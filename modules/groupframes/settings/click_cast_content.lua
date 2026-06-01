@@ -228,6 +228,66 @@ local function ApplyPixelBackdrop(frame, borderPixels, withBackground)
     })
 end
 
+local function CreateClickCastButton(parent, text, width, height, onClick, variant)
+    local button = GUI:CreateButton(parent, text or "", width or 1, height or 24, onClick, variant or "ghost")
+    if width and width > 0 and height and height > 0 then
+        SetSizePx(button, width, height)
+    elseif height and height > 0 then
+        SetHeightPx(button, height)
+    end
+
+    if UIKit and UIKit.CreateBackdropBorder then
+        if UIKit.UpdateBorderLines then
+            UIKit.UpdateBorderLines(button, 0, 0, 0, 0, 0, true)
+        end
+        button._clickCastBorder = UIKit.CreateBackdropBorder(button, 1, 1, 1, 1, 0.2)
+        button.SetBorderColor = function(self, r, g, b, a)
+            local border = self and self._clickCastBorder
+            if border and border.SetBackdropBorderColor then
+                border:SetBackdropBorderColor(r, g, b, a or 1)
+            elseif UIKit and UIKit.UpdateBorderLines then
+                UIKit.UpdateBorderLines(self, 1, r, g, b, a or 1, false)
+            end
+        end
+        button.SetFieldBorderColor = button.SetBorderColor
+    end
+
+    return button
+end
+
+local function SetButtonBorder(button, r, g, b, a)
+    if not button then return end
+    if button.SetBorderColor then
+        button:SetBorderColor(r, g, b, a or 1)
+    elseif UIKit and UIKit.UpdateBorderLines then
+        UIKit.UpdateBorderLines(button, 1, r, g, b, a or 1, false)
+    elseif button.SetBackdropBorderColor then
+        button:SetBackdropBorderColor(r, g, b, a or 1)
+    end
+end
+
+local function SetButtonHover(button, shown, r, g, b, a)
+    local hover = button and button._hoverBg
+    if not hover then return end
+    if r then
+        hover:SetColorTexture(r, g or r, b or r, a or 0.06)
+    end
+    if shown then
+        hover:Show()
+    else
+        hover:Hide()
+    end
+end
+
+local function SetButtonFill(button, r, g, b, a)
+    if not button then return end
+    if not button._clickCastFill then
+        button._clickCastFill = button:CreateTexture(nil, "BACKGROUND", nil, -1)
+        button._clickCastFill:SetAllPoints(button)
+    end
+    button._clickCastFill:SetColorTexture(r or 0, g or 0, b or 0, a or 0)
+end
+
 ---------------------------------------------------------------------------
 -- HELPERS
 
@@ -373,10 +433,12 @@ local function BuildClickCastPings(content, startY, state)
     -- bindings is sufficient.
     local suspendedPingBindings = {}
     local isPingSuspended = false
+    local PING_ROW_HEIGHT = 28
+    local PING_BUTTON_HEIGHT = 24
 
     local function CreatePingKeybindRow(parent, entry, yPos)
         local row = CreateFrame("Frame", nil, parent)
-        row:SetHeight(28)
+        row:SetHeight(PING_ROW_HEIGHT)
         row:SetPoint("TOPLEFT", PAD, yPos)
         row:SetPoint("RIGHT", parent, "RIGHT", -PAD, 0)
 
@@ -387,30 +449,30 @@ local function BuildClickCastPings(content, startY, state)
         label:SetText(entry.label)
         label:SetTextColor(C.text[1], C.text[2], C.text[3], 1)
 
-        local captureBtn = CreateFrame("Button", nil, row, "BackdropTemplate")
+        local captureBtn = CreateClickCastButton(row, "", 160, PING_BUTTON_HEIGHT)
         captureBtn:SetPoint("LEFT", label, "RIGHT", 8, 0)
-        captureBtn:SetSize(160, 24)
-        ApplyPixelBackdrop(captureBtn, 1, true)
-        captureBtn:SetBackdropColor(0.08, 0.08, 0.08, 1)
-        captureBtn:SetBackdropBorderColor(0.35, 0.35, 0.35, 1)
+        SetButtonFill(captureBtn, 0.08, 0.08, 0.08, 1)
+        SetButtonBorder(captureBtn, 0.35, 0.35, 0.35, 1)
 
-        local keyText = captureBtn:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-        keyText:SetPoint("CENTER", 0, 0)
+        local keyText = captureBtn.text
+        if keyText then
+            keyText:SetFont(GUI.FONT_PATH, 11, "")
+        end
 
         local function UpdateKeyText()
             local key1 = GetBindingKey(entry.binding)
             if key1 then
-                keyText:SetText(key1)
-                keyText:SetTextColor(C.text[1], C.text[2], C.text[3], 1)
+                captureBtn:SetText(key1)
+                if keyText then keyText:SetTextColor(C.text[1], C.text[2], C.text[3], 1) end
             else
-                keyText:SetText("Not bound")
-                keyText:SetTextColor(C.textMuted[1], C.textMuted[2], C.textMuted[3], 1)
+                captureBtn:SetText("Not bound")
+                if keyText then keyText:SetTextColor(C.textMuted[1], C.textMuted[2], C.textMuted[3], 1) end
             end
         end
         table.insert(pingRowUpdaters, UpdateKeyText)
         UpdateKeyText()
 
-        local clearBtn = GUI:CreateButton(row, "Clear", 50, 24, function()
+        local clearBtn = CreateClickCastButton(row, "Clear", 50, PING_BUTTON_HEIGHT, function()
             local key1, key2 = GetBindingKey(entry.binding)
             if key1 then SetBinding(key1) end
             if key2 then SetBinding(key2) end
@@ -418,6 +480,7 @@ local function BuildClickCastPings(content, startY, state)
             if refreshAllPingRows then refreshAllPingRows() else UpdateKeyText() end
         end)
         clearBtn:SetPoint("LEFT", captureBtn, "RIGHT", 6, 0)
+        SetButtonBorder(clearBtn, 1, 1, 1, 0.2)
         GUI:AttachTooltip(clearBtn, "Remove the current keybind for this ping action. The action stays defined but is no longer bound to a key.", "Clear Binding")
 
         captureBtn.isCapturing = false
@@ -469,7 +532,8 @@ local function BuildClickCastPings(content, startY, state)
 
             self.isCapturing = false
             self:EnableKeyboard(false)
-            self:SetBackdropBorderColor(0.35, 0.35, 0.35, 1)
+            SetButtonBorder(self, 0.35, 0.35, 0.35, 1)
+            SetButtonHover(self, false)
             -- Dismiss any stuck ping listener
             -- Update ALL rows since we may have cleared another entry's key
             if refreshAllPingRows then refreshAllPingRows() end
@@ -480,7 +544,8 @@ local function BuildClickCastPings(content, startY, state)
             RestorePingBindings()
             self.isCapturing = false
             self:EnableKeyboard(false)
-            self:SetBackdropBorderColor(0.35, 0.35, 0.35, 1)
+            SetButtonBorder(self, 0.35, 0.35, 0.35, 1)
+            SetButtonHover(self, false)
             -- Dismiss any stuck ping listener
             UpdateKeyText()
         end
@@ -508,9 +573,9 @@ local function BuildClickCastPings(content, startY, state)
                     SuspendPingBindings()
                     self.isCapturing = true
                     self:EnableKeyboard(true)
-                    self:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 1)
-                    keyText:SetText("Press a key or click...")
-                    keyText:SetTextColor(C.accent[1], C.accent[2], C.accent[3], 1)
+                    SetButtonBorder(self, C.accent[1], C.accent[2], C.accent[3], 1)
+                    captureBtn:SetText("Press a key or click...")
+                    if keyText then keyText:SetTextColor(C.accent[1], C.accent[2], C.accent[3], 1) end
                 end
                 return
             end
@@ -545,14 +610,18 @@ local function BuildClickCastPings(content, startY, state)
             FinishCapture(self, GetModifierPrefix() .. key)
         end)
         captureBtn:SetScript("OnEnter", function(self)
-            if not self.isCapturing then self:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 0.7) end
+            if not self.isCapturing then
+                SetButtonBorder(self, C.accent[1], C.accent[2], C.accent[3], 0.7)
+                SetButtonHover(self, true, C.accent[1], C.accent[2], C.accent[3], 0.08)
+            end
         end)
         captureBtn:SetScript("OnLeave", function(self)
             -- Don't cancel capture on leave — the user may move
             -- the mouse while pressing a key. Capture ends on key
             -- press or Escape.
             if not self.isCapturing then
-                self:SetBackdropBorderColor(0.35, 0.35, 0.35, 1)
+                SetButtonBorder(self, 0.35, 0.35, 0.35, 1)
+                SetButtonHover(self, false)
             end
         end)
 
@@ -724,19 +793,19 @@ local function BuildClickCastBindings(content, cc, refreshClickCast, startY, sta
     local ay = -30
 
     -- Drop zone for spellbook/macro drag
-    local dropZone = CreateFrame("Button", nil, addContainer, "BackdropTemplate")
+    local dropZone = CreateClickCastButton(addContainer, "Drop a spell or macro here", 1, 68, nil, "primary")
     dropZone:RegisterForClicks("LeftButtonUp")
     SetHeightPx(dropZone, 68)
     dropZone:SetPoint("TOPLEFT", 0, ay)
     dropZone:SetPoint("RIGHT", addContainer, "RIGHT", 0, 0)
-    ApplyPixelBackdrop(dropZone, 1, true)
-    dropZone:SetBackdropColor(C.bg[1], C.bg[2], C.bg[3], 0.8)
-    dropZone:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 0.5)
+    SetButtonFill(dropZone, C.bg[1], C.bg[2], C.bg[3], 0.8)
+    SetButtonBorder(dropZone, C.accent[1], C.accent[2], C.accent[3], 0.5)
 
-    local dropLabel = dropZone:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    dropLabel:SetPoint("CENTER", 0, 0)
-    dropLabel:SetText("Drop a spell or macro here")
-    dropLabel:SetTextColor(C.textMuted[1], C.textMuted[2], C.textMuted[3], 1)
+    local dropLabel = dropZone.text
+    if dropLabel then
+        dropLabel:SetFont(GUI.FONT_PATH, 11, "")
+        dropLabel:SetTextColor(C.textMuted[1], C.textMuted[2], C.textMuted[3], 1)
+    end
 
     local addState = { bindingType = "mouse", button = "LeftButton", key = nil, modifiers = "", actionType = "spell", spellName = "", macroText = "" }
     local spellInput, macroInput, actionDrop
@@ -798,13 +867,15 @@ local function BuildClickCastBindings(content, cc, refreshClickCast, startY, sta
     end)
     dropZone:SetScript("OnEnter", function(self)
         if GetCursorInfo() then
-            self:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 1)
-            dropLabel:SetTextColor(C.accent[1], C.accent[2], C.accent[3], 1)
+            SetButtonBorder(self, C.accent[1], C.accent[2], C.accent[3], 1)
+            SetButtonHover(self, true, C.accent[1], C.accent[2], C.accent[3], 0.08)
+            if dropLabel then dropLabel:SetTextColor(C.accent[1], C.accent[2], C.accent[3], 1) end
         end
     end)
     dropZone:SetScript("OnLeave", function(self)
-        self:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 0.5)
-        dropLabel:SetTextColor(C.textMuted[1], C.textMuted[2], C.textMuted[3], 1)
+        SetButtonBorder(self, C.accent[1], C.accent[2], C.accent[3], 0.5)
+        SetButtonHover(self, false)
+        if dropLabel then dropLabel:SetTextColor(C.textMuted[1], C.textMuted[2], C.textMuted[3], 1) end
     end)
     ay = ay - 78
 
@@ -841,26 +912,26 @@ local function BuildClickCastBindings(content, cc, refreshClickCast, startY, sta
     keyLabel:SetText("Key")
     keyLabel:SetTextColor(C.text[1], C.text[2], C.text[3], 1)
 
-    local keyCaptureBtn = CreateFrame("Button", nil, keyCaptureContainer, "BackdropTemplate")
+    local keyCaptureBtn = CreateClickCastButton(keyCaptureContainer, "Click to bind a key", 1, 26)
     keyCaptureBtn:SetPoint("LEFT", keyCaptureContainer, "LEFT", 180, 0)
     keyCaptureBtn:SetPoint("RIGHT", keyCaptureContainer, "RIGHT", 0, 0)
     SetHeightPx(keyCaptureBtn, 26)
-    ApplyPixelBackdrop(keyCaptureBtn, 1, true)
-    keyCaptureBtn:SetBackdropColor(0.08, 0.08, 0.08, 1)
-    keyCaptureBtn:SetBackdropBorderColor(0.35, 0.35, 0.35, 1)
+    SetButtonFill(keyCaptureBtn, 0.08, 0.08, 0.08, 1)
+    SetButtonBorder(keyCaptureBtn, 0.35, 0.35, 0.35, 1)
 
-    local keyCaptureText = keyCaptureBtn:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    keyCaptureText:SetPoint("CENTER", 0, 0)
-    keyCaptureText:SetText("Click to bind a key")
-    keyCaptureText:SetTextColor(C.textMuted[1], C.textMuted[2], C.textMuted[3], 1)
+    local keyCaptureText = keyCaptureBtn.text
+    if keyCaptureText then
+        keyCaptureText:SetFont(GUI.FONT_PATH, 11, "")
+        keyCaptureText:SetTextColor(C.textMuted[1], C.textMuted[2], C.textMuted[3], 1)
+    end
 
     local IGNORE_KEYS = { LSHIFT = true, RSHIFT = true, LCTRL = true, RCTRL = true, LALT = true, RALT = true, LMETA = true, RMETA = true }
 
     keyCaptureBtn:SetScript("OnClick", function(self)
         self.isCapturing = true
-        keyCaptureText:SetText("Press a key...")
-        keyCaptureText:SetTextColor(C.accent[1], C.accent[2], C.accent[3], 1)
-        self:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 1)
+        keyCaptureBtn:SetText("Press a key...")
+        if keyCaptureText then keyCaptureText:SetTextColor(C.accent[1], C.accent[2], C.accent[3], 1) end
+        SetButtonBorder(self, C.accent[1], C.accent[2], C.accent[3], 1)
         self:EnableKeyboard(true)
     end)
     keyCaptureBtn:SetScript("OnKeyDown", function(self, key)
@@ -870,32 +941,38 @@ local function BuildClickCastBindings(content, cc, refreshClickCast, startY, sta
         if key == "ESCAPE" then
             self.isCapturing = false
             self:EnableKeyboard(false)
-            self:SetBackdropBorderColor(0.35, 0.35, 0.35, 1)
+            SetButtonBorder(self, 0.35, 0.35, 0.35, 1)
+            SetButtonHover(self, false)
             if addState.key then
-                keyCaptureText:SetText(addState.key)
-                keyCaptureText:SetTextColor(C.text[1], C.text[2], C.text[3], 1)
+                keyCaptureBtn:SetText(addState.key)
+                if keyCaptureText then keyCaptureText:SetTextColor(C.text[1], C.text[2], C.text[3], 1) end
             else
-                keyCaptureText:SetText("Click to bind a key")
-                keyCaptureText:SetTextColor(C.textMuted[1], C.textMuted[2], C.textMuted[3], 1)
+                keyCaptureBtn:SetText("Click to bind a key")
+                if keyCaptureText then keyCaptureText:SetTextColor(C.textMuted[1], C.textMuted[2], C.textMuted[3], 1) end
             end
             return
         end
         addState.key = key
         self.isCapturing = false
         self:EnableKeyboard(false)
-        self:SetBackdropBorderColor(0.35, 0.35, 0.35, 1)
-        keyCaptureText:SetText(key)
-        keyCaptureText:SetTextColor(C.text[1], C.text[2], C.text[3], 1)
+        SetButtonBorder(self, 0.35, 0.35, 0.35, 1)
+        SetButtonHover(self, false)
+        keyCaptureBtn:SetText(key)
+        if keyCaptureText then keyCaptureText:SetTextColor(C.text[1], C.text[2], C.text[3], 1) end
     end)
     keyCaptureBtn:SetScript("OnEnter", function(self)
-        if not self.isCapturing then self:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 0.7) end
+        if not self.isCapturing then
+            SetButtonBorder(self, C.accent[1], C.accent[2], C.accent[3], 0.7)
+            SetButtonHover(self, true, C.accent[1], C.accent[2], C.accent[3], 0.08)
+        end
     end)
     keyCaptureBtn:SetScript("OnLeave", function(self)
         -- Don't cancel capture on leave — the user may move
         -- the mouse while pressing a key. Capture ends on key
         -- press or Escape.
         if not self.isCapturing then
-            self:SetBackdropBorderColor(0.35, 0.35, 0.35, 1)
+            SetButtonBorder(self, 0.35, 0.35, 0.35, 1)
+            SetButtonHover(self, false)
         end
     end)
     ay = ay - FORM_ROW
@@ -929,19 +1006,22 @@ local function BuildClickCastBindings(content, cc, refreshClickCast, startY, sta
     spellLabel:SetTextColor(C.text[1], C.text[2], C.text[3], 1)
 
     -- Browse button (right side)
-    local browseBtn = CreateFrame("Button", nil, spellInputContainer, "BackdropTemplate")
+    local browseBtn = CreateClickCastButton(spellInputContainer, "Browse", 64, 24, nil, "primary")
     SetSizePx(browseBtn, 64, 24)
     browseBtn:SetPoint("RIGHT", spellInputContainer, "RIGHT", 0, 0)
-    ApplyPixelBackdrop(browseBtn, 1, true)
-    browseBtn:SetBackdropColor(0.12, 0.12, 0.12, 1)
-    browseBtn:SetBackdropBorderColor(0.35, 0.35, 0.35, 1)
-    local browseBtnText = browseBtn:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    browseBtnText:SetPoint("CENTER", 0, 0)
-    browseBtnText:SetText("Browse")
-    browseBtnText:SetFont(GUI.FONT_PATH, 10, "")
-    browseBtnText:SetTextColor(C.accent[1], C.accent[2], C.accent[3], 1)
-    browseBtn:SetScript("OnEnter", function(self) self:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 1) end)
-    browseBtn:SetScript("OnLeave", function(self) self:SetBackdropBorderColor(0.35, 0.35, 0.35, 1) end)
+    SetButtonFill(browseBtn, 0.12, 0.12, 0.12, 1)
+    SetButtonBorder(browseBtn, 0.35, 0.35, 0.35, 1)
+    if browseBtn.text then
+        browseBtn.text:SetTextColor(C.accent[1], C.accent[2], C.accent[3], 1)
+    end
+    browseBtn:SetScript("OnEnter", function(self)
+        SetButtonBorder(self, C.accent[1], C.accent[2], C.accent[3], 1)
+        SetButtonHover(self, true, C.accent[1], C.accent[2], C.accent[3], 0.08)
+    end)
+    browseBtn:SetScript("OnLeave", function(self)
+        SetButtonBorder(self, 0.35, 0.35, 0.35, 1)
+        SetButtonHover(self, false)
+    end)
 
     local spellInputBg = CreateFrame("Frame", nil, spellInputContainer, "BackdropTemplate")
     spellInputBg:SetPoint("LEFT", spellInputContainer, "LEFT", 180, 0)
@@ -1088,17 +1168,11 @@ local function BuildClickCastBindings(content, cc, refreshClickCast, startY, sta
     browseTitle:SetTextColor(C.accent[1], C.accent[2], C.accent[3], 1)
 
     -- Close button
-    local browseCloseBtn = CreateFrame("Button", nil, browsePopup)
-    browseCloseBtn:SetSize(20, 20)
+    local browseCloseBtn = CreateClickCastButton(browsePopup, "X", 20, 20, function() browsePopup:Hide() end)
     browseCloseBtn:SetPoint("TOPRIGHT", -6, -6)
-    local browseCloseText = browseCloseBtn:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    browseCloseText:SetPoint("CENTER", 0, 0)
-    browseCloseText:SetText("X")
-    browseCloseText:SetFont(GUI.FONT_PATH, 11, "")
-    browseCloseText:SetTextColor(C.textMuted[1], C.textMuted[2], C.textMuted[3], 1)
-    browseCloseBtn:SetScript("OnEnter", function() browseCloseText:SetTextColor(C.accent[1], C.accent[2], C.accent[3], 1) end)
-    browseCloseBtn:SetScript("OnLeave", function() browseCloseText:SetTextColor(C.textMuted[1], C.textMuted[2], C.textMuted[3], 1) end)
-    browseCloseBtn:SetScript("OnClick", function() browsePopup:Hide() end)
+    if browseCloseBtn.text then
+        browseCloseBtn.text:SetFont(GUI.FONT_PATH, 11, "")
+    end
 
     -- Search box
     local browseSearchBg = CreateFrame("Frame", nil, browsePopup, "BackdropTemplate")
@@ -1381,21 +1455,19 @@ local function BuildClickCastBindings(content, cc, refreshClickCast, startY, sta
 
     local function RefreshClickCastPixelFrames()
         SetHeightPx(dropZone, 68)
-        ApplyPixelBackdrop(dropZone, 1, true)
-        dropZone:SetBackdropColor(C.bg[1], C.bg[2], C.bg[3], 0.8)
         if GetCursorInfo() then
-            dropZone:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 1)
+            SetButtonBorder(dropZone, C.accent[1], C.accent[2], C.accent[3], 1)
+            SetButtonHover(dropZone, true, C.accent[1], C.accent[2], C.accent[3], 0.08)
         else
-            dropZone:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 0.5)
+            SetButtonBorder(dropZone, C.accent[1], C.accent[2], C.accent[3], 0.5)
+            SetButtonHover(dropZone, false)
         end
 
         SetHeightPx(keyCaptureBtn, 26)
-        ApplyPixelBackdrop(keyCaptureBtn, 1, true)
-        keyCaptureBtn:SetBackdropColor(0.08, 0.08, 0.08, 1)
         if keyCaptureBtn.isCapturing then
-            keyCaptureBtn:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 1)
+            SetButtonBorder(keyCaptureBtn, C.accent[1], C.accent[2], C.accent[3], 1)
         else
-            keyCaptureBtn:SetBackdropBorderColor(0.35, 0.35, 0.35, 1)
+            SetButtonBorder(keyCaptureBtn, 0.35, 0.35, 0.35, 1)
         end
 
         SetHeightPx(spellInputBg, 24)
@@ -1454,8 +1526,8 @@ local function BuildClickCastBindings(content, cc, refreshClickCast, startY, sta
         addState.key = nil
         spellInput:SetText("")
         macroInput:SetText("")
-        keyCaptureText:SetText("Click to bind a key")
-        keyCaptureText:SetTextColor(C.textMuted[1], C.textMuted[2], C.textMuted[3], 1)
+        keyCaptureBtn:SetText("Click to bind a key")
+        if keyCaptureText then keyCaptureText:SetTextColor(C.textMuted[1], C.textMuted[2], C.textMuted[3], 1) end
         RefreshBindingList()
     end)
     addBtn:SetPoint("TOPLEFT", 0, addBtnY)
@@ -1529,18 +1601,22 @@ local function BuildClickCastBindings(content, cc, refreshClickCast, startY, sta
                 elseif PING_DISPLAY_NAMES[actionType] then displayName = PING_DISPLAY_NAMES[actionType] end
                 spellText:SetText(displayName)
                 spellText:SetTextColor(C.textMuted[1], C.textMuted[2], C.textMuted[3], 1)
-                local removeBtn = CreateFrame("Button", nil, row, "BackdropTemplate")
-                SetSizePx(removeBtn, 22, 22)
-                ApplyPixelBackdrop(removeBtn, 1, true)
-                removeBtn:SetBackdropColor(0.1, 0.1, 0.1, 0.8)
-                removeBtn:SetBackdropBorderColor(0.3, 0.3, 0.3, 1)
-                local xText = removeBtn:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-                xText:SetPoint("CENTER", 0, 0)
-                xText:SetText("X")
-                xText:SetTextColor(C.accent[1], C.accent[2], C.accent[3], 0.7)
-                removeBtn:SetScript("OnEnter", function(self) self:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 1) xText:SetTextColor(C.accent[1], C.accent[2], C.accent[3], 1) end)
-                removeBtn:SetScript("OnLeave", function(self) self:SetBackdropBorderColor(0.3, 0.3, 0.3, 1) xText:SetTextColor(C.accent[1], C.accent[2], C.accent[3], 0.7) end)
-                removeBtn:SetScript("OnClick", function() GFCC:RemoveBinding(i) RefreshBindingList() end)
+                local removeBtn = CreateClickCastButton(row, "X", 22, 22, function() GFCC:RemoveBinding(i) RefreshBindingList() end)
+                if removeBtn.text then
+                    removeBtn.text:SetTextColor(C.accent[1], C.accent[2], C.accent[3], 0.7)
+                end
+                SetButtonFill(removeBtn, 0.1, 0.1, 0.1, 0.8)
+                SetButtonBorder(removeBtn, 0.3, 0.3, 0.3, 1)
+                removeBtn:SetScript("OnEnter", function(self)
+                    SetButtonBorder(self, C.accent[1], C.accent[2], C.accent[3], 1)
+                    SetButtonHover(self, true, C.accent[1], C.accent[2], C.accent[3], 0.08)
+                    if self.text then self.text:SetTextColor(C.accent[1], C.accent[2], C.accent[3], 1) end
+                end)
+                removeBtn:SetScript("OnLeave", function(self)
+                    SetButtonBorder(self, 0.3, 0.3, 0.3, 1)
+                    SetButtonHover(self, false)
+                    if self.text then self.text:SetTextColor(C.accent[1], C.accent[2], C.accent[3], 0.7) end
+                end)
                 removeBtn:SetPoint("LEFT", spellText, "RIGHT", 8, 0)
                 listY = listY - 30
             end
