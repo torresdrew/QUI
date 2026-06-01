@@ -972,40 +972,42 @@ local function CreateInlineCollapsible(parent, title, contentHeight, onResize)
     return section, body
 end
 
-ns.QUI_Options = {
-    -- Constants
-    PADDING = PADDING,
-    NINE_POINT_ANCHOR_OPTIONS = NINE_POINT_ANCHOR_OPTIONS,
-    QUAZII_FPS_CVARS = QUAZII_FPS_CVARS,
+local Options = ns.QUI_Options or {}
+ns.QUI_Options = Options
 
-    -- Helper functions
-    GetDB = GetDB,
-    CreateScrollableContent = CreateScrollableContent,
-    CreateCollapsiblePage = CreateCollapsiblePage,
-    CreateTilePage = CreateTilePage,
-    CreateInlineCollapsible = CreateInlineCollapsible,
-    GetTextureList = GetTextureList,
-    GetFontList = GetFontList,
-    GetSoundList = GetSoundList,
-    PrintImportFeedback = ns.PrintImportFeedback,
-    SafeGetPixelSize = SafeGetPixelSize,
-    CreateWrappedLabel = CreateWrappedLabel,
-    CreateLinkItem = CreateLinkItem,
-    -- FPS functions
-    BackupCurrentFPSSettings = BackupCurrentFPSSettings,
-    RestorePreviousFPSSettings = RestorePreviousFPSSettings,
-    ApplyQuaziiFPSSettings = ApplyQuaziiFPSSettings,
-    CheckCVarsMatch = CheckCVarsMatch,
+-- Constants
+Options.PADDING = PADDING
+Options.NINE_POINT_ANCHOR_OPTIONS = NINE_POINT_ANCHOR_OPTIONS
+Options.QUAZII_FPS_CVARS = QUAZII_FPS_CVARS
 
-    -- Refresh callbacks
-    RefreshMinimap = RefreshMinimap,
-    RefreshUIHider = RefreshUIHider,
-    RefreshUnitFrames = RefreshUnitFrames,
-    RefreshBuffBorders = RefreshBuffBorders,
-    RefreshCrosshair = RefreshCrosshair,
-    RefreshReticle = RefreshReticle,
-    RefreshRangeCheck = RefreshRangeCheck,
-}
+-- Helper functions
+Options.GetDB = GetDB
+Options.CreateScrollableContent = CreateScrollableContent
+Options.CreateCollapsiblePage = CreateCollapsiblePage
+Options.CreateTilePage = CreateTilePage
+Options.CreateInlineCollapsible = CreateInlineCollapsible
+Options.GetTextureList = GetTextureList
+Options.GetFontList = GetFontList
+Options.GetSoundList = GetSoundList
+Options.PrintImportFeedback = ns.PrintImportFeedback
+Options.SafeGetPixelSize = SafeGetPixelSize
+Options.CreateWrappedLabel = CreateWrappedLabel
+Options.CreateLinkItem = CreateLinkItem
+
+-- FPS functions
+Options.BackupCurrentFPSSettings = BackupCurrentFPSSettings
+Options.RestorePreviousFPSSettings = RestorePreviousFPSSettings
+Options.ApplyQuaziiFPSSettings = ApplyQuaziiFPSSettings
+Options.CheckCVarsMatch = CheckCVarsMatch
+
+-- Refresh callbacks
+Options.RefreshMinimap = RefreshMinimap
+Options.RefreshUIHider = RefreshUIHider
+Options.RefreshUnitFrames = RefreshUnitFrames
+Options.RefreshBuffBorders = RefreshBuffBorders
+Options.RefreshCrosshair = RefreshCrosshair
+Options.RefreshReticle = RefreshReticle
+Options.RefreshRangeCheck = RefreshRangeCheck
 
 --[[
     ns.QUI_Options.CreateAccentDotLabel(parent, text, yOffset)

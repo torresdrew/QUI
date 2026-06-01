@@ -48,10 +48,72 @@ GUI.Colors = GUI.Colors or {
 local C = GUI.Colors
 
 ns.QUI_Options = ns.QUI_Options or {}
-ns.QUI_Options.PADDING = ns.QUI_Options.PADDING or 15
+local Options = ns.QUI_Options
+Options.PADDING = Options.PADDING or 15
 
-if type(ns.QUI_Options.CreateScrollableContent) ~= "function" then
-    function ns.QUI_Options.CreateScrollableContent(parent)
+local function GetOptionDelegate(name, fallback)
+    local method = Options and Options[name]
+    if type(method) == "function" and method ~= fallback then
+        return method
+    end
+    return nil
+end
+
+local function GetDBCompat()
+    local delegate = GetOptionDelegate("GetDB", GetDBCompat)
+    if delegate then
+        return delegate()
+    end
+
+    local addon = ns.Addon or (QUI and QUI.QUICore)
+    return addon and addon.db and addon.db.profile or nil
+end
+
+local function BuildLSMList(kind, fallback)
+    local list = {}
+    local lsm = ns.LSM
+    if lsm and type(lsm.List) == "function" then
+        for _, name in ipairs(lsm:List(kind) or {}) do
+            list[#list + 1] = { value = name, text = name }
+        end
+    end
+    if #list == 0 and fallback then
+        list[1] = fallback
+    end
+    return list
+end
+
+local function GetTextureListCompat()
+    local delegate = GetOptionDelegate("GetTextureList", GetTextureListCompat)
+    if delegate then
+        return delegate()
+    end
+    return BuildLSMList("statusbar", { value = "Solid", text = "Solid" })
+end
+
+local function GetFontListCompat()
+    local delegate = GetOptionDelegate("GetFontList", GetFontListCompat)
+    if delegate then
+        return delegate()
+    end
+    return BuildLSMList("font", { value = "Friz Quadrata TT", text = "Friz Quadrata TT" })
+end
+
+local function GetSoundListCompat()
+    local delegate = GetOptionDelegate("GetSoundList", GetSoundListCompat)
+    if delegate then
+        return delegate()
+    end
+    return BuildLSMList("sound", { value = "None", text = "None" })
+end
+
+local function CreateScrollableContentCompat(parent)
+    local delegate = GetOptionDelegate("CreateScrollableContent", CreateScrollableContentCompat)
+    if delegate then
+        return delegate(parent)
+    end
+
+    if parent then
         local scrollFrame = CreateFrame("ScrollFrame", nil, parent, "UIPanelScrollFrameTemplate")
         scrollFrame:SetPoint("TOPLEFT", parent, "TOPLEFT", 5, -5)
         scrollFrame:SetPoint("BOTTOMRIGHT", parent, "BOTTOMRIGHT", -28, 5)
@@ -67,6 +129,65 @@ if type(ns.QUI_Options.CreateScrollableContent) ~= "function" then
         return scrollFrame, content
     end
 end
+
+local function CreateWrappedLabelCompat(parent, text, size, color, maxWidth)
+    local delegate = GetOptionDelegate("CreateWrappedLabel", CreateWrappedLabelCompat)
+    if delegate then
+        return delegate(parent, text, size, color, maxWidth)
+    end
+
+    local gui = QUI and QUI.GUI
+    local label
+    if gui and type(gui.CreateLabel) == "function" then
+        label = gui:CreateLabel(parent, text or "", size or 12, color or C.text)
+    elseif parent and parent.CreateFontString then
+        label = parent:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        label:SetText(text or "")
+        if type(color) == "table" then
+            label:SetTextColor(color[1] or 1, color[2] or 1, color[3] or 1, color[4] or 1)
+        end
+    end
+
+    if label and maxWidth and label.SetWidth then
+        label:SetWidth(maxWidth)
+        if label.SetWordWrap then
+            label:SetWordWrap(true)
+        end
+    end
+
+    return label
+end
+
+local function CreateLinkItemCompat(parent, label, url, iconR, iconG, iconB, iconTexture, popupTitle)
+    local delegate = GetOptionDelegate("CreateLinkItem", CreateLinkItemCompat)
+    if delegate then
+        return delegate(parent, label, url, iconR, iconG, iconB, iconTexture, popupTitle)
+    end
+
+    local button = CreateFrame("Button", nil, parent)
+    button:SetSize(220, 22)
+    button.text = CreateWrappedLabelCompat(button, label or url or "", 12, C.text)
+    if button.text then
+        button.text:SetPoint("LEFT", button, "LEFT", 0, 0)
+        button.text:SetPoint("RIGHT", button, "RIGHT", 0, 0)
+    end
+    button:SetScript("OnClick", function()
+        if StaticPopup_Show then
+            StaticPopup_Show("QUI_COPY_TEXT", popupTitle or "Copy URL", nil, url)
+        elseif url then
+            print("|cFF30D1FFQUI:|r " .. tostring(url))
+        end
+    end)
+    return button
+end
+
+if type(Options.GetDB) ~= "function" then Options.GetDB = GetDBCompat end
+if type(Options.GetTextureList) ~= "function" then Options.GetTextureList = GetTextureListCompat end
+if type(Options.GetFontList) ~= "function" then Options.GetFontList = GetFontListCompat end
+if type(Options.GetSoundList) ~= "function" then Options.GetSoundList = GetSoundListCompat end
+if type(Options.CreateScrollableContent) ~= "function" then Options.CreateScrollableContent = CreateScrollableContentCompat end
+if type(Options.CreateWrappedLabel) ~= "function" then Options.CreateWrappedLabel = CreateWrappedLabelCompat end
+if type(Options.CreateLinkItem) ~= "function" then Options.CreateLinkItem = CreateLinkItemCompat end
 
 GUI.ThemePresets = GUI.ThemePresets or {
     { name = "Sky Blue",     color = {0.376, 0.647, 0.980} },

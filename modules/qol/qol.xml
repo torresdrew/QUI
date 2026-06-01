@@ -26,4 +26,5 @@
     <Script file="settings/xp_tracker.lua"/>
     <Script file="focuscastalert.lua"/>
     <Script file="settings/focus_cast_alert.lua"/>
+    <Script file="settings/qol_content.lua"/>
 </Ui>

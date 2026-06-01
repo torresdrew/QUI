@@ -25,4 +25,6 @@
     <Script file="frames/worldmap.lua"/>
     <Script file="frames/weeklyrewards.lua"/>
     <Script file="system/tooltips.lua"/>
+    <Script file="settings/skinning_content.lua"/>
+    <Script file="settings/border_coloring_content.lua"/>
 </Ui>

@@ -2467,7 +2467,7 @@ do
 -- Inlined from containers_page_surface.lua
 local ADDON_NAME, ns = ...
 local Settings = ns.Settings
-if QUI and QUI._optionsAddonName == ADDON_NAME and QUI.GUI and Settings and Settings.FullSurface then
+if QUI and QUI.GUI and Settings and Settings.FullSurface then
 --[[
     QUI Options V2 — Cooldown Manager tile
     Two sub-pages: Containers (dropdown-driven per-container editor with

@@ -3,6 +3,9 @@
     <Script file="settings/unit_frames_schema.lua"/>
     <Script file="settings/unit_frames_model.lua"/>
     <Script file="settings/unit_frames.lua"/>
+    <Script file="settings/unit_frames_surface.lua"/>
+    <Script file="settings/unit_frames_castbar_preview.lua"/>
+    <Script file="settings/unit_frames_body_preview.lua"/>
     <Script file="castbar.lua"/>
     <Script file="unitframes.lua"/>
     <Script file="unitframe_auras.lua"/>

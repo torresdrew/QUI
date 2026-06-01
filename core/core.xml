@@ -38,5 +38,14 @@
     <Script file="settings/pins_lifecycle.lua"/>
     <Script file="settings/renderer.lua"/>
     <Script file="settings/pins_ui.lua"/>
+    <Script file="settings/content/anchoring_shared_content.lua"/>
+    <Script file="settings/content/welcome_page.lua"/>
+    <Script file="settings/content/modules_page.lua"/>
+    <Script file="settings/content/modules_visual_onboarding.lua"/>
+    <Script file="settings/content/modules_nonvisual_onboarding.lua"/>
+    <Script file="settings/content/help_page.lua"/>
+    <Script file="settings/content/troubleshooting_page.lua"/>
+    <Script file="settings/content/profiles_content.lua"/>
+    <Script file="settings/content/import_export_content.lua"/>
     <Script file="rangeutils.lua"/>
 </Ui>

@@ -111,6 +111,7 @@ local function should_load_script(path)
     end
 
     if path == "core/utils.lua"
+        or path == "core/border_registry.lua"
         or path == "core/defaults.lua"
         or path == "core/scaling.lua"
         or path == "core/uikit.lua"
@@ -726,6 +727,29 @@ _G.C_Timer = {
 
 local profile_db = make_auto_table()
 profile_db.general.showOptionTooltips = true
+profile_db.quiGroupFrames = {
+    testMode = {},
+    party = {
+        auras = {
+            buffClassifications = {},
+            buffBlacklist = {},
+            debuffClassifications = {},
+            debuffBlacklist = {},
+        },
+        auraIndicators = { entries = {} },
+        pinnedAuras = { specSlots = {} },
+    },
+    raid = {
+        auras = {
+            buffClassifications = {},
+            buffBlacklist = {},
+            debuffClassifications = {},
+            debuffBlacklist = {},
+        },
+        auraIndicators = { entries = {} },
+        pinnedAuras = { specSlots = {} },
+    },
+}
 
 _G.QUI = {
     db = {
@@ -750,7 +774,41 @@ _G.QUI = {
             },
         },
     },
-    GUI = {},
+    GUI = {
+        Colors = {
+            bg = { 0.051, 0.067, 0.09, 0.97 },
+            bgLight = { 0.094, 0.11, 0.14, 1 },
+            bgDark = { 0.03, 0.04, 0.06, 1 },
+            bgContent = { 1, 1, 1, 0.02 },
+            bgSidebar = { 0, 0, 0, 0.25 },
+            bgFooter = { 0, 0, 0, 0.15 },
+            accent = { 0.204, 0.827, 0.6, 1 },
+            accentLight = { 0.431, 0.906, 0.718, 1 },
+            accentDark = { 0.1, 0.5, 0.35, 1 },
+            accentHover = { 0.3, 0.9, 0.65, 1 },
+            accentFaint = { 0.204, 0.827, 0.6, 0.07 },
+            accentGlow = { 0.204, 0.827, 0.6, 0.06 },
+            tabSelected = { 0.204, 0.827, 0.6, 1 },
+            tabSelectedText = { 1, 1, 1, 1 },
+            tabNormal = { 1, 1, 1, 0.55 },
+            tabHover = { 1, 1, 1, 0.85 },
+            text = { 1, 1, 1, 1 },
+            textBright = { 1, 1, 1, 1 },
+            textMuted = { 1, 1, 1, 0.45 },
+            textDim = { 1, 1, 1, 0.6 },
+            sectionLabel = { 1, 1, 1, 0.42 },
+            border = { 1, 1, 1, 0.06 },
+            borderStrong = { 1, 1, 1, 0.1 },
+            borderAccent = { 0.204, 0.827, 0.6, 1 },
+            sectionHeader = { 0.431, 0.906, 0.718, 1 },
+            sliderTrack = { 1, 1, 1, 0.12 },
+            sliderThumb = { 1, 1, 1, 1 },
+            sliderThumbBorder = { 0, 0, 0, 0.2 },
+            toggleOff = { 1, 1, 1, 0.12 },
+            toggleThumb = { 1, 1, 1, 1 },
+            warning = { 0.961, 0.620, 0.043, 1 },
+        },
+    },
     QUICore = {
         db = {
             profile = profile_db,
@@ -822,6 +880,54 @@ local ns = {
     Settings = {},
     UIKit = {},
     LSM = libs["LibSharedMedia-3.0"],
+}
+
+local function build_lsm_options(kind, fallback)
+    local list = {}
+    local lsm = ns.LSM
+    if lsm and type(lsm.List) == "function" then
+        for _, name in ipairs(lsm:List(kind) or {}) do
+            list[#list + 1] = { value = name, text = name }
+        end
+    end
+    if #list == 0 and fallback then
+        list[1] = fallback
+    end
+    return list
+end
+
+ns.QUI_Options = {
+    PADDING = 15,
+    GetDB = function()
+        return profile_db
+    end,
+    GetTextureList = function()
+        return build_lsm_options("statusbar", { value = "Solid", text = "Solid" })
+    end,
+    GetFontList = function()
+        return build_lsm_options("font", { value = "Friz Quadrata TT", text = "Friz Quadrata TT" })
+    end,
+    GetSoundList = function()
+        return build_lsm_options("sound", { value = "None", text = "None" })
+    end,
+    CreateScrollableContent = function(parent)
+        local scroll = create_stub_node("ScrollFrame", parent, false)
+        local content = create_stub_node("Frame", scroll, false)
+        content._hasContent = false
+        scroll.SetScrollChild = function(self, child) self._scrollChild = child end
+        scroll:SetScrollChild(content)
+        return scroll, content
+    end,
+    CreateWrappedLabel = function(parent, text)
+        local label = create_stub_node("FontString", parent, true)
+        label:SetText(text or "")
+        return label
+    end,
+    CreateLinkItem = function(parent, label)
+        local item = create_stub_node("Button", parent, false)
+        item._text = label or ""
+        return item
+    end,
 }
 
 ns.QUI_GroupFrameClickCast = {
@@ -2189,6 +2295,103 @@ end
 
 collect_feature_keywords()
 
+local function clear_non_plain_arrays_before_route_seed()
+    local function trim_plain_array(list, limit)
+        if type(list) ~= "table" or getmetatable(list) ~= nil then
+            return {}
+        end
+        for index = 1, limit do
+            if rawget(list, index) == nil then
+                return list
+            end
+        end
+        list[limit + 1] = nil
+        return list
+    end
+
+    local function is_scalar(value)
+        local value_type = type(value)
+        return value == nil
+            or value_type == "string"
+            or value_type == "number"
+            or value_type == "boolean"
+    end
+
+    local function filter_registry_entries(list, limit)
+        local filtered = {}
+        for index = 1, limit do
+            local entry = rawget(list, index)
+            if entry == nil then
+                break
+            end
+            if type(entry) == "table"
+                and getmetatable(entry) == nil
+                and type(entry.label) == "string"
+                and is_scalar(entry.navType)
+                and is_scalar(entry.tabIndex)
+                and is_scalar(entry.subTabIndex)
+                and is_scalar(entry.tileId)
+                and is_scalar(entry.subPageIndex)
+                and is_scalar(entry.tabName)
+                and is_scalar(entry.subTabName)
+                and is_scalar(entry.sectionName)
+                and is_scalar(entry.featureId)
+                and is_scalar(entry.providerKey)
+                and is_scalar(entry.category)
+                and is_scalar(entry.surfaceTabKey)
+                and is_scalar(entry.surfaceUnitKey) then
+                filtered[#filtered + 1] = entry
+            end
+        end
+        return filtered
+    end
+
+    if type(GUI.StaticSettingsRegistry) ~= "table" or getmetatable(GUI.StaticSettingsRegistry) ~= nil then
+        GUI.StaticSettingsRegistry = {}
+    end
+    if type(GUI.StaticNavigationRegistry) ~= "table" or getmetatable(GUI.StaticNavigationRegistry) ~= nil then
+        GUI.StaticNavigationRegistry = {}
+    end
+    GUI.StaticSettingsRegistry = trim_plain_array(GUI.StaticSettingsRegistry, 4000)
+    GUI.StaticNavigationRegistry = trim_plain_array(GUI.StaticNavigationRegistry, 2000)
+    GUI.StaticSettingsRegistry = filter_registry_entries(GUI.StaticSettingsRegistry, 4000)
+    GUI.StaticNavigationRegistry = filter_registry_entries(GUI.StaticNavigationRegistry, 2000)
+
+    if type(frame._tiles) ~= "table" or getmetatable(frame._tiles) ~= nil then
+        frame._tiles = {}
+        return
+    end
+    frame._tiles = trim_plain_array(frame._tiles, 30)
+    local filtered_tiles = {}
+    for _, tile in ipairs(frame._tiles) do
+        local config = tile and tile.config
+        if type(tile) == "table"
+            and type(tile.id) == "string"
+            and type(config) == "table"
+            and getmetatable(config) == nil
+            and type(config.name) == "string" then
+            if type(config.subPages) == "table"
+                and getmetatable(config.subPages) ~= nil then
+                config.subPages = nil
+            elseif type(config.subPages) == "table" then
+                local sub_pages = {}
+                for _, sub_page in ipairs(trim_plain_array(config.subPages, 30)) do
+                    if type(sub_page) == "table"
+                        and getmetatable(sub_page) == nil
+                        and type(sub_page.name) == "string" then
+                        sub_pages[#sub_pages + 1] = sub_page
+                    end
+                end
+                config.subPages = sub_pages
+            end
+            filtered_tiles[#filtered_tiles + 1] = tile
+        end
+    end
+    frame._tiles = filtered_tiles
+end
+
+clear_non_plain_arrays_before_route_seed()
+
 if type(GUI.SeedStaticSearchRoutesFromTiles) == "function" then
     GUI:SeedStaticSearchRoutesFromTiles(frame)
 end
@@ -2228,14 +2431,32 @@ end
 
 local emitted_module_entries = emit_module_toggle_entries()
 
-local function copy_table(source)
+local function copy_table(source, seen, depth)
     if type(source) ~= "table" then
         return source
     end
-    local copy = {}
-    for key, value in pairs(source) do
-        copy[key] = copy_table(value)
+    depth = depth or 0
+    if depth > 5 then
+        return nil
     end
+    if getmetatable(source) ~= nil then
+        return nil
+    end
+    seen = seen or {}
+    if seen[source] then
+        return nil
+    end
+    seen[source] = true
+    local copy = {}
+    local copied = 0
+    for key, value in pairs(source) do
+        copied = copied + 1
+        if copied > 200 then
+            break
+        end
+        copy[key] = copy_table(value, seen, depth + 1)
+    end
+    seen[source] = nil
     return copy
 end
 

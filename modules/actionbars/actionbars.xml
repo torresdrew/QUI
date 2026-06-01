@@ -22,5 +22,8 @@
     <Script file="buffborders.lua"/>
     <Script file="settings/action_bars.lua"/>
     <Script file="settings/action_bars_per_bar.lua"/>
+    <Script file="settings/action_bars_preview_driver.lua"/>
+    <Script file="settings/action_bars_content.lua"/>
+    <Script file="settings/action_bars_buffdebuff_content.lua"/>
     <Script file="totems.lua"/>
 </Ui>

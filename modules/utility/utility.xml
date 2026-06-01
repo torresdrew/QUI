@@ -3,5 +3,6 @@
     <Script file="settings/ready_check.lua"/>
     <Script file="settings/ready_check_provider.lua"/>
     <Script file="keybinds.lua"/>
+    <Script file="settings/keybinds_content.lua"/>
     <Script file="consumablemacros.lua"/>
 </Ui>
