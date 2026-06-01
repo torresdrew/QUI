@@ -275,6 +275,9 @@ local _spellsChangedDuringZoneTransition = false
 ---------------------------------------------------------------------------
 -- CONSTANTS
 ---------------------------------------------------------------------------
+local COLD_LOAD_SNAPSHOT_RETRY_DELAY = 0.5
+local COLD_LOAD_SNAPSHOT_RETRY_MAX_ATTEMPTS = 20
+
 local function IsBuiltinContainerKey(containerKey)
     if Shared and Shared.IsBuiltinContainerKey then
         return Shared.IsBuiltinContainerKey(containerKey)
@@ -3337,38 +3340,44 @@ end
 -- Blizzard CDM viewer references; this entrypoint delegates to that path.
 function CDMSpellData:SnapshotBlizzardCDM(containerKey)
     if InCombatLockdown() and not ns._inInitSafeWindow then
-        return false
+        return false, false
     end
-    if not IsBuiltinContainerKey(containerKey) then return false end
+    if not IsBuiltinContainerKey(containerKey) then return false, true end
 
     local db = GetContainerDB(containerKey)
-    if not db then return false end
+    if not db then return false, false end
 
     -- Only snapshot if ownedSpells == nil (first time)
-    if db.ownedSpells ~= nil then return false end
+    if db.ownedSpells ~= nil then return false, true end
 
     local composer = ns.CDMComposer
-    if not (composer and composer.SeedFromBlizzard) then return false end
+    if not (composer and composer.SeedFromBlizzard) then return false, false end
 
     local seeded, seedReady = composer.SeedFromBlizzard(containerKey)
-    if not seeded or not seedReady then return false end
+    if not seedReady then return false, false end
+    if not seeded then return false, false end
 
     db.ownedSpells = seeded
     local ncdm = GetNcdmDB()
     if ncdm then
         ncdm._snapshotVersion = (ncdm._snapshotVersion or 0) + 1
     end
-    return true
+    return true, true
 end
 
 local function SnapshotUnsetBuiltinContainers()
     local snapshotted = false
+    local allReady = true
     for _, key in ipairs(GetBuiltinContainerKeys()) do
-        if CDMSpellData:SnapshotBlizzardCDM(key) then
+        local didSnapshot, snapshotReady = CDMSpellData:SnapshotBlizzardCDM(key)
+        if didSnapshot then
             snapshotted = true
         end
+        if not snapshotReady then
+            allReady = false
+        end
     end
-    return snapshotted
+    return snapshotted, allReady
 end
 
 -- BuildSpellListFromOwned: Build runtime spell list from owned data
@@ -3831,19 +3840,28 @@ end
 -- can sequence Walk -> catalog rebuild -> entry reconcile -> change
 -- callback in one pass without intermediate UI flicker.
 function CDMSpellData:RunColdLoadReconcile()
-    if not IsCDMRuntimeEnabled() then return end
-    if InCombatLockdown() then
-        -- Bail; cold-load-into-combat is rare. Once combat ends, post-grace
-        -- SPELLS_CHANGED / data_loaded events fire normal reconcile.
-        return
+    local function runAttempt(attempt)
+        if not IsCDMRuntimeEnabled() then return end
+        if InCombatLockdown() then
+            -- Bail; cold-load-into-combat is rare. Once combat ends, post-grace
+            -- SPELLS_CHANGED / data_loaded events fire normal reconcile.
+            return
+        end
+        -- Cold-load ordering contract: the catalog must be fresh before the
+        -- dormant check, so rebuild explicitly here ahead of the shared tail.
+        if RebuildSpellToCooldownID then
+            RebuildSpellToCooldownID()
+        end
+        local _, snapshotReady = SnapshotUnsetBuiltinContainers()
+        if not snapshotReady and attempt < COLD_LOAD_SNAPSHOT_RETRY_MAX_ATTEMPTS then
+            C_Timer.After(COLD_LOAD_SNAPSHOT_RETRY_DELAY, function()
+                runAttempt(attempt + 1)
+            end)
+            return
+        end
+        RunReconcileSequence()
     end
-    -- Cold-load ordering contract: the catalog must be fresh before the
-    -- dormant check, so rebuild explicitly here ahead of the shared tail.
-    if RebuildSpellToCooldownID then
-        RebuildSpellToCooldownID()
-    end
-    SnapshotUnsetBuiltinContainers()
-    RunReconcileSequence()
+    runAttempt(1)
 end
 
 function CDMSpellData:ReconcileAllContainers()

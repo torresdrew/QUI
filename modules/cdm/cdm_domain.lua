@@ -881,9 +881,19 @@ function CDMCatalog.GetTrackedCategorySet(category, allowUnlearned)
     local settings = _G.CooldownViewerSettings
     if settings and settings.GetDataProvider then
         local okProvider, provider = pcall(settings.GetDataProvider, settings)
-        if okProvider
-            and provider
-            and provider.GetOrderedCooldownIDsForCategory then
+        if not okProvider or not provider then
+            return nil, false
+        end
+
+        local okManager, manager
+        if provider.GetLayoutManager then
+            okManager, manager = pcall(provider.GetLayoutManager, provider)
+        end
+        if not okManager or not manager then
+            return nil, false
+        end
+
+        if provider.GetOrderedCooldownIDsForCategory then
             local ok, ids = pcall(
                 provider.GetOrderedCooldownIDsForCategory,
                 provider,
