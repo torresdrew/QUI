@@ -691,8 +691,8 @@ local ns = {
 }
 
 local loadChunk = dofile("tests/helpers/load_cdm_consolidated_chunk.lua")
-loadChunk("modules/cdm/cdm_runtime.lua", "cdm_runtime_queries.lua")("QUI", ns)
-loadChunk("modules/cdm/cdm_runtime.lua", "cdm_resolvers.lua")("QUI", ns)
+loadChunk("modules/cdm/cdm_runtime_queries.lua", "cdm_runtime_queries.lua")("QUI", ns)
+loadChunk("modules/cdm/cdm_resolvers.lua", "cdm_resolvers.lua")("QUI", ns)
 
 -- isOnGCD is now read directly off cdInfo (NeverSecret) by the resolver, so
 -- the per-spell GCD state is injected onto the mocked cooldown-info table the
@@ -1103,7 +1103,7 @@ assert(durObj == mirrorDuration, "active live recharge should not override a mir
 assert(mode == "cooldown", "active mirror cooldown should stay cooldown mode over live charge, got " .. tostring(mode))
 -- After mode-collapse, BuildMirrorDurationSourceKey embeds (cooldownID,
 -- spellID) for real-cooldown modes instead of the per-event mirrorEpoch
--- (see cdm_runtime.lua:1779-1822). The (cooldownID, spellID) pair is
+-- (see cdm_resolvers.lua's BuildMirrorDurationSourceKey). The (cooldownID, spellID) pair is
 -- stable across routine event ticks, so the swipe binds once and runs
 -- to completion.
 assert(sourceID == "mirror:8204:1227281", "active mirror cooldown should keep its mirror source key")

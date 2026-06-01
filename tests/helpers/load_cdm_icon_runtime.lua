@@ -8,7 +8,7 @@ return function(ns)
             Helpers = ns.Helpers,
             Addon = ns.Addon,
         }
-        loadChunk("modules/cdm/cdm_domain.lua", "cdm_shared.lua")("QUI", sharedNS)
+        loadChunk("modules/cdm/cdm_shared.lua", "cdm_shared.lua")("QUI", sharedNS)
         for key, value in pairs(sharedNS.CDMShared or {}) do
             if existingShared[key] == nil then
                 existingShared[key] = value
@@ -30,7 +30,7 @@ return function(ns)
         ns.CDMSources.QueryOverrideSpell = ns.CDMSources.QueryOverrideSpell or function() return nil end
         ns.CDMSources.QuerySpellDisplayCount = ns.CDMSources.QuerySpellDisplayCount or function() return nil end
         ns.CDMSources.QuerySpellCount = ns.CDMSources.QuerySpellCount or function() return nil end
-        loadChunk("modules/cdm/cdm_runtime.lua", "cdm_runtime_queries.lua")("QUI", ns)
+        loadChunk("modules/cdm/cdm_runtime_queries.lua", "cdm_runtime_queries.lua")("QUI", ns)
     end
 
     if not ns.CDMIconStackText then

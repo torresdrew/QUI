@@ -17,7 +17,7 @@
 
     Invariants:
         * No game events are registered.
-        * Never calls into cdm_runtime.lua.
+        * Never calls into CDM runtime event scheduling.
         * Never touches the Blizzard CDM mirror (enforced by
           CDMIconFactory.AcquireForPreview skipping TryBindIconToBlizz).
         * Preview icons/bars are not pooled with runtime frames.

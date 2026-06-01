@@ -15,49 +15,22 @@ end
 
 local xml = readAll("modules/cdm/cdm.xml")
 
-local domain = indexOf(xml, 'file="cdm_domain.lua"')
-local visibility = indexOf(xml, 'file="hud_visibility.lua"')
-local runtime = indexOf(xml, 'file="cdm_runtime.lua"')
-local renderers = indexOf(xml, 'file="cdm_frame_writes.lua"')
-local spellData = indexOf(xml, 'file="cdm_spelldata.lua"')
-local mirror = indexOf(xml, 'file="cdm_blizz_mirror.lua"')
-local icons = indexOf(xml, 'file="cdm_icon_renderer.lua"')
-local bars = indexOf(xml, 'file="cdm_bar_renderer.lua"')
-local containers = indexOf(xml, 'file="cdm_containers.lua"')
-local settingsPage = indexOf(xml, 'file="settings\\containers_page.lua"')
-local composer = indexOf(xml, 'file="settings\\composer.lua"')
-
-assert(domain, "cdm_domain.lua should be loaded")
-assert(visibility, "hud_visibility.lua should be loaded")
-assert(domain < visibility, "domain facts should load before visibility/runtime consumers")
-
-assert(runtime, "cdm_runtime.lua should be loaded")
-assert(renderers, "cdm_frame_writes.lua should be loaded")
-assert(spellData, "cdm_spelldata.lua should be loaded")
-assert(mirror, "cdm_blizz_mirror.lua should be loaded")
-assert(icons, "cdm_icon_renderer.lua should be loaded")
-assert(bars, "cdm_bar_renderer.lua should be loaded")
-assert(containers, "cdm_containers.lua should be loaded")
-assert(settingsPage, "settings\\containers_page.lua should be loaded")
-assert(composer, "settings\\composer.lua should be loaded")
-assert(runtime < renderers, "runtime data should load before renderer effects")
-assert(renderers < spellData, "renderer exports should load before spell data consumers")
-assert(runtime < mirror, "runtime data should load before mirror capture")
-assert(mirror < icons, "mirror capture should load before icon rendering")
-assert(icons < bars, "icon rendering should load before bar rendering")
-assert(bars < containers, "bar rendering should load before container layout")
-assert(containers < settingsPage, "container settings page should load after container exports")
-assert(settingsPage < composer, "composer should load from the settings folder after the settings page shell")
-
-local removedHotPathFiles = {
-    "cdm_renderers.lua",
-    "cdm_icons.lua",
-    "cdm_bars.lua",
-    "cdm_runtime_store.lua",
+local expectedOrder = {
+    "cdm_shared.lua",
+    "cdm_index.lua",
+    "cdm_catalog.lua",
+    "hud_visibility.lua",
     "cdm_scheduler.lua",
     "cdm_sources.lua",
+    "cdm_runtime_store.lua",
     "cdm_runtime_queries.lua",
     "cdm_resolvers.lua",
+    "cdm_frame_writes.lua",
+    "cdm_effects.lua",
+    "cdm_aura_catalog.lua",
+    "cdm_aura_runtime.lua",
+    "cdm_spelldata.lua",
+    "cdm_blizz_mirror.lua",
     "cdm_icon_factory.lua",
     "cdm_icon_stack_text.lua",
     "cdm_icon_stack_policy.lua",
@@ -71,24 +44,40 @@ local removedHotPathFiles = {
     "cdm_icon_range_policy.lua",
     "cdm_icon_cooldown_policy.lua",
     "cdm_icon_custom_bar_policy.lua",
-    "cdm_effects.lua",
-    "cdm_index.lua",
-    "cdm_catalog.lua",
-    "cdm_shared.lua",
-    "cdm_provider.lua",
-    "cdm_composer.lua",
-    "cdm_aura_catalog.lua",
-    "cdm_aura_runtime.lua",
+    "cdm_icon_renderer.lua",
+    "cdm_bar_renderer.lua",
     "cdm_layout.lua",
     "cdm_buff_layout.lua",
+    "cdm_containers.lua",
     "cdm_layout_mode.lua",
-    "settings\\containers_page_schema.lua",
-    "settings\\containers_page_model.lua",
-    "settings\\containers_page_surface.lua",
+    "cdm_container_border_registry.lua",
+    "settings\\containers_page.lua",
+    "settings\\composer_preview_driver.lua",
+    "settings\\composer.lua",
 }
 
-for _, fileName in ipairs(removedHotPathFiles) do
-    assert(not indexOf(xml, 'file="' .. fileName .. '"'), fileName .. " should be consolidated out of cdm.xml")
+local positions = {}
+for _, fileName in ipairs(expectedOrder) do
+    local pos = indexOf(xml, 'file="' .. fileName .. '"')
+    assert(pos, fileName .. " should be loaded")
+    positions[fileName] = pos
+end
+
+for i = 2, #expectedOrder do
+    local before = expectedOrder[i - 1]
+    local after = expectedOrder[i]
+    assert(positions[before] < positions[after],
+        before .. " should load before " .. after)
+end
+
+local removedAggregateFiles = {
+    "cdm_domain.lua",
+    "cdm_runtime.lua",
+}
+
+for _, fileName in ipairs(removedAggregateFiles) do
+    assert(not indexOf(xml, 'file="' .. fileName .. '"'),
+        fileName .. " should not be registered after the layer split")
 end
 
 assert(not indexOf(xml, 'file="glows.lua"'), "glows.lua should remain consolidated")

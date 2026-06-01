@@ -3575,8 +3575,8 @@ Walk = function()
     -- /reload or spec swap forces a reconcile against a hot table.
     --
     -- Bail early when unavailable. The COOLDOWN_VIEWER_DATA_LOADED handler
-    -- (registered on cdm_domain.lua's _eventFrame and routed through the
-    -- CDMIndex broker subscription at the bottom of this file) already
+    -- (registered by cdm_index.lua and routed through the CDMIndex broker
+    -- subscription at the bottom of this file) already
     -- calls Walk(); when the event fires, Walk() re-enters here and the
     -- availability check passes.
     if C_CooldownViewer.IsCooldownViewerAvailable
@@ -4824,7 +4824,7 @@ end
 ---------------------------------------------------------------------------
 -- Resolver-bus catalog rebuild subscription.
 --
--- RebuildCatalog() (cdm_runtime.lua) publishes CDM:CATALOG_REBUILT on
+-- RebuildCatalog() (cdm_resolvers.lua) publishes CDM:CATALOG_REBUILT on
 -- PLAYER_LOGIN / TRAIT_TREE_CHANGED / SPELLS_CHANGED / ENCOUNTER_START /
 -- CHALLENGE_MODE_START / PVP_MATCH_ACTIVE. The mirror's own _eventFrame walks
 -- on login / spec / trait / PEW, but the encounter / M+ / rated-PvP starts

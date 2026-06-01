@@ -10,11 +10,11 @@ local function readAll(path)
     return data
 end
 
-local source = readAll("modules/cdm/cdm_icon_renderer.lua")
+local source = readAll("modules/cdm/cdm_icon_factory.lua")
 
 -- T1: bare construction helper must exist and be separate from CreateIcon
 local bareStart = assert(source:find("local function CreateIconBare(parent, spellEntry)", 1, true),
-    "CreateIconBare must exist as a local function in cdm_icon_renderer.lua")
+    "CreateIconBare must exist as a local function in cdm_icon_factory.lua")
 local createIconStart = assert(source:find("local function CreateIcon(parent, spellEntry)", 1, true),
     "CreateIcon must still exist as a local function")
 assert(bareStart < createIconStart,

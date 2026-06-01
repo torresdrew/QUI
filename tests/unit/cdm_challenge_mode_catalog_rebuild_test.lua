@@ -2,7 +2,7 @@
 -- Regression: entering a Mythic+ key (or an encounter / rated PvP match) must
 -- rebuild the CDM catalog through a LIVE path.
 --
--- cdm_runtime.lua's RebuildCatalog() is wired to fire on CHALLENGE_MODE_START
+-- cdm_resolvers.lua's RebuildCatalog() is wired to fire on CHALLENGE_MODE_START
 -- (and ENCOUNTER_START / PVP_MATCH_ACTIVE). Its header explains *why*: aura
 -- instance IDs re-randomize on those boundaries, so the catalog must rebuild.
 -- But RebuildCatalog() only bumps CDMResolvers._catalogVersion and publishes
@@ -37,13 +37,18 @@ local function countPlain(text, needle)
 end
 
 local CDM_FILES = {
-    "cdm_runtime.lua",
+    "cdm_resolvers.lua",
+    "cdm_runtime_queries.lua",
+    "cdm_scheduler.lua",
+    "cdm_sources.lua",
     "cdm_spelldata.lua",
     "cdm_blizz_mirror.lua",
     "cdm_containers.lua",
     "cdm_icon_renderer.lua",
     "cdm_bar_renderer.lua",
-    "cdm_domain.lua",
+    "cdm_shared.lua",
+    "cdm_index.lua",
+    "cdm_catalog.lua",
     "cdm_frame_writes.lua",
     "hud_visibility.lua",
 }
@@ -53,16 +58,16 @@ for _, name in ipairs(CDM_FILES) do
     sources[name] = readAll("modules/cdm/" .. name)
 end
 
-local runtime = sources["cdm_runtime.lua"]
+local resolvers = sources["cdm_resolvers.lua"]
 
 -- Sanity: the trigger and the publish exist, so the consumer assertion below
 -- stays meaningful (if either disappears, this test should be revisited).
 assert(
-    countPlain(runtime, 'RegisterEvent("CHALLENGE_MODE_START")') >= 1,
+    countPlain(resolvers, 'RegisterEvent("CHALLENGE_MODE_START")') >= 1,
     "expected CHALLENGE_MODE_START to be registered as a catalog rebuild trigger"
 )
 assert(
-    countPlain(runtime, 'publish("CDM:CATALOG_REBUILT")') >= 1,
+    countPlain(resolvers, 'publish("CDM:CATALOG_REBUILT")') >= 1,
     "expected RebuildCatalog() to publish CDM:CATALOG_REBUILT"
 )
 

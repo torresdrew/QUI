@@ -286,7 +286,7 @@ end
 -- or equipped-slot cooldown to watch. Trinket entries
 -- (entry.type == "trinket", inventory slots 13/14) and generic slot
 -- entries (entry.type == "slot") flow through the same slot-cooldown
--- query path in ResolveItemCooldownIdentity at cdm_runtime.lua:1577,
+-- query path in cdm_resolvers.lua's ResolveItemCooldownIdentity,
 -- so they legitimately need BAG_UPDATE_COOLDOWN updates.
 local function EventTraceHasItemOrSlotCooldownIconForTarget(targetID)
     for _, pool in pairs(iconPools) do
@@ -557,7 +557,7 @@ function CDMIcons.EventTraceIconWriteState(icon)
     local entry = icon._spellEntry or {}
 
     -- Cascade-source probes. The resolver's charge branch in
-    -- BuildMirrorRenderPayload (cdm_runtime.lua:3281-3300) tries
+    -- cdm_resolvers.lua's BuildMirrorRenderPayload tries
     -- m.cooldownDurObj -> QueryChargeDuration -> QueryDuration in order,
     -- with durQuerySpellID resolving to m.overrideSpellID when it
     -- differs from m.spellID. Surfacing each source's predicate state
@@ -827,8 +827,8 @@ end
 function CDMIcons.EventTracePrint(source, event, arg1, arg2, arg3, arg4, extra)
     local targetID = CDMIcons._eventTraceSpellID
     if not targetID then return end
-    -- "runtime-pre" comes from the runtime frame's OnEvent in
-    -- cdm_runtime.lua:1422. SUC / SPELL_UPDATE_CHARGES / SPELL_UPDATE_USES
+    -- "runtime-pre" comes from cdm_resolvers.lua's runtime frame OnEvent.
+    -- SUC / SPELL_UPDATE_CHARGES / SPELL_UPDATE_USES
     -- only fire on that frame, never the renderer's, so the trace point
     -- for the proc-window analysis lives there. Same spellID-filter rules
     -- apply.
@@ -878,7 +878,7 @@ function CDMIcons.EventTracePrint(source, event, arg1, arg2, arg3, arg4, extra)
 end
 
 -- Populate the runtime-frame trace hook slot declared in
--- cdm_runtime.lua so SPELL_UPDATE_COOLDOWN / SPELL_UPDATE_CHARGES /
+-- cdm_resolvers.lua so SPELL_UPDATE_COOLDOWN / SPELL_UPDATE_CHARGES /
 -- SPELL_UPDATE_USES / UNIT_SPELLCAST_* fires reach the trace timeline.
 -- The runtime frame uses an indirection slot rather than referencing
 -- CDMIcons directly to satisfy the architectural contract enforced by

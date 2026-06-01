@@ -641,8 +641,8 @@ function GetInventoryItemCooldown(unit, slotID)
 end
 
 local loadChunk = dofile("tests/helpers/load_cdm_consolidated_chunk.lua")
-loadChunk("modules/cdm/cdm_runtime.lua", "cdm_runtime_queries.lua")("QUI", ns)
-loadChunk("modules/cdm/cdm_runtime.lua", "cdm_resolvers.lua")("QUI", ns)
+loadChunk("modules/cdm/cdm_runtime_queries.lua", "cdm_runtime_queries.lua")("QUI", ns)
+loadChunk("modules/cdm/cdm_resolvers.lua", "cdm_resolvers.lua")("QUI", ns)
 
 local resolvers = assert(ns.CDMResolvers, "CDMResolvers should be exported")
 local resolve = assert(resolvers.ResolveCooldownState, "ResolveCooldownState should be exported")
@@ -739,7 +739,7 @@ assert(state.mode == "cooldown", "cached mirror state should resolve the cooldow
 assert(state.durObj == cooldownDur, "cached mirror state should provide the cooldown DurationObject")
 -- After the mode-collapse refactor, BuildMirrorRenderPayload deliberately
 -- bypasses cachedSourceID for cooldown/item-cooldown modes (per the
--- comment in cdm_runtime.lua:3098-3120) and builds a stable key from
+-- comment in cdm_resolvers.lua's BuildMirrorRenderPayload) and builds a stable key from
 -- (cooldownID, spellID). The cache-hit path is still verified by the
 -- mirrorStateLookups counter below.
 assert(state.sourceID == "mirror:50002:50002",

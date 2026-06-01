@@ -5,6 +5,21 @@ local function readAll(path)
     return contents:gsub("\r\n", "\n"):gsub("\r", "\n")
 end
 
+local function fileExists(path)
+    local handle = io.open(path, "rb")
+    if handle then
+        handle:close()
+        return true
+    end
+    return false
+end
+
+local function dirname(path)
+    return path:match("^(.*[/\\])") or ""
+end
+
+local loadSource = loadstring or load
+
 local function findChunk(source, chunkName)
     local marker = "-- Inlined from " .. chunkName .. "\n"
     local markerStart, markerEnd = source:find(marker, 1, true)
@@ -24,7 +39,13 @@ local function findChunk(source, chunkName)
 end
 
 return function(path, chunkName)
+    local standalonePath = dirname(path) .. chunkName
+    if fileExists(standalonePath) then
+        local source = readAll(standalonePath)
+        return assert(loadSource(source, "@" .. standalonePath))
+    end
+
     local source = readAll(path)
     local chunk = findChunk(source, chunkName)
-    return assert(loadstring(chunk, "@" .. path .. "#" .. chunkName))
+    return assert(loadSource(chunk, "@" .. path .. "#" .. chunkName))
 end

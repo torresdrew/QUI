@@ -12,7 +12,7 @@ local ns = {
 }
 
 local loadChunk = dofile("tests/helpers/load_cdm_consolidated_chunk.lua")
-local chunk = loadChunk("modules/cdm/cdm_domain.lua", "cdm_catalog.lua")
+local chunk = loadChunk("modules/cdm/cdm_catalog.lua", "cdm_catalog.lua")
 chunk("QUI", ns)
 
 ns.CDMSources = {

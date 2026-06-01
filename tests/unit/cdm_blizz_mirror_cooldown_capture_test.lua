@@ -110,7 +110,7 @@ local ns = {
 }
 
 local loadChunk = dofile("tests/helpers/load_cdm_consolidated_chunk.lua")
-loadChunk("modules/cdm/cdm_runtime.lua", "cdm_sources.lua")("QUI", ns)
+loadChunk("modules/cdm/cdm_sources.lua", "cdm_sources.lua")("QUI", ns)
 assert(loadfile("modules/cdm/cdm_blizz_mirror.lua"))("QUI", ns)
 
 ns.CDMBlizzMirror.ForceRescan()

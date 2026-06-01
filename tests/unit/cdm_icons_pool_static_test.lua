@@ -9,6 +9,7 @@ local function readAll(path)
 end
 
 local icons = readAll("modules/cdm/cdm_icon_renderer.lua")
+local factory = readAll("modules/cdm/cdm_icon_factory.lua")
 
 assert(not icons:find("function CDMIcons:GetIconPool", 1, true),
     "CDMIcons should not expose icon pool lookup")
@@ -16,13 +17,13 @@ assert(not icons:find("function CDMIcons:EnsurePool", 1, true),
     "CDMIcons should not expose icon pool creation")
 assert(not icons:find("function CDMIcons:ClearPool", 1, true),
     "CDMIcons should not expose icon pool release")
-assert(icons:find("function CDMIconFactory:GetIconPool", 1, true),
-    "CDMIconFactory compatibility surface should own icon pool lookup inside cdm_icon_renderer.lua")
-assert(icons:find("function CDMIconFactory:EnsurePool", 1, true),
-    "CDMIconFactory compatibility surface should own icon pool creation inside cdm_icon_renderer.lua")
-assert(icons:find("function CDMIconFactory:ClearPool", 1, true),
-    "CDMIconFactory compatibility surface should own icon pool release inside cdm_icon_renderer.lua")
-assert(icons:find("wipe(pool)", icons:find("function CDMIconFactory:ClearPool", 1, true), true),
+assert(factory:find("function CDMIconFactory:GetIconPool", 1, true),
+    "CDMIconFactory compatibility surface should own icon pool lookup inside cdm_icon_factory.lua")
+assert(factory:find("function CDMIconFactory:EnsurePool", 1, true),
+    "CDMIconFactory compatibility surface should own icon pool creation inside cdm_icon_factory.lua")
+assert(factory:find("function CDMIconFactory:ClearPool", 1, true),
+    "CDMIconFactory compatibility surface should own icon pool release inside cdm_icon_factory.lua")
+assert(factory:find("wipe(pool)", factory:find("function CDMIconFactory:ClearPool", 1, true), true),
     "ClearPool should wipe and reuse the existing viewer pool table instead of replacing it")
 assert(icons:find("BuildIconListSignature", 1, true),
     "BuildIcons should compute a stable icon list signature")

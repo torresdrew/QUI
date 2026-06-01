@@ -26,22 +26,6 @@ local function extractBlock(text, startNeedle, endNeedle, message)
     return string.sub(text, startPos, endPos + #endNeedle - 1)
 end
 
-local function extractConsolidatedChunk(text, chunkName)
-    local marker = "-- Inlined from " .. chunkName .. "\n"
-    local markerStart, markerEnd = string.find(text, marker, 1, true)
-    assert(markerStart, "missing consolidated chunk: " .. chunkName)
-
-    local chunkStart = markerEnd + 1
-    local nextMarker = string.find(text, "\nend\n\ndo\n-- Inlined from ", chunkStart, true)
-    if nextMarker then
-        return string.sub(text, chunkStart, nextMarker - 1)
-    end
-
-    local finalEnd = string.match(text, "()\nend%s*$", chunkStart)
-    assert(finalEnd, "missing end wrapper for consolidated chunk: " .. chunkName)
-    return string.sub(text, chunkStart, finalEnd - 1)
-end
-
 local function assertContainsOrdered(text, needles, message)
     local searchStart = 1
     for _, needle in ipairs(needles) do
@@ -120,34 +104,30 @@ local function assertPublicSurface(publicSymbols, categories)
     assert(#missing == 0, "CDMIcons public surface is missing categorized symbols: " .. table.concat(missing, ", "))
 end
 
-local runtime = readAll("modules/cdm/cdm_runtime.lua")
-local renderers = readAll("modules/cdm/cdm_frame_writes.lua")
-local iconRuntime = readAll("modules/cdm/cdm_icon_renderer.lua")
-local scheduler = extractConsolidatedChunk(runtime, "cdm_scheduler.lua")
-local resolvers = extractConsolidatedChunk(runtime, "cdm_resolvers.lua")
-local runtimeQueries = extractConsolidatedChunk(runtime, "cdm_runtime_queries.lua")
+local scheduler = readAll("modules/cdm/cdm_scheduler.lua")
+local resolvers = readAll("modules/cdm/cdm_resolvers.lua")
+local runtimeQueries = readAll("modules/cdm/cdm_runtime_queries.lua")
 local blizzMirror = readAll("modules/cdm/cdm_blizz_mirror.lua")
-local icons = extractConsolidatedChunk(iconRuntime, "cdm_icon_renderer.lua")
-local iconMirrorIndex = extractConsolidatedChunk(iconRuntime, "cdm_icon_mirror_index.lua")
-local iconRuntimeRefresh = extractConsolidatedChunk(iconRuntime, "cdm_icon_runtime_refresh.lua")
-local iconUpdateScheduler = extractConsolidatedChunk(iconRuntime, "cdm_icon_update_scheduler.lua")
-local iconRefreshBatch = extractConsolidatedChunk(iconRuntime, "cdm_icon_refresh_batch.lua")
-local iconRefreshWalker = extractConsolidatedChunk(iconRuntime, "cdm_icon_refresh_walker.lua")
-local iconItemVisualPolicy = extractConsolidatedChunk(iconRuntime, "cdm_icon_item_visual_policy.lua")
-local iconVisibilityPolicy = extractConsolidatedChunk(iconRuntime, "cdm_icon_visibility_policy.lua")
-local iconRangePolicy = extractConsolidatedChunk(iconRuntime, "cdm_icon_range_policy.lua")
-local iconCooldownPolicy = extractConsolidatedChunk(iconRuntime, "cdm_icon_cooldown_policy.lua")
-local iconStackPolicy = extractConsolidatedChunk(iconRuntime, "cdm_icon_stack_policy.lua")
-local iconCustomBarPolicy = extractConsolidatedChunk(iconRuntime, "cdm_icon_custom_bar_policy.lua")
-local factory = extractConsolidatedChunk(iconRuntime, "cdm_icon_factory.lua")
-local sources = extractConsolidatedChunk(runtime, "cdm_sources.lua")
-local effects = extractConsolidatedChunk(renderers, "cdm_effects.lua")
+local icons = readAll("modules/cdm/cdm_icon_renderer.lua")
+local iconMirrorIndex = readAll("modules/cdm/cdm_icon_mirror_index.lua")
+local iconRuntimeRefresh = readAll("modules/cdm/cdm_icon_runtime_refresh.lua")
+local iconUpdateScheduler = readAll("modules/cdm/cdm_icon_update_scheduler.lua")
+local iconRefreshBatch = readAll("modules/cdm/cdm_icon_refresh_batch.lua")
+local iconRefreshWalker = readAll("modules/cdm/cdm_icon_refresh_walker.lua")
+local iconItemVisualPolicy = readAll("modules/cdm/cdm_icon_item_visual_policy.lua")
+local iconVisibilityPolicy = readAll("modules/cdm/cdm_icon_visibility_policy.lua")
+local iconRangePolicy = readAll("modules/cdm/cdm_icon_range_policy.lua")
+local iconCooldownPolicy = readAll("modules/cdm/cdm_icon_cooldown_policy.lua")
+local iconStackPolicy = readAll("modules/cdm/cdm_icon_stack_policy.lua")
+local iconCustomBarPolicy = readAll("modules/cdm/cdm_icon_custom_bar_policy.lua")
+local factory = readAll("modules/cdm/cdm_icon_factory.lua")
+local sources = readAll("modules/cdm/cdm_sources.lua")
+local effects = readAll("modules/cdm/cdm_effects.lua")
 local composer = readAll("modules/cdm/settings/composer.lua")
 local spellData = readAll("modules/cdm/cdm_spelldata.lua")
-local auraRuntime = extractConsolidatedChunk(spellData, "cdm_aura_runtime.lua")
-local containerRuntime = readAll("modules/cdm/cdm_containers.lua")
-local containers = extractConsolidatedChunk(containerRuntime, "cdm_containers.lua")
-local buffLayout = extractConsolidatedChunk(containerRuntime, "cdm_buff_layout.lua")
+local auraRuntime = readAll("modules/cdm/cdm_aura_runtime.lua")
+local containers = readAll("modules/cdm/cdm_containers.lua")
+local buffLayout = readAll("modules/cdm/cdm_buff_layout.lua")
 
 local cdmIconsPublicSurface = {
     external = {

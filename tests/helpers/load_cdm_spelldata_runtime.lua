@@ -8,7 +8,7 @@ return function(ns)
             Helpers = ns.Helpers,
             Addon = ns.Addon,
         }
-        loadChunk("modules/cdm/cdm_domain.lua", "cdm_shared.lua")("QUI", sharedNS)
+        loadChunk("modules/cdm/cdm_shared.lua", "cdm_shared.lua")("QUI", sharedNS)
         for key, value in pairs(sharedNS.CDMShared or {}) do
             if existingShared[key] == nil then
                 existingShared[key] = value
