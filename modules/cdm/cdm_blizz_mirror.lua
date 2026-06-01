@@ -3509,8 +3509,43 @@ end
 -- `_quiMirrorBound` flag).
 ---------------------------------------------------------------------------
 local _walkPendingOnRegen = false
+local _coldLoadDeferredMirrorRefreshPending = false
+local Walk
 
-local function Walk()
+local function MarkColdLoadDeferredMirrorRefresh()
+    _coldLoadDeferredMirrorRefreshPending = true
+end
+
+local function RunColdLoadMirrorRefresh()
+    Walk()
+    HandlePlayerTotemUpdate()
+    CDMBlizzMirror.SyncSuppressionToMaster()
+end
+
+local function DrainColdLoadDeferredMirrorRefresh()
+    if not _coldLoadDeferredMirrorRefreshPending then
+        return
+    end
+    _coldLoadDeferredMirrorRefreshPending = false
+    C_Timer.After(0.1, function()
+        if ns._cdmColdLoadActive then
+            MarkColdLoadDeferredMirrorRefresh()
+            return
+        end
+        if InCombatLockdown() and not (ns and ns._inInitSafeWindow) then
+            _walkPendingOnRegen = true
+            MarkColdLoadDeferredMirrorRefresh()
+            return
+        end
+        RunColdLoadMirrorRefresh()
+        local sd = ns.CDMSpellData
+        if sd and sd.RunColdLoadReconcile then
+            sd:RunColdLoadReconcile()
+        end
+    end)
+end
+
+Walk = function()
     -- Allow execution during the ADDON_LOADED / PLAYER_ENTERING_WORLD
     -- safe window even though InCombatLockdown() returns true on a combat
     -- /reload. Walk's body is hook-installation + read-only C_CooldownViewer
@@ -4639,6 +4674,7 @@ _eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2)
             Walk()
         end
         CDMBlizzMirror.SyncSuppressionToMaster()
+        DrainColdLoadDeferredMirrorRefresh()
         return
     end
 
@@ -4662,28 +4698,59 @@ _eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2)
     -- reconcile pass that produces the final settled state.
     if event == "PLAYER_LOGIN" then
         ns._cdmColdLoadActive = true
-        C_Timer.After(2.0, function()
-            ns._cdmColdLoadActive = false
+        -- Cold-load finalize: run the single coordinated Walk + reconcile, but
+        -- only once the CooldownViewer has actually loaded -- not on a blind
+        -- fixed timer.
+        --
+        -- Per Blizzard CooldownViewerDocumentation,
+        -- C_CooldownViewer.IsCooldownViewerAvailable() is the global readiness
+        -- signal (FrameXML CooldownViewerMixin:ShouldBeShown gates on it) and
+        -- GetCooldownViewerCooldownInfo is documented MayReturnNothing.
+        -- Finalizing while the viewer is still settling can build the catalog
+        -- and the built-in TrackedBuff/TrackedBar buff containers from empty data;
+        -- because the grace window suppressed the COOLDOWN_VIEWER_DATA_LOADED /
+        -- SPELLS_CHANGED events that would rebuild it, tracked buffs then stay
+        -- blank until /reload (alpha54 regression; alpha53 had no grace and
+        -- rebuilt on every DATA_LOADED). So keep the grace open and retry
+        -- (bounded) until the viewer is available, then commit once.
+        local attempts = 0
+        local MAX_ATTEMPTS = 20  -- ~10s cap past the initial 2s settle delay
+        local function FinalizeColdLoad()
             if InCombatLockdown() and not (ns and ns._inInitSafeWindow) then
+                -- Combat: end the grace and let PLAYER_REGEN_ENABLED / the
+                -- normal post-combat events drive the rebuild.
+                ns._cdmColdLoadActive = false
                 _walkPendingOnRegen = true
                 return
             end
-            Walk()
-            HandlePlayerTotemUpdate()
-            CDMBlizzMirror.SyncSuppressionToMaster()
+            local viewerReady = not C_CooldownViewer
+                or not C_CooldownViewer.IsCooldownViewerAvailable
+                or C_CooldownViewer.IsCooldownViewerAvailable()
+            if not viewerReady and attempts < MAX_ATTEMPTS then
+                attempts = attempts + 1
+                C_Timer.After(0.5, FinalizeColdLoad)
+                return
+            end
+            ns._cdmColdLoadActive = false
+            RunColdLoadMirrorRefresh()
             -- Drive the spelldata reconcile from the same trigger so the
             -- whole cold-load is one coordinated update, not multiple.
             local sd = ns.CDMSpellData
             if sd and sd.RunColdLoadReconcile then
                 sd:RunColdLoadReconcile()
             end
-        end)
+            DrainColdLoadDeferredMirrorRefresh()
+        end
+        C_Timer.After(2.0, FinalizeColdLoad)
         return
     end
 
     -- Suppress non-LOGIN catalog reshapes during the cold-load grace
     -- so they don't fire intermediate state changes the user can see.
+    -- Record them for the post-grace drain so the rebuild is coalesced,
+    -- not lost.
     if ns._cdmColdLoadActive then
+        MarkColdLoadDeferredMirrorRefresh()
         return
     end
 
@@ -4720,9 +4787,11 @@ end
 if ns.CDMIndex and ns.CDMIndex.Subscribe then
     ns.CDMIndex.Subscribe("blizz_mirror", function(reason, baseSpellID, overrideSpellID)
         -- Cold-load grace: events that fire before the deferred PLAYER_LOGIN
-        -- walk run are skipped to avoid intermediate flicker. The single
-        -- delayed callback in the main _eventFrame handler does the Walk.
+        -- walk run are deferred to avoid intermediate flicker. The delayed
+        -- callback drains one post-grace refresh so readiness/layout events
+        -- are not lost.
         if ns._cdmColdLoadActive then
+            MarkColdLoadDeferredMirrorRefresh()
             return
         end
         if reason == "override" then
@@ -4773,8 +4842,10 @@ end
 if ns.CDMResolvers and ns.CDMResolvers.Subscribe then
     local _catalogRebuildToken = 0
     ns.CDMResolvers.Subscribe("CDM:CATALOG_REBUILT", function()
-        -- Cold-load grace: the deferred PLAYER_LOGIN walk owns the initial build.
+        -- Cold-load grace: the deferred PLAYER_LOGIN walk owns the initial build,
+        -- then drains a post-grace refresh so this rebuild is not lost.
         if ns._cdmColdLoadActive then
+            MarkColdLoadDeferredMirrorRefresh()
             return
         end
         _catalogRebuildToken = _catalogRebuildToken + 1
@@ -4788,6 +4859,7 @@ if ns.CDMResolvers and ns.CDMResolvers.Subscribe then
             -- _cdmColdLoadActive, so the synchronous guard above can miss it. The
             -- deferred PLAYER_LOGIN walk owns the initial build.
             if ns._cdmColdLoadActive then
+                MarkColdLoadDeferredMirrorRefresh()
                 return
             end
             if InCombatLockdown() and not (ns and ns._inInitSafeWindow) then
