@@ -6,6 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v4.0.0-beta1 - 2026-06-01
+
+> 🧪 **QUI 4 — first beta.** This is the opening beta of the QUI 4 line. It is more settled than the alpha builds, but still expect rough edges — please report anything you hit on GitHub. **Back up your `WTF` folder before installing.** No new schema migrations: your alpha80 profiles carry over unchanged.
+>
+> **Reminder: QUI ships as three folders — `QUI/`, `QUI_Options/`, and `QUI_Debug/`.** All three must live next to each other in `Interface/AddOns/`. The release zip already contains all three.
+
+### Added
+- **Aura presets and a reorganized aura indicator editor.** The group-frame aura indicator options are now laid out in two columns with grouped tabs, and you can apply ready-made aura presets instead of configuring every indicator by hand.
+- **Border coloring for chat tabs and the damage meter.** The per-module border color controls now extend to chat tab chrome and the damage meter window.
+
+### Changed
+- **Aura bars track live duration changes.** Aura bar timers now follow updates to an aura's duration (refreshes and extensions) instead of staying pinned to the original time.
+- **Consumable reminders always show on instance triggers.** Entering a triggering instance now reliably surfaces your consumable reminders.
+- **`/quiclearspell` is now `/quiclearscan`.** The scanner command accepts a spell **or** item ID, and `/quiclearscan all` wipes everything the scanner has learned.
+
+### Fixed
+- **More reliable consumable and trinket buff detection.** The spell scanner now only adopts a buff whose spell ID matches the ability or trinket you actually used. This removes false matches where an unrelated buff landing in the same moment — for example an external buff arriving just as you use a potion — was picked up instead.
+- **Click-cast overlay focus and cleanup.** Fixes to how the click-cast overlay takes focus and tears itself down.
+- **Custom bars refresh correctly after a layout change.** Custom bar runtime state is now rebuilt after Layout Mode changes.
+- **Locked power bars respect Cooldown Manager Edit Mode again.** A stale always-off check was replaced so the locked power bar correctly holds its position while the Cooldown Manager Edit Mode is active.
+
+### Internal
+- Consolidated the duplicated deep-copy helpers into one shared, cycle-safe implementation; cached per-tick settings lookups in the skyriding and castbar update loops; and moved chat tab chrome and click-cast buttons onto shared pixel-safe helpers.
+
 ## v3.6.0-alpha80 - 2026-06-01
 
 > ⚠️ **Still alpha — back up your `WTF` folder before installing.** No schema migrations; existing alpha79 profiles carry over unchanged.
