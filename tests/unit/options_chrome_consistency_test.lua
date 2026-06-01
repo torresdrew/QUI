@@ -185,4 +185,21 @@ do
     )
 end
 
+-- ===========================================================================
+-- modules/groupframes/settings/click_cast_content.lua
+-- ===========================================================================
+do
+    local src = readFile("modules/groupframes/settings/click_cast_content.lua")
+
+    assertContains(src, 'UIKit.RegisterScaleRefresh(content, "clickCastPixelFrames", RefreshClickCastPixelFrames)',
+        "click_cast_content.lua: click-cast scale refresh should only refresh existing pixel frames")
+
+    local callbackBody = src:match('UIKit%.RegisterScaleRefresh%(%s*content%s*,%s*"clickCastPixelFrames"%s*,%s*function%b()%s*(.-)%s*end%s*%)')
+    assert(not callbackBody or not callbackBody:find("RefreshBindingList", 1, true),
+        "click_cast_content.lua: click-cast scale refresh must not rebuild binding rows")
+
+    assertContains(src, "content._quiClickCastCleanupHooked",
+        "click_cast_content.lua: click-cast hide cleanup hook should guard duplicate registration")
+end
+
 print("OK: options_chrome_consistency_test")

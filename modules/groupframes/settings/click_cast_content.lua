@@ -1050,11 +1050,23 @@ local function BuildClickCastBindings(content, cc, refreshClickCast, startY, sta
     acMenu:SetPoint("TOPLEFT", spellInputBg, "BOTTOMLEFT", 0, -2)
     acMenu:SetPoint("RIGHT", spellInputBg, "RIGHT", 0, 0)
     acMenu:SetHeight(AC_ROW_HEIGHT * MAX_AC_ROWS + 4)
-    acMenu:SetFrameStrata("DIALOG")
+    acMenu:SetFrameStrata("TOOLTIP")
+    acMenu:SetFrameLevel(1000)
+    acMenu:SetToplevel(true)
+    acMenu:EnableMouse(true)
     ApplyPixelBackdrop(acMenu, 1, true)
     acMenu:SetBackdropColor(0.08, 0.08, 0.08, 0.95)
     acMenu:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 0.6)
     acMenu:Hide()
+
+    local function CommitAutocompleteSelection(row)
+        if row and row.spellName then
+            spellInput:SetText(row.spellName)
+            addState.spellName = row.spellName
+            acMenu:Hide()
+            spellInput:ClearFocus()
+        end
+    end
 
     local acRows = {}
     for ri = 1, MAX_AC_ROWS do
@@ -1081,14 +1093,8 @@ local function BuildClickCastBindings(content, cc, refreshClickCast, startY, sta
         rowHl:SetAllPoints()
         rowHl:SetColorTexture(C.accent[1], C.accent[2], C.accent[3], 0.15)
 
-        row:SetScript("OnClick", function(self)
-            if self.spellName then
-                spellInput:SetText(self.spellName)
-                addState.spellName = self.spellName
-                acMenu:Hide()
-                spellInput:ClearFocus()
-            end
-        end)
+        row:SetScript("OnMouseDown", CommitAutocompleteSelection)
+        row:SetScript("OnClick", CommitAutocompleteSelection)
 
         row:Hide()
         acRows[ri] = row
@@ -1122,6 +1128,7 @@ local function BuildClickCastBindings(content, cc, refreshClickCast, startY, sta
         end
         acMenu:SetHeight(#matches * AC_ROW_HEIGHT + 4)
         acMenu:Show()
+        acMenu:Raise()
     end
 
     spellInput:SetScript("OnEscapePressed", function(self) acMenu:Hide() self:ClearFocus() end)
@@ -1148,8 +1155,9 @@ local function BuildClickCastBindings(content, cc, refreshClickCast, startY, sta
     local browsePopup = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
     browsePopup:SetSize(320, 400)
     browsePopup:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
-    browsePopup:SetFrameStrata("FULLSCREEN_DIALOG")
-    browsePopup:SetFrameLevel(200)
+    browsePopup:SetFrameStrata("TOOLTIP")
+    browsePopup:SetFrameLevel(1000)
+    browsePopup:SetToplevel(true)
     browsePopup:SetMovable(true)
     browsePopup:EnableMouse(true)
     browsePopup:RegisterForDrag("LeftButton")
@@ -1410,6 +1418,7 @@ local function BuildClickCastBindings(content, cc, refreshClickCast, startY, sta
         browseSearch:SetText("")
         BuildBrowseList(nil)
         browsePopup:Show()
+        browsePopup:Raise()
     end)
 
     browsePopup:SetScript("OnHide", function()
@@ -1650,10 +1659,10 @@ local function BuildClickCastBindings(content, cc, refreshClickCast, startY, sta
     RefreshBindingList()
     RefreshClickCastPixelFrames()
     if UIKit and UIKit.RegisterScaleRefresh then
-        UIKit.RegisterScaleRefresh(content, "clickCastPixelFrames", function()
-            RefreshClickCastPixelFrames()
-            if RefreshBindingList then RefreshBindingList() end
-        end)
+        -- Scale refreshes are triggered by pixel-border creation. Rebuilding the
+        -- binding rows here creates more bordered buttons, which queues more
+        -- scale refreshes and can spiral while the options panel is open.
+        UIKit.RegisterScaleRefresh(content, "clickCastPixelFrames", RefreshClickCastPixelFrames)
     end
 
     -- Only listen while the bindings section is actually visible so hidden
@@ -1765,6 +1774,7 @@ local function BuildClickCastContent(content)
     end
 
     local state = {}
+    content._quiClickCastState = state
     local y = -10
 
     y = PlaceClickCastSection(content, y, "Settings", function(body)
@@ -1802,34 +1812,40 @@ local function BuildClickCastContent(content)
     -- Clear editbox focus and cancel any active key captures when the
     -- scroll content is hidden (tab change / panel close) to prevent
     -- stuck keyboard capture.
-    content:HookScript("OnHide", function()
-        if state.spellInput then state.spellInput:ClearFocus() end
-        if state.macroInput then state.macroInput:ClearFocus() end
-        if state.browsePopup then state.browsePopup:Hide() end
-        if state.acMenu then state.acMenu:Hide() end
-        if state.keyCaptureBtn and state.keyCaptureBtn.isCapturing then
-            state.keyCaptureBtn.isCapturing = false
-            state.keyCaptureBtn:EnableKeyboard(false)
-        end
-        if state.pingCaptureButtons then
-            for _, btn in ipairs(state.pingCaptureButtons) do
-                if btn.isCapturing then
-                    btn.isCapturing = false
-                    btn:EnableKeyboard(false)
+    if not content._quiClickCastCleanupHooked then
+        content._quiClickCastCleanupHooked = true
+        content:HookScript("OnHide", function(self)
+            local cleanupState = self and self._quiClickCastState
+            if not cleanupState then return end
+
+            if cleanupState.spellInput then cleanupState.spellInput:ClearFocus() end
+            if cleanupState.macroInput then cleanupState.macroInput:ClearFocus() end
+            if cleanupState.browsePopup then cleanupState.browsePopup:Hide() end
+            if cleanupState.acMenu then cleanupState.acMenu:Hide() end
+            if cleanupState.keyCaptureBtn and cleanupState.keyCaptureBtn.isCapturing then
+                cleanupState.keyCaptureBtn.isCapturing = false
+                cleanupState.keyCaptureBtn:EnableKeyboard(false)
+            end
+            if cleanupState.pingCaptureButtons then
+                for _, btn in ipairs(cleanupState.pingCaptureButtons) do
+                    if btn.isCapturing then
+                        btn.isCapturing = false
+                        btn:EnableKeyboard(false)
+                    end
                 end
             end
-        end
-        if state.isPingSuspended and state.isPingSuspended() then
-            local saved = state.clearPingSuspension()
-            C_Timer.After(0, function()
-                for action, keys in pairs(saved) do
-                    if keys[1] then SetBinding(keys[1], action) end
-                    if keys[2] then SetBinding(keys[2], action) end
-                end
-                SaveBindings(GetCurrentBindingSet())
-            end)
-        end
-    end)
+            if cleanupState.isPingSuspended and cleanupState.isPingSuspended() then
+                local saved = cleanupState.clearPingSuspension()
+                C_Timer.After(0, function()
+                    for action, keys in pairs(saved) do
+                        if keys[1] then SetBinding(keys[1], action) end
+                        if keys[2] then SetBinding(keys[2], action) end
+                    end
+                    SaveBindings(GetCurrentBindingSet())
+                end)
+            end
+        end)
+    end
 end
 
 local function CreateClickCastPage(parent)
