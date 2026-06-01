@@ -67,6 +67,9 @@ _G.C_CooldownViewer = {
 _G.CooldownViewerSettings = {
     GetDataProvider = function()
         return {
+            GetLayoutManager = function()
+                return {}
+            end,
             GetOrderedCooldownIDsForCategory = function(_, category, allowUnlearned)
                 assert(category == 0, "unexpected ordered category")
                 assert(allowUnlearned == true, "seed should preserve tracked unlearned abilities")
@@ -144,9 +147,41 @@ seeded, seedReady = catalog.SeedFromBlizzard("buff")
 assert(seedReady == false, "seed should wait when the tracked provider exists but is not hydrated")
 assert(#seeded == 0, "seed should not fall back to raw defaults while the tracked provider is unavailable")
 
+_G.C_CooldownViewer.GetCooldownViewerCooldownInfo = function(cooldownID)
+    if cooldownID == 902 then
+        return {
+            spellID = 90201,
+            overrideSpellID = nil,
+            overrideTooltipSpellID = 90202,
+            linkedSpellIDs = {},
+            isKnown = true,
+        }
+    end
+    return nil
+end
+
 _G.CooldownViewerSettings = {
     GetDataProvider = function()
         return {
+            GetOrderedCooldownIDsForCategory = function(_, category, allowUnlearned)
+                assert(category == 2, "unexpected tracked buff category")
+                assert(allowUnlearned == true, "seed should preserve tracked unlearned aura rows")
+                return { 902 }
+            end,
+        }
+    end,
+}
+
+seeded, seedReady = catalog.SeedFromBlizzard("buff")
+assert(seedReady == false, "seed should wait when the tracked provider has no loaded layout manager")
+assert(#seeded == 0, "seed should not snapshot raw data before settings layout hydration")
+
+_G.CooldownViewerSettings = {
+    GetDataProvider = function()
+        return {
+            GetLayoutManager = function()
+                return {}
+            end,
             GetOrderedCooldownIDsForCategory = function(_, category, allowUnlearned)
                 assert(category == 2, "unexpected tracked buff category")
                 assert(allowUnlearned == true, "seed should preserve tracked unlearned aura rows")

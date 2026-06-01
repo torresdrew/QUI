@@ -2498,21 +2498,8 @@ local function TrySnapshotBuiltInContainers(containerKeys)
         if key == "essential" or key == "utility" or key == "buff" or key == "trackedBar" then
             local containerDB = GetTrackerSettings(key)
             if containerDB and containerDB.ownedSpells == nil then
-                -- Prefer the composer-owned seed path. Falls back to the
-                -- legacy viewer-driven snapshot only when the seed source
-                -- is not ready; an empty ready seed means Blizzard has no
-                -- tracked rows for that category.
-                local seeded, seedReady
-                if ns.CDMComposer and ns.CDMComposer.SeedFromBlizzard then
-                    seeded, seedReady = ns.CDMComposer.SeedFromBlizzard(key)
-                end
-                if seeded and seedReady then
-                    containerDB.ownedSpells = seeded
-                    containerDB.removedSpells = {}
-                else
-                    ns.CDMSpellData:SnapshotBlizzardCDM(key)
-                end
-                if containerDB.ownedSpells == nil then
+                local _, snapshotReady = ns.CDMSpellData:SnapshotBlizzardCDM(key)
+                if not snapshotReady then
                     allReady = false
                 end
             end
@@ -5077,20 +5064,34 @@ function ownedEngine:Initialize()
     -- This runs after spell data init so the scan lists are populated.
     -- Only snapshots containers that haven't been snapshotted yet (ownedSpells == nil).
     -- Deferred to allow Blizzard viewers to fully populate.
-    C_Timer.After(2.0, function()
+    local function RetrySnapshotBuiltInContainers(attempt)
         if InCombatLockdown() then return end
-        if ns.CDMSpellData then
-            local containerKeys = BUILTIN_KEYS  -- only built-in containers get Blizzard snapshots
-            local snapshotted = false
-            for _, key in ipairs(containerKeys) do
-                if ns.CDMSpellData:SnapshotBlizzardCDM(key) then
-                    snapshotted = true
-                end
+        if not ns.CDMSpellData then return end
+
+        local snapshotted = false
+        local allReady = true
+        for _, key in ipairs(BUILTIN_KEYS) do
+            local didSnapshot, snapshotReady = ns.CDMSpellData:SnapshotBlizzardCDM(key)
+            if didSnapshot then
+                snapshotted = true
             end
-            if snapshotted then
-                RefreshAll()
+            if not snapshotReady then
+                allReady = false
             end
         end
+
+        if snapshotted then
+            RefreshAll()
+        end
+        if not allReady and attempt < SPEC_TRACKING_MAX_RETRIES then
+            C_Timer.After(SPEC_TRACKING_RETRY_DELAY, function()
+                RetrySnapshotBuiltInContainers(attempt + 1)
+            end)
+        end
+    end
+
+    C_Timer.After(2.0, function()
+        RetrySnapshotBuiltInContainers(1)
     end)
 
     -- Ensure built-in containers with DB tables have enabled=true
