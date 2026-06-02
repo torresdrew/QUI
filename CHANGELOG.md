@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v4.0.0-beta5 - 2026-06-02
+
+> 🧪 **QUI 4 beta — bugfix build.** Follow-up to beta4 squashing two WoW 12.0 taint/error bugs and finishing the keyboard click-casting work. No schema migrations: your beta4 profiles carry over unchanged. As always, **back up your `WTF` folder before installing** and report anything you hit on GitHub.
+
+### Fixed
+- **Chat no longer errors on raid warnings and monster emotes.** Channel coloring used to write Blizzard's chat color table directly, which tainted chat dispatch and threw a "secret string value" error when a raid warning or monster yell/whisper arrived. Channel colors are now applied purely at render time without touching any Blizzard global, so the error is gone and your custom channel colors still apply.
+- **Opening the World Map by keybind no longer blocks emotes.** Restoring saved positions for protected frames (World Map, Mail) tainted them, which blocked the map's read animation and produced an "action blocked" error. Protected frames are now repositioned through a secure path that no longer taints them.
+- **Keyboard click-cast rebinds apply immediately.** Changing a keyboard click-cast key out of combat now takes effect right away instead of waiting for you to re-hover the frame or `/reload`.
+- **Click-casting no longer skips party/raid frames while the roster settles.** A momentarily-empty frame slot could cause later frames to be skipped during setup; all frames are now bound reliably.
+
+### Internal
+- **Editor-only WoW API language-server definitions.** Added generated Lua language-server type definitions for the WoW client API, widget types, and supporting tooling. These are development aids only — not loaded in-game and not shipped in the release zip.
+
 ## v4.0.0-beta4 - 2026-06-02
 
 > 🧪 **QUI 4 beta — bugfix build.** Follow-up to beta3 with group-frame and click-casting fixes. No schema migrations: your beta3 profiles carry over unchanged. As always, **back up your `WTF` folder before installing** and report anything you hit on GitHub.
