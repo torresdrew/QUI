@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v4.0.0-beta3 - 2026-06-01
+
+> 🧪 **QUI 4 beta — internal refactor sync.** This beta brings the QUI 4 line in step with the latest development work: the Cooldown Manager and action bar internals have been split into smaller modules, chrome skinning is centralized behind a shared policy, and release packaging is hardened. These are largely under-the-hood changes — your beta2 profiles carry over unchanged, with no schema migrations. As always, **back up your `WTF` folder before installing** and report anything you hit on GitHub.
+>
+> **Packaging change:** the release zip now ships **two** folders — `QUI/` and `QUI_Options/` — which must live next to each other in `Interface/AddOns/`. The optional `QUI_Debug` diagnostic companion is no longer bundled in the release.
+
+### Changed
+- **Options search surfaces group-frame subtabs.** The in-options search index was refreshed so group-frame settings are found from the search box.
+
+### Internal
+- **Cooldown Manager runtime modularized.** The monolithic CDM runtime was split into shared, catalog, resolver, and scheduler modules with dedicated aura, icon, and buff-layout helpers, and the XML load order updated to match. No behavior change intended.
+- **Action bars split into env-backed submodules.** Action bar logic was moved into dedicated files with shared cross-file wiring.
+- **Centralized chrome skinning and stat tooltip policy.** Chrome palette/backdrop and close-button styling now route through a shared `SkinBase` policy (including the character and inspect panes), and character stat tooltip secret handling is consolidated behind one shared path.
+- **Hardened release packaging.** The release zip is now assembled from an explicit runtime file list with required/forbidden-path validation, and the debug companion is dropped from the package.
+- Updated structural test guards to match the new module and packaging boundaries.
+
 ## v4.0.0-beta2 - 2026-06-01
 
 > 🧪 **QUI 4 beta — bugfix build.** Follow-up to beta1. Still expect rough edges — please report anything you hit on GitHub. **Back up your `WTF` folder before installing.** No schema migrations: your beta1 profiles carry over unchanged.
