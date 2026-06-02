@@ -41,22 +41,84 @@ jobs:
 
       - name: Create addon zip
         run: |
+          set -euo pipefail
+
+          rm -rf build
           mkdir -p build/QUI build/QUI_Options
 
-          rsync -av --progress . build/QUI/ \
-            --exclude='.git' \
-            --exclude='.github' \
-            --exclude='.gitignore' \
-            --exclude='.claude' \
-            --exclude='build' \
-            --exclude='QUI_Options'
+          main_root_files=(
+            QUI.toc
+            Bindings.xml
+            load.xml
+            init.lua
+          )
+          main_runtime_dirs=(
+            assets
+            core
+            importstrings
+            libs
+            modules
+          )
 
-          rsync -av --progress QUI_Options/ build/QUI_Options/
+          for file in "${main_root_files[@]}"; do
+            test -f "$file"
+            cp -p "$file" "build/QUI/$file"
+          done
 
+          for dir in "${main_runtime_dirs[@]}"; do
+            test -d "$dir"
+            mkdir -p "build/QUI/$dir"
+            rsync -a --exclude='.DS_Store' "$dir/" "build/QUI/$dir/"
+          done
+
+          rsync -a --exclude='.DS_Store' QUI_Options/ build/QUI_Options/
           cp README.md build/QUI/ 2>/dev/null || true
           cp CHANGELOG.md build/QUI/ 2>/dev/null || true
           cp LICENSE build/QUI/ 2>/dev/null || true
 
+          required_paths=(
+            build/QUI/QUI.toc
+            build/QUI/Bindings.xml
+            build/QUI/load.xml
+            build/QUI/init.lua
+            build/QUI/core/core.xml
+            build/QUI/modules/modules.xml
+            build/QUI/libs/libs.xml
+            build/QUI/importstrings/importstrings.xml
+            build/QUI/assets/QUI.tga
+            build/QUI_Options/QUI_Options.toc
+            build/QUI_Options/bootstrap.lua
+            build/QUI_Options/options.xml
+            build/QUI_Options/search_cache.lua
+            build/QUI_Options/tiles/action_bars.lua
+          )
+
+          for required_path in "${required_paths[@]}"; do
+            if [[ ! -e "$required_path" ]]; then
+              echo "Missing packaged path: $required_path" >&2
+              exit 1
+            fi
+          done
+
+          forbidden_paths=(
+            build/QUI/.git
+            build/QUI/.github
+            build/QUI/docs
+            build/QUI/tests
+            build/QUI/tools
+            build/QUI/QUI_Options
+            build/QUI/QUI_Debug
+            build/QUI_Debug
+          )
+
+          for forbidden_path in "${forbidden_paths[@]}"; do
+            if [[ -e "$forbidden_path" ]]; then
+              echo "Non-runtime path packaged: $forbidden_path" >&2
+              exit 1
+            fi
+          done
+
+          rm -f ${{ steps.info.outputs.filename }}
           cd build
           zip -r ../${{ steps.info.outputs.filename }} QUI QUI_Options
 
