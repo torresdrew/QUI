@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v4.0.0-beta4 - 2026-06-02
+
+> 🧪 **QUI 4 beta — bugfix build.** Follow-up to beta3 with group-frame and click-casting fixes. No schema migrations: your beta3 profiles carry over unchanged. As always, **back up your `WTF` folder before installing** and report anything you hit on GitHub.
+
+### Fixed
+- **Click-casting now survives instance zone-ins.** Entering a group instance (e.g. a follower dungeon, where party members are NPCs) grows the party roster and makes the secure frames create their unit buttons after the initial setup pass, so the new party frames had no click-cast bindings until you `/reload`. Click-casting is now re-applied on every roster change (deferred out of combat), so the new frames are bound immediately.
+- **Heal-absorb bar respects its own toggle.** The heal-absorb bar is now driven by the Heal Absorbs toggle instead of the Absorb Shield toggle, so it no longer freezes when Show Absorb Shield is turned off.
+- **Ready-check icons appear on the initial check.** Frames now show the waiting icon the moment a ready check starts, instead of staying blank until someone responds.
+- **Overlays reappear after a settings change.** Absorb, heal-absorb, and heal-prediction overlays are repopulated after any group-frame settings refresh, instead of staying hidden until their next value change.
+- **Copy All Settings includes heal-absorb settings.** Heal-absorb options are now copied with the rest of the group-frame visuals instead of being silently skipped.
+
 ## v4.0.0-beta3 - 2026-06-01
 
 > 🧪 **QUI 4 beta — internal refactor sync.** This beta brings the QUI 4 line in step with the latest development work: the Cooldown Manager and action bar internals have been split into smaller modules, chrome skinning is centralized behind a shared policy, and release packaging is hardened. These are largely under-the-hood changes — your beta2 profiles carry over unchanged, with no schema migrations. As always, **back up your `WTF` folder before installing** and report anything you hit on GitHub.
