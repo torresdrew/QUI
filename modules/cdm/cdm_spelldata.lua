@@ -277,6 +277,7 @@ local _spellsChangedDuringZoneTransition = false
 ---------------------------------------------------------------------------
 local COLD_LOAD_SNAPSHOT_RETRY_DELAY = 0.5
 local COLD_LOAD_SNAPSHOT_RETRY_MAX_ATTEMPTS = 20
+local COLD_LOAD_SNAPSHOT_RETRY_SLOW_DELAY = 2.0
 
 local function IsBuiltinContainerKey(containerKey)
     if Shared and Shared.IsBuiltinContainerKey then
@@ -3853,8 +3854,11 @@ function CDMSpellData:RunColdLoadReconcile()
             RebuildSpellToCooldownID()
         end
         local _, snapshotReady = SnapshotUnsetBuiltinContainers()
-        if not snapshotReady and attempt < COLD_LOAD_SNAPSHOT_RETRY_MAX_ATTEMPTS then
-            C_Timer.After(COLD_LOAD_SNAPSHOT_RETRY_DELAY, function()
+        if not snapshotReady then
+            local delay = attempt < COLD_LOAD_SNAPSHOT_RETRY_MAX_ATTEMPTS
+                and COLD_LOAD_SNAPSHOT_RETRY_DELAY
+                or COLD_LOAD_SNAPSHOT_RETRY_SLOW_DELAY
+            C_Timer.After(delay, function()
                 runAttempt(attempt + 1)
             end)
             return
@@ -5156,7 +5160,11 @@ function CDMSpellData:Initialize()
                 if not IsCDMRuntimeEnabled() then return end
                 if token ~= _cdmViewerReconcileToken then return end
                 if not InCombatLockdown() then
-                    SnapshotUnsetBuiltinContainers()
+                    local _, snapshotReady = SnapshotUnsetBuiltinContainers()
+                    if not snapshotReady then
+                        CDMSpellData:RunColdLoadReconcile()
+                        return
+                    end
                     RunReconcileSequence()
                 end
             end)
