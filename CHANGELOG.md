@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v4.0.0-beta2 - 2026-06-01
+
+> 🧪 **QUI 4 beta — bugfix build.** Follow-up to beta1. Still expect rough edges — please report anything you hit on GitHub. **Back up your `WTF` folder before installing.** No schema migrations: your beta1 profiles carry over unchanged.
+>
+> **Reminder: QUI ships as three folders — `QUI/`, `QUI_Options/`, and `QUI_Debug/`.** All three must live next to each other in `Interface/AddOns/`. The release zip already contains all three.
+
+### Fixed
+- **Cooldown Manager icons and tracked buffs now bind reliably on a fresh login.** On a cold start the cooldown viewer can report data before it is fully populated; the mirror used to wipe its catalog on that partial read and fail to repopulate, leaving some cooldown icons and tracked buffs blank until a `/reload` or spec swap. The scan is now two-phase — it only commits once a complete read succeeds — and keeps retrying past the initial settle window instead of giving up.
+
+### Internal
+- Removed a batch of confirmed-dead code (legacy options widget builders, unreachable scale branches, retired profile keys, an unused import) with guard tests locking in each removal.
+
 ## v4.0.0-beta1 - 2026-06-01
 
 > 🧪 **QUI 4 — first beta.** This is the opening beta of the QUI 4 line. It is more settled than the alpha builds, but still expect rough edges — please report anything you hit on GitHub. **Back up your `WTF` folder before installing.** No new schema migrations: your alpha80 profiles carry over unchanged.
