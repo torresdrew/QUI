@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v4.0.0-beta11 - 2026-06-03
+
+> 🧪 **QUI 4 beta — bugfix build.** Follow-up to beta10 making the chat protected-message fix airtight on login. No schema migrations: your beta10 profiles carry over unchanged. As always, **back up your `WTF` folder before installing** and report anything you hit on GitHub.
+
+### Fixed
+- **Chat protected-message fix now lands before the chat window is styled.** beta10 stopped QUI from managing the main chat window through Edit Mode, but on login QUI could still apply its own styling to the window first, leaving a brief gap where a protected message (such as some channel or system lines) could still throw an error. QUI now detaches the chat window from Edit Mode before any of its styling or layout runs, closing that gap.
+
 ## v4.0.0-beta10 - 2026-06-03
 
 > 🧪 **QUI 4 beta — bugfix build.** Follow-up to beta9 fixing a chat error on certain protected messages and a ready-check skinning glitch. No schema migrations: your beta9 profiles carry over unchanged. As always, **back up your `WTF` folder before installing** and report anything you hit on GitHub.
