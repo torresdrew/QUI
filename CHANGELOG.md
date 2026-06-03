@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v4.0.0-beta10 - 2026-06-03
+
+> 🧪 **QUI 4 beta — bugfix build.** Follow-up to beta9 fixing a chat error on certain protected messages and a ready-check skinning glitch. No schema migrations: your beta9 profiles carry over unchanged. As always, **back up your `WTF` folder before installing** and report anything you hit on GitHub.
+
+### Fixed
+- **Chat no longer errors on certain protected messages.** QUI sized and positioned the main chat window through the game's Edit Mode, which could interfere with chat's own message handling and throw an error when a protected message (such as some channel or system lines) arrived. QUI now manages the main chat window's size and position directly, outside Edit Mode, so those messages display cleanly.
+- **Ready-check buttons keep their styling.** The **Ready** / **Not Ready** labels on the ready-check popup could come up unstyled or fail to render, because the game reapplies the button's font when the popup is shown or its buttons enable and disable. QUI now re-asserts the label styling on those events and keeps the button background beneath the text, so the labels always stay readable.
+
 ## v4.0.0-beta9 - 2026-06-03
 
 > 🧪 **QUI 4 beta — bugfix build.** Follow-up to beta8 fixing a cold-boot Cooldown Manager buff issue and a preview glitch in the options. No schema migrations: your beta8 profiles carry over unchanged. As always, **back up your `WTF` folder before installing** and report anything you hit on GitHub.
