@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v4.0.0-beta8 - 2026-06-03
+
+> 🧪 **QUI 4 beta — feature + bugfix build.** Follow-up to beta7 adding per-container border-color controls to the Cooldown Manager buff containers and fixing doubled private-aura text. No schema migrations: your beta7 profiles carry over unchanged. As always, **back up your `WTF` folder before installing** and report anything you hit on GitHub.
+
+### Added
+- **Border color controls for the Cooldown Manager buff containers.** The **Buff Icons** and **Buff Bars** containers now have their own **Border Color Source** (Inherit / Theme / Class / Custom) and **Border Color** pickers, just like the Essential/Utility cooldown rows. They default to **Inherit**, so they keep following your global skin border exactly as before until you choose otherwise.
+
+### Fixed
+- **Private aura stacks and timer no longer render twice.** When a private aura's text scale was set to anything other than 1, its stack count and duration timer were drawn on top of themselves. They now render once, and the private-aura icon no longer sinks behind the health bar on group and player/target/focus frames.
+
+### Removed
+- **Private Aura text scale and offset sliders.** These options drove the duplicate-text rendering fixed above and have been retired; private-aura stack/timer text now follows the icon automatically. Existing profiles load fine — the old values are simply ignored.
+
+### Internal
+- **Cold-boot buff-container diagnostics.** Added a temporary `QUI_CDM_FORCE_BUFF_REBUILD` helper that forces a clean buff-container rebuild (bypassing the relayout skip caches) to investigate a cold-boot relayout issue. No effect on normal use.
+
 ## v4.0.0-beta7 - 2026-06-03
 
 > 🧪 **QUI 4 beta — feature + bugfix build.** Follow-up to beta6 wiring the consumable reminder popup to your configured macros and fixing spell-flyout layering and direction. No schema migrations: your beta6 profiles carry over unchanged. As always, **back up your `WTF` folder before installing** and report anything you hit on GitHub.
