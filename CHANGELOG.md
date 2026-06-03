@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v4.0.0-beta9 - 2026-06-03
+
+> 🧪 **QUI 4 beta — bugfix build.** Follow-up to beta8 fixing a cold-boot Cooldown Manager buff issue and a preview glitch in the options. No schema migrations: your beta8 profiles carry over unchanged. As always, **back up your `WTF` folder before installing** and report anything you hit on GitHub.
+
+### Fixed
+- **Tracked self-buffs now show after a fresh login without a `/reload`.** A buff whose icon the game only creates once its data has finished loading (for example a self-buff like an Augmentation Evoker's Ebon Might) could be skipped on a cold boot and stay missing from the Cooldown Manager buff container until you reloaded. The container now rebuilds once the Cooldown Manager data has settled, so the icon is ready and appears the moment the buff goes active.
+- **Cooldown Manager preview no longer leaves stale icons or bars behind.** In the Cooldown Manager options, switching the live preview between an icon-shaped container and a bar-shaped one (for example from a custom icon group to the Buff Bars) left the previous container's preview frames on screen. The preview now clears those leftover frames whenever the container shape changes.
+
+### Internal
+- **Release packaging stamps the version from the release tag.** The packaged `.toc` files now always take their version straight from the release tag, so the in-game version can never drift from the published build. Also retired the temporary cold-boot buff/mirror diagnostics added in beta6 and beta8 now that the underlying issue is fixed. No effect on normal use.
+
 ## v4.0.0-beta8 - 2026-06-03
 
 > 🧪 **QUI 4 beta — feature + bugfix build.** Follow-up to beta7 adding per-container border-color controls to the Cooldown Manager buff containers and fixing doubled private-aura text. No schema migrations: your beta7 profiles carry over unchanged. As always, **back up your `WTF` folder before installing** and report anything you hit on GitHub.
