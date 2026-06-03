@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v4.0.0-beta6 - 2026-06-02
+
+> 🧪 **QUI 4 beta — diagnostic build.** A small instrumented follow-up to beta5 that exposes the Cooldown Manager mirror API for cold-boot troubleshooting. No functional or visual changes and no schema migrations: your beta5 profiles carry over unchanged. As always, **back up your `WTF` folder before installing** and report anything you hit on GitHub.
+
+### Internal
+- **Cold-boot Cooldown Manager diagnostics.** Exposed the Cooldown Manager mirror as a global handle so its tracked-bar state can be inspected with a base `/dump` on a fresh login, without the separate diagnostic companion. This is a temporary investigation aid with no effect on normal use.
+
 ## v4.0.0-beta5 - 2026-06-02
 
 > 🧪 **QUI 4 beta — bugfix build.** Follow-up to beta4 squashing two WoW 12.0 taint/error bugs and finishing the keyboard click-casting work. No schema migrations: your beta4 profiles carry over unchanged. As always, **back up your `WTF` folder before installing** and report anything you hit on GitHub.
