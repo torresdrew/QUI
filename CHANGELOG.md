@@ -6,10 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
-## Unreleased
+## v4.0.0-beta7 - 2026-06-03
+
+> 🧪 **QUI 4 beta — feature + bugfix build.** Follow-up to beta6 wiring the consumable reminder popup to your configured macros and fixing spell-flyout layering and direction. No schema migrations: your beta6 profiles carry over unchanged. As always, **back up your `WTF` folder before installing** and report anything you hit on GitHub.
 
 ### Added
 - **Consumable Check now follows your configured consumable macros.** When you've set a flask, weapon oil/stone, or augment rune in the consumables options, the reminder popup suggests that same item by default instead of its built-in order. Right-clicking an icon to pick a specific item still overrides the macro for that character. Hunters can now have a weapon **oil** suggested on their bow (the popup previously only offered ranged ammo there).
+
+### Fixed
+- **Spell flyouts stay on top and open the right way.** Action-button flyout popups (the fan of buttons that opens from a flyout slot) no longer render behind party/raid frames, and their tint no longer dims the button icons. With direction set to **Auto**, the flyout now opens toward the center of the screen and the little direction arrow always matches the way the popup actually opens — previously the arrow and the popup could disagree.
 
 ## v4.0.0-beta6 - 2026-06-02
 
