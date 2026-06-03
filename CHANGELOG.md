@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## Unreleased
+
+### Added
+- **Consumable Check now follows your configured consumable macros.** When you've set a flask, weapon oil/stone, or augment rune in the consumables options, the reminder popup suggests that same item by default instead of its built-in order. Right-clicking an icon to pick a specific item still overrides the macro for that character. Hunters can now have a weapon **oil** suggested on their bow (the popup previously only offered ranged ammo there).
+
 ## v4.0.0-beta6 - 2026-06-02
 
 > 🧪 **QUI 4 beta — diagnostic build.** A small instrumented follow-up to beta5 that exposes the Cooldown Manager mirror API for cold-boot troubleshooting. No functional or visual changes and no schema migrations: your beta5 profiles carry over unchanged. As always, **back up your `WTF` folder before installing** and report anything you hit on GitHub.
