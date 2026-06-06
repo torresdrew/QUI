@@ -207,32 +207,7 @@ local absorbThrottle = {}     -- unitToken → last update time
 local healPredThrottle = {}   -- unitToken → last update time
 local THROTTLE_INTERVAL = 0.1 -- 100ms coalesce window
 
-do local mp = ns._memprobes or {}; ns._memprobes = mp
-    mp[#mp + 1] = { name = "GF_powerThrottle",    tbl = powerThrottle }
-    mp[#mp + 1] = { name = "GF_absorbThrottle",   tbl = absorbThrottle }
-    mp[#mp + 1] = { name = "GF_healPredThrottle", tbl = healPredThrottle }
-    -- Unit-keyed caches that grow as new units are observed across encounters.
-    mp[#mp + 1] = { name = "GF_unitGuidCache",  fn = function()
-        local n = 0; for _ in pairs(_state.unitGuidCache) do n = n + 1 end; return n, 0
-    end }
-    mp[#mp + 1] = { name = "GF_cachedMarkers",  fn = function()
-        local n = 0; for _ in pairs(_state.cachedMarkers) do n = n + 1 end; return n, 0
-    end }
-    mp[#mp + 1] = { name = "GF_unitFrameMap",   fn = function()
-        local count, deep = 0, 0
-        for _, list in pairs(QUI_GF.unitFrameMap) do
-            count = count + 1
-            if type(list) == "table" then deep = deep + #list end
-        end
-        return count, deep
-    end }
-    mp[#mp + 1] = { name = "GF_unitEventFrames",  fn = function()
-        local n = 0; for _ in pairs(_state.unitEventFrames) do n = n + 1 end; return n, 0
-    end }
-    mp[#mp + 1] = { name = "GF_allFrames",      fn = function()
-        return #QUI_GF.allFrames, 0
-    end }
-end
+-- memprobes registered in SetupDebugInstrumentation (debug gate)
 
 ---------------------------------------------------------------------------
 -- CACHED BACKDROP TABLES: Avoid allocating a new table every SetBackdrop
@@ -240,7 +215,7 @@ end
 -- table reference lets it short-circuit and reduces GC pressure.
 ---------------------------------------------------------------------------
 local _backdropCache = {}
-do local mp = ns._memprobes or {}; ns._memprobes = mp; mp[#mp + 1] = { name = "GF_backdropCache", tbl = _backdropCache } end
+-- memprobes registered in SetupDebugInstrumentation (debug gate)
 local function GetCachedBackdrop(bgFile, edgeFile, edgeSize)
     local key = (bgFile or "") .. "|" .. (edgeFile or "") .. "|" .. (edgeSize or 0)
     local bd = _backdropCache[key]
@@ -300,7 +275,7 @@ gruCoalesceFrame:Hide()
 
 -- Font/texture caching
 local _fontCache = {}
-do local mp = ns._memprobes or {}; ns._memprobes = mp; mp[#mp + 1] = { name = "GF_fontCache", tbl = _fontCache } end
+-- memprobes registered in SetupDebugInstrumentation (debug gate)
 
 -- Pre-allocated color tables for common colors
 local COLORS = {
@@ -5410,9 +5385,48 @@ function _state.SetUnitEventActive(event, active)
     end
 end
 
--- Perf profiler opt-in (no-op until /qui perf → Modules toggle)
-ns.QUI_PerfRegistry = ns.QUI_PerfRegistry or {}
-ns.QUI_PerfRegistry[#ns.QUI_PerfRegistry + 1] = { name = "GroupFrames", frame = eventFrame }
+-- Debug instrumentation (memprobes + perf registry), gated — see core/debug_gate.lua
+do -- DO NOT unwrap: SetupDebugInstrumentation must stay off the main chunk's
+   -- local slots — this file is at Lua 5.1's 200-local limit (new locals
+   -- belong in _state, see ~line 64)
+local function SetupDebugInstrumentation()
+    local mp = ns._memprobes or {}; ns._memprobes = mp
+    mp[#mp + 1] = { name = "GF_powerThrottle",    tbl = powerThrottle }
+    mp[#mp + 1] = { name = "GF_absorbThrottle",   tbl = absorbThrottle }
+    mp[#mp + 1] = { name = "GF_healPredThrottle", tbl = healPredThrottle }
+    -- Unit-keyed caches that grow as new units are observed across encounters.
+    mp[#mp + 1] = { name = "GF_unitGuidCache",  fn = function()
+        local n = 0; for _ in pairs(_state.unitGuidCache) do n = n + 1 end; return n, 0
+    end }
+    mp[#mp + 1] = { name = "GF_cachedMarkers",  fn = function()
+        local n = 0; for _ in pairs(_state.cachedMarkers) do n = n + 1 end; return n, 0
+    end }
+    mp[#mp + 1] = { name = "GF_unitFrameMap",   fn = function()
+        local count, deep = 0, 0
+        for _, list in pairs(QUI_GF.unitFrameMap) do
+            count = count + 1
+            if type(list) == "table" then deep = deep + #list end
+        end
+        return count, deep
+    end }
+    mp[#mp + 1] = { name = "GF_unitEventFrames",  fn = function()
+        local n = 0; for _ in pairs(_state.unitEventFrames) do n = n + 1 end; return n, 0
+    end }
+    mp[#mp + 1] = { name = "GF_allFrames",      fn = function()
+        return #QUI_GF.allFrames, 0
+    end }
+    mp[#mp + 1] = { name = "GF_backdropCache", tbl = _backdropCache }
+    mp[#mp + 1] = { name = "GF_fontCache", tbl = _fontCache }
+    -- Perf profiler opt-in (no-op until /qui perf → Modules toggle)
+    ns.QUI_PerfRegistry = ns.QUI_PerfRegistry or {}
+    ns.QUI_PerfRegistry[#ns.QUI_PerfRegistry + 1] = { name = "GroupFrames", frame = eventFrame }
+end
+if ns.DebugRegister then -- gate contract: core/debug_gate.lua
+    ns.DebugRegister(SetupDebugInstrumentation)
+else
+    SetupDebugInstrumentation() -- standalone test harness: no gate, run eagerly
+end
+end -- scoped block (200-local limit)
 
 ---------------------------------------------------------------------------
 -- EVENT REGISTRATION
