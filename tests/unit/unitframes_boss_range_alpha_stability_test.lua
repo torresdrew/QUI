@@ -1,7 +1,7 @@
 -- tests/unit/unitframes_boss_range_alpha_stability_test.lua
 -- Run: lua tests/unit/unitframes_boss_range_alpha_stability_test.lua
 
-local path = "modules/unitframes/unitframes.lua"
+local path = "QUI_UnitFrames/unitframes/unitframes.lua"
 local file = assert(io.open(path, "rb"))
 local source = file:read("*a")
 file:close()

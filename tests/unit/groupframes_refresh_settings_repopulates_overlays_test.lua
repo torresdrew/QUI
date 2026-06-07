@@ -9,7 +9,7 @@
 -- settings change until its next dedicated event. RefreshSettings must
 -- repopulate overlays (via RefreshAllFrames) after re-decorating.
 
-local path = "modules/groupframes/groupframes.lua"
+local path = "QUI_GroupFrames/groupframes/groupframes.lua"
 local file = assert(io.open(path, "rb"))
 local source = file:read("*a")
 file:close()
