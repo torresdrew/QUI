@@ -17,6 +17,7 @@ local math_floor = math.floor
 local pairs = pairs
 local rawget = rawget
 local type = type
+local UnitExists = UnitExists
 
 -- QUI_UF is created in unitframes.lua and exported to ns.QUI_UnitFrames.
 -- This file loads after unitframes.lua, so the reference is available.
@@ -84,6 +85,10 @@ end
 
 -- Expose for QUI_RefreshAuras in unitframes.lua
 QUI_UF._lastAuraUpdate = lastAuraUpdate
+
+-- Boss engage is a global event; one shared listener avoids five frames
+-- reprocessing every transient boss-slot pulse.
+local bossEngageFrame
 
 ---------------------------------------------------------------------------
 -- AURA ICON STATE (weak-keyed to avoid tainting frames with secret values)
@@ -703,6 +708,31 @@ end
 -- Expose for unitframes.lua callers
 QUI_UF.UpdateAuras = UpdateAuras
 
+local function RefreshBossFrameForEngage(frame)
+    if not frame or not frame.unit then return end
+
+    lastAuraUpdate[frame.unit] = 0
+    if UnitExists(frame.unit) then
+        UpdateFrame(frame)
+    end
+    UpdateAuras(frame)
+end
+
+local function EnsureBossEngageFrame()
+    if bossEngageFrame then return end
+
+    bossEngageFrame = CreateFrame("Frame")
+    bossEngageFrame:RegisterEvent("INSTANCE_ENCOUNTER_ENGAGE_UNIT")
+    bossEngageFrame:SetScript("OnEvent", function()
+        local frames = QUI_UF.frames
+        if not frames then return end
+
+        for i = 1, 5 do
+            RefreshBossFrameForEngage(frames["boss" .. i])
+        end
+    end)
+end
+
 ---------------------------------------------------------------------------
 -- AURA TRACKING SETUP
 ---------------------------------------------------------------------------
@@ -726,7 +756,7 @@ local function SetupAuraTracking(frame)
         frame:RegisterEvent("PLAYER_TARGET_CHANGED")  -- ToT changes when target changes
         frame:RegisterEvent("UNIT_TARGET")            -- ToT changes when target's target changes
     elseif unit:match("^boss%d+$") then
-        frame:RegisterEvent("INSTANCE_ENCOUNTER_ENGAGE_UNIT")
+        EnsureBossEngageFrame()
     end
     -- player: no extra event needed, UNIT_AURA handles it
 
@@ -758,11 +788,6 @@ local function SetupAuraTracking(frame)
         elseif event == "UNIT_TARGET" and self.unit == "targettarget" then
             -- Target's target changed
             lastAuraUpdate["targettarget"] = 0
-            UpdateAuras(self)
-        elseif event == "INSTANCE_ENCOUNTER_ENGAGE_UNIT" and self.unit:match("^boss%d+$") then
-            -- Boss unit changed - full refresh for name, health, power, auras
-            lastAuraUpdate[self.unit] = 0
-            UpdateFrame(self)
             UpdateAuras(self)
         end
     end)
