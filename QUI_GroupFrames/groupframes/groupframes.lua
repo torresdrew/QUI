@@ -69,7 +69,6 @@ local _state = {
     cachedVDB_party = nil,
     cachedVDB_raid = nil,
     cachedModuleEnabled = false,
-    cachedModuleDB = nil,
     lastMode = nil,
     rangeCheckTicker = nil,
     unitGuidCache = {},
@@ -207,6 +206,22 @@ local absorbThrottle = {}     -- unitToken → last update time
 local healPredThrottle = {}   -- unitToken → last update time
 local THROTTLE_INTERVAL = 0.1 -- 100ms coalesce window
 
+-- initialConfigFunction snippet shared by every QUI secure group header
+-- (party / raid / spotlight). Runs in secure context for each new child.
+-- Stored on the shared IconLayout module (loaded first) rather than a file
+-- local to stay under the 200 main-chunk local cap.
+ns.QUI_GroupFrameIconLayout.HEADER_INIT_CONFIG_FUNC = [[
+        local header = self:GetParent()
+        local w = header:GetAttribute("_initialAttribute-unit-width") or 200
+        local h = header:GetAttribute("_initialAttribute-unit-height") or 40
+        self:SetWidth(w)
+        self:SetHeight(h)
+        self:SetAttribute("*type1", "target")
+        self:SetAttribute("*type2", "togglemenu")
+        RegisterUnitWatch(self)
+        self:GetParent():CallMethod("QUI_OnChildCreated", self:GetName())
+    ]]
+
 -- memprobes registered in SetupDebugInstrumentation (debug gate)
 
 ---------------------------------------------------------------------------
@@ -288,13 +303,8 @@ local COLORS = {
 
 -- Dispel constants and cached state
 local _dispel = {
-    defaultColors = {
-        Magic   = { 0.2, 0.6, 1.0, 1 },  -- Blue
-        Curse   = { 0.6, 0.0, 1.0, 1 },  -- Purple
-        Disease = { 0.6, 0.4, 0.0, 1 },  -- Brown
-        Poison  = { 0.0, 0.6, 0.0, 1 },  -- Green
-        Bleed   = { 0.8, 0.0, 0.0, 1 },  -- Red
-    },
+    -- Shared canonical palette (group_frames_icon_layout.lua, loaded first)
+    defaultColors = ns.QUI_GroupFrameIconLayout.DISPEL_DEFAULT_COLORS,
     allEnums = {1, 2, 3, 4, 9, 11},  -- WoW 12.0+, from SpellDispelType DB2
     enumNames = {
         [1] = "Magic", [2] = "Curse", [3] = "Disease", [4] = "Poison",
@@ -684,6 +694,11 @@ local ANCHOR_MAP = {
     BOTTOM     = { point = "BOTTOM",     leftPoint = "BOTTOMLEFT", rightPoint = "BOTTOMRIGHT",  justify = "CENTER", justifyV = "BOTTOM" },
 }
 
+-- Publish for the Edit Mode preview (groupframes_editmode.lua, loaded later)
+-- so its text placement always matches the live frames. The preview only reads
+-- leftPoint/rightPoint/justify/justifyV; the extra `point` field is harmless.
+ns.QUI_GroupFrameTextAnchorMap = ANCHOR_MAP
+
 local function GetTextAnchorInfo(anchorName)
     return ANCHOR_MAP[anchorName] or ANCHOR_MAP.LEFT
 end
@@ -701,9 +716,7 @@ end
 -- HELPERS: Group size + dimensions
 ---------------------------------------------------------------------------
 local function GetGroupSize()
-    if IsInRaid() then
-        return GetNumGroupMembers()
-    elseif IsInGroup() then
+    if IsInGroup() then
         return GetNumGroupMembers()
     end
     return 0
@@ -1407,6 +1420,11 @@ local ROLE_TOGGLE_KEY = {
     HEALER  = "showRoleHealer",
     DAMAGER = "showRoleDPS",
 }
+
+-- Published for the Edit Mode preview (groupframes_editmode.lua, loaded later)
+-- so its role icons stay in lockstep with the live frames.
+ns.QUI_GroupFrameRoleAtlas = ROLE_ATLAS
+ns.QUI_GroupFrameRoleToggleKey = ROLE_TOGGLE_KEY
 
 local function UpdateRoleIcon(frame)
     if not frame or not frame.unit or not frame.roleIcon then return end
@@ -3013,17 +3031,9 @@ local function AnchorHeaderToRoot(root, header, grow, leadEdge, attachTo, gap, i
         if grow == "UP" then
             header:SetPoint("BOTTOM" .. leadEdge, attachTo, "TOP" .. leadEdge, 0, gap or 0)
         elseif grow == "LEFT" then
-            if isSelfHeader then
-                header:SetPoint("TOPRIGHT", attachTo, "TOPLEFT", -(gap or 0), 0)
-            else
-                header:SetPoint("TOPRIGHT", attachTo, "TOPLEFT", -(gap or 0), 0)
-            end
+            header:SetPoint("TOPRIGHT", attachTo, "TOPLEFT", -(gap or 0), 0)
         elseif grow == "RIGHT" then
-            if isSelfHeader then
-                header:SetPoint("TOPLEFT", attachTo, "TOPRIGHT", gap or 0, 0)
-            else
-                header:SetPoint("TOPLEFT", attachTo, "TOPRIGHT", gap or 0, 0)
-            end
+            header:SetPoint("TOPLEFT", attachTo, "TOPRIGHT", gap or 0, 0)
         else
             header:SetPoint("TOP" .. leadEdge, attachTo, "BOTTOM" .. leadEdge, 0, -(gap or 0))
         end
@@ -3614,17 +3624,7 @@ local function CreateHeaders()
     local raidRoot = EnsureAnchorFrame("raid")
 
     -- initialConfigFunction runs in secure context for each new child
-    local initConfigFunc = [[
-        local header = self:GetParent()
-        local w = header:GetAttribute("_initialAttribute-unit-width") or 200
-        local h = header:GetAttribute("_initialAttribute-unit-height") or 40
-        self:SetWidth(w)
-        self:SetHeight(h)
-        self:SetAttribute("*type1", "target")
-        self:SetAttribute("*type2", "togglemenu")
-        RegisterUnitWatch(self)
-        self:GetParent():CallMethod("QUI_OnChildCreated", self:GetName())
-    ]]
+    local initConfigFunc = ns.QUI_GroupFrameIconLayout.HEADER_INIT_CONFIG_FUNC
 
     -- Party header
     local partyHeader = CreateFrame("Frame", "QUI_PartyHeader", partyRoot, "SecureGroupHeaderTemplate")
@@ -3846,17 +3846,7 @@ local function CreateSpotlightHeader()
     end
 
     -- Secure header with QUIGroupUnitButtonTemplate for proper decoration
-    local initConfigFunc = [[
-        local header = self:GetParent()
-        local w = header:GetAttribute("_initialAttribute-unit-width") or 200
-        local h = header:GetAttribute("_initialAttribute-unit-height") or 40
-        self:SetWidth(w)
-        self:SetHeight(h)
-        self:SetAttribute("*type1", "target")
-        self:SetAttribute("*type2", "togglemenu")
-        RegisterUnitWatch(self)
-        self:GetParent():CallMethod("QUI_OnChildCreated", self:GetName())
-    ]]
+    local initConfigFunc = ns.QUI_GroupFrameIconLayout.HEADER_INIT_CONFIG_FUNC
 
     local header = CreateFrame("Frame", "QUI_SpotlightRTHeader", container, "SecureGroupHeaderTemplate")
     header:SetAttribute("template", "SecureUnitButtonTemplate,BackdropTemplate")
@@ -4542,7 +4532,6 @@ local function UpdateHeaderVisibility()
         RebuildUnitFrameMap()
         QUI_GF:RefreshAllFrames()
         UpdateAnchorFrames()
-        initSafePeriod = false
 
         -- Reveal: all frames are now sized and populated.
         if needsReveal then
@@ -5019,7 +5008,6 @@ local eventFrame = CreateFrame("Frame")
 local function RefreshCachedEnabled()
     local db = GetSettings()
     _state.cachedModuleEnabled = db and db.enabled or false
-    _state.cachedModuleDB = db
 end
 
 local function OnEvent(self, event, arg1, ...)
@@ -5834,7 +5822,6 @@ end
 ---------------------------------------------------------------------------
 function QUI_GF:Disable()
     _state.cachedModuleEnabled = false
-    _state.cachedModuleDB = nil
     UnregisterEvents()
     StopRangeCheck()
 

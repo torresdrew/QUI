@@ -940,7 +940,6 @@ local function GetDurationColor(remaining, duration)
 end
 
 local timerElapsed = 0
-local cachedShowDurationColor = true
 local GetFontPath
 
 local function IsDurationTextEnabled(auraSettings, settingKey)
@@ -1114,60 +1113,11 @@ end
 ---------------------------------------------------------------------------
 -- SLOT OFFSET: Calculate icon position for configurable grow direction
 ---------------------------------------------------------------------------
-local function CalculateSlotOffset(index, iconSize, spacing, direction, totalCount)
-    local step = (index - 1) * (iconSize + spacing)
-    if direction == "RIGHT" then
-        return step, 0
-    elseif direction == "LEFT" then
-        return -step, 0
-    elseif direction == "CENTER" then
-        local n = totalCount or 1
-        local totalSpan = n * iconSize + math.max(n - 1, 0) * spacing
-        return step - totalSpan / 2, 0
-    elseif direction == "UP" then
-        return 0, step
-    elseif direction == "DOWN" then
-        return 0, -step
-    end
-    return step, 0 -- fallback to RIGHT
-end
+local CalculateSlotOffset = ns.QUI_GroupFrameIconLayout.CalculateSlotOffset
 
-local function ComposeAnchor(horizontal, vertical)
-    if vertical == "TOP" then
-        if horizontal == "LEFT" then return "TOPLEFT" end
-        if horizontal == "RIGHT" then return "TOPRIGHT" end
-        return "TOP"
-    elseif vertical == "BOTTOM" then
-        if horizontal == "LEFT" then return "BOTTOMLEFT" end
-        if horizontal == "RIGHT" then return "BOTTOMRIGHT" end
-        return "BOTTOM"
-    end
-
-    if horizontal == "LEFT" then return "LEFT" end
-    if horizontal == "RIGHT" then return "RIGHT" end
-    return "CENTER"
-end
-
-local function GetIconAnchorForGrow(frameAnchor, direction)
-    local horizontal = frameAnchor and frameAnchor:find("LEFT") and "LEFT"
-        or frameAnchor and frameAnchor:find("RIGHT") and "RIGHT"
-        or "CENTER"
-    local vertical = frameAnchor and frameAnchor:find("TOP") and "TOP"
-        or frameAnchor and frameAnchor:find("BOTTOM") and "BOTTOM"
-        or "CENTER"
-
-    if direction == "RIGHT" or direction == "CENTER" then
-        horizontal = "LEFT"
-    elseif direction == "LEFT" then
-        horizontal = "RIGHT"
-    elseif direction == "UP" then
-        vertical = "BOTTOM"
-    elseif direction == "DOWN" then
-        vertical = "TOP"
-    end
-
-    return ComposeAnchor(horizontal, vertical)
-end
+-- Shared with private_auras/indicators via the IconLayout module
+-- (group_frames_icon_layout.lua, loaded first in the .toc).
+local GetIconAnchorForGrow = ns.QUI_GroupFrameIconLayout.GetIconAnchorForGrow
 
 -- Track icons that need mouse setup deferred from combat
 local pendingMouseFix = false
@@ -1315,13 +1265,8 @@ local function ClearAuraIcon(icon)
 end
 
 -- Dispel border colors (file-level to avoid per-call allocation)
-local AURA_DISPEL_COLORS = {
-    Magic   = { 0.2, 0.6, 1.0, 1 },
-    Curse   = { 0.6, 0.0, 1.0, 1 },
-    Disease = { 0.6, 0.4, 0.0, 1 },
-    Poison  = { 0.0, 0.6, 0.0, 1 },
-    Bleed   = { 0.8, 0.0, 0.0, 1 },
-}
+-- Shared canonical palette (group_frames_icon_layout.lua, loaded first)
+local AURA_DISPEL_COLORS = ns.QUI_GroupFrameIconLayout.DISPEL_DEFAULT_COLORS
 
 local function UpdateAuraIcon(icon, auraData, unit)
     if not icon or not auraData then
@@ -1729,16 +1674,6 @@ end
 local PRIORITY_DISPELLABLE = 3
 local PRIORITY_BOSS = 2
 local PRIORITY_NORMAL = 1
-
--- Priority lookup table for zero-allocation sorting: auraData → priority.
--- Populated inline during aura collection, used by the sort comparator,
--- then wiped.  Eliminates AcquireAuraTable/ReleaseAuraTable per visible aura.
-local _auraPrioMap = {}
-
--- Reusable sort comparator (avoids closure allocation per sort call)
-local function AuraPrioritySort(a, b)
-    return (_auraPrioMap[a] or 0) > (_auraPrioMap[b] or 0)
-end
 
 local function GetAuraPriority(auraData)
     if not auraData then return 0 end
@@ -2495,9 +2430,6 @@ end
 function QUI_GFA:InvalidateLayout()
     layoutVersion = layoutVersion + 1
     _cachedFontPath = nil  -- force re-fetch on next access
-    -- Refresh cached setting for shared timer
-    local db = GetDB()
-    cachedShowDurationColor = db and db.auras and db.auras.showDurationColor ~= false
     -- Phase 2: panel subsets depend on filter settings that may have changed.
     -- Mark every cached unit dirty so the next render or delta re-runs the
     -- panel rebuild pass against the fresh filter cache.
@@ -2518,9 +2450,6 @@ function QUI_GFA:RefreshAll()
     -- Force layout recalculation on explicit refresh
     layoutVersion = layoutVersion + 1
     _cachedFontPath = nil  -- force re-fetch on next access
-    -- Sync cached setting from DB
-    local db = GetDB()
-    cachedShowDurationColor = db and db.auras and db.auras.showDurationColor ~= false
 
     for unit, list in pairs(GF.unitFrameMap) do
         local shouldScan = AnyVisibleFrameHasActiveAuraConsumers(list, #list)

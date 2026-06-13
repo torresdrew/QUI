@@ -1090,7 +1090,7 @@ local function EnsureIconContainer(frame)
     return container
 end
 
-local function PositionIconContainer(frame, ai)
+local function PositionIconContainer(frame)
     local state = GetIndicatorState(frame)
     local container = state.iconContainer
     if not container then
@@ -1263,7 +1263,7 @@ local function RenderIconIndicators(frame, ai, iconPayloads)
     state.iconHideSwipe = hideSwipe
     state.iconReverseSwipe = reverseSwipe
 
-    PositionIconContainer(frame, ai)
+    PositionIconContainer(frame)
     container:Show()
 
     local iconAnchor = IconLayout and IconLayout.GetIconAnchorForGrow

@@ -63,6 +63,27 @@ local function GetGUI()
     return QUI and QUI.GUI or nil
 end
 
+-- Reset every active draggable row (aura or indicator), clear its scripts and
+-- drag-handle border, and return it to the supplied reuse pool. Shared by the
+-- aura-row and indicator-row release paths, which differ only in their tables.
+local function ReleaseDraggableRows(activeRows, pool)
+    for _, row in ipairs(activeRows) do
+        row:Hide()
+        row:ClearAllPoints()
+        row.remove:SetScript("OnClick", nil)
+        row:SetScript("OnDragStart", nil)
+        row:SetScript("OnDragStop", nil)
+        row:SetScript("OnUpdate", nil)
+        row:SetScript("OnClick", nil)
+        row:SetAlpha(1)
+        if row.dragHandle then
+            row.dragHandle:SetBackdropBorderColor(0.24, 0.24, 0.28, 1)
+        end
+        table.insert(pool, row)
+    end
+    wipe(activeRows)
+end
+
 local function GetPixelSize(frame)
     local core = ns.Addon
     return (core and core.GetPixelSize and core:GetPixelSize(frame)) or 1
@@ -1041,21 +1062,7 @@ function AuraIndicatorsEditor.RenderTrackedAuras(host, auraIndicatorsDB, onChang
     local activeAuraRows = {}
     editor.activeAuraRows = activeAuraRows
     local function ReleaseAuraRows()
-        for _, row in ipairs(activeAuraRows) do
-            row:Hide()
-            row:ClearAllPoints()
-            row.remove:SetScript("OnClick", nil)
-            row:SetScript("OnDragStart", nil)
-            row:SetScript("OnDragStop", nil)
-            row:SetScript("OnUpdate", nil)
-            row:SetScript("OnClick", nil)
-            row:SetAlpha(1)
-            if row.dragHandle then
-                row.dragHandle:SetBackdropBorderColor(0.24, 0.24, 0.28, 1)
-            end
-            table.insert(auraRows, row)
-        end
-        wipe(activeAuraRows)
+        ReleaseDraggableRows(activeAuraRows, auraRows)
     end
     editor.ReleaseAuraRows = ReleaseAuraRows
 
@@ -1182,21 +1189,7 @@ function AuraIndicatorsEditor.RenderTrackedAuras(host, auraIndicatorsDB, onChang
     local activeIndicatorRows = {}
     editor.activeIndicatorRows = activeIndicatorRows
     local function ReleaseIndicatorRows()
-        for _, row in ipairs(activeIndicatorRows) do
-            row:Hide()
-            row:ClearAllPoints()
-            row.remove:SetScript("OnClick", nil)
-            row:SetScript("OnDragStart", nil)
-            row:SetScript("OnDragStop", nil)
-            row:SetScript("OnUpdate", nil)
-            row:SetScript("OnClick", nil)
-            row:SetAlpha(1)
-            if row.dragHandle then
-                row.dragHandle:SetBackdropBorderColor(0.24, 0.24, 0.28, 1)
-            end
-            table.insert(indicatorRows, row)
-        end
-        wipe(activeIndicatorRows)
+        ReleaseDraggableRows(activeIndicatorRows, indicatorRows)
     end
     editor.ReleaseIndicatorRows = ReleaseIndicatorRows
 

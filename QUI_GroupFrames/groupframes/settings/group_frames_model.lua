@@ -32,11 +32,6 @@ local function RenderSchema(methodName, host, contextMode, label)
     return ModelKit.RenderSchema(ns.QUI_GroupFramesSettingsSchema, methodName, host, contextMode, label, " settings unavailable (module not loaded).")
 end
 
-local function RenderGeneral(host, state)
-    local contextMode = state and state.contextMode or nil
-    RenderSchema("RenderGeneralTab", host, contextMode, "General")
-end
-
 local function BuildSchemaRender(methodName, label)
     return function(host, state)
         local contextMode = state and state.contextMode or nil
@@ -44,6 +39,7 @@ local function BuildSchemaRender(methodName, label)
     end
 end
 
+local RenderGeneral = BuildSchemaRender("RenderGeneralTab", "General")
 local RenderAppearance = BuildSchemaRender("RenderAppearanceTab", "Appearance")
 local RenderLayout = BuildSchemaRender("RenderLayoutTab", "Layout")
 local RenderDimensions = BuildSchemaRender("RenderDimensionsTab", "Dimensions")

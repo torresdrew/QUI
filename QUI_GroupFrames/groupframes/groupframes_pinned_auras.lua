@@ -444,6 +444,16 @@ end
 -- Walks the active spec's pinned slots, runs FindTrackedAuraData against the
 -- shared cache's lookup tables, and stashes matches in cache.pinnedMatches
 -- keyed by slot index. UpdateFramePinnedAuras then reads that map directly.
+-- Clear the matches table on an early-out; returns true if it actually had
+-- entries (i.e. the caller should report a change), false otherwise.
+local function WipeMatchesIfNonEmpty(matches)
+    if next(matches) then
+        wipe(matches)
+        return true
+    end
+    return false
+end
+
 function QUI_GFP:PopulateCacheMatches(unit, cache)
     if not cache or not cache.pinnedMatches then return false end
     local matches = cache.pinnedMatches
@@ -451,37 +461,21 @@ function QUI_GFP:PopulateCacheMatches(unit, cache)
 
     local pa = GetPinnedAuraSettings(IsInRaid())
     if not pa or not pa.enabled then
-        if next(matches) then
-            wipe(matches)
-            return true
-        end
-        return false
+        return WipeMatchesIfNonEmpty(matches)
     end
 
     local specID = GetPlayerSpecID()
     if not specID then
-        if next(matches) then
-            wipe(matches)
-            return true
-        end
-        return false
+        return WipeMatchesIfNonEmpty(matches)
     end
 
     local specSlots = pa.specSlots
     if not specSlots then
-        if next(matches) then
-            wipe(matches)
-            return true
-        end
-        return false
+        return WipeMatchesIfNonEmpty(matches)
     end
     local slots = specSlots[specID]
     if not slots or #slots == 0 then
-        if next(matches) then
-            wipe(matches)
-            return true
-        end
-        return false
+        return WipeMatchesIfNonEmpty(matches)
     end
 
     local helpfulByID = cache.buffsBySpellID
@@ -610,7 +604,10 @@ local function UpdateFramePinnedAuras(frame)
     local canReuse = (#state.indicators == validSlotCount) and (validSlotCount > 0)
 
     if canReuse then
-        -- In-place update: just refresh data/state on existing indicators
+        -- In-place update: refresh data/state on existing indicators, and
+        -- re-apply size/position so a settings change that keeps the same slot
+        -- count (slotSize, edgeInset, anchor, offsetX/Y) still takes effect.
+        local bottomPad = frame._bottomPad or 0
         local idx = 0
         for slotIdx, slot in ipairs(slots) do
             local spellID = slot.spellID
@@ -621,6 +618,19 @@ local function UpdateFramePinnedAuras(frame)
                 if auraData and auraData.auraInstanceID then
                     frame._pinnedAuraIDs[auraData.auraInstanceID] = true
                 end
+
+                local anchor = slot.anchor or "TOPLEFT"
+                ind:SetSize(slotSize, slotSize)
+                ind:SetFrameLevel(frame:GetFrameLevel() + 8)
+                ind:ClearAllPoints()
+                local insetDir = ANCHOR_INSET[anchor] or DEFAULT_INSET
+                local offX = insetDir[1] * inset + (slot.offsetX or 0)
+                local offY = insetDir[2] * inset + (slot.offsetY or 0)
+                if anchor == "BOTTOMLEFT" or anchor == "BOTTOM" or anchor == "BOTTOMRIGHT" then
+                    offY = offY + bottomPad
+                end
+                ind:SetPoint(anchor, frame, anchor, offX, offY)
+
                 ind._reverseSwipe = reverseSwipe
                 UpdateIndicatorData(ind, unit, slot, auraData, showSwipe)
             end

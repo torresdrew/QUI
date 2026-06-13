@@ -220,18 +220,10 @@ local function CreateTestFrame(parent, index, totalCount, classToken, name, role
     local fontPath = LSM:Fetch("font", fontName) or "Fonts\\FRIZQT__.TTF"
     local fontOutline = general and general.fontOutline or "OUTLINE"
 
-    -- Anchor map for text positioning (two-point horizontal anchoring for proper justify)
-    local ANCHOR_MAP = {
-        LEFT       = { leftPoint = "LEFT",       rightPoint = "RIGHT",        justify = "LEFT",   justifyV = "MIDDLE" },
-        RIGHT      = { leftPoint = "LEFT",       rightPoint = "RIGHT",        justify = "RIGHT",  justifyV = "MIDDLE" },
-        CENTER     = { leftPoint = "LEFT",       rightPoint = "RIGHT",        justify = "CENTER", justifyV = "MIDDLE" },
-        TOPLEFT    = { leftPoint = "TOPLEFT",    rightPoint = "TOPRIGHT",     justify = "LEFT",   justifyV = "TOP" },
-        TOPRIGHT   = { leftPoint = "TOPLEFT",    rightPoint = "TOPRIGHT",     justify = "RIGHT",  justifyV = "TOP" },
-        TOP        = { leftPoint = "TOPLEFT",    rightPoint = "TOPRIGHT",     justify = "CENTER", justifyV = "TOP" },
-        BOTTOMLEFT = { leftPoint = "BOTTOMLEFT", rightPoint = "BOTTOMRIGHT",  justify = "LEFT",   justifyV = "BOTTOM" },
-        BOTTOMRIGHT= { leftPoint = "BOTTOMLEFT", rightPoint = "BOTTOMRIGHT",  justify = "RIGHT",  justifyV = "BOTTOM" },
-        BOTTOM     = { leftPoint = "BOTTOMLEFT", rightPoint = "BOTTOMRIGHT",  justify = "CENTER", justifyV = "BOTTOM" },
-    }
+    -- Anchor map for text positioning (two-point horizontal anchoring for proper
+    -- justify). Shared with the live frames via groupframes.lua so preview text
+    -- placement can't drift from real frames.
+    local ANCHOR_MAP = ns.QUI_GroupFrameTextAnchorMap
 
     -- Name text
     local nameSettings = vdb.name
@@ -327,14 +319,14 @@ local function CreateTestFrame(parent, index, totalCount, classToken, name, role
     -- Role icon
     local indSettings = vdb.indicators
     if indSettings and indSettings.showRoleIcon ~= false then
-        local ROLE_TOGGLE_KEY = { TANK = "showRoleTank", HEALER = "showRoleHealer", DAMAGER = "showRoleDPS" }
+        local ROLE_TOGGLE_KEY = ns.QUI_GroupFrameRoleToggleKey
         local toggleKey = ROLE_TOGGLE_KEY[role]
         if not toggleKey or indSettings[toggleKey] ~= false then
             local roleIcon = textFrame:CreateTexture(nil, "OVERLAY")
             roleIcon:SetSize(indSettings.roleIconSize or 12, indSettings.roleIconSize or 12)
             local roleAnchor = indSettings.roleIconAnchor or "TOPLEFT"
             roleIcon:SetPoint(roleAnchor, frame, roleAnchor, indSettings.roleIconOffsetX or 2, indSettings.roleIconOffsetY or -2)
-            local ROLE_ATLAS = { TANK = "roleicon-tiny-tank", HEALER = "roleicon-tiny-healer", DAMAGER = "roleicon-tiny-dps" }
+            local ROLE_ATLAS = ns.QUI_GroupFrameRoleAtlas
             local atlas = ROLE_ATLAS[role]
             if atlas then
                 roleIcon:SetAtlas(atlas)
@@ -782,11 +774,11 @@ local function DestroyTestFrames(onlyType)
         -- Destroy all test frames (keep containers for reuse)
         for _, frame in ipairs(testFrames) do frame:Hide(); frame:SetParent(nil) end
         wipe(testFrames)
-        for tType, frames in pairs(testFramesByType) do
+        for _, frames in pairs(testFramesByType) do
             for _, frame in ipairs(frames) do frame:Hide(); frame:SetParent(nil) end
         end
         wipe(testFramesByType)
-        for tType, container in pairs(testContainers) do
+        for _, container in pairs(testContainers) do
             container._reuseContainer = true
         end
         wipe(testContainers)
@@ -1717,10 +1709,6 @@ end
 
 function QUI_GFEM:IsEditMode()
     return isEditMode
-end
-
-function QUI_GFEM:IsTestMode()
-    return isTestMode
 end
 
 -- Returns the currently visible frame for anchoring purposes.
