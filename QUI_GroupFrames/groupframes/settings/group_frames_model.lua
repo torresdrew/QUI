@@ -42,41 +42,21 @@ end
 local RenderGeneral = BuildSchemaRender("RenderGeneralTab", "General")
 local RenderAppearance = BuildSchemaRender("RenderAppearanceTab", "Appearance")
 local RenderLayout = BuildSchemaRender("RenderLayoutTab", "Layout")
-local RenderDimensions = BuildSchemaRender("RenderDimensionsTab", "Dimensions")
-local RenderRangePet = BuildSchemaRender("RenderRangePetTab", "Range & Pet")
-local RenderSpotlight = BuildSchemaRender("RenderSpotlightTab", "Spotlight")
 local RenderHealth = BuildSchemaRender("RenderHealthTab", "Health")
-local RenderPower = BuildSchemaRender("RenderPowerTab", "Power")
-local RenderName = BuildSchemaRender("RenderNameTab", "Name")
-local RenderBuffs = BuildSchemaRender("RenderBuffsTab", "Buffs")
-local RenderDebuffs = BuildSchemaRender("RenderDebuffsTab", "Debuffs")
 local RenderIndicators = BuildSchemaRender("RenderIndicatorsTab", "Indicators")
-local RenderAuraIndicators = BuildSchemaRender("RenderAuraIndicatorsTab", "Auras")
-local RenderPinnedAuras = BuildSchemaRender("RenderPinnedAurasTab", "Pinned Auras")
-local RenderPrivateAuras = BuildSchemaRender("RenderPrivateAurasTab", "Private Auras")
-local RenderHealer = BuildSchemaRender("RenderHealerTab", "Healer")
-local RenderDefensive = BuildSchemaRender("RenderDefensiveTab", "Defensives")
-local RenderDispelOverlay = BuildSchemaRender("RenderDispelOverlayTab", "Dispel Overlay")
+local RenderAuras = BuildSchemaRender("RenderAurasTab", "Auras")
 
+-- Order only; the tab strip wraps these across rows responsively by window
+-- width (group_frames_surface.lua uses wrapRows), so no explicit row field.
+-- Spotlight was folded into Layout (raid only) and Dispel Overlay into
+-- Appearance, so neither is a standalone tab any more.
 local TAB_DEFINITIONS = {
-    { key = "general", label = "General", row = 1, render = RenderGeneral },
-    { key = "appearance", label = "Appearance", row = 1, render = RenderAppearance },
-    { key = "layout", label = "Layout", row = 1, render = RenderLayout },
-    { key = "dimensions", label = "Dimensions", row = 1, render = RenderDimensions },
-    { key = "rangepet", label = "Range & Pet", row = 1, render = RenderRangePet },
-    { key = "spotlight", label = "Spotlight", row = 1, visible = function(state) return state.contextMode == "raid" end, render = RenderSpotlight },
-    { key = "health", label = "Health", row = 1, render = RenderHealth },
-    { key = "power", label = "Power", row = 1, render = RenderPower },
-    { key = "name", label = "Name", row = 1, render = RenderName },
-    { key = "indicators", label = "Indicators", row = 1, render = RenderIndicators },
-    { key = "healer", label = "Healer", row = 1, render = RenderHealer },
-    { key = "auraIndicators", label = "Auras", row = 2, render = RenderAuraIndicators },
-    { key = "privateAuras", label = "Private Auras", row = 2, render = RenderPrivateAuras },
-    { key = "defensive", label = "Defensives", row = 2, render = RenderDefensive },
-    { key = "dispelOverlay", label = "Dispel Overlay", row = 2, render = RenderDispelOverlay },
-    { key = "debuffs", label = "Debuffs", row = 2, render = RenderDebuffs },
-    { key = "buffs", label = "Buffs", row = 2, render = RenderBuffs },
-    { key = "pinnedAuras", label = "Pinned Auras", row = 2, render = RenderPinnedAuras },
+    { key = "general", label = "General", render = RenderGeneral },
+    { key = "appearance", label = "Appearance", render = RenderAppearance },
+    { key = "layout", label = "Layout", render = RenderLayout },
+    { key = "health", label = "Health", render = RenderHealth },
+    { key = "indicators", label = "Indicators", render = RenderIndicators },
+    { key = "auras", label = "Auras", render = RenderAuras },
 }
 
 function Model.GetTabDefinitions()

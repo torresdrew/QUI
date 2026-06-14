@@ -885,9 +885,9 @@ local function UpdateHealth(frame)
 
     if not UnitExists(unit) then
         if frame.healthBar then frame.healthBar:SetValue(0) end
-        local GFI = ns.QUI_GroupFrameIndicators
-        if GFI and GFI.SyncHealthBarTint then
-            GFI:SyncHealthBarTint(frame, 0, false)
+        local Render = ns.QUI_GroupFrameAuraRender
+        if Render and Render.SyncHealthBarTint then
+            Render:SyncHealthBarTint(frame, 0, false)
         end
         if frame.healthText then frame.healthText:SetText("") end
         return
@@ -934,9 +934,9 @@ local function UpdateHealth(frame)
             frame.healthBar:SetStatusBarColor(r, g, b, a)
         end
 
-        local GFI = ns.QUI_GroupFrameIndicators
-        if GFI and GFI.SyncHealthBarTint then
-            GFI:SyncHealthBarTint(frame, healthPct, isConnected and not isDeadOrGhost)
+        local Render = ns.QUI_GroupFrameAuraRender
+        if Render and Render.SyncHealthBarTint then
+            Render:SyncHealthBarTint(frame, healthPct, isConnected and not isDeadOrGhost)
         end
     end
 
@@ -5563,12 +5563,12 @@ end
 ---------------------------------------------------------------------------
 function QUI_GF:RefreshAllFrames(reason)
     -- Pre-loop setup that each module's RefreshAll does once before iteration.
-    -- Inlining per-frame work from auras + indicators avoids 2 extra full
-    -- iterations of unitFrameMap (was 4 passes, now 1 + private auras).
+    -- Inlining per-frame aura work avoids extra full iterations of unitFrameMap.
+    -- The unified element renderer (GFA:RenderFrame) draws strips + tracked
+    -- auras in one pass, so there is no separate indicator iteration anymore.
     local GFA = ns.QUI_GroupFrameAuras
     if GFA and GFA.InvalidateLayout then GFA:InvalidateLayout() end
     local auraCacheAvailable = GFA and GFA.ScanUnitAuras and GFA.RenderFrame
-    local GFI = ns.QUI_GroupFrameIndicators
 
     for unit, list in pairs(self.unitFrameMap) do
         local auraScanned = false
@@ -5586,14 +5586,12 @@ function QUI_GF:RefreshAllFrames(reason)
                 end
                 UpdateFrame(frame)
 
-                -- Auras: render from the per-unit cache when available.
+                -- Auras: render strips + tracked auras from the per-unit cache.
                 if auraCacheAvailable then
                     GFA:RenderFrame(frame)
                 elseif GFA and GFA.RefreshFrame then
                     GFA:RefreshFrame(frame)
                 end
-                -- Indicators: update tracked spells (was a separate full iteration)
-                if GFI and GFI.RefreshFrame then GFI:RefreshFrame(frame) end
             end
         end
     end

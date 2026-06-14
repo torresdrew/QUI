@@ -1,8 +1,9 @@
 --[[
     QUI Options V2 — Group Frames tile
-    Pattern mirrors options/tiles/cooldown_manager.lua:
-      - Preview block (Party/Raid dropdown + live composer preview)
-        persists across inner tabs.
+    Pattern mirrors options/tiles/cooldown_manager.lua, with the live
+    preview detached into a docked side panel (CreateDockedPreviewPanel,
+    anchored to the right edge of the options window) and a compact
+    Party/Raid dropdown row above the inner tabs.
       - Inner tab strip promotes the composer's widget-bar elements to
         top-level tabs alongside the frame-level sections. Frame-
         level tabs (Appearance, Layout, Dimensions, Range & Pet,
@@ -50,10 +51,207 @@ local State = {
     previewHost = nil,
     activeBody  = nil,
     repaintTabs = nil,
+    previewFilter = { threat = true, dispel = true, auras = true, indicators = true, highlights = true },
 }
 
 local TabModel
 local EnsureTabModel
+
+---------------------------------------------------------------------------
+-- DOCKED PREVIEW PANEL — detached, anchored to the options window's right
+-- edge. Lazily created; re-measured/resized after every composer rebuild
+-- via the QUI_SetGroupFramePreviewObserver seam.
+---------------------------------------------------------------------------
+local function CurrentOptionsWindow()
+    -- Prefer GUI.MainFrame, NOT the _G.QUI_Options global. GUI:RefreshAccentColor
+    -- (theme change) recreates the options window and updates GUI.MainFrame, but
+    -- leaves _G.QUI_Options pointing at the old, torn-down, hidden window —
+    -- anchoring to the stale global parents the panel to a dead frame.
+    return (GUI and GUI.MainFrame) or _G.QUI_Options
+end
+
+-- Install the composer resize observer exactly once. It reads State.previewPanel
+-- dynamically, so it keeps working across panel rebuilds (see EnsurePreviewPanel).
+local previewObserverInstalled = false
+local function InstallPreviewObserver()
+    if previewObserverInstalled or not _G.QUI_SetGroupFramePreviewObserver then
+        return
+    end
+    previewObserverInstalled = true
+    _G.QUI_SetGroupFramePreviewObserver(function(_, wrapper)
+        local p = State.previewPanel
+        if not p then return end
+        -- Generation guard: a later rebuild (e.g. rapid Party/Raid toggle)
+        -- reparents this cell's children away, so a deferred measure of the
+        -- now-stale cell would shrink the panel to a stub. Skip if superseded.
+        State.previewGen = (State.previewGen or 0) + 1
+        local gen = State.previewGen
+        local cell = wrapper and wrapper.previewCell
+        local w, h = FullSurface.MeasureRenderedExtent(cell)
+        if w <= 0 or h <= 0 then
+            C_Timer.After(0, function()
+                if State.previewGen ~= gen or not State.previewPanel then return end
+                local w2, h2 = FullSurface.MeasureRenderedExtent(cell)
+                if w2 > 0 and h2 > 0 then
+                    State.previewPanel.Resize(w2, h2)
+                end
+            end)
+            return
+        end
+        p.Resize(w, h)
+    end)
+end
+
+---------------------------------------------------------------------------
+-- CONTROL STRIP — on-panel preview filter chips + raid-size slider. The chips
+-- drive a transient filter (State.previewFilter) forwarded to the preview
+-- driver; chips whose underlying feature is disabled in config are greyed via
+-- Driver._ChipEnabledInConfig. The raid slider only shows in raid context.
+---------------------------------------------------------------------------
+local CHIP_DEFS = {
+    { key = "threat",     label = "Threat" },
+    { key = "dispel",     label = "Dispel" },
+    { key = "auras",      label = "Auras" },
+    { key = "indicators", label = "Indicators" },
+    { key = "highlights", label = "Highlights" },
+}
+
+local function CurrentPreviewVDB()
+    local Driver = ns.QUI_GroupFramesPreview
+    if not Driver or not Driver._GetGFDB or not Driver._GetContextDB then return nil end
+    local gfdb = Driver._GetGFDB()
+    return Driver._GetContextDB(gfdb, State.contextMode), gfdb
+end
+
+local function ApplyFilterToDriver()
+    if _G.QUI_SetGroupFramePreviewFilter then
+        _G.QUI_SetGroupFramePreviewFilter(State.previewFilter)
+    end
+end
+
+local function BuildControlStrip(panel)
+    local strip = panel.controlStrip
+    if not strip or strip._quiBuilt then return end
+    strip._quiBuilt = true
+    local UIKit = ns.UIKit
+    local Driver = ns.QUI_GroupFramesPreview
+    local chips = {}
+
+    local COLS, CHIP_W, ROW_H = 3, 64, 24
+    for i, def in ipairs(CHIP_DEFS) do
+        local col = (i - 1) % COLS
+        local row = math.floor((i - 1) / COLS)
+        local box = UIKit.CreateAccentCheckbox(strip, {
+            size = 14,
+            checked = State.previewFilter[def.key] ~= false,
+            onChange = function(val)
+                State.previewFilter[def.key] = val and true or false
+                ApplyFilterToDriver()
+            end,
+        })
+        box:ClearAllPoints()
+        box:SetPoint("TOPLEFT", strip, "TOPLEFT", col * CHIP_W, -(row * ROW_H))
+        local lbl = GUI:CreateLabel(strip, def.label, 11,
+            GUI.Colors and GUI.Colors.text or { 1, 1, 1, 1 }, "LEFT", 0, 0)
+        lbl:ClearAllPoints()
+        lbl:SetPoint("LEFT", box, "RIGHT", 3, 0)
+        chips[def.key] = { box = box, label = lbl }
+    end
+
+    -- gfdb captured once per build: testMode is mutated in place (never replaced)
+    -- and the driver re-reads gfdb on each Refresh, so the reference stays live.
+    local _, gfdb = CurrentPreviewVDB()
+    local raidRow = GUI:CreateFormSlider(strip, "Raid Size", 5, 40, 5, "raidCount",
+        (gfdb and gfdb.testMode) or {}, function(value)
+            local Drv = ns.QUI_GroupFramesPreview
+            local snapped = (Drv and Drv._SnapRaidCount(value)) or value
+            if gfdb and gfdb.testMode then gfdb.testMode.raidCount = snapped end
+            if _G.QUI_RefreshGroupFramePreview then
+                _G.QUI_RefreshGroupFramePreview("raid")
+            end
+        end)
+    raidRow:ClearAllPoints()
+    raidRow:SetPoint("TOPLEFT", strip, "TOPLEFT", 0, -(2 * ROW_H))
+    raidRow:SetPoint("TOPRIGHT", strip, "TOPRIGHT", 0, -(2 * ROW_H))
+
+    panel.RefreshControlStrip = function(vdb)
+        for _, def in ipairs(CHIP_DEFS) do
+            local c = chips[def.key]
+            local enabled = Driver and Driver._ChipEnabledInConfig(vdb, def.key)
+            if c then
+                if enabled then
+                    c.box:SetAlpha(1); c.box:EnableMouse(true); c.label:SetAlpha(1)
+                else
+                    c.box:SetAlpha(0.35); c.box:EnableMouse(false); c.label:SetAlpha(0.35)
+                end
+            end
+        end
+        if State.contextMode == "raid" then raidRow:Show() else raidRow:Hide() end
+    end
+end
+
+local function EnsurePreviewPanel()
+    local win = CurrentOptionsWindow()
+    if not win then return nil end
+
+    -- QUI_Options is torn down and rebuilt wholesale on theme change
+    -- (GUI:RefreshAccentColor) — TeardownFrameTree does SetParent(nil) on this
+    -- panel, and the rebuilt QUI_Options frame may be REUSED or REPLACED, so
+    -- window identity is not a reliable signal. The robust check: the panel is
+    -- valid only while still parented to the live window. After a teardown its
+    -- parent is no longer the live window, so rebuild (and neutralize the orphan
+    -- so it stops participating in the framework's refresh passes).
+    local cached = State.previewPanel
+    if cached and cached.frame and cached.frame:GetParent() == win then
+        return cached
+    end
+
+    if cached then
+        State.previewPanel = nil
+        if cached.frame then
+            cached.frame:Hide()
+            cached.frame:ClearAllPoints()
+        end
+    end
+
+    if not FullSurface or type(FullSurface.CreateDockedPreviewPanel) ~= "function" then
+        return nil
+    end
+
+    local panel = FullSurface.CreateDockedPreviewPanel({
+        gui = GUI,
+        title = "Preview",
+        idSuffix = "GroupFrames",
+        window = win,
+        controlStripHeight = 78,
+        minWidth = 220,
+    })
+    if not panel then return nil end
+
+    State.previewPanel = panel
+    InstallPreviewObserver()
+    BuildControlStrip(panel)
+    return panel
+end
+
+local function UpdatePreviewTitle()
+    local p = State.previewPanel
+    if not p then return end
+    p.SetTitle(State.contextMode == "raid" and "Preview — Raid" or "Preview — Party")
+end
+
+local function RefreshPreviewPanel()
+    local panel = EnsurePreviewPanel()
+    if not panel then return end
+    UpdatePreviewTitle()
+    if panel.RefreshControlStrip then
+        local vdb = CurrentPreviewVDB()
+        panel.RefreshControlStrip(vdb)
+    end
+    if _G.QUI_BuildGroupFramePreview then
+        _G.QUI_BuildGroupFramePreview(panel.contentHost, State.contextMode)
+    end
+end
 
 ---------------------------------------------------------------------------
 -- Helpers
@@ -70,6 +268,13 @@ local ContextSelection = FullSurface and FullSurface.CreateSelectionController
 
             if _G.QUI_RefreshGroupFramePreview then
                 _G.QUI_RefreshGroupFramePreview(key)
+            end
+            if State.previewPanel and State.previewPanel.RefreshControlStrip then
+                local vdb = CurrentPreviewVDB()
+                State.previewPanel.RefreshControlStrip(vdb)
+            end
+            if State.previewPanel then
+                State.previewPanel.SetTitle(key == "raid" and "Preview — Raid" or "Preview — Party")
             end
 
             if State.repaintTabs then
@@ -140,37 +345,6 @@ local function GetSearchRoot()
     return State.activeBody
 end
 
----------------------------------------------------------------------------
--- PREVIEW BLOCK — Party/Raid dropdown + hoisted composer preview.
----------------------------------------------------------------------------
-local function BuildPreviewBlock(pv)
-    local model = ResolveModel()
-    local getContextOptions = model and model.GetContextOptions
-
-    State.contextMode = NormalizeContextMode(State.contextMode)
-    FullSurface.BuildDropdownPreviewBlock(pv, {
-        gui = GUI,
-        state = State,
-        selectedValue = State.contextMode,
-        dropdownStateKey = "_contextMode",
-        dropdownLabel = "Unit Group",
-        dropdownOptions = type(getContextOptions) == "function" and getContextOptions() or {},
-        dropdownMeta = {
-            description = "Switch between Party and Raid frame settings. Spotlight is only available for Raid frames.",
-        },
-        clipPreviewChildren = true,
-        onDropdownChanged = function(value)
-            SetContextMode(value)
-        end,
-        onBuildPreviewHost = function(previewHost)
-            State.previewHost = previewHost
-            if _G.QUI_BuildGroupFramePreview then
-                _G.QUI_BuildGroupFramePreview(previewHost, State.contextMode)
-            end
-        end,
-    })
-end
-
 EnsureTabModel = function(feature)
     if TabModel then
         return TabModel
@@ -191,30 +365,141 @@ EnsureTabModel = function(feature)
 end
 
 ---------------------------------------------------------------------------
--- TAB STRIP — two-row layout so the wider tab set fits without clipping.
--- Matches cooldown_manager.lua styling (11pt labels, 2px accent bar under
--- the active tab).
+-- TAB STRIP — width-responsive wrapping: tabs pack onto one row when the
+-- window is wide enough and wrap to additional rows as it narrows. Repaints
+-- on size change (repaintOnSizeChanged below). Matches cooldown_manager.lua
+-- styling (11pt labels, 2px accent bar under the active tab).
 ---------------------------------------------------------------------------
 local function BuildTabStrip(parent)
     return FullSurface.CreateTabStrip(parent, {
-        fixedRows = true,
+        wrapRows = true,
         rowSpacing = 2,
         fallbackWidth = 780,
     })
 end
 
 ---------------------------------------------------------------------------
--- TILE BODY — tab strip + scroll-wrapped content host.
+-- IN-TAB SECTION NAV — these tabs stack several sections, so they get a chip
+-- strip (same component as Gameplay -> Damage Meter via sectionNav) that jump-
+-- scrolls to each section header. CreateAccentDotLabel (used by builder.Header)
+-- auto-registers each header as a section on any host that exposes
+-- RegisterSection, so we install one on the tab's content host before render.
+---------------------------------------------------------------------------
+local SECTION_NAV_TABS = {
+    appearance = true,
+    indicators = true,
+    auras = true,
+}
+
+local function InstallSectionRegistry(host)
+    if type(host._quiNavSections) == "table" then
+        wipe(host._quiNavSections)
+    else
+        host._quiNavSections = {}
+    end
+    if not host.RegisterSection then
+        function host:RegisterSection(id, label, frame)
+            if type(id) ~= "string" or id == "" or not frame then
+                return
+            end
+            local resolved = (type(label) == "string" and label ~= "") and label or id
+            local list = self._quiNavSections
+            for i, existing in ipairs(list) do
+                if existing.id == id then
+                    list[i] = { id = id, label = resolved, frame = frame }
+                    return
+                end
+            end
+            list[#list + 1] = { id = id, label = resolved, frame = frame }
+        end
+    end
+end
+
+-- Restore the scroll frame to its full (strip-less) anchors. RenderSectionNav
+-- pushes it down by the strip height; if a later render has no strip (content
+-- no longer overflows) we must undo that so the viewport reclaims the space.
+-- The 5/-28/5 insets mirror CreateScrollableContent (QUI_Options/shared.lua).
+local function ResetTabScrollAnchors(cached)
+    local sf = cached and cached.scrollFrame
+    if not sf or not cached.container then
+        return
+    end
+    sf:ClearAllPoints()
+    sf:SetPoint("TOPLEFT", cached.container, "TOPLEFT", 5, -5)
+    sf:SetPoint("BOTTOMRIGHT", cached.container, "BOTTOMRIGHT", -28, 5)
+end
+
+local function BuildTabSectionNav(host, cached)
+    if not host or not cached or not cached.scrollFrame then
+        return
+    end
+
+    -- Tear down any strip from a prior render; its chips point at section
+    -- frames that were just cleared/rebuilt, so they must not be reused.
+    if cached._sectionNav then
+        cached._sectionNav:Hide()
+        cached._sectionNav = nil
+    end
+    ResetTabScrollAnchors(cached)
+
+    local sections = host._quiNavSections
+    if type(sections) ~= "table" or #sections < 2 then
+        return
+    end
+
+    -- Heights settle one frame after render, so attempt now and again next
+    -- tick. Only show the strip once the content actually overflows the view.
+    local function tryBuild()
+        if cached._sectionNav then
+            return
+        end
+        local bodyH = host.GetHeight and host:GetHeight() or 0
+        local viewH = cached.scrollFrame.GetHeight and cached.scrollFrame:GetHeight() or 0
+        if bodyH > viewH and viewH > 0 then
+            cached._sectionNav = GUI:RenderSectionNav(cached.scrollFrame, host, sections)
+        end
+    end
+    tryBuild()
+    if C_Timer and C_Timer.After then
+        C_Timer.After(0, tryBuild)
+    end
+end
+
+---------------------------------------------------------------------------
+-- TILE BODY — compact Party/Raid dropdown row (injected at body top via
+-- initialize + tabTopOffset) + tab strip + scroll-wrapped content host.
+-- Also docks the detached preview panel and ties its visibility to this
+-- page's show/hide (covers tile-switch and window-close).
 ---------------------------------------------------------------------------
 local function BuildTileBody(body, _, _, feature)
     local tabModel = EnsureTabModel(feature)
-    return FullSurface.BuildScrollTabBody(body, {
+    local DROPDOWN_ROW_H = 30
+
+    local result = FullSurface.BuildScrollTabBody(body, {
         cacheTabBodies = true,
         state = State,
         clearFrame = ClearFrame,
         createTabStrip = BuildTabStrip,
+        tabTopOffset = -(DROPDOWN_ROW_H + 8),
         initialize = function()
             State.activeTab = State.activeTab or "general"
+            local model = ResolveModel(feature)
+            local getContextOptions = model and model.GetContextOptions
+            State.contextMode = NormalizeContextMode(State.contextMode)
+            FullSurface.BuildContextDropdownRow(body, {
+                gui = GUI,
+                label = "Unit Group",
+                stateKey = "_contextMode",
+                selectedValue = State.contextMode,
+                options = type(getContextOptions) == "function" and getContextOptions() or {},
+                meta = {
+                    description = "Switch between Party and Raid frame settings. Spotlight is only available for Raid frames.",
+                },
+                height = DROPDOWN_ROW_H,
+                onChanged = function(value)
+                    SetContextMode(value)
+                end,
+            })
         end,
         getTabs = function()
             return tabModel:GetTabs()
@@ -225,20 +510,66 @@ local function BuildTileBody(body, _, _, feature)
         setActiveTab = function(tabKey)
             tabModel:SetActiveKey(tabKey)
         end,
-        render = function(host, activeTab)
-            return tabModel:RenderKey(host, activeTab)
+        render = function(host, activeTab, cached)
+            local navTab = SECTION_NAV_TABS[activeTab] and cached ~= nil
+            if navTab then
+                InstallSectionRegistry(host)
+            end
+            local result = tabModel:RenderKey(host, activeTab)
+            if navTab then
+                BuildTabSectionNav(host, cached)
+                -- The auras tab reflows via ctx:RerenderFeature (aura add/remove/
+                -- expand), which re-anchors sections WITHOUT re-entering this
+                -- render callback -- so the strip's chips would point at stale
+                -- section frames. The reflow changes the host height, so rebuild
+                -- the strip on size settle (debounced to one rebuild per frame).
+                if not cached._navSizeHooked then
+                    cached._navSizeHooked = true
+                    host:HookScript("OnSizeChanged", function()
+                        if cached._navRebuildPending then
+                            return
+                        end
+                        cached._navRebuildPending = true
+                        local function rebuild()
+                            cached._navRebuildPending = false
+                            BuildTabSectionNav(host, cached)
+                        end
+                        if C_Timer and C_Timer.After then
+                            C_Timer.After(0, rebuild)
+                        else
+                            rebuild()
+                        end
+                    end)
+                end
+            end
+            return result
         end,
         repaintOnSizeChanged = true,
         deferResizeRepaint = true,
         preventReentry = true,
     })
+
+    -- Dock + show the detached preview panel; tie its visibility to this page.
+    EnsurePreviewPanel()
+    if not body._gfPreviewHooked then
+        body._gfPreviewHooked = true
+        body:HookScript("OnShow", function()
+            if State.previewPanel then State.previewPanel.Show() end
+            RefreshPreviewPanel()
+        end)
+        body:HookScript("OnHide", function()
+            if State.previewPanel then State.previewPanel.Hide() end
+        end)
+    end
+    if State.previewPanel and body:IsShown() then
+        State.previewPanel.Show()
+        RefreshPreviewPanel()
+    end
+
+    return result
 end
 
 ns.QUI_GroupFramesSettingsSurface = {
-    preview = {
-        height = 240,
-        build = BuildPreviewBlock,
-    },
     SetContextMode = SetContextMode,
     SetActiveTab = SetActiveTab,
     NavigateSearchEntry = NavigateSearchEntry,

@@ -46,8 +46,7 @@ assert(not partyKeystones:find("edgeSize = 1", 1, true),
 local rawBackdropFiles = {
     "QUI_Options/framework.lua",
     "QUI_GroupFrames/groupframes/groupframes_editmode.lua",
-    "QUI_GroupFrames/groupframes/settings/group_frames_pinned_editor.lua",
-    "QUI_GroupFrames/groupframes/settings/group_frames_aura_indicators_editor.lua",
+    "QUI_GroupFrames/groupframes/settings/group_frames_auras_editor.lua",
     "core/diagnostics_console.lua",
     "QUI_QoL/utility/settings/keybinds_content.lua",
     "QUI_Chat/chat/settings/chat_frame1_provider.lua",
@@ -55,7 +54,6 @@ local rawBackdropFiles = {
     "modules/layout/layoutmode_settings.lua",
     "QUI_CDM/cdm/settings/composer.lua",
     "QUI_QoL/qol/consumablecheck.lua",
-    "modules/layout/layoutmode_composer.lua",
 }
 
 for _, path in ipairs(rawBackdropFiles) do
