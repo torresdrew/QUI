@@ -70,29 +70,3 @@ function IntegrationShared.MakeQueueRetry(moduleName)
         end)
     end
 end
-
--- Returns a TryInstallAnchoredFramesHook function that wraps the global
--- QUI_UpdateAnchoredFrames once, chaining ns[moduleName]:ApplyAllPositions().
-function IntegrationShared.MakeTryInstallAnchoredFramesHook(moduleName)
-    local installed = false
-    return function()
-        if installed then
-            return true
-        end
-
-        local previousUpdateAnchoredFrames = _G.QUI_UpdateAnchoredFrames
-        if not previousUpdateAnchoredFrames then
-            return false
-        end
-
-        _G.QUI_UpdateAnchoredFrames = function(...)
-            previousUpdateAnchoredFrames(...)
-            local module = ns[moduleName]
-            if module then
-                module:ApplyAllPositions()
-            end
-        end
-        installed = true
-        return true
-    end
-end
