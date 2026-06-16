@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+
+## v4.0.0 - 2026-06-16
+
+QUI 4 is the next major release for Retail/Midnight. It restructures the addon into a small core plus LoadOnDemand feature suites, rebuilds the options experience, adds several full modules, and hardens the runtime for modern combat-taint and secret-value rules. Back up your `WTF` folder before upgrading from 3.x.
+
+### Added
+- Split QUI into core plus LoadOnDemand suite add-ons for Action Bars, Cooldown Manager, Chat, Group Frames, Unit Frames, Skinning, Datatexts, Minimap, Info Bar, Alts, Bags, Damage Meter, Debug, Options, Options Search, and QoL.
+- Added major new or rebuilt experiences: Bags, Alts tracking, Info Bar, native Damage Meter, QUI-owned Chat display, Group Frames aura tooling, targeted-spell indicators, missing raid-buff tracking, and Resource Bar border controls.
+- Added searchable/tiled options, richer Layout Mode tooling, in-game help content, diagnostics, profile/import helpers, generated search caches, and local CI/test helpers.
+
+### Changed
+- Rebuilt the Options UI around module pages, section navigation, pins, previews, searchable routes, and deferred loading.
+- Reworked Cooldown Manager internals around split resolvers/renderers, custom container parity, per-loadout/spec state, and safer aura/cooldown handling.
+- Consolidated skinning, font, border, scaling, storage, settings, migration, and UI-kit infrastructure across Blizzard frames and QUI-owned UI.
+- Updated profile defaults and migrations for QUI 4; very old pre-3.5.11 profiles are backed up and reseeded instead of step-migrated.
+
+### Fixed
+- Hardened combat-taint and secret-value handling across chat, unit/group frames, action bars, cooldowns, tooltips, skinning, damage meter, and layout mode.
+- Fixed many startup, reload, Edit Mode, Layout Mode, packaging, release workflow, search-cache, and module lifecycle issues found during alpha/beta testing.
+
+### Removed
+- Retired the old monolithic module layout, obsolete module master flags, first-run popup flow, pre-3.5.11 incremental migrations, stale localization/dev-build artifacts, and dead-code paths guarded by the new test suite.
 ## v4.0.0 - 2026-06-16
 
 QUI 4 is the next major release for Retail/Midnight. It restructures the addon into a small core plus LoadOnDemand feature suites, rebuilds the options experience, adds several full modules, and hardens the runtime for modern combat-taint and secret-value rules. Back up your `WTF` folder before upgrading from 3.x.
