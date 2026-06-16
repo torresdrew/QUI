@@ -8,6 +8,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v4.0.2-beta1 - 2026-06-16
+
+First beta of this build on top of 4.0.1.
+
+### Added
+- Icon Skins & Glow Providers: external skin-library support for icon borders, plus customizable proc-glow styling.
+- Omnium Folio datatext: launches the Midnight expansion landing page and shows unspent Runes of Power.
+- Mission button drawer option: opt the garrison/mission/expedition landing button into the button drawer instead of the minimap pin.
+- Per-bar border color for the primary and secondary Resource (power) bars.
+- Missing raid-buff tracking on Group Frames.
+- Localization (i18n) support enabled on the base addon.
+
+### Fixed
+- Stopped Blizzard tab/button art and fonts reverting over the QUI skin.
+- Stopped Group Finder list text reverting to the Blizzard font.
+
 ## v4.0.1 - 2026-06-16
 
 ### Fixed
