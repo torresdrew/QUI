@@ -59166,6 +59166,44 @@ ns.QUI_SearchCache = {
         },
         {
             ["category"] = "frames",
+            ["description"] = "Where the bar border gets its color: Inherit (global skin border), Theme accent, Class color, or Custom.",
+            ["featureId"] = "primaryPower",
+            ["label"] = "Источник цвета границы",
+            ["subPageIndex"] = 1,
+            ["subTabName"] = "Основной ресурс",
+            ["tabName"] = "Индикаторы ресурсов",
+            ["tileId"] = "resource_bars",
+            ["widgetDescriptor"] = {
+                ["category"] = "frames",
+                ["dbKey"] = "borderColorSource",
+                ["dbPath"] = "profile.powerBar",
+                ["dropdownOptions"] = {
+                },
+                ["featureId"] = "primaryPower",
+                ["kind"] = "dropdown",
+                ["options"] = {
+                    {
+                        ["text"] = "Наследовать (глобально)",
+                        ["value"] = "inherit",
+                    },
+                    {
+                        ["text"] = "Акцент темы",
+                        ["value"] = "theme",
+                    },
+                    {
+                        ["text"] = "Цвет класса",
+                        ["value"] = "class",
+                    },
+                    {
+                        ["text"] = "Пользовательский",
+                        ["value"] = "custom",
+                    },
+                },
+            },
+            ["widgetType"] = "dropdown",
+        },
+        {
+            ["category"] = "frames",
             ["description"] = "Направление заполнения: горизонтальное (слева направо) или вертикальное (снизу вверх).",
             ["featureId"] = "primaryPower",
             ["label"] = "Ориентация",
@@ -59491,6 +59529,26 @@ ns.QUI_SearchCache = {
         },
         {
             ["category"] = "frames",
+            ["description"] = "Custom bar border color, used when Border Color Source is set to Custom.",
+            ["featureId"] = "primaryPower",
+            ["label"] = "Цвет границы",
+            ["subPageIndex"] = 1,
+            ["subTabName"] = "Основной ресурс",
+            ["tabName"] = "Индикаторы ресурсов",
+            ["tileId"] = "resource_bars",
+            ["widgetDescriptor"] = {
+                ["category"] = "frames",
+                ["dbKey"] = "borderColor",
+                ["dbPath"] = "profile.powerBar",
+                ["featureId"] = "primaryPower",
+                ["kind"] = "colorpicker",
+                ["options"] = {
+                },
+            },
+            ["widgetType"] = "colorpicker",
+        },
+        {
+            ["category"] = "frames",
             ["description"] = "Цвет, используемый для пользовательских линий маркеров брейкпоинтов.",
             ["featureId"] = "primaryPower",
             ["label"] = "Цвет индикатора",
@@ -59783,6 +59841,44 @@ ns.QUI_SearchCache = {
                 ["step"] = 1,
             },
             ["widgetType"] = "slider",
+        },
+        {
+            ["category"] = "frames",
+            ["description"] = "Where the bar border gets its color: Inherit (global skin border), Theme accent, Class color, or Custom.",
+            ["featureId"] = "secondaryPower",
+            ["label"] = "Источник цвета границы",
+            ["subPageIndex"] = 2,
+            ["subTabName"] = "Вторичный ресурс",
+            ["tabName"] = "Индикаторы ресурсов",
+            ["tileId"] = "resource_bars",
+            ["widgetDescriptor"] = {
+                ["category"] = "frames",
+                ["dbKey"] = "borderColorSource",
+                ["dbPath"] = "profile.secondaryPowerBar",
+                ["dropdownOptions"] = {
+                },
+                ["featureId"] = "secondaryPower",
+                ["kind"] = "dropdown",
+                ["options"] = {
+                    {
+                        ["text"] = "Наследовать (глобально)",
+                        ["value"] = "inherit",
+                    },
+                    {
+                        ["text"] = "Акцент темы",
+                        ["value"] = "theme",
+                    },
+                    {
+                        ["text"] = "Цвет класса",
+                        ["value"] = "class",
+                    },
+                    {
+                        ["text"] = "Пользовательский",
+                        ["value"] = "custom",
+                    },
+                },
+            },
+            ["widgetType"] = "dropdown",
         },
         {
             ["category"] = "frames",
@@ -60120,6 +60216,26 @@ ns.QUI_SearchCache = {
                 ["step"] = 1,
             },
             ["widgetType"] = "slider",
+        },
+        {
+            ["category"] = "frames",
+            ["description"] = "Custom bar border color, used when Border Color Source is set to Custom.",
+            ["featureId"] = "secondaryPower",
+            ["label"] = "Цвет границы",
+            ["subPageIndex"] = 2,
+            ["subTabName"] = "Вторичный ресурс",
+            ["tabName"] = "Индикаторы ресурсов",
+            ["tileId"] = "resource_bars",
+            ["widgetDescriptor"] = {
+                ["category"] = "frames",
+                ["dbKey"] = "borderColor",
+                ["dbPath"] = "profile.secondaryPowerBar",
+                ["featureId"] = "secondaryPower",
+                ["kind"] = "colorpicker",
+                ["options"] = {
+                },
+            },
+            ["widgetType"] = "colorpicker",
         },
         {
             ["category"] = "frames",
