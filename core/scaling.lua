@@ -113,7 +113,6 @@ end
 --- @param frame? Frame Optional frame for frame-aware scaling (defaults to UIParent)
 --- @return number Virtual coordinate value representing exactly x physical pixels
 function QUICore:Scale(x, frame)
-    if x == 0 then return 0 end
     return self:Pixels(x, frame)
 end
 
@@ -301,6 +300,17 @@ local function applyFontInternal(self, fontString, frame, size, fontPath, flags)
     local px = self:GetPixelSize(frame)
     sz = Round(sz / px) * px
 
+    -- Route through the CJK-aware family setter so every UIKit.CreateText
+    -- consumer (castbars and most QUI UI text) renders Chinese/Korean glyphs.
+    -- ApplyFontWithFallback keeps the roman font (only adds CJK members, so
+    -- Latin appearance is unchanged) and degrades to a single-file SetFont
+    -- internally. Mirror the old boolean "ok" via a post-apply GetFont check so
+    -- the caller's scale-refresh registration still works.
+    if Helpers and Helpers.ApplyFontWithFallback then
+        Helpers.ApplyFontWithFallback(fontString, path, sz, outline)
+        return fontString:GetFont() ~= nil
+    end
+
     local ok = fontString:SetFont(path, sz, outline)
     return ok
 end
@@ -371,17 +381,23 @@ function QUICore:GetSmartDefaultScale()
     return 1.0                                                -- 1080p or lower
 end
 
+-- Re-run ApplyUIScale once combat ends (shared by the in-combat and
+-- protected-call-failed deferral paths in ApplyUIScale below).
+local function DeferUIScaleToRegen(self)
+    if not self._UIScalePending then
+        self._UIScalePending = true
+        self:RegisterEvent('PLAYER_REGEN_ENABLED', function()
+            self._UIScalePending = nil
+            self:UnregisterEvent('PLAYER_REGEN_ENABLED')
+            self:ApplyUIScale()
+        end)
+    end
+end
+
 --- Apply UI scale (defers if in combat, unless in ADDON_LOADED safe window)
 function QUICore:ApplyUIScale()
     if InCombatLockdown() and not ns._inInitSafeWindow then
-        if not self._UIScalePending then
-            self._UIScalePending = true
-            self:RegisterEvent('PLAYER_REGEN_ENABLED', function()
-                self._UIScalePending = nil
-                self:UnregisterEvent('PLAYER_REGEN_ENABLED')
-                self:ApplyUIScale()
-            end)
-        end
+        DeferUIScaleToRegen(self)
         return
     end
 
@@ -395,22 +411,20 @@ function QUICore:ApplyUIScale()
 
     local success = pcall(function() UIParent:SetScale(scaleToApply) end)
     if not success then
-        if not self._UIScalePending then
-            self._UIScalePending = true
-            self:RegisterEvent('PLAYER_REGEN_ENABLED', function()
-                self._UIScalePending = nil
-                self:UnregisterEvent('PLAYER_REGEN_ENABLED')
-                self:ApplyUIScale()
-            end)
-        end
+        DeferUIScaleToRegen(self)
         return
     end
 
     self.uiscale = UIParent:GetScale()
     self.screenWidth, self.screenHeight = GetScreenWidth(), GetScreenHeight()
     self:RefreshAllFonts()  -- Re-snap all registered fonts to new pixel grid
-    if ns.UIKit and ns.UIKit.RefreshScaleBoundWidgets then
-        ns.UIKit.RefreshScaleBoundWidgets()
+    local UIKit = ns.UIKit
+    if UIKit then
+        if UIKit.QueueScaleRefresh then
+            UIKit.QueueScaleRefresh(2)
+        elseif UIKit.RefreshScaleBoundWidgets then
+            UIKit.RefreshScaleBoundWidgets()
+        end
     end
 end
 
@@ -419,7 +433,7 @@ end
 --------------------------------------------------------------------------------
 
 function QUICore:PixelScaleChanged(event)
-    if event == 'UI_SCALE_CHANGED' then
+    if event == 'UI_SCALE_CHANGED' or event == 'DISPLAY_SIZE_CHANGED' then
         self.physicalWidth, self.physicalHeight = GetPhysicalScreenSize()
         self.resolution = format('%dx%d', self.physicalWidth, self.physicalHeight)
         -- Update the module-level cache
@@ -433,6 +447,7 @@ function QUICore:InitializePixelPerfect()
     self.resolution = format('%dx%d', self.physicalWidth, self.physicalHeight)
     cachedPhysicalHeight = self.physicalHeight
     self:RegisterEvent('UI_SCALE_CHANGED', 'PixelScaleChanged')
+    self:RegisterEvent('DISPLAY_SIZE_CHANGED', 'PixelScaleChanged')
 end
 
 --------------------------------------------------------------------------------
@@ -450,4 +465,3 @@ local panelFrame = nil
 function QUICore:SetPanelFrame(frame)
     panelFrame = frame
 end
-

@@ -7,7 +7,10 @@ nav_order: 13
 
 # Tooltips & Chat
 
-Tooltip and Chat settings are accessible from the **General & QoL** tab in-game but are documented separately here for convenience. This page also covers Skyriding, XP Tracker, Combat Text, BRez Counter, Combat Timer, M+ Timer, Raid Buffs, and Buff/Debuff Borders settings.
+Tooltip and Chat settings are accessible from the **Chat & Tooltips** tile in-game and are documented separately here for convenience. This page also covers several related presentation settings that may appear in nearby tiles such as Gameplay, Appearance, and Quality of Life.
+
+{: .note }
+QUI Chat is an optional module. Enable it from **Module Addons** before expecting the custom QUI chat windows, tabs, copy tools, or Combat Log tab. If the Chat module is off, only stock-chat styling and related tooltip/chat helpers apply.
 
 ---
 
@@ -34,6 +37,9 @@ Tooltip and Chat settings are accessible from the **General & QoL** tab in-game 
 | `tooltip.borderUseClassColor` | boolean | `false` | Class color border |
 | `tooltip.borderUseAccentColor` | boolean | `false` | Accent color border |
 | `tooltip.showSpellIDs` | boolean | `false` | Show spell/icon IDs and item IDs |
+| `tooltip.showTooltipTarget` | boolean | `true` | Show the unit's current target |
+| `tooltip.showPlayerMount` | boolean | `true` | Show active mount on mounted players |
+| `tooltip.showPlayerMythicRating` | boolean | `true` | Show Mythic+ rating on players |
 | `tooltip.hideHealthBar` | boolean | `true` | Hide health bar |
 | `tooltip.combatKey` | string | `"SHIFT"` | Combat modifier key |
 

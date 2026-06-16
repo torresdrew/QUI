@@ -18,6 +18,19 @@ local InCombatLockdown = InCombatLockdown
 local C_Timer = C_Timer
 local hooksecurefunc = hooksecurefunc
 
+local function RunAfterFirstFrame(callback, delay)
+    if ns and ns.RunAfterFirstFrame then
+        return ns.RunAfterFirstFrame(callback, delay)
+    end
+    if C_Timer and C_Timer.After then
+        return C_Timer.After(delay or 0, callback)
+    end
+    if type(callback) == "function" then
+        return callback()
+    end
+    return nil
+end
+
 -- Create QUICore as an Ace3 module within QUI
 local QUICore = QUI:NewModule("QUICore", "AceConsole-3.0", "AceEvent-3.0")
 QUI.QUICore = QUICore
@@ -49,25 +62,12 @@ local function EnsureReloadEventFrame(self)
     return self.__reloadEventFrame
 end
 
-function QUICore:RequestReload()
-    if InCombatLockdown() and not (QUI.db and QUI.db.profile and QUI.db.profile.general and QUI.db.profile.general.allowReloadInCombat) then
-        if not self.__pendingReload then
-            self.__pendingReload = true
-            print("|cFF30D1FFQUI:|r Reload queued - will execute when combat ends.")
-            EnsureReloadEventFrame(self)
-        end
-        return
-    end
-
-    self:ShowReloadPopup()
-end
-
 -- Safe reload function - queues if in combat, reloads immediately if not
 function QUICore:SafeReload()
     if InCombatLockdown() and not (QUI.db and QUI.db.profile and QUI.db.profile.general and QUI.db.profile.general.allowReloadInCombat) then
         if not self.__pendingReload then
             self.__pendingReload = true
-            print("|cFF30D1FFQUI:|r Reload queued - will execute when combat ends.")
+            print("|cFF30D1FFQUI:|r " .. ns.L["Reload queued - will execute when combat ends."])
             EnsureReloadEventFrame(self)
         end
     else
@@ -80,15 +80,15 @@ function QUICore:ShowReloadPopup()
     -- Use QUI's existing confirmation dialog
     if QUI and QUI.GUI and QUI.GUI.ShowConfirmation then
         QUI.GUI:ShowConfirmation({
-            title = "Reload Ready",
-            message = "Combat ended. Click to reload the UI.",
-            acceptText = "Reload Now",
-            cancelText = "Later",
+            title = ns.L["Reload Ready"],
+            message = ns.L["Combat ended. Click to reload the UI."],
+            acceptText = ns.L["Reload Now"],
+            cancelText = ns.L["Later"],
             onAccept = function() ReloadUI() end,
         })
     else
         -- Fallback: print message if GUI not available
-        print("|cFF30D1FFQUI:|r Combat ended. Type /reload to reload.")
+        print("|cFF30D1FFQUI:|r " .. ns.L["Combat ended. Type /reload to reload."])
     end
 end
 
@@ -99,11 +99,34 @@ function QUI:SafeReload()
     else
         -- Fallback if QUICore not loaded
         if InCombatLockdown() and not (self.db and self.db.profile and self.db.profile.general and self.db.profile.general.allowReloadInCombat) then
-            print("|cFF30D1FFQUI:|r Cannot reload during combat.")
+            print("|cFF30D1FFQUI:|r " .. ns.L["Cannot reload during combat."])
         else
             ReloadUI()
         end
     end
+end
+
+-- Resolution-based fallback scale ladder, shared by OnProfileChanged and
+-- OnEnable when GetSmartDefaultScale / pixel-perfect scaling isn't available.
+local function ResolveSmartDefaultScale()
+    local _, screenHeight = GetPhysicalScreenSize()
+    if screenHeight >= 2160 then        -- 4K
+        return 0.53
+    elseif screenHeight >= 1440 then    -- 1440p
+        return 0.64
+    end
+    return 1.0                          -- 1080p or lower
+end
+
+-- Re-assert QUI frame positions after a Blizzard layout/scale pass. Used by the
+-- post-profile-change settle timers (1.0s and, on scale change, 1.8s).
+local function RepositionFramesAfterScale()
+    local ApplyAnchors = _G.QUI_ApplyAllFrameAnchors
+    if ApplyAnchors then pcall(ApplyAnchors, true) end
+    local RefreshUnitFrames = _G.QUI_RefreshUnitFrames
+    if RefreshUnitFrames then pcall(RefreshUnitFrames) end
+    local RefreshGroupFrames = _G.QUI_RefreshGroupFrames
+    if RefreshGroupFrames then pcall(RefreshGroupFrames) end
 end
 
 local LSM = ns.LSM
@@ -132,9 +155,35 @@ end
 local defaults = ns.defaults
 
 
+-- OnNewProfile handler: seed a freshly-created profile with the shipped
+-- new-profile defaults. db.profile here is the new profile, already filled with
+-- legacy defaults by AceDB; we overwrite the curated keys on top BEFORE the
+-- first reader sees it. See core/new_profile_defaults.lua.
+function QUICore:SeedNewProfile(event, db, profileKey)
+    if ns.ApplyNewProfileSeed then
+        ns.ApplyNewProfileSeed(db.profile)
+    end
+end
+
 function QUICore:OnInitialize()
     self.db = LibStub("AceDB-3.0"):New("QUIDB", defaults, true)
     QUI.db = self.db  -- Make database accessible to other QUI modules
+
+    -- Seed every newly-created profile (including a fresh install's Default)
+    -- with the shipped new-profile defaults. Registered synchronously here,
+    -- on the live profile DB, BEFORE the profile is first materialized below
+    -- (RunShippedDefaultsMaintenance is the first reader), so the seed lands
+    -- before any reader sees it -- no reload required. Copies fire
+    -- OnProfileCopied (not OnNewProfile) so they keep their source; existing
+    -- profiles already exist and never fire this. See core/new_profile_defaults.lua.
+    self.db.RegisterCallback(self, "OnNewProfile", "SeedNewProfile")
+
+    -- Consume legacy per-profile shipped-default snapshots before pruning
+    -- them, so default flips stay pinned without carrying the large table
+    -- deeper into login.
+    if ns.Compatibility and ns.Compatibility.RunShippedDefaultsMaintenance then
+        ns.Compatibility.RunShippedDefaultsMaintenance(self.db)
+    end
 
     -- Run all profile migrations (consolidated in migrations.lua)
     if ns.Migrations and ns.Migrations.Run then
@@ -156,9 +205,6 @@ function QUICore:OnInitialize()
     -- Initialize preserved scale - will be properly set in OnEnable after UI scale is applied
     self._preservedUIScale = nil
 
-    -- Track spec for detecting false PLAYER_SPECIALIZATION_CHANGED events during M+ entry
-    self._lastKnownSpec = GetSpecialization() or 0
-
     -- Track current profile to detect same-profile "switches" during M+ entry
     self._lastKnownProfile = self.db:GetCurrentProfile()
 
@@ -175,10 +221,10 @@ function QUICore:OnInitialize()
     -- Note: Main /qui command is handled by init.lua
     -- (quicorerefresh slash command removed — classic viewer skinning deleted)
 
-    -- Defer minimap button creation to reduce load-time CPU
-    C_Timer.After(0.1, function()
+    -- Defer minimap button creation until after the first visible frame.
+    RunAfterFirstFrame(function()
         self:CreateMinimapButton()
-    end)
+    end, 0.1)
 
     -- Apply theme accent color to GUI.Colors early so modules outside the
     -- options panel (layout mode, skinning, etc.) see the correct color.
@@ -222,16 +268,31 @@ function QUICore:OnProfileChanged(event, db, profileKey)
     end
     if inChallengeMode then return end
 
+    -- Normalize callback payloads that don't pass the active destination profile.
+    local currentProfile = self.db:GetCurrentProfile()
+    local effectiveProfileKey = profileKey
+    if event == "OnProfileCopied" or event == "OnProfileReset" then
+        effectiveProfileKey = currentProfile
+    end
+    if type(effectiveProfileKey) ~= "string" or effectiveProfileKey == "" then
+        effectiveProfileKey = currentProfile
+    end
+
     -- Skip if "switching" to the same profile (happens during M+ entry false events)
     -- LibDualSpec triggers profile switch even when already on correct profile
-    local currentProfile = self.db:GetCurrentProfile()
-    if profileKey == self._lastKnownProfile and profileKey == currentProfile then
+    if effectiveProfileKey == self._lastKnownProfile and effectiveProfileKey == currentProfile then
         return  -- No actual change happening - skip all UI modifications
     end
-    self._lastKnownProfile = profileKey
+    self._lastKnownProfile = effectiveProfileKey
 
-    -- Update spec tracking (kept for reference)
-    self._lastKnownSpec = GetSpecialization() or 0
+    if ns.CDMResolvers and ns.CDMResolvers._RebuildCatalog then
+        ns.CDMResolvers._RebuildCatalog()
+    end
+
+    local pins = ns.Settings and ns.Settings.Pins
+    if pins and type(pins.HandleProfileEvent) == "function" then
+        pins:HandleProfileEvent(event, self.db, effectiveProfileKey)
+    end
 
     -- Run migrations on the newly-activated profile
     local addon = _G.QUI
@@ -264,9 +325,6 @@ function QUICore:OnProfileChanged(event, db, profileKey)
         end
         if ns.UIKit and ns.UIKit.RefreshScaleBoundWidgets then
             ns.UIKit.RefreshScaleBoundWidgets()
-        end
-        if not InCombatLockdown() and self.UIMult then
-            self:UIMult()
         end
     end
     local function DeferUIScale(scale)
@@ -313,15 +371,7 @@ function QUICore:OnProfileChanged(event, db, profileKey)
                 if self.GetSmartDefaultScale then
                     scaleToUse = self:GetSmartDefaultScale()
                 else
-                    -- Inline fallback
-                    local _, screenHeight = GetPhysicalScreenSize()
-                    if screenHeight >= 2160 then
-                        scaleToUse = 0.53
-                    elseif screenHeight >= 1440 then
-                        scaleToUse = 0.64
-                    else
-                        scaleToUse = 1.0
-                    end
+                    scaleToUse = ResolveSmartDefaultScale()
                 end
             end
 
@@ -340,7 +390,7 @@ function QUICore:OnProfileChanged(event, db, profileKey)
             self._preservedUIScale = newProfileScale
         end
     end
-    
+
     -- Handle Panel Scale and Alpha preservation
     -- Always restore the preserved panel settings on profile change (new, reset, or switch)
     -- This keeps the panel consistent across all profile operations
@@ -354,11 +404,13 @@ function QUICore:OnProfileChanged(event, db, profileKey)
 
     -- Invalidate options panel — cached widgets hold stale profile table references
     if QUI.GUI and QUI.GUI.MainFrame then
-        pcall(QUI.GUI.MainFrame.Hide, QUI.GUI.MainFrame)
-        pcall(QUI.GUI.MainFrame.SetParent, QUI.GUI.MainFrame, nil)
+        if type(QUI.GUI.TeardownFrameTree) == "function" then
+            pcall(QUI.GUI.TeardownFrameTree, QUI.GUI, QUI.GUI.MainFrame, { includeRoot = true })
+        else
+            pcall(QUI.GUI.MainFrame.Hide, QUI.GUI.MainFrame)
+            pcall(QUI.GUI.MainFrame.SetParent, QUI.GUI.MainFrame, nil)
+        end
         QUI.GUI.MainFrame = nil
-        QUI.GUI._searchIndexBuilt = false
-        QUI.GUI._allTabsAdded = false
         QUI.GUI.SettingsRegistry = {}
         QUI.GUI.SettingsRegistryKeys = {}
     end
@@ -369,7 +421,7 @@ function QUICore:OnProfileChanged(event, db, profileKey)
             print("|cFFFF6666QUI:|r RefreshAll error: " .. tostring(err))
         end
     end
-    
+
     -- Refresh Minimap module on profile change
     if QUICore.Minimap then
         -- Small delay to ensure profile data is fully loaded
@@ -379,7 +431,7 @@ function QUICore:OnProfileChanged(event, db, profileKey)
             end
         end)
     end
-    
+
     -- Reset castbar previewMode flags before refreshing unit frames.
     -- previewMode is a transient UI state (options panel toggle) that should not
     -- persist across profile changes, but it lives in the DB and gets copied along.
@@ -408,7 +460,7 @@ function QUICore:OnProfileChanged(event, db, profileKey)
     -- 0.5s for skinning (avoids stacking too much work at once).
     -- Priority ordering within the registry ensures correct refresh sequence
     -- (cooldowns → frames → qol → combat → trackers → anchoring).
-    local refreshGroups = { "cooldowns", "frames", "castbars", "qol", "combat", "trackers", "data", "chat", "character", "utility", "ui", "anchoring" }
+    local refreshGroups = { "cooldowns", "frames", "castbars", "qol", "combat", "trackers", "data", "chat", "character", "utility", "ui", "anchoring", "bags" }
     C_Timer.After(0.2, function()
         if ns.Registry then
             -- Refresh all non-skinning modules in priority order
@@ -435,12 +487,7 @@ function QUICore:OnProfileChanged(event, db, profileKey)
     -- unit frame positions to catch any Blizzard layout passes that fired late.
     C_Timer.After(1.0, function()
         if not InCombatLockdown() then
-            local ApplyAnchors = _G.QUI_ApplyAllFrameAnchors
-            if ApplyAnchors then pcall(ApplyAnchors, true) end
-            local RefreshUnitFrames = _G.QUI_RefreshUnitFrames
-            if RefreshUnitFrames then pcall(RefreshUnitFrames) end
-            local RefreshGroupFrames = _G.QUI_RefreshGroupFrames
-            if RefreshGroupFrames then pcall(RefreshGroupFrames) end
+            RepositionFramesAfterScale()
         end
     end)
 
@@ -452,23 +499,19 @@ function QUICore:OnProfileChanged(event, db, profileKey)
                 return
             end
 
-            if self.UIMult then
-                self:UIMult()
-            end
-
             if ns.Registry then
                 for _, group in ipairs(refreshGroups) do
                     ns.Registry:RefreshAll(group)
                 end
             end
 
-            local ApplyAnchors = _G.QUI_ApplyAllFrameAnchors
-            if ApplyAnchors then pcall(ApplyAnchors, true) end
-            local RefreshUnitFrames = _G.QUI_RefreshUnitFrames
-            if RefreshUnitFrames then pcall(RefreshUnitFrames) end
-            local RefreshGroupFrames = _G.QUI_RefreshGroupFrames
-            if RefreshGroupFrames then pcall(RefreshGroupFrames) end
+            RepositionFramesAfterScale()
         end)
+    end
+
+    -- Profile may newly flag-enable a LoadOnDemand sub-addon — load it live.
+    if ns.AddonLoader then
+        ns.AddonLoader:LoadEnabledLODModules()
     end
 end
 
@@ -477,7 +520,7 @@ function QUICore:ShowProfileChangeNotification()
     -- The popup was causing an ApplyAllFrameAnchors feedback loop by entering
     -- Edit Mode during the profile transition.
     local profileName = self.db and self.db:GetCurrentProfile() or "Unknown"
-    print(format("|cff60A5FAQUI:|r Profile switched to |cFFFFD700%s|r. Use |cFFFFD700/editmode|r to adjust frame positions.", profileName))
+    print(ns.L["|cff60A5FAQUI:|r Profile switched to |cFFFFD700%s|r. Use |cFFFFD700/editmode|r to adjust frame positions."]:format(profileName))
 end
 
 -- ============================================================================
@@ -525,22 +568,14 @@ function QUICore:RegisterPostInitialize(callback)
     table.insert(self._postInitializeCallbacks, callback)
 end
 
+-- Layout Mode is the current name for what used to be Edit Mode bridging;
+-- these are exact aliases of the RegisterEditMode* pair above.
 function QUICore:RegisterLayoutModeEnter(callback)
-    local um = ns.QUI_LayoutMode
-    if um then
-        um:RegisterEnterCallback(callback)
-    else
-        table.insert(self._editModeEnterCallbacks, callback)
-    end
+    return self:RegisterEditModeEnter(callback)
 end
 
 function QUICore:RegisterLayoutModeExit(callback)
-    local um = ns.QUI_LayoutMode
-    if um then
-        um:RegisterExitCallback(callback)
-    else
-        table.insert(self._editModeExitCallbacks, callback)
-    end
+    return self:RegisterEditModeExit(callback)
 end
 
 function QUICore:RegisterPostEnable(callback)
@@ -554,6 +589,11 @@ end
 function QUICore:OnEnable()
     -- Override Blizzard's /reload command to use SafeReload
     -- (Must happen in OnEnable, after Blizzard's slash commands are registered)
+    -- NOTE: This writes a *key* into SlashCmdList, which is the normal addon
+    -- pattern and is safe — FrameXML's ImportListToHash isolates per-command
+    -- taint via secureexecuterange. Never assign the SlashCmdList *global*
+    -- itself (e.g. `SlashCmdList = ...`) from addon code: that taints the
+    -- table binding and breaks AllowedWhenUntainted slash commands like /tm.
     SlashCmdList["RELOAD"] = function()
         QUI:SafeReload()
     end
@@ -578,15 +618,7 @@ function QUICore:OnEnable()
         if savedScale and savedScale > 0 then
             scaleToApply = savedScale
         else
-            -- Smart default based on resolution
-            local _, screenHeight = GetPhysicalScreenSize()
-            if screenHeight >= 2160 then      -- 4K
-                scaleToApply = 0.53
-            elseif screenHeight >= 1440 then  -- 1440p
-                scaleToApply = 0.64
-            else                              -- 1080p or lower
-                scaleToApply = 1.0
-            end
+            scaleToApply = ResolveSmartDefaultScale()
             self.db.profile.general.uiScale = scaleToApply
         end
         UIParent:SetScale(scaleToApply)
@@ -613,6 +645,16 @@ function QUICore:OnEnable()
         QUI.BuffBorders.Init()
     end
 
+    -- Eager-load enabled LoadOnDemand sub-addons now, inside the ADDON_LOADED
+    -- safe window, so their files compile on the loading screen instead of a
+    -- post-login hitch, and any secure setup in their init runs in the
+    -- protected window like the login-class siblings. Skips lateLoad modules
+    -- (e.g. QUI_Minimap), which need post-login state (settled EditMode) and are
+    -- loaded later by the staggered post-first-frame kick-off in addon_loader.
+    if ns.AddonLoader and ns.AddonLoader.LoadEnabledLODModulesEager then
+        ns.AddonLoader:LoadEnabledLODModulesEager()
+    end
+
     -- IMMEDIATE: Apply frame anchoring synchronously during ADDON_LOADED
     -- safe window. Protected calls work here even during combat reloads.
     ApplyFrameOverrides()
@@ -621,19 +663,22 @@ function QUICore:OnEnable()
     -- the ADDON_LOADED handler and cannot make protected calls in combat.
     ns._inInitSafeWindow = false
 
-    -- DEFERRED 0.1s: Hook setup (spreads work across frames)
+    -- DEFERRED: Hook setup after the first visible frame.
     -- Combat-safe: uses hooksecurefunc + CreateFrame only. Must always run so
     -- the PLAYER_REGEN_ENABLED recovery handler inside HookEditMode is created
     -- even after a combat reload.
-    C_Timer.After(0.1, function()
+    RunAfterFirstFrame(function()
         self:HookEditMode()
-    end)
+    end, 0.1)
 
-    -- DEFERRED 0.5s: Unit frames (secure APIs now safe) + global font override + alerts
-    C_Timer.After(0.5, function()
-        if self.UnitFrames and self.db.profile.unitFrames and self.db.profile.unitFrames.enabled then
-            self.UnitFrames:Initialize()
-        end
+    -- DEFERRED: alert/toast skinning + global font override.
+    -- (Unit frames are NOT initialized here. They init synchronously in
+    -- unitframes.lua's ADDON_LOADED handler because, like BuffBorders, their
+    -- secure frames must be created in the addon-load safe window so a combat
+    -- /reload can still build them. The old `self.UnitFrames:Initialize()`
+    -- deferred path was dead code — QUICore.UnitFrames is never assigned — and
+    -- wiring it up would break secure creation on combat reloads.)
+    RunAfterFirstFrame(function()
         -- Initialize alert/toast skinning
         if self.Alerts and self.db.profile.general and self.db.profile.general.skinAlerts then
             self.Alerts:Initialize()
@@ -646,10 +691,10 @@ function QUICore:OnEnable()
         -- positioned immediately; protected frames deferred to PLAYER_REGEN_ENABLED
         -- via pendingAnchoredFrameUpdateAfterCombat in the anchoring system.
         ApplyFrameOverrides()
-    end)
+    end, 0.2)
 
-    -- DEFERRED 1.0s: UI hider + buff borders
-    C_Timer.After(1.0, function()
+    -- DEFERRED: UI hider + buff borders
+    RunAfterFirstFrame(function()
         -- Cache _G function lookups at point of use
         local RefreshUIHider = _G.QUI_RefreshUIHider
         local RefreshBuffBorders = _G.QUI_RefreshBuffBorders
@@ -660,46 +705,46 @@ function QUICore:OnEnable()
             RefreshBuffBorders()
         end
         ApplyFrameOverrides()
-    end)
+    end, 0.35)
 
-    -- DEFERRED 2.0s: Safety retry for late-loading frames
-    C_Timer.After(2.0, function()
+    -- DEFERRED: Safety retry for late-loading frames
+    RunAfterFirstFrame(function()
         ApplyFrameOverrides()
-    end)
+    end, 0.8)
 
-    -- DEFERRED 3.0s: Register all frames as anchor targets + final override apply
-    C_Timer.After(3.0, function()
+    -- DEFERRED: Register all frames as anchor targets + final override apply
+    RunAfterFirstFrame(function()
         if ns.QUI_Anchoring then
             ns.QUI_Anchoring:RegisterAllFrameTargets()
         end
         ApplyFrameOverrides()
-    end)
+    end, 1.0)
 
     self:SetupEncounterWarningsSecretValuePatch()
 end
 
 function QUICore:OpenConfig()
     -- Open the new custom GUI instead of AceConfig
-    if QUI and QUI.GUI then
-        QUI.GUI:Toggle()
+    if QUI and QUI.OpenOptions then
+        QUI:OpenOptions()
     end
 end
 
 function QUICore:CreateMinimapButton()
     local LDB = LibStub("LibDataBroker-1.1", true)
     local LibDBIcon = LibStub("LibDBIcon-1.0", true)
-    
+
     if not LDB or not LibDBIcon then
         return
     end
-    
+
     -- Initialize minimap button database (separate from minimap module settings)
     if not self.db.profile.minimapButton then
         self.db.profile.minimapButton = {
             hide = false,
         }
     end
-    
+
     -- Create DataBroker object
     local dataObj = LDB:NewDataObject(ADDON_NAME, {
         type = "launcher",
@@ -716,11 +761,11 @@ function QUICore:CreateMinimapButton()
         end,
         OnTooltipShow = function(tooltip)
             tooltip:SetText("|cFF30D1FFQUI|r")
-            tooltip:AddLine("Left-click to open configuration", 1, 1, 1)
-            tooltip:AddLine("Right-click to toggle Edit Mode", 1, 1, 1)
+            tooltip:AddLine(ns.L["Left-click to open configuration"], 1, 1, 1)
+            tooltip:AddLine(ns.L["Right-click to toggle Edit Mode"], 1, 1, 1)
         end,
     })
-    
+
     -- Register with LibDBIcon using separate minimapButton settings
     LibDBIcon:Register(ADDON_NAME, dataObj, self.db.profile.minimapButton)
 end
@@ -729,7 +774,7 @@ end
 function QUICore:HookEditMode()
     if self.__editModeHooked then return end
     self.__editModeHooked = true
-    
+
     -- Hook EditModeManagerFrame if it exists
     if EditModeManagerFrame then
         -- Track whether we've already hooked BossTargetFrameContainer.GetScaledSelectionSides
@@ -758,17 +803,27 @@ function QUICore:HookEditMode()
             "PetActionBar", "ExtraAbilityContainer",
             "ExtraActionBarFrame", "ZoneAbilityFrame",
             "OverrideActionBar", "MainMenuBarVehicleLeaveButton",
-            -- Cooldown viewers
-            "EssentialCooldownViewer", "UtilityCooldownViewer",
-            "BuffIconCooldownViewer", "BuffBarCooldownViewer",
+            -- Cooldown viewers omitted: QUI no longer hides Blizzard's CDM
+            -- (data-decoupling commit), so the user must be able to drag and
+            -- toggle them through Blizzard's Edit Mode normally.
             -- Objective tracker
             "ObjectiveTrackerFrame",
+            -- Equipment durability
+            "DurabilityFrame",
             -- Cast bar
             "PlayerCastingBarFrame",
             -- Tooltip
             "GameTooltipDefaultContainer",
-            -- Chat
-            "ChatFrame1",
+            -- Chat: ChatFrame1 is intentionally NOT suppressed. It is an
+            -- EditModeSystem frame, so poking its Edit Mode secure state from
+            -- addon (tainted) code -- ClearHighlight, EditModeMagnetismManager
+            -- UnregisterFrame, HighlightSystem/SelectSystem hooks -- taints the
+            -- frame's secure context. That taint surfaces on its chat-event
+            -- dispatch and trips Blizzard's secret-string guard the moment a
+            -- public channel body (e.g. LookingForGroup) is a secret value
+            -- (ChatFrameOverrides MessageFormatter gsub). Cost of not
+            -- suppressing: Blizzard's blue selection overlay shows on the chat
+            -- frame while in Edit Mode only -- purely cosmetic.
         }
 
         -- PartyFrame is only suppressed when QUI group frames own party frames.
@@ -858,12 +913,12 @@ function QUICore:HookEditMode()
                 end
             end
         end)
-        
+
         -- Hook when Edit Mode is exited (minimal — no callback dispatch)
         hooksecurefunc(EditModeManagerFrame, "ExitEditMode", function()
             -- Hide power bar edit overlays that persist after edit mode exits
             C_Timer.After(0.15, function()
-                for _, barName in ipairs({"QUIPrimaryPowerBar", "QUISecondaryPowerBar"}) do
+                for _, barName in ipairs({"QUIPowerBar", "QUISecondaryPowerBar"}) do
                     local bar = _G[barName]
                     if bar and bar.editOverlay and bar.editOverlay:IsShown() then
                         bar.editOverlay:Hide()
@@ -872,7 +927,7 @@ function QUICore:HookEditMode()
             end)
         end)
     end
-            
+
     -- Hook combat end to reapply frame anchoring overrides deferred during combat
     local combatEndFrame = CreateFrame("Frame")
     combatEndFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
@@ -1030,7 +1085,8 @@ function QUI:GetSkinColor()
     -- Legacy fallback
     if db.general and db.general.skinUseClassColor then
         local _, class = UnitClass("player")
-        local color = RAID_CLASS_COLORS[class]
+        -- CUSTOM_CLASS_COLORS-aware via the shared helper (resolved at runtime)
+        local color = ns.Helpers and ns.Helpers.GetClassColorTable(class)
         if color then
             return color.r, color.g, color.b, 1
         end
@@ -1069,4 +1125,3 @@ function QUICore:RefreshAll()
         RefreshSkyriding()
     end
 end
-

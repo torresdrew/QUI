@@ -12,6 +12,7 @@ local pairs = pairs
 local ipairs = ipairs
 local tostring = tostring
 local tonumber = tonumber
+local select = select
 local table_remove = table.remove
 
 -- Cache LibSharedMedia reference
@@ -26,10 +27,6 @@ Helpers.AssetPath = "Interface\\AddOns\\" .. ADDON_NAME .. "\\assets\\"
 local issecretvalue = _G.issecretvalue
 local canaccesstable = _G.canaccesstable
 
-local function GetCore()
-    return (_G.QUI and _G.QUI.QUICore) or ns.Addon
-end
-
 ---------------------------------------------------------------------------
 -- SECRET VALUE UTILITIES (Patch 12.0+)
 -- Combat-related APIs can return "secret values" in restricted contexts.
@@ -41,6 +38,18 @@ end
 --- @return boolean True if value is a secret value
 function Helpers.IsSecretValue(value)
     return issecretvalue and issecretvalue(value) or false
+end
+
+--- Check whether any value in a vararg list is secret.
+--- @return boolean True if at least one value is a secret value
+function Helpers.HasSecretValue(...)
+    if not issecretvalue then return false end
+    for i = 1, select("#", ...) do
+        if issecretvalue(select(i, ...)) then
+            return true
+        end
+    end
+    return false
 end
 
 --- Check if a table can be accessed (not tainted/restricted)
@@ -59,6 +68,37 @@ function Helpers.SafeValue(value, fallback)
         return fallback
     end
     return value
+end
+
+---------------------------------------------------------------------------
+-- EDIT MODE SYSTEM FRAME GEOMETRY (taint-safe)
+-- EditModeSystemMixin:OnSystemLoad swaps a system frame's SetPoint/
+-- ClearAllPoints/SetScale for overrides that re-enter EditModeManagerFrame
+-- (SetPointOverride -> OnEditModeSystemAnchorChanged). Calling those from addon
+-- (tainted) code taints the frame's OWN secure event dispatch -- e.g.
+-- ChatFrame1, where it surfaces as a secret-string crash in ChatHistory_GetToken
+-- the moment a chat line carries a secret payload (M+/raid/public channels).
+-- Reparenting the frame out of Edit Mode does NOT remove these per-instance
+-- overrides, so QUI must call the saved *Base originals when repositioning a
+-- detached system frame. Plain (non-system) frames have no *Base method, so
+-- these are a transparent passthrough to the normal setters.
+---------------------------------------------------------------------------
+
+--- ClearAllPoints that bypasses an Edit Mode system frame's override.
+--- @param frame table The frame to clear
+function Helpers.BaseClearAllPoints(frame)
+    if not frame then return end
+    local fn = frame.ClearAllPointsBase or frame.ClearAllPoints
+    if fn then fn(frame) end
+end
+
+--- SetPoint that bypasses an Edit Mode system frame's override (and the
+--- EditModeManagerFrame re-entry/taint it causes). Args mirror frame:SetPoint.
+--- @param frame table The frame to anchor
+function Helpers.BaseSetPoint(frame, ...)
+    if not frame then return end
+    local fn = frame.SetPointBase or frame.SetPoint
+    if fn then fn(frame, ...) end
 end
 
 --- Safely compare two values (returns false if either is secret)
@@ -105,45 +145,152 @@ function Helpers.SafeToString(value, fallback)
     return fallback
 end
 
---- Is an aura sourced from the player / pet / vehicle?
---- Taint-safe: reads sourceUnit / sourceGUID / isFromPlayerOrPlayerPet via
---- SafeValue so secret values become nil instead of returning into Lua.
+---------------------------------------------------------------------------
+-- Keybind display formatting
+--
+-- Lives in core (loaded first, hard dependency of every sub-addon) so that
+-- login-class consumers -- action bars render keybind text at login -- resolve
+-- ns.FormatKeybind immediately, rather than waiting on a LoadOnDemand module.
+---------------------------------------------------------------------------
+
+-- Format keybind text for display (shorten modifiers, max 4 chars)
+local function FormatKeybind(keybind)
+    if not keybind then return nil end
+
+    local upper = keybind:upper()
+
+    -- CRITICAL: Remove ALL spaces first to normalize localized text
+    -- WoW returns "Num Pad 3", "Mouse Wheel Up", etc. - we need "NUMPAD3", "MOUSEWHEELUP"
+    upper = upper:gsub(" ", "")
+
+    -- Shorten mousewheel/mouse BEFORE removing modifier hyphens
+    -- This ensures CTRL-MOUSEWHEELUP -> CTRL-WU -> CWU (not CMOUSEWHEELUP)
+    upper = upper:gsub("MOUSEWHEELUP", "WU")
+    upper = upper:gsub("MOUSEWHEELDOWN", "WD")
+    upper = upper:gsub("MIDDLEMOUSE", "B3")
+    upper = upper:gsub("MIDDLEBUTTON", "B3")
+    upper = upper:gsub("BUTTON(%d+)", "B%1")  -- BUTTON4 -> B4, BUTTON5 -> B5
+
+    -- THEN: Remove modifier hyphens
+    upper = upper:gsub("SHIFT%-", "S")
+    upper = upper:gsub("CTRL%-", "C")
+    upper = upper:gsub("ALT%-", "A")
+    upper = upper:gsub("^S%-(.+)", "S%1")
+    upper = upper:gsub("^C%-(.+)", "C%1")
+    upper = upper:gsub("^A%-(.+)", "A%1")
+
+    -- Numpad special keys (BEFORE generic NUMPAD replacement)
+    upper = upper:gsub("NUMPADPLUS", "N+")
+    upper = upper:gsub("NUMPADMINUS", "N-")
+    upper = upper:gsub("NUMPADMULTIPLY", "N*")
+    upper = upper:gsub("NUMPADDIVIDE", "N/")
+    upper = upper:gsub("NUMPADPERIOD", "N.")
+    upper = upper:gsub("NUMPADENTER", "NE")
+
+    -- Other common keys
+    upper = upper:gsub("NUMPAD", "N")
+    upper = upper:gsub("CAPSLOCK", "CAP")
+    upper = upper:gsub("DELETE", "DEL")
+    upper = upper:gsub("ESCAPE", "ESC")
+    upper = upper:gsub("BACKSPACE", "BS")
+    upper = upper:gsub("SPACE", "SP")
+    upper = upper:gsub("INSERT", "INS")
+    upper = upper:gsub("PAGEUP", "PU")
+    upper = upper:gsub("PAGEDOWN", "PD")
+    upper = upper:gsub("HOME", "HM")
+    upper = upper:gsub("END", "ED")
+    upper = upper:gsub("PRINTSCREEN", "PS")
+    upper = upper:gsub("SCROLLLOCK", "SL")
+    upper = upper:gsub("PAUSE", "PA")
+    upper = upper:gsub("TILDE", "`")
+    upper = upper:gsub("GRAVE", "`")
+
+    -- Arrow keys
+    upper = upper:gsub("UPARROW", "UP")
+    upper = upper:gsub("DOWNARROW", "DN")
+    upper = upper:gsub("LEFTARROW", "LF")
+    upper = upper:gsub("RIGHTARROW", "RT")
+
+    -- Symbol keys
+    upper = upper:gsub("SEMICOLON", ";")
+    upper = upper:gsub("APOSTROPHE", "'")
+    upper = upper:gsub("LEFTBRACKET", "[")
+    upper = upper:gsub("RIGHTBRACKET", "]")
+    upper = upper:gsub("BACKSLASH", "\\")
+    upper = upper:gsub("MINUS", "-")
+    upper = upper:gsub("EQUALS", "=")
+    upper = upper:gsub("COMMA", ",")
+    -- Note: PERIOD already handled by NUMPADPERIOD, but standalone PERIOD key:
+    upper = upper:gsub("^PERIOD$", ".")
+    upper = upper:gsub("SLASH", "/")
+
+    -- Final safety: truncate to max 4 characters
+    if #upper > 4 then
+        upper = upper:sub(1, 4)
+    end
+
+    return upper
+end
+
+-- Expose for other modules (action bars, rotation helper, keybind viewers).
+ns.FormatKeybind = FormatKeybind
+
+--- Decode a potentially-secret boolean to a Lua boolean.
+--- A secret boolean cannot be observed in Lua (no API launders it back to a
+--- comparable value), so it resolves to nil ("unknown"); callers must treat
+--- nil as "can't tell" and fall back accordingly.
+--- @param value any
+--- @return boolean|nil
+local function DecodePotentialSecretBoolean(value)
+    if issecretvalue and issecretvalue(value) then return nil end
+    if value == nil then return nil end
+    if type(value) == "boolean" then return value end
+    return nil
+end
+
+local function UnitTokenMatches(unitToken, targetUnit)
+    if not UnitIsUnit then return false end
+    local ok, matched = pcall(UnitIsUnit, unitToken, targetUnit)
+    if not ok then return false end
+    return DecodePotentialSecretBoolean(matched) == true
+end
+
+local function GUIDMatchesUnit(sourceGUID, unit)
+    if issecretvalue and issecretvalue(sourceGUID) then return false end
+    if type(sourceGUID) ~= "string" then return false end
+    if not UnitGUID then return false end
+    local unitGUID = UnitGUID(unit)
+    return type(unitGUID) == "string" and sourceGUID == unitGUID
+end
+
+--- Is an aura sourced from the local player / pet / vehicle?
+--- `isFromPlayerOrPlayerPet` means the caster is player-controlled, not
+--- necessarily the local player, so it is only useful as a negative hint.
+--- Local ownership must be proven by sourceUnit / sourceGUID or by a caller
+--- that can use C_UnitAuras' PLAYER filter against the auraInstanceID.
 --- @param auraData table AuraData struct from C_UnitAuras.*
---- @param strictSource boolean? When true, require explicit sourceUnit/sourceGUID
----        to match; do not trust isFromPlayerOrPlayerPet alone. Use for defenses
----        against Blizzard viewer children that report "player" while carrying
----        a foreign aura instance.
+--- @param strictSource boolean? Retained for call-site compat; no-op.
 --- @return boolean
 function Helpers.IsAuraOwnedByPlayerOrPet(auraData, strictSource)
     if not auraData then return false end
 
-    local ownedFlag = Helpers.SafeValue(auraData.isFromPlayerOrPlayerPet, nil)
-    if ownedFlag ~= nil and not strictSource then
-        return ownedFlag == true
+    local okFlag, ownedFlag = pcall(function() return auraData.isFromPlayerOrPlayerPet end)
+    if okFlag and DecodePotentialSecretBoolean(ownedFlag) == false then
+        return false
     end
 
-    local sourceUnit = Helpers.SafeValue(auraData.sourceUnit, nil)
-    if sourceUnit then
-        if sourceUnit == "player" or sourceUnit == "pet" or sourceUnit == "vehicle" then
-            return true
-        end
-        if UnitIsUnit then
-            if UnitExists("player") and UnitIsUnit(sourceUnit, "player") then return true end
-            if UnitExists("pet") and UnitIsUnit(sourceUnit, "pet") then return true end
-            if UnitExists("vehicle") and UnitIsUnit(sourceUnit, "vehicle") then return true end
-        end
+    local okUnit, sourceUnit = pcall(function() return auraData.sourceUnit end)
+    if okUnit then
+        if UnitTokenMatches(sourceUnit, "player") then return true end
+        if UnitTokenMatches(sourceUnit, "pet") then return true end
+        if UnitTokenMatches(sourceUnit, "vehicle") then return true end
     end
 
-    local sourceGUID = Helpers.SafeValue(auraData.sourceGUID, nil)
-    if sourceGUID then
-        local playerGUID = UnitGUID and UnitGUID("player") or nil
-        local petGUID = UnitGUID and UnitGUID("pet") or nil
-        local vehicleGUID = UnitGUID and UnitGUID("vehicle") or nil
-        return sourceGUID == playerGUID or sourceGUID == petGUID or sourceGUID == vehicleGUID
-    end
-
-    if ownedFlag ~= nil then
-        return strictSource and false or ownedFlag == true
+    local okGUID, sourceGUID = pcall(function() return auraData.sourceGUID end)
+    if okGUID then
+        if GUIDMatchesUnit(sourceGUID, "player") then return true end
+        if GUIDMatchesUnit(sourceGUID, "pet") then return true end
+        if GUIDMatchesUnit(sourceGUID, "vehicle") then return true end
     end
 
     return false
@@ -194,6 +341,65 @@ function Helpers.GetModuleDB(moduleName)
         return profile[moduleName]
     end
     return nil
+end
+
+--- Returns the active consumable-macros settings table.
+--- Picks db.char.consumableMacros when its characterSpecific flag is true,
+--- otherwise db.profile.general.consumableMacros. Used by the macro module
+--- and the settings UI so both agree on which scope is currently active.
+--- @return table|nil The active settings table or nil if QUI core/db is not ready
+function Helpers.GetConsumableMacrosDB()
+    local core = Helpers.GetCore()
+    if not core or not core.db then return nil end
+    local charT = core.db.char and core.db.char.consumableMacros
+    if charT and charT.characterSpecific then
+        return charT
+    end
+    local profile = core.db.profile
+    return profile and profile.general and profile.general.consumableMacros
+end
+
+--- Returns the per-character consumable-macros table (where characterSpecific
+--- itself lives). Always returns the char-scope table regardless of which
+--- scope is currently active.
+--- @return table|nil
+function Helpers.GetCharConsumableMacrosDB()
+    local core = Helpers.GetCore()
+    return core and core.db and core.db.char and core.db.char.consumableMacros
+end
+
+--- Cycle-safe deep copy of an arbitrary value. Tables are cloned recursively
+--- (keys and values); shared/cyclic references are preserved via a `seen` map
+--- so a self-referential table can't stack-overflow. Non-tables are returned
+--- as-is. Metatables are NOT copied (matches the local copies it replaces).
+--- Canonical home for the former per-file DeepCopy/CloneValue duplicates.
+function Helpers.DeepCopy(value, seen)
+    if type(value) ~= "table" then
+        return value
+    end
+    seen = seen or {}
+    if seen[value] then
+        return seen[value]
+    end
+    local copy = {}
+    seen[value] = copy
+    for k, v in pairs(value) do
+        copy[Helpers.DeepCopy(k, seen)] = Helpers.DeepCopy(v, seen)
+    end
+    return copy
+end
+
+--- Shallow copy: a new top-level table whose entries are copied by reference
+--- (nested tables are shared). Non-tables are returned as-is.
+function Helpers.ShallowCopy(value)
+    if type(value) ~= "table" then
+        return value
+    end
+    local copy = {}
+    for k, v in pairs(value) do
+        copy[k] = v
+    end
+    return copy
 end
 
 --- Deep-copy a defaults table (shallow values, recursive sub-tables).
@@ -838,6 +1044,143 @@ function Helpers.GetGeneralFontSettings()
 end
 
 ---------------------------------------------------------------------------
+-- PER-SCRIPT FONT FALLBACK (CJK)
+-- WoW's stock font objects are FontFamily objects with one member per
+-- script (roman / korean / simplifiedchinese / traditionalchinese / russian;
+-- see Blizzard_Fonts_Shared/Shared/Fonts.xml). The engine picks the member
+-- per text-run, which is how an enUS client renders Korean/Chinese names.
+--
+-- A plain FontString:SetFont(file, ...) collapses the string to one physical
+-- file, so any glyph that file lacks renders blank. Quazii.ttf has zero CJK
+-- glyphs, so CJK names blanked everywhere QUI owns the font.
+--
+-- CreateFontFamily(name, members) rebuilds that per-script fallback at
+-- runtime: the QUI font handles roman/russian (Quazii covers Cyrillic) and
+-- Blizzard's stock fonts handle korean/chinese. Assigned via SetFontObject().
+--
+-- CreateFontFamily requires EXACTLY one member per script alphabet (5 total:
+-- roman, korean, simplifiedchinese, traditionalchinese, russian) — fewer than
+-- 5 throws "unexpected number of member fonts". The alphabet is given as the
+-- canonical Fonts.xml string; Enum.FontAlphabet does not exist on live 12.0
+-- clients, so we pass the strings directly (and use an enum value only on the
+-- rare build that exposes one). Any failure degrades to plain SetFont.
+---------------------------------------------------------------------------
+
+-- The five script alphabets, in Blizzard's canonical Fonts.xml spelling.
+-- roman/russian render with the QUI font (Quazii covers Cyrillic); the CJK
+-- scripts fall back to Blizzard's stock fonts.
+local FONT_ALPHABET_FILES = {
+    { name = "roman",              cjk = false },
+    { name = "korean",             cjk = "Fonts\\2002.TTF" },
+    { name = "simplifiedchinese",  cjk = "Fonts\\ARKai_T.ttf" },
+    { name = "traditionalchinese", cjk = "Fonts\\blei00d.TTF" },
+    { name = "russian",            cjk = false },
+}
+
+-- Resolve an alphabet name to whatever value CreateFontFamily wants: the
+-- numeric Enum.FontAlphabet entry when a build exposes it, else the string.
+local function AlphabetValue(name)
+    local enum = _G.Enum and _G.Enum.FontAlphabet
+    if type(enum) == "table" then
+        for k, v in pairs(enum) do
+            if type(k) == "string" and k:lower() == name then return v end
+        end
+    end
+    return name
+end
+
+-- One SimpleFont family per (path|size|flags) so CreateFontFamily runs at
+-- most once per distinct combination. Only successes are cached.
+local fontFamilyCache = {}
+
+--- Build (and cache) a per-script fallback SimpleFont for a QUI font.
+--- @param fontPath string Resolved roman/russian font file path
+--- @param size number Font height (> 0)
+--- @param flags string|nil Outline flags ("", "OUTLINE", "THICKOUTLINE", ...)
+--- @return any|nil SimpleFont font object, or nil when unavailable
+function Helpers.GetFontFamilyObject(fontPath, size, flags)
+    if type(fontPath) ~= "string" or type(size) ~= "number" or size <= 0 then
+        return nil
+    end
+    flags = flags or ""
+    if not _G.CreateFontFamily then return nil end
+
+    local key = fontPath .. "|" .. size .. "|" .. flags
+    local cached = fontFamilyCache[key]
+    if cached then return cached end
+
+    -- All five members are mandatory. CJK scripts use Blizzard's stock fonts;
+    -- roman/russian use the QUI font.
+    local members = {}
+    for i = 1, #FONT_ALPHABET_FILES do
+        local entry = FONT_ALPHABET_FILES[i]
+        members[i] = {
+            alphabet = AlphabetValue(entry.name),
+            file = entry.cjk or fontPath,
+            height = size,
+            flags = flags,
+        }
+    end
+
+    local familyName = "QUIFB_" .. key:gsub("[^%w]", "_")
+    local ok, family = pcall(_G.CreateFontFamily, familyName, members)
+    if not ok or not family then
+        -- Do NOT cache the failure. A throw here is most likely a transient
+        -- tainted/secure-context call; let a later untainted refresh retry so
+        -- the family self-heals instead of degrading for the whole session.
+        return nil
+    end
+    fontFamilyCache[key] = family
+    return family
+end
+
+--- Apply a QUI font to a FontString WITH per-script CJK fallback.
+--- Drop-in for fontString:SetFont — snapshots justify/color so appearance is
+--- unchanged for roman text, and falls back to plain SetFont whenever the
+--- family API is unavailable (older clients) so behaviour never regresses.
+--- @param fontString table FontString to style
+--- @param fontNameOrPath string LSM font name or a font file path
+--- @param size number Font height
+--- @param flags string|nil Outline flags
+function Helpers.ApplyFontWithFallback(fontString, fontNameOrPath, size, flags)
+    if not fontString or not fontString.SetFont then return end
+    flags = flags or ""
+
+    -- Resolve an LSM name to a path (mirrors GetGeneralFont); a raw path is
+    -- left as-is because Fetch(..., true) returns nil for unregistered keys.
+    local fontPath = fontNameOrPath
+    if LSM and type(fontNameOrPath) == "string" then
+        local fetched = LSM:Fetch("font", fontNameOrPath, true)
+        if fetched then fontPath = fetched end
+    end
+    if type(fontPath) ~= "string" then fontPath = DEFAULT_FONT end
+
+    local family
+    if type(size) == "number" and size > 0 then
+        family = Helpers.GetFontFamilyObject(fontPath, size, flags)
+    end
+
+    if family and fontString.SetFontObject then
+        -- SetFontObject re-bases inherited properties; snapshot the ones call
+        -- sites rely on so this stays a true drop-in for SetFont.
+        local jh = fontString.GetJustifyH and fontString:GetJustifyH()
+        local jv = fontString.GetJustifyV and fontString:GetJustifyV()
+        local r, g, b, a
+        if fontString.GetTextColor then r, g, b, a = fontString:GetTextColor() end
+
+        if pcall(fontString.SetFontObject, fontString, family) then
+            if jh and fontString.SetJustifyH then fontString:SetJustifyH(jh) end
+            if jv and fontString.SetJustifyV then fontString:SetJustifyV(jv) end
+            if r and fontString.SetTextColor then fontString:SetTextColor(r, g, b, a) end
+            return
+        end
+    end
+
+    -- Fallback: single physical file (today's behaviour).
+    fontString:SetFont(fontPath, size or 12, flags)
+end
+
+---------------------------------------------------------------------------
 -- COLOR/THEME HELPERS
 -- Centralized color utilities for skin system and class colors
 ---------------------------------------------------------------------------
@@ -872,19 +1215,21 @@ end
 local function GetBorderKeys(prefix)
     if not prefix or prefix == "" then
         return {
-            override  = "borderOverride",
-            hide      = "hideBorder",
-            useClass  = "borderUseClassColor",
-            color     = "borderColor",
+            source = "borderColorSource",
+            color  = "borderColor",
+            hide   = "hideBorder",
         }
     end
     return {
-        override  = prefix .. "BorderOverride",
-        hide      = prefix .. "HideBorder",
-        useClass  = prefix .. "BorderUseClassColor",
-        color     = prefix .. "BorderColor",
+        source = prefix .. "BorderColorSource",
+        color  = prefix .. "BorderColor",
+        hide   = prefix .. "HideBorder",
     }
 end
+
+-- Expose for reuse by the options component and the migration, so key derivation
+-- lives in exactly one place.
+Helpers.GetBorderKeys = GetBorderKeys
 
 --- Get skin border color from dedicated border settings.
 --- Falls back to skin accent color so existing profiles keep current visuals.
@@ -900,15 +1245,23 @@ function Helpers.GetSkinBorderColor(moduleSettings, prefix)
     local r, g, b, a = fallbackR, fallbackG, fallbackB, fallbackA
 
     if general then
-        if general.skinBorderUseClassColor then
+        -- Source enum: "theme" (no-op; keep the accent fallback above),
+        -- "class", or "custom". Legacy read: a profile that predates the enum
+        -- but had skinBorderUseClassColor on resolves to "class".
+        local source = general.skinBorderColorSource
+            or (general.skinBorderUseClassColor and "class")
+            or "theme"
+        if source == "class" then
             r, g, b = Helpers.GetPlayerClassColor()
             a = 1
-        elseif type(general.skinBorderColor) == "table" then
+        elseif source == "custom" and type(general.skinBorderColor) == "table" then
             r = general.skinBorderColor[1] or r
             g = general.skinBorderColor[2] or g
             b = general.skinBorderColor[3] or b
             a = general.skinBorderColor[4] or a
         end
+        -- source == "theme" (or "custom" with no stored color): leave the
+        -- accent fallback (r,g,b,a) untouched.
 
         if general.hideSkinBorders then
             a = 0
@@ -918,22 +1271,29 @@ function Helpers.GetSkinBorderColor(moduleSettings, prefix)
     if type(moduleSettings) == "table" then
         local keys = GetBorderKeys(type(prefix) == "string" and prefix or "")
 
-        if moduleSettings[keys.override] then
-            if moduleSettings[keys.useClass] then
-                r, g, b = Helpers.GetPlayerClassColor()
-                a = 1
-            elseif type(moduleSettings[keys.color]) == "table" then
-                local moduleColor = moduleSettings[keys.color]
-                r = moduleColor[1] or r
-                g = moduleColor[2] or g
-                b = moduleColor[3] or b
-                a = moduleColor[4] or a
-            end
-
-            if moduleSettings[keys.hide] then
-                a = 0
+        -- New enum, with a legacy fallback for un-migrated profiles.
+        local source = moduleSettings[keys.source]
+        if source == nil then
+            if moduleSettings.useClassColorBorder or moduleSettings.borderUseClassColor then
+                source = "class"
+            elseif moduleSettings.useAccentColorBorder then
+                source = "theme"
             end
         end
+
+        if source == "theme" then
+            r, g, b = Helpers.GetSkinAccentColor()
+            a = 1
+        elseif source == "class" then
+            r, g, b = Helpers.GetPlayerClassColor()
+            a = 1
+        elseif source == "custom" and type(moduleSettings[keys.color]) == "table" then
+            local mc = moduleSettings[keys.color]
+            r, g, b, a = mc[1] or r, mc[2] or g, mc[3] or b, mc[4] or a
+        end
+        -- "inherit"/nil -> keep the global (r,g,b,a) computed above.
+
+        if moduleSettings[keys.hide] then a = 0 end
     end
 
     return r, g, b, a
@@ -1012,12 +1372,43 @@ function Helpers.GetSkinBgColorWithOverride(moduleSettings, prefix)
     return r, g, b, a
 end
 
+-- Shared skin "chrome" constants — single source of truth for backdrop border
+-- thickness, fallback colors, background-depth tiers, and the widget bg boosts.
+-- Defined in core (loaded before skinning/ and character_pane/) so every skin
+-- module — including the early-loading character pane — reads the same values.
+-- These are DEFAULTS: any call may still pass an explicit value to override.
+Helpers.CHROME = {
+    BORDER_PX       = 1,                          -- default pixel border thickness
+    BG_FALLBACK     = { 0.05, 0.05, 0.05, 0.95 }, -- when no themed bg resolves
+    BORDER_FALLBACK = { 0, 0, 0, 1 },             -- when no themed border resolves
+    BUTTON_BOOST    = 0.07,                        -- lighten a button bg vs its panel
+    SCROLLROW_BOOST = 0.03,                        -- alternating scroll-row shading
+    -- Background "depth" tiers as adjustments to the themed skin bg, so they
+    -- still track the user's skin-bg color.
+    DEPTH = {
+        PANEL    = { boost = 0.00, alpha = 0.95 }, -- top-level frame background
+        SUBPANEL = { boost = 0.04, alpha = 0.85 }, -- inset forms / sub-frames
+        ROW      = { boost = 0.07, alpha = 0.75 }, -- list rows / row highlights
+    },
+}
+
+--- CUSTOM_CLASS_COLORS-aware class color TABLE lookup. Returns the color table
+--- (with .r/.g/.b and Blizzard's .colorStr) or nil. Single source of the
+--- custom-vs-Blizzard precedence shared by the class-color helpers and callers
+--- that need the raw table (e.g. chat colorStr).
+--- @param classToken string|nil The uppercase class token from UnitClass
+--- @return table|nil
+function Helpers.GetClassColorTable(classToken)
+    if not classToken then return nil end
+    return (CUSTOM_CLASS_COLORS and CUSTOM_CLASS_COLORS[classToken])
+        or RAID_CLASS_COLORS[classToken]
+end
+
 --- Get class color for a class token (e.g., "WARRIOR", "MAGE")
 --- @param classToken string The uppercase class token from UnitClass
 --- @return number, number, number r, g, b values (0-1)
 function Helpers.GetClassColor(classToken)
-    if not classToken then return 1, 1, 1 end
-    local classColor = RAID_CLASS_COLORS[classToken]
+    local classColor = Helpers.GetClassColorTable(classToken)
     if classColor then
         return classColor.r, classColor.g, classColor.b
     end
@@ -1029,6 +1420,46 @@ end
 function Helpers.GetPlayerClassColor()
     local _, classToken = UnitClass("player")
     return Helpers.GetClassColor(classToken)
+end
+
+--- Get a unit's color: class color for players, hostility/reaction color for
+--- NPCs, grey fallback otherwise. Distinct from GetClassColor/GetPlayerClassColor
+--- (which take/assume the player) — this resolves any unit token and returns alpha.
+--- @param unit string|nil Unit token (defaults to "player")
+--- @return number, number, number, number r, g, b, a values (0-1)
+function Helpers.GetUnitClassColor(unit)
+    unit = unit or "player"
+    if not UnitExists(unit) then
+        return 0.5, 0.5, 0.5, 1
+    end
+
+    -- Player characters: use their actual class color
+    if UnitIsPlayer(unit) then
+        local _, class = UnitClass(unit)
+        if type(class) == "string" then
+            local color = Helpers.GetClassColorTable(class)
+            if color then
+                return color.r, color.g, color.b, 1
+            end
+        end
+    end
+
+    -- NPCs: use hostility-based colors
+    -- SafeToNumber returns 0 for nil/secret reactions, and 0 is truthy in Lua, so a
+    -- bare `if reaction` sent unknown-reaction NPCs down the hostile-red branch. Valid
+    -- UnitReaction values are 1-8; require >0 so unknowns fall through to grey.
+    local reaction = Helpers.SafeToNumber(UnitReaction(unit, "player"), nil)
+    if reaction and reaction > 0 then
+        if reaction >= 5 then
+            return 0.2, 0.8, 0.2, 1  -- Friendly (green)
+        elseif reaction == 4 then
+            return 1, 1, 0.2, 1      -- Neutral (yellow)
+        else
+            return 0.8, 0.2, 0.2, 1  -- Hostile (red)
+        end
+    end
+
+    return 0.5, 0.5, 0.5, 1
 end
 
 --- Get item quality color
@@ -1083,31 +1514,6 @@ function Helpers.CreateTimeThrottle(interval, callback)
         lastRun = now
         return callback(...)
     end
-end
-
--- if QUI Player or Target Frames don't exist, find a 3rd party UF
--- eg Elv, Unhalted, or Blizzard UF for anchoring purposes
--- @param type string eg player or target
--- @return frame
-function Helpers.FindAnchorFrame(type)
-    local frameHighestWidth, highestWidth = nil, 0
-    local f = EnumerateFrames()
-    while f do
-        -- Fast field access first; only fall back to GetAttribute if nil
-        local unit = f.unit
-        if unit == nil and f.GetAttribute then
-            unit = f:GetAttribute("unit")
-        end
-        -- Cheapest checks first: unit match > IsVisible > IsObjectType > GetName
-        if unit == type and f:IsVisible() and f:IsObjectType("Button") and f:GetName() then
-            local w = f:GetWidth()
-            if w > 20 and w > highestWidth then
-                frameHighestWidth, highestWidth = f, w
-            end
-        end
-        f = EnumerateFrames(f)
-    end
-    return frameHighestWidth
 end
 
 --- Clamp a value between min and max bounds
@@ -1230,7 +1636,7 @@ function Helpers.CreateSkinColorGetter(prefix, settingsPath)
         local profile = Helpers.GetProfile()
         local settings = profile and profile[settingsPath]
         local sr, sg, sb, sa = Helpers.GetSkinBorderColor(settings, prefix)
-        local bgr, bgg, bgb, bga = Helpers.GetSkinBgColor()
+        local bgr, bgg, bgb, bga = Helpers.GetSkinBgColorWithOverride(settings, prefix)
         return sr, sg, sb, sa, bgr, bgg, bgb, bga
     end
 end
@@ -1438,7 +1844,7 @@ end
 --- @return table|nil cooldownInfo Raw cooldown info table when available
 function Helpers.ReadSpellCooldown(spellID)
     if C_Spell and C_Spell.GetSpellCooldown then
-        local a, b, c, d = C_Spell.GetSpellCooldown(spellID)
+        local a, b, _, d = C_Spell.GetSpellCooldown(spellID)
         if type(a) == "table" then
             local info = a
             return info.startTime or info.start, info.duration, info.modRate, info.isActive, info
@@ -1463,15 +1869,14 @@ function Helpers.IsCooldownActive(start, duration, isActive)
     if type(isActive) == "boolean" then
         return isActive
     end
-    if not start or not duration then return false end
 
-    local ok, result = pcall(function()
-        return duration > 0 and start > 0
-    end)
-    if not ok then
+    if Helpers.IsSecretValue(start) or Helpers.IsSecretValue(duration) then
         return true
     end
-    return result
+
+    if not start or not duration then return false end
+    if type(start) ~= "number" or type(duration) ~= "number" then return false end
+    return duration > 0 and start > 0
 end
 
 --- Apply a cooldown from a DurationObject when available, falling back to
@@ -1519,11 +1924,16 @@ end
 --- @param cooldownFrame table
 --- @param spellID any
 --- @param reverse boolean|nil
+--- @param ignoreGCD boolean|nil Defaults to true. Pass false when rendering the
+---        GCD spell itself (61304); ignoreGCD=true returns nil for the GCD spell
+---        because it has no cooldown when the GCD is excluded.
 --- @return boolean applied True when a cooldown was applied
-function Helpers.ApplyCooldownFromSpell(cooldownFrame, spellID, reverse)
+function Helpers.ApplyCooldownFromSpell(cooldownFrame, spellID, reverse, ignoreGCD)
     if not cooldownFrame or not spellID then
         return false
     end
+
+    if ignoreGCD == nil then ignoreGCD = true end
 
     local start, duration, modRate, isActive = Helpers.ReadSpellCooldown(spellID)
     if not Helpers.IsCooldownActive(start, duration, isActive) then
@@ -1533,7 +1943,11 @@ function Helpers.ApplyCooldownFromSpell(cooldownFrame, spellID, reverse)
     local durationObj = nil
     if cooldownFrame.SetCooldownFromDurationObject
         and C_Spell and C_Spell.GetSpellCooldownDuration then
-        local ok, fetchedDurationObj = pcall(C_Spell.GetSpellCooldownDuration, spellID)
+        -- ignoreGCD=true (default) so the swipe tracks the spell's real
+        -- cooldown instead of being overwritten by the 1.5s GCD sweep when
+        -- the spell goes on cooldown at the same instant the GCD starts.
+        -- Callers rendering the GCD spell itself must pass ignoreGCD=false.
+        local ok, fetchedDurationObj = pcall(C_Spell.GetSpellCooldownDuration, spellID, ignoreGCD)
         if ok and fetchedDurationObj then
             durationObj = fetchedDurationObj
         end
@@ -1542,18 +1956,58 @@ function Helpers.ApplyCooldownFromSpell(cooldownFrame, spellID, reverse)
     return Helpers.ApplyCooldownFromStart(cooldownFrame, durationObj, start, duration, modRate, reverse)
 end
 
---- Apply a cooldown using a DurationObject when possible, falling back to
---- numeric APIs only when the numeric values are confirmed non-secret.
---- This keeps combat-time aura cooldown rendering on the C-side path and
---- avoids doing Lua math on secret values.
+local function ApplyCooldownFromExpiration(cooldownFrame, expirationTime, duration, modRate)
+    if Helpers.IsSecretValue(expirationTime) or Helpers.IsSecretValue(duration) or Helpers.IsSecretValue(modRate) then
+        return false
+    end
+    if expirationTime == nil or duration == nil then
+        return false
+    end
+    if type(expirationTime) ~= "number" or type(duration) ~= "number" then
+        return false
+    end
+    if duration <= 0 then
+        return false
+    end
+    if modRate ~= nil and type(modRate) ~= "number" then
+        return false
+    end
+
+    if cooldownFrame.SetCooldownFromExpirationTime then
+        local ok
+        if modRate ~= nil then
+            ok = pcall(cooldownFrame.SetCooldownFromExpirationTime, cooldownFrame, expirationTime, duration, modRate)
+        else
+            ok = pcall(cooldownFrame.SetCooldownFromExpirationTime, cooldownFrame, expirationTime, duration)
+        end
+        if ok then
+            return true
+        end
+    end
+
+    if not cooldownFrame.SetCooldown then
+        return false
+    end
+
+    local startTime = expirationTime - duration
+    if modRate ~= nil then
+        return pcall(cooldownFrame.SetCooldown, cooldownFrame, startTime, duration, modRate)
+    end
+    return pcall(cooldownFrame.SetCooldown, cooldownFrame, startTime, duration)
+end
+
+--- Apply an aura cooldown. Prefer DurationObject timing so secret-capable
+--- aura timing stays C-side. Clean numeric AuraData timing is only a fallback
+--- for cases where a DurationObject cannot be obtained.
 --- @param cooldownFrame table
 --- @param unit string|nil
 --- @param auraInstanceID any
 --- @param expirationTime any
 --- @param duration any
---- @param reverse boolean|nil
+--- @param reverse boolean|nil Passed through as clearIfZero for DurationObject
+--- @param modRate any
 --- @return boolean applied True when a cooldown was applied
-function Helpers.ApplyCooldownFromAura(cooldownFrame, unit, auraInstanceID, expirationTime, duration, reverse)
+function Helpers.ApplyCooldownFromAura(cooldownFrame, unit, auraInstanceID, expirationTime, duration, reverse, modRate)
     if not cooldownFrame then
         return false
     end
@@ -1570,19 +2024,8 @@ function Helpers.ApplyCooldownFromAura(cooldownFrame, unit, auraInstanceID, expi
         end
     end
 
-    if expirationTime ~= nil and duration ~= nil then
-        if Helpers.IsSecretValue(expirationTime) or Helpers.IsSecretValue(duration) then
-            if cooldownFrame.Clear then
-                cooldownFrame:Clear()
-            end
-            return false
-        end
-
-        if cooldownFrame.SetCooldownFromExpirationTime then
-            return pcall(cooldownFrame.SetCooldownFromExpirationTime, cooldownFrame, expirationTime, duration)
-        end
-
-        return pcall(cooldownFrame.SetCooldown, cooldownFrame, expirationTime - duration, duration)
+    if ApplyCooldownFromExpiration(cooldownFrame, expirationTime, duration, modRate) then
+        return true
     end
 
     if cooldownFrame.Clear then
@@ -1708,4 +2151,3 @@ function Helpers.NotifyDragResolutionFailed()
         )
     end
 end
-

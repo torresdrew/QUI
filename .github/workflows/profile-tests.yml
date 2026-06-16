@@ -1,0 +1,16 @@
+name: Profile Tests
+
+on:
+  pull_request:
+  push:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: leafo/gh-actions-lua@v13
+        with:
+          luaVersion: "5.1"
+      - name: Run profile tests
+        run: lua tools/test_profiles.lua

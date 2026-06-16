@@ -1,0 +1,53 @@
+name: Lua Tests
+
+on:
+  pull_request:
+  push:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: leafo/gh-actions-lua@v13
+        with:
+          luaVersion: "5.1"
+      - name: Compile-check all Lua under 5.1
+        run: bash tools/check_compile.sh
+      - name: Run standalone Lua test suite
+        run: |
+          set -u
+          fail=0
+          for t in tests/unit/*.lua; do
+            echo "::group::$t"
+            if lua "$t"; then
+              echo "::endgroup::"
+            else
+              echo "::endgroup::"
+              echo "::error file=$t::Test failed"
+              fail=1
+            fi
+          done
+          exit $fail
+      - name: i18n unit tests
+        run: |
+          lua tools/test_i18n_locale.lua
+          lua tools/test_i18n_extract.lua
+          lua tools/test_i18n_format.lua
+      - name: i18n base up to date
+        run: |
+          lua tools/i18n/extract_strings.lua
+          git diff --exit-code core/locale/enUS.lua
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: leafo/gh-actions-lua@v13
+        with:
+          luaVersion: "5.1"
+      - uses: leafo/gh-actions-luarocks@v4
+      - name: Install luacheck
+        run: luarocks install luacheck
+      - name: Lint (luacheck)
+        run: luacheck QUI_Debug/ core/ modules/ init.lua QUI_ActionBars/ QUI_Alts/ QUI_Bags/ QUI_CDM/ QUI_Chat/ QUI_DamageMeter/ QUI_Datatexts/ QUI_GroupFrames/ QUI_InfoBar/ QUI_Minimap/ QUI_Options/ QUI_OptionsSearch/ QUI_QoL/ QUI_ResourceBars/ QUI_Skinning/ QUI_UnitFrames/

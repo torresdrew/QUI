@@ -38,13 +38,20 @@ local defaults = {
             autoInsertKey = true,  -- Auto-insert keystone in M+ UI
             skinKeystoneFrame = true,  -- Skin keystone insertion window
             skinGameMenu = true,  -- Skin ESC menu (opt-in)
+            skinContextMenus = true,  -- Skin context/dropdown menus
+            skinReadyCheck = true,  -- Skin ready check popup
+            readyCheckBorderColorSource = "inherit",  -- inherit | theme | class | custom
+            readyCheckBorderColor = {0, 0, 0, 1},    -- custom border color (used when source == "custom")
+            skinStaticPopups = true,  -- Skin StaticPopup dialogs
             allowReloadInCombat = false,  -- Allow /reload during combat (bypass SafeReload)
+            showOptionTooltips = true,  -- Show on-hover explanations over each option in the settings panel
             addQUIButton = true,  -- Add QUI button to ESC menu (opt-in)
             addEditModeButton = true,  -- Add QUI Edit Mode button to ESC menu
             gameMenuFontSize = 12,  -- Game menu button font size
             gameMenuDim = true,  -- Dim background when game menu is open
             skinPowerBarAlt = true,  -- Skin encounter/quest power bar (PlayerPowerBarAlt)
             skinStatusTrackingBars = true,  -- Skin bottom HUD XP / reputation / status tracking bars
+            skinDamageMeter = true,  -- Skin Blizzard's built-in Damage Meter (12.0+) when enabled
             statusTrackingBarsBarColorMode = "accent",  -- blizzard | custom | class | accent
             statusTrackingBarsBarColor = { 0.2, 0.5, 1.0, 1.0 },  -- fill when mode is custom (alpha optional)
             statusTrackingBarsBarHeight = 0,  -- 0 = keep Blizzard default height for slot
@@ -77,9 +84,13 @@ local defaults = {
             skinProfessions = true,  -- Skin Professions frame (opt-in)
             skinBgColor = { 0.008, 0.008, 0.008, 1 },  -- Skinning background color (with alpha)
             skinAlerts = true,  -- Skin alert/toast frames
+            alertsBorderColorSource = "inherit",  -- Alert border color: "inherit" | "theme" | "class" | "custom"
+            alertsBorderColor = {0, 0, 0, 1},     -- Alert border custom color (used when source == "custom")
             skinCharacterFrame = true,  -- Skin Character Frame (Character, Reputation, Currency tabs)
             skinInspectFrame = true,  -- Skin Inspect Frame to match Character Frame
             skinUseClassColor = true,  -- Use class color for skin accents
+            skinBorderColorSource = "theme",  -- Border color: "theme" | "class" | "custom"
+            skinBorderColor = { 0, 0, 0, 1 },  -- Global skin border custom color (used when source == "custom")
             -- QoL Automation
             sellJunk = true,
             autoRepair = "personal",      -- "off", "personal", "guild"
@@ -128,7 +139,7 @@ local defaults = {
                 textColor = {1, 0.2, 0.2, 1},
                 useClassColor = false,
             },
-            -- Consumable Check (disabled by default)
+            -- Consumable Check (enabled by default)
             consumableCheckEnabled = true,       -- Master toggle
             consumableOnReadyCheck = true,        -- Show on ready check
             consumableOnDungeon = false,          -- Show on dungeon entrance
@@ -180,6 +191,214 @@ local defaults = {
             keyTrackerOffsetX = 0,                -- X offset from anchor
             keyTrackerOffsetY = 0,                -- Y offset from anchor
             keyTrackerWidth = 170,                -- Frame width in pixels
+
+            -- Action Tracker (modules/qol/actiontracker.lua)
+            -- Seeded here so AceDB provides the subtable via its defaults
+            -- metatable from first login. Without this, db.profile.general.
+            -- actionTracker is nil until GetSettings() lazily creates it,
+            -- which means Pins:ApplyAllForDB cannot resolve pinned paths
+            -- like general.actionTracker.maxEntries on a fresh profile and
+            -- accumulates miss-counts that eventually disable the pins.
+            actionTracker = {
+                enabled = false,
+                onlyInCombat = true,
+                clearOnCombatEnd = true,
+                inactivityFadeEnabled = false,
+                inactivityFadeSeconds = 20,
+                clearOnInactivity = false,
+                showFailedCasts = true,
+                maxEntries = 6,
+                iconSize = 28,
+                iconSpacing = 4,
+                iconHideBorder = false,
+                iconBorderColorSource = "inherit",
+                iconBorderColor = {0, 0, 0, 0.85},
+                orientation = "VERTICAL",
+                invertScrollDirection = false,
+                xOffset = 0,
+                yOffset = -210,
+                blocklistText = "",
+                showBackdrop = true,
+                hideBorder = false,
+                borderSize = 1,
+                borderColorSource = "inherit",
+                backdropColor = {0, 0, 0, 0.6},
+                borderColor = {0, 0, 0, 1},
+            },
+        },
+
+        -- Bags / Inventory module (Phase 1 data layer; Phase 2 bag window + takeover)
+        bags = {
+            enabled = false,  -- master switch: scanning + UI takeover
+            appearance = {
+                iconSize = 36,      -- item button pixel size
+                columns = 12,       -- grid columns (bag window)
+                bankColumns = 14,   -- grid columns (bank window tabs)
+                guildColumns = 14,  -- grid columns (guild bank tabs)
+                spacing = 4,        -- gap between buttons (pixels)
+                equipmentSetMark = true, -- equipment-set corner widget eligible (live views)
+                equipmentSetBorder = false, -- cyan border override on set items (live views)
+                layoutMode = "flat", -- bag window layout: "flat" grid | "categories"
+                reagentDisplay = "separate", -- flat mode reagent bag: separate | merged | hidden
+                groupEmptySlots = false, -- flat mode: collapse empties into one counter cell
+                showBagSlots = true, -- bag-slot strip (equip/swap containers) atop the bag window
+                -- bags 1–4 hidden from the bag window grid (display-only:
+                -- scanning, search, and sort still cover them). Scalar map
+                -- [bagID]=true on purpose — see corners comment below.
+                hiddenBags = {},
+                -- per-corner icon widgets: primary + fallback pick per corner
+                -- (scalar keys on purpose — array defaults resurrect removed
+                -- entries at login). Widgets: none | quantity | item_level |
+                -- junk | equipment_set | binding | expansion | crafting_quality
+                corners = {
+                    tl1 = "junk",          tl2 = "item_level",
+                    tr1 = "crafting_quality", tr2 = "none",
+                    bl1 = "equipment_set", bl2 = "none",
+                    br1 = "quantity",      br2 = "none",
+                },
+                cornerFontSize = 11,    -- corner text size (quantity/ilvl/binding)
+                qualityColorText = false, -- corner text in item-quality color
+                greyJunk = false,       -- desaturate junk items
+                markUnusable = false,   -- red-tint items whose tooltip says unusable
+                contextFading = true,   -- fade non-matching items in context UIs
+            },
+            behavior = {
+                autoOpen = {        -- open/close bag window at interactions
+                    merchant = true,
+                    mail = true,
+                    auctionHouse = true,
+                    trade = true,
+                    scrappingMachine = true,
+                    itemUpgrade = true,
+                    socket = true,
+                    bank = true,        -- open the bag window alongside the bank window
+                    guildBank = true,   -- open the bag window alongside the guild bank window
+                },
+                sortKey = "quality",  -- quality | type | name | ilvl | expansion
+                sortReverse = false,  -- flip the chosen sort order wholesale
+                autoDepositReagents = false, -- deposit crafting reagents into the warband bank on bank open
+                junk = {
+                    dim        = true,       -- show coin overlay + desaturate junk items
+                    sellButton = true,       -- show "Sell Junk" button at merchant
+                    exclusions = {},         -- [itemID]=true; managed via options later
+                },
+                tooltipCounts = "on",  -- on | off | modifier (counts only while a modifier held)
+                newItemGlow = {
+                    enabled       = true,
+                    timeoutMinutes = 30,
+                },
+            },
+            currencyBar = {
+                enabled    = false,
+                currencies = {},  -- [currencyID]=true, managed in options
+            },
+            windows = {
+                bag       = { point = "BOTTOMRIGHT", x = -40, y = 120 },
+                bank      = { point = "BOTTOMLEFT",  x = 40,  y = 120 },
+                guildbank = { point = "BOTTOMLEFT",  x = 40,  y = 460 },
+                search    = { point = "CENTER",      x = 0,   y = 60 },
+            },
+        },
+
+        alts = {
+            enabled = false, -- master switch (Module Addons row)
+            window = { point = "CENTER", x = 0, y = 0, width = 920, height = 540 },
+            columns = {
+                ilvl = true, gold = true, played = true, rested = true,
+                zone = true, lastSeen = true, professions = true,
+            },
+            scanners = { reputations = true, weeklies = true, lockouts = true },
+            -- Tab visibility filters: [id] = false hides; absent = visible
+            -- (explicit-false so newly seen currencies/factions default ON).
+            currencyFilter = {},
+            reputationFilter = {},
+        },
+
+        damageMeter = {
+            -- Native QUI damage meter. Spec: docs/superpowers/specs/2026-05-22-damage-meter-design.md
+            -- Phase 5 (2026-05-22) deleted the legacy skinner module that previously
+            -- owned this table's top-level keys (enabled, visibility, style, etc.);
+            -- v37 migration nils any leftovers on existing profiles.
+            native = {
+                enabled              = true,
+                visibility           = "always",        -- "always" | "inCombat" | "hidden"
+                refreshRateCombat    = 0.5,
+                refreshRateIdle      = 2.0,
+                showPinnedSelf       = true,
+                showHoverTooltip     = true,
+                breakdownAnchor      = "row",
+                -- When true (default), the Healing Done + HPS views sum each
+                -- source's healing AND absorbs into one number; the breakdown
+                -- popup lists both heal spells and absorb shields. Toggle off
+                -- to see pure C_DamageMeter HealingDone (matching Blizzard's
+                -- stock meter's view of healing).
+                combineAbsorbsIntoHealing = true,
+                -- When true (default), unit names are shown without their
+                -- "-Realm" suffix (e.g. "Anya" instead of "Anya-Stormrage").
+                -- Applies to rows, the hover tooltip header, and the breakdown
+                -- popup title. Realm-less names (NPCs, same-realm players) are
+                -- unaffected.
+                shortenNames = true,
+                -- Reset all stored damage-meter sessions when a Mythic+ key
+                -- starts so Overall can represent that run from zero.
+                autoResetOnChallengeStart = true,
+                -- Optional lifecycle helper: windows on Overall swap to Current
+                -- when a key starts, then Current swaps back to Overall when
+                -- the key completes.
+                autoSwapChallengeSessions = false,
+                appearance = {
+                    global = {
+                        barHeight        = 18,
+                        barSpacing       = 2,
+                        headerHeight     = 22,
+                        headerShowIcons  = true,
+                        numberFormat     = "compact",   -- "minimal" | "compact" | "complete"
+                        iconStyle        = "spec",      -- "spec" | "class" | "none"
+                        -- When true (default), the row value cell appends the
+                        -- secondary metric in parentheses — per-second modes
+                        -- show "DPS (total)", total modes show "total (per
+                        -- second)". false = primary value only.
+                        showSecondaryValue = true,
+                        useClassColor    = true,
+                        barColorAccent   = true,
+                        barColor         = { 0.35, 0.55, 0.8, 1 },  -- {r,g,b,a} array form (CreateFormColorPicker contract)
+                        barFillAlpha     = 1.0,
+                        showRowBackground = true,
+                        -- LSM media names. nil = inherit QUI defaults
+                        -- (Phase 1 hardcoded WHITE8x8 for bars; backgrounds + borders
+                        -- still use Phase 1 hardcodes when nil — Phase 3 wires those).
+                        textures = {
+                            bar        = nil,
+                            background = nil,
+                            border     = nil,
+                        },
+                        -- Per-element font config: { name=LSM_font_name|nil, size=N|0(inherit), outline=""|OUTLINE|THICKOUTLINE }
+                        fonts = {
+                            rowName  = { name = nil, size = 0,  outline = "" },
+                            rowValue = { name = nil, size = 0,  outline = "" },
+                            header   = { name = nil, size = 12, outline = "" },
+                        },
+                        colors = {
+                            bg         = { 0, 0, 0, 0.85 },
+                            border     = nil,                -- nil = QUI accent
+                            rowName    = { 1, 1, 1, 1 },
+                            rowValue   = { 1, 1, 1, 1 },
+                            headerText = nil,                -- nil = QUI accent
+                        },
+                    },
+                    perWindow = {},                     -- filled in Phase 3
+                },
+                windows = {
+                    [1] = {
+                        damageMeterType = 0,            -- Enum.DamageMeterType.DamageDone
+                        sessionType     = 1,            -- Enum.DamageMeterSessionType.Current
+                        size            = { w = 240, h = 180 },
+                        hidden          = false,
+                        name            = "",            -- user-editable display name; empty = use auto-generated label
+                    },
+                },
+                windowCount   = 1,
+            },
         },
 
         -- Alert & Toast Skinning Settings (enabled via general.skinAlerts)
@@ -230,15 +449,35 @@ local defaults = {
             showDeaths = true,
             showAffixes = true,
             showObjectives = true,
+            objectiveTextAlign = "LEFT",    -- "LEFT" | "CENTER" | "RIGHT"
             position = { x = -11.667, y = -204.998 },
             forcesBarEnabled = true,
             forcesDisplayMode = "bar",
             forcesPosition = "after_timer",
             forcesTextFormat = "both",
+            forcesTextAlign = "LEFT",       -- "LEFT" | "CENTER" | "RIGHT"
             forcesLabel = "Forces",
             forcesFont = "Poppins",
             forcesFontSize = 11,
+            forcesBarHeight = 0,            -- 0 = layout default (full 14 / compact 12 / sleek 8)
             maxDungeonNameLength = 18,
+            borderColorSource = "inherit",  -- inherit | theme | class | custom
+            borderColor = {0, 0, 0, 1},     -- custom border color (used when source == "custom")
+        },
+
+        mplusProgress = {
+            enabled = true,
+            tooltipEnabled = true,
+            tooltipIncludeCount = true,
+            tooltipShowNoProgress = false,
+            nameplateEnabled = true,
+            nameplateTextFormat = "+$percent$%",
+            nameplateFont = "", -- empty = global QUI font
+            nameplateFontSize = 12,
+            nameplateTextColor = { 1, 1, 1, 1 },
+            nameplateTextScale = 1.0,
+            nameplateOffsetX = 0,
+            nameplateOffsetY = 0,
         },
 
         -- Character Pane Settings
@@ -314,13 +553,13 @@ local defaults = {
         ncdm = {
             enabled = true,         -- Master CDM enable/disable
             _snapshotVersion = 0,   -- Incremented each time ownedSpells are snapshotted
-            _specProfiles = nil,    -- Future: per-spec owned spell profiles
+            _specProfiles = nil,    -- Legacy shared spec profiles; runtime storage is character-scoped
+            perLoadoutSpec = false,     -- Enable per-loadout CDM entries (Phase 1 storage; Phase 2 UI surface)
             essential = {
                 enabled = true,
                 pos = nil,  -- { ox = number, oy = number } saved container position (nil = first-time, seed from Blizzard)
                 desaturateOnCooldown = true,
                 rangeIndicator = true,
-                rangeColor = {0.8, 0.1, 0.1, 1},
                 usabilityIndicator = true,
                 clickableIcons = false,
                 layoutDirection = "HORIZONTAL",
@@ -328,7 +567,8 @@ local defaults = {
                     iconCount = 12,     -- How many icons in row 1 (0 = disabled)
                     iconSize = 39,      -- Icon size in pixels (width)
                     borderSize = 1,     -- Border thickness around icon (0 to 5)
-                    borderColorTable = {0, 0, 0, 1}, -- Border color (RGBA)
+                    borderColorSource = "inherit", -- inherit | theme | class | custom
+                    borderColor = {0, 0, 0, 1}, -- Border color (RGBA, used when source == "custom")
                     aspectRatioCrop = 1.0,  -- 1.0 = square, higher = flatter
                     zoom = 0,           -- Icon texture zoom (0 to 0.2)
                     padding = 0,        -- Spacing between icons (-20 to 20)
@@ -350,7 +590,8 @@ local defaults = {
                     iconCount = 10,
                     iconSize = 39,
                     borderSize = 1,
-                    borderColorTable = {0, 0, 0, 1},
+                    borderColorSource = "inherit",
+                    borderColor = {0, 0, 0, 1},
                     aspectRatioCrop = 1.0,
                     zoom = 0,
                     padding = 1,
@@ -371,7 +612,8 @@ local defaults = {
                     iconCount = 10,     -- 0 = row disabled by default
                     iconSize = 39,
                     borderSize = 1,
-                    borderColorTable = {0, 0, 0, 1},
+                    borderColorSource = "inherit",
+                    borderColor = {0, 0, 0, 1},
                     aspectRatioCrop = 1.0,
                     zoom = 0,
                     padding = 0,
@@ -404,7 +646,6 @@ local defaults = {
                 pos = nil,  -- { ox = number, oy = number } saved container position (nil = first-time, seed from Blizzard)
                 desaturateOnCooldown = true,
                 rangeIndicator = true,
-                rangeColor = {0.8, 0.1, 0.1, 1},
                 usabilityIndicator = true,
                 clickableIcons = false,
                 layoutDirection = "HORIZONTAL",
@@ -412,7 +653,8 @@ local defaults = {
                     iconCount = 7,
                     iconSize = 30,
                     borderSize = 1,
-                    borderColorTable = {0, 0, 0, 1},
+                    borderColorSource = "inherit",
+                    borderColor = {0, 0, 0, 1},
                     aspectRatioCrop = 1.0,
                     zoom = 0,
                     padding = 0,
@@ -433,7 +675,8 @@ local defaults = {
                     iconCount = 6,
                     iconSize = 30,
                     borderSize = 1,
-                    borderColorTable = {0, 0, 0, 1},
+                    borderColorSource = "inherit",
+                    borderColor = {0, 0, 0, 1},
                     aspectRatioCrop = 1.0,
                     zoom = 0,
                     padding = 0,
@@ -454,7 +697,8 @@ local defaults = {
                     iconCount = 6,
                     iconSize = 30,
                     borderSize = 1,
-                    borderColorTable = {0, 0, 0, 1},
+                    borderColorSource = "inherit",
+                    borderColor = {0, 0, 0, 1},
                     aspectRatioCrop = 1.0,
                     zoom = 0,
                     padding = 0,
@@ -489,6 +733,8 @@ local defaults = {
                 pos = nil,  -- { ox = number, oy = number } saved container position (nil = first-time, seed from Blizzard)
                 iconSize = 30,      -- Icon size in pixels
                 borderSize = 0,     -- Border thickness (0 to 8)
+                borderColorSource = "inherit",  -- inherit | theme | class | custom
+                borderColor = {0, 0, 0, 1},
                 shape = "square",   -- DEPRECATED: use aspectRatioCrop instead
                 aspectRatioCrop = 1.0,  -- Aspect ratio (0.5-2.0): <1=taller, 1=square, >1=wider
                 growthDirection = "CENTERED_HORIZONTAL",  -- CENTERED_HORIZONTAL, LEFT, or RIGHT
@@ -529,6 +775,8 @@ local defaults = {
                 colorOverrides = {},                  -- Per-spell color overrides {spellID → {r, g, b, a}}
                 barOpacity = 1.0,
                 borderSize = 2,
+                borderColorSource = "inherit",  -- inherit | theme | class | custom
+                borderColor = {0, 0, 0, 1},
                 bgColor = {0, 0, 0, 1},
                 bgOpacity = 0.5,
                 textSize = 14,
@@ -574,13 +822,12 @@ local defaults = {
                     pos = nil,
                     desaturateOnCooldown = true,
                     rangeIndicator = true,
-                    rangeColor = {0.8, 0.1, 0.1, 1},
                     usabilityIndicator = true,
                     clickableIcons = false,
                     layoutDirection = "HORIZONTAL",
                     row1 = {
                         iconCount = 12, iconSize = 39, borderSize = 1,
-                        borderColorTable = {0, 0, 0, 1}, aspectRatioCrop = 1.0,
+                        borderColorSource = "inherit", borderColor = {0, 0, 0, 1}, aspectRatioCrop = 1.0,
                         zoom = 0, padding = 0, xOffset = 0, yOffset = 0,
                         hideDurationText = false, durationSize = 16,
                         durationOffsetX = 0, durationOffsetY = 0,
@@ -590,7 +837,7 @@ local defaults = {
                     },
                     row2 = {
                         iconCount = 10, iconSize = 39, borderSize = 1,
-                        borderColorTable = {0, 0, 0, 1}, aspectRatioCrop = 1.0,
+                        borderColorSource = "inherit", borderColor = {0, 0, 0, 1}, aspectRatioCrop = 1.0,
                         zoom = 0, padding = 1, xOffset = 0, yOffset = 0,
                         durationSize = 16, durationOffsetX = 0, durationOffsetY = 0,
                         stackSize = 12, stackOffsetX = 0, stackOffsetY = 0,
@@ -599,7 +846,7 @@ local defaults = {
                     },
                     row3 = {
                         iconCount = 10, iconSize = 39, borderSize = 1,
-                        borderColorTable = {0, 0, 0, 1}, aspectRatioCrop = 1.0,
+                        borderColorSource = "inherit", borderColor = {0, 0, 0, 1}, aspectRatioCrop = 1.0,
                         zoom = 0, padding = 0, xOffset = 0, yOffset = 0,
                         durationSize = 16, durationOffsetX = 0, durationOffsetY = 0,
                         stackSize = 12, stackOffsetX = 0, stackOffsetY = 0,
@@ -621,13 +868,12 @@ local defaults = {
                     pos = nil,
                     desaturateOnCooldown = true,
                     rangeIndicator = true,
-                    rangeColor = {0.8, 0.1, 0.1, 1},
                     usabilityIndicator = true,
                     clickableIcons = false,
                     layoutDirection = "HORIZONTAL",
                     row1 = {
                         iconCount = 7, iconSize = 30, borderSize = 1,
-                        borderColorTable = {0, 0, 0, 1}, aspectRatioCrop = 1.0,
+                        borderColorSource = "inherit", borderColor = {0, 0, 0, 1}, aspectRatioCrop = 1.0,
                         zoom = 0, padding = 0, xOffset = 0, yOffset = 0,
                         durationSize = 14, durationOffsetX = 0, durationOffsetY = 0,
                         stackSize = 14, stackOffsetX = 0, stackOffsetY = -1,
@@ -636,7 +882,7 @@ local defaults = {
                     },
                     row2 = {
                         iconCount = 6, iconSize = 30, borderSize = 1,
-                        borderColorTable = {0, 0, 0, 1}, aspectRatioCrop = 1.0,
+                        borderColorSource = "inherit", borderColor = {0, 0, 0, 1}, aspectRatioCrop = 1.0,
                         zoom = 0, padding = 0, xOffset = 0, yOffset = 0,
                         durationSize = 14, durationOffsetX = 0, durationOffsetY = 0,
                         stackSize = 14, stackOffsetX = 0, stackOffsetY = -1,
@@ -645,7 +891,7 @@ local defaults = {
                     },
                     row3 = {
                         iconCount = 6, iconSize = 30, borderSize = 1,
-                        borderColorTable = {0, 0, 0, 1}, aspectRatioCrop = 1.0,
+                        borderColorSource = "inherit", borderColor = {0, 0, 0, 1}, aspectRatioCrop = 1.0,
                         zoom = 0, padding = 0, xOffset = 0, yOffset = 0,
                         durationSize = 14, durationOffsetX = 0, durationOffsetY = 0,
                         stackSize = 14, stackOffsetX = 0, stackOffsetY = -1,
@@ -668,6 +914,7 @@ local defaults = {
                     enabled = true,
                     pos = nil,
                     iconSize = 30, borderSize = 0,
+                    borderColorSource = "inherit", borderColor = {0, 0, 0, 1},
                     shape = "square",
                     aspectRatioCrop = 1.0,
                     growthDirection = "CENTERED_HORIZONTAL",
@@ -703,6 +950,7 @@ local defaults = {
                     colorOverrides = {},
                     barOpacity = 1.0,
                     borderSize = 2,
+                    borderColorSource = "inherit", borderColor = {0, 0, 0, 1},
                     bgColor = {0, 0, 0, 1},
                     bgOpacity = 0.5,
                     textSize = 14,
@@ -887,7 +1135,7 @@ local defaults = {
                 rotationHelperColor = { 0, 1, 0.84, 1 },  -- #00FFD6 cyan/mint border
                 rotationHelperThickness = 1,  -- Border thickness in pixels
             },
-            -- BuffIconCooldownViewer removed - now handled by qui_buffbar.lua
+            -- BuffIconCooldownViewer removed - now handled by owned CDM.
             -- Settings are at db.profile.ncdm.buff instead
         },
 
@@ -901,6 +1149,7 @@ local defaults = {
             -- Border
             showBorder = true,
             borderThickness = 2,
+            borderColorSource = "inherit",  -- inherit | theme | class | custom
             borderColor = { 0, 0, 0, 1 },
             -- Cooldown
             cooldownSwipeEnabled = true,
@@ -1106,13 +1355,10 @@ local defaults = {
             g = 1,                   -- Crosshair color green
             b = 0.780,               -- Crosshair color blue
             a = 1,                   -- Crosshair alpha
-            borderR = 0,             -- Border color red
-            borderG = 0,             -- Border color green
-            borderB = 0,             -- Border color blue
-            borderA = 1,             -- Border alpha
             strata = "LOW",          -- Frame strata
             lineColor = { 0.796, 1, 0.780, 1 },
-            borderColorTable = { 0, 0, 0, 1 },
+            borderColorSource = "inherit",  -- inherit | theme | class | custom
+            borderColor = { 0, 0, 0, 1 },
             -- Range-based color changes
             changeColorOnRange = false,           -- Master toggle for range checking
             enableMeleeRangeCheck = true,         -- Check melee range (5 yards)
@@ -1155,6 +1401,7 @@ local defaults = {
             segmentColor = { 0, 0, 0, 1 },                -- 000000
             rechargeColor = { 0.4, 0.9, 1.0, 1 },         -- 66E6FF
             borderSize = 1,
+            borderColorSource = "inherit",  -- inherit | theme | class | custom
             borderColor = { 0, 0, 0, 1 },
             barTexture = "Quazii v4",
             showSegments = true,
@@ -1202,8 +1449,6 @@ local defaults = {
                 enabled = true,
                 color = {0.078, 0.608, 0.992, 1},  -- Clickable URL color (blue)
             },
-            -- UI cleanup
-            hideButtons = true,          -- Hide social/channel/scroll buttons
             -- Input box styling
             editBox = {
                 enabled = true,          -- Apply glass styling to input box
@@ -1218,6 +1463,74 @@ local defaults = {
                 format = "24h",          -- "24h" or "12h"
                 color = {0.6, 0.6, 0.6}, -- Gray color
             },
+            -- Message modifiers pipeline (Phase A)
+            modifiers = {
+                classColors = {
+                    enabled = true,
+                    recolorBodyText = false,  -- recolor names mentioned in body text (more expensive regex; opt-in)
+                },
+                channelShorten = {
+                    enabled = true,
+                    preset = "letter",        -- "letter" | "number"
+                },
+                -- Show cross-realm players' "-Realm" suffix in chat sender names
+                -- (decoupled from channelShorten, which only shapes channel/type
+                -- labels). Default off mirrors the historical channelShorten-on look.
+                showRealmNames = false,
+                keywordAlert = {
+                    enabled = false,                        -- default off; opt-in (sounds + flashes can be intrusive)
+                    keywords = {},                           -- list of strings (user-added)
+                    includeOwnName = true,                   -- always-on trigger: own character name
+                    includeFirstName = false,                -- additional always-on trigger: own first name (if name has spaces — rare)
+                    includeGuildName = false,                -- additional always-on trigger: own guild name when in a guild
+                    skipSelf = true,                         -- don't alert on own messages
+                    highlightColor = { 0.204, 0.831, 0.600, 1 },  -- mint accent #34D399
+                    soundFile = "Sound\\Interface\\RaidWarning.ogg",  -- LSM-resolvable; falls back to literal path
+                    flashTab = false,                        -- FCF_StartAlertFlash on the tab
+                },
+                redundantText = {
+                    enabled = false,                      -- default off; changes message format. Conservative default.
+                    patterns = {
+                        loot = true,                       -- "You receive item: %s" → "✓ %s"; "PlayerX receives item: %s" → "✓ PlayerX %s"
+                        currency = true,                   -- LOOT_CURRENCY_SELF / LOOT_CURRENCY → "↑%dx %s"
+                        xp = true,                         -- COMBATLOG_XPGAIN_FIRSTPERSON → "+%d XP"
+                        honor = true,                      -- COMBATLOG_HONORGAIN_NO_RANK / similar → "+%d Honor"
+                        reputation = true,                 -- FACTION_STANDING_INCREASED → "↑%d %s" / DECREASED → "↓%d %s"
+                    },
+                },
+            },
+            -- Persistent message history (Phase B)
+            -- Settings live on profile; captured entries live per-character at db.char.chat.history
+            history = {
+                enabled = true,                       -- master toggle for capture + login re-pump
+                retentionDays = 7,                    -- global default retention (1-30)
+                storeWhispers = false,                -- opt-in; warns about Blizzard HistoryKeeper duplicate restoration
+                showSeparators = true,                -- "---- Previous session ----" / "---- Resumed ----" markers around restored block
+                perChannelRetention = {},             -- map: chatTypeKey -> override days. Empty = use default.
+                maxEntries = 5000,                    -- hard FIFO cap; logout pass trims oldest beyond this.
+                excludedChannels = {},                -- set: channelName -> true. Captures from these named channels are dropped before storage.
+            },
+            -- Persistent edit-box command history (Phase C)
+            -- Settings live on profile; captured entries live per-character at db.char.chat.editboxHistory.entries
+            editboxHistory = {
+                enabled = true,                       -- persist Up/Down arrow recall across /reload
+                maxEntries = 200,                     -- 50-500 slider; FIFO trim
+                filterSensitive = true,               -- skip /password, /logout, /quit, /exit, /dnd, /afk, /camp, /script, /run, /console
+                restoreChatType = true,               -- Up arrow restores chat type and target on recall
+            },
+            -- Hyperlink enhancements (Phase D)
+            hyperlinks = {
+                coordinates = true,                   -- (x, y) and [x, y] become clickable waypoints
+                friendlyURLs = false,                 -- opinionated rendering; opt-in (Wowhead/Raidbots/Logs labels)
+            },
+            -- Per-tab content filtering (Phase E)
+            -- Map: chatFrameID -> { customized = true, groups = {...}, channels = {...} }
+            -- Empty by default; populated when users opt in via the Tab Filters settings tile.
+            tabs = {},
+            -- Custom button bar (Phase F)
+            -- Map: chatFrameID -> { enabled, position, buttons = {...}, customButtons = {...} }
+            -- Empty by default; populated when users enable a bar for a specific chat frame.
+            buttonBars = {},
             -- Copy button mode: "always", "hover", "hidden", "disabled"
             copyButtonMode = "always",
             -- Default chat tab on login/reload (1 = General, 2-10 = other tabs)
@@ -1238,6 +1551,45 @@ local defaults = {
                     { channel = "guild_officer", sound = "None" },
                 },
             },
+            -- The QUI chat display — active whenever the chat module is
+            -- enabled (enabled = full takeover; disabled = stock Blizzard
+            -- chat, untouched).
+            customDisplay = {
+                maxLines = 1000,        -- scrollback cap (store + every window's view)
+                bgAlpha = 0.25,         -- glass backdrop alpha (display-wide)
+                -- Combat Log tab: embeds Blizzard's real ChatFrame2 as a pinned
+                -- tab in window 1. Default on (mirrors Blizzard's stock Combat
+                -- Log tab). Governs presence via TabManager.ReconcileCombatLogTab.
+                combatLogTab = true,
+                -- Multi-window: ARRAY of per-window entries, seeded on first
+                -- access (tab_manager.GetWindowsConfig). windows[i] = {
+                --   width, height, tabs = ARRAY of SET-shaped entries { name,
+                --     groups = {KEY=true}, channels = {Name=true}, invert } }
+                -- Window POSITION lives in frameAnchoring ("chatFrame1" /
+                -- "chatWindow<i>") — single store, damage-meter pattern
+                -- (migration v45 folded legacy windows[i].position in).
+                -- Window 1 is the primary (editbox fallback owner; never
+                -- deletable). Empty until seeded.
+                windows = {},
+                -- Whisper conversation tabs. The tabs themselves are RUNTIME
+                -- state (session-only, never persisted) — only behavior
+                -- toggles live here.
+                whisperTabs = {
+                    translatePopout = true, -- Blizzard whisper popout -> QUI conversation tab
+                    autoIncoming = false,   -- spawn a tab on first incoming whisper
+                    autoOutgoing = false,   -- spawn a tab on first outgoing whisper
+                    targetWindow = 1,       -- window auto-created tabs land in (clamped at use)
+                },
+            },
+            -- Per-channel color overrides. Stored by name for custom channels
+            -- (e.g. "Trade") and by chat-type key for built-ins (SAY, RAID,
+            -- WHISPER, ...). Empty by default — until a user sets a color via
+            -- the Channel Colors options section, this map stays empty and
+            -- ChangeChatColor is never called, so Blizzard's defaults apply.
+            channelColors = {},
+            -- Border color for chat frame border (prefix "chat" → chatBorderColorSource/chatBorderColor)
+            chatBorderColorSource = "inherit",  -- inherit | theme | class | custom
+            chatBorderColor = {0, 0, 0, 1},     -- custom border color (used when source == "custom")
         },
 
         -- Tooltip Management
@@ -1257,9 +1609,8 @@ local defaults = {
             bgOpacity = 0.75,                  -- Background opacity (0-1)
             showBorder = true,                 -- Toggle border visibility
             borderThickness = 1,               -- Border thickness (1-10)
-            borderColor = {0.376, 0.647, 0.980, 1}, -- Border color (default = sky blue accent)
-            borderUseClassColor = true,        -- Use player class color for border
-            borderUseAccentColor = false,      -- Use addon accent color for border
+            borderColor = {0.376, 0.647, 0.980, 1}, -- Custom border color (used when borderColorSource == "custom")
+            borderColorSource = "inherit",     -- Border color: "inherit" | "theme" | "class" | "custom"
             showSpellIDs = true,               -- Show spell ID and icon ID on buff/debuff tooltips
             showPlayerItemLevel = true,        -- Show inspected player item level on player tooltips
             colorPlayerItemLevel = true,       -- Color tooltip player item level by configured ilvl brackets
@@ -1284,6 +1635,7 @@ local defaults = {
             hideHealthBar = true,              -- Hide the health bar on unit tooltips
             hideServerName = false,            -- Hide server/realm name line from player tooltips
             hidePlayerTitle = false,           -- Hide player title from tooltip name line
+            hideGuildName = false,             -- Hide guild name line from player tooltips
             showTooltipTarget = true,          -- Show target of unit on tooltip
             showPlayerMount = true,            -- Show active mount on player tooltip
             showPlayerMythicRating = true,     -- Show M+ rating on player tooltip
@@ -1324,6 +1676,12 @@ local defaults = {
                 countAnchor = "BOTTOMRIGHT", -- Stack count text anchor point
                 countOffsetX = 0,          -- Stack count text X offset
                 countOffsetY = 0,           -- Stack count text Y offset
+                showCooldownText = true,    -- Show cooldown duration countdown text
+                cooldownTextFontSize = 14,  -- Cooldown duration text size
+                cooldownTextColor = {1, 1, 1, 1}, -- Cooldown duration text color
+                cooldownTextAnchor = "CENTER", -- Cooldown duration text anchor point
+                cooldownTextOffsetX = 0,    -- Cooldown duration text X offset
+                cooldownTextOffsetY = 0,    -- Cooldown duration text Y offset
                 -- Bar Layout settings
                 barScale = 1.0,             -- Global scale multiplier (0.5 - 2.0)
                 buttonSpacing = 0,        -- Button spacing override (nil = use Blizzard Edit Mode padding)
@@ -1352,7 +1710,7 @@ local defaults = {
                 showWhenSpellBookOpen = false, -- Force bars visible while Spellbook is open
                 keepLeaveVehicleVisible = false, -- Keep leave-vehicle button visible when mouseover hide is active
                 disableBelowMaxLevel = false, -- Keep bars visible until character reaches max level
-                linkBars1to8 = true,       -- Link all action bars 1-8 for mouseover
+                linkBars1to8 = true,       -- Link bars 1-8 plus pet/stance for mouseover
             },
             -- Per-bar settings (nil = use global, value = override)
             -- alwaysShow = true means bar stays visible even when mouseover hide is enabled
@@ -1644,8 +2002,8 @@ local defaults = {
                 portraitSide = "LEFT",
                 portraitSize = 40,
                 portraitBorderSize = 1,
-                portraitBorderUseClassColor = false,
-                portraitBorderColor = { 0, 0, 0, 1 },
+                portraitBorderColorSource = "inherit",  -- inherit | theme | class | custom
+                portraitBorderColor = { 0, 0, 0, 1 },   -- custom border color (used when source == "custom")
                 portraitGap = 0,
                 -- Name text
                 showName = true,
@@ -1714,6 +2072,10 @@ local defaults = {
                     texture = "Quazii v5",
                     bgColor = {0.149, 0.149, 0.149, 1},
                     borderSize = 1,
+                    borderColorSource = "inherit",      -- inherit | theme | class | custom
+                    borderColor = {0, 0, 0, 1},         -- custom bar-border color (used when source == "custom")
+                    iconBorderColorSource = "inherit",  -- inherit | theme | class | custom
+                    iconBorderColor = {0, 0, 0, 1},     -- custom icon-border color (used when source == "custom")
                     useClassColor = false,
                     highlightInterruptible = false,
                     interruptibleColor = {0.2, 0.8, 0.2, 1},
@@ -1839,9 +2201,6 @@ local defaults = {
                     showCountdownNumbers = true,
                     reverseSwipe = false,
                     borderScale = 1,
-                    textScale = 1,
-                    textOffsetX = 0,
-                    textOffsetY = 0,
                     frameLevel = 50,
                 },
             },
@@ -1867,8 +2226,8 @@ local defaults = {
                 portraitSide = "RIGHT",
                 portraitSize = 40,
                 portraitBorderSize = 1,
-                portraitBorderUseClassColor = false,
-                portraitBorderColor = { 0, 0, 0, 1 },
+                portraitBorderColorSource = "inherit",  -- inherit | theme | class | custom
+                portraitBorderColor = { 0, 0, 0, 1 },   -- custom border color (used when source == "custom")
                 portraitGap = 0,
                 -- Name text
                 showName = true,
@@ -1945,6 +2304,10 @@ local defaults = {
                     texture = "Quazii v5",
                     bgColor = {0.149, 0.149, 0.149, 1},
                     borderSize = 1,
+                    borderColorSource = "inherit",      -- inherit | theme | class | custom
+                    borderColor = {0, 0, 0, 1},         -- custom bar-border color (used when source == "custom")
+                    iconBorderColorSource = "inherit",  -- inherit | theme | class | custom
+                    iconBorderColor = {0, 0, 0, 1},     -- custom icon-border color (used when source == "custom")
                     highlightInterruptible = true,
                     interruptibleColor = {0.2, 0.8, 0.2, 1},
                     maxLength = 12,
@@ -2046,9 +2409,6 @@ local defaults = {
                     showCountdownNumbers = true,
                     reverseSwipe = false,
                     borderScale = 1,
-                    textScale = 1,
-                    textOffsetX = 0,
-                    textOffsetY = 0,
                     frameLevel = 50,
                 },
             },
@@ -2209,19 +2569,6 @@ local defaults = {
                     opacity = 0.7,
                     texture = "QUI Stripes",
                 },
-                -- Castbar
-                castbar = {
-                    enabled = false,
-                    showIcon = true,
-                    width = 140,
-                    height = 12,
-                    offsetX = 0,
-                    offsetY = -20,
-                    widthAdjustment = 0,
-                    fontSize = 10,
-                    color = {1, 0.7, 0, 1},
-                    anchor = "unitframe",
-                },
                 -- Auras (buffs/debuffs)
                 auras = {
                     showBuffs = false,
@@ -2255,6 +2602,7 @@ local defaults = {
                     showIcon = true,
                     width = 140,
                     height = 15,
+                    anchor = "unitframe",  -- Attach under the pet frame, matching sibling castbars
                     offsetX = 0,
                     offsetY = -20,
                     widthAdjustment = 0,
@@ -2279,8 +2627,8 @@ local defaults = {
                 portraitSide = "RIGHT",
                 portraitSize = 30,
                 portraitBorderSize = 1,
-                portraitBorderUseClassColor = false,
-                portraitBorderColor = { 0, 0, 0, 1 },
+                portraitBorderColorSource = "inherit",  -- inherit | theme | class | custom
+                portraitBorderColor = { 0, 0, 0, 1 },   -- custom border color (used when source == "custom")
                 portraitGap = 0,
                 -- Name text
                 showName = true,
@@ -2399,9 +2747,6 @@ local defaults = {
                     showCountdownNumbers = true,
                     reverseSwipe = false,
                     borderScale = 1,
-                    textScale = 1,
-                    textOffsetX = 0,
-                    textOffsetY = 0,
                     frameLevel = 50,
                 },
             },
@@ -2625,50 +2970,18 @@ local defaults = {
                         },
                     },
                     targetHighlight = { enabled = true, color = { 1, 1, 1, 0.6 }, fillOpacity = 0.12 },
-                    defensiveIndicator = { enabled = false, iconSize = 16, maxIcons = 3, spacing = 2, growDirection = "RIGHT", position = "CENTER", offsetX = 0, offsetY = 0, reverseSwipe = true },
+                    defensiveIndicator = { enabled = false, iconSize = 16, maxIcons = 3, spacing = 2, growDirection = "RIGHT", position = "CENTER", offsetX = 0, offsetY = 0, reverseSwipe = true, durationTextSize = 12 },
                 },
+                targetedSpells = { enabled = true, iconSize = 24, maxIcons = 3, spacing = 2, growDirection = "CENTER", position = "CENTER", offsetX = 0, offsetY = 0, reverseSwipe = true },
                 classPower = { enabled = false, height = 4, spacing = 1 },
                 range = { enabled = true, outOfRangeAlpha = 0.4 },
                 auras = {
-                    showDebuffs = true, maxDebuffs = 3, debuffIconSize = 16,
-                    debuffAnchor = "BOTTOMRIGHT", debuffGrowDirection = "LEFT",
-                    debuffSpacing = 2, debuffOffsetX = -2, debuffOffsetY = -18,
-                    debuffHideSwipe = false,
-                    debuffReverseSwipe = false,
-                    showBuffs = false, maxBuffs = 0, buffIconSize = 14,
-                    buffAnchor = "TOPLEFT", buffGrowDirection = "RIGHT",
-                    buffSpacing = 2, buffOffsetX = 2, buffOffsetY = 16,
-                    buffHideSwipe = false,
-                    buffReverseSwipe = false,
-                    showDurationColor = true,
-                    showExpiringPulse = true,
-                    showBuffDurationText = true,
-                    showDebuffDurationText = true,
-                    durationFontSize = 9,
-                    buffDurationFont = "",
-                    buffDurationFontSize = 9,
-                    buffDurationAnchor = "BOTTOM",
-                    buffDurationOffsetX = 0,
-                    buffDurationOffsetY = -6,
-                    buffDurationColor = { 1, 1, 1, 1 },
-                    buffDurationUseTimeColor = true,
-                    debuffDurationFont = "",
-                    debuffDurationFontSize = 9,
-                    debuffDurationAnchor = "BOTTOM",
-                    debuffDurationOffsetX = 0,
-                    debuffDurationOffsetY = -6,
-                    debuffDurationColor = { 1, 1, 1, 1 },
-                    debuffDurationUseTimeColor = true,
-                    filterMode = "off",
-                    buffFilterOnlyMine = false,
-                    buffHidePermanent = false,
-                    buffDeduplicateDefensives = true,
-                    buffClassifications = { raid = false, raidInCombat = false, cancelable = false, notCancelable = false, important = false, bigDefensive = false, externalDefensive = false },
-                    debuffClassifications = { raid = true, raidInCombat = false, crowdControl = true, important = true },
-                    buffWhitelist = {},
-                    buffBlacklist = {},
-                    debuffWhitelist = {},
-                    debuffBlacklist = {},
+                    enabled = true,
+                    -- NOTE: the default filter strips are NOT shipped here. An
+                    -- AceDB array default (elements["*"] = {debuffs, buffs}) had
+                    -- copyDefaults re-fill deleted array indices on every reload,
+                    -- so deleting a strip never persisted. The strips are seeded
+                    -- once per profile context via Model.EnsureSeeded instead.
                 },
                 privateAuras = {
                     enabled = true,
@@ -2683,31 +2996,7 @@ local defaults = {
                     showCountdownNumbers = true,
                     reverseSwipe = false,
                     borderScale = 1,
-                    textScale = 2,
-                    textOffsetX = 0,
-                    textOffsetY = 0,
-                },
-                auraIndicators = {
-                    enabled = false,
-                    iconSize = 14,
-                    anchor = "TOPLEFT",
-                    anchorOffsetX = 0,
-                    anchorOffsetY = 0,
-                    growDirection = "RIGHT",
-                    spacing = 2,
-                    maxIndicators = 5,
-                    hideSwipe = false,
-                    reverseSwipe = false,
-                    trackedSpells = {},
-                    entries = {},
-                },
-                pinnedAuras = {
-                    enabled = false,
-                    slotSize = 8,
-                    edgeInset = 2,
-                    showSwipe = true,
-                    reverseSwipe = false,
-                    specSlots = {},
+                    textScale = 1,  -- scales Blizzard's fixed countdown/stack text; <1 shrinks it relative to the icon
                 },
                 castbar = { enabled = false, height = 8, showIcon = false, showText = false },
                 portrait = { showPortrait = false, portraitSide = "LEFT", portraitSize = 30 },
@@ -2813,50 +3102,18 @@ local defaults = {
                         },
                     },
                     targetHighlight = { enabled = true, color = { 1, 1, 1, 0.6 }, fillOpacity = 0.12 },
-                    defensiveIndicator = { enabled = false, iconSize = 16, maxIcons = 3, spacing = 2, growDirection = "RIGHT", position = "CENTER", offsetX = 0, offsetY = 0, reverseSwipe = true },
+                    defensiveIndicator = { enabled = false, iconSize = 16, maxIcons = 3, spacing = 2, growDirection = "RIGHT", position = "CENTER", offsetX = 0, offsetY = 0, reverseSwipe = true, durationTextSize = 12 },
                 },
+                targetedSpells = { enabled = true, iconSize = 24, maxIcons = 3, spacing = 2, growDirection = "CENTER", position = "CENTER", offsetX = 0, offsetY = 0, reverseSwipe = true },
                 classPower = { enabled = false, height = 4, spacing = 1 },
                 range = { enabled = true, outOfRangeAlpha = 0.4 },
                 auras = {
-                    showDebuffs = true, maxDebuffs = 3, debuffIconSize = 16,
-                    debuffAnchor = "BOTTOMRIGHT", debuffGrowDirection = "LEFT",
-                    debuffSpacing = 2, debuffOffsetX = -2, debuffOffsetY = -18,
-                    debuffHideSwipe = false,
-                    debuffReverseSwipe = false,
-                    showBuffs = false, maxBuffs = 0, buffIconSize = 14,
-                    buffAnchor = "TOPLEFT", buffGrowDirection = "RIGHT",
-                    buffSpacing = 2, buffOffsetX = 2, buffOffsetY = 16,
-                    buffHideSwipe = false,
-                    buffReverseSwipe = false,
-                    showDurationColor = true,
-                    showExpiringPulse = true,
-                    showBuffDurationText = true,
-                    showDebuffDurationText = true,
-                    durationFontSize = 9,
-                    buffDurationFont = "",
-                    buffDurationFontSize = 9,
-                    buffDurationAnchor = "BOTTOM",
-                    buffDurationOffsetX = 0,
-                    buffDurationOffsetY = -6,
-                    buffDurationColor = { 1, 1, 1, 1 },
-                    buffDurationUseTimeColor = true,
-                    debuffDurationFont = "",
-                    debuffDurationFontSize = 9,
-                    debuffDurationAnchor = "BOTTOM",
-                    debuffDurationOffsetX = 0,
-                    debuffDurationOffsetY = -6,
-                    debuffDurationColor = { 1, 1, 1, 1 },
-                    debuffDurationUseTimeColor = true,
-                    filterMode = "off",
-                    buffFilterOnlyMine = false,
-                    buffHidePermanent = false,
-                    buffDeduplicateDefensives = true,
-                    buffClassifications = { raid = false, raidInCombat = false, cancelable = false, notCancelable = false, important = false, bigDefensive = false, externalDefensive = false },
-                    debuffClassifications = { raid = true, raidInCombat = false, crowdControl = true, important = true },
-                    buffWhitelist = {},
-                    buffBlacklist = {},
-                    debuffWhitelist = {},
-                    debuffBlacklist = {},
+                    enabled = true,
+                    -- NOTE: the default filter strips are NOT shipped here. An
+                    -- AceDB array default (elements["*"] = {debuffs, buffs}) had
+                    -- copyDefaults re-fill deleted array indices on every reload,
+                    -- so deleting a strip never persisted. The strips are seeded
+                    -- once per profile context via Model.EnsureSeeded instead.
                 },
                 privateAuras = {
                     enabled = true,
@@ -2871,31 +3128,7 @@ local defaults = {
                     showCountdownNumbers = true,
                     reverseSwipe = false,
                     borderScale = 1,
-                    textScale = 2,
-                    textOffsetX = 0,
-                    textOffsetY = 0,
-                },
-                auraIndicators = {
-                    enabled = false,
-                    iconSize = 14,
-                    anchor = "TOPLEFT",
-                    anchorOffsetX = 0,
-                    anchorOffsetY = 0,
-                    growDirection = "RIGHT",
-                    spacing = 2,
-                    maxIndicators = 5,
-                    hideSwipe = false,
-                    reverseSwipe = false,
-                    trackedSpells = {},
-                    entries = {},
-                },
-                pinnedAuras = {
-                    enabled = false,
-                    slotSize = 8,
-                    edgeInset = 2,
-                    showSwipe = true,
-                    reverseSwipe = false,
-                    specSlots = {},
+                    textScale = 1,  -- scales Blizzard's fixed countdown/stack text; <1 shrinks it relative to the icon
                 },
                 castbar = { enabled = false, height = 8, showIcon = false, showText = false },
                 portrait = { showPortrait = false, portraitSide = "LEFT", portraitSize = 30 },
@@ -2925,7 +3158,7 @@ local defaults = {
 
             -- Click-casting moved to db.char (per-character) in v3.5.3.
             -- See ns.defaults.char.clickCast at the bottom of this file and
-            -- the migration in modules/frames/groupframes_clickcast.lua.
+            -- the migration in modules/groupframes/groupframes_clickcast.lua.
             -- Stale profile data intentionally left alone for downgrade safety.
 
             -- Test/preview mode (shared)
@@ -2974,9 +3207,8 @@ local defaults = {
             useClassColorText = false,
             borderSize = 1,
             hideBorder = false,
-            borderColor = { 0, 0, 0, 1 },
-            useClassColorBorder = false,
-            useAccentColorBorder = false,
+            borderColorSource = "inherit",  -- inherit | theme | class | custom
+            borderColor = { 0, 0, 0, 1 },  -- used when borderColorSource == "custom"
             borderTexture = "None",
             useCustomFont = false,
             font = nil,
@@ -3000,9 +3232,8 @@ local defaults = {
             useClassColorText = false,
             borderSize = 1,
             hideBorder = false,
-            borderColor = { 0, 0, 0, 1 },
-            useClassColorBorder = false,
-            useAccentColorBorder = false,
+            borderColorSource = "inherit",  -- inherit | theme | class | custom
+            borderColor = { 0, 0, 0, 1 },  -- used when borderColorSource == "custom"
             borderTexture = "None",
             useCustomFont = false,
             font = nil,
@@ -3010,7 +3241,7 @@ local defaults = {
 
         -- Combat Timer (displays elapsed combat time)
         combatTimer = {
-            enabled = true,       -- Opt-in feature (disabled by default)
+            enabled = true,       -- Enabled by default
             xOffset = 0,           -- Horizontal offset from screen center
             yOffset = -150,        -- Vertical offset (below center by default)
             width = 80,            -- Frame width
@@ -3026,9 +3257,8 @@ local defaults = {
             -- Border settings
             borderSize = 1,
             borderTexture = "None", -- Border texture from LibSharedMedia (or "None" for solid)
-            useClassColorBorder = false,  -- If true, use player class color
-            useAccentColorBorder = false,  -- If true, use addon accent color
-            borderColor = {0, 0, 0, 1},  -- Black border
+            borderColorSource = "inherit",  -- inherit | theme | class | custom
+            borderColor = {0, 0, 0, 1},  -- used when borderColorSource == "custom"
             hideBorder = false,  -- If true, hide border completely (overrides other border settings)
             onlyShowInEncounters = false,  -- If true, only show during boss encounters (not general combat)
         },
@@ -3054,6 +3284,7 @@ local defaults = {
             barColor = {0.2, 0.5, 1.0, 1},
             restedColor = {1.0, 0.7, 0.1, 0.5},
             backdropColor = {0.05, 0.05, 0.07, 0.85},
+            borderColorSource = "inherit",  -- inherit | theme | class | custom
             borderColor = {0, 0, 0, 1},
         },
 
@@ -3072,8 +3303,7 @@ local defaults = {
             barBgOverride = false,
             barBackgroundColor = { 0.1, 0.1, 0.1, 0.8 },
             -- Border
-            borderOverride = false,
-            borderUseClassColor = false,
+            borderColorSource = "inherit",  -- inherit | theme | class | custom
             borderColor = { 0, 0, 0, 1 },
             -- Text
             showText = true,
@@ -3112,6 +3342,7 @@ local defaults = {
         -- Cooldown Manager Effects
         cooldownSwipe = {
             showBuffSwipe = false,      -- Buff/aura duration swipe (Essential/Utility)
+            showCooldownIconAuraPhase = true, -- Let cooldown icons show their linked buff/debuff phase before cooldown/recharge
             showBuffIconSwipe = true,   -- BuffIcon viewer swipe (opt-in)
             showGCDSwipe = false,       -- GCD swipe (~1.5s)
             showCooldownSwipe = true,   -- Actual spell cooldown swipe
@@ -3131,7 +3362,8 @@ local defaults = {
         customGlow = {
             -- Essential Cooldowns
             essentialEnabled = true,
-            essentialPandemicEnabled = true,
+            essentialPandemicDebuffEnabled = true,
+            essentialPandemicBuffEnabled = true,
             essentialGlowType = "Pixel Glow",  -- "Pixel Glow", "Autocast Shine", "Button Glow"
             essentialColor = {0.95, 0.95, 0.32, 1},  -- Default yellow/gold
             essentialLines = 14,       -- Number of lines for Pixel Glow / spots for Autocast Shine
@@ -3144,7 +3376,8 @@ local defaults = {
 
             -- Utility Cooldowns
             utilityEnabled = true,
-            utilityPandemicEnabled = true,
+            utilityPandemicDebuffEnabled = true,
+            utilityPandemicBuffEnabled = true,
             utilityGlowType = "Pixel Glow",
             utilityColor = {0.95, 0.95, 0.32, 1},
             utilityLines = 14,
@@ -3156,9 +3389,10 @@ local defaults = {
             utilityYOffset = 0,
 
             -- Buff Icon Bar
-            buffPandemicEnabled = true,
+            buffPandemicDebuffEnabled = true,
+            buffPandemicBuffEnabled = true,
         },
-        
+
         -- Cooldown Highlighter (flash on spell cast)
         cooldownHighlighter = {
             enabled = false,
@@ -3213,8 +3447,29 @@ local defaults = {
             debuffDurationTextAnchor = "CENTER",
             debuffDurationTextOffsetX = 0,
             debuffDurationTextOffsetY = 0,
+            -- Filter flags (HELPFUL/HARMFUL is implicit per frame). Each enabled
+            -- flag is appended to the AuraFilters string passed to both the
+            -- SecureAuraHeader and C_UnitAuras.GetUnitAuras — they must stay in
+            -- sync or child↔aura pairing breaks.
+            buffFilterPlayer = false,
+            buffFilterRaid = false,
+            buffFilterCancelable = false,
+            buffFilterNotCancelable = false,
+            buffFilterBigDefensive = false,
+            debuffFilterPlayer = false,
+            debuffFilterRaid = false,
+            debuffFilterIncludeNameplateOnly = false,
+            debuffFilterRaidPlayerDispellable = false,
+            debuffFilterImportant = false,
+            debuffFilterCrowdControl = false,
+            -- Sort: keys map to SORT_TRANSLATIONS in modules/ui/buffborders.lua.
+            -- INDEX = raw API slot order (matches existing behavior pre-3.6).
+            buffSortRule = "INDEX",
+            buffSortReverse = false,
+            debuffSortRule = "INDEX",
+            debuffSortReverse = false,
         },
-        
+
         -- QUI Autohides
         uiHider = {
             hideObjectiveTrackerAlways = false,  -- Hide Objective Tracker always
@@ -3251,26 +3506,25 @@ local defaults = {
             hideDataBarsInPetBattle = false, -- Hide data bars during pet battles
             hideMainActionBarArt = false,
         },
-        
+
         -- Minimap Settings
         minimap = {
             enabled = true,  -- Enabled by default for clean minimap experience
-            
+
             -- Shape and Size
             shape = "SQUARE",  -- SQUARE or ROUND
             size = 226,
             scale = 1.0,  -- Scale multiplier for minimap frame
             zoomLevel = 0,  -- World zoom level (0-5); does not change the frame size
             borderSize = 1,
-            borderColor = {0, 0, 0, 1},  -- Black border
-            useClassColorBorder = false,
-            useAccentColorBorder = false,
+            borderColorSource = "inherit",  -- inherit | theme | class | custom
+            borderColor = {0, 0, 0, 1},     -- custom border color (used when source == "custom")
             buttonRadius = 2,  -- LibDBIcon button radius for square minimap
-            
+
             -- Position
             lock = false,  -- Unlocked by default so users can position it
             position = { point = "TOPLEFT", relPoint = "BOTTOMLEFT", x = 790, y = 285 },
-            
+
             -- Features
             autoZoom = false,  -- Auto zoom out after 10 seconds
             hideAddonButtons = true,  -- Show addon buttons on hover only
@@ -3294,12 +3548,13 @@ local defaults = {
                 bgColor = {0.03, 0.03, 0.03, 1}, -- Drawer background color (alpha controlled by bgOpacity)
                 bgOpacity = 98,            -- Drawer background opacity (0-100)
                 borderSize = 1,            -- Drawer border thickness multiplier (0 hides border)
-                borderColor = {0.2, 0.8, 0.6, 1}, -- Drawer border color
+                borderColor = {0.2, 0.8, 0.6, 1}, -- Drawer border color (used when source == "custom")
+                borderColorSource = "inherit",     -- inherit | theme | class | custom
             },
             middleClickMenuEnabled = true,  -- Middle click minimap opens quick menu
             hideMicroMenu = false,  -- Hide Blizzard micro menu (Character/Spellbook/etc.)
             hideBagBar = false,  -- Hide Blizzard bag bar
-            
+
             -- Button Visibility
             showZoomButtons = true,
             showMail = true,
@@ -3344,7 +3599,7 @@ local defaults = {
                 useClassColor = false,
                 timeFormat = "local",  -- "local" or "server"
             },
-            
+
             -- Coordinates (anchored top-right)
             showCoords = false,
             coordPrecision = "%d,%d",  -- %d,%d = normal, %.1f,%.1f = high, %.2f,%.2f = very high
@@ -3360,7 +3615,7 @@ local defaults = {
                 color = {1, 1, 1, 1},
                 useClassColor = false,
             },
-            
+
             -- Zone Text (anchored top-center)
             showZoneText = true,
             zoneTextConfig = {
@@ -3381,13 +3636,13 @@ local defaults = {
                 colorContested = {1.0, 0.7, 0.0, 1}, -- Orange
             },
         },
-        
+
         -- Minimap Button (LibDBIcon) - separate from minimap module
         minimapButton = {
             hide = false,
             minimapPos = 180,  -- 9 o'clock position (left side)
         },
-        
+
         -- Datatext Panel (fixed below minimap - slot-based architecture)
         datatext = {
             enabled = true,
@@ -3399,12 +3654,13 @@ local defaults = {
             slot3 = { shortLabel = true, noLabel = false, xOffset = 3, yOffset = 0 },
 
             forceSingleLine = true,  -- If true, ignores wrapping and forces single line
-            
+
             -- Panel Settings (width auto-matches minimap)
             height = 22,
             offsetY = 0,  -- Y offset from minimap bottom
             bgOpacity = 60,  -- 0-100
             borderSize = 2,  -- Border thickness (0-8, 0=hidden)
+            borderColorSource = "inherit",  -- inherit | theme | class | custom
             borderColor = {0, 0, 0, 1},  -- Black border (#90)
 
             -- Font Settings
@@ -3415,10 +3671,10 @@ local defaults = {
             -- Color Settings
             useClassColor = false,
             valueColor = {0.1, 1.0, 0.1, 1},  -- #1AFF1A green
-            
+
             -- Separator
             separator = "  ",
-            
+
             -- Legacy Composite Mode Toggles
             showFPS = true,
             showLatency = false,
@@ -3429,7 +3685,7 @@ local defaults = {
             showFriends = false,
             showGuild = false,
             showLootSpec = false,
-            
+
             -- Time Settings (for Time datatext or legacy mode)
             timeFormat = "local",  -- "local" or "server"
             use24Hour = false,
@@ -3442,6 +3698,9 @@ local defaults = {
 
             -- Player Spec datatext settings
             specDisplayMode = "full",  -- "icon" = icon only, "loadout" = icon + loadout, "full" = icon + spec/loadout
+
+            -- Alts datatext settings
+            altsMode = "gold",  -- "gold" = total gold across alts, "count" = number of tracked alts
 
             -- System datatext settings (combined FPS + Latency)
             system = {
@@ -3465,10 +3724,50 @@ local defaults = {
             currencyOrder = {},  -- Ordered currency IDs selected by user (up to 6)
             currencyEnabled = {}, -- Per-currency toggle map (id -> true/false)
         },
-        
+
         -- Additional Datapanels (user-created, independent of minimap)
         quiDatatexts = {
             panels = {},  -- Array of panel configurations
+        },
+
+        -- Info Bar (full-width top/bottom datatext bar — QUI_InfoBar module)
+        infobar = {
+            enabled = false,
+            position = "TOP",            -- "TOP" | "BOTTOM"
+            height = 22,
+            fontSize = 12,
+            bgOpacity = 85,              -- 0-100
+            borderSize = 1,
+            borderColorSource = "inherit",  -- inherit | theme | class | custom
+            borderColor = {0, 0, 0, 1},
+            mouseoverFade = false,
+            fadeRestOpacity = 0,         -- 0-100 (% opacity when faded out)
+            hideInCombat = false,
+            widgetSpacing = 12,
+            zonePadding = 8,
+            -- Zone lists ship EMPTY: AceDB's removeDefaults strips array entries
+            -- equal-by-index to defaults, so a user-shortened list matching a
+            -- default prefix would be wiped and reseeded next login. The starter
+            -- layout is seeded once at runtime (infobar.lua SeedDefaultZones).
+            zonesSeeded = false,
+            zones = {
+                left   = {},
+                center = {},
+                right  = {},
+            },
+            -- [widgetId] = { shortLabel=bool, noLabel=bool, minWidth=number, xOffset=number,
+            --                hideIcon=bool, clickThrough=bool }
+            widgetSettings = {},
+            micromenu = {
+                buttons = {
+                    character = true, spellbook = true, talents = true,
+                    achievements = true, collections = true, lfg = true,
+                    shop = false, help = false,
+                },
+            },
+            travel = {
+                useRandomHearth = false,
+            },
         },
 
         -- Custom Tracker Bars (consumables, trinkets, custom spells)
@@ -4167,6 +4466,11 @@ local defaults = {
     global = {
         -- Gold tracking per character (realm-name = copper)
         goldData = {},
+        pinnedSettings = {
+            _version = 1,
+            _updatedAt = 0,
+            entries = {},
+        },
         -- Spell Scanner: cross-character spell/item duration mappings
         spellScanner = {
             spells = {},   -- [castSpellID] = { buffSpellID, duration, icon, name, scannedAt }
@@ -4180,7 +4484,7 @@ local defaults = {
         -- spells, so a single AceDB profile shared across an account would
         -- leak one class's bindings onto every alt. Legacy profile data at
         -- profile.quiGroupFrames.clickCast is one-time copied here by the
-        -- migration in modules/frames/groupframes_clickcast.lua.
+        -- migration in modules/groupframes/groupframes_clickcast.lua.
         clickCast = {
             enabled = true,
             bindings = {},
@@ -4197,6 +4501,24 @@ local defaults = {
                 pet = false,
                 boss = false,
             },
+        },
+        -- Per-character override for consumable macro selections. When
+        -- characterSpecific = true, the consumable macro module reads its
+        -- selections from this table instead of profile.general.consumableMacros.
+        -- Mirrors the profile-side schema. The toggle itself lives here (not in
+        -- profile) so flipping it on one character cannot leak to alts that
+        -- share the same AceDB profile. See modules/utility/consumablemacros.lua.
+        consumableMacros = {
+            characterSpecific = false,
+            enabled = false,
+            selectedFlask = "none",
+            selectedPotion = "none",
+            selectedHealth = "none",
+            selectedHealthstone = "none",
+            selectedAugment = "none",
+            selectedVantus = "none",
+            selectedWeapon = "none",
+            chatNotifications = true,
         },
     },
 }

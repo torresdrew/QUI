@@ -16,23 +16,7 @@ local MAX_DISPLAY_SCHEMA_ERRORS = 3
 local MAX_DETAIL_TYPE_MISMATCHES = 64
 local MAX_SANITIZE_STEPS = 128
 
-local function CloneValue(value, seen)
-    if type(value) ~= "table" then
-        return value
-    end
-
-    seen = seen or {}
-    if seen[value] then
-        return seen[value]
-    end
-
-    local copy = {}
-    seen[value] = copy
-    for k, v in pairs(value) do
-        copy[CloneValue(k, seen)] = CloneValue(v, seen)
-    end
-    return copy
-end
+local CloneValue = ns.Helpers.DeepCopy
 
 local function GetDisplayPath(path, rootLabel)
     if type(path) ~= "string" or path == "" then
@@ -140,30 +124,6 @@ local function ValidateImportTree(value, label, state, depth)
     end
 
     return true
-end
-
-local function ValidateTableTypeShape(candidate, schema, path, errors, depth)
-    if #errors >= MAX_SCHEMA_ERRORS then return end
-    depth = depth or 0
-    if depth > MAX_IMPORT_DEPTH then return end
-    if type(candidate) ~= "table" or type(schema) ~= "table" then return end
-
-    for key, schemaValue in pairs(schema) do
-        if #errors >= MAX_SCHEMA_ERRORS then break end
-
-        local candidateValue = candidate[key]
-        if candidateValue ~= nil then
-            local schemaType = type(schemaValue)
-            local candidateType = type(candidateValue)
-            local keyPath = ("%s.%s"):format(path or "profile", tostring(key))
-
-            if schemaType ~= candidateType then
-                table.insert(errors, { path = keyPath, expected = schemaType, actual = candidateType })
-            elseif schemaType == "table" then
-                ValidateTableTypeShape(candidateValue, schemaValue, keyPath, errors, depth + 1)
-            end
-        end
-    end
 end
 
 local function ValidateTableTypeShapeDetailed(candidate, schema, path, errors, depth)
@@ -478,6 +438,7 @@ local PROFILE_THEME_GENERAL_KEYS = {
 local PROFILE_QOL_GENERAL_KEYS = {
     "uiScale",
     "allowReloadInCombat",
+    "showOptionTooltips",
     "autoInsertKey",
     "consumableMacros",
     "consumablePersistent",
@@ -533,6 +494,7 @@ local PROFILE_QOL_GENERAL_KEYS = {
     "keyTrackerOffsetX",
     "keyTrackerOffsetY",
     "keyTrackerWidth",
+    "actionTracker",
 }
 
 local PROFILE_SKINNING_GENERAL_KEYS = {
@@ -548,6 +510,7 @@ local PROFILE_SKINNING_GENERAL_KEYS = {
     "gameMenuDim",
     "skinPowerBarAlt",
     "skinStatusTrackingBars",
+    "skinDamageMeter",
     "statusTrackingBarsBarColorMode",
     "statusTrackingBarsBarColor",
     "statusTrackingBarsBarHeight",
@@ -581,12 +544,14 @@ local PROFILE_SKINNING_GENERAL_KEYS = {
     "skinAlerts",
     "skinCharacterFrame",
     "skinInspectFrame",
-    "skinLootWindow",
-    "skinLootUnderMouse",
-    "skinLootHistory",
-    "skinRollFrames",
-    "skinRollSpacing",
     "skinUseClassColor",
+    "skinBorderColorSource",
+    "skinBorderColor",
+    "hideSkinBorders",
+    "alertsBorderColorSource",
+    "alertsBorderColor",
+    "readyCheckBorderColorSource",
+    "readyCheckBorderColor",
 }
 
 local PROFILE_LAYOUT_PATHS = {
@@ -672,6 +637,259 @@ end
 
 local CUSTOM_TRACKER_BAR_ID_PREFIX = "customTrackerBar:"
 local GenerateUniqueTrackerID
+
+local function SyncCustomTrackerBarsToCDM(core, profile)
+    local migrations = ns.Migrations
+    if not migrations or type(migrations.SyncCustomTrackerBarsToCDM) ~= "function" then
+        return false
+    end
+    local globalDB = core and core.db and core.db.global
+    return migrations.SyncCustomTrackerBarsToCDM(profile, globalDB)
+end
+
+-- Cross-character profile imports lose the source-spec association on
+-- spec-specific custom-tracker bars: ncdm._lastSpecID is the only spec
+-- hint a v31 export carries, and the importing client's session
+-- overwrites it on the next save with the importer's current spec. By
+-- the time migrations next run, the original spec is gone.
+--
+-- Stamp bar._sourceSpecID directly from the imported _lastSpecID before
+-- migrations run. v32(c) EnsureCustomTrackerBarContainer clones the bar
+-- into the V2 container via CloneValue, propagating the stamp to
+-- container._sourceSpecID. v32(d)/v32(g) skip stamping when it's
+-- already set, so a priest export imported on a warrior preserves
+-- _sourceSpecID = priestSpec instead of being overwritten with the
+-- warrior's current spec.
+local function StampSourceSpecOnImportedSpecBars(targetProfile, importedProfile)
+    if type(targetProfile) ~= "table" or type(importedProfile) ~= "table" then return end
+    local bars = targetProfile.customTrackers and targetProfile.customTrackers.bars
+    if type(bars) ~= "table" then return end
+    local sourceSpecID = importedProfile.ncdm and importedProfile.ncdm._lastSpecID
+    if type(sourceSpecID) ~= "number" or sourceSpecID <= 0 then return end
+    for _, bar in ipairs(bars) do
+        if type(bar) == "table"
+           and bar.specSpecificSpells == true
+           and bar._sourceSpecID == nil
+        then
+            bar._sourceSpecID = sourceSpecID
+        end
+    end
+end
+
+local function RemoveImportedCustomBarContainers(core, profile)
+    local migrations = ns.Migrations
+    if migrations and type(migrations.RemoveLegacyCustomBarContainers) == "function" then
+        migrations.RemoveLegacyCustomBarContainers(profile, core and core.db and core.db.global)
+    end
+end
+
+local function IsCustomBarContainer(container)
+    return type(container) == "table" and container.containerType == "customBar"
+end
+
+local function GetCustomBarLegacyID(containerKey, container)
+    if type(container) ~= "table" then return nil end
+    if container._legacyId ~= nil then return tostring(container._legacyId) end
+    if container.id ~= nil then return tostring(container.id) end
+    if type(containerKey) == "string" then
+        return containerKey:match("^customBar_(.+)$")
+    end
+    return nil
+end
+
+local function BuildLegacyCustomTrackerBarFromContainer(containerKey, container)
+    if not IsCustomBarContainer(container) then return nil end
+
+    local legacyID = GetCustomBarLegacyID(containerKey, container)
+    if not legacyID or legacyID == "" then return nil end
+
+    local row = type(container.row1) == "table" and container.row1 or {}
+    return {
+        id = legacyID,
+        name = container.name or "Custom Bar",
+        enabled = container.enabled ~= false,
+        locked = container.locked == true,
+        offsetX = (type(container.pos) == "table" and container.pos.ox) or container.offsetX or 0,
+        offsetY = (type(container.pos) == "table" and container.pos.oy) or container.offsetY or 0,
+        growDirection = container.growDirection or "RIGHT",
+        maxIcons = row.iconCount or container.maxIcons or 8,
+        iconSize = row.iconSize or container.iconSize or 28,
+        spacing = row.padding or container.spacing or 4,
+        borderSize = row.borderSize or container.borderSize or 2,
+        borderColor = CloneValue(row.borderColorTable or container.borderColor or container.borderColorTable or {0, 0, 0, 1}),
+        aspectRatioCrop = row.aspectRatioCrop or container.aspectRatioCrop or 1.0,
+        zoom = row.zoom or container.zoom or 0,
+        durationFont = row.durationFont or container.durationFont,
+        durationSize = row.durationSize or container.durationSize or 13,
+        durationColor = CloneValue(row.durationTextColor or container.durationColor or container.durationTextColor or {1, 1, 1, 1}),
+        durationAnchor = row.durationAnchor or container.durationAnchor or "CENTER",
+        durationOffsetX = row.durationOffsetX or container.durationOffsetX or 0,
+        durationOffsetY = row.durationOffsetY or container.durationOffsetY or 0,
+        hideDurationText = row.hideDurationText == true or container.hideDurationText == true,
+        stackFont = row.stackFont or container.stackFont,
+        stackSize = row.stackSize or container.stackSize or 9,
+        stackColor = CloneValue(row.stackTextColor or container.stackColor or container.stackTextColor or {1, 1, 1, 1}),
+        stackAnchor = row.stackAnchor or container.stackAnchor or "BOTTOMRIGHT",
+        stackOffsetX = row.stackOffsetX or container.stackOffsetX or 3,
+        stackOffsetY = row.stackOffsetY or container.stackOffsetY or -1,
+        hideStackText = row.hideStackText == true or container.hideStackText == true,
+        showItemCharges = container.showItemCharges ~= false,
+        showProfessionQuality = container.showProfessionQuality ~= false,
+        showRechargeSwipe = container.showRechargeSwipe == true,
+        noDesaturateWithCharges = container.noDesaturateWithCharges == true,
+        bgOpacity = container.bgOpacity or 0,
+        bgColor = CloneValue(container.bgColor or {0, 0, 0, 1}),
+        hideGCD = container.hideGCD ~= false,
+        hideNonUsable = container.hideNonUsable == true,
+        showOnlyOnCooldown = container.showOnlyOnCooldown == true,
+        showOnlyWhenActive = container.showOnlyWhenActive == true,
+        showOnlyWhenOffCooldown = container.showOnlyWhenOffCooldown == true,
+        showOnlyInCombat = container.showOnlyInCombat == true,
+        dynamicLayout = container.dynamicLayout == true,
+        clickableIcons = container.clickableIcons == true,
+        showActiveState = container.showActiveState ~= false,
+        activeGlowEnabled = container.activeGlowEnabled ~= false,
+        activeGlowType = container.activeGlowType or "Pixel Glow",
+        activeGlowColor = CloneValue(container.activeGlowColor or {1, 0.85, 0.3, 1}),
+        activeGlowLines = container.activeGlowLines or 8,
+        activeGlowFrequency = container.activeGlowFrequency or 0.25,
+        activeGlowThickness = container.activeGlowThickness or 2,
+        activeGlowScale = container.activeGlowScale or 1.0,
+        specSpecificSpells = container.specSpecificSpells == true or container.specSpecific == true,
+        entries = CloneValue(container.entries or {}),
+    }
+end
+
+local function CollectCustomTrackerExportRecords(profile)
+    if type(profile) ~= "table" then return {} end
+
+    local containers = profile.ncdm and profile.ncdm.containers
+    local byLegacyID = {}
+    local customKeys = {}
+    if type(containers) == "table" then
+        for key, container in pairs(containers) do
+            if IsCustomBarContainer(container) then
+                local legacyID = GetCustomBarLegacyID(key, container)
+                if legacyID then
+                    byLegacyID[legacyID] = { key = key, container = container, legacyID = legacyID }
+                    customKeys[#customKeys + 1] = key
+                end
+            end
+        end
+    end
+    table.sort(customKeys)
+
+    local records = {}
+    local seen = {}
+    local bars = profile.customTrackers and profile.customTrackers.bars
+    if type(bars) == "table" then
+        for _, bar in ipairs(bars) do
+            if type(bar) == "table" then
+                local legacyID = bar.id ~= nil and tostring(bar.id) or nil
+                local mapped = legacyID and byLegacyID[legacyID] or nil
+                if mapped then
+                    local exportedBar = BuildLegacyCustomTrackerBarFromContainer(mapped.key, mapped.container)
+                    if exportedBar then
+                        records[#records + 1] = {
+                            bar = exportedBar,
+                            legacyID = mapped.legacyID,
+                            containerKey = mapped.key,
+                        }
+                    end
+                    seen[legacyID] = true
+                else
+                    records[#records + 1] = {
+                        bar = CloneValue(bar),
+                        legacyID = legacyID,
+                        containerKey = legacyID and ("customBar_" .. legacyID) or nil,
+                    }
+                    if legacyID then seen[legacyID] = true end
+                end
+            end
+        end
+    end
+
+    for _, key in ipairs(customKeys) do
+        local mapped = byLegacyID[GetCustomBarLegacyID(key, containers[key])]
+        if mapped and not seen[mapped.legacyID] then
+            local exportedBar = BuildLegacyCustomTrackerBarFromContainer(mapped.key, mapped.container)
+            if exportedBar then
+                records[#records + 1] = {
+                    bar = exportedBar,
+                    legacyID = mapped.legacyID,
+                    containerKey = mapped.key,
+                }
+                seen[mapped.legacyID] = true
+            end
+        end
+    end
+
+    return records
+end
+
+local function ExtractBarsFromExportRecords(records)
+    local bars = {}
+    for _, record in ipairs(records or {}) do
+        if type(record) == "table" and type(record.bar) == "table" then
+            bars[#bars + 1] = CloneValue(record.bar)
+        end
+    end
+    return bars
+end
+
+local function CollectSpecEntriesForExportRecord(record, globals)
+    if type(record) ~= "table" or type(globals) ~= "table" then return nil end
+    if not (record.bar and record.bar.specSpecificSpells) then return nil end
+
+    local legacyID = record.legacyID or (record.bar and record.bar.id)
+    if legacyID ~= nil and type(globals.specTrackerSpells) == "table" then
+        local legacyEntries = globals.specTrackerSpells[legacyID]
+        if type(legacyEntries) == "table" then
+            return CloneValue(legacyEntries)
+        end
+    end
+
+    local containerKey = record.containerKey
+    if (not containerKey or containerKey == "") and legacyID ~= nil then
+        containerKey = "customBar_" .. tostring(legacyID)
+    end
+    local ncdmEntries = globals.ncdm
+        and globals.ncdm.specTrackerSpells
+        and globals.ncdm.specTrackerSpells[containerKey]
+    if type(ncdmEntries) == "table" then
+        return CloneValue(ncdmEntries)
+    end
+
+    return nil
+end
+
+local function CollectLegacySpecEntriesForExportRecords(records, globals)
+    if type(records) ~= "table" or type(globals) ~= "table" then return nil end
+    local result = nil
+    for _, record in ipairs(records) do
+        local entries = CollectSpecEntriesForExportRecord(record, globals)
+        local legacyID = record.legacyID or (record.bar and record.bar.id)
+        if entries and legacyID ~= nil then
+            result = result or {}
+            result[legacyID] = entries
+        end
+    end
+    return result
+end
+
+local function StampCustomTrackerBarsForExport(targetProfile, sourceProfile)
+    local records = CollectCustomTrackerExportRecords(sourceProfile)
+    if #records == 0 then return records end
+
+    if type(targetProfile.customTrackers) == "table" then
+        targetProfile.customTrackers = CloneValue(targetProfile.customTrackers)
+    else
+        targetProfile.customTrackers = {}
+    end
+    targetProfile.customTrackers.bars = ExtractBarsFromExportRecords(records)
+
+    return records
+end
 
 local function GetTrackerEntryResolvedName(entry)
     if type(entry) ~= "table" then
@@ -773,16 +991,14 @@ local function BuildCustomTrackerBarDescription(bar)
 end
 
 local function BuildCustomTrackerBarPreviewChildren(profileData)
-    local bars = profileData
-        and profileData.customTrackers
-        and profileData.customTrackers.bars
-
-    if type(bars) ~= "table" then
+    local records = CollectCustomTrackerExportRecords(profileData)
+    if #records == 0 then
         return nil
     end
 
     local children = {}
-    for index, bar in ipairs(bars) do
+    for index, record in ipairs(records) do
+        local bar = record.bar
         local barName = type(bar) == "table" and bar.name or nil
         children[#children + 1] = {
             id = CUSTOM_TRACKER_BAR_ID_PREFIX .. index,
@@ -808,9 +1024,9 @@ local PROFILE_IMPORT_CATEGORIES = {
     {
         id = "layout",
         label = "Layout / Positions",
-        description = "Mover positions, HUD anchors, frame placement, and tracked element offsets.",
+                description = "Mover positions, frame placement, and tracked element offsets.",
         recommended = false,
-        topLevelKeys = { "frameAnchoring", "dandersFrames", "abilityTimeline", "blizzardMover", "layoutMode" },
+        topLevelKeys = { "frameAnchoring", "bigWigs", "dandersFrames", "abilityTimeline", "blizzardMover", "layoutMode" },
         paths = PROFILE_LAYOUT_PATHS,
     },
     {
@@ -875,6 +1091,9 @@ local PROFILE_IMPORT_CATEGORIES = {
             "rangeCheck",
             "skyriding",
             "hudLayering",
+            "powerBar",
+            "secondaryPowerBar",
+            "powerColors",
         },
     },
     {
@@ -1005,6 +1224,13 @@ local PROFILE_IMPORT_CATEGORIES = {
         },
     },
     {
+        id = "infobar",
+        label = "Info Bar",
+        description = "Full-width info bar layout, widgets, and appearance.",
+        recommended = true,
+        topLevelKeys = { "infobar" },
+    },
+    {
         id = "customTrackers",
         label = "Custom CDM Bars",
         description = "Custom CDM bar settings and individual imported bars.",
@@ -1029,6 +1255,7 @@ local PROFILE_IMPORT_CATEGORIES = {
         recommended = true,
         topLevelKeys = {
             "mplusTimer",
+            "mplusProgress",
             "combatText",
             "brzCounter",
             "atonementCounter",
@@ -1037,6 +1264,16 @@ local PROFILE_IMPORT_CATEGORIES = {
             "totemBar",
             "preyTracker",
         },
+    },
+    {
+        id = "damageMeter",
+        label = "Damage Meter",
+        description = "Native damage meter windows, appearance, and behavior settings.",
+        recommended = true,
+        -- Copies the whole `damageMeter` table; only `damageMeter.native.*` is
+        -- persisted config (captured combat sessions are runtime-only and live
+        -- off-profile), so this matches full-export behavior exactly.
+        topLevelKeys = { "damageMeter" },
     },
     {
         id = "chat",
@@ -1060,6 +1297,20 @@ local PROFILE_IMPORT_CATEGORIES = {
         recommended = true,
         topLevelKeys = { "alerts", "tooltip", "character", "loot", "lootRoll", "lootResults" },
         generalKeys = PROFILE_SKINNING_GENERAL_KEYS,
+    },
+    {
+        id = "bags",
+        label = "Bags",
+        description = "Bag, bank, and storage module settings.",
+        recommended = true,
+        topLevelKeys = { "bags" },
+    },
+    {
+        id = "alts",
+        label = "Alts",
+        description = "Alt roster window settings.",
+        recommended = true,
+        topLevelKeys = { "alts" },
     },
 }
 
@@ -1254,7 +1505,7 @@ local function RestoreDatatextPanelLayout(targetProfile, previousProfile)
     end
 end
 
-local function ImportSelectedCustomTrackerBars(targetProfile, importedProfile, barIndexes)
+local function ImportSelectedCustomTrackerBars(core, targetProfile, importedProfile, barIndexes)
     if type(targetProfile) ~= "table" or type(importedProfile) ~= "table" or type(barIndexes) ~= "table" then
         return false, nil
     end
@@ -1272,24 +1523,24 @@ local function ImportSelectedCustomTrackerBars(targetProfile, importedProfile, b
     end
 
     local importedAny = false
-    local idMappings = {}
+    local mappings = {}
     for _, barIndex in ipairs(barIndexes) do
         local sourceBar = importedBars[barIndex]
         if type(sourceBar) == "table" then
             local clonedBar = CloneValue(sourceBar)
-            local sourceID = sourceBar.id
-            if clonedBar.id then
-                clonedBar.id = GenerateUniqueTrackerID()
-            end
-            if sourceID ~= nil and clonedBar.id ~= nil then
-                idMappings[#idMappings + 1] = { sourceID = sourceID, targetID = clonedBar.id }
-            end
+            local sourceID = clonedBar.id
+            clonedBar.id = GenerateUniqueTrackerID()
+            clonedBar._importedLegacyId = sourceID
             table.insert(targetProfile.customTrackers.bars, clonedBar)
+            mappings[#mappings + 1] = {
+                sourceID = sourceID,
+                targetID = clonedBar.id,
+            }
             importedAny = true
         end
     end
 
-    return importedAny, idMappings
+    return importedAny, mappings
 end
 
 local function DetectProfileImportPrefix(str)
@@ -1353,6 +1604,18 @@ local function ParseProfileImportString(core, str)
     local payloadValid, payloadErr = ValidateProfilePayload(core, payload)
     if not payloadValid then
         return false, payloadErr or "Import failed profile validation."
+    end
+
+    -- Reject pre-3.5.11 exports. The incremental migrations that would upgrade
+    -- them (v2–v31) were removed in 4.0; if such an export reached the import
+    -- pipeline its RunOnProfile pass would hit the schema floor and wipe the
+    -- ACTIVE profile (it imports in place). A schemaless export (no version) is
+    -- left alone — it takes the normal fresh-data path, not the floor.
+    local floor = ns.Migrations and ns.Migrations.MIN_SUPPORTED_SCHEMA
+    local importedSchema = tonumber(payload._schemaVersion)
+    if floor and importedSchema and importedSchema > 0 and importedSchema < floor then
+        return false, ("This profile is too old to import (it predates 3.5.11). Minimum supported version is %d; this profile is %d.")
+            :format(floor, importedSchema)
     end
 
     return true, payload, prefix
@@ -1488,8 +1751,8 @@ local function CollectSelectedProfileCategories(selectedCategoryIDs, profileData
                 selectedLookup[categoryID] = true
                 selectedCustomTrackerBarIndexes[#selectedCustomTrackerBarIndexes + 1] = barIndex
 
-                local profileBars = profileData and profileData.customTrackers and profileData.customTrackers.bars
-                local selectedBar = type(profileBars) == "table" and profileBars[barIndex] or nil
+                local trackerRecords = CollectCustomTrackerExportRecords(profileData)
+                local selectedBar = trackerRecords[barIndex] and trackerRecords[barIndex].bar or nil
                 local barName = type(selectedBar) == "table" and selectedBar.name or ("Bar " .. barIndex)
                 selectedLabels[#selectedLabels + 1] = ("Custom CDM Bars > %s"):format(tostring(barName))
             end
@@ -1535,8 +1798,8 @@ local function ExportSelectedCustomTrackerBars(targetProfile, sourceProfile, bar
         return false
     end
 
-    local sourceBars = sourceProfile.customTrackers and sourceProfile.customTrackers.bars
-    if type(sourceBars) ~= "table" then
+    local sourceRecords = CollectCustomTrackerExportRecords(sourceProfile)
+    if #sourceRecords == 0 then
         return false
     end
 
@@ -1549,7 +1812,8 @@ local function ExportSelectedCustomTrackerBars(targetProfile, sourceProfile, bar
 
     local exportedAny = false
     for _, barIndex in ipairs(barIndexes) do
-        local sourceBar = sourceBars[barIndex]
+        local record = sourceRecords[barIndex]
+        local sourceBar = record and record.bar
         if type(sourceBar) == "table" then
             table.insert(targetProfile.customTrackers.bars, CloneValue(sourceBar))
             exportedAny = true
@@ -1559,44 +1823,38 @@ local function ExportSelectedCustomTrackerBars(targetProfile, sourceProfile, bar
     return exportedAny
 end
 
--- ----------------------------------------------------------------------------
--- Profile export-globals bundling
---
 -- Tracker bar entries with specSpecificSpells live in db.global, not
--- db.profile, so a profile-scoped export drops them and the importing
--- player ends up with empty spec-specific bars. Bundle the relevant
--- subtrees under a transient payload key so they round-trip with the
--- profile string. Forward-compatible: V2 builds know to look for the
--- same key and will re-home the data through their migration pipeline.
--- ----------------------------------------------------------------------------
+-- db.profile, so a profile-scoped export drops them. We bundle the
+-- relevant subtrees under a top-level key on the payload, then unpack
+-- them into db.global on import. Self-contained — no schema knowledge
+-- needed beyond "these specific tables hold tracker spell entries".
 local PROFILE_EXPORT_GLOBALS_KEY = "_quiBundledGlobals"
 
-local function CollectExportGlobals(globals)
+local function CollectExportGlobals(globals, profile)
     if type(globals) ~= "table" then return nil end
-    local specTracker = globals.specTrackerSpells
-    if type(specTracker) ~= "table" or not next(specTracker) then
-        return nil
+    local bundle = nil
+    if type(globals.specTrackerSpells) == "table" and next(globals.specTrackerSpells) then
+        bundle = bundle or {}
+        bundle.specTrackerSpells = globals.specTrackerSpells
     end
-    return { specTrackerSpells = CloneValue(specTracker) }
-end
-
-local function CollectExportGlobalsForBars(globals, barIDs)
-    if type(globals) ~= "table" or type(barIDs) ~= "table" or #barIDs == 0 then
-        return nil
+    if type(globals.ncdm) == "table"
+       and type(globals.ncdm.specTrackerSpells) == "table"
+       and next(globals.ncdm.specTrackerSpells)
+    then
+        bundle = bundle or {}
+        bundle.ncdm_specTrackerSpells = globals.ncdm.specTrackerSpells
     end
-    local specTracker = globals.specTrackerSpells
-    if type(specTracker) ~= "table" then return nil end
-
-    local sliced = nil
-    for _, barID in ipairs(barIDs) do
-        local entries = barID ~= nil and specTracker[barID]
-        if type(entries) == "table" then
-            sliced = sliced or {}
-            sliced[barID] = CloneValue(entries)
+    local records = CollectCustomTrackerExportRecords(profile)
+    local legacySpecEntries = CollectLegacySpecEntriesForExportRecords(records, globals)
+    if legacySpecEntries then
+        bundle = bundle or {}
+        local merged = CloneValue(bundle.specTrackerSpells or {})
+        for key, value in pairs(legacySpecEntries) do
+            merged[key] = value
         end
+        bundle.specTrackerSpells = merged
     end
-    if not sliced then return nil end
-    return { specTrackerSpells = sliced }
+    return bundle
 end
 
 local function ApplyImportedGlobals(core, bundle)
@@ -1605,33 +1863,65 @@ local function ApplyImportedGlobals(core, bundle)
     if type(globals) ~= "table" then return end
 
     if type(bundle.specTrackerSpells) == "table" then
-        if type(globals.specTrackerSpells) ~= "table" then
-            globals.specTrackerSpells = {}
-        end
-        for barID, entries in pairs(bundle.specTrackerSpells) do
-            globals.specTrackerSpells[barID] = CloneValue(entries)
-        end
+        globals.specTrackerSpells = CloneValue(bundle.specTrackerSpells)
+    end
+    if type(bundle.ncdm_specTrackerSpells) == "table" then
+        if type(globals.ncdm) ~= "table" then globals.ncdm = {} end
+        globals.ncdm.specTrackerSpells = CloneValue(bundle.ncdm_specTrackerSpells)
     end
 end
 
-local function MergeImportedTrackerGlobalsWithMapping(core, bundle, idMappings)
-    if type(bundle) ~= "table" or type(idMappings) ~= "table" or #idMappings == 0 then return end
+local function EnsureGlobalSpecTrackerRoots(core)
     local globals = core and core.db and core.db.global
-    if type(globals) ~= "table" then return end
-    local sourceTracker = bundle.specTrackerSpells
-    if type(sourceTracker) ~= "table" then return end
-
+    if type(globals) ~= "table" then return nil end
     if type(globals.specTrackerSpells) ~= "table" then
         globals.specTrackerSpells = {}
     end
-    for _, mapping in ipairs(idMappings) do
-        local sourceID = mapping.sourceID
-        local targetID = mapping.targetID
-        if sourceID ~= nil and targetID ~= nil then
-            local sourceEntries = sourceTracker[sourceID]
-            if type(sourceEntries) == "table" then
-                globals.specTrackerSpells[targetID] = CloneValue(sourceEntries)
+    if type(globals.ncdm) ~= "table" then
+        globals.ncdm = {}
+    end
+    if type(globals.ncdm.specTrackerSpells) ~= "table" then
+        globals.ncdm.specTrackerSpells = {}
+    end
+    return globals
+end
+
+local function MergeImportedCustomTrackerGlobals(core, bundle, mappings)
+    if type(bundle) ~= "table" then return end
+    local globals = EnsureGlobalSpecTrackerRoots(core)
+    if not globals then return end
+
+    if type(mappings) == "table" and #mappings > 0 then
+        for _, mapping in ipairs(mappings) do
+            local sourceID = mapping.sourceID
+            local targetID = mapping.targetID
+            if sourceID ~= nil then
+                local sourceLegacy = type(bundle.specTrackerSpells) == "table"
+                    and bundle.specTrackerSpells[sourceID]
+                if type(sourceLegacy) == "table" then
+                    globals.specTrackerSpells[sourceID] = CloneValue(sourceLegacy)
+                end
+
+                local sourceContainerKey = "customBar_" .. tostring(sourceID)
+                local targetContainerKey = "customBar_" .. tostring(targetID)
+                local sourceNCDM = type(bundle.ncdm_specTrackerSpells) == "table"
+                    and bundle.ncdm_specTrackerSpells[sourceContainerKey]
+                if type(sourceNCDM) == "table" then
+                    globals.ncdm.specTrackerSpells[targetContainerKey] = CloneValue(sourceNCDM)
+                end
             end
+        end
+        return
+    end
+
+    if type(bundle.specTrackerSpells) == "table" then
+        for key, value in pairs(bundle.specTrackerSpells) do
+            globals.specTrackerSpells[key] = CloneValue(value)
+        end
+    end
+    if type(bundle.ncdm_specTrackerSpells) == "table" then
+        for key, value in pairs(bundle.ncdm_specTrackerSpells) do
+            globals.ncdm.specTrackerSpells[key] = CloneValue(value)
         end
     end
 end
@@ -1656,12 +1946,27 @@ local function ApplyFullProfilePayload(core, importedProfile)
         -- below if the imported data actually needs migrating.
         -- Also exclude the transient bundle key — it's a payload carrier,
         -- not a profile field.
-        if key ~= "_migrationBackup" and key ~= PROFILE_EXPORT_GLOBALS_KEY then
+        if key ~= "_migrationBackup" and key ~= "_needsStarterReseed" and key ~= PROFILE_EXPORT_GLOBALS_KEY then
             profile[key] = CloneValue(value)
         end
     end
 
     ApplyImportedGlobals(core, bundledGlobals)
+
+    -- Capture the imported _lastSpecID onto each spec-specific bar before
+    -- migrations or the live session can overwrite the field. Otherwise
+    -- a priest profile imported on a warrior loses its priest origin the
+    -- moment the warrior's session saves.
+    StampSourceSpecOnImportedSpecBars(profile, importedProfile)
+
+    local pins = ns.Settings and ns.Settings.Pins
+    if pins and type(pins.HandleFullImportSnapshot) == "function" then
+        local migratedImport = CloneValue(importedProfile)
+        if ns.Migrations and type(ns.Migrations.RunOnProfile) == "function" then
+            ns.Migrations.RunOnProfile(migratedImport)
+        end
+        pins:HandleFullImportSnapshot(core.db, migratedImport)
+    end
 
     -- Run backward-compatibility migrations on the freshly imported data
     -- so that legacy keys (castBar, unitFrames, etc.) are moved to their
@@ -1670,6 +1975,10 @@ local function ApplyFullProfilePayload(core, importedProfile)
     if addon and addon.BackwardsCompat then
         addon:BackwardsCompat()
     end
+
+    -- If the import payload already carries the current schema but only has
+    -- legacy tracker bars, the schema gate will no-op. Normalize explicitly.
+    SyncCustomTrackerBarsToCDM(core, profile)
 
     -- Refresh all modules via the Registry (includes frame anchoring).
     -- Falls back to core:RefreshAll() if the Registry is not available.
@@ -1762,21 +2071,32 @@ local function RunImportProfileSelection(core, payloadOrErr, selectedCategoryIDs
         ApplyProfileImportCategory(profile, payloadOrErr, category)
     end
 
-    if selectedLookup.customTrackers then
-        -- Whole-category import preserves bar IDs (the category copies
-        -- customTrackers.bars verbatim), so the bundled spec entries can
-        -- be applied without remapping.
-        local bundle = payloadOrErr[PROFILE_EXPORT_GLOBALS_KEY]
-        if type(bundle) == "table" then
-            ApplyImportedGlobals(core, bundle)
+    local importedCustomTrackerMappings
+    if not selectedLookup.customTrackers and #selectedCustomTrackerBarIndexes > 0 then
+        local importedBars
+        importedBars, importedCustomTrackerMappings = ImportSelectedCustomTrackerBars(core, profile, payloadOrErr, selectedCustomTrackerBarIndexes)
+        if not importedBars then
+            importedCustomTrackerMappings = nil
         end
-    elseif #selectedCustomTrackerBarIndexes > 0 then
-        local _, idMappings = ImportSelectedCustomTrackerBars(profile, payloadOrErr, selectedCustomTrackerBarIndexes)
-        -- The bundled spec-tracker entries reference source bar IDs; remap to
-        -- the freshly-generated target IDs so live storage finds them.
-        local bundle = payloadOrErr[PROFILE_EXPORT_GLOBALS_KEY]
-        if type(bundle) == "table" and type(idMappings) == "table" and #idMappings > 0 then
-            MergeImportedTrackerGlobalsWithMapping(core, bundle, idMappings)
+    end
+
+    if selectedLookup.customTrackers or #selectedCustomTrackerBarIndexes > 0 then
+        MergeImportedCustomTrackerGlobals(
+            core,
+            payloadOrErr[PROFILE_EXPORT_GLOBALS_KEY],
+            selectedLookup.customTrackers and nil or importedCustomTrackerMappings
+        )
+        -- Same import-time stamping as the full-profile path: capture the
+        -- imported _lastSpecID onto spec-specific bars before SyncCustomTrackerBarsToCDM
+        -- builds the V2 containers (which clone bar fields verbatim).
+        StampSourceSpecOnImportedSpecBars(profile, payloadOrErr)
+        SyncCustomTrackerBarsToCDM(core, profile)
+        if type(profile.customTrackers) == "table" and type(profile.customTrackers.bars) == "table" then
+            for _, bar in ipairs(profile.customTrackers.bars) do
+                if type(bar) == "table" then
+                    bar._importedLegacyId = nil
+                end
+            end
         end
     end
 
@@ -1834,6 +2154,11 @@ local function RunImportProfileSelection(core, payloadOrErr, selectedCategoryIDs
         RestorePathList(profile, previousProfile, PROFILE_LAYOUT_PATHS)
         RestoreCustomTrackerLayout(profile, previousProfile)
         RestoreDatatextPanelLayout(profile, previousProfile)
+    end
+
+    local pins = ns.Settings and ns.Settings.Pins
+    if pins and type(pins.HandleSelectiveImport) == "function" then
+        pins:HandleSelectiveImport(core.db, selectedSpecs)
     end
 
     if ns.Registry then
@@ -1896,23 +2221,16 @@ local function RunExportProfileSelection(core, selectedCategoryIDs)
     for _, category in ipairs(selectionData.specs) do
         ApplyProfileImportCategory(exportPayload, profile, category)
     end
+    if selectionData.lookup.customTrackers then
+        StampCustomTrackerBarsForExport(exportPayload, profile)
+    end
 
     if not selectionData.lookup.customTrackers and #selectionData.customTrackerBarIndexes > 0 then
         ExportSelectedCustomTrackerBars(exportPayload, profile, selectionData.customTrackerBarIndexes)
     end
 
-    -- Bundle spec-specific tracker entries for any tracker bars in the export.
-    -- Walk the bars actually being exported and slice db.global.specTrackerSpells
-    -- to just those IDs, so a partial profile export still carries working data.
-    local exportedBars = exportPayload.customTrackers and exportPayload.customTrackers.bars
-    if type(exportedBars) == "table" and #exportedBars > 0 then
-        local barIDs = {}
-        for _, bar in ipairs(exportedBars) do
-            if type(bar) == "table" and bar.id ~= nil and bar.specSpecificSpells then
-                barIDs[#barIDs + 1] = bar.id
-            end
-        end
-        local bundle = CollectExportGlobalsForBars(core.db.global, barIDs)
+    if selectionData.lookup.customTrackers or #selectionData.customTrackerBarIndexes > 0 then
+        local bundle = CollectExportGlobals(core and core.db and core.db.global, profile)
         if bundle then
             exportPayload[PROFILE_EXPORT_GLOBALS_KEY] = bundle
         end
@@ -1930,18 +2248,21 @@ function QUICore:ExportProfileToString()
         return "No profile loaded."
     end
 
-    -- Shallow-copy so we can strip `_migrationBackup` (per-profile rollback
-    -- buffer, not user data) without mutating the live profile.
+    -- Shallow-copy so we can strip transient bookkeeping keys (`_migrationBackup`
+    -- per-profile rollback buffer; `_needsStarterReseed` floor flag) without
+    -- mutating the live profile. Neither is user data and both are meaningless
+    -- in another account.
     local payload = {}
     for k, v in pairs(self.db.profile) do
-        if k ~= "_migrationBackup" then
+        if k ~= "_migrationBackup" and k ~= "_needsStarterReseed" then
             payload[k] = v
         end
     end
+    StampCustomTrackerBarsForExport(payload, self.db.profile)
 
     -- Bundle the spec-specific tracker entries that live on db.global so
     -- the importing player gets working bars instead of empty ones.
-    local bundle = CollectExportGlobals(self.db.global)
+    local bundle = CollectExportGlobals(self.db.global, self.db.profile)
     if bundle then
         payload[PROFILE_EXPORT_GLOBALS_KEY] = bundle
     end
@@ -2033,7 +2354,7 @@ function QUICore:ImportProfileFromString(str, targetProfileName)
         end
         if stripped and #stripped > 0 then
             local count = #stripped
-            print(("|cff60A5FAQUI:|r Auto-fixed %d incompatible setting%s during import."):format(count, count == 1 and "" or "s"))
+            print(ns.L["|cff60A5FAQUI:|r Auto-fixed %d incompatible setting%s during import."]:format(count, count == 1 and "" or "s"))
         end
         payloadOrErr = sanitized
     end
@@ -2053,6 +2374,10 @@ function QUICore:ImportProfileFromValidatedPayload(payload, targetProfileName)
 
     return RunImportFullProfile(self, payload, targetProfileName)
 end
+
+-- NOTE: the pre-3.5.11 floor reseed now lives in core/compatibility.lua
+-- (ReseedStarterFlaggedProfiles), seeding ns.NewProfileSeed onto floored
+-- profiles during BackwardsCompat -- no Starter Profile import, no reload.
 
 function QUICore:ImportProfileSelectionFromString(str, selectedCategoryIDs, targetProfileName)
     local ok, payloadOrErr = ParseProfileImportString(self, str)
@@ -2097,6 +2422,16 @@ function QUICore:GenerateUniqueTrackerID()
             used[id] = true
         end
     end
+    local containers = db and db.profile and db.profile.ncdm and db.profile.ncdm.containers
+    if type(containers) == "table" then
+        for key, container in pairs(containers) do
+            if type(container) == "table" then
+                if container._legacyId then used[container._legacyId] = true end
+                local suffix = type(key) == "string" and key:match("^customBar_(.+)$")
+                if suffix then used[suffix] = true end
+            end
+        end
+    end
     local id
     repeat
         id = "tracker" .. time() .. math.random(1000, 9999)
@@ -2110,15 +2445,16 @@ end
 
 -- Export a single tracker bar (with its spec-specific entries if enabled)
 function QUICore:ExportSingleTrackerBar(barIndex)
-    if not self.db or not self.db.profile or not self.db.profile.customTrackers
-        or not self.db.profile.customTrackers.bars then
+    if not self.db or not self.db.profile then
         return nil, "No tracker data loaded."
     end
     if not AceSerializer or not LibDeflate then
         return nil, "Export requires AceSerializer-3.0 and LibDeflate."
     end
 
-    local bar = self.db.profile.customTrackers.bars[barIndex]
+    local records = CollectCustomTrackerExportRecords(self.db.profile)
+    local record = records[barIndex]
+    local bar = record and record.bar
     if not bar then
         return nil, "Bar not found."
     end
@@ -2130,8 +2466,8 @@ function QUICore:ExportSingleTrackerBar(barIndex)
     }
 
     -- Include spec-specific entries if the bar uses them
-    if bar.specSpecificSpells and bar.id and self.db.global and self.db.global.specTrackerSpells then
-        exportData.specEntries = self.db.global.specTrackerSpells[bar.id]
+    if bar.specSpecificSpells and self.db.global then
+        exportData.specEntries = CollectSpecEntriesForExportRecord(record, self.db.global)
     end
 
     local serialized = AceSerializer:Serialize(exportData)
@@ -2154,21 +2490,22 @@ end
 
 -- Export all tracker bars
 function QUICore:ExportAllTrackerBars()
-    if not self.db or not self.db.profile or not self.db.profile.customTrackers then
+    if not self.db or not self.db.profile then
         return nil, "No tracker data loaded."
     end
     if not AceSerializer or not LibDeflate then
         return nil, "Export requires AceSerializer-3.0 and LibDeflate."
     end
 
-    local bars = self.db.profile.customTrackers.bars
+    local records = CollectCustomTrackerExportRecords(self.db.profile)
+    local bars = ExtractBarsFromExportRecords(records)
     if not bars or #bars == 0 then
         return nil, "No tracker bars to export."
     end
 
     local exportData = {
         bars = bars,
-        specEntries = self.db.global and self.db.global.specTrackerSpells or nil,
+        specEntries = self.db.global and CollectLegacySpecEntriesForExportRecords(records, self.db.global) or nil,
     }
 
     local serialized = AceSerializer:Serialize(exportData)
@@ -2238,12 +2575,12 @@ function QUICore:ImportSingleTrackerBar(str)
     end
 
     -- Generate collision-safe unique ID for the imported bar
-    local oldID = data.bar.id
     local newID = GenerateUniqueTrackerID()
-    data.bar.id = newID
+    local importedBar = CloneValue(data.bar)
+    importedBar.id = newID
 
     -- Append bar to existing bars
-    table.insert(self.db.profile.customTrackers.bars, data.bar)
+    table.insert(self.db.profile.customTrackers.bars, importedBar)
 
     -- Copy spec-specific entries if present (with new ID)
     if data.specEntries then
@@ -2251,6 +2588,8 @@ function QUICore:ImportSingleTrackerBar(str)
         if not self.db.global.specTrackerSpells then self.db.global.specTrackerSpells = {} end
         self.db.global.specTrackerSpells[newID] = data.specEntries
     end
+
+    SyncCustomTrackerBarsToCDM(self, self.db.profile)
 
     return true, "Bar imported successfully."
 end
@@ -2301,12 +2640,14 @@ function QUICore:ImportAllTrackerBars(str, replaceExisting)
     end
 
     if replaceExisting then
+        RemoveImportedCustomBarContainers(self, self.db.profile)
+
         -- Replace all bars
-        self.db.profile.customTrackers.bars = data.bars
+        self.db.profile.customTrackers.bars = CloneValue(data.bars)
 
         -- Replace spec entries (or clear if none provided)
         if not self.db.global then self.db.global = {} end
-        self.db.global.specTrackerSpells = data.specEntries or {}
+        self.db.global.specTrackerSpells = CloneValue(data.specEntries or {})
     else
         -- Merge: append bars with new IDs
         if not self.db.profile.customTrackers.bars then
@@ -2318,9 +2659,12 @@ function QUICore:ImportAllTrackerBars(str, replaceExisting)
         for _, bar in ipairs(data.bars) do
             local oldID = bar.id
             local newID = GenerateUniqueTrackerID()
-            bar.id = newID
-            idMapping[oldID] = newID
-            table.insert(self.db.profile.customTrackers.bars, bar)
+            local clonedBar = CloneValue(bar)
+            clonedBar.id = newID
+            if oldID ~= nil then
+                idMapping[oldID] = newID
+            end
+            table.insert(self.db.profile.customTrackers.bars, clonedBar)
         end
 
         -- Copy spec entries with new IDs
@@ -2336,6 +2680,8 @@ function QUICore:ImportAllTrackerBars(str, replaceExisting)
             end
         end
     end
+
+    SyncCustomTrackerBarsToCDM(self, self.db.profile)
 
     return true, "CDM bars imported successfully."
 end

@@ -1,0 +1,319 @@
+--[[
+  _addon_env.lua
+
+  Shared headless environment for QUI Lua tooling. Stubs the WoW globals
+  the bundled libs and addon files reach for at module-load time, then
+  loads the libs and a slice of core/ in dependency order.
+
+  Public API:
+    local env = dofile("tools/_addon_env.lua")
+    env.LoadLibs()                        -- bundled libs (LibStub, AceDB, etc.)
+    local ns = env.LoadCore()             -- QUI core slice; returns shared ns
+    env.ApplySeed(seedTable)              -- _G.QUI_DB := deep-copy of seedTable
+    local h = env.BuildHarness()          -- fresh AceDB on current _G.QUI_DB;
+                                          -- returns { db, QUI, QUICore, ns, defaults }
+    local h = env.LoadHarness(seedTable)  -- ApplySeed + BuildHarness combo
+
+  Path-independent: resolves bundled libs relative to its own location.
+]]
+
+-- This headless harness intentionally sets WoW global stubs (string/table
+-- helpers, CreateFrame, Unit* etc.) so bundled libs and addon files load
+-- outside the client. Declare them so luacheck doesn't flag the assignments.
+-- luacheck: globals strmatch strfind strsub strlower strupper strrep strtrim strjoin tinsert tremove tconcat wipe geterrorhandler format CreateFrame GetRealmName UnitName UnitClass UnitRace UnitFactionGroup GetLocale GetCurrentRegion
+
+local M = {}
+
+local function ScriptDir()
+    local info = debug and debug.getinfo and debug.getinfo(1, "S")
+    local p = info and info.source or ""
+    if p:sub(1, 1) == "@" then
+        p = p:sub(2)
+    else
+        p = (arg and arg[0]) or ""
+    end
+    p = p:gsub("\\", "/")
+    local dir = p:match("(.*/)")
+    if dir == nil or dir == "" then return "./" end
+    return dir
+end
+
+-- Repo root is one directory up from tools/_addon_env.lua. When invoked as
+-- `lua -e ...` (no script file), arg[0] is nil — fall back to "./" so the
+-- documented "run from repo root" workflow resolves libs/ correctly.
+local REPO_ROOT = (arg and arg[0]) and (ScriptDir() .. "../") or "./"
+M.REPO_ROOT = REPO_ROOT
+
+----------------------------------------------------------------------------
+-- WoW string globals
+----------------------------------------------------------------------------
+strmatch = string.match
+strfind  = string.find
+strsub   = string.sub
+strlower = string.lower
+strupper = string.upper
+strrep   = string.rep
+strtrim  = function(s) return (s:gsub("^%s+", ""):gsub("%s+$", "")) end
+strjoin  = function(sep, ...)
+    local n = select("#", ...)
+    local out = {}
+    for i = 1, n do out[i] = tostring(select(i, ...)) end
+    return table.concat(out, sep)
+end
+tinsert  = table.insert
+tremove  = table.remove
+tconcat  = table.concat
+wipe     = function(t) for k in pairs(t) do t[k] = nil end return t end
+geterrorhandler = function() return print end
+
+----------------------------------------------------------------------------
+-- WoW-style positional string.format (e.g. "%2$s %1$s", "%1$d / %2$d").
+-- Stock Lua 5.1 rejects "%n$" specifiers, but WoW's format supports them and
+-- QUI localization relies on them so translators can reorder arguments. This
+-- shim reorders args for positional specifiers then delegates to native
+-- format; non-positional format strings pass straight through unchanged.
+-- Build-tooling only — never shipped to the WoW client.
+----------------------------------------------------------------------------
+do
+    local rawformat = string.format
+    local function posformat(fmt, ...)
+        if type(fmt) == "string" and fmt:find("%%%d+%$") then
+            local args = { ... }
+            local res = fmt:gsub("%%(%d+)%$([%-%+ #0]*%d*%.?%d*[diouxXeEfgGqcs])",
+                function(idx, conv)
+                    return rawformat("%" .. conv, args[tonumber(idx)])
+                end)
+            return (res:gsub("%%%%", "%%"))
+        end
+        return rawformat(fmt, ...)
+    end
+    string.format = posformat
+    format = posformat
+end
+
+----------------------------------------------------------------------------
+-- WoW API stubs (constants — just have to satisfy module-init reads)
+----------------------------------------------------------------------------
+function CreateFrame(_)
+    return {
+        RegisterEvent     = function() end,
+        UnregisterEvent   = function() end,
+        SetScript         = function() end,
+        IsEventRegistered = function() return false end,
+    }
+end
+
+function GetRealmName()      return "TestRealm"           end
+function UnitName()          return "TestChar"            end
+function UnitClass()         return nil, "MAGE"           end
+function UnitRace()          return nil, "Human"          end
+function UnitFactionGroup()  return "Alliance"            end
+-- GetLocale honors an injected locale (_G.QUI_TEST_LOCALE) so i18n tooling can
+-- drive locale-aware loads through the shared harness; defaults to "enUS".
+function GetLocale()         return _G.QUI_TEST_LOCALE or "enUS" end
+function GetCurrentRegion()  return 1                      end
+
+-- Combat-secret APIs (12.0+).
+-- Default behavior is unchanged: nothing is secret. Tests can create
+-- sentinel values via M.MakeSecret() that these predicates recognize.
+-- IMPORTANT: core/utils.lua captures _G.issecretvalue into a local at file
+-- load (core/utils.lua:27) — these exact function objects must be installed
+-- before LoadCore() and never reassigned. They consult the registry instead.
+--
+-- Simulation limits (Lua 5.1 cannot intercept these on tables):
+--   `if secret then` is truthy (real secrets throw on boolean test)
+--   `#secret` is 0            (real secrets throw on length)
+--   `secret == x` is false    (real secrets throw on equality)
+-- Arithmetic, relational compare, indexing all throw — matching the client.
+local SECRET_REGISTRY = setmetatable({}, { __mode = "k" })
+
+_G.issecretvalue  = function(v) return SECRET_REGISTRY[v] == true end
+_G.canaccesstable = function(t) return SECRET_REGISTRY[t] ~= true end
+
+local SECRET_MT = {
+    __index    = function() error("attempted to index a secret value", 2) end,
+    __newindex = function() error("attempted to write to a secret value", 2) end,
+    __concat   = function(a, b)
+        local function part(x)
+            return SECRET_REGISTRY[x] and "<secret>" or tostring(x)
+        end
+        return part(a) .. part(b)
+    end,
+    __tostring = function() return "<secret>" end,
+    __metatable = "secret",
+}
+
+-- Create an opaque secret sentinel for tests. Each call returns a distinct
+-- value that issecretvalue() reports as secret.
+function M.MakeSecret()
+    local s = setmetatable({}, SECRET_MT)
+    SECRET_REGISTRY[s] = true
+    return s
+end
+
+-- C_AddOns / similar tables — just empty so init.lua-style lookups don't error
+_G.C_AddOns = _G.C_AddOns or { GetAddOnMetadata = function() return nil end }
+
+-- CallbackHandler-1.0 wraps every callback dispatch in securecallfunction.
+-- WoW provides it; in the harness it's a plain forwarding call so AceDB
+-- callbacks (OnNewProfile etc.) actually fire when registered.
+_G.securecallfunction = _G.securecallfunction or function(fn, ...) return fn(...) end
+
+----------------------------------------------------------------------------
+-- Library loading (AceDB needs LibStub + CallbackHandler in scope)
+----------------------------------------------------------------------------
+local LIBS_LOADED = false
+
+local function LoadLibs()
+    if LIBS_LOADED then return end
+    local libsRoot = REPO_ROOT .. "libs"
+
+    dofile(libsRoot .. "/LibStub/LibStub.lua")
+    dofile(libsRoot .. "/CallbackHandler-1.0/CallbackHandler-1.0.lua")
+    dofile(libsRoot .. "/AceDB-3.0/AceDB-3.0.lua")
+    dofile(libsRoot .. "/AceSerializer-3.0.lua")
+    dofile(libsRoot .. "/LibDeflate/LibDeflate.lua")
+
+    LIBS_LOADED = true
+end
+
+M.LoadLibs = LoadLibs
+
+----------------------------------------------------------------------------
+-- Addon file loading
+--
+-- QUI files use `local ADDON_NAME, ns = ...` to receive the addon name and
+-- shared namespace from the WoW addon loader. We replicate that by calling
+-- loadfile() and invoking the chunk with our own (name, ns) pair.
+----------------------------------------------------------------------------
+
+local function LoadAddonFile(relPath, addonName, ns)
+    local fullPath = REPO_ROOT .. relPath
+    local chunk, err = loadfile(fullPath)
+    if not chunk then
+        error("Failed to load " .. fullPath .. ": " .. tostring(err))
+    end
+    return chunk(addonName, ns)
+end
+
+M.LoadAddonFile = LoadAddonFile
+
+local CORE_LOADED = false
+local SHARED_NS
+
+local function LoadCore()
+    if CORE_LOADED then return SHARED_NS end
+    LoadLibs()
+
+    -- Fake _G.QUI before any core file loads — compatibility.lua attaches
+    -- methods to it (function QUI:BackwardsCompat()), and migrations.lua
+    -- exposes itself on it. DebugPrint is defined on the real AceAddon
+    -- object in init.lua but not loaded here — stub it as a no-op so
+    -- BackwardsCompat can call self:DebugPrint() without erroring.
+    _G.QUI = _G.QUI or {}
+    _G.QUI.DebugPrint = _G.QUI.DebugPrint or function() end
+
+    SHARED_NS = {}
+    SHARED_NS.Addon = {}  -- profile_io.lua does `local QUICore = ns.Addon`
+
+    -- Localization must precede any string consumer (matches QUI.toc, where
+    -- the locale block loads before core/core.xml). enUS.lua populates the
+    -- base table in ns.LocaleData; locale.lua builds the ns.L metatable that
+    -- settings/options modules index at load time. Without these, ns.L is nil
+    -- and every `ns.L["..."]` errors on load.
+    LoadAddonFile("core/locale/enUS.lua",    "QUI", SHARED_NS)
+    LoadAddonFile("core/locale/locale.lua",  "QUI", SHARED_NS)
+
+    -- Load order matches QUI.toc: utils first, then defaults, then
+    -- migration / compat / io machinery.
+    LoadAddonFile("core/utils.lua",          "QUI", SHARED_NS)
+    LoadAddonFile("core/new_profile_defaults.lua", "QUI", SHARED_NS)
+    LoadAddonFile("core/border_registry.lua", "QUI", SHARED_NS)
+    LoadAddonFile("core/defaults.lua",       "QUI", SHARED_NS)
+    LoadAddonFile("core/migrations.lua",     "QUI", SHARED_NS)
+    LoadAddonFile("core/compatibility.lua", "QUI", SHARED_NS)
+    LoadAddonFile("core/profile_io.lua",    "QUI", SHARED_NS)
+
+    CORE_LOADED = true
+    return SHARED_NS
+end
+
+M.LoadCore = LoadCore
+
+----------------------------------------------------------------------------
+-- Harness construction
+----------------------------------------------------------------------------
+
+local function ApplySeed(seedTable)
+    -- Replace _G.QUI_DB / _G.QUIDB with deep clones of the seed.
+    local function DeepCopy(v)
+        if type(v) ~= "table" then return v end
+        local copy = {}
+        for k, vv in pairs(v) do copy[k] = DeepCopy(vv) end
+        return copy
+    end
+    if seedTable and seedTable.QUI_DB then
+        _G.QUI_DB = DeepCopy(seedTable.QUI_DB)
+    else
+        _G.QUI_DB = nil
+    end
+    if seedTable and seedTable.QUIDB then
+        _G.QUIDB = DeepCopy(seedTable.QUIDB)
+    else
+        _G.QUIDB = nil
+    end
+end
+
+M.ApplySeed = ApplySeed
+
+local function BuildHarness(opts)
+    opts = opts or {}
+    local ns = LoadCore()
+    local AceDB = LibStub("AceDB-3.0")
+
+    -- core/defaults.lua sets ns.defaults (SHARED_NS.defaults); init.lua
+    -- would merge that into QUI.defaults in WoW, but in the harness we use
+    -- ns.defaults directly since we don't load init.lua.
+    local defaults = ns.defaults
+    if type(defaults) ~= "table" or type(defaults.profile) ~= "table" then
+        error("Expected ns.defaults.profile to be a table after LoadCore — check core/defaults.lua")
+    end
+
+    local db = AceDB:New("QUI_DB", defaults, "Default")
+
+    -- Mirror core/main.lua QUICore:OnInitialize: register the new-profile seed
+    -- on OnNewProfile BEFORE the profile is first materialized, so a freshly
+    -- created profile (a seed.sv.lua with no profiles.Default entry) gets the
+    -- shipped Starter Profile seed exactly as a real fresh install does. Profiles that
+    -- already exist in the seed SV never fire OnNewProfile, so the 24 existing
+    -- fixtures are unaffected. opts.noSeed disables it for targeted tests.
+    if not opts.noSeed and type(ns.ApplyNewProfileSeed) == "function" then
+        db.RegisterCallback(ns.Addon, "OnNewProfile", function(_, newDB)
+            ns.ApplyNewProfileSeed(newDB.profile)
+        end)
+    end
+
+    -- Make QUICore + QUI:BackwardsCompat() callable like in WoW.
+    _G.QUI.db = db
+    ns.Addon.db = db
+    _G.QUI.QUICore = ns.Addon
+
+    return {
+        db = db,
+        ns = ns,
+        QUI = _G.QUI,
+        QUICore = ns.Addon,
+        defaults = defaults,
+    }
+end
+
+M.BuildHarness = BuildHarness
+
+local function LoadHarness(seedTable, opts)
+    ApplySeed(seedTable)
+    return BuildHarness(opts)
+end
+
+M.LoadHarness = LoadHarness
+
+return M
