@@ -2976,6 +2976,7 @@ local defaults = {
                     targetHighlight = { enabled = true, color = { 1, 1, 1, 0.6 }, fillOpacity = 0.12 },
                     defensiveIndicator = { enabled = false, iconSize = 16, maxIcons = 3, spacing = 2, growDirection = "RIGHT", position = "CENTER", offsetX = 0, offsetY = 0, reverseSwipe = true, durationTextSize = 12 },
                 },
+                targetedSpells = { enabled = true, iconSize = 24, maxIcons = 3, spacing = 2, growDirection = "CENTER", position = "CENTER", offsetX = 0, offsetY = 0, reverseSwipe = true },
                 classPower = { enabled = false, height = 4, spacing = 1 },
                 range = { enabled = true, outOfRangeAlpha = 0.4 },
                 auras = {
@@ -3107,6 +3108,7 @@ local defaults = {
                     targetHighlight = { enabled = true, color = { 1, 1, 1, 0.6 }, fillOpacity = 0.12 },
                     defensiveIndicator = { enabled = false, iconSize = 16, maxIcons = 3, spacing = 2, growDirection = "RIGHT", position = "CENTER", offsetX = 0, offsetY = 0, reverseSwipe = true, durationTextSize = 12 },
                 },
+                targetedSpells = { enabled = true, iconSize = 24, maxIcons = 3, spacing = 2, growDirection = "CENTER", position = "CENTER", offsetX = 0, offsetY = 0, reverseSwipe = true },
                 classPower = { enabled = false, height = 4, spacing = 1 },
                 range = { enabled = true, outOfRangeAlpha = 0.4 },
                 auras = {
