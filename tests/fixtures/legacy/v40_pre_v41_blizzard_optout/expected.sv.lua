@@ -2752,6 +2752,7 @@ return {
           hideMicroMenu = false,
           lock = false,
           middleClickMenuEnabled = true,
+          missionsInDrawer = false,
           position = {
             point = "TOPLEFT",
             relPoint = "BOTTOMLEFT",

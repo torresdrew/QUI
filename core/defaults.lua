@@ -3562,6 +3562,7 @@ local defaults = {
             showAddonCompartment = false,
             showDifficulty = true,
             showMissions = true,
+            missionsInDrawer = false,
             showCalendar = true,
             showTracking = true,
 
