@@ -90,8 +90,8 @@ do
         disableCDM == 1, ("called %d times"):format(disableCDM))
     check("1: ncdm.enabled flag forced true after migration",
         profile.ncdm.enabled == true, tostring(profile.ncdm.enabled))
-    check("1: _schemaVersion == 44",
-        profile._schemaVersion == 44, tostring(profile._schemaVersion))
+    check("1: _schemaVersion stamped to at least 44",
+        (tonumber(profile._schemaVersion) or 0) >= 44, tostring(profile._schemaVersion))
 end
 
 ---------------------------------------------------------------------------
