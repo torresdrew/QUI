@@ -7,6 +7,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+
+## v4.0.1 - 2026-06-16
+
+### Fixed
+- fixed curseforge metadata upload
 ## v4.0.0 - 2026-06-16
 
 QUI 4 is the next major release for Retail/Midnight. It restructures the addon into a small core plus LoadOnDemand feature suites, rebuilds the options experience, adds several full modules, and hardens the runtime for modern combat-taint and secret-value rules. Back up your `WTF` folder before upgrading from 3.x.
