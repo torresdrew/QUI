@@ -32,3 +32,10 @@ tools/i18n/_mt/
 # Python bytecode
 tools/i18n/__pycache__/
 *.pyc
+
+# Fork-local tooling
+GSE_UnholyDK.lua
+encode_gse.py
+/.windsurf
+/node_modules
+/.tmp_debug
