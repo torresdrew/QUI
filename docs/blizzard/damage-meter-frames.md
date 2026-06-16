@@ -246,7 +246,7 @@ C_DamageMeter.IsDamageMeterAvailable()                      -- (isAvailable, fai
 C_DamageMeter.GetSessionDurationSeconds(sessionType)        -- elapsed seconds for current/overall session
 C_DamageMeter.GetCombatSessionFromType(sessionType, type)   -- {combatSources, maxAmount, totalAmount, durationSeconds, ...}
 C_DamageMeter.GetCombatSessionFromID(sessionID, type)
-C_DamageMeter.GetAvailableCombatSessions()                  -- {{sessionID, name, durationSeconds}, ...}
+C_DamageMeter.GetAvailableCombatSessions()                  -- { {sessionID, name, durationSeconds}, ... }
 C_DamageMeter.ResetAllCombatSessions()
 ```
 
