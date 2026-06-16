@@ -454,9 +454,7 @@ end
 -- after the first call; until it loads (or if the addon is absent/disabled),
 -- search degrades gracefully to the tile-seeded routes registered at panel build.
 local function SearchCacheAddonName()
-    local loc = (ns.GetLocalizationLocale and ns.GetLocalizationLocale())
-        or (GetLocale and GetLocale())
-        or "enUS"
+    local loc = GetLocale and GetLocale() or "enUS"
     return (loc == "enUS") and "QUI_OptionsSearch" or ("QUI_OptionsSearch_" .. loc)
 end
 function GUI:EnsureSearchCacheLoaded()
@@ -5214,7 +5212,6 @@ function GUI:CreateMainFrame()
         accentSwatch:SetAlpha(preset == "Custom" and 1 or 0.5)
     end
 
-    local localizationEnabled = not ns.IsLocalizationEnabled or ns.IsLocalizationEnabled()
     -- Language picker (account-wide; reload required to apply)
     local LOCALE_NAMES = {
         enUS = "English",          deDE = "Deutsch",
@@ -5230,12 +5227,8 @@ function GUI:CreateMainFrame()
     }
 
     local function GetSelectedLocale()
-        if not localizationEnabled then
-            return "enUS"
-        end
-        return (ns.GetLocalizationLocale and ns.GetLocalizationLocale())
-            or (GetLocale and GetLocale())
-            or "enUS"
+        local g = QUI.QUICore and QUI.QUICore.db and QUI.QUICore.db.global
+        return (g and g.selectedLocale) or GetLocale()
     end
 
     local langLabel = titleBar:CreateFontString(nil, "OVERLAY", "GameFontNormal")
@@ -5249,10 +5242,6 @@ function GUI:CreateMainFrame()
     UIKit.CreateBackground(langDropBtn, 0.1, 0.1, 0.1, 0.8)
     UIKit.CreateBorderLines(langDropBtn)
     UIKit.UpdateBorderLines(langDropBtn, 1, 0.3, 0.3, 0.3, 1)
-    langDropBtn:EnableMouse(localizationEnabled)
-    if not localizationEnabled then
-        langDropBtn:SetAlpha(0.55)
-    end
 
     local langDropText = langDropBtn:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     SetFont(langDropText, 10, "", C.text)
@@ -5264,7 +5253,7 @@ function GUI:CreateMainFrame()
 
     local langDropArrow = langDropBtn:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     SetFont(langDropArrow, 8, "", C.textMuted)
-    langDropArrow:SetText(localizationEnabled and "v" or "")
+    langDropArrow:SetText("v")
     langDropArrow:SetPoint("RIGHT", -3, 0)
 
     local langMenu = CreateFrame("Frame", nil, langDropBtn)
@@ -5330,27 +5319,25 @@ function GUI:CreateMainFrame()
         end
     end
 
-    if localizationEnabled then
-        langDropBtn:SetScript("OnClick", function()
-            if langMenu:IsShown() then
-                langMenu:Hide()
-            else
-                BuildLangMenu()
-                langMenu:Show()
-            end
-        end)
-        langDropBtn:SetScript("OnEnter", function()
-            UIKit.UpdateBorderLines(langDropBtn, 1, C.accent[1], C.accent[2], C.accent[3], 1)
-        end)
-        langDropBtn:SetScript("OnLeave", function()
-            if not langMenu:IsShown() then
-                UIKit.UpdateBorderLines(langDropBtn, 1, 0.3, 0.3, 0.3, 1)
-            end
-        end)
-        langMenu:SetScript("OnHide", function()
+    langDropBtn:SetScript("OnClick", function()
+        if langMenu:IsShown() then
+            langMenu:Hide()
+        else
+            BuildLangMenu()
+            langMenu:Show()
+        end
+    end)
+    langDropBtn:SetScript("OnEnter", function()
+        UIKit.UpdateBorderLines(langDropBtn, 1, C.accent[1], C.accent[2], C.accent[3], 1)
+    end)
+    langDropBtn:SetScript("OnLeave", function()
+        if not langMenu:IsShown() then
             UIKit.UpdateBorderLines(langDropBtn, 1, 0.3, 0.3, 0.3, 1)
-        end)
-    end
+        end
+    end)
+    langMenu:SetScript("OnHide", function()
+        UIKit.UpdateBorderLines(langDropBtn, 1, 0.3, 0.3, 0.3, 1)
+    end)
 
     -- Panel Scale (compact inline: label + editbox + slider)
     local scaleContainer = CreateFrame("Frame", nil, titleBar)

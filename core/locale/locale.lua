@@ -7,12 +7,7 @@ local data = ns.LocaleData or {}
 ns.LocaleData = data
 
 local base   = data.enUS or {}
-local localizationEnabled = true
-if type(ns.IsLocalizationEnabled) == "function" then
-    localizationEnabled = ns.IsLocalizationEnabled()
-end
-
-local active = localizationEnabled and data.active or nil -- nil on enUS clients / unknown locales
+local active = data.active          -- nil on enUS clients / unknown locales
 
 -- Resolution: active translation -> enUS base -> the literal key.
 -- Never returns nil, so an un-extracted or untranslated string renders English.
