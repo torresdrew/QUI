@@ -328,27 +328,39 @@ end
 ---------------------------------------------------------------------------
 local function OnInitButtons(menu)
     local settings = GetGeneralSettings()
-    if not settings or not settings.skinGameMenu then return end
+    if not settings then return end
     if not menu or not menu.buttonPool then return end
 
-    ApplyStaticSkin()
-    ReassertChrome()
+    -- Custom QUI buttons are independent of skinning. Inject them whenever
+    -- either button is enabled, even if skinGameMenu is off.
+    local skin = settings.skinGameMenu
+    local wantButtons = settings.addQUIButton ~= false or settings.addEditModeButton ~= false
+    if not skin and not wantButtons then return end
+
+    if skin then
+        ApplyStaticSkin()
+        ReassertChrome()
+    end
 
     local sr, sg, sb, sa, bgr, bgg, bgb = GetGameMenuColors()
     local fontSize = GetGameMenuFontSize()
 
     local refButton, minLevel
     for button in menu.buttonPool:EnumerateActive() do
-        SkinButton(button, true, sr, sg, sb, sa, bgr, bgg, bgb, fontSize)
+        if skin then
+            SkinButton(button, true, sr, sg, sb, sa, bgr, bgg, bgb, fontSize)
+        end
         local lvl = button:GetFrameLevel() or 0
         if not minLevel or lvl < minLevel then minLevel = lvl end
         refButton = refButton or button
     end
 
-    ReassertLevels(minLevel)
+    if skin then ReassertLevels(minLevel) end
     PositionCustomButtons(settings, refButton, sr, sg, sb, sa, bgr, bgg, bgb, fontSize)
-    AssertDim(settings)
-    ExtendMenuBg()
+    if skin then
+        AssertDim(settings)
+        ExtendMenuBg()
+    end
 end
 
 ---------------------------------------------------------------------------
