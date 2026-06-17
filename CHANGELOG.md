@@ -8,6 +8,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v4.0.2-beta3 - 2026-06-16
+
+### Fixed
+- CDM: a cooldown temporarily overridden by a proc (e.g. Hammer of Light
+  over Wake of Ashes) no longer drops its base spell from the learned set
+  or surfaces a phantom "unlearned" entry; the icon still shows the proc art.
+- Game menu: injected QUI buttons now use the stock Blizzard look when
+  game-menu skinning is disabled (no clashing QUI inset/font).
+
+
 ## v4.0.2-beta2 - 2026-06-16
 
 ### Added
