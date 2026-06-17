@@ -3503,9 +3503,37 @@ end
 -- maps, and FireChangeCallback refreshes display — which re-evaluates the
 -- render-time known filters against fresh spell data. Callers must invoke
 -- this inside their own combat-lockdown guard.
-local function RunReconcileSequence()
-    CDMSpellData:CheckAllDormantSpells()
+-- Order-independent signature of the persistent learned-cooldown set
+-- (_cdmCooldownLearnedPreferred, rebuilt inside ReconcileAllContainers). Its
+-- keys are SelectPersistentSpellID values, which prefer the still-known BASE
+-- spell over a live override -- so a transient proc override (e.g. Hammer of
+-- Light 427453 replacing Wake of Ashes 255937) does NOT move the set, while a
+-- talent/spec change that adds, drops, or converts a learned cooldown does.
+local function LearnedCooldownSignature()
+    local set = CDMSpellData._cdmCooldownLearnedPreferred
+    if type(set) ~= "table" then return "" end
+    local ids = {}
+    for id in pairs(set) do ids[#ids + 1] = id end
+    table.sort(ids)
+    return table.concat(ids, ",")
+end
+
+-- guardUnchanged: when true (the SPELLS_CHANGED debounce path), skip the
+-- expensive FireChangeCallback -> RefreshAll when nothing structural actually
+-- changed -- no dormant spell was folded back AND the persistent learned set is
+-- identical across the rebuild. A proc override fires SPELLS_CHANGED but changes
+-- neither, so it no longer drives a full container rebuild (which flashed glows
+-- and rewrote stack text every proc). Talent/spec changes still move the
+-- learned set, so they fire. Callers that MUST always refresh (cold load,
+-- catalog data load) leave guardUnchanged nil. The render path re-evaluates
+-- known-state live every tick, so a skipped refresh never leaves stale display.
+local function RunReconcileSequence(guardUnchanged)
+    local restored = CDMSpellData:CheckAllDormantSpells()
+    local before = guardUnchanged and LearnedCooldownSignature() or nil
     CDMSpellData:ReconcileAllContainers()
+    if guardUnchanged and not restored and before == LearnedCooldownSignature() then
+        return
+    end
     if FireChangeCallback then
         FireChangeCallback()
     end
@@ -3817,12 +3845,15 @@ local function CompareShelfReturning(a, b)
     return a.id < b.id
 end
 
+-- Returns true if it folded at least one shelved spell back into a list (a
+-- structural change), false otherwise -- lets RunReconcileSequence skip the
+-- expensive display refresh when nothing actually moved.
 function CDMSpellData:CheckDormantSpells(containerKey)
     local db = GetContainerDB(containerKey)
-    if not db then return end
+    if not db then return false end
 
     local shelf = db.dormantSpells
-    if type(shelf) ~= "table" or next(shelf) == nil then return end
+    if type(shelf) ~= "table" or next(shelf) == nil then return false end
 
     -- Builtin containers with ownedSpells == nil haven't snapshotted yet —
     -- creating the list here would suppress SnapshotBlizzardCDM. Leave the
@@ -3830,7 +3861,7 @@ function CDMSpellData:CheckDormantSpells(containerKey)
     -- snapshot semantics, so creating their (possibly per-spec) list is safe.
     local createIfMissing = (db.containerType == "customBar")
     local list = GetMutableEntryList(db, containerKey, createIfMissing)
-    if type(list) ~= "table" then return end
+    if type(list) ~= "table" then return false end
 
     -- Tolerate every historical shelf shape: array of spellIDs, map of
     -- spellID → slot number, map of spellID → { slot, row, kind, seq }.
@@ -3869,6 +3900,7 @@ function CDMSpellData:CheckDormantSpells(containerKey)
         end
     end
 
+    local restoredAny = false
     for _, info in ipairs(returning) do
         if not present[info.id] then
             present[info.id] = true
@@ -3880,23 +3912,30 @@ function CDMSpellData:CheckDormantSpells(containerKey)
                 restored.kind = ResolveEntryKind(restored, containerKey)
             end
             table.insert(list, insertAt, restored)
+            restoredAny = true
         end
     end
 
     db.dormantSpells = {}
     db._dormantSequence = nil
+    return restoredAny
 end
 
 -- Fold any stale dormant shelves back into their lists, across all
 -- container keys. Part of the standard reconcile sequence.
+-- Returns true if any container folded a shelved spell back into its list.
 function CDMSpellData:CheckAllDormantSpells()
     local containerKeys = GetBuiltinContainerKeys()
     if ns.CDMContainers and ns.CDMContainers.GetAllContainerKeys then
         containerKeys = ns.CDMContainers.GetAllContainerKeys()
     end
+    local restoredAny = false
     for _, key in ipairs(containerKeys) do
-        self:CheckDormantSpells(key)
+        if self:CheckDormantSpells(key) then
+            restoredAny = true
+        end
     end
+    return restoredAny
 end
 
 -- Public: read the entry list for a given spec (defaults to current).
@@ -4850,8 +4889,10 @@ function CDMSpellData:Initialize()
                 end
                 if not InCombatLockdown() then
                     -- Notify containers to refresh display after dormant cleanup
-                    -- removed stale spells from ownedSpells.
-                    RunReconcileSequence()
+                    -- removed stale spells from ownedSpells. guardUnchanged=true:
+                    -- a transient proc override fires SPELLS_CHANGED but changes
+                    -- no structural state, so skip the redundant full refresh.
+                    RunReconcileSequence(true)
                 end
             end)
         elseif event == "PLAYER_EQUIPMENT_CHANGED" then

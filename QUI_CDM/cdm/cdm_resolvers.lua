@@ -1847,6 +1847,47 @@ local function PlayerIsCastingMirrorSpell(m, sid)
     return false
 end
 
+-- A transient PROC override (e.g. Hammer of Light 427453 overriding Wake of
+-- Ashes 255937 on a Light's Guidance proc) makes the override the AVAILABLE
+-- spell while the base keeps recharging on its own lane. C_Spell.GetSpellCooldown
+-- on the override reports the base's SHARED recharge slot as active, so the naive
+-- cooldown branch paints the base recharge under the override's art. Blizzard's
+-- CooldownViewer shows the proc READY instead. Detect it precisely so ONLY this
+-- shape is affected:
+--   * sid is the registered base (sid == m.spellID, distinct from override),
+--   * a live override exists (m.overrideSpellID),
+--   * the base (m.spellID) is still INDEPENDENTLY known -> a transient proc, NOT
+--     a permanent talent conversion (Berserk 50334 -> Incarnation 102558, where
+--     the base reports isActive=false and the override owns the real cooldown),
+--   * the base is itself on a REAL (non-GCD) recharge -> the override's reported
+--     cooldown really is the base's shared slot. (Augmentation Breath of Eons'
+--     base reports isOnGCD=true, so it fails this and keeps its handling.)
+-- Called only from the base real-cooldown branch, so `sid` is the registered
+-- base and is already known to be on a real (non-GCD) recharge. This is a
+-- transient proc when an override is currently ACTIVE (m.overrideSpellID, set by
+-- Blizzard when the proc replaces the base on the bar) and the base is still
+-- INDEPENDENTLY known. Talent conversions (Berserk 50334 -> Incarnation 102558)
+-- never reach here -- their base reports isActive=false. m.overrideSpellID /
+-- m.spellID are sanitized mirror fields; QueryIsSpellKnownOrPlayerSpell is a
+-- non-secret IsSpellKnown/IsPlayerSpell probe.
+local function IsTransientProcOverrideReady(m, sid)
+    if not (m and sid) then return false end
+    -- Read the override from the LIVE spell-override map (C_Spell.GetOverrideSpell
+    -- via QueryOverrideSpell), NOT m.overrideSpellID. The mirror field comes from
+    -- C_CooldownViewer.GetCooldownViewerCooldownInfo, which does not expose every
+    -- proc override (Hammer of Light 427453 overriding Wake of Ashes 255937 is the
+    -- reference case: GetOverrideSpell flips to 427453 but the cooldown-info
+    -- override field stays at the base 255937, so the old m.overrideSpellID read
+    -- never fired this guard and the base recharge painted under the usable proc).
+    -- QueryOverrideSpell is kept fresh at the proc edge by the glow-event override
+    -- cache clear in cdm_effects.lua.
+    local ovSid = QueryOverrideSpell(sid)
+    if not ovSid or ovSid == sid then return false end
+    if m.spellID and m.spellID ~= sid then return false end
+    return Sources ~= nil and Sources.QueryIsSpellKnownOrPlayerSpell ~= nil
+        and Sources.QueryIsSpellKnownOrPlayerSpell(sid) == true
+end
+
 -- Returns (mode, auraData, cooldownSpellID). cooldownSpellID is the spellID
 -- where an active cooldown was detected (used by BuildMirrorRenderPayload to
 -- acquire the matching DurationObject). It is nil for "aura" and "inactive"
@@ -1890,8 +1931,14 @@ local function DeriveMirrorPayloadMode(m, sid, suppressAura)
     -- curve in cdm_icon_renderer.lua, so a cosmetic isOnGCD wobble here only
     -- affects which swipe shows, never the dark/bright state the user sees.
     local baseOnGCD = cdInfo and cdInfo.isOnGCD
-    -- A real (non-GCD) cooldown on the base always wins.
+    -- A real (non-GCD) cooldown on the base always wins -- EXCEPT when this is a
+    -- transient proc override that is available while its base recharges, where
+    -- the "cooldown" we just read is the base's shared slot and Blizzard shows
+    -- the proc ready. Show ready (inactive) so the proc surfaces + glows.
     if cdActive and baseOnGCD ~= true then
+        if IsTransientProcOverrideReady(m, sid) then
+            return "inactive", nil, nil
+        end
         return "cooldown", nil, sid
     end
     -- Talent-override cooldowns sit on the override spellID, not the registered

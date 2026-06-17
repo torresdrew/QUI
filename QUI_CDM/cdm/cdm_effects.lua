@@ -83,6 +83,12 @@ local overlayedSpells = {}  -- [spellID] = true
 local overlayedSpellCounts = {}  -- [spellID] = refcount
 local overlayedSourceMap = {}  -- [sourceSpellID] = { [candidateID] = true }
 
+-- Overlay-driven glows are latched on overlayedSpells (the authoritative overlay
+-- state) so a transient icon->overlay re-link miss during a SPELLS_CHANGED
+-- override flip cannot tear them down. See EvaluateGlowForIcon.
+local overlayGlowSpell = {}  -- [icon] = overlay spellID currently driving its glow
+local overlayGlowBase  = {}  -- [icon] = entry.spellID when latched (recycle guard)
+
 -- Glow-spell-candidate gathering rewritten without per-call closures.
 -- Previously `ForEachSpellCandidate` + `ForEachIconSpellID` took callbacks
 -- and `EvaluateGlowForIcon` allocated 3 fresh closures per icon glow eval
@@ -95,6 +101,15 @@ local _iconRawSeen = {}
 local _iconCandidateSeen = {}
 local _iconSpellIDScratch = {}
 local _iconSpellIDScratchN = 0
+
+local function GetIconRuntimeState(icon)
+    if not icon then return nil end
+    local store = ns.CDMRuntimeStore
+    if store and store.GetFrameState then
+        return store.GetFrameState(icon)
+    end
+    return icon._cdmRuntimeState
+end
 
 -- Visit one raw spellID candidate. Resolves Blizzard's override spell once
 -- and emits up to two deduplicated candidates into _iconSpellIDScratch.
@@ -140,6 +155,23 @@ local function GatherIconSpellIDs(icon)
     -- spellIDs directly to ScanGlowsForSpell.
     VisitRawSpellID(icon._runtimeSpellID)
 
+    local runtimeState = GetIconRuntimeState(icon)
+    if runtimeState then
+        VisitRawSpellID(runtimeState.spellID)
+        local mirrorState = runtimeState.mirrorState or runtimeState.state
+        if mirrorState then
+            VisitRawSpellID(mirrorState.overrideTooltipSpellID)
+            VisitRawSpellID(mirrorState.overrideSpellID)
+            VisitRawSpellID(mirrorState.spellID)
+            local linkedSpellIDs = mirrorState.linkedSpellIDs
+            if type(linkedSpellIDs) == "table" then
+                for _, linkedSpellID in ipairs(linkedSpellIDs) do
+                    VisitRawSpellID(linkedSpellID)
+                end
+            end
+        end
+    end
+
     local CDMSpellData = ns.CDMSpellData
     if CDMSpellData and CDMSpellData.ResolveDisplaySpellID then
         VisitRawSpellID(CDMSpellData:ResolveDisplaySpellID(entry))
@@ -170,21 +202,30 @@ local function ClearOverlaySource(sourceSpellID)
     overlayedSourceMap[sourceSpellID] = nil
 end
 
+local function MarkOverlayCandidate(mapped, candidateID)
+    if not candidateID or mapped[candidateID] then return end
+    mapped[candidateID] = true
+    overlayedSpellCounts[candidateID] = (overlayedSpellCounts[candidateID] or 0) + 1
+    overlayedSpells[candidateID] = true
+end
+
 local function MarkOverlaySource(sourceSpellID)
     if not sourceSpellID then return end
     ClearOverlaySource(sourceSpellID)
     -- mapped is stored persistently in overlayedSourceMap, so this
     -- allocation is intentional (one per MarkOverlaySource call).
     local mapped = {}
-    mapped[sourceSpellID] = true
-    overlayedSpellCounts[sourceSpellID] = (overlayedSpellCounts[sourceSpellID] or 0) + 1
-    overlayedSpells[sourceSpellID] = true
+    MarkOverlayCandidate(mapped, sourceSpellID)
     local overrideID = Sources and Sources.QueryOverrideSpell
         and Sources.QueryOverrideSpell(sourceSpellID)
-    if overrideID and overrideID ~= sourceSpellID then
-        mapped[overrideID] = true
-        overlayedSpellCounts[overrideID] = (overlayedSpellCounts[overrideID] or 0) + 1
-        overlayedSpells[overrideID] = true
+    MarkOverlayCandidate(mapped, overrideID)
+    local baseID = Sources and Sources.QueryBaseSpell
+        and Sources.QueryBaseSpell(sourceSpellID)
+    if baseID and baseID ~= sourceSpellID then
+        MarkOverlayCandidate(mapped, baseID)
+        local baseOverrideID = Sources and Sources.QueryOverrideSpell
+            and Sources.QueryOverrideSpell(baseID)
+        MarkOverlayCandidate(mapped, baseOverrideID)
     end
     overlayedSourceMap[sourceSpellID] = mapped
 end
@@ -196,6 +237,8 @@ local function QueryReadableSpellUsable(spellID)
     noMana = type(noMana) == "boolean" and noMana or false
     return usable and true or false, noMana and true or false
 end
+
+local IsOverlayed
 
 -- Explicit per-spell override: glow when this ability becomes castable.
 local function IsSpellCastable(icon)
@@ -209,17 +252,58 @@ local function IsSpellCastable(icon)
     return QueryReadableSpellUsable(spellID)
 end
 
+local function GetSpellGlowOverrideForID(viewerType, spellID)
+    local CDMSpellData = ns.CDMSpellData
+    if not CDMSpellData or not viewerType or not spellID then return nil end
+    return CDMSpellData:GetSpellOverride(viewerType, spellID)
+end
+
 local function GetSpellGlowOverride(icon)
     if not icon or not icon._spellEntry then return nil end
 
     local entry = icon._spellEntry
-    local CDMSpellData = ns.CDMSpellData
-    if not CDMSpellData or not entry.viewerType then return nil end
-
     local lookupID = entry.spellID or entry.id
-    if not lookupID then return nil end
+    return GetSpellGlowOverrideForID(entry.viewerType, lookupID)
+end
 
-    return CDMSpellData:GetSpellOverride(entry.viewerType, lookupID)
+local function IsGlowOverrideDisabled(override)
+    return override and override.glowEnabled == false
+end
+
+local function IsOverlayCandidateAllowed(viewerType, candidateID)
+    local candidateOvr = GetSpellGlowOverrideForID(viewerType, candidateID)
+    if not IsGlowOverrideDisabled(candidateOvr) then
+        return true, candidateOvr
+    end
+
+    -- MarkOverlaySource aliases an overlay source to its base/override IDs so a
+    -- base-owned mirror icon can react before Blizzard's mirror state catches
+    -- up. If the gathered candidate is disabled only because it is the stale
+    -- base ID, honor the actual event source's own override instead.
+    for sourceID, mapped in pairs(overlayedSourceMap) do
+        if mapped[candidateID] then
+            local sourceOvr = GetSpellGlowOverrideForID(viewerType, sourceID)
+            if not IsGlowOverrideDisabled(sourceOvr) then
+                return true, sourceOvr
+            end
+        end
+    end
+
+    return false, candidateOvr
+end
+
+local function FindAllowedOverlayGlow(icon, viewerType)
+    local n = GatherIconSpellIDs(icon)
+    for i = 1, n do
+        local candidateID = _iconSpellIDScratch[i]
+        if IsOverlayed(candidateID) then
+            local allowed, candidateOvr = IsOverlayCandidateAllowed(viewerType, candidateID)
+            if allowed then
+                return true, candidateOvr, candidateID
+            end
+        end
+    end
+    return false, nil, nil
 end
 
 local GetSettings = Helpers.CreateDBGetter("customGlow")
@@ -284,6 +368,22 @@ local function AddIconToGlowMaps(icon)
     AddGlowMapID(spellID, icon)
     if overrideID and overrideID ~= spellID then
         AddGlowMapID(overrideID, icon)
+    end
+    local runtimeState = GetIconRuntimeState(icon)
+    if runtimeState then
+        AddGlowMapID(runtimeState.spellID, icon)
+        local mirrorState = runtimeState.mirrorState or runtimeState.state
+        if mirrorState then
+            AddGlowMapID(mirrorState.overrideTooltipSpellID, icon)
+            AddGlowMapID(mirrorState.overrideSpellID, icon)
+            AddGlowMapID(mirrorState.spellID, icon)
+            local linkedSpellIDs = mirrorState.linkedSpellIDs
+            if type(linkedSpellIDs) == "table" then
+                for _, linkedSpellID in ipairs(linkedSpellIDs) do
+                    AddGlowMapID(linkedSpellID, icon)
+                end
+            end
+        end
     end
     if HasProcOnUsableOverride and HasProcOnUsableOverride(icon) then
         procOnUsableGlowIcons[#procOnUsableGlowIcons + 1] = icon
@@ -706,15 +806,23 @@ local function IsOverlayQueryActive(spellID)
     return IsSpellOverlayed(spellID) and true or false
 end
 
-local function IsOverlayed(spellID)
+IsOverlayed = function(spellID)
     if not spellID then return false end
-    -- Prefer the live query API whenever it exists. The event cache is a
-    -- fallback for clients/API paths where the query function is unavailable;
-    -- otherwise a missed HIDE event can leave a spell looking permanently procced.
+    -- The SPELL_ACTIVATION_OVERLAY_GLOW_SHOW/HIDE event is Blizzard's
+    -- authoritative proc signal (ref-counted into overlayedSpells, cleared on
+    -- HIDE). The live IsSpellOverlayed query is a secondary check that does NOT
+    -- reflect some override procs -- Hammer of Light (427453) fires GLOW_SHOW
+    -- but C_SpellActivationOverlay.IsSpellOverlayed(427453) returns false, so a
+    -- live-only check leaves the procced override icon un-glowed while the
+    -- action bar (which shows straight off the event) glows correctly. Honor
+    -- either source: event cache first (catches override procs), then the live
+    -- query (catches procs whose SHOW we loaded after, avoiding a stale miss).
+    -- The HIDE/wipe events clear the cache, bounding the missed-HIDE risk.
+    if overlayedSpells[spellID] then return true end
     if IsSpellOverlayed then
         return IsOverlayQueryActive(spellID)
     end
-    return overlayedSpells[spellID] or false
+    return false
 end
 
 local function EvaluateGlowForIcon(icon)
@@ -741,31 +849,49 @@ local function EvaluateGlowForIcon(icon)
 
     local entry = icon._spellEntry
     local viewerType = entry.viewerType
-    local baseID = entry.spellID
-    local overrideID = entry.overrideSpellID
 
     local spellOvr = GetSpellGlowOverride(icon)
+    local overlayGlow, overlayOvr, overlaySpellID = FindAllowedOverlayGlow(icon, viewerType)
 
     local shouldGlow
-    if spellOvr and spellOvr.glowEnabled == false then
+    if overlayGlow then
+        shouldGlow = true
+    elseif spellOvr and spellOvr.glowEnabled == false then
         shouldGlow = false
     elseif spellOvr and spellOvr.glowEnabled == true then
         shouldGlow = true
-    else
-        local n = GatherIconSpellIDs(icon)
-        for i = 1, n do
-            if IsOverlayed(_iconSpellIDScratch[i]) then
-                shouldGlow = true
-                break
-            end
-        end
     end
 
     if not shouldGlow and spellOvr and spellOvr.procOnUsable == true then
         shouldGlow = IsSpellCastable(icon)
     end
 
-    return shouldGlow and true or false, spellOvr
+    -- Overlay glow latch. A routine scan can transiently fail to re-link this
+    -- icon to its active overlay: Blizzard's override spell flips mid
+    -- SPELLS_CHANGED, so Sources.QueryOverrideSpell briefly stops resolving the
+    -- overlay ID and FindAllowedOverlayGlow misses -- even though the overlay is
+    -- still active (overlayedSpells[id] stays true until GLOW_HIDE). Tearing the
+    -- glow down on that miss, then re-applying once the override settles, replays
+    -- the proc glow's intro animation (a visible flicker at proc start). Latch on
+    -- the authoritative overlayedSpells state: once an overlay drives the glow,
+    -- only the GLOW_HIDE path (which clears overlayedSpells) may stop it -- a
+    -- re-link miss while the overlay is still active leaves the glow untouched.
+    -- The base guard drops the latch if the icon is recycled to another spell.
+    local entryID = entry.spellID or entry.id
+    if overlayGlow then
+        overlayGlowSpell[icon] = overlaySpellID
+        overlayGlowBase[icon] = entryID
+    elseif not shouldGlow then
+        local latched = overlayGlowSpell[icon]
+        if latched and overlayGlowBase[icon] == entryID and IsOverlayed(latched) then
+            shouldGlow = true   -- overlay still active; transient re-link miss
+        else
+            overlayGlowSpell[icon] = nil
+            overlayGlowBase[icon] = nil
+        end
+    end
+
+    return shouldGlow and true or false, overlayOvr or spellOvr
 end
 
 SyncGlowForIcon = function(icon)
@@ -892,6 +1018,20 @@ local function ScanGlowsForSpell(spellID)
             matched = true
         end
     end
+    local baseID = Sources and Sources.QueryBaseSpell
+        and Sources.QueryBaseSpell(spellID)
+    if baseID and baseID ~= spellID then
+        if _ProcessGlowIconsForCandidate(baseID, visited) then
+            matched = true
+        end
+        local baseOverrideID = Sources and Sources.QueryOverrideSpell
+            and Sources.QueryOverrideSpell(baseID)
+        if baseOverrideID and baseOverrideID ~= baseID then
+            if _ProcessGlowIconsForCandidate(baseOverrideID, visited) then
+                matched = true
+            end
+        end
+    end
 
     if not matched then
         -- Proc events are infrequent; if the fast reverse map misses because
@@ -922,8 +1062,15 @@ local function StopAllTrackedGlows()
     end
     wipe(toStop)
     wipe(activeGlowIcons)
+    wipe(overlayGlowSpell)
+    wipe(overlayGlowBase)
 end
 
+-- Full rebuild: tears every glow down and re-applies from scratch. Use ONLY
+-- when the glow *settings* changed (type/color/frequency from the options
+-- panel) -- the teardown is what forces the new look to take. The restart
+-- replays the proc-glow's intro animation (a visible flash), which is fine
+-- while the user is actively editing but must NOT run on routine refreshes.
 local function RefreshAllGlows()
     -- Stop all current glows
     StopAllTrackedGlows()
@@ -937,11 +1084,46 @@ local function RefreshAllGlows()
     ScanAllGlows()
 end
 
+-- Idempotent resync for post-layout refreshes (icons created/recycled, but
+-- glow *settings* unchanged). Rebuilds the reverse map then diffs per icon via
+-- SyncGlowForIcon, which only starts a glow when the icon is not already
+-- glowing and only stops one when it should no longer glow. A still-valid glow
+-- is left completely untouched -- no ButtonGlow_Stop->Start, so no AnimIn
+-- replay/flash. This is the safe-to-call-repeatedly path: a single proc (e.g.
+-- Hammer of Light overriding Wake of Ashes) drives several back-to-back
+-- post-layout refreshes, and the previous RefreshAllGlows teardown flashed the
+-- proc glow on every one. Glows on hidden/recycled icons are invisible (the
+-- glow frame is a child of the hidden icon) and re-evaluated when next shown.
+local function ResyncAllGlows()
+    if not IsCDMRuntimeEnabled() then
+        StopAllTrackedGlows()
+        return
+    end
+    RebuildGlowSpellMap()
+    ScanAllGlows()
+end
+
 ---------------------------------------------------------------------------
 -- EVENT HANDLING
 -- Spell activation overlay events drive proc glow updates.
 -- Track overlay state in overlayedSpells table for API-free fallback.
 ---------------------------------------------------------------------------
+-- Proc overrides (Hammer of Light 427453 overriding Wake of Ashes 255937 on a
+-- Light's Guidance proc) flip C_Spell.GetOverrideSpell mid-combat. The resolver
+-- reads that override through CDMRuntimeQueries.QueryOverrideSpell, which caches
+-- per spellID. Previously the only invalidation edge was SPELLS_CHANGED -- a
+-- Blizzard hot event that fires constantly in combat for procs/forms/temp
+-- spells, so it must not carry broad work. The glow SHOW/HIDE events ARE the
+-- proc edges (per-spell, fired exactly when the override flips), so invalidate
+-- the override cache here instead. Keeps QueryOverrideSpell fresh at the proc
+-- edge without leaning on SPELLS_CHANGED in the hot path.
+local function InvalidateOverrideCacheForProc()
+    local rq = ns.CDMRuntimeQueries
+    if rq and rq.ClearStableCaches then
+        rq.ClearStableCaches()
+    end
+end
+
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("SPELL_ACTIVATION_OVERLAY_GLOW_SHOW")
 eventFrame:RegisterEvent("SPELL_ACTIVATION_OVERLAY_GLOW_HIDE")
@@ -964,11 +1146,13 @@ eventFrame:SetScript("OnEvent", function(_, event, spellID)
     end
     if (event == "SPELL_ACTIVATION_OVERLAY_GLOW_SHOW"
         or event == "SPELL_ACTIVATION_OVERLAY_SHOW") and spellID then
+        InvalidateOverrideCacheForProc()
         MarkOverlaySource(spellID)
         ScanGlowsForSpell(spellID)
         return
     elseif event == "SPELL_ACTIVATION_OVERLAY_GLOW_HIDE"
         or event == "SPELL_ACTIVATION_OVERLAY_HIDE" then
+        InvalidateOverrideCacheForProc()
         if spellID then
             ClearOverlaySource(spellID)
             ScanGlowsForSpell(spellID)
@@ -1036,6 +1220,7 @@ ns._OwnedGlows = {
     StartGlow = StartGlow,
     StopGlow = StopGlow,
     RefreshAllGlows = RefreshAllGlows,
+    ResyncAllGlows = ResyncAllGlows,
     RebuildGlowSpellMap = RebuildGlowSpellMap,
     GetViewerType = GetViewerType,
     -- Resolves the customGlow settings table for a viewer ("Essential",

@@ -2898,6 +2898,56 @@ local function RefreshCooldownViewerRelatedAuraStates()
     return changed
 end
 
+CDMBlizzMirror._RefreshCooldownViewerRelatedAuraState = function(cdID, cat)
+    if not (cdID and cat and not IsAuraViewerCategoryName(cat)) then return false end
+    local child = GetInstanceChild(cdID, cat)
+    local s = EnsureState(cdID, child, cat)
+    if not s then return false end
+
+    local hadRelatedAura = s.auraDurObjSource == "aura-related-child"
+        or s.auraInstanceIDSource == "aura-related-child"
+    if CaptureAuraInstanceFromRelatedAuraChildren(cdID, cat) then
+        RequestMirrorTextRefreshForState(cdID, s, "related-aura")
+        return true
+    elseif hadRelatedAura then
+        ClearAuraDurationLane(cdID, s)
+        s.auraInstanceID = nil
+        s.auraInstanceIDSource = nil
+        s.auraUnit = nil
+        s.auraData = nil
+        s.mirrorEpoch = (s.mirrorEpoch or 0) + 1
+        s.lastTouch = GetTime()
+        RequestMirrorTextRefreshForState(cdID, s, "related-aura-clear")
+        return true
+    end
+    return false
+end
+
+CDMBlizzMirror._RefreshOverlayMappedStates = function(spellID)
+    if not spellID then return false end
+    local changed = false
+    local function RefreshMappedCooldown(catName, cdID)
+        if not (catName and cdID) then return end
+        if IsAuraViewerCategoryName(catName) then
+            local child = GetInstanceChild(cdID, catName)
+            if child then
+                RefreshChildSemanticState(child, cdID, false)
+                changed = true
+            end
+        elseif CDMBlizzMirror._RefreshCooldownViewerRelatedAuraState(cdID, catName) then
+            changed = true
+        end
+    end
+
+    for catName, catMap in pairs(_cdIDByCatSpell) do
+        RefreshMappedCooldown(catName, catMap and catMap[spellID])
+    end
+    for catName, directMap in pairs(_directCDIDByCatSpell) do
+        RefreshMappedCooldown(catName, directMap and directMap[spellID])
+    end
+    return changed
+end
+
 local function SetChildPandemicState(child, active)
     local cdID = child and child.cooldownID
     if not cdID then return end
@@ -3171,10 +3221,16 @@ function BindChildHooks(child, cooldownID, viewerCategoryNum)
     -- Always refresh the bind-time category map and seed state for the
     -- current cooldownID, even if the frame was already bound.
     local catName = CATEGORY_NAMES[viewerCategoryNum]
+    local alreadyBound = child._quiMirrorBound == true
+    local sameBinding = alreadyBound
+        and child._quiMirrorBoundCooldownID == cooldownID
+        and child._quiMirrorBoundCategory == catName
     _categoryByFrame[child] = viewerCategoryNum
     RegisterCooldownInstance(cooldownID, catName, child, nil)
     EnsureState(cooldownID, child, catName)
-    RefreshChildSemanticState(child, cooldownID, false)
+    if not sameBinding then
+        RefreshChildSemanticState(child, cooldownID, false)
+    end
 
     local cooldownFrame = child.Cooldown
     if cooldownFrame then
@@ -3182,9 +3238,14 @@ function BindChildHooks(child, cooldownID, viewerCategoryNum)
     end
 
     BindChildTextHooks(child)
-    SyncChildChargeCountFields(child, cooldownID, EnsureState(cooldownID, child, catName), "charge-field-bind")
+    if not sameBinding then
+        SyncChildChargeCountFields(child, cooldownID, EnsureState(cooldownID, child, catName), "charge-field-bind")
+    end
 
-    if child._quiMirrorBound then
+    child._quiMirrorBoundCooldownID = cooldownID
+    child._quiMirrorBoundCategory = catName
+
+    if alreadyBound then
         return
     end
     child._quiMirrorBound = true
@@ -3744,6 +3805,67 @@ local function BindNewChildren()
             end
         end
     end
+end
+
+CDMBlizzMirror._BindMappedChildrenForSpell = function(spellID)
+    if not spellID then return false end
+    if not C_CooldownViewer or not C_CooldownViewer.GetCooldownViewerCategorySet then
+        return false
+    end
+
+    local candidateCooldowns = {}
+    local function AddSpellID(id)
+        if type(id) ~= "number" or id <= 0 then return end
+        for _, catMap in pairs(_cdIDByCatSpell) do
+            local cdID = catMap[id]
+            if cdID then
+                candidateCooldowns[cdID] = true
+            end
+        end
+        for _, directMap in pairs(_directCDIDByCatSpell) do
+            local cdID = directMap[id]
+            if cdID then
+                candidateCooldowns[cdID] = true
+            end
+        end
+    end
+
+    AddSpellID(spellID)
+    if Sources and Sources.QueryBaseSpell then
+        AddSpellID(CleanScalar(Sources.QueryBaseSpell(spellID)))
+    end
+
+    local hasCandidates = false
+    for _ in pairs(candidateCooldowns) do
+        hasCandidates = true
+        break
+    end
+    if not hasCandidates then return false end
+
+    local changed = false
+    for catNum = 0, 3 do
+        local viewerName = CATEGORY_GLOBALS[catNum]
+        local viewer = _G[viewerName]
+        if viewer and viewer.GetChildren then
+            local children = { viewer:GetChildren() }
+            for i = 1, #children do
+                local child = children[i]
+                local cdID = child and child.cooldownID
+                if cdID and candidateCooldowns[cdID] then
+                    local wasBound = child._quiMirrorBound == true
+                    local bound = BindChildToCatalogCategories(child, cdID, catNum)
+                    changed = bound or changed
+                    if bound and not wasBound then
+                        local categories = ResolveChildCatalogCategories(cdID, CATEGORY_NAMES[catNum])
+                        for _, catName in ipairs(categories) do
+                            FireOnChildBound(cdID, catName)
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return changed
 end
 
 CDMBlizzMirror.BindNewChildren = BindNewChildren
@@ -4659,6 +4781,68 @@ CDMBlizzMirror._RefreshSpellOverridePair = function(baseSpellID, overrideSpellID
     _RebuildSpellNameIndex()
 end
 
+CDMBlizzMirror._RefreshOverlayCooldownInfo = function(spellID)
+    if not spellID then return false end
+    if not (C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCooldownInfo) then
+        return false
+    end
+
+    local baseSpellID
+    if Sources and Sources.QueryBaseSpell then
+        baseSpellID = CleanScalar(Sources.QueryBaseSpell(spellID))
+    end
+
+    local cdID, hostCatName = FindMappedCooldownID(spellID, baseSpellID)
+    if not cdID or not hostCatName then return false end
+
+    local info = C_CooldownViewer.GetCooldownViewerCooldownInfo(cdID)
+    if not info then return false end
+
+    local clean = SanitizeCooldownInfo(cdID, info)
+    local prev = GetInstanceInfo(cdID, hostCatName)
+    local changed = not prev
+        or prev.spellID ~= clean.spellID
+        or prev.overrideSpellID ~= clean.overrideSpellID
+        or prev.overrideTooltipSpellID ~= clean.overrideTooltipSpellID
+        or prev.selfAura ~= clean.selfAura
+        or prev.hasAura ~= clean.hasAura
+        or prev.charges ~= clean.charges
+        or prev.isKnown ~= clean.isKnown
+    if not changed then
+        return false, cdID, hostCatName
+    end
+
+    RegisterCooldownInstance(cdID, hostCatName, GetInstanceChild(cdID, hostCatName), clean)
+    RemoveCooldownIDFromMaps(cdID, hostCatName)
+    MapCooldownInfoIDs(_cdIDByCatSpell[hostCatName], clean, cdID)
+    _RebuildSpellNameIndex()
+    RequestMirrorTextRefresh(cdID, hostCatName, "overlay")
+    return true, cdID, hostCatName
+end
+
+CDMBlizzMirror._RunOverlayTargetedRefresh = function(spellID)
+    if not spellID then return false end
+    CDMBlizzMirror._BindMappedChildrenForSpell(spellID)
+    local refreshedCooldown = CDMBlizzMirror._RefreshOverlayCooldownInfo(spellID)
+    local refreshedState = CDMBlizzMirror._RefreshOverlayMappedStates(spellID)
+    if refreshedState and not refreshedCooldown then
+        RequestMirrorTextRefreshForMappedSpells("overlay", spellID)
+    end
+    return refreshedCooldown or refreshedState
+end
+
+CDMBlizzMirror._ScheduleOverlayTargetedRefresh = function(spellID)
+    if not (spellID and C_Timer and C_Timer.After) then return end
+    CDMBlizzMirror._overlayRefreshTokens = CDMBlizzMirror._overlayRefreshTokens or {}
+    local tokens = CDMBlizzMirror._overlayRefreshTokens
+    tokens[spellID] = (tokens[spellID] or 0) + 1
+    local token = tokens[spellID]
+    C_Timer.After(0, function()
+        if tokens[spellID] ~= token then return end
+        CDMBlizzMirror._RunOverlayTargetedRefresh(spellID)
+    end)
+end
+
 _eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2)
     if event == "SPELL_UPDATE_USES" then
         BindNewChildren()
@@ -4670,12 +4854,8 @@ _eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2)
 
     if event == "SPELL_ACTIVATION_OVERLAY_GLOW_SHOW"
         or event == "SPELL_ACTIVATION_OVERLAY_GLOW_HIDE" then
-        BindNewChildren()
-        RefreshAuraViewerChildActiveStates()
-        RefreshCooldownViewerRelatedAuraStates()
-        if not RequestMirrorTextRefreshForMappedSpells("overlay", arg1) then
-            RequestMirrorTextRefresh(nil, nil, "overlay")
-        end
+        CDMBlizzMirror._RunOverlayTargetedRefresh(arg1)
+        CDMBlizzMirror._ScheduleOverlayTargetedRefresh(arg1)
         return
     end
 

@@ -2751,8 +2751,16 @@ local function RunPostLayoutRefresh()
     if _G.QUI_RefreshCooldownSwipe then
         _G.QUI_RefreshCooldownSwipe()
     end
-    if _G.QUI_RefreshCustomGlows then
-        _G.QUI_RefreshCustomGlows()
+    -- Idempotent resync, NOT the full teardown: a post-layout refresh that
+    -- tore every glow down and restarted it replayed the proc-glow AnimIn (a
+    -- visible flash) on each pass. A single proc (e.g. Hammer of Light
+    -- overriding Wake of Ashes) drives several post-layout refreshes in a row,
+    -- so the glow flashed repeatedly. ResyncAllGlows leaves still-valid glows
+    -- untouched; settings changes still go through the full RefreshAllGlows.
+    local glows = ns._OwnedGlows
+    local resync = glows and (glows.ResyncAllGlows or glows.RefreshAllGlows)
+    if resync then
+        resync()
     end
     -- Reapply icon visibility after layout so "active only" display mode
     -- hides inactive icons that LayoutContainer() showed.
@@ -3314,6 +3322,10 @@ function ownedEngine:Initialize()
     -- Wire owned-engine exports that are populated after their modules load.
     if ns._OwnedGlows then
         QUI.CustomGlows = ns._OwnedGlows
+        -- RefreshAllGlows = full teardown+reapply (settings changes). The
+        -- idempotent ResyncAllGlows used by routine post-layout refreshes is
+        -- called directly off ns._OwnedGlows (see RunPostLayoutRefresh) to avoid
+        -- a second _G.QUI_* global.
         _G.QUI_RefreshCustomGlows = ns._OwnedGlows.RefreshAllGlows
         -- No-op effects refresh (owned engine has no effects.lua)
         ---@type fun(...)

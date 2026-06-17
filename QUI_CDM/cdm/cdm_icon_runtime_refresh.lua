@@ -1111,6 +1111,15 @@ function CDMIconRuntimeRefresh.Create(callbacks)
             return
         end
         if event == "SPELLS_CHANGED" then
+            -- These three are small table wipes (not the CPU-intensive work the
+            -- SPELLS_CHANGED-is-hot warning targets); they run in combat too
+            -- because non-proc override changes that fire NO glow -- Druid form /
+            -- Warrior stance swaps mid-combat -- flip C_Spell.GetOverrideSpell
+            -- through SPELLS_CHANGED only, and the override cache must stay fresh.
+            -- (Proc overrides that DO glow are additionally covered per-spell by
+            -- the glow-edge clear in cdm_effects.lua.) The genuinely heavy work --
+            -- RebuildCatalog (cdm_resolvers.lua) -- already combat-defers, and
+            -- QueueCatalogScopeRefresh below combat-defers its own scope walk.
             if callbacks.clearTextureCycleCache then
                 callbacks.clearTextureCycleCache()
             end
