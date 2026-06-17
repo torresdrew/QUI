@@ -5,8 +5,10 @@ local function noop() end
 local eventScript
 local registeredUnitEvents = {}
 local timers = {}
+local hookCalls = 0
 
 function hooksecurefunc(owner, method, hook)
+    hookCalls = hookCalls + 1
     local original = owner[method] or noop
     owner[method] = function(self, ...)
         original(self, ...)
@@ -67,6 +69,13 @@ local auraChild = {
     Hide = noop,
 }
 auraChild.Cooldown.GetParent = function() return auraChild end
+local auraChildWrites = {}
+setmetatable(auraChild, {
+    __newindex = function(tbl, key, value)
+        auraChildWrites[key] = value
+        rawset(tbl, key, value)
+    end,
+})
 
 local lateAuraChild = {
     cooldownID = 3001,
@@ -236,6 +245,15 @@ ns.CDMBlizzMirror.ForceRescan()
 local wakeState = ns.CDMBlizzMirror.GetStateByCooldownID(1001, "essential")
 assert(wakeState and wakeState.overrideSpellID == 255937,
     "initial essential mirror state should be captured before overlay")
+assert(rawget(auraChild, "_quiMirrorBound") == nil,
+    "mirror must not store hook bookkeeping on Blizzard cooldown children")
+assert(auraChildWrites._quiMirrorBound == nil,
+    "mirror must keep hook bookkeeping in side tables to avoid tainting Blizzard children")
+
+local firstHookCalls = hookCalls
+ns.CDMBlizzMirror.ForceRescan()
+assert(hookCalls == firstHookCalls,
+    "rescanning an already-bound child must not install duplicate hooks")
 
 local boundaryEvents = {
     "PLAYER_REGEN_ENABLED",

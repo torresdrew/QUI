@@ -52,6 +52,7 @@ local _categoryByFrame     = {}    -- [child frame] = catNum (lazy-init category
 local _childByCooldownFrame = setmetatable({}, { __mode = "k" }) -- [child.Cooldown] = child frame
 local _forceShowingChild    = setmetatable({}, { __mode = "k" }) -- [child] = true for mirror-internal Show()
 local _textOwnerHooked      = setmetatable({}, { __mode = "k" }) -- [Applications/ChargeCount owner] = true
+CDMBlizzMirror._childHooksBound = setmetatable({}, { __mode = "k" }) -- [child] = { cooldownID, category } once hooks are installed
 CDMBlizzMirror._knownShownByFrame = setmetatable({}, { __mode = "k" }) -- [frame/text owner] = last clean Show/Hide/SetShown state
 -- CooldownViewerCooldown info captured from C_CooldownViewer.GetCooldownViewerCooldownInfo:
 --   cooldownID, spellID, overrideSpellID, overrideTooltipSpellID,
@@ -1148,7 +1149,7 @@ function CDMBlizzMirror.GetRawCooldownViewerDebugLines()
                 "wasSetFromAura=" .. FormatRawValue(child and child.wasSetFromAura),
                 "wasSetFromCooldown=" .. FormatRawValue(child and child.wasSetFromCooldown),
                 "wasSetFromCharges=" .. FormatRawValue(child and child.wasSetFromCharges),
-                "bound=" .. FormatRawValue(child and child._quiMirrorBound),
+                "bound=" .. FormatRawValue(child and CDMBlizzMirror._childHooksBound[child] ~= nil),
             }
             lines[#lines + 1] = table.concat(parts, " | ")
         end
@@ -1284,11 +1285,12 @@ end
 --
 -- Blizzard's CDM viewer pools/reuses child frames across rebuilds — a frame
 -- that displayed cooldownID X at bind time may later display cooldownID Y
--- (talent change, spec change, viewer rebuild). `_quiMirrorBound` is set on
--- the frame to avoid re-installing the hook closure, but the closure itself
--- must read `cooldownID` from the live frame each fire — never close over
--- the bind-time cooldownID. State is lazy-initialized so reassigned
--- cooldownIDs that haven't been formally walked still get a state slot.
+-- (talent change, spec change, viewer rebuild). `_childHooksBound` tracks
+-- hook installation and the last bound cooldown identity in a weak side table
+-- so we never add addon-owned fields to Blizzard's frame. The closure itself
+-- must read `cooldownID` from the live frame each fire — never close over the
+-- bind-time cooldownID. State is lazy-initialized so reassigned cooldownIDs
+-- that haven't been formally walked still get a state slot.
 ---------------------------------------------------------------------------
 EnsureState = function(cdID, frame, viewerCategory)
     if not cdID then return nil end
@@ -3239,10 +3241,11 @@ function BindChildHooks(child, cooldownID, viewerCategoryNum)
     -- Always refresh the bind-time category map and seed state for the
     -- current cooldownID, even if the frame was already bound.
     local catName = CATEGORY_NAMES[viewerCategoryNum]
-    local alreadyBound = child._quiMirrorBound == true
+    local hookBinding = CDMBlizzMirror._childHooksBound[child]
+    local alreadyBound = hookBinding ~= nil
     local sameBinding = alreadyBound
-        and child._quiMirrorBoundCooldownID == cooldownID
-        and child._quiMirrorBoundCategory == catName
+        and hookBinding.cooldownID == cooldownID
+        and hookBinding.category == catName
     _categoryByFrame[child] = viewerCategoryNum
     RegisterCooldownInstance(cooldownID, catName, child, nil)
     EnsureState(cooldownID, child, catName)
@@ -3260,13 +3263,15 @@ function BindChildHooks(child, cooldownID, viewerCategoryNum)
         SyncChildChargeCountFields(child, cooldownID, EnsureState(cooldownID, child, catName), "charge-field-bind")
     end
 
-    child._quiMirrorBoundCooldownID = cooldownID
-    child._quiMirrorBoundCategory = catName
-
     if alreadyBound then
+        hookBinding.cooldownID = cooldownID
+        hookBinding.category = catName
         return
     end
-    child._quiMirrorBound = true
+    CDMBlizzMirror._childHooksBound[child] = {
+        cooldownID = cooldownID,
+        category = catName,
+    }
 
     -- Cooldown widget hooks — capture active-state transitions on every
     -- Blizzard push, regardless of which Cooldown method the mixin uses.
@@ -3568,7 +3573,7 @@ end
 ---------------------------------------------------------------------------
 -- Discovery walk. OOC-only. Idempotent — re-runs on viewer rebuilds and
 -- only binds new children (existing bindings short-circuit via the
--- `_quiMirrorBound` flag).
+-- `_childHooksBound` side table).
 ---------------------------------------------------------------------------
 local _walkPendingOnRegen = false
 local _coldLoadDeferredMirrorRefreshPending = false
@@ -3802,7 +3807,7 @@ local function BindNewChildren()
                 local child = children[i]
                 local cdID  = child and child.cooldownID
                 if cdID then
-                    local wasBound = child._quiMirrorBound == true
+                    local wasBound = CDMBlizzMirror._childHooksBound[child] ~= nil
                     local bound = BindChildToCatalogCategories(child, cdID, catNum)
                     if _G.QUI_CDM_TAINT_DEBUG and CDMBlizzMirror.TaintLog then
                         CDMBlizzMirror.TaintLog("LazyBind", "cdID", cdID,
@@ -3870,7 +3875,7 @@ CDMBlizzMirror._BindMappedChildrenForSpell = function(spellID)
                 local child = children[i]
                 local cdID = child and child.cooldownID
                 if cdID and candidateCooldowns[cdID] then
-                    local wasBound = child._quiMirrorBound == true
+                    local wasBound = CDMBlizzMirror._childHooksBound[child] ~= nil
                     local bound = BindChildToCatalogCategories(child, cdID, catNum)
                     changed = bound or changed
                     if bound and not wasBound then
