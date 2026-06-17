@@ -8,6 +8,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v4.0.2-beta2 - 2026-06-16
+
+### Added
+- Resource bars: segment-divider (tick) settings exposed in the UI.
+
+### Fixed
+- Resource bars: segment dividers now scoped to the secondary bar, with live-preview parity.
+- Game menu: QUI buttons now inject even when skinning is disabled.
+- CDM: glow/effects settings now drive the composer live preview.
+
+
 ## v4.0.2-beta1 - 2026-06-16
 
 First beta of this build on top of 4.0.1.
