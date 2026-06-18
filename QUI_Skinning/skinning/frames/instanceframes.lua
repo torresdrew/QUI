@@ -370,6 +370,14 @@ local function SkinLFDFrame()
             LockFrameTextObjects(row, 2)
         end)
     end
+    -- Follower (story-mode) dungeon list is a SEPARATE ScrollBox with the same
+    -- row font-object revert (LFDFrame.lua:48 / LFDQueueFrameFollowerList_InitButton).
+    local followerList = LFDQueueFrame.Follower
+    if followerList and followerList.ScrollBox then
+        SkinBase.HookScrollBoxAcquired(followerList.ScrollBox, function(row)
+            LockFrameTextObjects(row, 2)
+        end)
+    end
 
     SkinBase.SkinFrameText(LFDQueueFrame, { recurse = true })
     SkinBase.MarkSkinned(LFDQueueFrame)
@@ -649,6 +657,11 @@ local function StyleAffixIcon(affix, sr, sg, sb, sa, bgr, bgg, bgb, bga)
             SkinBase.SetFrameData(affix.Portrait, "backdrop", portraitBackdrop)
         end
     end
+
+    -- The affix "+X%" Percent text re-applies its font OBJECT on every SetUp
+    -- (Blizzard_ChallengesUI.lua:807/809), reverting the one-shot SkinFrameText.
+    -- Lock so the QUI face survives weekly/affix refreshes.
+    LockFrameTextObjects(affix, 2)
 
     SkinBase.MarkStyled(affix)
 end

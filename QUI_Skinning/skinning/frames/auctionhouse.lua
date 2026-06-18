@@ -108,6 +108,11 @@ end
 local function skinRow(row)
     SkinBase.SkinScrollRow(row)
     SkinBase.SkinFrameText(row, { recurse = true })
+    -- AH result rows are TableBuilder-backed: each cell re-applies its font
+    -- OBJECT (Number*/Price* font objects) on every populate / scroll-recycle,
+    -- reverting the one-shot SkinFrameText face above. Lock so the QUI face
+    -- re-applies on each swap (fontOnly keeps the quality/price text colors).
+    SkinBase.LockFrameTextObjects(row, 4)
 end
 
 -- Skin browse panel (item list / commodities list)
@@ -296,6 +301,11 @@ local function SkinCategoriesList()
         -- Reapply the QUI font: Blizzard's element initializer calls
         -- SetNormalFontObject on every rebind, reverting the label font.
         SkinBase.SkinFontString(button.Text)
+        -- The initializer also fires on SetDataProvider / OnShow / expand-
+        -- collapse rebuilds that DON'T re-run the acquired-frame callback, so
+        -- the one-shot above is missed. Lock the button's SetNormalFontObject
+        -- swap so the QUI face re-applies on every rebind.
+        SkinBase.LockFrameTextObjects(button, 2)
     end
     local function RefreshCategoryButtons(self)
         SafeForEachFrame(self, StyleCategoryRow)
