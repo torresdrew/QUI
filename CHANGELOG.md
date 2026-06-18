@@ -9,6 +9,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v4.0.3-beta1 - 2026-06-17
+
+### Changed
+- perf(cdm): cut in-combat aura/resolve churn — memo aura queries, drop a
+  redundant target-change aura walk, skip provable self-aura icons on target
+  swap (worst-case CDM frame 148ms/+16MB → 56ms/+6MB per 5s)
+
+### Fixed
+- fix(skinning): re-assert QUI theming Blizzard clobbers on hover/rebind —
+  objective-tracker title/text color on mouseover; spellbook/talents/achievement
+  fonts on hover & list-rebind
 ## v4.0.2 - 2026-06-18
 
 ### Added
