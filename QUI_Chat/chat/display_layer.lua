@@ -562,6 +562,20 @@ local function CreateWindow(id)
         local refFrame = _G.DEFAULT_CHAT_FRAME or _G.ChatFrame1 or self
         _G.SetItemRef(link, text, button, refFrame)
     end)
+    -- Hover tooltips. A bare ScrollingMessageFrame has no OnHyperlinkEnter/
+    -- Leave scripts; Blizzard's ChatFrameMixin wires those in ChatFrame.xml to
+    -- fire EventRegistry "ChatFrame.OnHyperlinkEnter/Leave" (ChatFrame.lua:27).
+    -- The QUI tooltip handler (hyperlinks.lua) listens on those events, so
+    -- without re-firing them from this custom SMF, hovering an item/spell link
+    -- shows nothing. Mirror Blizzard's signature and pass self as the chatFrame.
+    if _G.EventRegistry and _G.EventRegistry.TriggerEvent then
+        smf:SetScript("OnHyperlinkEnter", function(self, link, text, region, boundsLeft, boundsBottom, boundsWidth, boundsHeight)
+            _G.EventRegistry:TriggerEvent("ChatFrame.OnHyperlinkEnter", self, link, text, region, boundsLeft, boundsBottom, boundsWidth, boundsHeight)
+        end)
+        smf:SetScript("OnHyperlinkLeave", function(self)
+            _G.EventRegistry:TriggerEvent("ChatFrame.OnHyperlinkLeave", self)
+        end)
+    end
     -- Clicking the message area marks the window active (editbox follow).
     if smf.HookScript then
         smf:HookScript("OnMouseDown", function()
