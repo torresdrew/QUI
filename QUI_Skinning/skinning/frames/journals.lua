@@ -197,6 +197,45 @@ end
 local function SkinEncounterJournalTextFrame(frame)
     if frame then
         SkinBase.SkinFrameText(frame, { recurse = true, chrome = true })
+        if SkinBase.LockFrameTextObjects then
+            SkinBase.LockFrameTextObjects(frame, 3)
+        end
+    end
+end
+
+local function GetEncounterJournalBottomTabs(frame)
+    if not frame then return nil end
+    local tabs = {}
+    for _, key in ipairs({
+        "JourneysTab",
+        "MonthlyActivitiesTab",
+        "suggestTab",
+        "dungeonsTab",
+        "raidsTab",
+        "LootJournalTab",
+        "TutorialsTab",
+    }) do
+        local tab = frame[key]
+        if tab then
+            tabs[#tabs + 1] = tab
+        end
+    end
+    return tabs
+end
+
+-- Bottom content tabs (Suggestions / Dungeons / Raids / Loot / Journeys /
+-- Monthly Activities / Tutorials). Font-only fix — we DON'T reskin the tab art
+-- (left as Blizzard's). ApplyButtonFontObjects sets the tab's Normal / Highlight
+-- / Disabled font OBJECTS to the QUI font, so neither hover (engine shows the
+-- HIGHLIGHT object with no setter call) nor selection (Blizzard sets the
+-- DISABLED object) reverts; LockFrameTextObjects re-asserts after the
+-- PanelTemplates_SelectTab SetDisabledFontObject swap.
+local function SkinEncounterJournalBottomTabs(frame)
+    local tabs = GetEncounterJournalBottomTabs(frame)
+    if not tabs or #tabs == 0 then return end
+    for _, tab in ipairs(tabs) do
+        SkinBase.ApplyButtonFontObjects(tab)
+        SkinBase.LockFrameTextObjects(tab, 2)
     end
 end
 
@@ -272,13 +311,12 @@ local function SkinMonthlyActivitiesText(monthlyFrame)
     end
 end
 
-local function SkinEncounterJournalText(frame)
-    if not frame or not IsSettingEnabled("skinEncounterJournal") then return end
-
-    SkinEncounterJournalTextFrame(frame)
-    SkinMonthlyActivitiesText(frame.MonthlyActivitiesFrame)
-
-    local encounter = frame.encounter
+-- Encounter description / overview / boss-ability headers only. This is the
+-- subtree EncounterJournal_ToggleHeaders / SetBullets / SetDescriptionWithBullets
+-- mutate, so the runtime hooks re-skin THIS (cheap) instead of recursing the
+-- whole EncounterJournal tree.
+local function SkinEncounterJournalEncounterText(frame)
+    local encounter = frame and frame.encounter
     if not encounter then return end
 
     SkinEncounterJournalTextFrame(encounter.infoFrame)
@@ -304,13 +342,44 @@ local function SkinEncounterJournalText(frame)
     end
 end
 
+-- Full one-shot pass: whole-frame chrome recurse + Monthly Activities + the
+-- encounter subtree. EXPENSIVE (recurses the entire EncounterJournal incl. the
+-- instance / boss lists), so it runs ONLY at init/refresh — never on the
+-- per-row update hooks, which caused the Adventure Guide / Traveler's Log open
+-- stutter (mirrors the spellbook category-tab fix).
+local function SkinEncounterJournalText(frame)
+    if not frame or not IsSettingEnabled("skinEncounterJournal") then return end
+
+    SkinEncounterJournalTextFrame(frame)
+    SkinMonthlyActivitiesText(frame.MonthlyActivitiesFrame)
+    SkinEncounterJournalEncounterText(frame)
+end
+
+local encounterTextPending
 local function ScheduleEncounterJournalText(frame, focusFrame)
+    if focusFrame then
+        -- Targeted: skin the changed element (+ its parent header/container).
+        -- EncounterJournal_UpdateButtonState fires once per instance/boss row on
+        -- every list build; the old behavior ALSO recursed the whole
+        -- EncounterJournal tree per fire (incl. Monthly Activities) — that was
+        -- the open stutter. Skinning just focusFrame + parent is bounded.
+        C_Timer.After(0, function()
+            SkinEncounterJournalTextFrame(focusFrame)
+            if focusFrame.GetParent then
+                SkinEncounterJournalTextFrame(focusFrame:GetParent())
+            end
+        end)
+        return
+    end
+    -- No focus (boss description / bullets / headers changed): coalesce to one
+    -- encounter-subtree pass per frame instead of a whole-frame recurse per
+    -- hook fire.
+    if encounterTextPending then return end
+    encounterTextPending = true
     C_Timer.After(0, function()
-        SkinEncounterJournalTextFrame(focusFrame)
-        if focusFrame and focusFrame.GetParent then
-            SkinEncounterJournalTextFrame(focusFrame:GetParent())
-        end
-        SkinEncounterJournalText(frame)
+        encounterTextPending = false
+        if not IsSettingEnabled("skinEncounterJournal") then return end
+        SkinEncounterJournalEncounterText(frame)
     end)
 end
 
@@ -351,9 +420,21 @@ local function HookEncounterJournalScrollBoxes(frame)
     HookMonthlyActivitiesScrollBoxes(frame and frame.MonthlyActivitiesFrame)
 end
 
+local monthlyTextPending
 local function ScheduleMonthlyActivitiesText(monthlyFrame, focusFrame)
+    -- Targeted element (e.g. BarComplete / HeaderContainer) — cheap, run now.
+    if focusFrame then
+        C_Timer.After(0, function()
+            SkinEncounterJournalTextFrame(focusFrame)
+        end)
+    end
+    -- Traveler's Log fires OnShow + UpdateActivities + SetActivities +
+    -- SetThresholds (+ more) back-to-back on open; coalesce the full Monthly
+    -- Activities sweep to one run per frame so the open doesn't stutter.
+    if monthlyTextPending then return end
+    monthlyTextPending = true
     C_Timer.After(0, function()
-        SkinEncounterJournalTextFrame(focusFrame)
+        monthlyTextPending = false
         SkinMonthlyActivitiesText(monthlyFrame)
     end)
 end
@@ -444,6 +525,7 @@ local function SkinEncounterJournal()
     local frame = _G.EncounterJournal
     if not frame or SkinBase.IsSkinned(frame) then return end
     SkinBase.SkinButtonFrameTemplate(frame)
+    SkinEncounterJournalBottomTabs(frame)
     HookEncounterJournalTextUpdates(frame)
     HookEncounterJournalScrollBoxes(frame)
     SkinEncounterJournalText(frame)
@@ -460,6 +542,7 @@ local function RefreshEncounterJournal()
     end
     HookEncounterJournalTextUpdates(frame)
     HookEncounterJournalScrollBoxes(frame)
+    SkinEncounterJournalBottomTabs(frame)
     SkinEncounterJournalText(frame)
 end
 _G.QUI_RefreshEncounterJournalColors = RefreshEncounterJournal
@@ -475,6 +558,34 @@ end
 ---------------------------------------------------------------------------
 -- CollectionsJournal
 ---------------------------------------------------------------------------
+local function LockCollectionsText(frame)
+    if SkinBase.LockFrameTextObjects and frame then
+        SkinBase.SkinFrameText(frame, { recurse = true })
+        SkinBase.LockFrameTextObjects(frame, 4)
+    end
+end
+
+local function LockCollectionsScrollBox(scrollBox)
+    if not scrollBox then return end
+    -- Guarded per-row font lock (recursive pass runs once per pooled row; the
+    -- LockFontObject hooks re-assert the QUI face on later rebinds). Replaces an
+    -- unguarded acquire callback + redundant ForEachFrame sweep — re-walking
+    -- Mount/Pet/Heirloom rows on every open was the open-window hitch.
+    SkinBase.HookScrollBoxRowFonts(scrollBox, 3)
+end
+
+local function HookCollectionsText(frame)
+    LockCollectionsText(frame)
+    LockCollectionsScrollBox(_G.MountJournal and _G.MountJournal.ScrollBox)
+    LockCollectionsScrollBox(_G.PetJournal and _G.PetJournal.ScrollBox)
+    LockCollectionsScrollBox(_G.HeirloomsJournal and _G.HeirloomsJournal.ScrollBox)
+
+    local wardrobe = _G.WardrobeCollectionFrame
+    local sets = wardrobe and wardrobe.SetsCollectionFrame
+    local list = sets and sets.ListContainer
+    LockCollectionsScrollBox(list and list.ScrollBox)
+end
+
 local function SkinCollections()
     if not IsSettingEnabled("skinCollections") then return end
     local frame = _G.CollectionsJournal
@@ -488,10 +599,17 @@ local function SkinCollections()
     end
     SkinBase.SkinTabGroup(tabs, frame)
     SkinBase.SkinFrameText(frame, { recurse = true })
+    HookCollectionsText(frame)
     SkinBase.MarkSkinned(frame)
 end
 
-local function RefreshCollections() RefreshBackdropColors(_G.CollectionsJournal) end
+local function RefreshCollections()
+    local frame = _G.CollectionsJournal
+    RefreshBackdropColors(frame)
+    if frame and IsSettingEnabled("skinCollections") then
+        HookCollectionsText(frame)
+    end
+end
 _G.QUI_RefreshCollectionsColors = RefreshCollections
 if ns.Registry then
     ns.Registry:Register("skinCollections", {
@@ -505,6 +623,9 @@ end
 ---------------------------------------------------------------------------
 -- INITIALIZATION
 ---------------------------------------------------------------------------
-SkinBase.OnAddOnLoaded("Blizzard_PlayerSpells",     SkinPlayerSpells,     0.1)
-SkinBase.OnAddOnLoaded("Blizzard_EncounterJournal", SkinEncounterJournal, 0.1)
-SkinBase.OnAddOnLoaded("Blizzard_Collections",      SkinCollections,      0.1)
+-- delay 0 = skin synchronously inside the ADDON_LOADED handler, BEFORE the LOD
+-- frame's first paint, so the window never flashes Blizzard FRIZQT before the
+-- QUI font lands. (The 0.1s defer skinned a frame already on screen → flash.)
+SkinBase.OnAddOnLoaded("Blizzard_PlayerSpells",     SkinPlayerSpells,     0)
+SkinBase.OnAddOnLoaded("Blizzard_EncounterJournal", SkinEncounterJournal, 0)
+SkinBase.OnAddOnLoaded("Blizzard_Collections",      SkinCollections,      0)

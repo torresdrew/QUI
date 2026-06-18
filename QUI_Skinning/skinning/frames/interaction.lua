@@ -50,6 +50,7 @@ local function SkinBank()
     if not frame or SkinBase.IsSkinned(frame) then return end
     SkinBase.SkinButtonFrameTemplate(frame)
     SkinBase.SkinFrameText(frame, { recurse = true })
+    SkinBase.LockFrameTextObjects(frame, 4)
     SkinBase.MarkSkinned(frame)
 end
 
@@ -75,6 +76,7 @@ local function SkinMerchant()
     -- MerchantFrameTab1 (Items), MerchantFrameTab2 (Buyback)
     SkinBase.SkinTabGroup(CollectNumberedTabs("MerchantFrame", 2), frame)
     SkinBase.SkinFrameText(frame, { recurse = true })
+    SkinBase.LockFrameTextObjects(frame, 4)
     SkinBase.MarkSkinned(frame)
 end
 
@@ -100,6 +102,7 @@ local function SkinMail()
     -- MailFrameTab1 (Inbox), MailFrameTab2 (Send Mail)
     SkinBase.SkinTabGroup(CollectNumberedTabs("MailFrame", 2), frame)
     SkinBase.SkinFrameText(frame, { recurse = true })
+    SkinBase.LockFrameTextObjects(frame, 4)
     SkinBase.MarkSkinned(frame)
 end
 
@@ -123,6 +126,7 @@ local function SkinGuildBank()
     if not frame or SkinBase.IsSkinned(frame) then return end
     SkinBase.SkinButtonFrameTemplate(frame)
     SkinBase.SkinFrameText(frame, { recurse = true })
+    SkinBase.LockFrameTextObjects(frame, 4)
     SkinBase.MarkSkinned(frame)
 end
 
@@ -146,7 +150,7 @@ end
 SkinBase.OnAddOnLoaded("Blizzard_UIPanels_Game", function()
     SkinBank()
     SkinMerchant()
-end, 0.1)
+end, 0)
 
-SkinBase.OnAddOnLoaded("Blizzard_MailFrame",   SkinMail,      0.1)
-SkinBase.OnAddOnLoaded("Blizzard_GuildBankUI", SkinGuildBank, 0.1)
+SkinBase.OnAddOnLoaded("Blizzard_MailFrame",   SkinMail,      0)
+SkinBase.OnAddOnLoaded("Blizzard_GuildBankUI", SkinGuildBank, 0)

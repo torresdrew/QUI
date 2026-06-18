@@ -2824,13 +2824,43 @@ function SkinBase.HookScrollBoxAcquired(scrollBox, callback)
         end
     end)
 
+    -- Apply SYNCHRONOUSLY on acquire (no C_Timer.After deferral). A deferred
+    -- apply lands one frame after the row is first painted, so the row shows the
+    -- stock FRIZQT font for a frame before the QUI face appears = the visible
+    -- font "flash" on opening list windows (guild roster, achievements, etc.).
+    -- Running in the acquire callback applies the font before that frame's paint.
+    -- If Blizzard rebinds the row's font object after us, callers pair this with
+    -- LockFontObject, whose SetFontObject hook re-asserts the QUI face — so a
+    -- later rebind can't revert it. SetFont here targets per-instance fontstrings
+    -- (never shared font objects), so it carries no taint.
     ScrollUtil.AddAcquiredFrameCallback(scrollBox, function(_, frame)
-        C_Timer.After(0, function()
-            callback(frame)
-        end)
+        callback(frame)
     end, scrollBox)
 
     SkinBase.SetFrameData(scrollBox, "qScrollHooked", true)
+end
+
+---------------------------------------------------------------------------
+-- HookScrollBoxRowFonts(scrollBox, depth)
+-- Canonical "lock pooled-row fonts" for a ScrollBox. The recursive
+-- SkinFrameText + LockFrameTextObjects pass is expensive, and LockFrameTextObjects
+-- installs SetFontObject hooks that re-assert the QUI face on every later
+-- Blizzard rebind (acquire / presence / state refresh) — so re-walking + re-
+-- SetFont on EVERY acquire is wasted work, and the synchronous burst of font
+-- realizations across a panel's ScrollBoxes on open is the open-window hitch.
+-- Guard per row (qListRowFonted) so the expensive recursive pass runs ONCE; the
+-- LockFontObject hooks cover every later revert. This is the single source of
+-- truth for the pattern — callers MUST use it instead of an inline acquire
+-- callback that re-skins per acquire, or the hitch comes back.
+---------------------------------------------------------------------------
+function SkinBase.HookScrollBoxRowFonts(scrollBox, depth)
+    if not scrollBox then return end
+    SkinBase.HookScrollBoxAcquired(scrollBox, function(row)
+        if not row or SkinBase.GetFrameData(row, "qListRowFonted") then return end
+        SkinBase.SkinFrameText(row, { recurse = true })
+        SkinBase.LockFrameTextObjects(row, depth or 3)
+        SkinBase.SetFrameData(row, "qListRowFonted", true)
+    end)
 end
 
 ---------------------------------------------------------------------------
@@ -3001,8 +3031,8 @@ end
 -- hover, or a ScrollBox row button's SetNormalFontObject on re-bind. A one-shot
 -- SkinFontString is reverted by those swaps; this hooks the swap and re-applies
 -- the QUI font right after.
---   * FontStrings expose SetFontObject → re-apply to the fontstring itself.
---   * Buttons expose SetNormalFontObject → re-apply to button:GetFontString().
+--   * FontStrings/EditBoxes expose SetFontObject → re-apply to the object itself.
+--   * Buttons expose Set*FontObject state setters → re-apply to button:GetFontString().
 -- The re-apply uses SkinFontString's SetFont (never SetFontObject), so it does
 -- not re-trigger the hook. Defaults to fontOnly (preserve Blizzard's text
 -- color, just enforce the QUI font face/outline). Idempotent per object.
@@ -3011,18 +3041,23 @@ function SkinBase.LockFontObject(obj, opts)
     if not obj or SkinBase.GetFrameData(obj, "qFontLocked") then return end
     opts = opts or { fontOnly = true }
 
-    if obj.SetFontObject and obj.GetObjectType and obj:GetObjectType() == "FontString" then
+    if obj.SetFontObject and obj.SetFont then
         hooksecurefunc(obj, "SetFontObject", function(self)
             SkinBase.SkinFontString(self, opts)
         end)
     end
 
-    if obj.SetNormalFontObject then
-        hooksecurefunc(obj, "SetNormalFontObject", function(self)
-            local fs = self.GetFontString and self:GetFontString()
-            if fs then SkinBase.SkinFontString(fs, opts) end
-        end)
+    local function LockButtonStateSetter(methodName)
+        if obj[methodName] then
+            hooksecurefunc(obj, methodName, function(self)
+                local fs = self.GetFontString and self:GetFontString()
+                if fs then SkinBase.SkinFontString(fs, opts) end
+            end)
+        end
     end
+    LockButtonStateSetter("SetNormalFontObject")
+    LockButtonStateSetter("SetHighlightFontObject")
+    LockButtonStateSetter("SetDisabledFontObject")
 
     SkinBase.SetFrameData(obj, "qFontLocked", true)
 end
@@ -3055,6 +3090,16 @@ function SkinBase.LockFrameTextObjects(frame, maxDepth)
             SkinBase.LockFrameTextObjects(select(i, frame:GetChildren()), maxDepth - 1)
         end
     end
+end
+
+function SkinBase.LockDropdownText(dropdown, maxDepth)
+    if not dropdown then return end
+    local text = dropdown.Text or (dropdown.GetFontString and dropdown:GetFontString())
+    if text then
+        SkinBase.SkinFontString(text, { fontOnly = true })
+        SkinBase.LockFontObject(text, { fontOnly = true })
+    end
+    SkinBase.LockFrameTextObjects(dropdown, maxDepth or 2)
 end
 
 -- Resolve a frame's primary label fontstring (button text / editbox).
@@ -3138,6 +3183,7 @@ function SkinBase.SkinEditBox(editBox, opts)
         SkinBase.SetFrameData(editBox, "skinFont", true)
         SkinBase.SetFrameData(editBox, "skinFontColor", opts.fontColor)
         SkinBase.SkinFontString(editBox, { color = opts.fontColor })
+        SkinBase.LockFontObject(editBox, { fontOnly = true })
     end
     SkinBase.MarkStyled(editBox)
 end
@@ -3250,6 +3296,7 @@ function SkinBase.SkinDropdown(dropdown, opts)
     SkinBase.SetFrameData(dropdown, "bgColor", { bgr, bgg, bgb })
     SkinBase.SetFrameData(dropdown, "skinKind", "dropdown")
     SkinBase.SetFrameData(dropdown, "bgBoost", boost)
+    SkinBase.LockDropdownText(dropdown, 2)
     if opts.hover ~= false then AttachHover(dropdown) end
     SkinBase.MarkStyled(dropdown)
 end

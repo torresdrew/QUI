@@ -201,7 +201,8 @@ local function SkinOrdersPage(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
         local orderTabs = { browseFrame.PublicOrdersButton, browseFrame.GuildOrdersButton, browseFrame.NpcOrdersButton, browseFrame.PersonalOrdersButton }
         for _, tab in ipairs(orderTabs) do
             if tab then
-                SkinBase.SkinButton(tab)
+                SkinBase.SkinTab(tab, browseFrame, { hover = true })
+                SkinBase.LockFrameTextObjects(tab, 2)
             end
         end
     end
@@ -212,6 +213,11 @@ local function SkinOrdersPage(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
         -- The order view form uses similar structure to the customer orders form
         SkinSubPanel(orderView.OrderDetails, sr, sg, sb, sa)
         SkinSubPanel(orderView.OrderInfo, sr, sg, sb, sa)
+        local noteTitle = orderView.OrderInfo and orderView.OrderInfo.NoteBox and orderView.OrderInfo.NoteBox.NoteTitle
+        if noteTitle then
+            SkinBase.SkinFontString(noteTitle, { fontOnly = true })
+            SkinBase.LockFontObject(noteTitle, { fontOnly = true })
+        end
         -- Buttons
         if orderView.CreateButton then
             SkinBase.SkinButton(orderView.CreateButton)
@@ -412,7 +418,9 @@ local function RefreshProfessionsColors()
         SkinBase.RefreshWidget(bf.FavoritesSearchButton)
         local orderTabs = { bf.PublicOrdersButton, bf.GuildOrdersButton, bf.NpcOrdersButton, bf.PersonalOrdersButton }
         for _, tab in ipairs(orderTabs) do
-            SkinBase.RefreshWidget(tab)
+            if tab then
+                SkinBase.RefreshTabSelected(tab, bf)
+            end
         end
         if ordersPage.OrderView then
             UpdatePanelColors(ordersPage.OrderView.OrderDetails, sr, sg, sb, sa, bgr, bgg, bgb, bga)

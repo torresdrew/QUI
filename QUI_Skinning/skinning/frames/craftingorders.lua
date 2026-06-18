@@ -233,6 +233,10 @@ local function SkinForm(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
         -- Duration dropdown
         if pc.DurationDropdown then
             SkinBase.SkinDropdown(pc.DurationDropdown)
+            if pc.DurationDropdown.Text then
+                SkinBase.SkinFontString(pc.DurationDropdown.Text, { fontOnly = true })
+            end
+            SkinBase.LockFrameTextObjects(pc.DurationDropdown, 2)
         end
         -- Note edit box
         if pc.NoteEditBox then
@@ -243,9 +247,11 @@ local function SkinForm(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     -- Dropdowns on the form
     if form.MinimumQuality and form.MinimumQuality.Dropdown then
         SkinBase.SkinDropdown(form.MinimumQuality.Dropdown)
+        SkinBase.LockDropdownText(form.MinimumQuality.Dropdown)
     end
     if form.OrderRecipientDropdown then
         SkinBase.SkinDropdown(form.OrderRecipientDropdown)
+        SkinBase.LockDropdownText(form.OrderRecipientDropdown)
     end
 
     -- Recipient target edit box

@@ -263,6 +263,7 @@ local function SkinStaticPopup(popup)
         local button = popup["button" .. i] or (name and _G[name .. "Button" .. i])
         StyleButton(button, "staticPopup")
     end
+    StyleButton(popup.ExtraButton or (name and _G[name .. "ExtraButton"]), "staticPopup")
 
     StyleEditBox(popup.editBox or (name and _G[name .. "EditBox"]), "staticPopup")
     SkinBase.SkinFrameText(popup, { recurse = true })
@@ -273,6 +274,8 @@ local function SkinStaticPopup(popup)
             for i = 1, 4 do
                 RefreshButtonState(self["button" .. i])
             end
+            local recapName = self.GetName and self:GetName()
+            RefreshButtonState(self.ExtraButton or (recapName and _G[recapName .. "ExtraButton"]))
         end)
     end
 end
@@ -322,6 +325,9 @@ local function SkinContextMenuFrame(frame, isCompositorMenu)
     -- Compositor menus lock SetFont; skin frame/backdrop only (see note above).
     if not isCompositorMenu then
         SkinBase.SkinFrameText(frame, { recurse = true })
+        if SkinBase.LockFrameTextObjects then
+            SkinBase.LockFrameTextObjects(frame, 3)
+        end
     end
 end
 

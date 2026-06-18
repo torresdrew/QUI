@@ -150,6 +150,11 @@ local function StyleGroupFinderButton(button, sr, sg, sb, sa, bgr, bgg, bgb, bga
     -- Store colors for hover
     SkinBase.SetFrameData(button, "skinColor", { sr, sg, sb, sa })
 
+    if button.name then
+        SkinBase.SkinFontString(button.name, { fontOnly = true })
+    end
+    LockFrameTextObjects(button, 2)
+
     AddSkinColorHoverBorder(button)
 
     SkinBase.MarkStyled(button)
@@ -351,7 +356,7 @@ local function SkinLFDFrame()
 
     -- Style find group button
     if _G.LFDQueueFrameFindGroupButton then
-        SkinBase.SkinButton(_G.LFDQueueFrameFindGroupButton)
+        SkinBase.SkinButton(_G.LFDQueueFrameFindGroupButton, { font = true })
     end
 
     -- Style type dropdown
@@ -359,6 +364,7 @@ local function SkinLFDFrame()
     if typeDropdown then
         typeDropdown:SetWidth(200)
         SkinBase.SkinDropdown(typeDropdown, { keepArrow = true, insetY = 2 })
+        SkinBase.LockDropdownText(typeDropdown)
     end
 
     -- Specific-dungeon selection list: pooled ScrollBox rows get their font
@@ -366,17 +372,13 @@ local function SkinLFDFrame()
     -- SkinFrameText below. Re-lock the QUI font as each row is acquired.
     local specificList = LFDQueueFrame.Specific
     if specificList and specificList.ScrollBox then
-        SkinBase.HookScrollBoxAcquired(specificList.ScrollBox, function(row)
-            LockFrameTextObjects(row, 2)
-        end)
+        SkinBase.HookScrollBoxRowFonts(specificList.ScrollBox, 2)
     end
     -- Follower (story-mode) dungeon list is a SEPARATE ScrollBox with the same
     -- row font-object revert (LFDFrame.lua:48 / LFDQueueFrameFollowerList_InitButton).
     local followerList = LFDQueueFrame.Follower
     if followerList and followerList.ScrollBox then
-        SkinBase.HookScrollBoxAcquired(followerList.ScrollBox, function(row)
-            LockFrameTextObjects(row, 2)
-        end)
+        SkinBase.HookScrollBoxRowFonts(followerList.ScrollBox, 2)
     end
 
     SkinBase.SkinFrameText(LFDQueueFrame, { recurse = true })
@@ -416,7 +418,7 @@ local function SkinRaidFinderFrame()
 
     -- Style find raid button
     if _G.RaidFinderFrameFindRaidButton then
-        SkinBase.SkinButton(_G.RaidFinderFrameFindRaidButton)
+        SkinBase.SkinButton(_G.RaidFinderFrameFindRaidButton, { font = true })
     end
 
     -- Style selection dropdown
@@ -424,6 +426,7 @@ local function SkinRaidFinderFrame()
     if selectionDropdown then
         selectionDropdown:SetWidth(200)
         SkinBase.SkinDropdown(selectionDropdown, { keepArrow = true, insetY = 2 })
+        SkinBase.LockDropdownText(selectionDropdown)
     end
 
     -- Raid Finder uses a dropdown (no row list), but its queue-frame labels and
@@ -506,10 +509,10 @@ local function SkinLFGListFrame()
     if LFGListFrame.CategorySelection then
         local cs = LFGListFrame.CategorySelection
         if cs.StartGroupButton then
-            SkinBase.SkinButton(cs.StartGroupButton)
+            SkinBase.SkinButton(cs.StartGroupButton, { font = true })
         end
         if cs.FindGroupButton then
-            SkinBase.SkinButton(cs.FindGroupButton)
+            SkinBase.SkinButton(cs.FindGroupButton, { font = true })
         end
         -- Style category buttons
         if cs.CategoryButtons then
@@ -526,13 +529,13 @@ local function SkinLFGListFrame()
     if LFGListFrame.SearchPanel then
         local sp = LFGListFrame.SearchPanel
         if sp.BackButton then
-            SkinBase.SkinButton(sp.BackButton)
+            SkinBase.SkinButton(sp.BackButton, { font = true })
         end
         if sp.SignUpButton then
-            SkinBase.SkinButton(sp.SignUpButton)
+            SkinBase.SkinButton(sp.SignUpButton, { font = true })
         end
         if sp.RefreshButton then
-            SkinBase.SkinButton(sp.RefreshButton)
+            SkinBase.SkinButton(sp.RefreshButton, { font = true })
         end
         -- Style search box (uses raw CreateBackdrop — keep colors)
         if sp.SearchBox then
@@ -541,15 +544,13 @@ local function SkinLFGListFrame()
         end
         -- Style filter button
         if sp.FilterButton then
-            SkinBase.SkinButton(sp.FilterButton)
+            SkinBase.SkinButton(sp.FilterButton, { font = true })
         end
         -- Search-result rows are pooled ScrollBox buttons whose font OBJECT is
         -- swapped on hover/selection/re-bind, reverting the one-shot
         -- SkinFrameText. Re-lock the QUI font as each row is acquired.
         if sp.ScrollBox then
-            SkinBase.HookScrollBoxAcquired(sp.ScrollBox, function(row)
-                LockFrameTextObjects(row, 2)
-            end)
+            SkinBase.HookScrollBoxRowFonts(sp.ScrollBox, 2)
         end
     end
 
@@ -557,13 +558,19 @@ local function SkinLFGListFrame()
     if LFGListFrame.ApplicationViewer then
         local av = LFGListFrame.ApplicationViewer
         if av.RefreshButton then
-            SkinBase.SkinButton(av.RefreshButton)
+            SkinBase.SkinButton(av.RefreshButton, { font = true })
         end
         if av.RemoveEntryButton then
-            SkinBase.SkinButton(av.RemoveEntryButton)
+            SkinBase.SkinButton(av.RemoveEntryButton, { font = true })
         end
         if av.EditButton then
-            SkinBase.SkinButton(av.EditButton)
+            SkinBase.SkinButton(av.EditButton, { font = true })
+        end
+        if av.AutoAcceptButton then
+            if av.AutoAcceptButton.Label then
+                SkinBase.SkinFontString(av.AutoAcceptButton.Label, { fontOnly = true })
+            end
+            LockFrameTextObjects(av.AutoAcceptButton, 2)
         end
     end
 
@@ -571,10 +578,10 @@ local function SkinLFGListFrame()
     if LFGListFrame.EntryCreation then
         local ec = LFGListFrame.EntryCreation
         if ec.ListGroupButton then
-            SkinBase.SkinButton(ec.ListGroupButton)
+            SkinBase.SkinButton(ec.ListGroupButton, { font = true })
         end
         if ec.CancelButton then
-            SkinBase.SkinButton(ec.CancelButton)
+            SkinBase.SkinButton(ec.CancelButton, { font = true })
         end
     end
 
@@ -992,6 +999,10 @@ local function SkinPVPFrame()
         local catButton = PVPQueueFrame["CategoryButton" .. i] or _G["PVPQueueFrameCategoryButton" .. i]
         if catButton then
             StyleGroupFinderButton(catButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+            if catButton.Name then
+                SkinBase.SkinFontString(catButton.Name, { fontOnly = true })
+            end
+            LockFrameTextObjects(catButton, 2)
         end
     end
 
@@ -1000,7 +1011,7 @@ local function SkinPVPFrame()
     if HonorFrame then
         -- Queue button
         if _G.HonorFrameQueueButton then
-            SkinBase.SkinButton(_G.HonorFrameQueueButton)
+            SkinBase.SkinButton(_G.HonorFrameQueueButton, { font = true })
         end
 
         -- Type dropdown
@@ -1008,6 +1019,7 @@ local function SkinPVPFrame()
         if typeDropdown then
             typeDropdown:SetWidth(230)
             SkinBase.SkinDropdown(typeDropdown, { keepArrow = true, insetY = 2 })
+            SkinBase.LockDropdownText(typeDropdown)
         end
 
         -- Role icons (handles both 11.x and 12.x API)
@@ -1049,7 +1061,7 @@ local function SkinPVPFrame()
     if ConquestFrame then
         -- Join button
         if _G.ConquestJoinButton then
-            SkinBase.SkinButton(_G.ConquestJoinButton)
+            SkinBase.SkinButton(_G.ConquestJoinButton, { font = true })
         end
 
         -- Role icons (handles both 11.x and 12.x API)
@@ -1098,13 +1110,14 @@ local function SkinPVPFrame()
 
         -- Queue button
         if TrainingGroundsFrame.QueueButton then
-            SkinBase.SkinButton(TrainingGroundsFrame.QueueButton)
+            SkinBase.SkinButton(TrainingGroundsFrame.QueueButton, { font = true })
         end
 
         -- Type dropdown
         if TrainingGroundsFrame.TypeDropdown then
             TrainingGroundsFrame.TypeDropdown:SetWidth(230)
             SkinBase.SkinDropdown(TrainingGroundsFrame.TypeDropdown, { keepArrow = true, insetY = 2 })
+            SkinBase.LockDropdownText(TrainingGroundsFrame.TypeDropdown)
         end
 
         -- Role icons

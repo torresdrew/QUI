@@ -10,6 +10,14 @@ local Helpers = ns.Helpers
 local Shared = {}
 ns.AltsViewShared = Shared
 
+local function CJKFont(fs, p, s, f)
+    if Helpers and Helpers.ApplyFontWithFallback then
+        Helpers.ApplyFontWithFallback(fs, p, s, f)
+    else
+        fs:SetFont(p, s, f)
+    end
+end
+
 --- Class token → r,g,b. RAID_CLASS_COLORS read directly (chat sender-recolor
 --- precedent; routing through the CUSTOM-aware helper would drift here too).
 function Shared.ClassColor(classToken)
@@ -30,7 +38,7 @@ end
 
 function Shared.MakeFS(parent, size)
     local fs = parent:CreateFontString(nil, "ARTWORK")
-    fs:SetFont(Shared.GeneralFont(), size or 11, Shared.GeneralOutline())
+    CJKFont(fs, Shared.GeneralFont(), size or 11, Shared.GeneralOutline())
     fs:SetWordWrap(false)
     return fs
 end
