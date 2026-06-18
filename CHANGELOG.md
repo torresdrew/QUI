@@ -9,6 +9,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v4.0.3-beta2 - 2026-06-18
+
+### Fixed
+- fix(skinning): stop QUI text font/color reverting on skinned frames —
+  achievement, auction house, instance/group finder, journals, social,
+  world map, keystone, objective-tracker labels hold themed font/color
+  through hover & list-rebind
+- fix(groupframes): keep unit names visible in restricted-identity combat
+- fix(anchoring): don't pin a self-restricted secure frame to UIParent
+  (stops it freezing in combat)
+
 ## v4.0.3-beta1 - 2026-06-17
 
 ### Changed
