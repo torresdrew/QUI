@@ -36,11 +36,12 @@ local function GetSpellBookFrame(frame)
     return frame and (frame.SpellBookFrame or _G.SpellBookFrame)
 end
 
-local function SkinPlayerSpellsText(frame)
+-- Skin ONLY the currently-displayed (pooled) spell rows. This is the cheap
+-- per-page path: it touches the ~dozen visible element frames, never the whole
+-- PlayerSpellsFrame tree. Runs on every PagedContentFrame OnUpdate (page /
+-- category switch), so it must stay light.
+local function SkinSpellRows(frame)
     if not frame or not IsSettingEnabled("skinSpellBook") then return end
-
-    SkinBase.SkinFrameText(frame, { recurse = true, chrome = true })
-
     local spellBookFrame = GetSpellBookFrame(frame)
     local pagedSpellsFrame = spellBookFrame and spellBookFrame.PagedSpellsFrame
     if pagedSpellsFrame and pagedSpellsFrame.EnumerateFrames then
@@ -53,9 +54,20 @@ local function SkinPlayerSpellsText(frame)
     end
 end
 
+-- Full one-shot chrome pass over the whole PlayerSpellsFrame (titles, search
+-- box, talent labels, category tabs). EXPENSIVE: recurses the entire frame
+-- incl. the talent tree's hundreds of node children, so it runs ONLY at
+-- init/refresh — NOT on every page update (that caused a stutter when clicking
+-- between the class / general / pet category tabs).
+local function SkinPlayerSpellsText(frame)
+    if not frame or not IsSettingEnabled("skinSpellBook") then return end
+    SkinBase.SkinFrameText(frame, { recurse = true, chrome = true })
+    SkinSpellRows(frame)
+end
+
 local function SchedulePlayerSpellsText(frame)
     C_Timer.After(0, function()
-        SkinPlayerSpellsText(frame)
+        SkinSpellRows(frame)
     end)
 end
 
@@ -134,6 +146,20 @@ local function SkinPlayerSpells()
         -- Tabs swap their font OBJECT on hover/select; lock so the QUI face
         -- survives (fontOnly keeps the per-state size, just enforces the face).
         for _, t in ipairs(frame.TabSystem.tabs) do
+            SkinBase.LockFrameTextObjects(t, 2)
+        end
+    end
+    -- The class / general / pet category tabs live on a SEPARATE TabSystem
+    -- (SpellBookFrame.CategoryTabSystem), not frame.TabSystem above. They use
+    -- TabSystemButtonArtMixin:SetTabSelected, which calls SetNormalFontObject
+    -- on every selection — reverting the QUI font on each click. Lock them so
+    -- the swap re-applies the QUI face. (Initial face comes from the full
+    -- SkinPlayerSpellsText recurse below.)
+    local spellBookFrame = GetSpellBookFrame(frame)
+    local categoryTabs = spellBookFrame and spellBookFrame.CategoryTabSystem
+        and spellBookFrame.CategoryTabSystem.tabs
+    if categoryTabs then
+        for _, t in ipairs(categoryTabs) do
             SkinBase.LockFrameTextObjects(t, 2)
         end
     end
@@ -399,6 +425,15 @@ local function HookEncounterJournalTextUpdates(frame)
     end)
     HookEncounterJournalFunction("EncounterJournal_UpdateButtonState", function(button)
         ScheduleEncounterJournalText(frame, button)
+    end)
+    -- Adventure Guide "Suggestions" tab: EJSuggestFrame_RefreshDisplay
+    -- (Blizzard_EncounterJournal.lua) re-applies SetFontObject to the
+    -- suggestion title/description text on every show / scroll / next-prev,
+    -- and those Adventure-Journal font objects carry near-black / dark-red
+    -- colors meant for the light suggestion art -> unreadable on the QUI dark
+    -- theme. Re-skin the suggestFrame (chrome = near-white) after each refresh.
+    HookEncounterJournalFunction("EJSuggestFrame_RefreshDisplay", function()
+        ScheduleEncounterJournalTextFrame(frame.suggestFrame)
     end)
 
     SkinBase.SetFrameData(frame, "qEncounterJournalTextHooked", true)

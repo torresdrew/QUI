@@ -107,8 +107,41 @@ end
 
 -- Apply font and color to a block (quest name header + all objective lines)
 -- skipHeight: forwarded to StyleLine — see StyleLine comment for details.
+-- Per-instance UpdateHighlight hook: re-assert QUI text colors on hover.
+-- Blizzard's UpdateHighlight (OnHeaderEnter/Leave) swaps HeaderText + every line/dash to
+-- OBJECTIVE_TRACKER_COLOR, clobbering our themed title/text colors as the cursor moves.
+-- CRITICAL: XML mixin="ObjectiveTrackerBlockMixin" COPIES the mixin's functions onto each
+-- block frame at creation, so hooksecurefunc on the mixin TABLE never fires for blocks that
+-- already exist (e.g. quests tracked at login) — only the instance's own copy runs. Hook the
+-- instance directly so coverage is timing-independent. Called from StyleBlock (covers blocks
+-- present at each skin pass, e.g. login) and from the AddObjective/SetHeader hooks (cover blocks
+-- created later, e.g. quests accepted in-session). Guarded so each block is hooked once.
+-- TAINT: fires from mouse-hover scripts (insecure), plain SetTextColor on insecure FontStrings
+-- is safe; re-assert synchronously so there is no visible flash of Blizzard's color.
+local function EnsureBlockHighlightHook(block)
+    if not block or block._quiHighlightHooked or not block.UpdateHighlight then return end
+    block._quiHighlightHooked = true
+    hooksecurefunc(block, "UpdateHighlight", function(self)
+        local s = GetSettings()
+        if not s or not s.skinObjectiveTracker then return end
+        if self.HeaderText then
+            SafeSetTextColor(self.HeaderText, s.objectiveTrackerTitleColor)
+        end
+        if self.usedLines then
+            for _, line in pairs(self.usedLines) do
+                SafeSetTextColor(line.Text, s.objectiveTrackerTextColor)
+                if line.Dash then
+                    SafeSetTextColor(line.Dash, s.objectiveTrackerTextColor)
+                end
+            end
+        end
+    end)
+end
+
 local function StyleBlock(block, fontPath, titleFontSize, textFontSize, titleColor, textColor, skipHeight)
     if not block then return end
+
+    EnsureBlockHighlightHook(block)
 
     if titleFontSize > 0 and block.HeaderText then
         -- Idempotent guard: skip SetFont when font is already correct to prevent
@@ -729,6 +762,7 @@ local function HookLineCreation()
     if ObjectiveTrackerBlockMixin and ObjectiveTrackerBlockMixin.AddObjective and not SkinBase.GetFrameData(ObjectiveTrackerBlockMixin, "addObjectiveHooked") then
         hooksecurefunc(ObjectiveTrackerBlockMixin, "AddObjective", function(self, objectiveKey)
             local block = self
+            EnsureBlockHighlightHook(block)
             C_Timer.After(0, function()
                 local line = block.usedLines and block.usedLines[objectiveKey]
                 if line then
@@ -754,6 +788,7 @@ local function HookLineCreation()
     if ObjectiveTrackerBlockMixin and ObjectiveTrackerBlockMixin.SetHeader and not SkinBase.GetFrameData(ObjectiveTrackerBlockMixin, "setHeaderHooked") then
         hooksecurefunc(ObjectiveTrackerBlockMixin, "SetHeader", function(self)
             local block = self
+            EnsureBlockHighlightHook(block)
             C_Timer.After(0, function()
                 local currentSettings = GetSettings()
                 local currentTitleSize = currentSettings and currentSettings.objectiveTrackerTitleFontSize or 0
@@ -774,34 +809,8 @@ local function HookLineCreation()
         SkinBase.SetFrameData(ObjectiveTrackerBlockMixin, "setHeaderHooked", true)
     end
 
-    -- Hook ObjectiveTrackerBlockMixin:UpdateHighlight to re-assert QUI text colors on hover.
-    -- Blizzard's UpdateHighlight (fired by OnHeaderEnter/OnHeaderLeave) calls SetTextColor on
-    -- the block HeaderText and every objective line/dash, swapping in OBJECTIVE_TRACKER_COLOR
-    -- ("HeaderHighlight"/"Header" + "NormalHighlight"/"Normal"). That clobbers our themed
-    -- title/text colors every time the cursor moves over a quest. Re-apply synchronously
-    -- (no C_Timer defer) so there is no visible flash of Blizzard's color.
-    -- TAINT: runs from mouse-hover scripts, not a secure event context — plain SetTextColor
-    -- on insecure FontStrings is safe; no deferral needed.
-    if ObjectiveTrackerBlockMixin and ObjectiveTrackerBlockMixin.UpdateHighlight and not SkinBase.GetFrameData(ObjectiveTrackerBlockMixin, "updateHighlightHooked") then
-        hooksecurefunc(ObjectiveTrackerBlockMixin, "UpdateHighlight", function(self)
-            local currentSettings = GetSettings()
-            if not currentSettings or not currentSettings.skinObjectiveTracker then return end
-            local titleColor = currentSettings.objectiveTrackerTitleColor
-            local textColor = currentSettings.objectiveTrackerTextColor
-            if self.HeaderText then
-                SafeSetTextColor(self.HeaderText, titleColor)
-            end
-            if self.usedLines then
-                for _, line in pairs(self.usedLines) do
-                    SafeSetTextColor(line.Text, textColor)
-                    if line.Dash then
-                        SafeSetTextColor(line.Dash, textColor)
-                    end
-                end
-            end
-        end)
-        SkinBase.SetFrameData(ObjectiveTrackerBlockMixin, "updateHighlightHooked", true)
-    end
+    -- Note: the hover-color re-assert is installed per-block-instance in StyleBlock (the mixin-table
+    -- hook approach does not work — XML mixin= copies functions onto each instance at creation).
 
     -- Note: POI button glows are hidden via HidePOIButtonGlows() called from ScheduleBackdropUpdate()
 end

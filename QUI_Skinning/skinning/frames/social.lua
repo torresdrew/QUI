@@ -22,6 +22,19 @@ end
 
 local RefreshBackdropColors = SkinBase.RefreshFrameBackdropColors
 
+-- Pooled list rows (friends / who / ignore / community roster) are ScrollBox-
+-- recycled and Blizzard re-applies their font OBJECT on every acquire / rebind
+-- / presence update (FriendsFrame.lua, CommunitiesMemberList.lua), reverting a
+-- one-shot SkinFrameText. Lock each acquired row's fontstrings so the QUI face
+-- survives (fontOnly keeps Blizzard's class / status text colors).
+local function HookListRows(scrollBox, depth)
+    if scrollBox and SkinBase.HookScrollBoxAcquired then
+        SkinBase.HookScrollBoxAcquired(scrollBox, function(row)
+            SkinBase.LockFrameTextObjects(row, depth or 3)
+        end)
+    end
+end
+
 ---------------------------------------------------------------------------
 -- FriendsFrame
 ---------------------------------------------------------------------------
@@ -39,6 +52,10 @@ local function SkinFriends()
     end
     SkinBase.SkinTabGroup(tabs, frame)
     SkinBase.SkinFrameText(frame, { recurse = true })
+    -- Friends / Ignore / Who pooled list rows (FriendsFrame.lua:312/326/343).
+    if _G.FriendsListFrame then HookListRows(_G.FriendsListFrame.ScrollBox) end
+    if frame.IgnoreListWindow then HookListRows(frame.IgnoreListWindow.ScrollBox) end
+    if _G.WhoFrame then HookListRows(_G.WhoFrame.ScrollBox) end
     SkinBase.MarkSkinned(frame)
 end
 
@@ -62,6 +79,9 @@ local function SkinCommunities()
     if not frame or SkinBase.IsSkinned(frame) then return end
     SkinBase.SkinButtonFrameTemplate(frame)
     SkinBase.SkinFrameText(frame, { recurse = true })
+    -- Community / guild roster rows (CommunitiesMemberList.lua:459) re-font on
+    -- acquire + presence/state refresh.
+    if frame.MemberList then HookListRows(frame.MemberList.ScrollBox) end
     SkinBase.MarkSkinned(frame)
 end
 
