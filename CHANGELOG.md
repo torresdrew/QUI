@@ -9,6 +9,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v4.0.3-beta3 - 2026-06-18
+
+### Added
+- global default QUI font on engine text + CJK-aware fallback (koKR/zhCN/zhTW
+  keep Blizzard default) + baked symbol glyphs (stars, circles, card suits,
+  pointers, divider decorations)
+
+### Fixed
+- fix(skinning): readable text on dark theme — achievement earned/completed
+  rows re-lit; kill the Adventure Guide / achievement / guild-roster
+  open-window font stutter & FRIZQT flash
+- fix(chat): copy window renders the QUI font all the way down large
+  histories; class colors / GMOTD color hold on first draw (no white flash)
+- fix(chat): restore hover tooltips on chat hyperlinks
+- fix(cdm): mirrored cooldown icon no longer stuck in aura mode after the
+  borrowed buff ends (e.g. Stampeding Roar)
+- fix(resourcebars): secondary bar swap recenters anchored position (stops
+  snap-to-center on always-swap specs)
+
 ## v4.0.3-beta2 - 2026-06-18
 
 ### Fixed
