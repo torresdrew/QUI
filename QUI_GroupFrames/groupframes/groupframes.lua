@@ -1160,9 +1160,17 @@ local function UpdateName(frame)
 
     local name = UnitName(unit)
     if name then
+        -- UnitName is SecretWhenUnitIdentityRestricted: in restricted combat it
+        -- returns a secret string, and a bare `#name > maxLen` length pre-check
+        -- throws on a secret, aborting UpdateName and leaving the name blanked for
+        -- the rest of combat. TruncateUTF8 is secret-safe (it format-truncates a
+        -- secret and no-ops when the value is already short), so call it directly
+        -- without a Lua-side length compare; SetText is a secret-safe sink.
         local maxLen = nameSettings and nameSettings.maxNameLength or 10
-        if maxLen > 0 and #name > maxLen then
-            name = Helpers.TruncateUTF8 and Helpers.TruncateUTF8(name, maxLen) or name:sub(1, maxLen)
+        if maxLen > 0 and Helpers.TruncateUTF8 then
+            name = Helpers.TruncateUTF8(name, maxLen)
+        elseif maxLen > 0 and not (issecretvalue and issecretvalue(name)) and #name > maxLen then
+            name = name:sub(1, maxLen)
         end
         frame.nameText:SetText(name)
 
