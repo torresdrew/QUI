@@ -825,6 +825,15 @@ IsOverlayed = function(spellID)
     return false
 end
 
+-- Hand the resolver our authoritative proc-overlay signal so it can tell a
+-- genuine proc override (overlay active -> show ready) from a form/spec override
+-- that shares the base cooldown (no overlay -> show the cooldown swipe). See
+-- IsTransientProcOverrideReady in cdm_resolvers.lua. cdm_resolvers loads before
+-- this file, so CDMResolvers is present.
+if ns.CDMResolvers and ns.CDMResolvers.SetProcOverlayProbe then
+    ns.CDMResolvers.SetProcOverlayProbe(IsOverlayed)
+end
+
 local function EvaluateGlowForIcon(icon)
     if not icon or not icon:IsShown() or not icon._spellEntry then
         return false, nil
