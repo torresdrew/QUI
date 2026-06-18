@@ -25,8 +25,20 @@ local Sources = ns.CDMSources
 local resolverStats -- debug counters; nil until QUI_Debug activates instrumentation
 local currentResolveCallerTag -- string or nil; set by SetResolveCallerTag before each resolve
 local markFn -- profiler hook; bound at debug activation (nil otherwise)
+-- Proc-overlay probe: returns true when a spellID currently has an active spell-
+-- activation overlay (proc). Registered by cdm_effects.lua at load (which owns the
+-- event-cached overlay set); nil in the standalone test harness, where it reads as
+-- "no active proc". Used by IsTransientProcOverrideReady to tell a genuine proc
+-- override (Hammer of Light, overlay active) from a form/spec override that merely
+-- shares the base cooldown (Stampeding Roar, no overlay).
+local procOverlayProbe
 local function MemAuditProfilerMark(name)
     if markFn then markFn(name) end
+end
+
+-- Registered by cdm_effects.lua (loads after this file). fn(spellID) -> boolean.
+function CDMResolvers.SetProcOverlayProbe(fn)
+    procOverlayProbe = fn
 end
 
 ---------------------------------------------------------------------------
@@ -1960,6 +1972,21 @@ local function IsTransientProcOverrideReady(m, sid)
     local ovSid = QueryOverrideSpell(sid)
     if not ovSid or ovSid == sid then return false end
     if m.spellID and m.spellID ~= sid then return false end
+    -- A genuine transient proc override is accompanied by an active spell-
+    -- activation overlay on the override and is castable while the base
+    -- recharges -- Blizzard's CooldownViewer shows it READY. A form/spec
+    -- override that merely SHARES the base's cooldown (Druid Stampeding Roar
+    -- 77761 overriding 106898) carries no proc overlay and is genuinely on
+    -- cooldown -- it must show the cooldown swipe, NOT ready. The override's
+    -- C_Spell.GetSpellCooldown cannot tell them apart (both report the shared
+    -- recharge slot active), so gate on the proc-overlay signal. The probe
+    -- reads cdm_effects' event-cached overlay set -- the authoritative proc
+    -- edge; IsSpellOverlayed alone misses override procs like Hammer of Light
+    -- (see cdm_effects.lua IsOverlayed). Without an active overlay this is not
+    -- a ready proc, so fall through to the real-cooldown classification.
+    if not (procOverlayProbe and procOverlayProbe(ovSid)) then
+        return false
+    end
     return Sources ~= nil and Sources.QueryIsSpellKnownOrPlayerSpell ~= nil
         and Sources.QueryIsSpellKnownOrPlayerSpell(sid) == true
 end
