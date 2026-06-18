@@ -71,14 +71,29 @@ end
 local guidClassCache = {}
 
 local function ResolveSenderClass(guid)
-    local cached = guidClassCache[guid]
-    if cached then return cached end
     if not _G.GetPlayerInfoByGUID then return nil end
+    -- Combat / chat-messaging lockdown delivers the sender GUID as a SECRET
+    -- value. GetPlayerInfoByGUID is SecretArguments="AllowedWhenTainted" (the
+    -- Blizzard API doc), so an addon may pass the secret GUID straight through,
+    -- exactly as ChatFrameUtil.GetDecoratedSenderName does unguarded
+    -- (vendored ChatFrameUtil.lua:1006) -- the returned class is a plain
+    -- (non-secret) string, so stock raid chat keeps class colors in combat.
+    -- Gating on IsSecret(guid) here was dropping that coloring mid-combat.
+    -- The memo keys/values are plain strings; a secret GUID bypasses it (a
+    -- secret table key is unsafe) and just resolves fresh each message under
+    -- lockdown. IsSecret(englishClass) is a belt-and-braces guard: if a future
+    -- client ever marked the return secret, bail rather than throw on `~= ""`.
+    local secret = IsSecret(guid)
+    if not secret then
+        local cached = guidClassCache[guid]
+        if cached then return cached end
+    end
     -- GetPlayerInfoByGUID: returns localizedClass, englishClass, ... (7 values)
     -- MayReturnNothing=true when GUID is unknown; pcall ok=true, englishClass=nil.
     local ok, _, englishClass = pcall(_G.GetPlayerInfoByGUID, guid)
-    if ok and type(englishClass) == "string" and englishClass ~= "" then
-        guidClassCache[guid] = englishClass
+    if ok and not IsSecret(englishClass)
+        and type(englishClass) == "string" and englishClass ~= "" then
+        if not secret then guidClassCache[guid] = englishClass end
         return englishClass
     end
     return nil
@@ -88,7 +103,11 @@ end
 -- Reads RAID_CLASS_COLORS directly (NOT any custom-color-aware helper — the
 -- chat sender recolor must track Blizzard's class palette).
 local function SenderClassColorStr(guid)
-    if IsSecret(guid) or type(guid) ~= "string" or guid == "" then return nil end
+    -- A secret GUID is allowed through to the class lookup (ResolveSenderClass
+    -- mirrors Blizzard and feeds it to GetPlayerInfoByGUID); only the
+    -- empty/type sieve is gated off, since `== ""` on a secret would throw.
+    if guid == nil then return nil end
+    if not IsSecret(guid) and (type(guid) ~= "string" or guid == "") then return nil end
     local settings = I.GetSettings and I.GetSettings()
     local mods = settings and settings.modifiers
     if not (mods and mods.classColors and mods.classColors.enabled) then return nil end
@@ -135,7 +154,10 @@ function Format.DecorateSender(event, ...)
             if ok2 and type(marked) == "string" and marked ~= "" then decorated = marked end
         end
     end
-    local colorStr = SenderClassColorStr(not IsSecret(guid) and guid or nil)
+    -- Pass the GUID through even when secret: GetPlayerInfoByGUID accepts a
+    -- secret arg (AllowedWhenTainted) and the class return is non-secret, so
+    -- raid/party names stay class-colored during combat lockdown (stock parity).
+    local colorStr = SenderClassColorStr(guid)
     if colorStr then
         decorated = ("|c%s%s|r"):format(colorStr, decorated)
     end
@@ -270,6 +292,24 @@ function Format.ColorForTypeKey(typeKey, chName)
         return info.r or 1, info.g or 1, info.b or 1
     end
     return 1, 1, 1
+end
+
+-- Render-time type-color resolver (consumed by display_layer.RenderEntry).
+-- Type-derived lines (system lines like GMOTD, and CHAT_MSG_* non-channel
+-- types) bake their color at STORE time via ColorForTypeKey. At login the
+-- per-type color has not synced yet (it arrives in the UPDATE_CHAT_COLOR
+-- burst AFTER the line), so the baked value is the white fallback and the
+-- line paints white until the rebake pass rewrites it -- the "white GMOTD that
+-- self-heals". Resolving the color LIVE at render (same override->ChatTypeInfo
+-- precedence the bake used) means the first paint already carries the synced
+-- color the instant it is available, with no bake-and-rebake flash. This is
+-- the reference addons' live-render model. Channel lines are deliberately
+-- NOT routed here: their color is per-SLOT (ChatTypeInfo.CHANNEL<n>) and the
+-- slot number is not carried on the stored entry, so the baked slot color
+-- stays authoritative for them (display_layer gates CHANNEL/CHANNEL_NOTICE
+-- out and keeps the existing override resolver for channel-name overrides).
+ns.QUI.Chat._typeColorResolver = function(typeKey, chName)
+    return Format.ColorForTypeKey(typeKey, chName)
 end
 
 -- ---------------------------------------------------------------------------

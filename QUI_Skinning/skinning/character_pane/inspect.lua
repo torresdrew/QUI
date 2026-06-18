@@ -1446,6 +1446,7 @@ local function CreateInspectSettingsButton()
 
     local gearLabel = gearBtn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     gearLabel:SetPoint("LEFT", gearIcon, "RIGHT", 4, 0)
+    CJKFont(gearLabel, STANDARD_TEXT_FONT, 12, "")
     gearLabel:SetText(ns.L["Settings"])
     gearLabel:SetTextColor(C.text[1], C.text[2], C.text[3], 1)
 
@@ -1512,6 +1513,7 @@ local function CreateInspectSettingsButton()
     -- Title
     local title = inspectSettingsPanel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     title:SetPoint("TOP", inspectSettingsPanel, "TOP", 0, -8)
+    CJKFont(title, STANDARD_TEXT_FONT, 14, "")
     title:SetText(ns.L["QUI Inspect Panel"])
     title:SetTextColor(C.accent[1], C.accent[2], C.accent[3], 1)
 

@@ -711,18 +711,22 @@ end
 -- EQUIPMENT MANAGER SKINNING
 ---------------------------------------------------------------------------
 
+local function RestyleEquipmentSetEntryText(entry)
+    local text = entry and entry.text
+    if not text then return end
+    CJKFont(text, GetFontPath(), 11, "")
+    if text.SetTextColor then
+        text:SetTextColor(0.9, 0.9, 0.9, 1)
+    end
+end
+
 -- Skin individual equipment set entry
 local function SkinEquipmentSetEntry(entry)
+    if not entry then return end
+    RestyleEquipmentSetEntryText(entry)
     if skinnedEntries[entry] then return end
 
     local sr, sg, sb, sa = GetSkinColors()
-    local fontPath = GetFontPath()
-
-    -- Style the entry text
-    if entry.text then
-        CJKFont(entry.text, fontPath, 11, "")
-        entry.text:SetTextColor(0.9, 0.9, 0.9, 1)
-    end
 
     -- Style the icon with a border
     if entry.icon and not iconBorders[entry.icon] then
@@ -852,6 +856,7 @@ RefreshEquipmentManagerColors = function()
     if pane and pane.ScrollBox then
         pane.ScrollBox:ForEachFrame(function(entry)
             if not skinnedEntries[entry] then return end
+            RestyleEquipmentSetEntryText(entry)
             if entry.icon and iconBorders[entry.icon] then
                 SetPixelBackdropColors(iconBorders[entry.icon], { sr, sg, sb, 1 })
             end

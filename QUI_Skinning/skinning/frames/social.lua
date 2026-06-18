@@ -28,11 +28,17 @@ local RefreshBackdropColors = SkinBase.RefreshFrameBackdropColors
 -- one-shot SkinFrameText. Lock each acquired row's fontstrings so the QUI face
 -- survives (fontOnly keeps Blizzard's class / status text colors).
 local function HookListRows(scrollBox, depth)
-    if scrollBox and SkinBase.HookScrollBoxAcquired then
-        SkinBase.HookScrollBoxAcquired(scrollBox, function(row)
-            SkinBase.LockFrameTextObjects(row, depth or 3)
-        end)
-    end
+    -- Guarded per-row font lock (runs the recursive pass once; the LockFontObject
+    -- hooks re-assert the QUI face on every later acquire/presence/state rebind).
+    -- The unguarded form was the guild/friends open-window hitch.
+    SkinBase.HookScrollBoxRowFonts(scrollBox, depth or 3)
+end
+
+local function LockGuildNameAlertText(frame)
+    local alert = frame and frame.GuildNameAlertFrame and frame.GuildNameAlertFrame.Alert
+    if not alert then return end
+    SkinBase.SkinFontString(alert, { fontOnly = true })
+    SkinBase.LockFontObject(alert, { fontOnly = true })
 end
 
 ---------------------------------------------------------------------------
@@ -82,10 +88,19 @@ local function SkinCommunities()
     -- Community / guild roster rows (CommunitiesMemberList.lua:459) re-font on
     -- acquire + presence/state refresh.
     if frame.MemberList then HookListRows(frame.MemberList.ScrollBox) end
+    if frame.CommunitiesList then HookListRows(frame.CommunitiesList.ScrollBox) end
+    if frame.ApplicantList then HookListRows(frame.ApplicantList.ScrollBox) end
+    if frame.GuildBenefitsFrame and frame.GuildBenefitsFrame.Rewards then
+        HookListRows(frame.GuildBenefitsFrame.Rewards.ScrollBox)
+    end
+    LockGuildNameAlertText(frame)
     SkinBase.MarkSkinned(frame)
 end
 
-local function RefreshCommunities() RefreshBackdropColors(_G.CommunitiesFrame) end
+local function RefreshCommunities()
+    RefreshBackdropColors(_G.CommunitiesFrame)
+    LockGuildNameAlertText(_G.CommunitiesFrame)
+end
 _G.QUI_RefreshCommunitiesColors = RefreshCommunities
 if ns.Registry then
     ns.Registry:Register("skinCommunities", {
@@ -99,5 +114,5 @@ end
 ---------------------------------------------------------------------------
 -- INITIALIZATION
 ---------------------------------------------------------------------------
-SkinBase.OnAddOnLoaded("Blizzard_FriendsFrame", SkinFriends,     0.1)
-SkinBase.OnAddOnLoaded("Blizzard_Communities",  SkinCommunities, 0.1)
+SkinBase.OnAddOnLoaded("Blizzard_FriendsFrame", SkinFriends,     0)
+SkinBase.OnAddOnLoaded("Blizzard_Communities",  SkinCommunities, 0)

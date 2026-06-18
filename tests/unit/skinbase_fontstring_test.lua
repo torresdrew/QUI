@@ -59,7 +59,16 @@ end
 
 CreateFrame = function() return NewFrame() end
 C_Timer = { After = function(_, fn) fn() end }
-function hooksecurefunc() end
+function hooksecurefunc(target, methodName, callback)
+    if type(target) == "table" and type(methodName) == "string" and type(callback) == "function" then
+        local original = target[methodName] or function() end
+        target[methodName] = function(self, ...)
+            local results = { original(self, ...) }
+            callback(self, ...)
+            return unpack(results)
+        end
+    end
+end
 ScrollUtil = { AddAcquiredFrameCallback = function() end }
 STANDARD_TEXT_FONT = "Fonts\\FRIZQT__.TTF"
 
@@ -158,5 +167,35 @@ local fsZero = NewFontString(0)
 SkinBase.SkinFontString(fsZero, { fontOnly = true })
 assert(fsZero.size == 12,
     "SkinFontString must fall back to the default size when GetFont reports a zero size")
+
+-- LockFontObject must cover every button font object state Blizzard can swap.
+local stateButton = NewFrame()
+function stateButton:SetNormalFontObject(fontObject) self.normalFontObject = fontObject end
+function stateButton:SetHighlightFontObject(fontObject) self.highlightFontObject = fontObject end
+function stateButton:SetDisabledFontObject(fontObject) self.disabledFontObject = fontObject end
+
+SkinBase.LockFontObject(stateButton, { fontOnly = true })
+local stateFs = stateButton:GetFontString()
+
+stateFs.font = nil
+stateButton:SetNormalFontObject("GameFontNormal")
+assert(stateFs.font == generalFont, "LockFontObject must survive SetNormalFontObject")
+
+stateFs.font = nil
+stateButton:SetHighlightFontObject("GameFontHighlight")
+assert(stateFs.font == generalFont, "LockFontObject must survive SetHighlightFontObject")
+
+stateFs.font = nil
+stateButton:SetDisabledFontObject("GameFontDisable")
+assert(stateFs.font == generalFont, "LockFontObject must survive SetDisabledFontObject")
+
+-- LockFontObject must also cover EditBox-like frames that expose SetFontObject.
+local editBox = NewFrame()
+function editBox:SetFont(font, size, flags) self.font, self.size, self.flags = font, size, flags end
+function editBox:GetFont() return self.font, self.size or 13, self.flags end
+function editBox:SetFontObject(fontObject) self.fontObject = fontObject end
+SkinBase.LockFontObject(editBox, { fontOnly = true })
+editBox:SetFontObject("GameFontNormal")
+assert(editBox.font == generalFont, "LockFontObject must survive EditBox SetFontObject")
 
 print("OK: skinbase_fontstring_test")

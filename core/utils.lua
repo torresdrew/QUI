@@ -1273,6 +1273,21 @@ function Helpers.ApplyFontWithFallback(fontString, fontNameOrPath, size, flags)
     fontString:SetFont(fontPath, size or 12, flags)
 end
 
+--- Returns the Blizzard system glyph font for glyph-restricted clients, or nil.
+--- Used to gate path-string font globals (STANDARD_TEXT_FONT) that cannot carry
+--- a per-script FontFamily: on CJK clients the Latin-only QUI font would render
+--- boxes, so callers must leave the Blizzard default instead. ruRU is NOT gated
+--- because Quazii ships Cyrillic glyphs. Reads the locale at call time so tests
+--- (and a mid-session /reload) resolve correctly.
+--- @return string|nil systemFontPath
+function Helpers.GetLocaleGlyphFallback()
+    local loc = GetLocale and GetLocale() or "enUS"
+    if loc == "koKR" then return "Fonts\\2002.TTF"
+    elseif loc == "zhCN" then return "Fonts\\ARKai_T.ttf"
+    elseif loc == "zhTW" then return "Fonts\\blei00d.TTF" end
+    return nil
+end
+
 ---------------------------------------------------------------------------
 -- COLOR/THEME HELPERS
 -- Centralized color utilities for skin system and class colors

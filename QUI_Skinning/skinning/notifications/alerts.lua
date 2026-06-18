@@ -633,9 +633,17 @@ local function SkinMiscAlert(frame)
     SkinBase.MarkSkinned(frame)
 end
 
+local function RestyleEntitlementAlertText(frame)
+    if not frame or not frame.Title then return end
+    SkinBase.SkinFontString(frame.Title, { fontOnly = true })
+    SkinBase.LockFontObject(frame.Title, { fontOnly = true })
+end
+
 --- Skin Entitlement/RAF Delivered Alert
 local function SkinEntitlementAlert(frame)
-    if not frame or SkinBase.IsSkinned(frame) then return end
+    if not frame then return end
+    RestyleEntitlementAlertText(frame)
+    if SkinBase.IsSkinned(frame) then return end
 
     frame:SetAlpha(1)
     if not SkinBase.GetFrameData(frame, "hooked") then
@@ -659,6 +667,7 @@ local function SkinEntitlementAlert(frame)
     end
 
     SkinBase.SkinFrameText(frame, { recurse = true })
+    RestyleEntitlementAlertText(frame)
     SkinBase.MarkSkinned(frame)
 end
 

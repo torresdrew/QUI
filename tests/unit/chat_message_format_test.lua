@@ -140,6 +140,26 @@ eq("decorate guid unknown",
     F.DecorateSender("CHAT_MSG_SAY", "hi", "Bob-Realm", nil, nil, nil, nil, nil, nil, nil, nil, nil, "Player-9-NONE"),
     "Bob")
 eq("decorate secret sender", F.DecorateSender("CHAT_MSG_SAY", "hi", secret), nil)
+-- Secret GUID (combat / chat-messaging lockdown): the class still resolves and
+-- colors the name. GetPlayerInfoByGUID is SecretArguments="AllowedWhenTainted",
+-- so the secret GUID passes straight through to the class lookup (stock
+-- raid-chat parity) -- the old IsSecret(guid) gate dropped class colors mid
+-- combat. The class return is a plain string, so the markup builds normally.
+do
+    local secretGuid = setmetatable({}, { __tostring = explode, __concat = explode, __len = explode })
+    secrets[secretGuid] = true
+    local prevGPI = _G.GetPlayerInfoByGUID
+    _G.GetPlayerInfoByGUID = function(gg)
+        if rawequal(gg, secretGuid) then return "Mage", "MAGE" end
+        return prevGPI(gg)
+    end
+    -- guid at a12: "hi"(a1), "Bob-Realm"(a2), a3..a11 = 9 nils, secretGuid(a12)
+    eq("decorate class color secret guid",
+        F.DecorateSender("CHAT_MSG_SAY", "hi", "Bob-Realm", nil, nil, nil, nil, nil, nil, nil, nil, nil, secretGuid),
+        "|cff3fc7ebBob|r")
+    _G.GetPlayerInfoByGUID = prevGPI
+    secrets[secretGuid] = nil
+end
 
 -- ============ short mode (channelShorten enabled, letter preset) ============
 

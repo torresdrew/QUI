@@ -39,3 +39,4 @@ encode_gse.py
 /.windsurf
 /node_modules
 /.tmp_debug
+tools/preview/

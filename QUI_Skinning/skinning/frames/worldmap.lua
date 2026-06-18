@@ -123,4 +123,4 @@ if ns.Registry then
     })
 end
 
-SkinBase.OnAddOnLoaded("Blizzard_WorldMap", SkinWorldMap, 0.1)
+SkinBase.OnAddOnLoaded("Blizzard_WorldMap", SkinWorldMap, 0)

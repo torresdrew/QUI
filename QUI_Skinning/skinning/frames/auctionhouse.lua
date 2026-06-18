@@ -56,6 +56,67 @@ local function SkinAuctionHouseTabs()
     end
 end
 
+local function SkinAuctionHouseAuctionsTabs(auctionsFrame)
+    if not auctionsFrame then return end
+    local tabs = { auctionsFrame.AuctionsTab, auctionsFrame.BidsTab }
+    SkinBase.SkinTabGroup(tabs, auctionsFrame, { font = true })
+    for _, tab in ipairs(tabs) do
+        SkinBase.LockFrameTextObjects(tab, 2)
+    end
+end
+
+local function LockDurationDropdownText(dropdown)
+    if not dropdown then return end
+    local text = dropdown.Text or (dropdown.GetFontString and dropdown:GetFontString())
+    if text then
+        SkinBase.SkinFontString(text, { fontOnly = true })
+        SkinBase.LockFontObject(text, { fontOnly = true })
+    end
+    SkinBase.LockFrameTextObjects(dropdown, 2)
+end
+
+local function LockTokenFrameText(frame)
+    if not frame then return end
+    SkinBase.SkinFrameText(frame, { recurse = true })
+    SkinBase.LockFrameTextObjects(frame, 4)
+
+    for _, key in ipairs({ "BuyoutPrice", "MarketPrice" }) do
+        local fontString = frame[key]
+        if fontString then
+            SkinBase.SkinFontString(fontString, { fontOnly = true })
+            SkinBase.LockFontObject(fontString, { fontOnly = true })
+        end
+    end
+end
+
+local function LockAuctionHouseTokenText()
+    local AuctionHouseFrame = _G.AuctionHouseFrame
+    if not AuctionHouseFrame then return end
+
+    LockTokenFrameText(AuctionHouseFrame.WoWTokenResults)
+    LockTokenFrameText(AuctionHouseFrame.WoWTokenSellFrame)
+
+    local tutorial = AuctionHouseFrame.WoWTokenResults and AuctionHouseFrame.WoWTokenResults.GameTimeTutorial
+    if tutorial then
+        LockTokenFrameText(tutorial)
+        LockTokenFrameText(tutorial.LeftDisplay)
+        LockTokenFrameText(tutorial.RightDisplay)
+    end
+end
+
+local function LockAuctionHouseBuyDialogText()
+    local AuctionHouseFrame = _G.AuctionHouseFrame
+    local notification = AuctionHouseFrame and AuctionHouseFrame.BuyDialog and AuctionHouseFrame.BuyDialog.Notification
+    if not notification then return end
+
+    SkinBase.SkinFrameText(notification, { recurse = true })
+    SkinBase.LockFrameTextObjects(notification, 2)
+    if notification.Text then
+        SkinBase.SkinFontString(notification.Text, { fontOnly = true })
+        SkinBase.LockFontObject(notification.Text, { fontOnly = true })
+    end
+end
+
 -- Skin search bar elements
 local function SkinSearchBar()
     local AuctionHouseFrame = _G.AuctionHouseFrame
@@ -194,6 +255,7 @@ local function SkinSellPanel()
         -- Duration dropdown
         if commoditiesSell.DurationDropdown then
             SkinBase.SkinDropdown(commoditiesSell.DurationDropdown)
+            LockDurationDropdownText(commoditiesSell.DurationDropdown)
         end
         -- Post button
         if commoditiesSell.PostButton then
@@ -219,6 +281,7 @@ local function SkinSellPanel()
         -- Duration dropdown
         if itemSell.DurationDropdown then
             SkinBase.SkinDropdown(itemSell.DurationDropdown)
+            LockDurationDropdownText(itemSell.DurationDropdown)
         end
         -- Post button
         if itemSell.PostButton then
@@ -243,6 +306,7 @@ local function SkinAuctionsPanel()
     if not auctionsFrame then return end
 
     SkinBase.StripTextures(auctionsFrame)
+    SkinAuctionHouseAuctionsTabs(auctionsFrame)
 
     -- Summary list
     if auctionsFrame.SummaryList then
@@ -361,6 +425,8 @@ local function SkinAuctionHouse()
     pcall(SkinAuctionsPanel)
 
     SkinBase.SkinFrameText(AuctionHouseFrame, { recurse = true })
+    LockAuctionHouseTokenText()
+    LockAuctionHouseBuyDialogText()
     SkinBase.MarkSkinned(AuctionHouseFrame)
 end
 
@@ -384,6 +450,10 @@ local function RefreshAuctionHouseColors()
     -- Tabs
     if AuctionHouseFrame.Tabs then
         SkinBase.RefreshTabGroup(AuctionHouseFrame.Tabs, AuctionHouseFrame)
+    end
+    if AuctionHouseFrame.AuctionsFrame then
+        local tabs = { AuctionHouseFrame.AuctionsFrame.AuctionsTab, AuctionHouseFrame.AuctionsFrame.BidsTab }
+        SkinBase.RefreshTabGroup(tabs, AuctionHouseFrame.AuctionsFrame)
     end
 
     -- Search bar
@@ -429,6 +499,7 @@ local function RefreshAuctionHouseColors()
         if commoditiesSell.QuantityInput and commoditiesSell.QuantityInput.InputBox then
             SkinBase.RefreshWidget(commoditiesSell.QuantityInput.InputBox)
         end
+        LockDurationDropdownText(commoditiesSell.DurationDropdown)
     end
 
     -- Item sell
@@ -451,6 +522,7 @@ local function RefreshAuctionHouseColors()
         if itemSell.QuantityInput and itemSell.QuantityInput.InputBox then
             SkinBase.RefreshWidget(itemSell.QuantityInput.InputBox)
         end
+        LockDurationDropdownText(itemSell.DurationDropdown)
     end
 
     -- Auctions panel
@@ -461,6 +533,9 @@ local function RefreshAuctionHouseColors()
             SkinBase.RefreshWidget(auctionsFrame.BidFrame.BidButton)
         end
     end
+
+    LockAuctionHouseTokenText()
+    LockAuctionHouseBuyDialogText()
 end
 
 -- Expose refresh function globally

@@ -156,7 +156,7 @@ local function RestyleButtonText(button)
     local text = button and button.GetFontString and button:GetFontString()
     if not text or not text.SetFont then return end
     local font = (ns.Helpers and ns.Helpers.GetGeneralFont and ns.Helpers.GetGeneralFont()) or STANDARD_TEXT_FONT
-    text:SetFont(font, 12, FONT_FLAGS)
+    CJKFont(text, font, 12, FONT_FLAGS)
     if text.SetDrawLayer then text:SetDrawLayer("OVERLAY", 7) end
     if text.SetTextColor then text:SetTextColor(0.9, 0.9, 0.9, 1) end
 end
@@ -212,6 +212,7 @@ local function SkinButton(button, sr, sg, sb, bgr, bgg, bgb, bga)
     -- Style the label, and re-assert it whenever the button is shown or its
     -- enabled state changes — Blizzard reapplies the button's font object on
     -- those, which can otherwise leave the Ready / Not Ready label unrendered.
+    SkinBase.ApplyButtonFontObjects(button, { size = 12, color = { 0.9, 0.9, 0.9, 1 }, disabledColor = { 0.5, 0.5, 0.5, 1 } })
     RestyleButtonText(button)
     button:HookScript("OnShow", RestyleButtonText)
     button:HookScript("OnEnable", RestyleButtonText)
@@ -328,7 +329,7 @@ local function SkinReadyCheckFrame()
     if text then
         text:ClearAllPoints()
         text:SetPoint("TOP", targetFrame, "TOP", 0, -30)
-        text:SetFont(STANDARD_TEXT_FONT, 12, FONT_FLAGS)
+        CJKFont(text, STANDARD_TEXT_FONT, 12, FONT_FLAGS)
         if text.SetDrawLayer then text:SetDrawLayer("OVERLAY", 5) end
         text:SetTextColor(0.9, 0.9, 0.9, 1)
     end
