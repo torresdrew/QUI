@@ -9,6 +9,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v4.0.3-beta4 - 2026-06-18
+
+### Added
+- WoW 12.1 client support (interface 120100)
+
+### Fixed
+- fix(skinning): QUI font reasserted on framepool-acquired and re-shown text —
+  achievement criteria/meta rows, profession lists and similar no longer revert
+  to the engine font; inspect slot IconBorder re-suppressed after each slot
+  Update
+
 ## v4.0.3-beta3 - 2026-06-18
 
 ### Added

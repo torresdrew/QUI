@@ -163,6 +163,20 @@ local function SkinPlayerSpells()
             SkinBase.LockFrameTextObjects(t, 2)
         end
     end
+    -- Spec/talent action buttons (SpecFrame.ActivateButton = MagicButton "Activate";
+    -- TalentsFrame.ApplyButton/InspectCopyButton = UIPanelButton) swap their Highlight/
+    -- Disabled font OBJECT on hover/disable with no setter call — SkinFrameText's one-
+    -- shot face reverts. Drive the button font objects so the QUI face survives.
+    local function DriveButtonFont(btn)
+        if btn then SkinBase.ApplyButtonFontObjects(btn) end
+    end
+    if frame.SpecFrame then
+        DriveButtonFont(frame.SpecFrame.ActivateButton)
+    end
+    if frame.TalentsFrame then
+        DriveButtonFont(frame.TalentsFrame.ApplyButton)
+        DriveButtonFont(frame.TalentsFrame.InspectCopyButton)
+    end
     HookPlayerSpellsTextUpdates(frame)
     HookTalentButtons(frame)
     SkinPlayerSpellsText(frame)
