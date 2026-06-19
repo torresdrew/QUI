@@ -9,6 +9,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v4.0.3-beta6 - 2026-06-19
+
+> Profile schema migrates v46 → v47 (automatic backup taken). The IMPORTANT
+> aura filter Blizzard removed in 12.0.7 is scrubbed from saved filter state.
+
+### Added
+- CDM bar header right-click menu gains **New Window** / **Delete Window**
+  entries (New Window greys out at the 5-window cap; Delete is disabled with
+  one window left so you can't strand yourself with no header to right-click)
+- Alts overflow tabs (equipment, currencies, reputations, weeklies, roster,
+  professions) now show a QUI-styled scroll bar with click + drag-to-jump
+
+### Changed
+- CDM owned-cooldown bar duration text is now driven by the engine-side
+  duration-text binding (12.0.7) instead of a per-frame Lua poll
+
+### Fixed
+- Alts equipment tab: the average item-level footer no longer overlaps the
+  bottom status line
+
+### Removed
+- IMPORTANT aura filter — group frames, unit frames, action-bar buff borders
+  and its settings UI — Blizzard dropped it from the aura filter set in 12.0.7;
+  saved selections are auto-scrubbed by the schema migration
+
 ## v4.0.3-beta5 - 2026-06-19
 
 ### Fixed
