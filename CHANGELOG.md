@@ -9,6 +9,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v4.0.3-beta8 - 2026-06-19
+
+### Fixed
+- Cooldown Manager entries no longer reset after a `/reload` when **Per-Loadout
+  Profiles** is off and you switch talent loadouts in game — with the toggle
+  off the per-loadout save/load is now fully inert, so the live bars stay in
+  sync with the shared slot instead of being snapped back on the next reload
+
+
 ## v4.0.3-beta7 - 2026-06-19
 
 ### Fixed
