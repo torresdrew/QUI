@@ -572,4 +572,71 @@ do
     string.format = realFormat
 end
 
+-- Secret sender + secret GUID in combat: player-name color should still be
+-- preserved by resolving class from the raw GUID, without storing or comparing
+-- the secret identity.
+do
+    local meta = getmetatable(secret)
+    local function sentinel()
+        local s = setmetatable({}, meta)
+        secrets[s] = true
+        return s
+    end
+
+    local secretSender = sentinel()
+    local secretGuid = sentinel()
+    local partyBody = sentinel()
+    local shown = sentinel()
+    local coloredShown = sentinel()
+    local plainLink = sentinel()
+    local coloredLink = sentinel()
+    local plainPrefix = sentinel()
+    local coloredPrefix = sentinel()
+    local plainFinal = sentinel()
+    local coloredFinal = sentinel()
+
+    local prevGPI = _G.GetPlayerInfoByGUID
+    _G.GetPlayerInfoByGUID = function(gg)
+        if rawequal(gg, secretGuid) then return "Mage", "MAGE" end
+        return prevGPI(gg)
+    end
+
+    local realFormat = string.format
+    string.format = function(fmt, ...)
+        local a1, a2 = ...
+        if fmt == "[%s]" and rawequal(a1, secretSender) then
+            return shown
+        elseif fmt == "|c%s%s|r" and a1 == "ff3fc7eb" and rawequal(a2, shown) then
+            return coloredShown
+        elseif fmt == "|Hplayer:%s|h%s|h" and rawequal(a1, secretSender) and rawequal(a2, shown) then
+            return plainLink
+        elseif fmt == "|Hplayer:%s|h%s|h" and rawequal(a1, secretSender) and rawequal(a2, coloredShown) then
+            return coloredLink
+        elseif fmt == "%s%s" and a1 == "" and rawequal(a2, plainLink) then
+            return plainLink
+        elseif fmt == "%s%s" and a1 == "" and rawequal(a2, coloredLink) then
+            return coloredLink
+        elseif fmt == "[P] %s: " and rawequal(a1, plainLink) then
+            return plainPrefix
+        elseif fmt == "[P] %s: " and rawequal(a1, coloredLink) then
+            return coloredPrefix
+        elseif fmt == "%s%s" and rawequal(a1, plainPrefix) and rawequal(a2, partyBody) then
+            return plainFinal
+        elseif fmt == "%s%s" and rawequal(a1, coloredPrefix) and rawequal(a2, partyBody) then
+            return coloredFinal
+        end
+        return realFormat(fmt, ...)
+    end
+
+    local got = F.WrapSecretEventLine("CHAT_MSG_PARTY", {
+        text = partyBody,
+        rawSender = secretSender,
+        rawGuid = secretGuid,
+    })
+
+    string.format = realFormat
+    _G.GetPlayerInfoByGUID = prevGPI
+    assert(rawequal(got, coloredFinal), "secret sender+GUID keeps class-colored prefix")
+end
+
 print("OK: chat_message_format_test")
