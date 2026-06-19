@@ -9,6 +9,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v4.0.3-beta7 - 2026-06-19
+
+### Fixed
+- Click-casting bindings set to **target**, **menu**, or **toggle menu** work
+  again on group/unit frames — 12.0.7 locked those actions behind a protected
+  click path, so they're now routed through a secure click proxy
+- Copy Chat window now shows a Battle.net friend's name instead of `???` when
+  the link only carried a truncated tag (the full name is resolved from the
+  account ID as the window opens)
+
+
 ## v4.0.3-beta6 - 2026-06-19
 
 > Profile schema migrates v46 → v47 (automatic backup taken). The IMPORTANT
