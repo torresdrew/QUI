@@ -157,6 +157,20 @@ assertContains(achievement, "AchievementFrameComparison.StatContainer.ScrollBox"
     "Achievement comparison stat ScrollBox must be locked")
 
 local auctionhouse = readFile("QUI_Skinning/skinning/frames/auctionhouse.lua")
+local auctionHouseTableXml = readFile("tests/framexml/Interface/AddOns/Blizzard_AuctionHouseUI/Shared/Blizzard_AuctionHouseTableBuilder.xml")
+assertContains(auctionHouseTableXml, "AuctionHouseTableHeaderStringTemplate\" mixin=\"AuctionHouseTableHeaderStringMixin\" inherits=\"ColumnDisplayButtonShortTemplate\"",
+    "Auction House sort headers must still inherit the shared column-display button template")
+local sharedPanelTemplates = readFile("tests/framexml/Interface/AddOns/Blizzard_SharedXML/Mainline/SharedUIPanelTemplates.xml")
+local columnDisplayButtonShort = blockBetween(sharedPanelTemplates, "<Button name=\"ColumnDisplayButtonShortTemplate\"",
+    "	</Button>")
+assertContains(columnDisplayButtonShort, "<NormalFont style=\"GameFontHighlightSmall\"/>",
+    "Auction House sort headers inherit a stock button font object that can reappear on button state changes")
+local auctionHeaderSkin = blockBetween(auctionhouse, "local function HookAuctionHeaderSkin()",
+    "-- Skin browse panel")
+assertContains(auctionHeaderSkin, "SkinBase.ApplyButtonFontObjects(self)",
+    "Auction House sort headers must drive normal/highlight/disabled font objects")
+assertContains(auctionHeaderSkin, "SkinBase.LockFrameTextObjects(self, 2)",
+    "Auction House sort headers must lock hover/state font-object resets")
 local auctionsTabs = blockBetween(auctionhouse, "local function SkinAuctionHouseAuctionsTabs(auctionsFrame)",
     "local function LockDurationDropdownText(dropdown)")
 assertContains(auctionsTabs, "SkinBase.SkinTabGroup(tabs, auctionsFrame, { font = true })",
@@ -197,8 +211,12 @@ assertContains(social, "SkinBase.LockFontObject(alert, { fontOnly = true })",
     "guild name alert must survive dynamic font-object resets")
 
 local interaction = readFile("QUI_Skinning/skinning/frames/interaction.lua")
+local mail = readFile("QUI_Skinning/skinning/frames/mail.lua")
 local lockCount = 0
 for _ in interaction:gmatch("SkinBase%.LockFrameTextObjects%(frame, %d%)") do
+    lockCount = lockCount + 1
+end
+for _ in mail:gmatch("SkinBase%.LockFrameTextObjects%(frame, %d%)") do
     lockCount = lockCount + 1
 end
 assert(lockCount >= 4, "Bank/Merchant/Mail/GuildBank skins must lock descendant text objects")

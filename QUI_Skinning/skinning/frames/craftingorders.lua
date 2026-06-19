@@ -445,7 +445,7 @@ initFrame:SetScript("OnEvent", function(self, event, addon)
     end
 end)
 
-if C_AddOns.IsAddOnLoaded("Blizzard_ProfessionsCustomerOrders") then
+if SkinBase.IsAddOnFullyLoaded("Blizzard_ProfessionsCustomerOrders") then
     C_Timer.After(0.1, SkinCraftingOrders)
     initFrame:UnregisterEvent("ADDON_LOADED")
 end

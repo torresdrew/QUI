@@ -2814,15 +2814,26 @@ end
 --
 -- Idempotent — flagged via SetFrameData(scrollBox, "qScrollHooked").
 ---------------------------------------------------------------------------
+local scrollBoxAcquiredCallbacks = Helpers.CreateStateTable()
+
 function SkinBase.HookScrollBoxAcquired(scrollBox, callback)
-    if not scrollBox or SkinBase.GetFrameData(scrollBox, "qScrollHooked") then return end
+    if not scrollBox or type(callback) ~= "function" then return end
     if not ScrollUtil or not ScrollUtil.AddAcquiredFrameCallback then return end
+
+    local callbacks = scrollBoxAcquiredCallbacks[scrollBox]
+    if not callbacks then
+        callbacks = {}
+        scrollBoxAcquiredCallbacks[scrollBox] = callbacks
+    end
+    callbacks[#callbacks + 1] = callback
 
     C_Timer.After(0, function()
         if scrollBox.ForEachFrame then
             pcall(scrollBox.ForEachFrame, scrollBox, callback)
         end
     end)
+
+    if SkinBase.GetFrameData(scrollBox, "qScrollHooked") then return end
 
     -- Apply SYNCHRONOUSLY on acquire (no C_Timer.After deferral). A deferred
     -- apply lands one frame after the row is first painted, so the row shows the
@@ -2834,7 +2845,11 @@ function SkinBase.HookScrollBoxAcquired(scrollBox, callback)
     -- later rebind can't revert it. SetFont here targets per-instance fontstrings
     -- (never shared font objects), so it carries no taint.
     ScrollUtil.AddAcquiredFrameCallback(scrollBox, function(_, frame)
-        callback(frame)
+        local list = scrollBoxAcquiredCallbacks[scrollBox]
+        if not list then return end
+        for _, cb in ipairs(list) do
+            cb(frame)
+        end
     end, scrollBox)
 
     SkinBase.SetFrameData(scrollBox, "qScrollHooked", true)
@@ -2874,6 +2889,13 @@ end
 -- and the always-loaded ones (Blizzard_UIPanels_Game), since the
 -- already-loaded short-circuit fires immediately.
 ---------------------------------------------------------------------------
+function SkinBase.IsAddOnFullyLoaded(addonName)
+    if not C_AddOns or not C_AddOns.IsAddOnLoaded then return false end
+    local loadedOrLoading, loaded = C_AddOns.IsAddOnLoaded(addonName)
+    if loaded ~= nil then return loaded end
+    return loadedOrLoading == true
+end
+
 function SkinBase.OnAddOnLoaded(addonName, callback, delay)
     delay = delay or 0
     local function fire()
@@ -2884,7 +2906,7 @@ function SkinBase.OnAddOnLoaded(addonName, callback, delay)
         end
     end
 
-    if C_AddOns and C_AddOns.IsAddOnLoaded and C_AddOns.IsAddOnLoaded(addonName) then
+    if SkinBase.IsAddOnFullyLoaded(addonName) then
         fire()
         return
     end
@@ -2907,11 +2929,13 @@ local function HoverEnter(self)
     local bd = SkinBase.GetBackdrop(self)
     local sc = SkinBase.GetFrameData(self, "skinColor")
     if bd and sc then
+        -- Brighten the color AND drive the border to FULL alpha on hover (the resting
+        -- border is dimmed, so keeping that alpha made the hover too subtle).
         bd:SetBackdropBorderColor(
             math.min(sc[1] * HOVER_BRIGHTEN, 1),
             math.min(sc[2] * HOVER_BRIGHTEN, 1),
             math.min(sc[3] * HOVER_BRIGHTEN, 1),
-            sc[4])
+            1)
     end
 end
 
@@ -2930,36 +2954,14 @@ local function AttachHover(frame)
     SkinBase.SetFrameData(frame, "qHoverHooked", true)
 end
 
--- Visible row hover: brighten the backdrop FILL (sits below the row text, so it
--- reads as a clean row highlight) plus the border. Restores the stored base fill
--- on leave. For list rows whose native HighlightTexture is stripped, the plain
--- border-brighten is too subtle — this gives the Blizzard-style row highlight.
-local ROW_HOVER_FILL_BOOST = 0.14
-local function RowFillEnter(self)
-    local bd = SkinBase.GetBackdrop(self)
-    if not bd then return end
-    local f = SkinBase.GetFrameData(self, "rowFill")
-    if f then
-        bd:SetBackdropColor(
-            math.min(f[1] + ROW_HOVER_FILL_BOOST, 1),
-            math.min(f[2] + ROW_HOVER_FILL_BOOST, 1),
-            math.min(f[3] + ROW_HOVER_FILL_BOOST, 1),
-            math.min((f[4] or 0.6) + 0.2, 1))
-    end
-    HoverEnter(self)
-end
-local function RowFillLeave(self)
-    local bd = SkinBase.GetBackdrop(self)
-    if not bd then return end
-    local f = SkinBase.GetFrameData(self, "rowFill")
-    if f then bd:SetBackdropColor(f[1], f[2], f[3], f[4]) end
-    HoverLeave(self)
-end
-local function AttachRowFillHover(frame)
-    if SkinBase.GetFrameData(frame, "qHoverHooked") then return end
-    frame:HookScript("OnEnter", RowFillEnter)
-    frame:HookScript("OnLeave", RowFillLeave)
-    SkinBase.SetFrameData(frame, "qHoverHooked", true)
+-- Public border-brighten toggle for rows whose OnEnter *script* never fires (so
+-- AttachHover's HookScript can't catch hover) but whose mixin OnEnter *method*
+-- does run — e.g. ProfessionsRecipeListRecipeMixin (Init/SkillUps call it directly).
+-- Callers hooksecurefunc the mixin method and route the hover here, so the row's
+-- backdrop border brightens exactly like the (working) crafting-orders rows.
+function SkinBase.SetRowHovered(frame, hovered)
+    if not frame then return end
+    if hovered then HoverEnter(frame) else HoverLeave(frame) end
 end
 
 -- Hover that restores a custom state on leave (vs the plain border reset that
@@ -3244,8 +3246,10 @@ function SkinBase.SkinEditBox(editBox, opts)
     SkinBase.CreateBackdrop(editBox, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     SkinBase.SetFrameData(editBox, "skinColor", { sr, sg, sb, sa })
     SkinBase.SetFrameData(editBox, "skinKind", "editbox")
-    -- opt-in: restyle the input text with the global QUI font.
-    if opts.font then
+    -- QUI font by default; dense/native editboxes can opt out with
+    -- { font = false }. LockFontObject covers Blizzard focus/default
+    -- paths that reapply font objects after the initial skin pass.
+    if opts.font ~= false then
         SkinBase.SetFrameData(editBox, "skinFont", true)
         SkinBase.SetFrameData(editBox, "skinFontColor", opts.fontColor)
         SkinBase.SkinFontString(editBox, { color = opts.fontColor })
@@ -3277,13 +3281,10 @@ function SkinBase.SkinScrollRow(row, opts)
     SkinBase.SetFrameData(row, "bgBoost", boost)
     SkinBase.SetFrameData(row, "bgAlpha", bgAlpha)
     SkinBase.SetFrameData(row, "borderAlphaMult", borderAlphaMult)
-    SkinBase.SetFrameData(row, "rowFill", {
-        math.min(bgr + boost, 1), math.min(bgg + boost, 1), math.min(bgb + boost, 1), bgAlpha,
-    })
-    if opts.hover ~= false then
-        -- hoverFill = visible fill+border row highlight; default = border-brighten only.
-        if opts.hoverFill then AttachRowFillHover(row) else AttachHover(row) end
-    end
+    -- Border-brighten on hover (HookScript OnEnter/OnLeave). Rows whose OnEnter
+    -- script never fires (e.g. profession recipe rows) route hover via the mixin
+    -- hook + SkinBase.SetRowHovered instead.
+    if opts.hover ~= false then AttachHover(row) end
     SkinBase.MarkStyled(row)
 end
 
@@ -3353,6 +3354,10 @@ function SkinBase.SkinDropdown(dropdown, opts)
         if dropdown.NineSlice then dropdown.NineSlice:SetAlpha(0) end
         if dropdown.NormalTexture then dropdown.NormalTexture:SetAlpha(0) end
         if dropdown.HighlightTexture then dropdown.HighlightTexture:SetAlpha(0) end
+        -- WowStyle1DropdownTemplate (12.x DropdownButton) draws its frame via a
+        -- .Background atlas (common-dropdown-textholder), not NineSlice/NormalTexture.
+        -- Hide it so the QUI backdrop shows through; the .Arrow is kept.
+        if dropdown.Background then dropdown.Background:SetAlpha(0) end
     else
         SkinBase.StripTextures(dropdown)
     end
@@ -3441,7 +3446,7 @@ function SkinBase.RefreshWidget(frame)
     end
 
     -- Re-apply the global QUI font on live font/theme changes for widgets that
-    -- opted in at skin time (SkinButton/SkinEditBox {font=true}).
+    -- opted into shared widget font handling at skin time.
     if SkinBase.GetFrameData(frame, "skinFont") then
         local color = SkinBase.GetFrameData(frame, "skinFontColor")
         if kind == "editbox" then

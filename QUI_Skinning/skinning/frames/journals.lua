@@ -163,15 +163,34 @@ local function SkinPlayerSpells()
             SkinBase.LockFrameTextObjects(t, 2)
         end
     end
-    -- Spec/talent action buttons (SpecFrame.ActivateButton = MagicButton "Activate";
-    -- TalentsFrame.ApplyButton/InspectCopyButton = UIPanelButton) swap their Highlight/
-    -- Disabled font OBJECT on hover/disable with no setter call — SkinFrameText's one-
-    -- shot face reverts. Drive the button font objects so the QUI face survives.
+    -- Spec/talent action buttons swap their Highlight/Disabled font OBJECT on
+    -- hover/disable with no setter call — SkinFrameText's one-shot face reverts.
+    -- Drive the button font objects so the QUI face survives.
     local function DriveButtonFont(btn)
         if btn then SkinBase.ApplyButtonFontObjects(btn) end
     end
+    -- The spec "Activate" buttons are NOT frame.SpecFrame.ActivateButton — they
+    -- live on a POOL of ClassSpecContentFrameTemplate frames (one per spec) at
+    -- frame.SpecFrame.SpecContentFramePool, each with its own .ActivateButton
+    -- (MagicButton). ClassSpecFrameMixin:SetEnabled re-asserts the stock Normal/
+    -- Disabled font object on every UpdateSpecFrame/activation, so font when the
+    -- pool is (re)built, not just once.
+    local function FontSpecActivateButtons(specFrame)
+        local pool = specFrame and specFrame.SpecContentFramePool
+        if not pool or not pool.EnumerateActive then return end
+        for contentFrame in pool:EnumerateActive() do
+            DriveButtonFont(contentFrame.ActivateButton)
+        end
+    end
     if frame.SpecFrame then
-        DriveButtonFont(frame.SpecFrame.ActivateButton)
+        FontSpecActivateButtons(frame.SpecFrame)
+        if not SkinBase.GetFrameData(frame.SpecFrame, "qSpecActivateHooked")
+            and type(frame.SpecFrame.UpdateSpecFrame) == "function" then
+            hooksecurefunc(frame.SpecFrame, "UpdateSpecFrame", function(self)
+                FontSpecActivateButtons(self)
+            end)
+            SkinBase.SetFrameData(frame.SpecFrame, "qSpecActivateHooked", true)
+        end
     end
     if frame.TalentsFrame then
         DriveButtonFont(frame.TalentsFrame.ApplyButton)
@@ -251,6 +270,21 @@ local function SkinEncounterJournalBottomTabs(frame)
         SkinBase.ApplyButtonFontObjects(tab)
         SkinBase.LockFrameTextObjects(tab, 2)
     end
+end
+
+-- Tutorials tab "Start Catch-Up Experience" button
+-- (EncounterJournal.TutorialsFrame.Contents.StartButton, RPE_START_EXPERIENCE).
+-- It inherits SharedButtonSmallTemplate whose Normal/Highlight/Disabled font
+-- OBJECTS are GameFont* (FRIZQT); the engine re-asserts them on show/enable/
+-- disable, reverting the one-shot recursive font sweep. ApplyButtonFontObjects
+-- drives the button's font objects to the QUI face so the swaps stay QUI.
+local function SkinEncounterJournalTutorialsButton(frame)
+    local tutorials = frame and frame.TutorialsFrame
+    local contents = tutorials and tutorials.Contents
+    local startButton = contents and contents.StartButton
+    if not startButton then return end
+    SkinBase.ApplyButtonFontObjects(startButton)
+    SkinBase.LockFrameTextObjects(startButton, 2)
 end
 
 local function ScheduleEncounterJournalTextFrame(frame)
@@ -540,6 +574,7 @@ local function SkinEncounterJournal()
     if not frame or SkinBase.IsSkinned(frame) then return end
     SkinBase.SkinButtonFrameTemplate(frame)
     SkinEncounterJournalBottomTabs(frame)
+    SkinEncounterJournalTutorialsButton(frame)
     HookEncounterJournalTextUpdates(frame)
     HookEncounterJournalScrollBoxes(frame)
     SkinEncounterJournalText(frame)
@@ -557,6 +592,7 @@ local function RefreshEncounterJournal()
     HookEncounterJournalTextUpdates(frame)
     HookEncounterJournalScrollBoxes(frame)
     SkinEncounterJournalBottomTabs(frame)
+    SkinEncounterJournalTutorialsButton(frame)
     SkinEncounterJournalText(frame)
 end
 _G.QUI_RefreshEncounterJournalColors = RefreshEncounterJournal

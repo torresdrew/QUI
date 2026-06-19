@@ -2118,7 +2118,8 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
 end)
 
 -- LOD catch-up: Blizzard_InspectUI may have loaded before this module did.
-if C_AddOns.IsAddOnLoaded("Blizzard_InspectUI") then
+local skinBase = GetSkinBase()
+if skinBase and skinBase.IsAddOnFullyLoaded and skinBase.IsAddOnFullyLoaded("Blizzard_InspectUI") then
     HookInspectFrame()
     PatchInspectGuildNilGuard()
 end
