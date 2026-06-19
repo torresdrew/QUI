@@ -1,4 +1,4 @@
--- modules/chat/message_format.lua
+-- QUI_Chat/chat/message_format.lua
 -- Blizzard-parity formatter for custom-display lines captured from CHAT_MSG_*
 -- events. Replicates ChatFrameMixin:MessageEventHandler's formatting (vendored
 -- FrameXML: Blizzard_ChatFrameBase/Mainline/ChatFrameOverrides.lua:268-674):
@@ -10,11 +10,12 @@
 -- Payload tables: both entry points take `p`, a table of probed CHAT_MSG_*
 -- args built by message_capture — every possibly-secret field is nil unless
 -- proven non-secret, EXCEPT p.text (BuildEventLine: non-secret string;
--- WrapSecretEventLine: secret) and p.rawSender (may be secret; only ever
--- touched through pcall'd string.format, never a Lua operator).
+-- WrapSecretEventLine: secret), p.rawSender, and p.rawGuid (may be secret;
+-- raw identity values are only ever passed to secret-allowed APIs or fixed
+-- string.format templates, never Lua operators).
 --   p = { text, rawSender, sender, language, channelFull, target, flags,
 --         zoneID, chNum, chBase, chName (registry-resolved display name),
---         lineID, guid, bnID, decorated (DecorateSender output) }
+--         lineID, guid, rawGuid, bnID, decorated (DecorateSender output) }
 --
 -- HARD CONSTRAINT: ChatTypeInfo is READ-ONLY here. Never assign into it and
 -- never call ChangeChatColor.
@@ -892,6 +893,10 @@ function Format.WrapSecretEventLine(event, p)
             link = BuildPlayerLink(typeKey, chatGroup, p, ("[%s]"):format(p.decorated or p.sender))
         elseif IsSecret(p.rawSender) then
             local shown = string.format("[%s]", p.rawSender)
+            local colorStr = SenderClassColorStr(p.rawGuid or p.guid)
+            if colorStr then
+                shown = string.format("|c%s%s|r", colorStr, shown)
+            end
             link = string.format("|Hplayer:%s|h%s|h", p.rawSender, shown)
         end
         if link then
