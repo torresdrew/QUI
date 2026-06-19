@@ -832,7 +832,17 @@ end
 local function StylePVPActivityButton(button, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     if not button or SkinBase.IsStyled(button) then return end
 
-    -- Hide default textures
+    -- Hide default textures. 12.x activity templates (PVPCasualActivityButton /
+    -- PVPRatedActivityButtonTemplate) draw the button art via NormalTexture /
+    -- PushedTexture / HighlightTexture atlases — there are NO .Bg/.Border/.Ring
+    -- keys. Clear the texture CONTENT (not just alpha): HonorFrameBonusFrame_-
+    -- SetButtonState re-asserts NormalTexture:SetAlpha(1/0.5) on every queue
+    -- refresh, so SetAlpha(0) would be reverted; SetTexture(nil) sticks.
+    if button.NormalTexture then button.NormalTexture:SetTexture(nil) end
+    local pushed = button.GetPushedTexture and button:GetPushedTexture()
+    if pushed then pushed:SetTexture(nil) end
+    if button.HighlightTexture then button.HighlightTexture:SetTexture(nil) end
+    -- Legacy keys (older clients / other templates)
     if button.Bg then button.Bg:Hide() end
     if button.Border then button.Border:Hide() end
     if button.Ring then button.Ring:Hide() end
@@ -882,6 +892,10 @@ local function StylePVPActivityButton(button, sr, sg, sb, sa, bgr, bgg, bgb, bga
     SkinBase.SetFrameData(button, "skinColor", { sr, sg, sb, sa })
 
     AddSkinColorHoverBorder(button)
+
+    -- Title / size / type fontstrings use stock GameFont* (FRIZQT); lock the QUI
+    -- face. SetButtonState SetTextColor still drives enabled/disabled coloring.
+    LockFrameTextObjects(button, 2)
 
     SkinBase.MarkStyled(button)
 end
@@ -1102,6 +1116,14 @@ local function SkinPVPFrame()
         -- Join button
         if _G.ConquestJoinButton then
             SkinBase.SkinButton(_G.ConquestJoinButton, { font = true })
+        end
+
+        -- Type dropdown (12.x WowStyle1 DropdownButton, mirrors HonorFrame)
+        local conquestDropdown = ConquestFrame.TypeDropdown or _G.ConquestFrameTypeDropdown
+        if conquestDropdown then
+            conquestDropdown:SetWidth(230)
+            SkinBase.SkinDropdown(conquestDropdown, { keepArrow = true, insetY = 2 })
+            SkinBase.LockDropdownText(conquestDropdown)
         end
 
         -- Role icons (handles both 11.x and 12.x API)
@@ -1408,6 +1430,10 @@ local function RefreshInstanceFramesColors()
         local ConquestFrame = _G.ConquestFrame
         if ConquestFrame then
             SkinBase.RefreshWidget(_G.ConquestJoinButton)
+            local conquestDropdown = ConquestFrame.TypeDropdown or _G.ConquestFrameTypeDropdown
+            if conquestDropdown then
+                SkinBase.RefreshWidget(conquestDropdown)
+            end
             -- Activity buttons
             local conquestButtons = { "RatedSoloShuffle", "RatedBGBlitz", "Arena2v2", "Arena3v3", "RatedBG" }
             for _, btnName in ipairs(conquestButtons) do

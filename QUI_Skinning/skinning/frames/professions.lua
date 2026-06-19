@@ -32,9 +32,7 @@ local function StyleScrollBoxRow(row)
     -- Fallback: skip frames with no visible text content (spacers)
     if not row.Label and not row.Text and not row.Icon then return end
 
-    -- hoverFill = visible row highlight (Blizzard's native HighlightOverlay is
-    -- stripped; the plain border-brighten alone is too subtle on these rows).
-    SkinBase.SkinScrollRow(row, { hoverFill = true })
+    SkinBase.SkinScrollRow(row)
     SkinBase.SkinFrameText(row, { recurse = true })
 
     -- Category header rows revert the QUI font on hover: ProfessionsRecipe
@@ -50,16 +48,9 @@ local function StyleScrollBoxRow(row)
     -- re-bind their font on populate/recycle. Lock the row subtree so the QUI face
     -- re-applies on each cell rebind (mirrors the Auction House row styler).
     SkinBase.LockFrameTextObjects(row, 4)
-
-    -- Inset backdrop past the skill-up icon area on recipe rows
-    if row.SkillUps then
-        local bd = SkinBase.GetBackdrop(row)
-        if bd then
-            bd:ClearAllPoints()
-            bd:SetPoint("TOPLEFT", row.SkillUps, "TOPRIGHT", 0, 0)
-            bd:SetPoint("BOTTOMRIGHT")
-        end
-    end
+    -- Backdrop stays full-row (SkinScrollRow's SetAllPoints) so the hover border
+    -- brightens the whole row like the Auction House rows. (The old SkillUps inset
+    -- left the backdrop covering only a shifted sub-box → partial, dim hover.)
 end
 
 ---------------------------------------------------------------------------
@@ -96,8 +87,22 @@ end
 -- SKIN RECIPE LIST (shared between CraftingPage and OrdersPage)
 ---------------------------------------------------------------------------
 
+-- Recipe rows DON'T fire their OnEnter *script* on hover (HookScript never fires —
+-- verified in-game), so AttachHover's border-brighten never triggers. Blizzard runs
+-- the mixin OnEnter METHOD directly (Init:257/305 + SkillUps OnEnter) — the same path
+-- that bolds the label. Hook the method and route hover to the backdrop border-
+-- brighten, matching the (working) crafting-orders rows. Covers CraftingPage + Orders.
+local function HookRecipeRowHover()
+    local mixin = _G.ProfessionsRecipeListRecipeMixin
+    if not mixin or mixin.OnEnter == nil or mixin.__quiHoverHooked then return end
+    hooksecurefunc(mixin, "OnEnter", function(self) SkinBase.SetRowHovered(self, true) end)
+    hooksecurefunc(mixin, "OnLeave", function(self) SkinBase.SetRowHovered(self, false) end)
+    mixin.__quiHoverHooked = true
+end
+
 local function SkinRecipeList(recipeList)
     if not recipeList then return end
+    HookRecipeRowHover()
 
     -- Hide decorations
     if recipeList.Background then recipeList.Background:SetAlpha(0) end
@@ -504,7 +509,7 @@ initFrame:SetScript("OnEvent", function(self, event, addon)
 end)
 
 -- If Blizzard_Professions loaded before QUI (e.g. after /reload), skin now
-if C_AddOns.IsAddOnLoaded("Blizzard_Professions") then
+if SkinBase.IsAddOnFullyLoaded("Blizzard_Professions") then
     C_Timer.After(0.1, SkinProfessions)
     initFrame:UnregisterEvent("ADDON_LOADED")
 end

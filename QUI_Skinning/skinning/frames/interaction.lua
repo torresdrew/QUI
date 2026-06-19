@@ -4,14 +4,12 @@
 -- Skins the everyday NPC-interaction and player-storage frames:
 --   - BankFrame        (PortraitFrameTemplate)
 --   - MerchantFrame    (ButtonFrameTemplate)
---   - MailFrame        (ButtonFrameTemplate, LOD via Blizzard_MailFrame)
 --   - GuildBankFrame   (BasicFrameTemplate,  LOD via Blizzard_GuildBankUI)
 --
--- All four lean on SkinBase.SkinButtonFrameTemplate for the standard
+-- All three lean on SkinBase.SkinButtonFrameTemplate for the standard
 -- chrome strip + backdrop + close-button styling. Frame-specific sub-
--- elements (bag slot grids, tab strips, message lists) are deliberately
--- left alone in this initial pass — those land in follow-up commits if
--- they need per-element treatment.
+-- elements (bag slot grids, tab strips, message lists) get explicit coverage
+-- where Blizzard owns them outside the root frame's descendant tree.
 ---------------------------------------------------------------------------
 
 local addonName, ns = ...
@@ -26,7 +24,7 @@ end
 
 ---------------------------------------------------------------------------
 -- Generic refresh: re-apply current skin colors to a previously-skinned
--- frame's QUI backdrop. Used by all four refreshers below.
+-- frame's QUI backdrop. Used by all three refreshers below.
 ---------------------------------------------------------------------------
 local RefreshBackdropColors = SkinBase.RefreshFrameBackdropColors
 
@@ -100,32 +98,6 @@ if ns.Registry then
 end
 
 ---------------------------------------------------------------------------
--- MailFrame (LOD: Blizzard_MailFrame)
----------------------------------------------------------------------------
-local function SkinMail()
-    if not IsSettingEnabled("skinMail") then return end
-    local frame = _G.MailFrame
-    if not frame or SkinBase.IsSkinned(frame) then return end
-    SkinBase.SkinButtonFrameTemplate(frame)
-    -- MailFrameTab1 (Inbox), MailFrameTab2 (Send Mail)
-    SkinBase.SkinTabGroup(CollectNumberedTabs("MailFrame", 2), frame)
-    SkinBase.SkinFrameText(frame, { recurse = true })
-    SkinBase.LockFrameTextObjects(frame, 4)
-    SkinBase.MarkSkinned(frame)
-end
-
-local function RefreshMail() RefreshBackdropColors(_G.MailFrame) end
-_G.QUI_RefreshMailColors = RefreshMail
-if ns.Registry then
-    ns.Registry:Register("skinMail", {
-        refresh = RefreshMail,
-        priority = 80,
-        group = "skinning",
-        importCategories = { "skinning", "theme" },
-    })
-end
-
----------------------------------------------------------------------------
 -- GuildBankFrame (LOD: Blizzard_GuildBankUI)
 ---------------------------------------------------------------------------
 local function SkinGuildBank()
@@ -165,5 +137,4 @@ SkinBase.OnAddOnLoaded("Blizzard_UIPanels_Game", function()
     SkinMerchant()
 end, 0)
 
-SkinBase.OnAddOnLoaded("Blizzard_MailFrame",   SkinMail,      0)
 SkinBase.OnAddOnLoaded("Blizzard_GuildBankUI", SkinGuildBank, 0)

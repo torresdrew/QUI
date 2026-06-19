@@ -62,6 +62,68 @@ local function SkinAuctionHouseTabs()
     end
 end
 
+-- Return true if `frame` (or an ancestor, up to `depth`) is anchored to `target`
+-- — or to a direct child of `target`. GetPoint MayReturnNothing and can hand back
+-- a secret relativeTo when anchoring is secret, so the whole probe is pcall-wrapped
+-- (== on a secret value throws).
+local function FrameAnchorsTo(frame, target, depth)
+    if not frame or depth < 0 then return false end
+    if frame.GetNumPoints then
+        local ok, hit = pcall(function()
+            for i = 1, frame:GetNumPoints() do
+                local _, rel = frame:GetPoint(i)
+                if rel == target then return true end
+                if rel and rel.GetParent and rel:GetParent() == target then return true end
+            end
+            return false
+        end)
+        if ok and hit then return true end
+    end
+    return FrameAnchorsTo(frame.GetParent and frame:GetParent() or nil, target, depth - 1)
+end
+
+-- Apply the QUI font to bottom tabs added by OTHER addons. These are not children
+-- of AuctionHouseFrame and never enter AuctionHouseFrame.Tabs — they are separate
+-- top-level Buttons (often grouped under an unnamed container) anchored to the AH
+-- frame, so the .Tabs sweep and the global font system both miss them. Detect them
+-- structurally (a shown Button with a fontstring whose own/ancestor anchor targets
+-- AuctionHouseFrame) and drive their font objects. Font-only: art/position
+-- untouched. Per-frame guard keeps the per-open _G walk cheap; the walk only runs
+-- while the AH is open.
+local function FontAuctionHouseExtraTabs()
+    local AuctionHouseFrame = _G.AuctionHouseFrame
+    if not AuctionHouseFrame then return end
+
+    -- Our own + Blizzard tabs (already skinned; keeps the guard flags coherent).
+    if AuctionHouseFrame.Tabs then
+        for _, tab in ipairs(AuctionHouseFrame.Tabs) do
+            if tab and not SkinBase.GetFrameData(tab, "qAHTabFonted") then
+                SkinBase.ApplyButtonFontObjects(tab)
+                SkinBase.LockFrameTextObjects(tab, 2)
+                SkinBase.SetFrameData(tab, "qAHTabFonted", true)
+            end
+        end
+    end
+
+    if not (AuctionHouseFrame.IsShown and AuctionHouseFrame:IsShown()) then return end
+    for _, obj in pairs(_G) do
+        if type(obj) == "table" and obj ~= AuctionHouseFrame
+            and not SkinBase.GetFrameData(obj, "qAHTabFonted") then
+            local ok, isTab = pcall(function()
+                return obj.IsObjectType and obj:IsObjectType("Button")
+                    and obj.GetFontString and obj:GetFontString()
+                    and obj.IsShown and obj:IsShown()
+                    and FrameAnchorsTo(obj, AuctionHouseFrame, 2)
+            end)
+            if ok and isTab then
+                SkinBase.ApplyButtonFontObjects(obj)
+                SkinBase.LockFrameTextObjects(obj, 2)
+                SkinBase.SetFrameData(obj, "qAHTabFonted", true)
+            end
+        end
+    end
+end
+
 local function SkinAuctionHouseAuctionsTabs(auctionsFrame)
     if not auctionsFrame then return end
     local tabs = { auctionsFrame.AuctionsTab, auctionsFrame.BidsTab }
@@ -198,6 +260,7 @@ local function HookAuctionHeaderSkin()
         local hl = self.GetHighlightTexture and self:GetHighlightTexture()
         if hl then hl:SetAlpha(0) end
         SkinBase.ApplyButtonFontObjects(self)
+        SkinBase.LockFrameTextObjects(self, 2)
     end)
     mixin.__quiHeaderSkinHooked = true
 end
@@ -465,6 +528,14 @@ local function SkinAuctionHouse()
 
     -- Style tabs
     SkinAuctionHouseTabs()
+    -- Re-font on every open so bottom tabs added by other addons still pick up
+    -- the QUI font (per-tab guard keeps it cheap). Deferred one frame: other
+    -- addons create/reshow their tabs in their own AH OnShow, which may run after
+    -- ours, so wait for the frame to settle before walking.
+    FontAuctionHouseExtraTabs()
+    AuctionHouseFrame:HookScript("OnShow", function()
+        C_Timer.After(0, FontAuctionHouseExtraTabs)
+    end)
     HookAuctionHeaderSkin()
 
     -- Skin sub-panels (pcall each so one failure doesn't block the rest)
@@ -613,7 +684,7 @@ frame:SetScript("OnEvent", function(self, event, addon)
     end
 end)
 
-if C_AddOns.IsAddOnLoaded("Blizzard_AuctionHouseUI") then
+if SkinBase.IsAddOnFullyLoaded("Blizzard_AuctionHouseUI") then
     C_Timer.After(0.1, SkinAuctionHouse)
     frame:UnregisterEvent("ADDON_LOADED")
 end

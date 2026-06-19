@@ -267,7 +267,7 @@ frame:SetScript("OnEvent", function(self, event, addon)
 end)
 
 -- LOD catch-up: Blizzard_ChallengesUI may have loaded before this module did.
-if C_AddOns.IsAddOnLoaded("Blizzard_ChallengesUI") then
+if SkinBase.IsAddOnFullyLoaded("Blizzard_ChallengesUI") then
     if ChallengesKeystoneFrame then
         SkinKeystoneFrame()
     end

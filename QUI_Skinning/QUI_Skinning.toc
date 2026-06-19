@@ -33,6 +33,7 @@ skinning\frames\auctionhouse.lua
 skinning\frames\craftingorders.lua
 skinning\frames\professions.lua
 skinning\frames\interaction.lua
+skinning\frames\mail.lua
 skinning\frames\social.lua
 skinning\frames\journals.lua
 skinning\frames\achievement.lua
