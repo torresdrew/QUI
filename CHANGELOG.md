@@ -9,6 +9,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v4.0.3-beta5 - 2026-06-19
+
+### Fixed
+- skinning font/template sweep — profession recipe rows now get a full-row
+  hover highlight; PvP activity buttons, the Encounter Journal "Start Catch-Up"
+  button, spec Activate buttons and auction-house bottom tabs/sort headers hold
+  the QUI font instead of reverting to the engine font on show/hover
+- dedicated Mail frame skin covering the inbox, send-mail and open-mail surfaces
+  the previous pass left looking native
+- CDM proc glow no longer buries the native cooldown count — the glow now draws
+  below the swipe/count instead of above it
+- chat: class color is preserved on whisper and party lines whose sender name is
+  a secret value in restricted combat
+
 ## v4.0.3-beta4 - 2026-06-18
 
 ### Added
