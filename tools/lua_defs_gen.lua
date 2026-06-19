@@ -50,7 +50,12 @@ end
 local function buildSignature(fn)
     local lines = {}
     if type(fn.Documentation) == "table" and fn.Documentation[1] then
-        lines[#lines + 1] = "--- " .. table.concat(fn.Documentation, " ")
+        -- Doc strings can embed literal control bytes (newline/CR/tab); some
+        -- 12.1 docs (e.g. C_StringUtil.EscapeDecimalNonPrintables) do. Collapse
+        -- any whitespace run to a single space so the comment stays one line —
+        -- a raw newline would split it and break the file (luac parse error).
+        local doc = table.concat(fn.Documentation, " "):gsub("%s+", " ")
+        lines[#lines + 1] = "--- " .. doc
     end
     local params = {}
     if type(fn.Arguments) == "table" then
