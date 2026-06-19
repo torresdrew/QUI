@@ -331,6 +331,17 @@ UpdateAssistedCombatRotationFrame = function(button)
         frame = CreateFrame("Frame", nil, button, "ActionBarButtonAssistedCombatRotationTemplate")
         button.AssistedCombatRotationFrame = frame
         _assistRotationButton = button
+        -- 12.1: the template's OnUpdate now calls actionButton:OnActionBarSlotChanged().
+        -- QUI's owned buttons are built from ActionButtonTemplate +
+        -- SecureActionButtonTemplate and do NOT inherit ActionBarActionButtonMixin,
+        -- so that method is nil and the OnUpdate errors every frame. Stub it: the
+        -- rotation glow is driven by ForceUpdateAction/UpdateState; we only need to
+        -- mirror the real method's new-action-highlight clear.
+        if not button.OnActionBarSlotChanged then
+            button.OnActionBarSlotChanged = function(self)
+                if ClearNewActionHighlight then ClearNewActionHighlight(self.action, true) end
+            end
+        end
         -- The template OnLoad sets frame level relative to MainActionBar's
         -- EndCaps, which QUI reparented to a hidden frame (low level).
         -- Override to sit above the button so it's visible over QUI's
