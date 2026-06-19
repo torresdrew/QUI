@@ -12,7 +12,15 @@ local ApplyCooldownFromSpell = Helpers and Helpers.ApplyCooldownFromSpell
 -- Locals
 local UIParent = UIParent
 local CreateFrame = CreateFrame
-local GetScaledCursorPosition = GetScaledCursorPosition
+-- 12.1 removed the in-world global GetScaledCursorPosition (now glue-screen
+-- only, plus a mixin method / _Insecure variant). Reimplement it: raw cursor
+-- position divided by UIParent's effective scale, exactly as the old global.
+local GetCursorPosition = GetCursorPosition
+local GetScaledCursorPosition = GetScaledCursorPosition or function()
+    local scale = UIParent:GetEffectiveScale()
+    local x, y = GetCursorPosition()
+    return x / scale, y / scale
+end
 local InCombatLockdown = InCombatLockdown
 local UnitClass = UnitClass
 local C_ClassColor = C_ClassColor
