@@ -56,8 +56,10 @@ function __WowWidget:AddUnit(unitTokenString, asset, width, height, r, g, b, a, 
 ---@param y? number
 ---@param ... any
 function __WowWidget:AdjustPointsOffset(x, y, ...) end
+--- Advances the clock by a specified number of seconds.
+---@param delta? any
 ---@param ... any
-function __WowWidget:AdvanceTime(...) end
+function __WowWidget:AdvanceTime(delta, ...) end
 ---@param texture? any
 ---@param snapshotID? number
 ---@param ... any
@@ -90,6 +92,10 @@ function __WowWidget:CanApproximate(seconds, ...) end
 ---@param ... any
 ---@return boolean canChangeHitTestPoints
 function __WowWidget:CanChangeHitTestPoints(...) end
+--- Returns true if this binding has enough configuration to produce formatted text.
+---@param ... any
+---@return boolean canFormatText
+function __WowWidget:CanFormatText(...) end
 ---@param ... any
 ---@return any moveRestriction
 function __WowWidget:CanMove(...) end
@@ -113,6 +119,10 @@ function __WowWidget:CanSaveTabardNow(...) end
 ---@param unit? any
 ---@param ... any
 function __WowWidget:CanSetUnit(unit, ...) end
+--- Returns true if this binding has enough configuration to update its font string with formatted text.
+---@param ... any
+---@return boolean canUpdateText
+function __WowWidget:CanUpdateFontString(...) end
 ---@param ... any
 function __WowWidget:CancelOpenCheckout(...) end
 ---@param ... any
@@ -141,6 +151,11 @@ function __WowWidget:ClearPoint(point, ...) end
 function __WowWidget:ClearPoints(...) end
 ---@param ... any
 function __WowWidget:ClearPointsOffset(...) end
+---@param ... any
+function __WowWidget:ClearSVG(...) end
+--- Clears the text color curve used by this binding.
+---@param ... any
+function __WowWidget:ClearTextColorCurve(...) end
 ---@param ... any
 function __WowWidget:ClearTransform(...) end
 ---@param ... any
@@ -181,6 +196,7 @@ function __WowWidget:DeleteCookies(...) end
 ---@param ... any
 ---@return boolean success
 function __WowWidget:DetachFromMount(rider, ...) end
+--- Disables automatic updates for this duration text binding.
 ---@param ... any
 function __WowWidget:Disable(...) end
 ---@param isAccessible? boolean
@@ -199,6 +215,7 @@ function __WowWidget:Dress(...) end
 ---@param invSlot? number
 ---@param ... any
 function __WowWidget:DressPlayerSlot(invSlot, ...) end
+--- Enables automatic updates for this duration text binding.
 ---@param ... any
 function __WowWidget:Enable(...) end
 ---@param enable? boolean
@@ -420,6 +437,10 @@ function __WowWidget:GetChecked(...) end
 ---@param ... any
 ---@return any texture
 function __WowWidget:GetCheckedTexture(...) end
+--- Returns the clock source used by this object.
+---@param ... any
+---@return any clock
+function __WowWidget:GetClock(...) end
 --- Returns the current time of the clock source used by this object.
 ---@param ... any
 ---@return any clockTime
@@ -516,6 +537,10 @@ function __WowWidget:GetDoorConnectionInfo(...) end
 ---@return any layer
 ---@return number sublevel
 function __WowWidget:GetDrawLayer(...) end
+--- Returns the duration object used by this duration text binding.
+---@param ... any
+---@return any duration
+function __WowWidget:GetDuration(...) end
 ---@param ... any
 ---@return any editorModeContext
 function __WowWidget:GetEditorModeContext(...) end
@@ -543,6 +568,10 @@ function __WowWidget:GetEndPoint(...) end
 ---@param ... any
 ---@return any endTime
 function __WowWidget:GetEndTime(modifier, ...) end
+--- Returns the text shown when the duration has fully expired.
+---@param ... any
+---@return string text
+function __WowWidget:GetExpiredText(...) end
 ---@param ... any
 ---@return number facing
 function __WowWidget:GetFacing(...) end
@@ -620,13 +649,28 @@ function __WowWidget:GetFontObject(...) end
 ---@param ... any
 ---@return any font
 function __WowWidget:GetFontObjectForAlphabet(alphabet, ...) end
+--- Returns the font string updated by this duration text binding.
+---@param ... any
+---@return any fontString
+function __WowWidget:GetFontString(...) end
 ---@param messageID? number
 ---@param ... any
 ---@return any fontString
 function __WowWidget:GetFontStringByID(messageID, ...) end
+--- Returns the text that would currently be assigned to the configured font string.
+---@param ... any
+---@return string text
+function __WowWidget:GetFormattedText(...) end
+--- Returns the text color that would currently be assigned to the configured font string.
+---@param ... any
+---@return any color
+function __WowWidget:GetFormattedTextColor(...) end
 ---@param ... any
 ---@return number normalizedAlpha
 function __WowWidget:GetFromAlpha(...) end
+---@param ... any
+---@return number percent
+function __WowWidget:GetFromPercent(...) end
 --- Returns the configured heal absorb clamping mode.
 ---@param ... any
 ---@return any healAbsorbClampMode
@@ -928,6 +972,9 @@ function __WowWidget:GetRoomGUID(...) end
 ---@return string name
 function __WowWidget:GetRoomName(...) end
 ---@param ... any
+---@return number svgFile
+function __WowWidget:GetSVGFileID(...) end
+---@param ... any
 ---@return number scale
 function __WowWidget:GetScale(...) end
 ---@param ... any
@@ -1000,18 +1047,34 @@ function __WowWidget:GetStripIntervalWhitespace(...) end
 ---@return number colorB
 ---@return number colorA
 function __WowWidget:GetTextColor(...) end
+--- Returns the text color curve used by this binding.
+---@param ... any
+---@return any curve
+---@return any property
+function __WowWidget:GetTextColorCurve(...) end
 ---@param ... any
 ---@return number thickness
 function __WowWidget:GetThickness(...) end
 ---@param ... any
 ---@return any texture
 function __WowWidget:GetThumbTexture(...) end
+--- Returns the current time value represented by this clock.
+---@param ... any
+---@return any time
+function __WowWidget:GetTime(...) end
+--- Returns the time modifier used when sampling duration values for this binding.
+---@param ... any
+---@return any modifier
+function __WowWidget:GetTimeModifier(...) end
 ---@param ... any
 ---@return number timeVisibleSeconds
 function __WowWidget:GetTimeVisible(...) end
 ---@param ... any
 ---@return number normalizedAlpha
 function __WowWidget:GetToAlpha(...) end
+---@param ... any
+---@return number percent
+function __WowWidget:GetToPercent(...) end
 ---@param index? number
 ---@param ... any
 ---@return number objectiveIndex
@@ -1044,6 +1107,10 @@ function __WowWidget:GetType(...) end
 ---@param ... any
 ---@return number uiMapID
 function __WowWidget:GetUiMapID(...) end
+--- Returns the minimum number of seconds between automatic text updates. A value of zero updates every game tick.
+---@param ... any
+---@return number updateInterval
+function __WowWidget:GetUpdateInterval(...) end
 ---@param ... any
 ---@return number file
 function __WowWidget:GetUpperBackgroundFileName(...) end
@@ -1081,6 +1148,10 @@ function __WowWidget:GetWorldScale(...) end
 ---@param ... any
 ---@return number yaw
 function __WowWidget:GetYaw(...) end
+--- Returns the text shown when the duration is not configured, or represents a zero-duration time span.
+---@param ... any
+---@return string text
+function __WowWidget:GetZeroDurationText(...) end
 ---@param ... any
 ---@return number zoomFactor
 function __WowWidget:GetZoom(...) end
@@ -1100,14 +1171,27 @@ function __WowWidget:HasAttachmentPoints(...) end
 ---@param ... any
 ---@return boolean hasCustomCamera
 function __WowWidget:HasCustomCamera(...) end
+--- Returns true once the duration has reached its end time.
+---@param modifier? any
+---@param ... any
+---@return boolean hasExpired
+function __WowWidget:HasExpired(modifier, ...) end
 ---@param messageID? number
 ---@param ... any
 ---@return boolean hasMessage
 function __WowWidget:HasMessageByID(messageID, ...) end
---- Returns true if the curve has been configured with any secret values. Curves with secret values always produce secret results when evaluated.
+---@param ... any
+---@return boolean hasSVG
+function __WowWidget:HasSVG(...) end
+--- Returns true if the duration text binding has been configured with any secret values.
 ---@param ... any
 ---@return boolean hasSecretValues
 function __WowWidget:HasSecretValues(...) end
+--- Returns true once the duration has reached its start time.
+---@param modifier? any
+---@param ... any
+---@return boolean hasStarted
+function __WowWidget:HasStarted(modifier, ...) end
 ---@param ... any
 function __WowWidget:Hide(...) end
 ---@param scaleFactor? number
@@ -1118,6 +1202,11 @@ function __WowWidget:InitializeCamera(scaleFactor, ...) end
 function __WowWidget:InitializePanCamera(scaleFactor, ...) end
 ---@param ... any
 function __WowWidget:InitializeTabardColors(...) end
+--- Returns true while the duration is at or after its start time and before its end time.
+---@param modifier? any
+---@param ... any
+---@return boolean isActive
+function __WowWidget:IsActive(modifier, ...) end
 ---@param ... any
 ---@return boolean isActive
 function __WowWidget:IsAllowedIndoorsActive(...) end
@@ -1135,11 +1224,15 @@ function __WowWidget:IsBaseVariantOnlyActive(...) end
 ---@return boolean isActive
 function __WowWidget:IsCollectedActive(...) end
 ---@param ... any
+---@return boolean isConnectedToDraggingRoom
+function __WowWidget:IsConnectedToDraggingRoom(...) end
+---@param ... any
 ---@return boolean isActive
 function __WowWidget:IsCustomizableOnlyActive(...) end
 ---@param ... any
 ---@return boolean isDraggingThumb
 function __WowWidget:IsDraggingThumb(...) end
+--- Returns true if this duration text binding updates its font string automatically.
 ---@param ... any
 ---@return boolean enabled
 function __WowWidget:IsEnabled(...) end
@@ -1162,6 +1255,9 @@ function __WowWidget:IsLoaded(...) end
 ---@param ... any
 ---@return boolean isOccupied
 function __WowWidget:IsOccupiedDoor(...) end
+---@param ... any
+---@return boolean isPartOfDraggingRoom
+function __WowWidget:IsPartOfDraggingRoom(...) end
 ---@param ... any
 ---@return boolean preferringCollisionBounds
 function __WowWidget:IsPreferringModelCollisionBounds(...) end
@@ -1285,6 +1381,13 @@ function __WowWidget:ResetNextHandSlot(...) end
 --- Resets all stored healing values used for calculations.
 ---@param ... any
 function __WowWidget:ResetPredictedValues(...) end
+--- Resets the clock to a zero time value.
+---@param ... any
+function __WowWidget:ResetTime(...) end
+--- Rewinds the clock by a specified number of seconds.
+---@param delta? any
+---@param ... any
+function __WowWidget:RewindTime(delta, ...) end
 --- Run search with all current param values
 ---@param ... any
 function __WowWidget:RunSearch(...) end
@@ -1370,9 +1473,6 @@ function __WowWidget:SetBarberShopAlternateForm(...) end
 ---@param isActive? boolean
 ---@param ... any
 function __WowWidget:SetBaseVariantOnly(isActive, ...) end
----@param asset? any
----@param ... any
-function __WowWidget:SetBlipTexture(asset, ...) end
 ---@param alpha? number
 ---@param ... any
 function __WowWidget:SetBorderAlpha(alpha, ...) end
@@ -1451,6 +1551,10 @@ function __WowWidget:SetChecked(checked, ...) end
 ---@param asset? any
 ---@param ... any
 function __WowWidget:SetCheckedTexture(asset, ...) end
+--- Configures the clock source used by this object.
+---@param clock? any
+---@param ... any
+function __WowWidget:SetClock(clock, ...) end
 --- Search parameter; If true, includes all owned entries, including those that are in storage OR placed in an owned house or plot; See IsStoredOnlyActive for a more exclusive toggle
 ---@param isActive? boolean
 ---@param ... any
@@ -1490,9 +1594,6 @@ function __WowWidget:SetColorWheelThumbTexture(texture, ...) end
 ---@param convert? boolean
 ---@param ... any
 function __WowWidget:SetConvertToLower(convert, ...) end
----@param asset? any
----@param ... any
-function __WowWidget:SetCorpsePOIArrowTexture(asset, ...) end
 ---@param creatureID? number
 ---@param displayID? number
 ---@param ... any
@@ -1545,10 +1646,15 @@ function __WowWidget:SetDoBlend(doBlend, ...) end
 ---@param layer? any
 ---@param ... any
 function __WowWidget:SetDrawLayer(layer, ...) end
+--- Configures the duration object used by this duration text binding.
+---@param duration? any
+---@param ... any
+function __WowWidget:SetDuration(duration, ...) end
 --- Search parameter; If set, limits search results to only entries that are used/valid in the specified editor mode
 ---@param editorModeContext? any
 ---@param ... any
 function __WowWidget:SetEditorModeContext(editorModeContext, ...) end
+--- Configures whether this duration text binding updates its font string automatically.
 ---@param enabled? boolean
 ---@param ... any
 function __WowWidget:SetEnabled(enabled, ...) end
@@ -1561,6 +1667,10 @@ function __WowWidget:SetEndColor(color, ...) end
 ---@param offsetY? number
 ---@param ... any
 function __WowWidget:SetEndPoint(relativePoint, relativeTo, offsetX, offsetY, ...) end
+--- Configures the text shown when the duration has fully expired.
+---@param text? string
+---@param ... any
+function __WowWidget:SetExpiredText(text, ...) end
 ---@param facing? number
 ---@param ... any
 function __WowWidget:SetFacing(facing, ...) end
@@ -1658,9 +1768,20 @@ function __WowWidget:SetFontHeight(height, ...) end
 ---@param font? any
 ---@param ... any
 function __WowWidget:SetFontObject(font, ...) end
+--- Configures the font string updated by this duration text binding.
+---@param fontString? any
+---@param ... any
+function __WowWidget:SetFontString(fontString, ...) end
+--- Configures the text format used by this duration text binding to display the remaining duration using the supplied formatter.
+---@param formatter? any
+---@param ... any
+function __WowWidget:SetFormatter(formatter, ...) end
 ---@param normalizedAlpha? number
 ---@param ... any
 function __WowWidget:SetFromAlpha(normalizedAlpha, ...) end
+---@param percent? number
+---@param ... any
+function __WowWidget:SetFromPercent(percent, ...) end
 ---@param characterIndex? number
 ---@param ... any
 ---@return boolean success
@@ -1700,9 +1821,9 @@ function __WowWidget:SetHitRectThickness(thickness, ...) end
 ---@param anchors? table
 ---@param ... any
 function __WowWidget:SetHitTestPoints(anchors, ...) end
----@param asset? any
+---@param scale? number
 ---@param ... any
-function __WowWidget:SetIconTexture(asset, ...) end
+function __WowWidget:SetIconScale(scale, ...) end
 --- Changes the clamping mode used when calculating incoming heal amounts.
 ---@param incomingHealClampMode? any
 ---@param ... any
@@ -1885,9 +2006,6 @@ function __WowWidget:SetOrientation(orientation, ...) end
 ---@param originY? number
 ---@param ... any
 function __WowWidget:SetOrigin(point, originX, originY, ...) end
----@param asset? any
----@param ... any
-function __WowWidget:SetPOIArrowTexture(asset, ...) end
 ---@param scale? number
 ---@param ... any
 function __WowWidget:SetPanDistance(scale, ...) end
@@ -1926,9 +2044,6 @@ function __WowWidget:SetPlayerPingScale(scale, ...) end
 ---@param height? number
 ---@param ... any
 function __WowWidget:SetPlayerPingTexture(textureType, asset, width, height, ...) end
----@param asset? any
----@param ... any
-function __WowWidget:SetPlayerTexture(asset, ...) end
 ---@param point? any
 ---@param relativeTo? any
 ---@param relativePoint? any
@@ -1994,6 +2109,10 @@ function __WowWidget:SetRoll(roll, ...) end
 ---@param animate? boolean
 ---@param ... any
 function __WowWidget:SetRotation(radians, animate, ...) end
+---@param svgAsset? any
+---@param ... any
+---@return boolean success
+function __WowWidget:SetSVG(svgAsset, ...) end
 ---@param scale? number
 ---@param ... any
 function __WowWidget:SetScale(scale, ...) end
@@ -2065,9 +2184,6 @@ function __WowWidget:SetStartColor(color, ...) end
 ---@param offsetY? number
 ---@param ... any
 function __WowWidget:SetStartPoint(relativePoint, relativeTo, offsetX, offsetY, ...) end
----@param asset? any
----@param ... any
-function __WowWidget:SetStaticPOIArrowTexture(asset, ...) end
 ---@param stepsPerPage? number
 ---@param ... any
 function __WowWidget:SetStepsPerPage(stepsPerPage, ...) end
@@ -2109,12 +2225,26 @@ function __WowWidget:SetTaskBlobRingTexture(asset, ...) end
 ---@param a? any
 ---@param ... any
 function __WowWidget:SetTextColor(colorR, colorG, colorB, a, ...) end
+--- Configures this duration text binding to adjust fontstring text color by evaluating a duration property through a curve.
+---@param curve? any
+---@param property? any
+---@param ... any
+function __WowWidget:SetTextColorCurve(curve, property, ...) end
+--- Configures the text format used by this duration text binding. The format string may contain '{}' placeholders, each of which is substituted by the corresponding component in the supplied array.
+---@param format? string
+---@param components? table
+---@param ... any
+function __WowWidget:SetTextFormat(format, components, ...) end
 ---@param thickness? number
 ---@param ... any
 function __WowWidget:SetThickness(thickness, ...) end
 ---@param asset? any
 ---@param ... any
 function __WowWidget:SetThumbTexture(asset, ...) end
+--- Sets the current clock timestamp to a given value.
+---@param time? any
+---@param ... any
+function __WowWidget:SetTime(time, ...) end
 --- Configures the duration object to represent an end time and a duration.
 ---@param endTime? any
 ---@param duration? any
@@ -2127,6 +2257,10 @@ function __WowWidget:SetTimeFromEnd(endTime, duration, modRate, ...) end
 ---@param modRate? number
 ---@param ... any
 function __WowWidget:SetTimeFromStart(startTime, duration, modRate, ...) end
+--- Configures the time modifier used when sampling duration values for this binding.
+---@param modifier? any
+---@param ... any
+function __WowWidget:SetTimeModifier(modifier, ...) end
 --- Configures the duration object to represent a fixed start and end time span. If the end time is earlier than the start time, the duration will clamp to zero.
 ---@param startTime? any
 ---@param endTime? any
@@ -2138,9 +2272,12 @@ function __WowWidget:SetTimeVisible(timeVisibleSeconds, ...) end
 ---@param normalizedAlpha? number
 ---@param ... any
 function __WowWidget:SetToAlpha(normalizedAlpha, ...) end
---- Resets all state on the curve, and clears the secret values flag.
+--- Resets this duration text binding to its default state, clearing the configured font string, duration, format, formatter, and fallback text.
 ---@param ... any
 function __WowWidget:SetToDefaults(...) end
+---@param percent? number
+---@param ... any
+function __WowWidget:SetToPercent(percent, ...) end
 ---@param translation? any
 ---@param rotation? any
 ---@param scale? number
@@ -2173,6 +2310,10 @@ function __WowWidget:SetUnitColor(unit, colorR, colorG, colorB, colorA, ...) end
 ---@param cb? any
 ---@param ... any
 function __WowWidget:SetUpdateCallback(cb, ...) end
+--- Configures the minimum number of seconds between automatic text updates. A value of zero updates every game tick.
+---@param updateInterval? number
+---@param ... any
+function __WowWidget:SetUpdateInterval(updateInterval, ...) end
 ---@param x? boolean
 ---@param y? boolean
 ---@param z? boolean
@@ -2207,6 +2348,10 @@ function __WowWidget:SetWidth(width, ...) end
 ---@param yaw? number
 ---@param ... any
 function __WowWidget:SetYaw(yaw, ...) end
+--- Configures the text shown when the duration is not configured, or represents a zero-duration time span.
+---@param text? string
+---@param ... any
+function __WowWidget:SetZeroDurationText(text, ...) end
 ---@param zoomLevel? number
 ---@param ... any
 function __WowWidget:SetZoom(zoomLevel, ...) end
@@ -2299,6 +2444,9 @@ function __WowWidget:UndressSlot(inventorySlot, ...) end
 function __WowWidget:UnequipItems(...) end
 ---@param ... any
 function __WowWidget:UpdateBlips(...) end
+--- Immediately updates the configured font string from the current duration state.
+---@param ... any
+function __WowWidget:UpdateFontString(...) end
 ---@param x? number
 ---@param y? number
 ---@param ... any
