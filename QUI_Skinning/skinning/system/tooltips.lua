@@ -1966,11 +1966,8 @@ ns.QUI_RequestTooltipChromeRefit = RequestTooltipChromeRefit
 -- because they all inherit these font objects.
 local CJK_LOCALES = { koKR = true, zhCN = true, zhTW = true }
 local function SelectedLocaleNeedsCJK()
-    local loc
-    if not ns.IsLocalizationEnabled or ns.IsLocalizationEnabled() then
-        loc = QUIDB and QUIDB.global and QUIDB.global.selectedLocale
-    end
-    loc = loc or (GetLocale and GetLocale())
+    local loc = (QUIDB and QUIDB.global and QUIDB.global.selectedLocale)
+        or (GetLocale and GetLocale())
     return loc ~= nil and CJK_LOCALES[loc] == true
 end
 
