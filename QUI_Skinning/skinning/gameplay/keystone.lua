@@ -4,32 +4,17 @@ local GetCore = ns.Helpers.GetCore
 local SkinBase = ns.SkinBase
 local Helpers = ns.Helpers
 
-local function CJKFont(fs, p, s, f)
-    if ns.Helpers and ns.Helpers.ApplyFontWithFallback then
-        ns.Helpers.ApplyFontWithFallback(fs, p, s, f)
-    else
-        fs:SetFont(p, s, f)
-    end
-end
-
--- Resolve the user's configured general font FACE (falling back to the WoW
--- default). CJKFont keeps CJK glyph fallback either way; this just ensures the
--- label uses the QUI font instead of the hardcoded engine default.
-local function GeneralFontFace()
-    return (ns.Helpers and ns.Helpers.GetGeneralFont and ns.Helpers.GetGeneralFont()) or STANDARD_TEXT_FONT
-end
-
 ---------------------------------------------------------------------------
 -- KEYSTONE FRAME SKINNING
 ---------------------------------------------------------------------------
 
--- Static colors (text only - bg comes from QUI:GetSkinBgColor())
+-- Static colors (text only - bg comes from QUI:GetSkinBgColor()).
+-- Font facing/outline is owned by SkinBase.SkinFontString (QUI font + CJK fallback
+-- + the user's configured outline + size>0 guard) — no local CJKFont/FONT_FLAGS shims.
 local COLORS = {
     text = { 0.9, 0.9, 0.9, 1 },
     textMuted = { 0.6, 0.6, 0.6, 1 },
 }
-
-local FONT_FLAGS = "OUTLINE"
 
 -- Style a button with QUI theme
 local function StyleButton(button, sr, sg, sb, sa, bgr, bgg, bgb, bga)
@@ -44,11 +29,11 @@ local function StyleButton(button, sr, sg, sb, sa, bgr, bgg, bgb, bga)
         SkinBase.SetFrameData(button, "backdrop", btnBd)
     end
 
-    SkinBase.ApplyPixelBackdrop(btnBd, 1, true, true)
+    SkinBase.ApplyPixelBackdrop(btnBd, SkinBase.CHROME.BORDER_PX, true, true)
     -- Button bg slightly lighter than main bg
-    local btnBgR = math.min(bgr + 0.07, 1)
-    local btnBgG = math.min(bgg + 0.07, 1)
-    local btnBgB = math.min(bgb + 0.07, 1)
+    local btnBgR = math.min(bgr + SkinBase.CHROME.BUTTON_BOOST, 1)
+    local btnBgG = math.min(bgg + SkinBase.CHROME.BUTTON_BOOST, 1)
+    local btnBgB = math.min(bgb + SkinBase.CHROME.BUTTON_BOOST, 1)
     Helpers.SetFrameBackdropColor(btnBd, btnBgR, btnBgG, btnBgB, 1)
     Helpers.SetFrameBackdropBorderColor(btnBd, sr, sg, sb, sa)
 
@@ -139,18 +124,15 @@ local function SkinKeystoneFrame()
 
     -- Style fonts
     if keystoneFrame.DungeonName then
-        CJKFont(keystoneFrame.DungeonName, GeneralFontFace(), 22, FONT_FLAGS)
-        keystoneFrame.DungeonName:SetTextColor(unpack(COLORS.text))
+        SkinBase.SkinFontString(keystoneFrame.DungeonName, { size = 22, color = COLORS.text })
     end
 
     if keystoneFrame.TimeLimit then
-        CJKFont(keystoneFrame.TimeLimit, GeneralFontFace(), 16, FONT_FLAGS)
-        keystoneFrame.TimeLimit:SetTextColor(unpack(COLORS.textMuted))
+        SkinBase.SkinFontString(keystoneFrame.TimeLimit, { size = 16, color = COLORS.textMuted })
     end
 
     if keystoneFrame.Instructions then
-        CJKFont(keystoneFrame.Instructions, GeneralFontFace(), 11, FONT_FLAGS)
-        keystoneFrame.Instructions:SetTextColor(unpack(COLORS.textMuted))
+        SkinBase.SkinFontString(keystoneFrame.Instructions, { size = 11, color = COLORS.textMuted })
     end
 
     -- Style buttons
@@ -188,7 +170,7 @@ local function SkinKeystoneFrame()
                 SkinBase.SetExpandedPixelPoints(affixBorder, affix.Portrait, 1)
                 affixBorder:SetFrameLevel(affix:GetFrameLevel())
                 affixBorder:EnableMouse(false)
-                SkinBase.ApplyPixelBackdrop(affixBorder, 1, false, false)
+                SkinBase.ApplyPixelBackdrop(affixBorder, SkinBase.CHROME.BORDER_PX, false, false)
                 Helpers.SetFrameBackdropBorderColor(affixBorder, r, g, b, a)
                 SkinBase.SetFrameData(affix, "border", affixBorder)
             end
@@ -217,9 +199,9 @@ local function RefreshKeystoneColors()
     -- Update button backdrop
     local startBtnBd = keystoneFrame.StartButton and SkinBase.GetFrameData(keystoneFrame.StartButton, "backdrop")
     if startBtnBd then
-        local btnBgR = math.min(bgr + 0.07, 1)
-        local btnBgG = math.min(bgg + 0.07, 1)
-        local btnBgB = math.min(bgb + 0.07, 1)
+        local btnBgR = math.min(bgr + SkinBase.CHROME.BUTTON_BOOST, 1)
+        local btnBgG = math.min(bgg + SkinBase.CHROME.BUTTON_BOOST, 1)
+        local btnBgB = math.min(bgb + SkinBase.CHROME.BUTTON_BOOST, 1)
         Helpers.SetFrameBackdropColor(startBtnBd, btnBgR, btnBgG, btnBgB, 1)
         Helpers.SetFrameBackdropBorderColor(startBtnBd, sr, sg, sb, sa)
         SkinBase.SetFrameData(keystoneFrame.StartButton, "skinColor", { sr, sg, sb, sa })

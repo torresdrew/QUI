@@ -146,6 +146,22 @@ ns.SkinBase = {
             frame:SetBackdropBorderColor(borderColor[1], borderColor[2], borderColor[3], borderColor[4])
         end
     end,
+    -- Canonical recolor of an already-managed pixel-backdrop child: updates the
+    -- persisted backdrop state (data.borderColor/data.bgColor) and re-renders. Mirrors
+    -- ApplyPixelBackdrop's color application so the persistence assertions below hold.
+    SetBackdropColors = function(frame, borderColor, bgColor)
+        appliedBackdrops[#appliedBackdrops + 1] = {
+            frame = frame,
+            borderColor = borderColor,
+            bgColor = bgColor,
+        }
+        if bgColor and frame.SetBackdropColor then
+            frame:SetBackdropColor(bgColor[1], bgColor[2], bgColor[3], bgColor[4])
+        end
+        if borderColor and frame.SetBackdropBorderColor then
+            frame:SetBackdropBorderColor(borderColor[1], borderColor[2], borderColor[3], borderColor[4])
+        end
+    end,
     SkinFrameText = function() end,
     OnAddOnLoaded = function(_, callback)
         capturedCallback = callback

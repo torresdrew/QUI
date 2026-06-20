@@ -67,14 +67,18 @@ assertOrdered(entitlement, "RestyleEntitlementAlertText(frame)",
 ---------------------------------------------------------------------------
 local crafting = readFile("QUI_Skinning/skinning/frames/craftingorders.lua")
 local durationBlock = blockBetween(crafting, "-- Duration dropdown", "-- Note edit box")
-assertContains(durationBlock, "SkinBase.SkinFontString(pc.DurationDropdown.Text, { fontOnly = true })",
-    "customer order duration dropdown visible text must use the QUI font")
-assertContains(durationBlock, "SkinBase.LockFrameTextObjects(pc.DurationDropdown, 2)",
-    "customer order duration dropdown text must survive Blizzard SetFontObject")
-assertContains(crafting, "LockDropdownText(form.MinimumQuality.Dropdown)",
-    "customer order minimum quality dropdown visible text must be locked")
-assertContains(crafting, "LockDropdownText(form.OrderRecipientDropdown)",
-    "customer order recipient dropdown visible text must be locked")
+-- SkinDropdown owns the dropdown text durability: it faces the visible text in the QUI
+-- font (SkinFontString{fontOnly}) AND locks it against Blizzard SetFontObject
+-- (LockFontObject + LockFrameTextObjects(dropdown, 2)) — see SkinBase.SkinDropdown ->
+-- LockDropdownText in core/uikit.lua. So routing through it is the single source of truth.
+assertContains(durationBlock, "SkinBase.SkinDropdown(pc.DurationDropdown)",
+    "customer order duration dropdown must route through SkinDropdown (QUI font + survives Blizzard SetFontObject)")
+-- SkinDropdown calls LockDropdownText internally, so routing the form dropdowns through it
+-- guarantees their visible text is faced + locked (no separate post-lock call needed).
+assertContains(crafting, "SkinBase.SkinDropdown(form.MinimumQuality.Dropdown)",
+    "customer order minimum quality dropdown must route through SkinDropdown (faces + locks its text)")
+assertContains(crafting, "SkinBase.SkinDropdown(form.OrderRecipientDropdown)",
+    "customer order recipient dropdown must route through SkinDropdown (faces + locks its text)")
 
 local professions = readFile("QUI_Skinning/skinning/frames/professions.lua")
 local orderTypeTabs = blockBetween(professions, "-- Order type tab buttons",

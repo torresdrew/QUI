@@ -9,8 +9,6 @@ local QUICore = ns.Addon
 local Helpers = ns.Helpers
 local SkinBase = ns.SkinBase
 
-local SafeGetPixelSize = SkinBase.GetPixelSize
-
 -- Module reference
 local Alerts = {}
 QUICore.Alerts = Alerts
@@ -29,27 +27,23 @@ local ICON_TEX_COORDS = { 0.08, 0.92, 0.08, 0.92 }
 -- HELPER FUNCTIONS
 ---------------------------------------------------------------------------
 
-local function GetDB()
-    return Helpers.GetProfile() or {}
-end
-
 local function GetGeneralSettings()
     return Helpers.GetModuleDB("general") or {}
 end
 
 local function GetAlertSettings()
+    -- Returns (settings, enabled). enabled is derived from general.skinAlerts but is
+    -- NOT written onto the persisted alerts table — mutating it inside a getter would
+    -- clobber the saved profile.alerts.enabled key on every read.
     local alerts = Helpers.GetModuleDB("alerts") or {}
-    local general = GetGeneralSettings()
-    alerts.enabled = general.skinAlerts
-    return alerts
+    return alerts, GetGeneralSettings().skinAlerts
 end
 
 --- Get theme colors from QUI skinning system
 local function GetThemeColors()
-    local general = GetGeneralSettings()
-    local sr, sg, sb, sa = Helpers.GetSkinBorderColor(general, "alerts")
-    local bgr, bgg, bgb, bga = Helpers.GetSkinBgColor()
-    return sr, sg, sb, sa, bgr, bgg, bgb, bga
+    -- Canonical eight-value resolver (border + per-module bg override) used across the
+    -- skinning tree, rather than hand-pairing GetSkinBorderColor + GetSkinBgColor.
+    return SkinBase.GetSkinColors(GetGeneralSettings(), "alerts")
 end
 
 --- Force alpha to 1 (prevents Blizzard fade animations)
@@ -118,20 +112,10 @@ local function GetQualityColor(hyperlink)
     if not hyperlink then return nil end
     local quality = C_Item.GetItemQualityByID(hyperlink)
     if quality and quality >= 1 then
-        local r, g, b = GetItemQualityColor(quality)
+        local r, g, b = C_Item.GetItemQualityColor(quality)
         return { r = r, g = g, b = b }
     end
     return nil
-end
-
---- Update existing backdrop colors (for theme changes)
-local function UpdateBackdropColors(frame)
-    local bd = SkinBase.GetFrameData(frame, "backdrop")
-    if not bd then return end
-
-    local sr, sg, sb, sa, bgr, bgg, bgb, bga = GetThemeColors()
-    Helpers.SetFrameBackdropColor(bd, bgr, bgg, bgb, bga)
-    Helpers.SetFrameBackdropBorderColor(bd, sr, sg, sb, sa)
 end
 
 --- Create icon border frame with optional quality color
@@ -149,6 +133,7 @@ local function CreateIconBorder(icon, parent, qualityColor)
         else
             Helpers.SetFrameBackdropBorderColor(existingBorder, sr, sg, sb, sa)
         end
+        if parent then SkinBase.SetFrameData(parent, "iconBorder", existingBorder) end
         return existingBorder
     end
 
@@ -165,6 +150,9 @@ local function CreateIconBorder(icon, parent, qualityColor)
     end
 
     SkinBase.SetFrameData(icon, "border", border)
+    -- Tag the border on the alert frame under a stable key so RefreshAlertColors can
+    -- recolor it regardless of which icon handle (Icon/dungeonTexture/EmblemIcon/...) it wraps.
+    if parent then SkinBase.SetFrameData(parent, "iconBorder", border) end
     return border
 end
 
@@ -521,7 +509,7 @@ local function SkinScenarioAlert(frame)
     if frame.glowFrame then Kill(frame.glowFrame.glow) end
 
     if frame.dungeonTexture then
-        frame.dungeonTexture:SetTexCoord(0.1, 0.9, 0.1, 0.9)
+        frame.dungeonTexture:SetTexCoord(unpack(ICON_TEX_COORDS))
         frame.dungeonTexture:ClearAllPoints()
         frame.dungeonTexture:SetPoint("LEFT", SkinBase.GetFrameData(frame, "backdrop"), 9, 0)
         frame.dungeonTexture:SetDrawLayer("OVERLAY")
@@ -568,7 +556,7 @@ local function SkinLegendaryItemAlert(frame, itemLink)
         if frame.Icon and itemLink then
             local quality = C_Item.GetItemQualityByID(itemLink)
             if quality then
-                local r, g, b = GetItemQualityColor(quality)
+                local r, g, b = C_Item.GetItemQualityColor(quality)
                 local border = SkinBase.GetFrameData(frame.Icon, "border")
                 if border then Helpers.SetFrameBackdropBorderColor(border, r, g, b, 1) end
             end
@@ -605,7 +593,7 @@ local function SkinLegendaryItemAlert(frame, itemLink)
         if itemLink then
             local quality = C_Item.GetItemQualityByID(itemLink)
             if quality then
-                local r, g, b = GetItemQualityColor(quality)
+                local r, g, b = C_Item.GetItemQualityColor(quality)
                 Helpers.SetFrameBackdropBorderColor(border, r, g, b, 1)
             end
         end
@@ -682,7 +670,7 @@ local function SkinEntitlementAlert(frame)
     Kill(frame.shine)
 
     if frame.Icon then
-        frame.Icon:SetTexCoord(0.1, 0.9, 0.1, 0.9)
+        frame.Icon:SetTexCoord(unpack(ICON_TEX_COORDS))
         frame.Icon:ClearAllPoints()
         frame.Icon:SetPoint("LEFT", SkinBase.GetFrameData(frame, "backdrop"), 9, 0)
 
@@ -884,8 +872,8 @@ end
 -- (re)skinned on every show.
 local bonusRollHooked = false
 local function HookBonusRollFrames()
-    local db = GetAlertSettings()
-    if not db.enabled or bonusRollHooked then return end
+    local _, enabled = GetAlertSettings()
+    if not enabled or bonusRollHooked then return end
 
     local hooked = false
     if type(LootWonAlertFrame_SetUp) == "function" then
@@ -1008,8 +996,8 @@ local function PostAlertMove()
 end
 
 local function CreateAlertMover()
-    local db = GetAlertSettings()
-    if not db.enabled then return end
+    local _, enabled = GetAlertSettings()
+    if not enabled then return end
 
     -- Create holder frame
     if not alertHolder then
@@ -1036,6 +1024,7 @@ local function CreateAlertMover()
         local text = alertMover:CreateFontString(nil, "OVERLAY", "GameFontNormal")
         text:SetPoint("CENTER")
         text:SetText(ns.L["Alert Frames"])
+        SkinBase.SkinFontString(text) -- QUI global font + CJK fallback (was stock GameFontNormal/FRIZQT)
         alertMover.text = text
 
         -- Drag handlers
@@ -1143,8 +1132,8 @@ local function HookEventToastFrame()
 end
 
 local function CreateEventToastMover()
-    local db = GetAlertSettings()
-    if not db.enabled then return end
+    local _, enabled = GetAlertSettings()
+    if not enabled then return end
 
     -- Always create the holder frame so frameAnchoring can position it,
     -- even if EventToastManagerFrame doesn't exist yet
@@ -1172,6 +1161,7 @@ local function CreateEventToastMover()
         local text = toastMover:CreateFontString(nil, "OVERLAY", "GameFontNormal")
         text:SetPoint("CENTER")
         text:SetText(ns.L["Event Toasts"])
+        SkinBase.SkinFontString(text) -- QUI global font + CJK fallback (was stock GameFontNormal/FRIZQT)
         toastMover.text = text
 
         -- Drag handlers
@@ -1238,8 +1228,8 @@ local function HookBNetToastFrame()
 end
 
 local function CreateBNetToastMover()
-    local db = GetAlertSettings()
-    if not db.enabled then return end
+    local _, enabled = GetAlertSettings()
+    if not enabled then return end
 
     -- Always create the holder frame so frameAnchoring can position it,
     -- even if BNToastFrame doesn't exist yet
@@ -1267,6 +1257,7 @@ local function CreateBNetToastMover()
         local text = bnetToastMover:CreateFontString(nil, "OVERLAY", "GameFontNormal")
         text:SetPoint("CENTER")
         text:SetText(ns.L["Battle.Net Toasts"])
+        SkinBase.SkinFontString(text) -- QUI global font + CJK fallback (was stock GameFontNormal/FRIZQT)
         bnetToastMover.text = text
 
         -- Drag handlers
@@ -1361,12 +1352,10 @@ local function RefreshAlertColors()
                     Helpers.SetFrameBackdropColor(bd, bgr, bgg, bgb, bga)
                     Helpers.SetFrameBackdropBorderColor(bd, sr, sg, sb, sa)
                 end
-                -- Update icon borders
-                if frame.Icon then
-                    local ib = SkinBase.GetFrameData(frame.Icon, "border")
-                    if ib then
-                        Helpers.SetFrameBackdropBorderColor(ib, sr, sg, sb, sa)
-                    end
+                -- Update icon border (keyed on the alert frame, set by CreateIconBorder)
+                local ib = SkinBase.GetFrameData(frame, "iconBorder")
+                if ib then
+                    Helpers.SetFrameBackdropBorderColor(ib, sr, sg, sb, sa)
                 end
             end
         end
@@ -1397,7 +1386,6 @@ if ns.Registry then
     })
 end
 
-local Helpers = ns.Helpers
 if Helpers and Helpers.BorderRegistry then
     Helpers.BorderRegistry.Register({
         key      = "alerts",
@@ -1415,8 +1403,8 @@ end
 ---------------------------------------------------------------------------
 
 function Alerts:HookAlertSystems()
-    local db = GetAlertSettings()
-    if not db.enabled then return end
+    local _, enabled = GetAlertSettings()
+    if not enabled then return end
 
     -- TAINT SAFETY: All setUpFunction hooks defer via C_Timer.After(0) to break taint chain.
     -- Alert system setUpFunction fires from Blizzard's internal alert pool, which can propagate taint.
@@ -1487,8 +1475,8 @@ function Alerts:HookAlertSystems()
 end
 
 function Alerts:Initialize()
-    local db = GetAlertSettings()
-    if not db.enabled then return end
+    local _, enabled = GetAlertSettings()
+    if not enabled then return end
 
     -- Hook all alert systems for skinning
     self:HookAlertSystems()

@@ -3,7 +3,6 @@ local Helpers = ns.Helpers
 local SkinBase = ns.SkinBase
 local UIKit = ns.UIKit
 local GetCore = Helpers.GetCore
-local issecretvalue = issecretvalue
 
 local function TooltipDebugCount(name, amount)
     local dbg = ns.QUI_TooltipDebug
@@ -448,11 +447,11 @@ end
 local function HasAccessibleDimensions(tooltip)
     if not tooltip then return false end
     local okWidth, width = pcall(tooltip.GetWidth, tooltip)
-    if not okWidth or type(width) ~= "number" or (issecretvalue and issecretvalue(width)) then
+    if not okWidth or type(width) ~= "number" or Helpers.IsSecretValue(width) then
         return false
     end
     local okHeight, height = pcall(tooltip.GetHeight, tooltip)
-    if not okHeight or type(height) ~= "number" or (issecretvalue and issecretvalue(height)) then
+    if not okHeight or type(height) ~= "number" or Helpers.IsSecretValue(height) then
         return false
     end
     return width >= 0 and height >= 0
@@ -466,7 +465,8 @@ local function GetStyleFrame(tooltip)
     frame:SetAllPoints()
     frame.ignoreInLayout = true
     frame:EnableMouse(false)
-    frame.bg = UIKit.CreateBackground(frame, 0.05, 0.05, 0.05, 0.95)
+    local bgF = SkinBase.CHROME.BG_FALLBACK
+    frame.bg = UIKit.CreateBackground(frame, bgF[1], bgF[2], bgF[3], bgF[4])
     UIKit.CreateBorderLines(frame)
 
     styleFrames[tooltip] = frame
@@ -673,8 +673,10 @@ local function StyleTooltip(tooltip)
         -- SkinCloseButton.) Idempotent — re-asserting the same point each show
         -- is harmless, and the tooltip only shows on an item-link click.
         if closeButton.ClearAllPoints and closeButton.SetPoint then
-            pcall(closeButton.ClearAllPoints, closeButton)
-            pcall(closeButton.SetPoint, closeButton, "TOPRIGHT", tooltip, "TOPRIGHT", -2, -2)
+            -- Scale-stable re-anchor: SetPixelPoint stores the offset in a weak side table
+            -- and re-applies (ClearAllPoints + SetPoint) on every scale refresh. pcall-wrapped
+            -- for protected-frame safety; the side table itself is taint-safe.
+            pcall(SkinBase.SetPixelPoint, closeButton, "TOPRIGHT", tooltip, "TOPRIGHT", -2, -2)
         end
     end
     TooltipDebugEnd(dbg, "skin.style", dbgStart, nil, dbgHeap)
@@ -829,7 +831,8 @@ local gameTooltipFamily = {
     -- GameTooltipTooltip is GameTooltip.ItemTooltip.Tooltip; leave it fully
     -- Blizzard-owned so world quest reward sizing can read safe widths.
     "SmallTextTooltip",
-    "ReputationParagonTooltip", "NamePlateTooltip",
+    "ReputationParagonTooltip",
+    -- NamePlateTooltip intentionally omitted: skinning it causes taint.
     "FriendsTooltip", "SettingsTooltip",
     "GameSmallHeaderTooltip", "QuickKeybindTooltip",
 }
@@ -863,10 +866,7 @@ local function RebuildTooltipList()
         tooltipsToSkin[#tooltipsToSkin + 1] = name
     end
     for _, name in ipairs(gameTooltipFamily) do
-        -- NamePlateTooltip excluded (causes taint)
-        if name ~= "NamePlateTooltip" then
-            tooltipsToSkin[#tooltipsToSkin + 1] = name
-        end
+        tooltipsToSkin[#tooltipsToSkin + 1] = name
     end
 end
 
@@ -1537,7 +1537,7 @@ end
 --   X: rightmost double-line index + measured right (the X path stays
 --      measurement-based; secret rights are filtered out so the diagnostic
 --      reflects only non-secret contributions).
-local _diagBottomLine, _diagBottomText
+local _diagBottomText
 local _diagWorstRight, _diagWorstRightLine, _diagWorstRightText
 
 -- Y axis is anchor-based (no Lua compares on secret coords). MeasureBottom is
@@ -1651,7 +1651,7 @@ local function CollectAnchorTargets(tooltip)
     -- visible index = bottommost FontString. This replaces the earlier
     -- min-by-coordinate scan, which couldn't run when GetBottom returned
     -- secrets in combat-restricted tooltips.
-    _diagBottomLine, _diagBottomText = nil, nil
+    _diagBottomText = nil
     local lastLeftFS, lastLeftIndex
     for i = count, 1, -1 do
         local left
@@ -1669,7 +1669,6 @@ local function CollectAnchorTargets(tooltip)
                     _diagBottomText = t
                 end
             end
-            _diagBottomLine = i
             break
         end
     end

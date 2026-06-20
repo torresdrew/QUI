@@ -90,15 +90,10 @@ local function InsetButtonBackdrop(button, inset)
     local backdrop = SkinBase.GetBackdrop(button)
     if not backdrop then return end
 
-    inset = inset or 0
-    if SkinBase.SetInsetPointsPx then
-        SkinBase.SetInsetPointsPx(backdrop, button, inset, inset, inset, inset)
-        return
-    end
-
-    backdrop:ClearAllPoints()
-    backdrop:SetPoint("TOPLEFT", button, "TOPLEFT", inset, -inset)
-    backdrop:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", -inset, inset)
+    -- Refreshing inset: re-applies on UI-scale change so the backdrop stays on the
+    -- pixel grid. The one-shot SetInsetPointsPx baked stale screen-unit offsets, and
+    -- its bare-SetPoint fallback was unreachable (the helper is always present).
+    SkinBase.SetInsetPixelPoints(backdrop, button, inset or 0)
 end
 
 local function LowerFrameBackdrop(frame)
@@ -146,11 +141,13 @@ local function SkinMailIconButton(button)
         SkinBase.SetFrameData(button, "skinColor", { sr, sg, sb, sa })
         SkinBase.SetFrameData(button, "skinKind", "button")
         SkinBase.SetFrameData(button, "bgBoost", ICON_BUTTON_BG_BOOST)
+        SkinBase.SetFrameData(button, "skinFont", true) -- RefreshWidget re-faces on theme change
         SkinBase.MarkStyled(button)
     end
 
-    SkinBase.SkinFrameText(button, { recurse = true })
-    SkinBase.LockFrameTextObjects(button, 2)
+    -- Guarded once-per-button recursive face (avoids re-walking every region on each
+    -- InboxFrame_Update); theme-change re-face goes through RefreshWidget via skinFont.
+    SkinBase.LockPooledRowText(button, 2)
 end
 
 local function SkinInboxArtwork()
@@ -177,8 +174,7 @@ local function SkinMailItems()
         local item = _G["MailItem" .. i]
         if item then
             SkinBase.SkinScrollRow(item, { hover = false })
-            SkinBase.SkinFrameText(item, { recurse = true })
-            SkinBase.LockFrameTextObjects(item, 3)
+            SkinBase.LockPooledRowText(item, 3) -- guarded once-per-row face (InboxFrame_Update fires often)
             SkinBase.SkinButton(_G["MailItem" .. i .. "ExpireTime"])
             SkinMailIconButton(_G["MailItem" .. i .. "Button"])
         end

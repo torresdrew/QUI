@@ -23,14 +23,12 @@ end
 
 local source = readFile("QUI_Skinning/skinning/frames/auctionhouse.lua")
 
+-- The belowChildren opt lowers SkinButton's own backdrop to max(0, button level - 1) --
+-- the same SetFrameLevel the old manual GetBackdrop/SetFrameLevel block did -- so the
+-- clear-filters "X" (a child of FilterButton) stays on top of the QUI backdrop.
 assertContains(
     source,
-    "GetBackdrop(searchBar.FilterButton)",
-    "AH filter skinning must reference its own backdrop to re-level it")
-
-assertContains(
-    source,
-    "filterBd:SetFrameLevel(math.max(0, searchBar.FilterButton:GetFrameLevel() - 1))",
-    "AH filter backdrop must be lowered below the dropdown's children so the clear-X stays on top")
+    "SkinBase.SkinButton(searchBar.FilterButton, { strip = true, font = true, belowChildren = true })",
+    "AH filter backdrop must be lowered below the dropdown's children (belowChildren) so the clear-X stays on top")
 
 print("OK: auctionhouse_filter_clearx_strata_test")

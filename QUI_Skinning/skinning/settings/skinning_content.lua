@@ -18,15 +18,11 @@ local RenderAdapters = Settings and Settings.RenderAdapters
 
 local THEME_COLORS_SUBPAGE_INDEX = 10
 
-local PAD = (Shared and Shared.PADDING) or 15
-local HEADER_GAP = 26
-local SECTION_GAP = 14
-
 ---------------------------------------------------------------------------
 -- Refresh helpers (unchanged)
 ---------------------------------------------------------------------------
 local function RefreshSkinSurfaces()
-    if ns.Registry then
+    if ns.Registry and type(ns.Registry.RefreshAll) == "function" then
         ns.Registry:RefreshAll("skinning")
     end
     if _G.QUI_RefreshStatusTrackingBarSkin then
@@ -192,9 +188,11 @@ local function BuildThemeColorsTab(tabContent)
     local tooltip = db.tooltip
 
     if general.themePreset == nil then general.themePreset = "Custom" end
-    if general.skinUseClassColor == nil then general.skinUseClassColor = (general.themePreset == "Class Colored") end
+    -- Match BuildSkinningTab and core/defaults.lua (true) so this shared key cannot resolve
+    -- differently depending on which tab the user opens first.
+    if general.skinUseClassColor == nil then general.skinUseClassColor = true end
     if general.addonAccentColor == nil then general.addonAccentColor = {0.376, 0.647, 0.980, 1} end
-    if general.skinBgColor == nil then general.skinBgColor = {0.05, 0.05, 0.05, 0.95} end
+    if general.skinBgColor == nil then general.skinBgColor = {0.008, 0.008, 0.008, 1} end -- match core/defaults.lua
     if general.hideSkinBorders == nil then general.hideSkinBorders = false end
     if general.skinBorderColorSource == nil then
         general.skinBorderColorSource = general.skinBorderUseClassColor and "class" or "theme"

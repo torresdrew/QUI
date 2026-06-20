@@ -159,7 +159,8 @@ local function ApplyMPlusTimerSkin()
     if opacityMul == nil then opacityMul = 1 end
     opacityMul = math.max(0, math.min(1, opacityMul))
     bga = math.max(0, math.min(1, bga * opacityMul))
-    local br, bg, bb, ba = SkinBase.GetSkinBarColor(settings)
+    -- bar fills use a fixed alpha of 1; the bar-color alpha is intentionally not threaded.
+    local br, bg, bb = SkinBase.GetSkinBarColor(settings)
     local colors = GetContrastColors(bgr, bgg, bgb)
     local showBorder = settings.showBorder ~= false  -- Default true
 

@@ -332,9 +332,9 @@ local function RefreshInspectFrameColors()
 
     -- Update main background
     if customBg then
+        -- ApplyPixelBackdrop persists + renders both colors; bare follow-up setters only
+        -- touch live textures and are discarded on the next scale-refresh rebuild.
         SkinBase.ApplyPixelBackdrop(customBg, 1, true, true, { sr, sg, sb, sa }, { bgr, bgg, bgb, bga })
-        customBg:SetBackdropColor(bgr, bgg, bgb, bga)
-        customBg:SetBackdropBorderColor(sr, sg, sb, sa)
     end
 
     SkinInspectFrameTabs()

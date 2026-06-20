@@ -52,6 +52,26 @@ local function StyleScrollBoxRow(row)
     -- left the backdrop covering only a shifted sub-box → partial, dim hover.)
 end
 
+-- OrderList (crafter Orders) rows use ProfessionsCrafterOrderListElementTemplate, a
+-- TableBuilder row with NO .Label/.Text/.Icon parentKeys, so StyleScrollBoxRow's
+-- Label/Text/Icon spacer fallback would early-return on EVERY row and leave the whole
+-- list unskinned. This variant keeps only the divider/padding-node guard and always
+-- skins real content rows (matching craftingorders.lua's row styler).
+local function StyleOrderListRow(row)
+    if not row or SkinBase.IsStyled(row) then return end
+
+    local node = row.GetElementData and row:GetElementData()
+    if node then
+        local data = node.GetData and node:GetData()
+        if data and (data.isDivider or data.topPadding or data.bottomPadding) then
+            return
+        end
+    end
+
+    SkinBase.SkinScrollRow(row)
+    SkinBase.LockPooledRowText(row, 4)
+end
+
 ---------------------------------------------------------------------------
 -- HIDE DECORATIONS
 ---------------------------------------------------------------------------
@@ -197,8 +217,8 @@ local function SkinOrdersPage(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
         -- Recipe list (left panel)
         SkinRecipeList(browseFrame.RecipeList)
 
-        -- Order list (right panel)
-        SkinBase.SkinListContainer(browseFrame.OrderList, StyleScrollBoxRow)
+        -- Order list (right panel) — TableBuilder rows need the no-Label/Text/Icon-guard styler
+        SkinBase.SkinListContainer(browseFrame.OrderList, StyleOrderListRow)
 
         -- Search / back buttons
         if browseFrame.SearchButton then

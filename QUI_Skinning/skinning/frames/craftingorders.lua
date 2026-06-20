@@ -269,11 +269,9 @@ local function SkinForm(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
         end
         -- Duration dropdown
         if pc.DurationDropdown then
+            -- SkinDropdown faces+locks the dropdown text internally (LockDropdownText:
+            -- SkinFontString{fontOnly} + LockFontObject + LockFrameTextObjects(dropdown,2)).
             SkinBase.SkinDropdown(pc.DurationDropdown)
-            if pc.DurationDropdown.Text then
-                SkinBase.SkinFontString(pc.DurationDropdown.Text, { fontOnly = true })
-            end
-            SkinBase.LockFrameTextObjects(pc.DurationDropdown, 2)
         end
         -- Note edit box
         if pc.NoteEditBox then
@@ -282,13 +280,12 @@ local function SkinForm(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     end
 
     -- Dropdowns on the form
+    -- SkinDropdown already calls LockDropdownText internally, so no post-lock needed.
     if form.MinimumQuality and form.MinimumQuality.Dropdown then
         SkinBase.SkinDropdown(form.MinimumQuality.Dropdown)
-        SkinBase.LockDropdownText(form.MinimumQuality.Dropdown)
     end
     if form.OrderRecipientDropdown then
         SkinBase.SkinDropdown(form.OrderRecipientDropdown)
-        SkinBase.LockDropdownText(form.OrderRecipientDropdown)
     end
 
     -- Recipient target edit box

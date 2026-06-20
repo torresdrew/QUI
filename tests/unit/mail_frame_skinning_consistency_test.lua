@@ -76,7 +76,7 @@ for _, needle in ipairs({
     "_G[\"MailItem\" .. i]",
     "_G[\"MailItem\" .. i .. \"ExpireTime\"]",
     "_G[\"MailItem\" .. i .. \"Button\"]",
-    "SkinBase.LockFrameTextObjects(item, 3)",
+    "SkinBase.LockPooledRowText(item, 3)",
     "SkinBase.SkinButton(_G.OpenAllMail",
     "local function SkinSendMailControls()",
     "SkinBase.SkinEditBox(_G.SendMailNameEditBox)",

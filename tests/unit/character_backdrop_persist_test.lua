@@ -118,6 +118,8 @@ local ns = {
     -- ApplyTextureBackdrop's colour application (uikit.lua:2057-2067): use the
     -- passed colour, else the _quiBg*/_quiBorder* fallback fields.
     SkinBase = {
+        -- Guarded pixel-size entry point (numerically mirrors Addon:GetPixelSize).
+        GetPixelSize = function() return 0.5 end,
         ApplyTextureBackdrop = function(frame, _bgFile, _edgeFile, _edgeSize, borderColor, bgColor)
             if bgColor then
                 frame:SetBackdropColor(bgColor[1], bgColor[2], bgColor[3], bgColor[4])

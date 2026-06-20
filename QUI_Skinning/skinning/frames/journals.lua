@@ -132,17 +132,9 @@ local function SkinPlayerSpells()
     SkinBase.SkinButtonFrameTemplate(frame)
     -- Modern TabSystemTemplate tabs live at frame.TabSystem.tabs.
     if frame.TabSystem and frame.TabSystem.tabs then
+        -- SkinTabGroup already wires the SetTab programmatic-switch refresh via
+        -- RegisterOwnerTabRefresh (sets qTabSysHooked), so a manual hook here is dead.
         SkinBase.SkinTabGroup(frame.TabSystem.tabs, frame)
-        if not SkinBase.GetFrameData(frame.TabSystem, "qTabSysHooked") then
-            hooksecurefunc(frame.TabSystem, "SetTab", function()
-                C_Timer.After(0, function()
-                    for _, t in ipairs(frame.TabSystem.tabs) do
-                        SkinBase.RefreshTabSelected(t, frame)
-                    end
-                end)
-            end)
-            SkinBase.SetFrameData(frame.TabSystem, "qTabSysHooked", true)
-        end
         -- Tabs swap their font OBJECT on hover/select; lock so the QUI face
         -- survives (fontOnly keeps the per-state size, just enforces the face).
         for _, t in ipairs(frame.TabSystem.tabs) do
@@ -210,6 +202,10 @@ local function RefreshPlayerSpells()
         return
     end
     RefreshBackdropColors(frame)
+    -- Re-read theme colors into the tab tints (RefreshTabSelected alone re-applies stale stored colors).
+    if frame.TabSystem and frame.TabSystem.tabs then
+        SkinBase.RefreshTabGroup(frame.TabSystem.tabs, frame)
+    end
     HookPlayerSpellsTextUpdates(frame)
     HookTalentButtons(frame)
     SkinPlayerSpellsText(frame)
@@ -583,8 +579,10 @@ end
 
 local function RefreshEncounterJournal()
     local frame = _G.EncounterJournal
-    RefreshBackdropColors(frame)
+    -- Gate before recoloring (matches RefreshPlayerSpells): a disabled module should
+    -- not recolor its (possibly leftover) backdrop on a theme refresh.
     if not frame or not IsSettingEnabled("skinEncounterJournal") then return end
+    RefreshBackdropColors(frame)
     if not SkinBase.IsSkinned(frame) then
         SkinEncounterJournal()
         return
@@ -706,10 +704,17 @@ end
 
 local function RefreshCollections()
     local frame = _G.CollectionsJournal
+    if not frame or not IsSettingEnabled("skinCollections") then return end
     RefreshBackdropColors(frame)
-    if frame and IsSettingEnabled("skinCollections") then
-        HookCollectionsText(frame)
+    -- Recolor the CollectionsJournalTab1..6 strip on a live theme/accent change
+    -- (RefreshTabSelected alone re-applies stale stored tints).
+    local tabs = {}
+    for i = 1, 6 do
+        local tab = _G["CollectionsJournalTab" .. i]
+        if tab then tabs[#tabs + 1] = tab end
     end
+    SkinBase.RefreshTabGroup(tabs, frame)
+    HookCollectionsText(frame)
 end
 _G.QUI_RefreshCollectionsColors = RefreshCollections
 if ns.Registry then
