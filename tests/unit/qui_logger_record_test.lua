@@ -3,7 +3,18 @@
 local ns = {}
 assert(loadfile("QUI_Logger/recorder.lua"))("QUI_Logger", ns)
 
-for _, fn in ipairs({"SanitizeArg","SanitizeArgs","BuildRecord","NewSession","InitDB","ClearDB","StatusString"}) do
+for _, fn in ipairs({
+    "SanitizeArg",
+    "SanitizeArgs",
+    "BuildRecord",
+    "NewSession",
+    "PruneSession",
+    "PruneDB",
+    "EnsureDB",
+    "InitDB",
+    "ClearDB",
+    "StatusString",
+}) do
     assert(type(ns[fn]) == "function", "recorder must define ns." .. fn)
 end
 
