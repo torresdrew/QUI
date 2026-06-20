@@ -9,6 +9,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v4.0.3-beta9 - 2026-06-20
+
+### Fixed
+- Player class colors now hold through combat for party/raid/guild chat — when
+  combat delivers the chat sender as a protected (secret) value the name's
+  class color is recovered from a name→class cache instead of dropping to plain
+- Skinning is steadier across Blizzard's own refreshes — managed backdrop
+  recolors persist (no whitening after a UI-scale change) and QUI fonts stay
+  locked through the refresh paths that used to revert them; fragile frame
+  setup is deferred so it no longer races initialization
+- Action-tracker preview no longer trips a combat "action blocked" error — the
+  mouse-enable toggle that ran every half-second is off the visibility path and
+  is now layout-mode only
+
+### Changed
+- Smoother group-frame tooltip hover — tooltip shows are debounced and the
+  non-roster aura refresh is scoped to the unit the tooltip is on, cutting the
+  hover-stutter churn
+
+
 ## v4.0.3-beta8 - 2026-06-19
 
 ### Fixed
