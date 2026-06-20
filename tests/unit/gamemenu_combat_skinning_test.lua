@@ -212,6 +212,14 @@ local ns = {
         ApplyFullBackdrop = function() backdropApplications = backdropApplications + 1 end,
         SkinFontString = function(fs) fontStringSkins[#fontStringSkins + 1] = fs end,
         SkinFrameText = function() end,
+        -- Canonical tier-3 label-font path: drives the button's per-state font OBJECTS
+        -- off a single shared cached QUI label font object (stable across hover/disable),
+        -- which is exactly what the per-state assertions below verify.
+        ApplyButtonFontObjects = function(button, _opts)
+            if button.SetNormalFontObject then button:SetNormalFontObject(labelFontObjectStub) end
+            if button.SetHighlightFontObject then button:SetHighlightFontObject(labelFontObjectStub) end
+            if button.SetDisabledFontObject then button:SetDisabledFontObject(labelFontObjectStub) end
+        end,
     },
 }
 

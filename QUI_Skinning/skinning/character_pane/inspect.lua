@@ -837,7 +837,9 @@ local function UpdateInspectSlotBorder(slot, unit)
 
     if quality and quality >= 1 then
         local r, g, b = C_Item.GetItemQualityColor(quality)
-        borderFrame:SetBackdropBorderColor(r, g, b, 1)
+        -- Persist the quality tint into data.borderColor so it survives a scale
+        -- rebuild (a bare SetBackdropBorderColor reverts to default chrome on refresh).
+        SetOnePixelBorderColors(borderFrame, { r, g, b, 1 })
         borderFrame:Show()
     else
         borderFrame:Hide()
@@ -1873,10 +1875,10 @@ ApplyInspectPaneLayout = function(force)
         end)
     end)
 
-    local skinBase = GetSkinBase()
-    if skinBase and InspectFrame then
-        skinBase.SkinFrameText(InspectFrame, { recurse = true })
-    end
+    -- InspectFrame chrome-text durability (recursive SkinFrameText + LockFrameTextObjects
+    -- + tab font objects) is owned by frames/inspect.lua. A second bare, unlocked
+    -- SkinFrameText pass here only re-walks the same subtree and reverts on Blizzard
+    -- font re-binds, so it is intentionally not repeated.
 
     inspectLayoutApplied = true
 end
@@ -2122,9 +2124,13 @@ local function PatchInspectGuildNilGuard()
 
     if originalOnEvent then
         InspectGuildFrame:SetScript("OnEvent", function(self, event, unit, ...)
+            -- UnitGUID is SecretWhenUnitIdentityRestricted; a raw == on a secret
+            -- value throws in restricted/PvP combat. Guard the payload, then resolve
+            -- InspectFrame.unit through the readable-GUID helper before comparing.
             if event == "INSPECT_READY"
                 and InspectFrame and InspectFrame.unit
-                and UnitGUID and UnitGUID(InspectFrame.unit) == unit
+                and not Helpers.IsSecretValue(unit)
+                and IsInspectGUIDMatch(InspectFrame.unit, unit)
                 and ShouldSkipInspectGuildUpdate()
             then
                 ClearInspectGuildFrame()

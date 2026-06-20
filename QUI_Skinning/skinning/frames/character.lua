@@ -54,7 +54,7 @@ local function RefreshPixelBackdrop(frame)
     local state = pixelBackdropState[frame]
     if not state then return end
     if not frame then return end
-    local edgeSize = (state.borderPixels or 1) * QUICore:GetPixelSize(frame)
+    local edgeSize = (state.borderPixels or 1) * SkinBase.GetPixelSize(frame, 1)
     local bgFile = state.withBackground and "Interface\\Buttons\\WHITE8x8" or false
     local edgeFile = edgeSize > 0 and "Interface\\Buttons\\WHITE8x8" or false
     -- Match the old SetBackdrop behaviour: with insets, push the bg in by one
@@ -128,7 +128,8 @@ local function StyleThinScrollBar(scrollBar, r, g, b)
     local thumb = scrollBar.ThumbTexture or (scrollBar.GetThumbTexture and scrollBar:GetThumbTexture()) or scrollBar.Thumb
     if thumb then
         thumb:SetColorTexture(r, g, b, 0.78)
-        thumb:SetWidth(8 * QUICore:GetPixelSize(scrollBar))
+        UIKit.DisablePixelSnap(thumb) -- 8px-wide quad vanishes off-grid at fractional scales without this
+        thumb:SetWidth(8 * SkinBase.GetPixelSize(scrollBar, 1))
     end
 
     local upBtn = scrollBar.ScrollUpButton or scrollBar.Back
@@ -190,9 +191,10 @@ local function CreateOrUpdateBackground()
         customBg:EnableMouse(false)  -- Don't steal clicks
     end
 
+    -- Local ApplyPixelBackdrop already persists+renders these colors via the file's own
+    -- backdrop subsystem; the global Helpers.SetFrameBackdrop* pair wrote a _quiBg*/_quiBorder*
+    -- cache the local RefreshPixelBackdrop never reads, so it was redundant on the create path.
     ApplyPixelBackdrop(customBg, 1, true, true, { sr, sg, sb, sa }, { bgr, bgg, bgb, bga })
-    Helpers.SetFrameBackdropColor(customBg, bgr, bgg, bgb, bga)
-    Helpers.SetFrameBackdropBorderColor(customBg, sr, sg, sb, sa)
 
     return customBg
 end
@@ -454,7 +456,7 @@ local function SkinReputationEntry(child)
     -- Skin reputation bar
     local ReputationBar = child.Content and child.Content.ReputationBar
     if ReputationBar then
-        ReputationBar:SetStatusBarTexture("Interface\\Buttons\\WHITE8X8")
+        ReputationBar:SetStatusBarTexture("Interface\\Buttons\\WHITE8x8")
 
         -- Suppress Blizzard's ornate end-cap art + black fill backing.
         -- ReputationBarTemplate (ReputationFrame.xml) draws LeftTexture/RightTexture
@@ -984,9 +986,14 @@ local function SkinTitleManagerPane()
     -- Hide pane background (uses popup's custom bg)
     if pane.Bg then pane.Bg:Hide() end
 
-    -- Style ScrollBox entries — fires once per acquisition.
+    -- Style ScrollBox entries — fires once per acquisition. Pair with the guarded
+    -- once-per-row font lock (matching the rep/currency rows) so the QUI face survives
+    -- any future font-object rebind on the row.
     if pane.ScrollBox then
-        SkinBase.HookScrollBoxAcquired(pane.ScrollBox, SkinTitleEntry)
+        SkinBase.HookScrollBoxAcquired(pane.ScrollBox, function(row)
+            SkinTitleEntry(row)
+            SkinBase.LockPooledRowText(row, 3)
+        end)
     end
 
     -- Blizzard's PaperDollTitlesPane_InitButton re-Shows BgTop/BgMiddle/BgBottom for

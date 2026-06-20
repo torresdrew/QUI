@@ -93,6 +93,13 @@ local ns = {
         SkinCloseButton = function(button)
             skinnedCloseButtons[#skinnedCloseButtons + 1] = button
         end,
+        -- Scale-stable pixel re-anchor: stores the offset in a weak side table and
+        -- (re)applies it via ClearAllPoints + SetPoint, exactly like the real
+        -- RefreshPixelPoint. The mock applies it immediately so the anchor assertions hold.
+        SetPixelPoint = function(region, point, relativeTo, relativePoint, x, y)
+            if region.ClearAllPoints then region:ClearAllPoints() end
+            if region.SetPoint then region:SetPoint(point, relativeTo, relativePoint, x or 0, y or 0) end
+        end,
     },
     UIKit = {
         CreateBackground = function() return { SetVertexColor = function() end } end,

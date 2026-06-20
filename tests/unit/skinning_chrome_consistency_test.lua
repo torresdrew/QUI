@@ -77,8 +77,12 @@ for _, f in ipairs({
     "QUI_Skinning/skinning/character_pane/character.lua", "QUI_Skinning/skinning/character_pane/inspect.lua",
 }) do
     local src = readFile(f)
-    assert(src:find("SkinFrameText", 1, true) or src:find("SkinFontString", 1, true),
-        f .. " must route text through SkinFrameText/SkinFontString")
+    -- ApplyButtonFontObjects is also a shared text-skinning helper (it drives the
+    -- button's font OBJECTS via the size|color cache, internally facing via SkinFontString),
+    -- so a file whose only text is button labels may route exclusively through it.
+    assert(src:find("SkinFrameText", 1, true) or src:find("SkinFontString", 1, true)
+        or src:find("ApplyButtonFontObjects", 1, true),
+        f .. " must route text through SkinFrameText/SkinFontString/ApplyButtonFontObjects")
 end
 
 -- 6) Semantic color tokens preserved (guard against over-zealous color sweep)

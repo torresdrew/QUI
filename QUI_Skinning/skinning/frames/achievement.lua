@@ -43,8 +43,10 @@ local function HideAchievementChrome()
         if tex and tex.Hide then tex:Hide() end
     end
 
-    -- The Blizzard backdrop also draws a BackdropTemplate frame border —
-    -- zero its colors so it doesn't peek through the QUI backdrop.
+    -- The Blizzard backdrop also draws a BackdropTemplate frame border — remove it
+    -- entirely (SkinAchievement gives AchievementFrame its own CreateBackdrop child)
+    -- so it doesn't peek through the QUI backdrop. pcall-guarded; SetBackdrop(nil)
+    -- reads no width/height, so no secret-value/combat throw.
     if frame.SetBackdrop then
         pcall(frame.SetBackdrop, frame, nil)
     end

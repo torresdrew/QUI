@@ -246,7 +246,7 @@ local function SkinTrackerHeader(header)
 
     -- Hide background atlas
     if header.Background then
-        header.Background:SetAtlas(nil)
+        header.Background:SetTexture(nil) -- Nilable-correct clear (SetAtlas atlas arg is Nilable=false)
         header.Background:SetAlpha(0)
     end
 
@@ -693,7 +693,10 @@ local function ApplyQUIBackdrop(trackerFrame, sr, sg, sb, sa, bgr, bgg, bgb, bga
                 local bd = SkinBase.GetFrameData(self, "backdrop")
                 if bd then
                     local _, _, _, _, currBgR, currBgG, currBgB = SkinBase.GetSkinColors()
-                    Helpers.SetFrameBackdropColor(bd, currBgR, currBgG, currBgB, alpha)
+                    -- Persist into data.bgColor so the edit-mode opacity survives the next
+                    -- scale-refresh rebuild (Helpers.SetFrameBackdropColor wrote only the
+                    -- _quiBg* cache, which data.bgColor shadows on rebuild).
+                    SkinBase.SetBackdropColors(bd, nil, { currBgR, currBgG, currBgB, alpha })
                 end
             end)
         end)
@@ -948,7 +951,10 @@ local function SkinObjectiveTracker()
                 local _, _, _, _, currBgR, currBgG, currBgB = SkinBase.GetSkinColors()
                 local bd = SkinBase.GetFrameData(TrackerFrame, "backdrop")
                 if bd then
-                    Helpers.SetFrameBackdropColor(bd, currBgR, currBgG, currBgB, alpha)
+                    -- Persist into data.bgColor so the edit-mode opacity survives the next
+                    -- scale-refresh rebuild (Helpers.SetFrameBackdropColor wrote only the
+                    -- _quiBg* cache, which data.bgColor shadows on rebuild).
+                    SkinBase.SetBackdropColors(bd, nil, { currBgR, currBgG, currBgB, alpha })
                 end
             end)
         end)

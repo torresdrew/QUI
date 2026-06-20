@@ -47,8 +47,10 @@ end
 
 local function ApplyBorderBackdrop(backdrop)
     if not backdrop then return end
+    -- Recolor via the shared persistence helper (same idiom as achievement/weeklyrewards),
+    -- rather than re-driving ApplyPixelBackdrop on the already-managed backdrop child.
     local sr, sg, sb, sa, bgr, bgg, bgb, bga = SkinBase.GetSkinColors()
-    SkinBase.ApplyPixelBackdrop(backdrop, 1, true, true, { sr, sg, sb, sa }, { bgr, bgg, bgb, bga })
+    SkinBase.SetBackdropColors(backdrop, { sr, sg, sb, sa }, { bgr, bgg, bgb, bga })
 end
 
 -- Quest-log rows (QuestScrollFrame) are FramePool-pooled (QuestMapFrame.lua:

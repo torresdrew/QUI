@@ -3373,12 +3373,24 @@ function SkinBase.RefreshCategorySelected(button)
     local sc = SkinBase.GetFrameData(button, "skinColor")
     if not bd or not sc then return end
     local selected = button.SelectedTexture and button.SelectedTexture:IsShown()
+    -- Persist through scale-refresh WITHOUT rebuilding the backdrop. CreateBackdrop
+    -- seeds pixelBackdropData.borderColor/bgColor with the full-alpha skin color;
+    -- RefreshPixelBackdrop (login/first-show/scale change) re-applies that cached
+    -- value, which is what snapped every category row back to a full-alpha border
+    -- ("all highlighted" on first open). Routing through SetBackdropColors fixed
+    -- the color but rebuilt the 4-texture backdrop on EVERY category bind
+    -- (OnFilterClicked refresh + AuctionHouseFilterButton_SetUp per row) = a
+    -- browse-time FPS stutter. Instead drop the cached colors so RefreshPixelBackdrop
+    -- falls back to the live _quiBorder*/_quiBg* fields, then set those via the cheap
+    -- bare setters (vertex recolor only, no SetPoint/texture rebuild).
+    local data = pixelBackdropData[bd]
+    if data then data.borderColor, data.bgColor = nil, nil end
+    local r, g, b, a = SkinBase.GetDepthColor("ROW")
     if selected then
         bd:SetBackdropBorderColor(sc[1], sc[2], sc[3], sc[4])
-        bd:SetBackdropColor(SkinBase.GetDepthColor("ROW"))
+        bd:SetBackdropColor(r, g, b, a)
     else
         bd:SetBackdropBorderColor(sc[1], sc[2], sc[3], (sc[4] or 1) * 0.5)
-        local r, g, b = SkinBase.GetDepthColor("ROW")
         bd:SetBackdropColor(r, g, b, 0.7)
     end
 end

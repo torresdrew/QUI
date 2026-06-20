@@ -4,21 +4,6 @@ local GetCore = ns.Helpers.GetCore
 local SkinBase = ns.SkinBase
 local Helpers = ns.Helpers
 
-local function CJKFont(fs, p, s, f)
-    if ns.Helpers and ns.Helpers.ApplyFontWithFallback then
-        ns.Helpers.ApplyFontWithFallback(fs, p, s, f)
-    else
-        fs:SetFont(p, s, f)
-    end
-end
-
--- Resolve the user's configured general font FACE (falling back to the WoW
--- default). CJKFont keeps CJK glyph fallback either way; this just ensures the
--- label uses the QUI font instead of the hardcoded engine default.
-local function GeneralFontFace()
-    return (ns.Helpers and ns.Helpers.GetGeneralFont and ns.Helpers.GetGeneralFont()) or STANDARD_TEXT_FONT
-end
-
 ---------------------------------------------------------------------------
 -- PLAYER POWER BAR ALT SKINNING
 ---------------------------------------------------------------------------
@@ -27,8 +12,7 @@ end
 -- corruption, Darkmoon games, etc.
 --
 -- Approach: Hide Blizzard's bar, create custom replacement
-
-local FONT_FLAGS = "OUTLINE"
+-- Font facing is owned by SkinBase.SkinFontString (QUI font + CJK fallback + outline).
 
 -- Bar dimensions
 local BAR_WIDTH = 250
@@ -207,8 +191,7 @@ local function CreateQUIAltPowerBar()
     -- Create text
     bar.text = bar:CreateFontString(nil, "OVERLAY")
     bar.text:SetPoint("CENTER", bar, "CENTER")
-    CJKFont(bar.text, GeneralFontFace(), 11, FONT_FLAGS)
-    bar.text:SetTextColor(1, 1, 1)
+    SkinBase.SkinFontString(bar.text, { size = 11, color = { 1, 1, 1, 1 } })
     bar.text:SetJustifyH("CENTER")
 
     -- Store colors for refresh and mark as skinned

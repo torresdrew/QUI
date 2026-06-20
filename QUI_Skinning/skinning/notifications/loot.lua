@@ -25,8 +25,9 @@ QUICore.Loot = Loot
 -- Helper to get theme colors from QUI skin system
 local function GetThemeColors()
     local db = QUICore.db and QUICore.db.profile or {}
-    local sr, sg, sb, sa = Helpers.GetSkinBorderColor(db.loot or {})
-    local bgr, bgg, bgb, bga = Helpers.GetSkinBgColor()
+    -- Canonical 8-value resolver: border + per-module bg override path, consistent
+    -- with readycheck.lua, instead of pairing GetSkinBorderColor + override-less GetSkinBgColor.
+    local sr, sg, sb, sa, bgr, bgg, bgb, bga = SkinBase.GetSkinColors(db.loot or {}, "loot")
     return {bgr, bgg, bgb, bga}, {sr, sg, sb, sa}, {0.95, 0.96, 0.97, 1}
 end
 
@@ -1572,9 +1573,10 @@ local function CreateEditModeBorder(frame)
 
     local border = {}
 
-    -- Top border
+    -- Top border (DisablePixelSnap so the 2px quad stays on-grid at fractional UI scales)
     border.top = frame:CreateTexture(nil, "OVERLAY")
     border.top:SetColorTexture(unpack(EDIT_BORDER_COLOR))
+    SkinBase.DisablePixelSnap(border.top)
     border.top:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, 0)
     border.top:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 0, 0)
     border.top:SetHeight(EDIT_BORDER_SIZE)
@@ -1582,6 +1584,7 @@ local function CreateEditModeBorder(frame)
     -- Bottom border
     border.bottom = frame:CreateTexture(nil, "OVERLAY")
     border.bottom:SetColorTexture(unpack(EDIT_BORDER_COLOR))
+    SkinBase.DisablePixelSnap(border.bottom)
     border.bottom:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 0, 0)
     border.bottom:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", 0, 0)
     border.bottom:SetHeight(EDIT_BORDER_SIZE)
@@ -1589,6 +1592,7 @@ local function CreateEditModeBorder(frame)
     -- Left border
     border.left = frame:CreateTexture(nil, "OVERLAY")
     border.left:SetColorTexture(unpack(EDIT_BORDER_COLOR))
+    SkinBase.DisablePixelSnap(border.left)
     border.left:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, 0)
     border.left:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 0, 0)
     border.left:SetWidth(EDIT_BORDER_SIZE)
@@ -1596,6 +1600,7 @@ local function CreateEditModeBorder(frame)
     -- Right border
     border.right = frame:CreateTexture(nil, "OVERLAY")
     border.right:SetColorTexture(unpack(EDIT_BORDER_COLOR))
+    SkinBase.DisablePixelSnap(border.right)
     border.right:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 0, 0)
     border.right:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", 0, 0)
     border.right:SetWidth(EDIT_BORDER_SIZE)

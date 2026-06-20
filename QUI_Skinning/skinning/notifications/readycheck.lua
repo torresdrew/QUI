@@ -365,34 +365,11 @@ local function SkinReadyCheckFrame()
         end)
     end)
 
-    -- Make frame movable (only when unlocked)
-    -- Defer to post-combat if in lockdown so skinning can still proceed
-    local function EnableDragging()
-        if InCombatLockdown() then
-            local f = CreateFrame("Frame")
-            f:RegisterEvent("PLAYER_REGEN_ENABLED")
-            f:SetScript("OnEvent", function(self)
-                self:UnregisterEvent("PLAYER_REGEN_ENABLED")
-                EnableDragging()
-            end)
-            return
-        end
-        frame:SetMovable(true)
-        frame:RegisterForDrag("LeftButton")
-    end
-    EnableDragging()
-    frame:HookScript("OnDragStart", function(self)
-        if InCombatLockdown() then return end
-        if SkinBase.GetFrameData(self, "unlocked") then
-            self:StartMoving()
-        end
-    end)
-    frame:HookScript("OnDragStop", function(self)
-        if InCombatLockdown() then return end
-        if SkinBase.GetFrameData(self, "unlocked") then
-            self:StopMovingOrSizing()
-        end
-    end)
+    -- Positioning is owned by the frameAnchoring system (QUI_ApplyFrameAnchor, invoked
+    -- from the Show hook above). The legacy drag block gated movement on an "unlocked"
+    -- frame-data flag that nothing ever sets, so StartMoving/StopMovingOrSizing were
+    -- unreachable and SetMovable/RegisterForDrag was pointless taint surface on the
+    -- protected ReadyCheckFrame — removed.
 
     SkinBase.SkinFrameText(frame, { recurse = true })
     SkinBase.MarkSkinned(frame)

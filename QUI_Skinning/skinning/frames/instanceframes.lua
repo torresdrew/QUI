@@ -4,14 +4,6 @@ local GetCore = ns.Helpers.GetCore
 local Helpers = ns.Helpers
 local SkinBase = ns.SkinBase
 
-local function CJKFont(fs, p, s, f)
-    if ns.Helpers and ns.Helpers.ApplyFontWithFallback then
-        ns.Helpers.ApplyFontWithFallback(fs, p, s, f)
-    else
-        fs:SetFont(p, s, f)
-    end
-end
-
 -- Recursively re-lock the QUI font on a frame's fontstrings so Blizzard's
 -- hover / selection / list re-bind font-object swaps don't revert our font.
 -- Promoted to SkinBase.LockFrameTextObjects (core/uikit.lua) so journals /
@@ -726,8 +718,10 @@ local function SkinChallengesFrame()
             end
             -- Style labels
             if wi.Child.Label then
-                local fontPath = ns.Helpers.GetGeneralFont()
-                CJKFont(wi.Child.Label, fontPath, 14, "OUTLINE")
+                -- Canonical face (size>0 guard + CJK fallback); lock so the M+ UI's
+                -- per-SetUp font-object re-assert doesn't revert it.
+                SkinBase.SkinFontString(wi.Child.Label, { size = 14, outline = "OUTLINE", fontOnly = true })
+                SkinBase.LockFontObject(wi.Child.Label)
             end
         end
     end
@@ -978,7 +972,7 @@ local function StyleSpecificBGButton(button, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     -- Skin this button directly because the rest of its chrome is styled here.
     -- HookScrollBoxAcquired composes callbacks through SkinBase.
     SkinBase.SkinFrameText(button, { recurse = true })
-    SkinBase.LockFrameTextObjects(button, 2)
+    LockFrameTextObjects(button, 2)
 
     SkinBase.MarkStyled(button)
 end
