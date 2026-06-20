@@ -136,9 +136,12 @@ eq("decorate ambiguate", F.DecorateSender("CHAT_MSG_SAY", "hi", "Bob-Realm"), "B
 eq("decorate class color",
     F.DecorateSender("CHAT_MSG_SAY", "hi", "Bob-Realm", nil, nil, nil, nil, nil, nil, nil, nil, nil, "Player-1-MAGE"),
     "|cff3fc7ebBob|r")
+-- Truly-unknown player (never resolved, so absent from the name cache) stays
+-- plain. Uses a fresh name -- "Bob-Realm" was seeded MAGE just above, and the
+-- name cache now (correctly) recolors any later line from a known name.
 eq("decorate guid unknown",
-    F.DecorateSender("CHAT_MSG_SAY", "hi", "Bob-Realm", nil, nil, nil, nil, nil, nil, nil, nil, nil, "Player-9-NONE"),
-    "Bob")
+    F.DecorateSender("CHAT_MSG_SAY", "hi", "Ghost-Realm", nil, nil, nil, nil, nil, nil, nil, nil, nil, "Player-9-NONE"),
+    "Ghost")
 eq("decorate secret sender", F.DecorateSender("CHAT_MSG_SAY", "hi", secret), nil)
 -- Secret GUID (combat / chat-messaging lockdown): the class still resolves and
 -- colors the name. GetPlayerInfoByGUID is SecretArguments="AllowedWhenTainted",
@@ -158,6 +161,32 @@ do
         F.DecorateSender("CHAT_MSG_SAY", "hi", "Bob-Realm", nil, nil, nil, nil, nil, nil, nil, nil, nil, secretGuid),
         "|cff3fc7ebBob|r")
     _G.GetPlayerInfoByGUID = prevGPI
+    secrets[secretGuid] = nil
+end
+
+-- Combat name-cache recovery (the party/raid/guild fix). In live combat the
+-- engine returns NOTHING for a secret GUID (GetPlayerInfoByGUID is
+-- MayReturnNothing under chat-messaging lockdown), so the secret-GUID
+-- passthrough ALONE goes plain -- which is exactly the reported bug. A sender
+-- resolved earlier while non-secret seeds a name->class cache; when the same
+-- name speaks during combat, the class is recovered by name even though the
+-- GUID won't resolve. The default stub returns nothing for an unknown GUID, so
+-- the secret sentinel here naturally resolves to nothing (no GPI override).
+do
+    local secretGuid = setmetatable({}, { __tostring = explode, __concat = explode, __len = explode })
+    secrets[secretGuid] = true
+    -- 1) Seed: non-secret GUID resolves MAGE for sender "Cara-Realm".
+    eq("namecache seed colors",
+        F.DecorateSender("CHAT_MSG_PARTY", "hi", "Cara-Realm", nil, nil, nil, nil, nil, nil, nil, nil, nil, "Player-1-MAGE"),
+        "|cff3fc7ebCara|r")
+    -- 2) Combat: secret GUID resolves to NOTHING; name cache recovers the class.
+    eq("namecache combat recover",
+        F.DecorateSender("CHAT_MSG_PARTY", "hi", "Cara-Realm", nil, nil, nil, nil, nil, nil, nil, nil, nil, secretGuid),
+        "|cff3fc7ebCara|r")
+    -- 3) A never-seen sender stays plain -- no false recovery from the cache.
+    eq("namecache unknown stays plain",
+        F.DecorateSender("CHAT_MSG_PARTY", "hi", "Newbie-Realm", nil, nil, nil, nil, nil, nil, nil, nil, nil, secretGuid),
+        "Newbie")
     secrets[secretGuid] = nil
 end
 
