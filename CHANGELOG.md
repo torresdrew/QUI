@@ -9,6 +9,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v5.0.0-alpha2 - 2026-06-21
+
+> ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will
+> not load on the 12.0.x live client. Stay on the v4.x beta line for live realms.
+
+### Changed
+- chore(toc): pin every shipped TOC to a single `## Interface: 120100`, dropping
+  the pre-12.1 forward-compat list (120000/120001/120005/120007). QUI5 now
+  declares support for patch 12.1 exclusively.
+
+
 ## v5.0.0-alpha1 - 2026-06-18
 
 > ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will
