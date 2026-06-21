@@ -276,6 +276,19 @@ local LEAVE_SNIPPET = [[
 -- group layout) doesn't wipe the active frame's bindings.
 local HIDE_SNIPPET = LEAVE_SNIPPET
 
+-- WrapScript pre-body for OnShow — re-arm when a frame is hidden then re-shown
+-- UNDER A STATIONARY CURSOR. WoW fires no fresh OnEnter on re-show (the cursor
+-- never crossed the frame boundary), so the instant arm path is skipped and only
+-- the <=0.2s mouseoverstate tick would re-bind: a dead window where the key falls
+-- through to the action bar. RegisterUnitWatch hide/show (phasing, instance layer
+-- change, disconnect, roster churn) and secure-header relayout both trigger it.
+-- Guarded on IsUnderMouse so a frame showing AWAY from the cursor neither arms
+-- itself nor clears the actually-hovered frame's binding (ENTER_SNIPPET's leading
+-- ClearBindings run only after this guard passes).
+local SHOW_SNIPPET = [[
+    if not self:IsUnderMouse() then return end
+]] .. ENTER_SNIPPET
+
 local CLEAR_HEADER_BINDINGS_SNIPPET = [[
     self:ClearBindings()
     local caster = self:GetFrameRef("cc-caster")
@@ -333,6 +346,7 @@ local function WrapFrameSecureHandlers(frame)
     SecureHandlerWrapScript(frame, "OnEnter", header, ENTER_SNIPPET)
     SecureHandlerWrapScript(frame, "OnLeave", header, LEAVE_SNIPPET)
     SecureHandlerWrapScript(frame, "OnHide", header, HIDE_SNIPPET)
+    SecureHandlerWrapScript(frame, "OnShow", header, SHOW_SNIPPET)
 
     secureWrappedFrames[frame] = true
 end
@@ -618,9 +632,11 @@ local casterVBtns = {} -- virtual buttons set last apply, cleared on re-apply
 -- tell those apart from frame hover, so the snippet checks the registered
 -- frames (published as cc-frame<i> refs) geometrically via IsUnderMouse.
 local CASTER_MOUSEOVER_SNIPPET = [[
-    self:ClearBindings()
-    if newstate ~= "on" then return end
-
+    -- Geometry is authoritative, NOT the mouseover token. The
+    -- [@mouseover,exists] driver is mouseover-blind (SecureStateDriverManager
+    -- ignores UPDATE_MOUSEOVER_UNIT; it re-samples on a 0.2s tick), so a unit
+    -- token that churns in combat flips this to "off" while the cursor has not
+    -- moved. Test "is a registered click-cast frame still under the cursor?".
     local overFrame = false
     local fcount = self:GetAttribute("cc-framecount") or 0
     for i = 1, fcount do
@@ -630,15 +646,27 @@ local CASTER_MOUSEOVER_SNIPPET = [[
             break
         end
     end
-    if not overFrame then return end
 
-    local count = self:GetAttribute("cc-keycount") or 0
-    for i = 1, count do
-        local key = self:GetAttribute("cc-key" .. i)
-        local vbtn = self:GetAttribute("cc-vbtn" .. i)
-        if key and vbtn then
-            self:SetBindingClick(true, key, self, vbtn)
+    if newstate == "on" then
+        -- Mouseover appeared. Bind ONLY over a real click-cast frame (a nameplate
+        -- / 3D world unit also satisfies [@mouseover,exists] but must not bind).
+        if not overFrame then return end
+        self:ClearBindings()
+        local count = self:GetAttribute("cc-keycount") or 0
+        for i = 1, count do
+            local key = self:GetAttribute("cc-key" .. i)
+            local vbtn = self:GetAttribute("cc-vbtn" .. i)
+            if key and vbtn then
+                self:SetBindingClick(true, key, self, vbtn)
+            end
         end
+    elseif not overFrame then
+        -- Mouseover gone AND the cursor has truly left every frame: release the
+        -- keys so the action-bar keybind fires again. GUARDED -- while a frame is
+        -- still physically under the cursor a transient off-tick is ignored, so
+        -- the binding can't strand cleared until the next 0.2s tick ("stuck until
+        -- I re-mouseover").
+        self:ClearBindings()
     end
 ]]
 
@@ -899,6 +927,14 @@ local function SetupFrameClickCast(frame)
                 currentKeyboardFrame = nil
                 ClearHeaderOverrideBindings()
             end
+        end)
+        frame:HookScript("OnShow", function(self)
+            -- A frame re-shown under a stationary cursor gets no OnEnter, so the
+            -- secure OnShow wrap re-arms the binding; mirror it here so the
+            -- OOC-refresh re-arm target (currentKeyboardFrame, read by
+            -- RefreshHeaderOverrideBindings) stays consistent with it.
+            if not isEnabled then return end
+            if self:IsUnderMouse() then currentKeyboardFrame = self end
         end)
 
         -- Smart resurrection: hook to swap spell when target is dead.

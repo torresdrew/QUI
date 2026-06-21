@@ -239,9 +239,17 @@ local function assertCasterBindsF()
     runCasterState("on")
     local b = c.overrideBindings and c.overrideBindings.F
     assert(b and b.button == "keyf", "@mouseover did not bind F to the caster -- click-cast dead")
+    -- A transient off-tick while the cursor is still over the frame keeps the key
+    -- (guarded release -- the [@mouseover,exists] driver is mouseover-blind, so a
+    -- churning unit token must not strand the binding cleared).
+    runCasterState("off")
+    assert(c.overrideBindings and c.overrideBindings.F,
+        "a transient off-tick while still over the frame must keep F (no stranding)")
+    -- Only a real cursor-off release frees the key so the action bar keybind fires.
+    hoverFrame.underMouse = false
     runCasterState("off")
     assert(not (c.overrideBindings and c.overrideBindings.F),
-        "off @mouseover the caster must release F so the action bar keybind fires")
+        "off @mouseover with the cursor off the frame must release F so the action bar keybind fires")
     hoverFrame.underMouse = nil
 end
 
