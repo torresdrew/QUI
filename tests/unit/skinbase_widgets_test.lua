@@ -3,6 +3,7 @@
 -- luacheck: globals CreateFrame C_Timer hooksecurefunc PanelTemplates_SetTab ScrollUtil
 
 local hookedScripts = {}
+local unpack = table.unpack or unpack
 
 local function NewTexture()
     local t = { alpha = 1 }
@@ -10,6 +11,7 @@ local function NewTexture()
     function t:SetTexture(f) self.file = f end
     function t:SetColorTexture(r, g, b, a) self.colorTexture = { r, g, b, a } end
     function t:SetVertexColor(r, g, b, a) self.color = { r, g, b, a } end
+    function t:SetTextColor(r, g, b, a) self.textColor = { r, g, b, a } end
     function t:ClearAllPoints() self.points = {} end
     function t:SetPoint(...) self.points = self.points or {}; self.points[#self.points + 1] = { ... } end
     function t:SetHeight(h) self.height = h end
@@ -22,7 +24,7 @@ local function NewTexture()
 end
 
 local function NewFrame(parent)
-    local f = { parent = parent, textures = {}, points = {}, frameLevel = 4, scripts = {} }
+    local f = { parent = parent, textures = {}, points = {}, frameLevel = 4, scripts = {}, enabled = true }
     function f:CreateTexture() local t = NewTexture(); self.textures[#self.textures + 1] = t; return t end
     function f:CreateFontString() return NewTexture() end
     function f:SetAllPoints() self.allPoints = true end
@@ -39,10 +41,13 @@ local function NewFrame(parent)
     function f:GetHighlightTexture() self.highlight = self.highlight or NewTexture(); return self.highlight end
     function f:GetPushedTexture() self.pushed = self.pushed or NewTexture(); return self.pushed end
     function f:GetNormalTexture() self.normal = self.normal or NewTexture(); return self.normal end
+    function f:GetDisabledTexture() self.disabled = self.disabled or NewTexture(); return self.disabled end
+    function f:GetFontString() self.fontString = self.fontString or NewTexture(); return self.fontString end
     function f:HookScript(event, fn) self.scripts[event] = fn; hookedScripts[#hookedScripts + 1] = { f = self, event = event, fn = fn } end
     function f:SetFont(font, size, flags) self.font, self.fontSize, self.fontFlags = font, size, flags end
     function f:GetFont() return self.font, self.fontSize or 13, self.fontFlags end
     function f:SetFontObject(fontObject) self.fontObject = fontObject end
+    function f:IsEnabled() return self.enabled end
     return f
 end
 
@@ -86,10 +91,24 @@ SkinBase.SkinButton(button)
 assert(SkinBase.GetBackdrop(button), "SkinButton must create a backdrop")
 assert(button.Left.alpha == 0, "SkinButton must hide named Left texture")
 assert(button:GetNormalTexture().alpha == 0, "SkinButton must hide normal texture")
+assert(button:GetDisabledTexture().alpha == 0, "SkinButton must hide disabled texture")
 assert(SkinBase.GetFrameData(button, "skinKind") == "button", "SkinButton must tag skinKind")
 assert(SkinBase.IsStyled(button), "SkinButton must mark styled")
 local bd = SkinBase.GetBackdrop(button)
 assert(math.abs(bd._quiBgR - (0.1 + 0.07)) < 1e-9, "SkinButton must apply the button bg boost")
+
+local stateButton = NewFrame()
+stateButton.Left, stateButton.Right, stateButton.Middle = NewTexture(), NewTexture(), NewTexture()
+stateButton.enabled = false
+SkinBase.SkinButton(stateButton, { fontColor = { 1, 0.82, 0, 1 } })
+assert(stateButton:GetFontString().textColor[1] == 0.5,
+    "disabled skinned button must use disabled text color at skin time")
+stateButton.Left.alpha = 1
+stateButton.enabled = true
+stateButton.scripts.OnEnable(stateButton)
+assert(stateButton.Left.alpha == 0, "OnEnable must re-suppress UIPanelButton slice art")
+assert(math.abs(stateButton:GetFontString().textColor[2] - 0.82) < 1e-9,
+    "OnEnable must restore active text color")
 
 -- SkinButton{strip=true} strips textures instead of hiding named regions
 local stripBtn = NewFrame()

@@ -501,6 +501,7 @@ local function SkinLFGListFrame()
     if not LFGListFrame or SkinBase.IsSkinned(LFGListFrame) then return end
 
     local sr, sg, sb, sa, bgr, bgg, bgb, bga = SkinBase.GetSkinColors()
+    local actionTextColor = { 1.0, 0.82, 0.0, 1 }
 
     -- Hide Blizzard decorations
     HideLFGListDecorations()
@@ -508,22 +509,30 @@ local function SkinLFGListFrame()
     -- Style category selection
     if LFGListFrame.CategorySelection then
         local cs = LFGListFrame.CategorySelection
-        if cs.StartGroupButton then
-            SkinBase.SkinButton(cs.StartGroupButton, { font = true })
+        local function StyleCategoryNavButtons()
+            if cs.StartGroupButton then
+                SkinBase.SkinButton(cs.StartGroupButton, { font = true, fontColor = actionTextColor })
+                SkinBase.RefreshButtonVisualState(cs.StartGroupButton)
+            end
+            if cs.FindGroupButton then
+                SkinBase.SkinButton(cs.FindGroupButton, { font = true, fontColor = actionTextColor })
+                SkinBase.RefreshButtonVisualState(cs.FindGroupButton)
+            end
         end
-        if cs.FindGroupButton then
-            SkinBase.SkinButton(cs.FindGroupButton, { font = true })
-        end
+        StyleCategoryNavButtons()
         -- Style category buttons. Re-style on every UpdateCategoryButtons: the set
         -- can grow mid-session (LFGListCategorySelection_AddButton lazily creates new
-        -- buttons), so a one-shot loop misses later additions. The IsStyled guard
-        -- keeps re-runs cheap.
+        -- buttons), so a one-shot loop misses later additions.
         local function StyleCategoryButtons()
             if not cs.CategoryButtons then return end
             for _, catButton in pairs(cs.CategoryButtons) do
-                if catButton and not SkinBase.IsStyled(catButton) then
-                    SkinBase.StripTextures(catButton)
-                    SkinBase.SkinButton(catButton, { font = true })
+                if catButton then
+                    SkinBase.SkinCategoryButton(catButton, {
+                        font = true,
+                        selectedTextColor = actionTextColor,
+                    })
+                    SkinBase.SetFrameData(catButton, "categorySelectedTextColor", actionTextColor)
+                    SkinBase.RefreshCategorySelected(catButton)
                 end
             end
         end
@@ -534,6 +543,13 @@ local function SkinLFGListFrame()
                 StyleCategoryButtons()
             end)
             SkinBase.SetFrameData(cs, "qCatButtonsHooked", true)
+        end
+        if type(_G.LFGListCategorySelection_UpdateNavButtons) == "function"
+            and not SkinBase.GetFrameData(cs, "qCatNavButtonsHooked") then
+            hooksecurefunc("LFGListCategorySelection_UpdateNavButtons", function(panel)
+                if panel == cs then StyleCategoryNavButtons() end
+            end)
+            SkinBase.SetFrameData(cs, "qCatNavButtonsHooked", true)
         end
     end
 

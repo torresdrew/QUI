@@ -3253,6 +3253,59 @@ local function GetLabelFontString(frame)
     return frame.Text
 end
 
+local function SetFontStringColor(fs, color)
+    if not fs or not fs.SetTextColor or type(color) ~= "table" then return end
+    fs:SetTextColor(color[1] or 1, color[2] or 1, color[3] or 1, color[4] or 1)
+end
+
+local BUTTON_ART_KEYS = {
+    "Left", "Right", "Middle", "Center",
+    "NormalTexture", "HighlightTexture", "PushedTexture", "DisabledTexture",
+}
+
+local function SuppressButtonArt(button)
+    if not button then return end
+    for _, key in ipairs(BUTTON_ART_KEYS) do
+        local tex = button[key]
+        if tex and tex.SetAlpha then tex:SetAlpha(0) end
+    end
+    local highlight = button.GetHighlightTexture and button:GetHighlightTexture()
+    if highlight then highlight:SetAlpha(0) end
+    local pushed = button.GetPushedTexture and button:GetPushedTexture()
+    if pushed then pushed:SetAlpha(0) end
+    local normal = button.GetNormalTexture and button:GetNormalTexture()
+    if normal then normal:SetAlpha(0) end
+    local disabled = button.GetDisabledTexture and button:GetDisabledTexture()
+    if disabled then disabled:SetAlpha(0) end
+end
+
+function SkinBase.RefreshButtonVisualState(button)
+    if not button then return end
+    SuppressButtonArt(button)
+
+    if not SkinBase.GetFrameData(button, "skinFont") then return end
+
+    local color = SkinBase.GetFrameData(button, "skinFontColor")
+    local disabledColor = SkinBase.GetFrameData(button, "skinFontDisabledColor") or DISABLED_TEXT_COLOR
+    SkinBase.ApplyButtonFontObjects(button, { color = color, disabledColor = disabledColor })
+
+    if button.IsEnabled and not button:IsEnabled() then
+        SetFontStringColor(GetLabelFontString(button), disabledColor)
+    else
+        SetFontStringColor(GetLabelFontString(button), color)
+    end
+end
+
+local BUTTON_STATE_SCRIPTS = { "OnShow", "OnEnable", "OnDisable", "OnMouseDown", "OnMouseUp" }
+
+local function HookButtonVisualState(button)
+    if not button or not button.HookScript or SkinBase.GetFrameData(button, "qButtonVisualStateHooked") then return end
+    for _, script in ipairs(BUTTON_STATE_SCRIPTS) do
+        button:HookScript(script, SkinBase.RefreshButtonVisualState)
+    end
+    SkinBase.SetFrameData(button, "qButtonVisualStateHooked", true)
+end
+
 ---------------------------------------------------------------------------
 -- SkinButton(button, opts)
 --   opts.strip   : StripTextures instead of hiding named Left/Right/Middle/
@@ -3269,17 +3322,8 @@ function SkinBase.SkinButton(button, opts)
     if opts.strip then
         SkinBase.StripTextures(button)
     else
-        if button.Left then button.Left:SetAlpha(0) end
-        if button.Right then button.Right:SetAlpha(0) end
-        if button.Middle then button.Middle:SetAlpha(0) end
-        if button.Center then button.Center:SetAlpha(0) end
+        SuppressButtonArt(button)
     end
-    local highlight = button.GetHighlightTexture and button:GetHighlightTexture()
-    if highlight then highlight:SetAlpha(0) end
-    local pushed = button.GetPushedTexture and button:GetPushedTexture()
-    if pushed then pushed:SetAlpha(0) end
-    local normal = button.GetNormalTexture and button:GetNormalTexture()
-    if normal then normal:SetAlpha(0) end
 
     SkinBase.CreateBackdrop(button, sr, sg, sb, sa,
         math.min(bgr + boost, 1), math.min(bgg + boost, 1), math.min(bgb + boost, 1), 1)
@@ -3297,14 +3341,17 @@ function SkinBase.SkinButton(button, opts)
     if opts.font ~= false then
         SkinBase.SetFrameData(button, "skinFont", true)
         SkinBase.SetFrameData(button, "skinFontColor", opts.fontColor)
+        SkinBase.SetFrameData(button, "skinFontDisabledColor", opts.disabledFontColor or DISABLED_TEXT_COLOR)
         -- Drive the button's font OBJECTS (not a one-shot SetFont): UIPanel-style
         -- buttons swap their Highlight font object on hover and Disabled object on
         -- :Disable() WITHOUT calling a setter (so a Lock* hook never fires) — only
         -- driving the objects re-faces those swaps. Dim grey disabled color keeps
         -- disabled buttons reading as disabled.
-        SkinBase.ApplyButtonFontObjects(button, { color = opts.fontColor, disabledColor = DISABLED_TEXT_COLOR })
+        SkinBase.ApplyButtonFontObjects(button, { color = opts.fontColor, disabledColor = opts.disabledFontColor or DISABLED_TEXT_COLOR })
     end
     if opts.hover ~= false then AttachHover(button) end
+    HookButtonVisualState(button)
+    SkinBase.RefreshButtonVisualState(button)
     SkinBase.MarkStyled(button)
 end
 
@@ -3373,13 +3420,16 @@ function SkinBase.RefreshCategorySelected(button)
     local sc = SkinBase.GetFrameData(button, "skinColor")
     if not bd or not sc then return end
     local selected = button.SelectedTexture and button.SelectedTexture:IsShown()
+    local label = button.Label or GetLabelFontString(button)
     if selected then
         bd:SetBackdropBorderColor(sc[1], sc[2], sc[3], sc[4])
         bd:SetBackdropColor(SkinBase.GetDepthColor("ROW"))
+        SetFontStringColor(label, SkinBase.GetFrameData(button, "categorySelectedTextColor") or sc)
     else
         bd:SetBackdropBorderColor(sc[1], sc[2], sc[3], (sc[4] or 1) * 0.5)
         local r, g, b = SkinBase.GetDepthColor("ROW")
         bd:SetBackdropColor(r, g, b, 0.7)
+        SetFontStringColor(label, SkinBase.GetFrameData(button, "categoryTextColor") or { 0.95, 0.95, 0.95, 1 })
     end
 end
 
@@ -3395,6 +3445,8 @@ function SkinBase.SkinCategoryButton(button, opts)
     SkinBase.CreateBackdrop(button, sr, sg, sb, sa)
     SkinBase.SetFrameData(button, "skinColor", { sr, sg, sb, sa })
     SkinBase.SetFrameData(button, "skinKind", "category")
+    SkinBase.SetFrameData(button, "categorySelectedTextColor", opts.selectedTextColor)
+    SkinBase.SetFrameData(button, "categoryTextColor", opts.textColor)
     -- Drive the QUI font onto the button's font objects (default, like SkinButton):
     -- category buttons swap their Highlight font object on hover with no setter
     -- call, so only object-driving survives it. opts.font == false opts out.
@@ -3518,6 +3570,9 @@ function SkinBase.RefreshWidget(frame)
         bd:SetBackdropColor(math.min(bgr + boost, 1), math.min(bgg + boost, 1), math.min(bgb + boost, 1), bgAlpha)
         bd:SetBackdropBorderColor(sr, sg, sb, sa * mult)
         SkinBase.SetFrameData(frame, "skinColor", { sr, sg, sb, sa * mult })
+    elseif kind == "category" then
+        SkinBase.SetFrameData(frame, "skinColor", { sr, sg, sb, sa })
+        SkinBase.RefreshCategorySelected(frame)
     end
 
     -- Re-apply the global QUI font on live font/theme changes for widgets that
@@ -3528,7 +3583,8 @@ function SkinBase.RefreshWidget(frame)
             SkinBase.SkinFontString(frame, { color = color })
         else
             -- Buttons: re-drive font objects so the QUI font survives hover/disable.
-            SkinBase.ApplyButtonFontObjects(frame, { color = color, disabledColor = DISABLED_TEXT_COLOR })
+            local disabledColor = SkinBase.GetFrameData(frame, "skinFontDisabledColor") or DISABLED_TEXT_COLOR
+            SkinBase.ApplyButtonFontObjects(frame, { color = color, disabledColor = disabledColor })
         end
     end
 end
