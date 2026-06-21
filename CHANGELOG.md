@@ -9,6 +9,41 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v5.0.0-alpha1 - 2026-06-18
+
+> ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will
+> not load on the 12.0.x live client. Stay on the v4.x beta line for live realms.
+
+First QUI5 alpha. Targets patch 12.1 and pulls the latest fixes and features
+forward from the 4.x beta line.
+
+### Added
+- feat(cdm): "New Window" / "Delete Window" entries in the cooldown-manager header
+  right-click menu.
+- feat(cdm): bar duration text now driven via `DurationTextBinding` (12.0.7 API).
+- feat(alts): overflow tab strips show scroll bars; fixed equipment ilvl/status
+  text overlap.
+
+### Fixed
+- fix(12.1): `GetScaledCursorPosition` was removed from the in-world environment
+  in patch 12.1 (now glue-screen only) — the cursor reticle errored every frame.
+  Reimplemented locally from `GetCursorPosition` and UIParent's effective scale.
+- fix(12.1): the global `AnimateTexCoords` moved to `TextureUtil` in 12.1 —
+  restored the button glow "ants" animation (LibCustomGlow).
+- fix(12.1): 12.1's assisted-combat rotation OnUpdate now calls
+  `OnActionBarSlotChanged()`, a method QUI's custom action buttons don't inherit
+  — stubbed it on the hosting button to stop the per-frame error.
+- fix(chat): class color preserved on secret-sender whisper/party lines.
+- fix(skinning,cdm): font-revert/template-drift sweep, mail frame skinning coverage,
+  and glow drawn below the cooldown swipe.
+- fix(auras): removed the IMPORTANT aura filter (removed by Blizzard in 12.0.7).
+
+### Internal
+- Refreshed the vendored FrameXML + Blizzard API doc corpus to 12.1.0.68209 and
+  regenerated the LSP API definitions; sanitized control bytes in generated doc
+  comments so the defs always parse.
+- Regenerated the enUS localization base.
+
 
 
 ## v4.0.4 - 2026-06-23
