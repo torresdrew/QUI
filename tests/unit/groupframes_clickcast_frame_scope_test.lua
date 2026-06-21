@@ -200,12 +200,25 @@ assert(b and b.button == "keyf",
 print("OK: registered-frame mouseover binds keyboard click-cast")
 
 ---------------------------------------------------------------------------
--- Scenario 3: driver "off" (no mouseover unit) releases the key.
+-- Scenario 3a: a transient driver "off" while the cursor is STILL over the
+-- frame (a churning unit token -- the [@mouseover,exists] driver is
+-- mouseover-blind and re-sampled on a 0.2s tick) must NOT release the key.
+-- Releasing here is what stranded the binding cleared until a re-mouseover.
 ---------------------------------------------------------------------------
+runCasterState("off")          -- child.underMouse still true (from Scenario 2)
+assert(caster.overrideBindings.F and caster.overrideBindings.F.button == "keyf",
+    "BUG: a transient off-tick while the cursor is still over the frame must keep the key (no stranding)")
+print("OK: guarded off-tick keeps the key while still over the frame")
+
+---------------------------------------------------------------------------
+-- Scenario 3b: driver "off" once the cursor has truly left every frame
+-- releases the key so the action bar keybind fires.
+---------------------------------------------------------------------------
+child.underMouse = false
 runCasterState("off")
 assert(not caster.overrideBindings.F,
-    "off @mouseover the caster must release the key so the action bar keybind fires")
-print("OK: mouseover gone releases the key")
+    "off @mouseover with the cursor off every frame must release the key so the action bar keybind fires")
+print("OK: mouseover gone (cursor off the frame) releases the key")
 
 ---------------------------------------------------------------------------
 -- Scenario 4: a hidden frame under the cursor does not count (its rect can
