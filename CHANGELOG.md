@@ -10,6 +10,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v4.0.4-beta2 - 2026-06-21
+
+### Added
+- feat(infobar): add Professions, Quest Log, Housing, and Adventure Guide buttons to the micro menu
+
+### Fixed
+- fix(clickcast): re-arm keyboard binds when mouseover briefly drops and the frame re-shows
+- fix(tooltip): stop a C stack overflow from reentrant tooltip Show() during layout refresh
+- fix(skinning): repair dead skins, backdrop color persistence, and stale field lookups
+
 ## v4.0.4-beta1 - 2026-06-20
 
 ### Changed
