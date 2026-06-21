@@ -17,8 +17,8 @@ local function assertAbsent(text, needle, reason)
 end
 
 local source = readFile("QUI_Skinning/skinning/character_pane/inspect.lua")
-local inspectGuildFrame = readFile("tests/framexml/Interface/AddOns/Blizzard_InspectUI/InspectGuildFrame.lua")
-local inspectFrame = readFile("tests/framexml/Interface/AddOns/Blizzard_InspectUI/Blizzard_InspectUI.lua")
+local inspectGuildFrame = readFile("tests/framexml/Interface/AddOns/Blizzard_InspectUI/Mainline/InspectGuildFrame.lua")
+local inspectFrame = readFile("tests/framexml/Interface/AddOns/Blizzard_InspectUI/Mainline/Blizzard_InspectUI.lua")
 local paperDollDocs = readFile("tests/api-docs/blizzard/PaperDollInfoDocumentation.lua")
 
 assertContains(

@@ -3,7 +3,7 @@
 ## IconTexture: Interface\AddOns\QUI\assets\QUI
 ## Notes: Load-on-demand localized settings search index for QUI (ruRU)
 ## Author: Zol
-## Version: 4.0.5-beta3
+## Version: 5.0.0-alpha1
 ## Category: User Interface
 ## Group: QUI
 ## RequiredDeps: QUI, QUI_Options
