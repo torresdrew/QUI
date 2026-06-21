@@ -9,6 +9,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v4.0.4-beta3 - 2026-06-21
+
+### Fixed
+- fix(clickcast): drop the insecure OnShow re-arm that crashed on frame re-show; keyboard re-arm now stays entirely in the secure mouseover-state driver
 
 ## v4.0.4-beta2 - 2026-06-21
 
