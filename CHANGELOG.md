@@ -10,6 +10,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v4.0.4-beta1 - 2026-06-20
+
+### Changed
+- refactor(skinning): consolidate font/backdrop paths onto canonical SkinBase helpers (SkinFontString / ApplyButtonFontObjects / SkinDropdown / LockPooledRowText) and harden backdrop color persistence so picked colors survive UI-scale refreshes
+
+### Fixed
+- i18n: re-enable localization (the forced-English release gate is removed on this branch)
+- fix(skinning): persist quality/accent recolors through scale rebuilds across character, inspect, objective tracker, world map, and alerts
+- fix(skinning): drop dead readycheck drag block + redundant setters; DisablePixelSnap on 1px/2px quads so they stay on-grid at fractional scales
+
 ## v4.0.3 - 2026-06-21
 
 ### Added
