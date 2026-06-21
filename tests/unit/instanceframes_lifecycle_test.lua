@@ -21,8 +21,8 @@ local pveFrame = readFile("tests/framexml/Interface/AddOns/Blizzard_GroupFinder/
 local pvpui = readFile("tests/framexml/Interface/AddOns/Blizzard_PVPUI/Mainline/Blizzard_PVPUI.lua")
 local challenges = readFile("tests/framexml/Interface/AddOns/Blizzard_ChallengesUI/Mainline/Blizzard_ChallengesUI.lua")
 
-assertContains(pveFrame, "UIParentLoadAddOn(panels[tabIndex].addon);",
-    "FrameXML must load PVP/Challenges addons inside PVEFrame_ShowFrame before the selected panel is shown")
+assertContains(pveFrame, "if not panels[tabIndex].loadFunc() then",
+    "FrameXML must load PVP/Challenges addons (12.1 loadFunc) inside PVEFrame_ShowFrame before the selected panel is shown")
 assertContains(pveFrame, "panel:Show();",
     "FrameXML must show the selected child panel synchronously after addon loading")
 assertContains(pveFrame, "function PVEFrameMixin:OnShow()",
