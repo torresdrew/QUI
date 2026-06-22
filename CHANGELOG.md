@@ -9,6 +9,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v4.0.4-beta4 - 2026-06-22
+
+### Added
+- feat(skinning): skin the Delves, Dressing Room, and PvP Match scoreboard frames; expand the shared UIKit factory behind the skin layer
+
+### Fixed
+- perf(groupframes): cut raid-frame update cost across five hot paths
+
 ## v4.0.4-beta3 - 2026-06-21
 
 ### Fixed
