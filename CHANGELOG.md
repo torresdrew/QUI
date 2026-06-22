@@ -9,6 +9,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v4.0.4-beta5 - 2026-06-22
+
+### Fixed
+- fix(clickcast): drive keyboard click-cast binds off per-frame hover edges instead of a mouseover state-driver poll, so a key can no longer arm over a nameplate or world unit; clear stale caster keys when the last keyboard bind is removed
+
 ## v4.0.4-beta4 - 2026-06-22
 
 ### Added
