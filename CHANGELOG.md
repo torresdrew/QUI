@@ -9,6 +9,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v4.0.4-beta6 - 2026-06-23
+
+### Changed
+- refactor(font): drive QUI's font face/outline by overriding the ~120 shared Blizzard font objects instead of recursive per-frame FontString walks. Inheriting text now survives Blizzard's hover/disable font swaps, fixing reverts the per-frame pattern couldn't hold; the user outline applies only to fonts that natively carry one (body/quest/mail text never blobs), and CJK locales are unaffected.
+
+### Fixed
+- fix(chat): "Copy Character Name" works again — it had been failing with a forbidden-action error. Hyperlink clicks now route through an inert Blizzard launderer so the spawned unit menu is untainted.
+- fix(skinning): tooltips self-size via the built-in 12.0.7 path instead of QUI's manual refit — fixes "tainted by QUI" crashes on widget tooltips (Field Accolades, item displays) and oversized world-map tooltips.
+
 ## v4.0.4-beta5 - 2026-06-22
 
 ### Fixed
