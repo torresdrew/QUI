@@ -28,6 +28,124 @@ assert(body:find("if inRange == nil then", 1, true),
     "boss range alpha should skip indeterminate samples from spell range checks")
 assert(body:find("bossRange.pending", 1, true),
     "boss range alpha should keep pending samples until a range change is stable")
+assert(body:find("not bossRange.hostileSpell and not bossRange.friendlySpell", 1, true),
+    "boss range alpha should run when either a hostile or friendly range spell is available")
+
+do
+    local rangeStart = assert(source:find("local BOSS_RANGE_CHECK_INTERVAL", 1, true),
+        "boss range alpha constants should exist")
+    local rangeEnd = assert(source:find("---------------------------------------------------------------------------\n-- CREATE: Unit Frame",
+        rangeStart, true), "boss range alpha section should end before CreateUnitFrame")
+    local loader = loadstring or load
+    local chunk = "local UpdateBossRangeAlpha\n"
+        .. source:sub(rangeStart, rangeEnd - 1)
+        .. "\nreturn { UpdateBossRangeAlpha = UpdateBossRangeAlpha }"
+
+    local units = {
+        boss1 = { hostile = true },
+        boss2 = { assist = true },
+    }
+    local boss2Alphas = {}
+    local boss2SpellRangeCalls = 0
+    local unitInRangeCalls = 0
+
+    Helpers = {
+        IsLayoutModeActive = function()
+            return false
+        end,
+    }
+    QUI_UF = {
+        frames = {
+            boss1 = {
+                unit = "boss1",
+                SetAlpha = function() end,
+            },
+            boss2 = {
+                unit = "boss2",
+                SetAlpha = function(_, alpha)
+                    boss2Alphas[#boss2Alphas + 1] = alpha
+                end,
+            },
+        },
+    }
+
+    function IsSecretValue()
+        return false
+    end
+
+    function GetUnitSettings()
+        return {
+            range = {
+                enabled = true,
+                outOfRangeAlpha = 0.4,
+            },
+        }
+    end
+
+    function UnitClass()
+        return "Priest", "PRIEST"
+    end
+
+    function GetSpecialization()
+        return nil
+    end
+
+    function IsPlayerSpell()
+        return true
+    end
+
+    C_Spell = {
+        IsSpellInRange = function(_, unit)
+            if unit == "boss2" then
+                boss2SpellRangeCalls = boss2SpellRangeCalls + 1
+                return false
+            end
+            return true
+        end,
+    }
+
+    function UnitExists(unit)
+        return units[unit] ~= nil
+    end
+
+    function UnitIsDeadOrGhost()
+        return false
+    end
+
+    function UnitCanAttack(_, unit)
+        return units[unit] and units[unit].hostile or false
+    end
+
+    function UnitCanAssist(_, unit)
+        return units[unit] and units[unit].assist or false
+    end
+
+    function UnitIsFriend(_, unit)
+        return units[unit] and units[unit].assist or false
+    end
+
+    function InCombatLockdown()
+        return true
+    end
+
+    function UnitInRange(unit)
+        assert(unit == "boss2", "only the friendly boss unit should fall back to UnitInRange")
+        unitInRangeCalls = unitInRangeCalls + 1
+        return (unitInRangeCalls % 2) == 0, true
+    end
+
+    local api = assert(loader(chunk))()
+    for _ = 1, 4 do
+        api.UpdateBossRangeAlpha()
+    end
+
+    assert(boss2SpellRangeCalls == 4,
+        "friendly/healable boss units should use friendly spell range checks")
+    assert(unitInRangeCalls == 0,
+        "friendly/healable boss units should not use UnitInRange for boss range alpha")
+    assert(#boss2Alphas == 1 and boss2Alphas[1] == 0.4,
+        "out-of-range friendly/healable boss units should dim without flickering")
+end
 
 local auraSource = readAll("QUI_UnitFrames/unitframes/unitframe_auras.lua")
 assert(auraSource:find("local bossEngageFrame", 1, true),

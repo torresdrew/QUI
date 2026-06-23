@@ -2227,6 +2227,17 @@ local BOSS_RANGE_CHECK_INTERVAL = 0.2
 local BOSS_RANGE_CHANGE_CONFIRMATIONS = 2
 
 local BOSS_RANGE_SPELLS = {
+    specFriendly = {
+        [102] = 8936, [103] = 8936, [104] = 8936, [105] = 774, -- Druid
+        [1467] = 360995, [1468] = 360995, [1473] = 360995,    -- Evoker
+        [62] = 1459, [63] = 1459, [64] = 1459,                -- Mage
+        [268] = 116670, [269] = 116670, [270] = 116670,       -- Monk
+        [65] = 19750, [66] = 19750, [70] = 19750,             -- Paladin
+        [256] = 17, [257] = 2061, [258] = 17,                 -- Priest
+        [259] = 57934, [260] = 57934, [261] = 57934,          -- Rogue
+        [262] = 8004, [263] = 8004, [264] = 8004,             -- Shaman
+        [265] = 5697, [266] = 5697, [267] = 5697,             -- Warlock
+    },
     specHostile = {
         [250] = 47541, [251] = 47541, [252] = 47541,          -- Death Knight: Death Coil
         [577] = 185123, [581] = 185123,                       -- Demon Hunter: Throw Glaive
@@ -2241,6 +2252,17 @@ local BOSS_RANGE_SPELLS = {
         [262] = 188196, [263] = 188196, [264] = 188196,       -- Shaman: Lightning Bolt
         [265] = 686, [266] = 686, [267] = 29722,              -- Warlock
         [71] = 355, [72] = 355, [73] = 355,                   -- Warrior: Taunt
+    },
+    classFriendly = {
+        PRIEST = { 2061, 17 },
+        PALADIN = { 19750 },
+        DRUID = { 8936, 774 },
+        SHAMAN = { 8004 },
+        MONK = { 116670 },
+        EVOKER = { 361469, 360995 },
+        MAGE = { 1459 },
+        WARLOCK = { 5697 },
+        ROGUE = { 57934 },
     },
     classHostile = {
         DEATHKNIGHT = 47541,
@@ -2261,6 +2283,7 @@ local BOSS_RANGE_SPELLS = {
 
 local bossRange = {
     playerClass = nil,
+    friendlySpell = nil,
     hostileSpell = nil,
     ticker = nil,
     eventFrame = nil,
@@ -2283,12 +2306,30 @@ local function ClearBossRangeState(unit)
 end
 
 local function ResolveBossRangeSpell()
+    local previousFriendlySpell = bossRange.friendlySpell
     local previousSpell = bossRange.hostileSpell
     bossRange.playerClass = select(2, UnitClass("player"))
+    local resolvedFriendlySpell = nil
     local resolvedSpell = nil
 
     local specIndex = GetSpecialization and GetSpecialization()
     local specID = specIndex and GetSpecializationInfo and GetSpecializationInfo(specIndex)
+
+    local friendlySpecSpell = specID and BOSS_RANGE_SPELLS.specFriendly[specID]
+    if friendlySpecSpell and IsPlayerSpell and IsPlayerSpell(friendlySpecSpell) then
+        resolvedFriendlySpell = friendlySpecSpell
+    else
+        local candidates = bossRange.playerClass and BOSS_RANGE_SPELLS.classFriendly[bossRange.playerClass]
+        if candidates and IsPlayerSpell then
+            for _, spellID in ipairs(candidates) do
+                if IsPlayerSpell(spellID) then
+                    resolvedFriendlySpell = spellID
+                    break
+                end
+            end
+        end
+    end
+
     local specSpell = specID and BOSS_RANGE_SPELLS.specHostile[specID]
     if specSpell and IsPlayerSpell and IsPlayerSpell(specSpell) then
         resolvedSpell = specSpell
@@ -2299,8 +2340,9 @@ local function ResolveBossRangeSpell()
         end
     end
 
+    bossRange.friendlySpell = resolvedFriendlySpell
     bossRange.hostileSpell = resolvedSpell
-    if previousSpell ~= bossRange.hostileSpell then
+    if previousFriendlySpell ~= bossRange.friendlySpell or previousSpell ~= bossRange.hostileSpell then
         ClearBossRangeState()
     end
 end
@@ -2349,6 +2391,22 @@ local function ResetBossRangeAlpha()
     end
 end
 
+local function IsFriendlyBossUnit(unit)
+    if UnitCanAssist then
+        local canAssist = UnitCanAssist("player", unit)
+        if IsSecretValue(canAssist) then canAssist = false end
+        if canAssist then return true end
+    end
+
+    if UnitIsFriend then
+        local isFriend = UnitIsFriend("player", unit)
+        if IsSecretValue(isFriend) then isFriend = false end
+        if isFriend then return true end
+    end
+
+    return false
+end
+
 local function CheckBossUnitRange(unit)
     if not unit or not UnitExists(unit) then return true end
     local isDead = UnitIsDeadOrGhost(unit)
@@ -2370,6 +2428,20 @@ local function CheckBossUnitRange(unit)
             local ok, inRange = pcall(CheckInteractDistance, unit, 4)
             if ok and inRange ~= nil then
                 return inRange and true or false
+            end
+        end
+
+        return nil
+    end
+
+    if IsFriendlyBossUnit(unit) then
+        if bossRange.friendlySpell and C_Spell and C_Spell.IsSpellInRange then
+            local inRange = C_Spell.IsSpellInRange(bossRange.friendlySpell, unit)
+            if IsSecretValue(inRange) then
+                return inRange
+            end
+            if inRange ~= nil then
+                return inRange
             end
         end
 
@@ -2440,7 +2512,7 @@ UpdateBossRangeAlpha = function()
         return
     end
 
-    if not bossRange.hostileSpell then
+    if not bossRange.hostileSpell and not bossRange.friendlySpell then
         ResolveBossRangeSpell()
     end
 
@@ -2448,7 +2520,7 @@ UpdateBossRangeAlpha = function()
         return
     end
 
-    if not bossRange.hostileSpell then
+    if not bossRange.hostileSpell and not bossRange.friendlySpell then
         ResetBossRangeAlpha()
         return
     end
