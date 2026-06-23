@@ -53,6 +53,7 @@ local function makeFrame(ftype)
     f.Clear = function() smfAdded = {} end
     f.AddMessage = function(_, m, r, g, b) smfAdded[#smfAdded + 1] = { m = m, r = r, g = g, b = b } end
     f.RegisterEvent = noop; f.UnregisterAllEvents = noop
+    f.SetAllPoints = noop; f.SetToplevel = noop; f.SetHyperlinkPropagateToParent = noop
     f.SetScript = function(s, k, v) s["_" .. k] = v end
     return f
 end
