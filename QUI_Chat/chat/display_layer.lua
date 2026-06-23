@@ -532,7 +532,40 @@ local function CreateWindow(id)
     end
 
     local cd = GetCustomDisplaySettings()
-    local smf = CreateFrame("ScrollingMessageFrame", smfName, container)
+    -- Hyperlink taint launderer. CopyToClipboard (the "Copy Character Name"
+    -- unit-popup item) is restricted: HasRestrictions=true, so it is FORBIDDEN
+    -- the instant any addon taint sits on the call path. A QUI-owned
+    -- OnHyperlinkClick that calls SetItemRef taints the unit popup it spawns,
+    -- so its Copy button dies with ADDON_ACTION_FORBIDDEN. Fix: never handle the
+    -- click in QUI code. Parent the SMF to a real ChatFrameTemplate frame and
+    -- let hyperlink events propagate up to it -- ChatFrameMixin:OnHyperlinkClick
+    -- is Blizzard-owned (untainted), so the SetItemRef it calls builds a clean
+    -- menu and Copy works. The frame is inert otherwise: events off, OnUpdate
+    -- blanked, scrollbar/mouse disabled. It sits between container and the SMF so
+    -- show/hide/strata still cascade from the container, and the layout/anchor
+    -- system (which only ever touches the container) is left untouched.
+    local linkHandler = CreateFrame(
+        "ScrollingMessageFrame", smfName .. "LinkHandler", container, "ChatFrameTemplate")
+    win.linkHandler = linkHandler
+    linkHandler:SetAllPoints(container)
+    linkHandler:UnregisterAllEvents()
+    linkHandler:SetScript("OnUpdate", nil)
+    linkHandler:SetScript("OnEvent", nil)
+    linkHandler:EnableMouse(false)
+    linkHandler:EnableMouseWheel(false)
+    if linkHandler.SetToplevel then linkHandler:SetToplevel(false) end
+    if linkHandler.ScrollBar then linkHandler.ScrollBar:Hide() end
+    -- SetItemRef hands this frame to Blizzard as contextData.frame; player/BN/
+    -- channel links deref frame.editBox via ChooseBoxForSend. This frame has no
+    -- editBox, so point it at ChatFrame1's (the live QUI-styled input) to avoid
+    -- a nil deref on the first whisper/channel-name click.
+    linkHandler.editBox = _G.ChatFrame1EditBox
+    -- Receive propagated hyperlink events: a hyperlink-disabled frame may not
+    -- run its OnHyperlinkClick for events bubbled up from a child.
+    linkHandler:SetHyperlinksEnabled(true)
+    linkHandler:Show()
+
+    local smf = CreateFrame("ScrollingMessageFrame", smfName, linkHandler)
     win.smf = smf
     smf:SetPoint("TOPLEFT",     container, "TOPLEFT",     6,  -(DRAG_STRIP_HEIGHT + 2))
     -- Right inset clears the scrollbar's lane instead of overlapping it. The
@@ -545,37 +578,15 @@ local function CreateWindow(id)
     smf:SetJustifyH("LEFT")
     smf:SetMaxLines((cd and cd.maxLines) or 1000)
     smf:SetHyperlinksEnabled(true)
-    smf:SetScript("OnHyperlinkClick", function(self, link, text, button)
-        if not _G.SetItemRef then return end
-        -- The 4th SetItemRef arg becomes Blizzard's contextData.frame. For
-        -- player/BN/channel links it flows into ChatFrameUtil.SendTell /
-        -- OpenChat -> ChooseBoxForSend(frame), which dereferences frame.editBox.
-        -- This custom ScrollingMessageFrame has no editBox (the QUI input is
-        -- ChatFrame1's editbox, restyled in place by editbox_basics), so handing
-        -- Blizzard `self` crashes the instant someone left-clicks a player or
-        -- channel name. Hand it the canonical chat frame instead: ChatFrame1 is
-        -- only reparented (never Hide()'d) under the takeover, so it stays
-        -- IsShown()-true and owns the QUI-styled editbox -- whispers/joins open
-        -- there. contextData.frame is read ONLY by chat link handlers (whisper
-        -- editbox + context-menu anchor); every other link type anchors its
-        -- tooltip to UIParent, so this substitution is inert for them.
-        local refFrame = _G.DEFAULT_CHAT_FRAME or _G.ChatFrame1 or self
-        _G.SetItemRef(link, text, button, refFrame)
-    end)
-    -- Hover tooltips. A bare ScrollingMessageFrame has no OnHyperlinkEnter/
-    -- Leave scripts; Blizzard's ChatFrameMixin wires those in ChatFrame.xml to
-    -- fire EventRegistry "ChatFrame.OnHyperlinkEnter/Leave" (ChatFrame.lua:27).
-    -- The QUI tooltip handler (hyperlinks.lua) listens on those events, so
-    -- without re-firing them from this custom SMF, hovering an item/spell link
-    -- shows nothing. Mirror Blizzard's signature and pass self as the chatFrame.
-    if _G.EventRegistry and _G.EventRegistry.TriggerEvent then
-        smf:SetScript("OnHyperlinkEnter", function(self, link, text, region, boundsLeft, boundsBottom, boundsWidth, boundsHeight)
-            _G.EventRegistry:TriggerEvent("ChatFrame.OnHyperlinkEnter", self, link, text, region, boundsLeft, boundsBottom, boundsWidth, boundsHeight)
-        end)
-        smf:SetScript("OnHyperlinkLeave", function(self)
-            _G.EventRegistry:TriggerEvent("ChatFrame.OnHyperlinkLeave", self)
-        end)
-    end
+    -- No QUI-owned OnHyperlinkClick/Enter/Leave here: a QUI closure calling
+    -- SetItemRef would taint the unit popup and forbid "Copy Character Name"
+    -- (see linkHandler above). Propagate clicks AND hover up to linkHandler
+    -- instead. Its ChatFrameMixin handlers fire the EventRegistry
+    -- "ChatFrame.OnHyperlink{Click,Enter,Leave}" notifications that the tooltip
+    -- handler (hyperlinks.lua) already listens for, and call SetItemRef
+    -- untainted. QUI's hooksecurefunc on SetItemRef still runs there, so addon:
+    -- waypoint/player links keep routing through handlePlayer/handleWaypoint.
+    smf:SetHyperlinkPropagateToParent(true)
     -- Clicking the message area marks the window active (editbox follow).
     if smf.HookScript then
         smf:HookScript("OnMouseDown", function()
