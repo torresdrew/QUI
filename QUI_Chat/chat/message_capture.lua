@@ -419,10 +419,21 @@ end
 -- capture frame owns its event wiring (format stays frame-free).
 SYSTEM_EVENTS.PLAYER_ENTERING_WORLD = function()
     if Format.RefreshLanguages then Format.RefreshLanguages() end
+    -- Warm the name->class cache from the player + roster so the FIRST party/raid
+    -- line rendered after a zone-in (incl. entering a dungeon straight into a
+    -- pull) is class-colored even though its GUID is already secret in combat.
+    if Format.SeedKnownClasses then Format.SeedKnownClasses() end
     -- /reload keeps guild data cached, so the MOTD is readable right here even
     -- if no GUILD_ROSTER_UPDATE re-fires; on a cold login GetMOTD is still empty
     -- this early and the roster-update pull above catches it. seenMotd dedupes.
     MaybePullGMOTD()
+end
+
+-- Roster change: re-warm the name->class cache. UnitClass's classFilename is
+-- non-secret, so this stays correct even when the update fires mid-combat (a
+-- member joining during a pull) -- keeping their chat lines class-colored.
+SYSTEM_EVENTS.GROUP_ROSTER_UPDATE = function()
+    if Format.SeedKnownClasses then Format.SeedKnownClasses() end
 end
 
 SYSTEM_EVENTS.ALTERNATIVE_DEFAULT_LANGUAGE_CHANGED = function()

@@ -23,7 +23,10 @@ _G.ChatTypeInfo = setmetatable({}, {
 })
 _G.Ambiguate = function(name) return (name:gsub("%-.*$", "")) end
 
-_G.RAID_CLASS_COLORS = { MAGE = { colorStr = "ff3fc7eb" } }
+_G.RAID_CLASS_COLORS = {
+    MAGE = { colorStr = "ff3fc7eb" },
+    DEMONHUNTER = { colorStr = "ffa330c9" },
+}
 function _G.GetPlayerInfoByGUID(guid)
     if guid == "Player-1-MAGE" then return "Mage", "MAGE" end
     return nil
@@ -188,6 +191,54 @@ do
         F.DecorateSender("CHAT_MSG_PARTY", "hi", "Newbie-Realm", nil, nil, nil, nil, nil, nil, nil, nil, nil, secretGuid),
         "Newbie")
     secrets[secretGuid] = nil
+end
+
+-- Proactive roster seeding (the cold-login-into-combat fix). Lazy seeding above
+-- needs a sender to have spoken while non-secret FIRST; a player who logs in
+-- straight into a Mythic+ pull and types in /party has NO such prior line, so
+-- the GUID is already secret and the name cache is empty -> plain name. Seeding
+-- from UnitClass (classFilename is non-secret even in combat) at login/roster
+-- change warms the cache so the very first combat line is class-colored, with
+-- NO GetPlayerInfoByGUID resolve. Covers the reported case: the player's OWN
+-- Demon Hunter name in party chat, plus cross-realm groupmates.
+do
+    local roster = {
+        player = { loc = "Demon Hunter", class = "DEMONHUNTER", full = "Drew",          short = "Drew" },
+        party1 = { loc = "Mage",         class = "MAGE",        full = "Zin-OtherRealm", short = "Zin"  },
+    }
+    local prev = {
+        IsInGroup = _G.IsInGroup, IsInRaid = _G.IsInRaid, UnitExists = _G.UnitExists,
+        UnitIsPlayer = _G.UnitIsPlayer, UnitClass = _G.UnitClass, GetUnitName = _G.GetUnitName,
+    }
+    _G.IsInGroup = function() return true end
+    _G.IsInRaid = function() return false end
+    _G.UnitExists = function(u) return roster[u] ~= nil end
+    _G.UnitIsPlayer = function() return true end
+    _G.UnitClass = function(u)
+        local e = roster[u]; if e then return e.loc, e.class end
+    end
+    _G.GetUnitName = function(u, server)
+        local e = roster[u]; if not e then return nil end
+        return server and e.full or e.short
+    end
+
+    F.SeedKnownClasses()
+
+    local secretGuid = setmetatable({}, { __tostring = explode, __concat = explode, __len = explode })
+    secrets[secretGuid] = true
+    -- Player's OWN party line, in combat (secret GUID), never chatted before:
+    -- recovered purely from the login seed of UnitClass("player").
+    eq("seed player own combat color",
+        F.DecorateSender("CHAT_MSG_PARTY", "hi", "Drew", nil, nil, nil, nil, nil, nil, nil, nil, nil, secretGuid),
+        "|cffa330c9Drew|r")
+    -- Cross-realm groupmate (arg2 keeps "-Realm"), secret GUID: recovered from
+    -- the realm-qualified roster seed, again with no GUID resolve.
+    eq("seed roster cross-realm color",
+        F.DecorateSender("CHAT_MSG_PARTY", "hi", "Zin-OtherRealm", nil, nil, nil, nil, nil, nil, nil, nil, nil, secretGuid),
+        "|cff3fc7ebZin|r")
+    secrets[secretGuid] = nil
+
+    for k, v in pairs(prev) do _G[k] = v end
 end
 
 -- ============ short mode (channelShorten enabled, letter preset) ============

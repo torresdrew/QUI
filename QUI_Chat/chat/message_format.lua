@@ -92,6 +92,55 @@ local function CacheableName(name)
     return name
 end
 
+-- Proactive NAME->class seeding from the local player + group roster. Lazy
+-- seeding (above) only fills nameClassCache after a sender has spoken at least
+-- once while NON-SECRET -- so a cold login straight into a Mythic+ pull leaves
+-- it EMPTY exactly when it is needed: the player's own first party line (and
+-- every groupmate's) is dispatched in combat, the GUID is already secret, and
+-- the name has no cache entry yet, so the name renders plain. The fix: pull
+-- class from a source that is non-secret even under combat lockdown. UnitGUID
+-- is SecretWhenUnitIdentityRestricted, but UnitClass's SECOND return
+-- (classFilename, e.g. "DEMONHUNTER") carries NO secret marker -- only its
+-- first return (localized name) is ConditionalSecret -- and RAID_CLASS_COLORS
+-- is keyed by exactly that filename. So `select(2, UnitClass(unit))` resolves
+-- any roster member's class by their non-secret unit token, combat or not
+-- (Blizzard's own GetClassColoredTextForUnit uses the identical call,
+-- vendored ColorUtil.lua:81). We store it under the member's chat NAME so the
+-- combat recovery path finds it on the very first line. Seed on login and on
+-- every GROUP_ROSTER_UPDATE (message_capture owns the event wiring).
+local function SeedUnitClass(unit)
+    if not (_G.UnitExists and _G.UnitExists(unit)) then return end
+    if _G.UnitIsPlayer and not _G.UnitIsPlayer(unit) then return end
+    if not _G.UnitClass then return end
+    -- classFilename is the non-secret 2nd return; guard anyway in case a future
+    -- client marks it secret (== "" on a secret would throw).
+    local ok, _, englishClass = pcall(_G.UnitClass, unit)
+    if not ok or IsSecret(englishClass)
+        or type(englishClass) ~= "string" or englishClass == "" then return end
+    -- Seed under BOTH the realm-qualified and short name forms. CHAT_MSG_* arg2
+    -- carries "Name-Realm" only for cross-realm senders and bare "Name" for
+    -- same-realm; GetUnitName(unit, true) matches that convention exactly, and
+    -- the bare form covers same-realm lines (and is a harmless fallback else).
+    local getName = _G.GetUnitName
+    if not getName then return end
+    local full = CacheableName(getName(unit, true))
+    if full then nameClassCache[full] = englishClass end
+    local short = CacheableName(getName(unit, false))
+    if short then nameClassCache[short] = englishClass end
+end
+
+-- Seed the name->class cache from every currently-known unit. Cheap (≤41 units,
+-- plain-string writes); safe to call repeatedly. Idempotent: a class is
+-- immutable per character within a session, so re-seeding only refreshes keys.
+function Format.SeedKnownClasses()
+    SeedUnitClass("player")
+    if _G.IsInRaid and _G.IsInRaid() then
+        for i = 1, 40 do SeedUnitClass("raid" .. i) end
+    elseif _G.IsInGroup and _G.IsInGroup() then
+        for i = 1, 4 do SeedUnitClass("party" .. i) end
+    end
+end
+
 local function ResolveSenderClass(guid, name)
     if not _G.GetPlayerInfoByGUID then return nil end
     local cname = CacheableName(name)
@@ -129,13 +178,17 @@ end
 -- Reads RAID_CLASS_COLORS directly (NOT any custom-color-aware helper — the
 -- chat sender recolor must track Blizzard's class palette).
 local function SenderClassColorStr(guid, name)
-    -- A secret GUID is allowed through to the class lookup (ResolveSenderClass
-    -- mirrors Blizzard and feeds it to GetPlayerInfoByGUID); only the
-    -- empty/type sieve is gated off, since `== ""` on a secret would throw.
-    -- `name` (the non-secret sender) backs the combat recovery path when the
-    -- secret GUID won't resolve -- see nameClassCache above.
-    if guid == nil then return nil end
-    if not IsSecret(guid) and (type(guid) ~= "string" or guid == "") then return nil end
+    -- TRUTHINESS ONLY -- never compare the guid. Blizzard parity (vendored
+    -- ChatFrameUtil.lua:1002-1006): `if senderGUID and ... GetPlayerInfoByGUID`,
+    -- the secret guid handed straight to the resolver. A bare `==`/`~=` on it
+    -- (the old `if guid == nil`) is fine out of combat -- plain string -- but
+    -- illegal on the real engine secret a raid/party line carries in combat,
+    -- which silently dropped the class color (no Lua unit test reproduces it:
+    -- the harness secret sentinel is a plain table, so `== nil` just returns
+    -- false). `not guid` is the same boolean coercion Blizzard relies on, safe
+    -- on secrets. Empty/garbage guids resolve to nothing downstream
+    -- (GetPlayerInfoByGUID is MayReturnNothing), so no type sieve is needed.
+    if not guid then return nil end
     local settings = I.GetSettings and I.GetSettings()
     local mods = settings and settings.modifiers
     if not (mods and mods.classColors and mods.classColors.enabled) then return nil end
