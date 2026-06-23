@@ -9,6 +9,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v5.0.0-alpha3 - 2026-06-23
+
+> ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will
+> not load on the 12.0.x live client. Stay on the v4.x beta line for live realms.
+
+Rebased the QUI5 12.1 line onto the latest 4.x beta (v4.0.4), folding in every
+fix and feature that landed on the beta line since alpha2.
+
+### Added
+- added Delves/Dressing Room/PvP Match skinning surfaces; expanded the UIKit
+  factory tier.
+- added professions, quest log, housing, and adventure guide buttons to the
+  Info Bar micro menu.
+
+### Fixed
+- refactor(font): override the shared Blizzard font objects instead of walking
+  frames per-frame, so themed fonts survive Blizzard hover/disable swaps.
+- fix(chat): launder hyperlink taint so "Copy Character Name" works again.
+- fix(skinning): drop the tooltip refit and adopt 12.0.7 self-sizing; repair
+  dead skins, backdrop persistence, and dead-field lookups; consolidate the
+  font/backdrop paths and harden persistence.
+- fix(tooltip): stop a C stack overflow from reentrant `Show()` in layout refresh.
+- fix(cdm): prefer the override cooldown lane when a child override is active.
+- fix(anchoring): pin the CDM buff-icon container out of the restricted anchor
+  family.
+- fix(clickcast): edge-driven keyboard binds, clear keys on last-bind removal,
+  keep the mouse-over decision secure, and re-arm on transient mouseover-off.
+- perf(groupframes): cut raid-frame cost across 5 hot paths.
+- fixed friendly boss frames flickering, tooltips flickering when fading out, and
+  LFG category button styling / refresh handling.
+
+
 ## v5.0.0-alpha2 - 2026-06-21
 
 > ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will
