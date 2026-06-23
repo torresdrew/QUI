@@ -2093,6 +2093,11 @@ local function DeriveMirrorPayloadMode(m, sid, suppressAura)
     -- curve in cdm_icon_renderer.lua, so a cosmetic isOnGCD wobble here only
     -- affects which swipe shows, never the dark/bright state the user sees.
     local baseOnGCD = cdInfo and cdInfo.isOnGCD
+    local overrideMode, overrideAura, overrideCooldownSid =
+        ResolveActiveOverrideChildCooldownLane(m, sid)
+    if overrideMode then
+        return overrideMode, overrideAura, overrideCooldownSid
+    end
     -- A real (non-GCD) cooldown on the base always wins -- EXCEPT when this is a
     -- transient proc override that is available while its base recharges, where
     -- the "cooldown" we just read is the base's shared slot and Blizzard shows
