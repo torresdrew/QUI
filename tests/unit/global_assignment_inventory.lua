@@ -68,6 +68,7 @@ return {
     "QUI_Debug/editmode_diagnose.lua::QUI_DiagnoseEditMode",
     "QUI_Debug/memaudit.lua::QUI_MemAudit",
     "QUI_Debug/performance.lua::QUI_TogglePerfMonitor",
+    "QUI_Debug/perftest.lua::QUI_PerfTest",
     "QUI_GroupFrames/groupframes/groupframes.lua::QUI_GroupFrames",
     "QUI_GroupFrames/groupframes/groupframes.lua::QUI_RefreshGroupFrames",
     "QUI_GroupFrames/groupframes/raidbuffs.lua::QUI_RefreshRaidBuffs",
