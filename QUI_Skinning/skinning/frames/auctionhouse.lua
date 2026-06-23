@@ -2,6 +2,7 @@ local addonName, ns = ...
 
 local GetCore = ns.Helpers.GetCore
 local SkinBase = ns.SkinBase
+local AH_CATEGORY_TEXT_COLOR = { 0.72, 0.78, 0.85, 1 }
 
 ---------------------------------------------------------------------------
 -- AUCTION HOUSE SKINNING
@@ -41,12 +42,6 @@ local function SkinAuctionHouseTabs()
     if not AuctionHouseFrame or not AuctionHouseFrame.Tabs then return end
 
     SkinBase.SkinTabGroup(AuctionHouseFrame.Tabs, AuctionHouseFrame, { font = true })
-
-    -- Lock each main tab's font objects: tab selection/hover re-asserts the stock
-    -- font object, reverting the QUI face (the auctions sub-tabs already do this).
-    for _, tab in ipairs(AuctionHouseFrame.Tabs) do
-        SkinBase.LockFrameTextObjects(tab, 2)
-    end
 
     -- Reposition tabs: left justify and tighten spacing
     local tabs = AuctionHouseFrame.Tabs
@@ -99,7 +94,6 @@ local function FontAuctionHouseExtraTabs()
         for _, tab in ipairs(AuctionHouseFrame.Tabs) do
             if tab and not SkinBase.GetFrameData(tab, "qAHTabFonted") then
                 SkinBase.ApplyButtonFontObjects(tab)
-                SkinBase.LockFrameTextObjects(tab, 2)
                 SkinBase.SetFrameData(tab, "qAHTabFonted", true)
             end
         end
@@ -117,7 +111,6 @@ local function FontAuctionHouseExtraTabs()
             end)
             if ok and isTab then
                 SkinBase.ApplyButtonFontObjects(obj)
-                SkinBase.LockFrameTextObjects(obj, 2)
                 SkinBase.SetFrameData(obj, "qAHTabFonted", true)
             end
         end
@@ -128,9 +121,6 @@ local function SkinAuctionHouseAuctionsTabs(auctionsFrame)
     if not auctionsFrame then return end
     local tabs = { auctionsFrame.AuctionsTab, auctionsFrame.BidsTab }
     SkinBase.SkinTabGroup(tabs, auctionsFrame, { font = true })
-    for _, tab in ipairs(tabs) do
-        SkinBase.LockFrameTextObjects(tab, 2)
-    end
 end
 
 local function LockDurationDropdownText(dropdown)
@@ -140,14 +130,10 @@ local function LockDurationDropdownText(dropdown)
         SkinBase.SkinFontString(text, { fontOnly = true })
         SkinBase.LockFontObject(text, { fontOnly = true })
     end
-    SkinBase.LockFrameTextObjects(dropdown, 2)
 end
 
 local function LockTokenFrameText(frame)
     if not frame then return end
-    SkinBase.SkinFrameText(frame, { recurse = true })
-    SkinBase.LockFrameTextObjects(frame, 4)
-
     for _, key in ipairs({ "BuyoutPrice", "MarketPrice" }) do
         local fontString = frame[key]
         if fontString then
@@ -177,8 +163,6 @@ local function LockAuctionHouseBuyDialogText()
     local notification = AuctionHouseFrame and AuctionHouseFrame.BuyDialog and AuctionHouseFrame.BuyDialog.Notification
     if not notification then return end
 
-    SkinBase.SkinFrameText(notification, { recurse = true })
-    SkinBase.LockFrameTextObjects(notification, 2)
     if notification.Text then
         SkinBase.SkinFontString(notification.Text, { fontOnly = true })
         SkinBase.LockFontObject(notification.Text, { fontOnly = true })
@@ -199,18 +183,16 @@ local function SkinSearchBar()
         end
         -- Filter button (WowStyle1 dropdown — standard button textures don't apply)
         if searchBar.FilterButton then
-            SkinBase.SkinButton(searchBar.FilterButton, { strip = true, font = true })
-            -- Keep the QUI backdrop BELOW the dropdown's children so the
-            -- clear-filters "X" (ClearFiltersButton, over the top-right corner)
-            -- renders on top. Lowering our own backdrop is stable; raising the X
-            -- is not — the dropdown/menu machinery re-levels its child buttons on
-            -- show/interaction (Blizzard_Menu MenuTemplates: "Machinery is
-            -- broken"), so a one-time level bump on the X gets undone on the
-            -- first click. Mirrors the proven professions.lua belowChildren path.
-            local filterBd = SkinBase.GetBackdrop(searchBar.FilterButton)
-            if filterBd then
-                filterBd:SetFrameLevel(math.max(0, searchBar.FilterButton:GetFrameLevel() - 1))
-            end
+            -- belowChildren keeps the QUI backdrop BELOW the dropdown's children so the
+            -- clear-filters "X" (ClearFiltersButton, over the top-right corner) renders on
+            -- top. Lowering our own backdrop is stable; raising the X is not — the
+            -- dropdown/menu machinery re-levels its child buttons on show/interaction. The
+            -- opt does the same SetFrameLevel(max(0, level-1)) as the old manual block.
+            -- WowStyle1FilterDropdownTemplate (a DropdownButton) — route through the
+            -- canonical SkinDropdown (default strip, like every other QUI dropdown)
+            -- so it reads as a dropdown, not a button. belowChildren keeps the QUI
+            -- backdrop below the ClearFiltersButton "X" overlay so it stays on top.
+            SkinBase.SkinDropdown(searchBar.FilterButton, { belowChildren = true })
         end
         -- Search button
         if searchBar.SearchButton then
@@ -259,7 +241,6 @@ local function HookAuctionHeaderSkin()
         local hl = self.GetHighlightTexture and self:GetHighlightTexture()
         if hl then hl:SetAlpha(0) end
         SkinBase.ApplyButtonFontObjects(self)
-        SkinBase.LockFrameTextObjects(self, 2)
     end)
     SkinBase.SetFrameData(mixin, "headerSkinHooked", true)
 end
@@ -320,6 +301,22 @@ local function SkinBrowsePanel()
     end
 end
 
+local function SkinQuantityInputFrame(quantityInput)
+    if not quantityInput then return end
+    if quantityInput.InputBox then
+        SkinBase.SkinEditBox(quantityInput.InputBox)
+    end
+    if quantityInput.MaxButton then
+        SkinBase.SkinButton(quantityInput.MaxButton, { font = true })
+    end
+end
+
+local function RefreshQuantityInputFrame(quantityInput)
+    if not quantityInput then return end
+    SkinBase.RefreshWidget(quantityInput.InputBox)
+    SkinBase.RefreshWidget(quantityInput.MaxButton)
+end
+
 -- Skin sell panel
 local function SkinSellPanel()
     local AuctionHouseFrame = _G.AuctionHouseFrame
@@ -337,9 +334,7 @@ local function SkinSellPanel()
             if moneyInput.CopperBox then SkinBase.SkinEditBox(moneyInput.CopperBox) end
         end
         -- Quantity input
-        if commoditiesSell.QuantityInput and commoditiesSell.QuantityInput.InputBox then
-            SkinBase.SkinEditBox(commoditiesSell.QuantityInput.InputBox)
-        end
+        SkinQuantityInputFrame(commoditiesSell.QuantityInput)
         -- Duration dropdown
         if commoditiesSell.DurationDropdown then
             SkinBase.SkinDropdown(commoditiesSell.DurationDropdown)
@@ -363,9 +358,7 @@ local function SkinSellPanel()
             if moneyInput.CopperBox then SkinBase.SkinEditBox(moneyInput.CopperBox) end
         end
         -- Quantity input
-        if itemSell.QuantityInput and itemSell.QuantityInput.InputBox then
-            SkinBase.SkinEditBox(itemSell.QuantityInput.InputBox)
-        end
+        SkinQuantityInputFrame(itemSell.QuantityInput)
         -- Duration dropdown
         if itemSell.DurationDropdown then
             SkinBase.SkinDropdown(itemSell.DurationDropdown)
@@ -434,6 +427,7 @@ local function SuppressCategoryTextures(button)
     SkinBase.StripTextures(button)
     if button.SelectedTexture then button.SelectedTexture:SetAlpha(0) end
     if button.NormalTexture then button.NormalTexture:SetAlpha(0) end
+    if button.HighlightTexture then button.HighlightTexture:SetAlpha(0) end
     local highlight = button:GetHighlightTexture()
     if highlight then highlight:SetAlpha(0) end
 end
@@ -455,14 +449,10 @@ local function SkinCategoriesList()
         SkinBase.SkinCategoryButton(button)
         SuppressCategoryTextures(button)
         SkinBase.RefreshCategorySelected(button)
-        -- Reapply the QUI font: Blizzard's element initializer calls
-        -- SetNormalFontObject on every rebind, reverting the label font.
-        SkinBase.SkinFontString(button.Text)
-        SkinBase.LockFrameTextObjects(button, 2)
         -- SetUp's SetNormalFontObject REPLACES the font object SkinCategoryButton
         -- drove once (the once-guard won't re-drive). Re-drive on every bind so the
         -- normal + hover/disable font objects stay on the QUI face.
-        SkinBase.ApplyButtonFontObjects(button)
+        SkinBase.ApplyButtonFontObjects(button, { color = AH_CATEGORY_TEXT_COLOR })
     end
     local function RefreshCategoryButtons(self)
         SafeForEachFrame(self, StyleCategoryRow)
@@ -501,9 +491,9 @@ local function SkinCategoriesList()
         SkinBase.SetFrameData(categoriesList, "clickHooked", true)
     end
 
-    -- Hide scroll bar background
-    if categoriesList.ScrollBar and categoriesList.ScrollBar.Background then
-        categoriesList.ScrollBar.Background:Hide()
+    -- Canonical thin QUI scrollbar (was a bare Background:Hide()).
+    if categoriesList.ScrollBar then
+        SkinBase.SkinTrimScrollBar(categoriesList.ScrollBar)
     end
 end
 
@@ -527,10 +517,10 @@ local function SkinAuctionHouse()
 
     -- Style tabs
     SkinAuctionHouseTabs()
-    -- Re-font on every open so bottom tabs added by other addons still pick up
-    -- the QUI font (per-tab guard keeps it cheap). Deferred one frame: other
-    -- addons create/reshow their tabs in their own AH OnShow, which may run after
-    -- ours, so wait for the frame to settle before walking.
+    -- Re-font on every open so bottom tabs added by other addons still pick up the QUI
+    -- font (per-tab guard keeps it cheap). The initial pass below is synchronous; the
+    -- OnShow hook defers one frame because other addons create/reshow their tabs in their
+    -- own AH OnShow (which may run after ours), so it waits for the frame to settle.
     FontAuctionHouseExtraTabs()
     AuctionHouseFrame:HookScript("OnShow", function()
         C_Timer.After(0, FontAuctionHouseExtraTabs)
@@ -544,9 +534,25 @@ local function SkinAuctionHouse()
     pcall(SkinSellPanel)
     pcall(SkinAuctionsPanel)
 
-    SkinBase.SkinFrameText(AuctionHouseFrame, { recurse = true })
     LockAuctionHouseTokenText()
     LockAuctionHouseBuyDialogText()
+
+    -- Item-display icons: crop + quality border. Hook the base item-display
+    -- mixin's icon setter (self = the ItemDisplay button) so every browse / sell /
+    -- auctions item icon is skinned as it is set. Idempotent per mixin + per icon.
+    if SkinBase.SkinIcon and _G.AuctionHouseItemDisplayMixin
+        and not SkinBase.GetFrameData(_G.AuctionHouseItemDisplayMixin, "qAHIconHooked") then
+        hooksecurefunc(_G.AuctionHouseItemDisplayMixin, "SetItemInternal", function(self)
+            if self and self.Icon then
+                local border = SkinBase.SkinIcon(self.Icon)
+                if border and self.IconBorder then
+                    SkinBase.HandleIconBorder(self.IconBorder, border)
+                end
+            end
+        end)
+        SkinBase.SetFrameData(_G.AuctionHouseItemDisplayMixin, "qAHIconHooked", true)
+    end
+
     SkinBase.MarkSkinned(AuctionHouseFrame)
 end
 
@@ -617,9 +623,7 @@ local function RefreshAuctionHouseColors()
             SkinBase.RefreshWidget(mi.SilverBox)
             SkinBase.RefreshWidget(mi.CopperBox)
         end
-        if commoditiesSell.QuantityInput and commoditiesSell.QuantityInput.InputBox then
-            SkinBase.RefreshWidget(commoditiesSell.QuantityInput.InputBox)
-        end
+        RefreshQuantityInputFrame(commoditiesSell.QuantityInput)
         LockDurationDropdownText(commoditiesSell.DurationDropdown)
     end
 
@@ -640,9 +644,7 @@ local function RefreshAuctionHouseColors()
             SkinBase.RefreshWidget(mi.SilverBox)
             SkinBase.RefreshWidget(mi.CopperBox)
         end
-        if itemSell.QuantityInput and itemSell.QuantityInput.InputBox then
-            SkinBase.RefreshWidget(itemSell.QuantityInput.InputBox)
-        end
+        RefreshQuantityInputFrame(itemSell.QuantityInput)
         LockDurationDropdownText(itemSell.DurationDropdown)
     end
 

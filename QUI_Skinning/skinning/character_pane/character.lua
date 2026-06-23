@@ -35,6 +35,8 @@ end
 ---------------------------------------------------------------------------
 local pendingDecorMode = nil     -- "character" or "other"
 local pendingStatsPanelRefresh = false
+local pendingCharacterFrameScale = nil   -- deferred CharacterFrame:SetScale (protected in combat)
+local pendingPaneLayout = false          -- deferred protected pane layout (decor reposition + slot SetScale/SetPoint)
 local ScheduleUpdate
 local ApplyCharacterPaneLayout
 
@@ -62,11 +64,27 @@ end
 local charCombatFrame = CreateFrame("Frame")
 charCombatFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
 charCombatFrame:SetScript("OnEvent", function()
-    -- If CharacterFrame closed during combat, nothing to apply
+    -- Apply any deferred CharacterFrame scale first — SetScale is safe now that
+    -- combat ended and does not require the frame to be shown.
+    if pendingCharacterFrameScale then
+        if CharacterFrame then CharacterFrame:SetScale(pendingCharacterFrameScale) end
+        pendingCharacterFrameScale = nil
+    end
+
+    -- If CharacterFrame closed during combat, drop the rest of the queued work
     if not CharacterFrame or not CharacterFrame:IsShown() then
         pendingDecorMode = nil
         pendingStatsPanelRefresh = false
+        pendingPaneLayout = false
         return
+    end
+
+    -- Re-run the deferred protected pane layout (HideBlizzardDecorations +
+    -- slot reposition) now that combat has ended. force=true bypasses the
+    -- layoutApplied guard set when we deferred during combat.
+    if pendingPaneLayout then
+        pendingPaneLayout = false
+        if ApplyCharacterPaneLayout then ApplyCharacterPaneLayout(true) end
     end
 
     if pendingDecorMode then
@@ -98,9 +116,15 @@ charCombatFrame:SetScript("OnEvent", function()
 end)
 
 local function SetCharacterFrameScale(scale)
-    if CharacterFrame then
-        CharacterFrame:SetScale(scale)
+    if not CharacterFrame then return end
+    -- CharacterFrame is a protected UIPanel; SetScale on it taints in combat.
+    -- Defer to the charCombatFrame PLAYER_REGEN_ENABLED handler, mirroring
+    -- inspect.lua SetInspectScaleDeferred.
+    if InCombatLockdown() then
+        pendingCharacterFrameScale = scale
+        return
     end
+    CharacterFrame:SetScale(scale)
 end
 
 -- Blizzard can return protected "secret" stat values in combat and some
@@ -376,9 +400,9 @@ local function StyleCloseButton(button)
     if skinBase and skinBase.SkinChromeCloseButton then
         skinBase.SkinChromeCloseButton(button, {
             stateKey = "characterPaneClose",
-            label = "X",
+            -- glyph + size inherit the unified "×"/14 default (matches every other
+            -- QUI close button); only the chrome inset/palette stay pane-specific.
             font = GetGlobalFont(),
-            fontSize = 11,
             fontFlags = "OUTLINE",
             textColor = C.text,
             borderColor = function() local r, g, b = GetCharacterBorderColor(); return r, g, b, 1 end,
@@ -440,10 +464,10 @@ local function UpdateSidebarTabBorder(tab)
 
     if IsSidebarTabActive(tab) then
         local r, g, b = GetCharacterAccentColor()
-        border:SetBackdropBorderColor(r, g, b, 1)
+        SetOnePixelBorderColors(border, { r, g, b, 1 })
     else
         local r, g, b = GetCharacterBorderColor()
-        border:SetBackdropBorderColor(r, g, b, 1)
+        SetOnePixelBorderColors(border, { r, g, b, 1 })
     end
 end
 
@@ -517,7 +541,7 @@ local function StyleSidebarTab(tab, index, uniformWidth, uniformHeight)
     tab:HookScript("OnEnter", function(self)
         local r, g, b = GetCharacterAccentColor()
         local bd = sidebarTabBorders[self]
-        if bd then bd:SetBackdropBorderColor(r, g, b, 1) end
+        if bd then SetOnePixelBorderColors(bd, { r, g, b, 1 }) end
     end)
     tab:HookScript("OnLeave", function(self)
         UpdateSidebarTabBorder(self)
@@ -1483,6 +1507,14 @@ end
 -- Hide Blizzard CharacterFrame decorations
 ---------------------------------------------------------------------------
 local function HideBlizzardDecorations()
+    -- Defensive: repositions protected CharacterFrame children (sidebar tabs,
+    -- close button, bottom tabs) — forbidden in combat. Callers gate via
+    -- ApplyCharacterPaneLayout, but self-defer too in case of a direct caller.
+    if InCombatLockdown() then
+        pendingPaneLayout = true
+        return
+    end
+
     local settings = GetSettings()
 
     -- Main frame decorations (only hide elements specific to Character tab)
@@ -1663,10 +1695,9 @@ local function HideBlizzardDecorations()
             r, g, b = C_Item.GetItemQualityColor(quality)
         end
 
+        -- ApplySlotPixelBackdrop persists data.borderColor and re-renders; a bare
+        -- SetBackdropBorderColor here is redundant and discarded on scale refresh.
         ApplySlotPixelBackdrop(borderFrame, { r, g, b, 1 })
-        if borderFrame.SetBackdropBorderColor then
-            borderFrame:SetBackdropBorderColor(r, g, b, 1)
-        end
         borderFrame:Show()
     end
 
@@ -1762,9 +1793,9 @@ local function CreateCustomBackground()
         customBg:SetPoint("TOPLEFT", CharacterFrame, "TOPLEFT", 0, 0)
         customBg:SetPoint("BOTTOMRIGHT", CharacterFrame, "BOTTOMRIGHT", PANEL_WIDTH_EXTENSION, -PANEL_HEIGHT_EXTENSION)
 
-        -- Use global skinning background color
-        customBg:SetBackdropColor(bgr, bgg, bgb, bga)
-        customBg:SetBackdropBorderColor(sr, sg, sb, sa)
+        -- Colors already persisted by ApplyOnePixelBorder above; a bare setter here
+        -- is discarded on the next scale refresh. Live recolor goes through the
+        -- bgColorPicker callback via SetOnePixelBorderColors.
         customBg:Show()
     end
 
@@ -1804,6 +1835,13 @@ local RIGHT_COLUMN_SLOTS = {
 -- Reposition equipment slots into portrait layout
 ---------------------------------------------------------------------------
 local function RepositionSlots()
+    -- Defensive: SetScales/SetPoints protected equipment slots — forbidden in
+    -- combat. Callers gate via ApplyCharacterPaneLayout; self-defer too.
+    if InCombatLockdown() then
+        pendingPaneLayout = true
+        return
+    end
+
     local settings = GetSettings()
     if not CharacterFrameBg then return end  -- Need this frame as anchor
 
@@ -2032,20 +2070,30 @@ ApplyCharacterPaneLayout = function(force)
     -- Only apply once per session (unless forced)
     if layoutApplied and not force then return end
 
-    HideBlizzardDecorations()
+    -- HideBlizzardDecorations repositions protected CharacterFrame children
+    -- (PaperDollSidebarTabs, CloseButton, bottom tabs) and the slot pass
+    -- SetScales/SetPoints the equipment slots — all ADDON_ACTION_FORBIDDEN in
+    -- combat. Defer the protected layout to PLAYER_REGEN_ENABLED (mirrors
+    -- inspect.lua pendingInspectLayout/ApplyInspectPaneLayout); the QUI-owned
+    -- background/title/text skinning below is insecure-safe and runs now.
+    local inCombat = InCombatLockdown()
+    if inCombat then
+        pendingPaneLayout = true
+    else
+        HideBlizzardDecorations()
+    end
+
     CreateCustomBackground()
     SetupTitleArea()
-    -- Let Blizzard's slot setup for the current frame finish before anchoring.
-    RunAfterCharacterPaneLayoutTick(function()
-        RepositionSlots()
-        RefreshEquipmentSlotBorders()
-        PositionModelScene()
-        PositionStatsPanelForLayout()
-    end)
 
-    local skinBase = GetSkinBase()
-    if skinBase and CharacterFrame then
-        skinBase.SkinFrameText(CharacterFrame, { recurse = true })
+    if not inCombat then
+        -- Let Blizzard's slot setup for the current frame finish before anchoring.
+        RunAfterCharacterPaneLayoutTick(function()
+            RepositionSlots()
+            RefreshEquipmentSlotBorders()
+            PositionModelScene()
+            PositionStatsPanelForLayout()
+        end)
     end
 
     layoutApplied = true
@@ -2212,9 +2260,14 @@ local function RefreshCharacterPanelFonts()
 
     -- Update section header underlines with header color
     if trackedUnderlines then
+        local sb = GetSkinBase()
         for _, line in ipairs(trackedUnderlines) do
             if line and line.SetColorTexture then
                 line:SetColorTexture(headerColor[1], headerColor[2], headerColor[3], 0.3)
+                -- Re-disable texel snapping: SetColorTexture re-enables the
+                -- engine default, which rasterizes the 1px underline to nothing
+                -- at fractional UI scale (snap was applied at creation only).
+                if sb and sb.DisablePixelSnap then sb.DisablePixelSnap(line) end
             end
         end
     end
@@ -2396,6 +2449,9 @@ local function CreateSectionHeader(parent, text, yOffset)
     line:SetPoint("TOPLEFT", header, "BOTTOMLEFT", 0, -2)
     line:SetPoint("RIGHT", parent, "RIGHT", -5, 0)
     line:SetColorTexture(headerColor[1], headerColor[2], headerColor[3], 0.3)
+    if UIKit and UIKit.DisablePixelSnap then
+        UIKit.DisablePixelSnap(line) -- keep the 1px underline crisp/visible at fractional scales
+    end
     if UIKit and UIKit.RegisterScaleRefresh then
         UIKit.RegisterScaleRefresh(line, "characterPaneSectionUnderline", function(owner)
             owner:SetHeight(GetPixelSize(owner))
@@ -3330,9 +3386,13 @@ local function UpdateILvlDisplay()
     -- Get spec and class
     local specName = ""
     local className = ""
-    local specIndex = GetSpecialization()
-    if specIndex then
-        local _, specNameLocal = GetSpecializationInfo(specIndex)
+    -- Canonical namespaced API (matches the in-file usage at ~2667). The bare
+    -- GetSpecialization/GetSpecializationInfo globals only exist behind the
+    -- loadDeprecationFallbacks CVar, so call through C_SpecializationInfo directly.
+    local specIndex = C_SpecializationInfo and C_SpecializationInfo.GetSpecialization
+        and C_SpecializationInfo.GetSpecialization()
+    if specIndex and C_SpecializationInfo.GetSpecializationInfo then
+        local _, specNameLocal = C_SpecializationInfo.GetSpecializationInfo(specIndex)
         specName = specNameLocal or ""
     end
     local _, classNameLocal = UnitClass("player")
@@ -3970,9 +4030,9 @@ local function HookCharacterFrame()
         QUICore:SetPixelPerfectSize(gearBtn, 118, 20)
         QUICore:SetPixelPerfectPoint(gearBtn, "TOPRIGHT", CharacterFrame, "TOPRIGHT", 6, -6)
         local br, bg, bb = GetCharacterBorderColor()
+        -- ApplyOnePixelBorder persists data.bgColor/data.borderColor; the prior
+        -- Helpers.SetFrameBackdrop* writes were shadowed by data.* on scale refresh.
         ApplyOnePixelBorder(gearBtn, true, { br, bg, bb, 1 }, { 0.1, 0.1, 0.1, 0.8 })
-        Helpers.SetFrameBackdropColor(gearBtn, 0.1, 0.1, 0.1, 0.8)
-        Helpers.SetFrameBackdropBorderColor(gearBtn, br, bg, bb, 1)
         gearBtn:SetFrameStrata("HIGH")
         gearBtn:SetFrameLevel(100)
 
@@ -4011,8 +4071,8 @@ local function HookCharacterFrame()
         -- Match the main QUI options panel background (#0d1117 @ 0.97 alpha)
         -- rather than the lighter character-panel bg, so settings popouts feel
         -- like the same surface as the rest of QUI's settings UI.
-        Helpers.SetFrameBackdropColor(settingsPanel, 0.051, 0.067, 0.09, 0.97)
-        Helpers.SetFrameBackdropBorderColor(settingsPanel, C.border[1], C.border[2], C.border[3], 1)
+        -- Colors already persisted via ApplyOnePixelBorder above (data.* shadows the
+        -- _quiBg*/_quiBorder* fallback on refresh, so the prior Helpers writes were dead).
         settingsPanel:SetFrameStrata("DIALOG")
         settingsPanel:SetFrameLevel(200)
         settingsPanel:EnableMouse(true)
@@ -4046,7 +4106,7 @@ local function HookCharacterFrame()
             end
         end
         ApplyPanelGlow()
-        settingsPanel._accentGlow = panelGlow
+        GetState(settingsPanel).accentGlow = panelGlow
         settingsPanel:HookScript("OnShow", ApplyPanelGlow)
 
         -- Title
@@ -4165,7 +4225,9 @@ local function HookCharacterFrame()
                 -- Update local customBg if we own it
                 if customBg and not IsSkinningHandlingBackground() then
                     local col = generalDB.skinBgColor or C.bg
-                    customBg:SetBackdropColor(col[1], col[2], col[3], col[4] or 0.95)
+                    -- Persist into data.bgColor so the picked color survives a UI-scale
+                    -- rebuild (a bare SetBackdropColor reverts on the next refresh).
+                    SetOnePixelBorderColors(customBg, nil, { col[1], col[2], col[3], col[4] or 0.95 })
                 end
                 -- Also refresh skinning module if it's active
                 if _G.QUI_RefreshCharacterFrameColors then

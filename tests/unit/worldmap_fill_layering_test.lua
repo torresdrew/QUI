@@ -1,6 +1,6 @@
 -- tests/unit/worldmap_fill_layering_test.lua
 -- Run: lua tests/unit/worldmap_fill_layering_test.lua
-local capturedCallback
+local capturedCallbacks = {}
 local frameState = setmetatable({}, { __mode = "k" })
 local appliedBackdrops = {}
 
@@ -146,13 +146,32 @@ ns.SkinBase = {
             frame:SetBackdropBorderColor(borderColor[1], borderColor[2], borderColor[3], borderColor[4])
         end
     end,
+    -- Canonical recolor of an already-managed pixel-backdrop child: updates the
+    -- persisted backdrop state (data.borderColor/data.bgColor) and re-renders. Mirrors
+    -- ApplyPixelBackdrop's color application so the persistence assertions below hold.
+    SetBackdropColors = function(frame, borderColor, bgColor)
+        appliedBackdrops[#appliedBackdrops + 1] = {
+            frame = frame,
+            borderColor = borderColor,
+            bgColor = bgColor,
+        }
+        if bgColor and frame.SetBackdropColor then
+            frame:SetBackdropColor(bgColor[1], bgColor[2], bgColor[3], bgColor[4])
+        end
+        if borderColor and frame.SetBackdropBorderColor then
+            frame:SetBackdropBorderColor(borderColor[1], borderColor[2], borderColor[3], borderColor[4])
+        end
+    end,
     SkinFrameText = function() end,
-    OnAddOnLoaded = function(_, callback)
-        capturedCallback = callback
+    OnAddOnLoaded = function(addon, callback)
+        capturedCallbacks[addon] = callback
     end,
 }
 
 assert(loadfile("QUI_Skinning/skinning/frames/worldmap.lua"))("QUI", ns)
+-- worldmap.lua registers several addon-loaded callbacks (WorldMap, FlightMap);
+-- target the WorldMap one specifically.
+local capturedCallback = capturedCallbacks["Blizzard_WorldMap"]
 assert(type(capturedCallback) == "function", "World map skinning must register an addon-loaded callback")
 
 capturedCallback()

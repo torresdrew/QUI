@@ -14,12 +14,6 @@ local SPELL_NAMES = { [774] = "Rejuvenation", [8936] = "Regrowth" }
 local NAME_TO_ID  = { Rejuvenation = 774, Regrowth = 8936 }
 
 local frameMT
-local function RunSnippet(snippet, selfFrame, owner)
-    local loader = loadstring or load
-    local chunk, err = loader("local self, owner = ...\n" .. snippet)
-    assert(chunk, err)
-    return chunk(selfFrame, owner)
-end
 
 local function NewFrame(frameType, name, parent, template)
     local frame = {
@@ -90,9 +84,18 @@ function UnitIsPlayer() return true end
 function GetSpecialization() return 1 end
 function GetSpecializationInfo() return 102 end
 function RegisterStateDriver() end
+function RegisterAttributeDriver() end
 function UnregisterStateDriver() end
 function SecureHandlerWrapScript(frame, script, header, preBody)
     frame.secureWraps[script] = { header = header, preBody = preBody }
+end
+
+-- Run a frame's wrapped secure snippet (self = frame, owner = header). The
+-- keyboard key is bound by the OnEnter wrap, edge-driven -- not a state driver.
+local function RunWrap(frame, script)
+    local wrap = assert(frame.secureWraps[script], "frame missing secure wrap: " .. script)
+    local chunk = assert((loadstring or load)("local self, owner = ...\n" .. wrap.preBody))
+    return chunk(frame, wrap.header)
 end
 GameTooltip = { GetOwner = function() return nil end, AddLine = noop, AddDoubleLine = noop, Show = noop }
 _G.wipe = function(t) for k in pairs(t) do t[k] = nil end return t end
@@ -154,8 +157,8 @@ local GFCC = assert(ns.QUI_GroupFrameClickCast)
 GFCC:Initialize()
 GFCC:RegisterAllFrames()
 
--- Keyboard keys are PUBLISHED to the global caster (its mouseoverstate driver
--- binds them on @mouseover), not bound per-frame.
+-- Keyboard keys are PUBLISHED to the global caster (its cast macros); the
+-- OnEnter wrap binds them to the caster on hover, not a state-driver poll.
 local caster = assert(_G.QUI_ClickCastCaster, "caster button should exist for keyboard binding")
 assert(caster:GetAttribute("cc-key1") == "F", "key F should be published to the caster")
 assert(caster:GetAttribute("type-keyf") == "macro", "caster key virtual button should be configured")
@@ -172,14 +175,12 @@ assert(caster:GetAttribute("type-keyf") == nil,
 assert(caster:GetAttribute("type-keyg") == "macro", "new caster key virtual button should be configured")
 assert(caster:GetAttribute("macrotext-keyg"):find("Regrowth", 1, true),
     "new caster key virtual button should cast Regrowth")
--- And the driver binds the current key (G) on @mouseover while the cursor is
--- over a registered frame (the frame-hover gate scopes keyboard click-cast to
--- click-cast frames; bare @mouseover -- nameplates/world -- must not bind).
-child.underMouse = true
-local loader = loadstring or load
-assert(loader("local self, newstate = ...\n" .. caster:GetAttribute("_onstate-mouseoverstate")))(caster, "on")
+-- And the OnEnter secure wrap binds the current key (G) to the caster while the
+-- cursor is over the registered frame. The wrap exists only on registered click-
+-- cast frames, so bare @mouseover (nameplates/world) can never arm a key.
+RunWrap(child, "OnEnter")
 assert(caster.overrideBindings.G and caster.overrideBindings.G.button == "keyg",
-    "BUG: @mouseover should bind the new G key without /reload")
+    "BUG: hovering should bind the new G key without /reload")
 assert(not caster.overrideBindings.F, "BUG: stale F binding should be gone after rebind")
 
 print("OK: groupframes_clickcast_keyboard_dynamic_apply_test")

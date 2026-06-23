@@ -28,9 +28,9 @@ local columnDisplayHooked = false
 
 -- Pooled list rows (friends / who / ignore / community roster) are ScrollBox-
 -- recycled and Blizzard re-applies their font OBJECT on every acquire / rebind
--- / presence update (FriendsFrame.lua, CommunitiesMemberList.lua), reverting a
--- one-shot SkinFrameText. Lock each acquired row's fontstrings so the QUI face
--- survives (fontOnly keeps Blizzard's class / status text colors).
+-- / presence update (FriendsFrame.lua, CommunitiesMemberList.lua). Lock each
+-- acquired row's fontstrings so the QUI face survives (fontOnly keeps
+-- Blizzard's class / status text colors).
 local function HookListRows(scrollBox, depth)
     -- Guarded per-row font lock (runs the recursive pass once; the LockFontObject
     -- hooks re-assert the QUI face on every later acquire/presence/state rebind).
@@ -52,7 +52,6 @@ local function SkinFriends()
     if not IsSettingEnabled("skinFriends") then return end
     local frame = _G.FriendsFrame
     if not frame or SkinBase.IsSkinned(frame) then return end
-    SkinBase.SkinButtonFrameTemplate(frame)
     -- FriendsFrameTab1..4: Friends / Quick Join / Who / Raid
     -- (per Blizzard_FriendsFrame/Mainline/FriendsFrame.lua:273-276).
     local tabs = {}
@@ -60,8 +59,7 @@ local function SkinFriends()
         local tab = _G["FriendsFrameTab" .. i]
         if tab then tabs[#tabs + 1] = tab end
     end
-    SkinBase.SkinTabGroup(tabs, frame)
-    SkinBase.SkinFrameText(frame, { recurse = true })
+    SkinBase.SkinWindow(frame, { tabs = tabs })
     -- Friends / Ignore / Who pooled list rows (FriendsFrame.lua:312/326/343).
     if _G.FriendsListFrame then HookListRows(_G.FriendsListFrame.ScrollBox) end
     if frame.IgnoreListWindow then HookListRows(frame.IgnoreListWindow.ScrollBox) end
@@ -75,6 +73,19 @@ local function SkinFriends()
             if h then SkinBase.ApplyButtonFontObjects(h) end
         end
     end
+
+    -- Wire the shared editbox/dropdown skins onto the Friends/Who sub-widgets
+    -- (existing verified helpers; guarded — AddFriendNameEditBox is created on
+    -- demand so it may be nil at first skin).
+    if SkinBase.SkinEditBox then
+        if _G.WhoFrameEditBox then SkinBase.SkinEditBox(_G.WhoFrameEditBox) end
+        if _G.AddFriendNameEditBox then SkinBase.SkinEditBox(_G.AddFriendNameEditBox) end
+    end
+    if SkinBase.SkinDropdown then
+        if _G.FriendsFrameStatusDropdown then SkinBase.SkinDropdown(_G.FriendsFrameStatusDropdown) end
+        if _G.WhoFrameDropdown then SkinBase.SkinDropdown(_G.WhoFrameDropdown) end
+    end
+
     SkinBase.MarkSkinned(frame)
 end
 
@@ -96,8 +107,7 @@ local function SkinCommunities()
     if not IsSettingEnabled("skinCommunities") then return end
     local frame = _G.CommunitiesFrame
     if not frame or SkinBase.IsSkinned(frame) then return end
-    SkinBase.SkinButtonFrameTemplate(frame)
-    SkinBase.SkinFrameText(frame, { recurse = true })
+    SkinBase.SkinWindow(frame)
     -- Community / guild roster rows (CommunitiesMemberList.lua:459) re-font on
     -- acquire + presence/state refresh.
     if frame.MemberList then HookListRows(frame.MemberList.ScrollBox) end
@@ -117,7 +127,12 @@ local function SkinCommunities()
     -- method (once) so the lock runs after the headers exist and on every rebuild.
     if not columnDisplayHooked and _G.ColumnDisplayMixin and _G.ColumnDisplayMixin.LayoutColumns then
         hooksecurefunc(_G.ColumnDisplayMixin, "LayoutColumns", function(self)
-            SkinBase.LockFrameTextObjects(self, 1)
+            -- The sortable column headers are Buttons with a HighlightFont OBJECT
+            -- the engine swaps on hover with no setter call. Drive their font
+            -- objects so the header label survives mouseover.
+            if SkinBase.ApplyButtonFontObjectsDeep then
+                SkinBase.ApplyButtonFontObjectsDeep(self, 1)
+            end
         end)
         columnDisplayHooked = true
     end

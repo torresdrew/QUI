@@ -50,6 +50,10 @@ local function makeFrame()
     function f:SetMaxLines(n) self.maxLines = n end
     function f:EnableMouseWheel(v) self.wheelEnabled = v end
     function f:SetHyperlinksEnabled() end
+    function f:SetAllPoints() end
+    function f:UnregisterAllEvents() self.events = {} end
+    function f:SetToplevel() end
+    function f:SetHyperlinkPropagateToParent(v) self.hyperlinkPropagate = v end
     function f:AddMessage(m, r, g, b)
         self.added[#self.added + 1] = m
         self.colors = self.colors or {}
@@ -79,6 +83,7 @@ _G.ChatFontNormal = {}
 local layoutModeActive = false
 function _G.QUI_IsLayoutModeActive() return layoutModeActive end
 _G.ChatFrame1 = {}
+_G.ChatFrame1EditBox = {}
 
 function _G.CreateFont(name)
     local fo = { name = name }
@@ -455,36 +460,28 @@ Display.Refresh()
 assert(smf1.fading == false, "fade re-disabled: SetFading(false) called")
 
 -- Hyperlink click context frame --------------------------------------------
--- A player/channel name click hands its frame to Blizzard's SetItemRef, which
--- routes it through ChatFrameUtil.SendTell / OpenChat -> ChooseBoxForSend(frame)
--- -> frame.editBox. The custom ScrollingMessageFrame has NO editBox (the QUI
--- input is ChatFrame1's editbox restyled in place), so passing the SMF crashed
--- the instant someone left-clicked a player or channel name. The handler must
--- substitute the canonical chat frame (DEFAULT_CHAT_FRAME / ChatFrame1), which
--- owns the QUI-styled editbox and stays IsShown()-true under the takeover.
+-- Hyperlink taint launderer. Clicking a player/channel name must NOT run any
+-- QUI-owned OnHyperlinkClick: a QUI closure calling SetItemRef taints the unit
+-- popup it spawns, which forbids the restricted CopyToClipboard ("Copy
+-- Character Name") with ADDON_ACTION_FORBIDDEN. The SMF therefore wires NO
+-- hyperlink scripts and instead PROPAGATES events to its parent linkHandler --
+-- a real ChatFrameTemplate whose Blizzard-owned ChatFrameMixin:OnHyperlinkClick
+-- calls SetItemRef untainted, so the menu is born clean and Copy works.
+-- The editbox-less-frame crash guard (player/BN/channel links deref
+-- frame.editBox via ChooseBoxForSend) moves onto that launderer: its .editBox
+-- points at ChatFrame1's live editbox.
 do
-    local captured
-    local realChatFrame = { editBox = {} }
-    _G.DEFAULT_CHAT_FRAME = realChatFrame
-    local origSetItemRef = _G.SetItemRef
-    _G.SetItemRef = function(link, text, button, frame)
-        captured = { link = link, text = text, button = button, frame = frame }
-    end
+    assert(smf1.scripts.OnHyperlinkClick == nil,
+        "SMF must NOT own OnHyperlinkClick -- a QUI closure would taint the unit popup and forbid Copy")
+    assert(smf1.scripts.OnHyperlinkEnter == nil and smf1.scripts.OnHyperlinkLeave == nil,
+        "SMF must NOT own hover scripts -- the launderer fires them via propagation")
+    assert(smf1.hyperlinkPropagate == true,
+        "SMF propagates hyperlink events up to its parent launderer")
 
-    local hyperlinkClick = smf1.scripts.OnHyperlinkClick
-    assert(type(hyperlinkClick) == "function", "SMF wires OnHyperlinkClick")
-
-    hyperlinkClick(smf1, "player:Tenszangetsu-Sylvanas:1:WHISPER", "[Tenszangetsu]", "LeftButton")
-    assert(captured, "OnHyperlinkClick forwards to SetItemRef")
-    assert(captured.frame ~= smf1,
-        "must NOT pass the editbox-less custom SMF as the link context frame")
-    assert(captured.frame == realChatFrame and captured.frame.editBox ~= nil,
-        "must pass the canonical chat frame that owns the editbox (ChooseBoxForSend reads .editBox)")
-    assert(captured.link == "player:Tenszangetsu-Sylvanas:1:WHISPER" and captured.button == "LeftButton",
-        "link + button forwarded to SetItemRef unchanged")
-
-    _G.SetItemRef = origSetItemRef
-    _G.DEFAULT_CHAT_FRAME = nil
+    local linkHandler = _G.QUI_CustomChatMessagesLinkHandler
+    assert(linkHandler ~= nil, "window 1 has a link-handler launderer (ChatFrameTemplate child of container)")
+    assert(linkHandler.editBox == _G.ChatFrame1EditBox and linkHandler.editBox ~= nil,
+        "launderer carries ChatFrame1's editbox (ChooseBoxForSend reads .editBox)")
 end
 
 -- Active-window tracking ---------------------------------------------------

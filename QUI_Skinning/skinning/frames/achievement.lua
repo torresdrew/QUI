@@ -11,7 +11,7 @@
 --   - AchievementFrameCategoriesBG  (parchment for the left category column)
 --   - AchievementFrameWaterMark     (watermark dragon)
 --   - AchievementFrameGuildEmblem{Left,Right}  (hidden by default)
--- Close button lives at AchievementFrameHeader.CloseButton.
+-- Close button is the named global AchievementFrameCloseButton (Mainline).
 ---------------------------------------------------------------------------
 
 local addonName, ns = ...
@@ -43,8 +43,10 @@ local function HideAchievementChrome()
         if tex and tex.Hide then tex:Hide() end
     end
 
-    -- The Blizzard backdrop also draws a BackdropTemplate frame border —
-    -- zero its colors so it doesn't peek through the QUI backdrop.
+    -- The Blizzard backdrop also draws a BackdropTemplate frame border — remove it
+    -- entirely (SkinAchievement gives AchievementFrame its own CreateBackdrop child)
+    -- so it doesn't peek through the QUI backdrop. pcall-guarded; SetBackdrop(nil)
+    -- reads no width/height, so no secret-value/combat throw.
     if frame.SetBackdrop then
         pcall(frame.SetBackdrop, frame, nil)
     end
@@ -177,15 +179,6 @@ local function LockAchievementSummaryText()
     local summary = _G.AchievementFrameSummaryAchievements
     if not summary or not summary.buttons then return end
     for _, button in ipairs(summary.buttons) do
-        -- Font lock runs once per pooled button (AchievementFrameSummary_Update-
-        -- Achievements re-fires this every summary refresh; re-walking the
-        -- recurse pass each time is wasted). The LockFrameTextObjects hooks keep
-        -- the face; only the color must re-assert each refresh.
-        if not SkinBase.GetFrameData(button, "qListRowFonted") then
-            SkinBase.SkinFrameText(button, { recurse = true })
-            SkinBase.LockFrameTextObjects(button, 3)
-            SkinBase.SetFrameData(button, "qListRowFonted", true)
-        end
         RecolorSummaryDescription(button)
     end
 end
@@ -250,22 +243,13 @@ local function HookAchievementComparisonText()
 end
 
 -- Bottom tabs (Achievements / Guild / Statistics) — AchievementFrameTab1..3,
--- PanelTemplates tabs. Font-only fix — we DON'T reskin the tab art (left as
--- Blizzard's). A one-shot SkinFrameText is not enough: the engine shows the
--- button's HIGHLIGHT font object on hover with NO setter call, and
--- PanelTemplates_SelectTab swaps the DISABLED font object on selection — both
--- revert to Blizzard fonts. ApplyButtonFontObjects sets all three state font
--- OBJECTS (Normal / Highlight / Disabled) to the QUI font so hover and the
--- selected tab stay QUI; LockFrameTextObjects re-asserts after the SelectTab
--- SetDisabledFontObject swap.
-local function LockAchievementBottomTabFonts()
-    for i = 1, 3 do
-        local tab = _G["AchievementFrameTab" .. i]
-        if tab then
-            SkinBase.ApplyButtonFontObjects(tab)
-            SkinBase.LockFrameTextObjects(tab, 2)
-        end
-    end
+-- PanelTemplates tabs. Route through the canonical SkinBase.SkinTabGroup so they
+-- match EVERY other frame's tabs (QUI backdrop box + selected/unselected tint +
+-- durable font across hover/select), instead of the former font-only treatment
+-- that left the stock parchment tab art and made these the lone divergent tab
+-- strip. SkinTabGroup is idempotent, so re-calling on refresh is cheap.
+local function SkinAchievementBottomTabs()
+    SkinBase.SkinTabGroup(SkinBase.CollectNumberedTabs("AchievementFrame", 3), _G.AchievementFrame, { font = true })
 end
 
 local function SkinAchievement()
@@ -277,13 +261,18 @@ local function SkinAchievement()
     local sr, sg, sb, sa, bgr, bgg, bgb, bga = SkinBase.GetSkinColors()
     SkinBase.CreateBackdrop(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
 
-    local header = _G.AchievementFrameHeader
-    if header and header.CloseButton then
-        SkinBase.SkinCloseButton(header.CloseButton)
+    -- Mainline AchievementFrame's close button is the named global
+    -- AchievementFrameCloseButton (XML name="$parentCloseButton",
+    -- Blizzard_AchievementUI/Mainline:2309). There is no AchievementFrameHeader
+    -- global (that was Cata) and AchievementFrame.Header (parentKey, :1660) has no
+    -- CloseButton child, so the old _G.AchievementFrameHeader.CloseButton lookup
+    -- was always nil-guarded dead and the close X was never skinned.
+    local closeButton = frame.CloseButton or _G.AchievementFrameCloseButton
+    if closeButton then
+        SkinBase.SkinCloseButton(closeButton)
     end
 
-    SkinBase.SkinFrameText(frame, { recurse = true })
-    LockAchievementBottomTabFonts()
+    SkinAchievementBottomTabs()
     HookAchievementLists()
     HookAchievementListColors()
     HookAchievementObjectiveColors()
@@ -297,7 +286,7 @@ local function RefreshAchievement()
     local frame = _G.AchievementFrame
     if not frame then return end
     if SkinBase.IsSkinned(frame) then
-        LockAchievementBottomTabFonts()
+        SkinAchievementBottomTabs()
         HookAchievementLists()
         HookAchievementListColors()
         HookAchievementObjectiveColors()

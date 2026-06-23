@@ -13,8 +13,6 @@ local GetFontFlags = Helpers.GetGeneralFontOutline
 
 -- Debounce flag to prevent multiple concurrent backdrop updates
 local pendingBackdropUpdate = false
--- Session-once guard for the scenario stage-block re-suppress hook.
-local scenarioStageHooked = false
 
 local function RunAfterFirstFrame(callback, delay)
     if ns.RunAfterFirstFrame then
@@ -170,15 +168,20 @@ local LCG = LibStub and LibStub("LibCustomGlow-1.0", true)
 local function StyleQuestPOIIcon(button)
     if not button or SkinBase.IsStyled(button) then return end
 
-    -- Style the POI button
+    -- Style the POI button. On QuestObjectiveItemButtonTemplate only NormalTexture
+    -- has a parentKey (Blizzard_ObjectiveTrackerShared.xml:34); Pushed/Highlight have
+    -- none, so button.PushedTexture/.HighlightTexture were always nil — use the
+    -- texture accessors instead.
     if button.NormalTexture then
         button.NormalTexture:SetAlpha(0)
     end
-    if button.PushedTexture then
-        button.PushedTexture:SetAlpha(0)
+    local pushed = button.GetPushedTexture and button:GetPushedTexture()
+    if pushed then
+        pushed:SetAlpha(0)
     end
-    if button.HighlightTexture then
-        button.HighlightTexture:SetAlpha(0.3)
+    local highlight = button.GetHighlightTexture and button:GetHighlightTexture()
+    if highlight then
+        highlight:SetAlpha(0.3)
     end
 
     -- Stop any existing LibCustomGlow effects (cleanup from previous versions)
@@ -189,16 +192,19 @@ local function StyleQuestPOIIcon(button)
     SkinBase.MarkStyled(button)
 end
 
--- Style completion checkmark with QUI color
-local function StyleCompletionCheck(check)
-    if not check or SkinBase.IsStyled(check) then return end
+-- Tint a line's completion-check icon with the QUI accent color. The current
+-- ObjectiveTracker shows the check as each line's Icon (atlas
+-- 'ui-questtracker-tracker-check', Blizzard_ObjectiveTrackerAnimTemplates.xml:6),
+-- so we recolor that icon in place rather than forcing our own atlas (which would
+-- mis-style incomplete lines whose Icon is hidden). Idempotent via IsStyled.
+local function StyleCompletionCheck(icon)
+    if not icon or SkinBase.IsStyled(icon) then return end
 
     local sr, sg, sb = SkinBase.GetSkinColors()
-    check:SetAtlas("checkmark-minimal")
-    check:SetDesaturated(true)
-    check:SetVertexColor(sr, sg, sb)
+    if icon.SetDesaturated then icon:SetDesaturated(true) end
+    icon:SetVertexColor(sr, sg, sb)
 
-    SkinBase.MarkStyled(check)
+    SkinBase.MarkStyled(icon)
 end
 
 -- Apply full block skinning (fonts, colors, icons) to a single block
@@ -217,8 +223,13 @@ local function ApplyBlockSkinning(tracker, block)
     -- Style icons (POI button, completion check)
     local itemButton = block.ItemButton or block.itemButton
     if itemButton then StyleQuestPOIIcon(itemButton) end
-    local check = block.currentLine and block.currentLine.Check
-    if check then StyleCompletionCheck(check) end
+    -- Completion check is per-line now: each used line's Icon carries the check
+    -- atlas (there is no block.currentLine.Check in the current ObjectiveTracker).
+    if block.usedLines then
+        for _, line in pairs(block.usedLines) do
+            if line.Icon then StyleCompletionCheck(line.Icon) end
+        end
+    end
 
     -- Style block header and all objective lines.
     -- skipHeight=true: this function is called from the AddBlock hook, so we must
@@ -246,7 +257,7 @@ local function SkinTrackerHeader(header)
 
     -- Hide background atlas
     if header.Background then
-        header.Background:SetAtlas(nil)
+        header.Background:SetTexture(nil) -- Nilable-correct clear (SetAtlas atlas arg is Nilable=false)
         header.Background:SetAlpha(0)
     end
 
@@ -405,12 +416,18 @@ local function ApplyMaxWidth(settings)
     -- Hide scenario stage artwork for narrower display
     HideScenarioStageArtwork()
     -- ScenarioObjectiveTrackerStageMixin:UpdateStageBlock re-shows NormalBG/FinalBG/
-    -- GlowTexture and re-anchors Stage/Name on every stage change; re-run the hide +
-    -- reposition after it, once-installed.
-    if _G.ScenarioObjectiveTrackerStageMixin and _G.ScenarioObjectiveTrackerStageMixin.UpdateStageBlock
-        and not scenarioStageHooked then
-        scenarioStageHooked = true
-        hooksecurefunc(_G.ScenarioObjectiveTrackerStageMixin, "UpdateStageBlock", function()
+    -- GlowTexture and re-anchors Stage/Name on every stage change; re-run the hide
+    -- after it. The mixin is applied via XML mixin= (Blizzard_ScenarioObjectiveTracker
+    -- .xml:231), which COPIES UpdateStageBlock onto the StageBlock INSTANCE at creation,
+    -- and Blizzard calls stageBlock:UpdateStageBlock(...) on that instance (.lua:245) —
+    -- so a hook on the mixin TABLE never fires. Hook the instance, per-instance guarded
+    -- (mirrors EnsureBlockHighlightHook), so coverage is timing-independent.
+    local scenario = _G.ScenarioObjectiveTracker
+    local stageBlock = scenario and scenario.StageBlock
+    if stageBlock and stageBlock.UpdateStageBlock
+        and not SkinBase.GetFrameData(stageBlock, "stageHooked") then
+        SkinBase.SetFrameData(stageBlock, "stageHooked", true)
+        hooksecurefunc(stageBlock, "UpdateStageBlock", function()
             HideScenarioStageArtwork()
         end)
     end
@@ -620,35 +637,10 @@ end
 -- setting the correct line height in StyleLine is sufficient — subsequent lines
 -- shift down automatically through the anchor chain.
 
--- Kill all textures in a NineSlice frame
-local function KillNineSlice(nineSlice)
-    if not nineSlice then return end
-
-    -- Hide the frame
-    nineSlice:Hide()
-    nineSlice:SetAlpha(0)
-
-    -- Kill all child textures (corners, edges, center)
-    for _, region in ipairs({nineSlice:GetRegions()}) do
-        if region:IsObjectType("Texture") then
-            region:SetTexture(nil)
-            region:SetAtlas(nil)
-            region:Hide()
-        end
-    end
-
-    -- Kill known NineSlice parts
-    local parts = {"TopLeftCorner", "TopRightCorner", "BottomLeftCorner", "BottomRightCorner",
-                   "TopEdge", "BottomEdge", "LeftEdge", "RightEdge", "Center"}
-    for _, part in ipairs(parts) do
-        local tex = nineSlice[part]
-        if tex then
-            tex:SetTexture(nil)
-            tex:SetAtlas(nil)
-            tex:Hide()
-        end
-    end
-end
+-- NineSlice killing now routes through the canonical SkinBase.KillNineSlice
+-- (core/uikit.lua): it clears child + named-part textures via SetTexture(nil)
+-- and hides the frame. The old local copy called SetAtlas(nil), an API
+-- violation — SimpleTextureBase:SetAtlas declares its atlas arg Nilable=false.
 
 -- Resolve edit-mode opacity (0 is valid = transparent, so check for nil)
 local function ResolveBackdropOpacity(bga)
@@ -663,13 +655,13 @@ end
 local function ApplyBackdropColors(backdrop, hideBorder, sr, sg, sb, sa, bgr, bgg, bgb, opacity)
     local borderColor = hideBorder and { 0, 0, 0, 0 } or { sr, sg, sb, sa }
     local bgColor = { bgr, bgg, bgb, opacity }
+    -- ApplyPixelBackdrop seeds data.bgColor/data.borderColor and renders the
+    -- backdrop (its internal manual setters also populate _quiBg*/_quiBorder*), so
+    -- the prior Helpers.SetFrameBackdrop* writes here were dead: they only re-wrote
+    -- _quiBg*, which data.bgColor shadows on the next scale-refresh rebuild. The
+    -- colors are identical, so dropping them changes nothing visible (mirrors the
+    -- SetBackgroundAlpha-hook fix below).
     SkinBase.ApplyPixelBackdrop(backdrop, hideBorder and 0 or 1, true, true, borderColor, bgColor, nil, nil, 1)
-    Helpers.SetFrameBackdropColor(backdrop, bgr, bgg, bgb, opacity)
-    if hideBorder then
-        Helpers.SetFrameBackdropBorderColor(backdrop, 0, 0, 0, 0)
-    else
-        Helpers.SetFrameBackdropBorderColor(backdrop, sr, sg, sb, sa)
-    end
 end
 
 -- Apply QUI backdrop
@@ -677,7 +669,7 @@ local function ApplyQUIBackdrop(trackerFrame, sr, sg, sb, sa, bgr, bgg, bgb, bga
     if not trackerFrame then return end
 
     -- Kill Blizzard's NineSlice completely
-    KillNineSlice(trackerFrame.NineSlice)
+    SkinBase.KillNineSlice(trackerFrame.NineSlice)
 
     -- Hook SetBackgroundAlpha so edit mode opacity also affects our backdrop
     if trackerFrame.SetBackgroundAlpha and not SkinBase.GetFrameData(trackerFrame, "backgroundHooked") then
@@ -693,7 +685,10 @@ local function ApplyQUIBackdrop(trackerFrame, sr, sg, sb, sa, bgr, bgg, bgb, bga
                 local bd = SkinBase.GetFrameData(self, "backdrop")
                 if bd then
                     local _, _, _, _, currBgR, currBgG, currBgB = SkinBase.GetSkinColors()
-                    Helpers.SetFrameBackdropColor(bd, currBgR, currBgG, currBgB, alpha)
+                    -- Persist into data.bgColor so the edit-mode opacity survives the next
+                    -- scale-refresh rebuild (Helpers.SetFrameBackdropColor wrote only the
+                    -- _quiBg* cache, which data.bgColor shadows on rebuild).
+                    SkinBase.SetBackdropColors(bd, nil, { currBgR, currBgG, currBgB, alpha })
                 end
             end)
         end)
@@ -863,6 +858,27 @@ local function SkinObjectiveTracker()
     -- Hook line creation to style new lines dynamically
     HookLineCreation()
 
+    -- Skin progress-bar fills (texture-only — flat themed fill via SkinStatusBar;
+    -- NO font work, so no interaction with the idempotent-font oscillation guards
+    -- above). Hook each progress-bar mixin's value setter: `self` is the bar
+    -- container, self.Bar is the StatusBar. Future pooled bars created after the
+    -- hook pick up the wrapper via the Mixin copy; SkinStatusBar is idempotent
+    -- (IsStyled), so the frequent SetPercent/SetValue calls only skin once.
+    local function SkinTrackerProgressBar(pb)
+        if pb and pb.Bar then SkinBase.SkinStatusBar(pb.Bar, { backdrop = false }) end
+    end
+    local pbMixins = {
+        { mixin = _G.ObjectiveTrackerProgressBarMixin, method = "SetPercent" },
+        { mixin = _G.BonusObjectiveTrackerProgressBarMixin, method = "SetValue" },
+        { mixin = _G.ScenarioTrackerProgressBarMixin, method = "SetValue" },
+    }
+    for _, pm in ipairs(pbMixins) do
+        if pm.mixin and pm.mixin[pm.method] and not SkinBase.GetFrameData(pm.mixin, "qProgressBarHooked") then
+            hooksecurefunc(pm.mixin, pm.method, SkinTrackerProgressBar)
+            SkinBase.SetFrameData(pm.mixin, "qProgressBarHooked", true)
+        end
+    end
+
     -- Skin main header (minimize button repositioned in ApplyMaxWidth)
     if TrackerFrame.Header then
         SkinTrackerHeader(TrackerFrame.Header)
@@ -948,7 +964,10 @@ local function SkinObjectiveTracker()
                 local _, _, _, _, currBgR, currBgG, currBgB = SkinBase.GetSkinColors()
                 local bd = SkinBase.GetFrameData(TrackerFrame, "backdrop")
                 if bd then
-                    Helpers.SetFrameBackdropColor(bd, currBgR, currBgG, currBgB, alpha)
+                    -- Persist into data.bgColor so the edit-mode opacity survives the next
+                    -- scale-refresh rebuild (Helpers.SetFrameBackdropColor wrote only the
+                    -- _quiBg* cache, which data.bgColor shadows on rebuild).
+                    SkinBase.SetBackdropColors(bd, nil, { currBgR, currBgG, currBgB, alpha })
                 end
             end)
         end)
@@ -964,7 +983,6 @@ local function SkinObjectiveTracker()
         TrackerFrame:EnableMouse(false)
     end
 
-    SkinBase.SkinFrameText(TrackerFrame, { recurse = true })
     SkinBase.MarkSkinned(TrackerFrame)
 end
 

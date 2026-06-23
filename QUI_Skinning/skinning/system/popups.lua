@@ -4,14 +4,6 @@ local Helpers = ns.Helpers
 local GetCore = Helpers.GetCore
 local SkinBase = ns.SkinBase
 
-local function CJKFont(fs, p, s, f)
-    if ns.Helpers and ns.Helpers.ApplyFontWithFallback then
-        ns.Helpers.ApplyFontWithFallback(fs, p, s, f)
-    else
-        fs:SetFont(p, s, f)
-    end
-end
-
 ---------------------------------------------------------------------------
 -- Context menu + StaticPopup skinning
 --
@@ -21,7 +13,6 @@ end
 ---------------------------------------------------------------------------
 
 local FONT_SIZE = 12
-local FONT_FLAGS = "OUTLINE"
 
 local menuCallbacks = Helpers.CreateStateTable()
 
@@ -103,7 +94,7 @@ local function HideDecorativeTextures(frame)
     end
 
     for _, key in ipairs({
-        "BG", "Bg", "Background", "Border", "NineSlice", "Inset",
+        "BG", "Bg", "Background", "Border", "NineSlice", "Inset", "TopTileStreaks",
         "LeftBorder", "RightBorder", "TopBorder", "BottomBorder",
         "TopLeftCorner", "TopRightCorner", "BottomLeftCorner", "BottomRightCorner",
         "PortraitContainer", "TitleContainer",
@@ -115,24 +106,8 @@ local function HideDecorativeTextures(frame)
     end
 end
 
-local function StyleFontString(fontString, size, r, g, b, a)
-    if not fontString or not fontString.SetFont then return end
-    local fontPath = Helpers.GetGeneralFont and Helpers.GetGeneralFont() or STANDARD_TEXT_FONT
-    CJKFont(fontString, fontPath, size or FONT_SIZE, FONT_FLAGS)
-    if fontString.SetTextColor then
-        fontString:SetTextColor(r or 0.9, g or 0.9, b or 0.9, a or 1)
-    end
-end
-
-local function StyleFrameText(frame)
-    if not frame or IsForbidden(frame) or not frame.GetRegions then return end
-    for i = 1, frame:GetNumRegions() do
-        local region = select(i, frame:GetRegions())
-        if region and region.IsObjectType and region:IsObjectType("FontString") then
-            StyleFontString(region, FONT_SIZE, 0.9, 0.9, 0.9, 1)
-        end
-    end
-end
+-- Font facing is owned by the canonical SkinBase helpers (SkinFontString / SkinFrameText),
+-- which carry the size>0 guard, CJK fallback, and the user's configured outline.
 
 local function HideButtonTexture(texture)
     if not texture or not texture.SetAlpha then return end
@@ -202,7 +177,7 @@ local function StyleButton(button, prefix)
 
     StripButtonTextures(button)
 
-    local _, sr, sg, sb, sa, bgr, bgg, bgb, bga = ApplyBackdrop(button, prefix, 0.07, 1)
+    local _, sr, sg, sb, sa, bgr, bgg, bgb, bga = ApplyBackdrop(button, prefix, SkinBase.CHROME.BUTTON_BOOST, 1)
 
     SkinBase.SetFrameData(button, "systemPopupNormalBg", { bgr, bgg, bgb, bga })
     SkinBase.SetFrameData(button, "systemPopupHoverBg", {
@@ -249,7 +224,7 @@ local function StyleEditBox(editBox, prefix)
     ApplyBackdrop(editBox, prefix, 0.02, 0.92)
 
     if editBox.GetFont then
-        StyleFontString(editBox, FONT_SIZE, 0.92, 0.92, 0.92, 1)
+        SkinBase.SkinFontString(editBox, { size = FONT_SIZE, color = { 0.92, 0.92, 0.92, 1 } })
     end
 end
 
@@ -258,17 +233,23 @@ local function SkinStaticPopup(popup)
 
     HideDecorativeTextures(popup)
     ApplyBackdrop(popup, "staticPopup", 0, nil)
-    StyleFrameText(popup)
 
     local name = popup.GetName and popup:GetName()
     for i = 1, 4 do
-        local button = popup["button" .. i] or (name and _G[name .. "Button" .. i])
+        -- Modern GameDialogMixin exposes popup:GetButton(i) (Blizzard_StaticPopup_Game
+        -- /GameDialog.lua:533); keep the lowercase parentKey + global-name fallbacks for
+        -- legacy popup types that lack the accessor.
+        local button = (popup.GetButton and popup:GetButton(i))
+            or popup["button" .. i] or (name and _G[name .. "Button" .. i])
         StyleButton(button, "staticPopup")
     end
     StyleButton(popup.ExtraButton or (name and _G[name .. "ExtraButton"]), "staticPopup")
 
-    StyleEditBox(popup.editBox or (name and _G[name .. "EditBox"]), "staticPopup")
-    SkinBase.SkinFrameText(popup, { recurse = true })
+    StyleEditBox((popup.GetEditBox and popup:GetEditBox())
+        or popup.editBox or (name and _G[name .. "EditBox"]), "staticPopup")
+    -- Single canonical walk faces every fontstring (incl. nested) and applies the
+    -- near-white chrome color (was a separate StyleFrameText top-level pass).
+    SkinBase.SkinFrameText(popup, { recurse = true, chrome = true, color = { 0.9, 0.9, 0.9, 1 } })
 
     -- GameDialogMixin:SetupText re-SetFontObject's SubText/Text on every show; lock
     -- so the QUI face re-applies after each Blizzard re-assert (not only per OnShow).
@@ -318,6 +299,7 @@ local function SkinContextMenuFrame(frame, isCompositorMenu)
             local region = select(i, frame:GetRegions())
             if region and region.IsObjectType and region:IsObjectType("Texture") then
                 region:SetColorTexture(bgr, bgg, bgb, 1)
+                SkinBase.DisablePixelSnap(region)
                 region:SetAlpha(bga)
                 SkinBase.SetInsetPixelPoints(region, frame, 1)
             end
@@ -333,9 +315,11 @@ local function SkinContextMenuFrame(frame, isCompositorMenu)
     end
     -- Compositor menus lock SetFont; skin frame/backdrop only (see note above).
     if not isCompositorMenu then
-        SkinBase.SkinFrameText(frame, { recurse = true })
-        if SkinBase.LockFrameTextObjects then
-            SkinBase.LockFrameTextObjects(frame, 3)
+        -- Legacy DropDownList menu entries are Buttons whose template declares a
+        -- HighlightFont OBJECT the engine swaps on hover (and a DisabledFont when
+        -- greyed) with NO setter call; driving the button font objects is the durable fix.
+        if SkinBase.ApplyButtonFontObjectsDeep then
+            SkinBase.ApplyButtonFontObjectsDeep(frame, 3)
         end
     end
 end

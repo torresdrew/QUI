@@ -1194,12 +1194,15 @@ function UIKit.CreateCloseButton(parent, opts)
     local xLine1 = close:CreateTexture(nil, "OVERLAY")
     xLine1:SetSize(lineLen, lineWidth)
     xLine1:SetPoint("CENTER")
-    xLine1:SetColorTexture(1, 1, 1, 0.8)
+    -- Thin (1.5px) rotated solid quads rasterize away at fractional screen
+    -- offsets unless pixel-snap is disabled after every SetColorTexture; route
+    -- through ApplyColorTexture (mirrors CreateChevronCaret / manual edges).
+    ApplyColorTexture(xLine1, 1, 1, 1, 0.8)
     xLine1:SetRotation(math.rad(45))
     local xLine2 = close:CreateTexture(nil, "OVERLAY")
     xLine2:SetSize(lineLen, lineWidth)
     xLine2:SetPoint("CENTER")
-    xLine2:SetColorTexture(1, 1, 1, 0.8)
+    ApplyColorTexture(xLine2, 1, 1, 1, 0.8)
     xLine2:SetRotation(math.rad(-45))
     close._xLine1, close._xLine2 = xLine1, xLine2
 
@@ -1208,14 +1211,14 @@ function UIKit.CreateCloseButton(parent, opts)
         local ar, ag, ab = UIKit.GetAccentColor()
         UIKit.UpdateBorderLines(self, 1, ar, ag, ab, 1)
         self._bg:SetVertexColor(ar, ag, ab, 0.15)
-        xLine1:SetColorTexture(ar, ag, ab, 1)
-        xLine2:SetColorTexture(ar, ag, ab, 1)
+        ApplyColorTexture(xLine1, ar, ag, ab, 1)
+        ApplyColorTexture(xLine2, ar, ag, ab, 1)
     end)
     close:SetScript("OnLeave", function(self)
         UIKit.UpdateBorderLines(self, 1, borderRGBA())
         self._bg:SetVertexColor(0.08, 0.08, 0.08, 0.6)
-        xLine1:SetColorTexture(1, 1, 1, 0.8)
-        xLine2:SetColorTexture(1, 1, 1, 0.8)
+        ApplyColorTexture(xLine1, 1, 1, 1, 0.8)
+        ApplyColorTexture(xLine2, 1, 1, 1, 0.8)
     end)
 
     return close
@@ -1565,6 +1568,19 @@ local BG_BOOST_BUTTON = SkinBase.CHROME.BUTTON_BOOST
 local BG_BOOST_ROW = SkinBase.CHROME.SCROLLROW_BOOST
 local HOVER_BRIGHTEN = 1.3
 
+-- Hover-brighten: single source of truth for the 1.3x lighten applied to
+-- backdrop/border colors on mouse-over (close buttons, tab hover, group-finder
+-- rows, ...). HOVER_BRIGHTEN was file-local and skin files open-coded `* 1.3`
+-- (e.g. frames/instanceframes.lua AddSkinColorHoverBorder). HoverBrightenColor
+-- multiplies r,g,b by the factor (default HOVER_BRIGHTEN), clamps to 1 and
+-- passes alpha through, returning 4 values. Wrap in a table for SetBackdropColors:
+--   SkinBase.SetBackdropColors(bd, { SkinBase.HoverBrightenColor(r, g, b, a) }, nil)
+SkinBase.HOVER_BRIGHTEN = HOVER_BRIGHTEN
+function SkinBase.HoverBrightenColor(r, g, b, a, factor)
+    factor = factor or HOVER_BRIGHTEN
+    return math.min((r or 0) * factor, 1), math.min((g or 0) * factor, 1), math.min((b or 0) * factor, 1), a
+end
+
 ---------------------------------------------------------------------------
 -- GetPixelSize(frame, default)
 -- Returns the pixel-perfect edge size for the given frame.
@@ -1830,8 +1846,10 @@ function SkinBase.SkinChromeCloseButton(button, opts)
         end
         SkinBase.SetFrameData(button, key .. "Label", label)
     end
-    CJKFont(label, opts.font or STANDARD_TEXT_FONT, opts.fontSize or 11, opts.fontFlags or "OUTLINE")
-    label:SetText(opts.label or "X")
+    -- Default to the SAME glyph + size as SkinCloseButton ("×" U+00D7 at 14) so
+    -- every close button across QUI reads identically; callers no longer override.
+    CJKFont(label, opts.font or STANDARD_TEXT_FONT, opts.fontSize or 14, opts.fontFlags or "OUTLINE")
+    label:SetText(opts.label or "\195\151")
     local textColor = ResolveChromeColor(opts.textColor, { 1, 1, 1, 1 }, 1)
     label:SetTextColor(textColor[1], textColor[2], textColor[3], textColor[4])
 
@@ -1840,13 +1858,15 @@ function SkinBase.SkinChromeCloseButton(button, opts)
         local bd = SkinBase.GetFrameData(self, key .. "Border")
         if not bd then return end
         local hoverPalette = SkinBase.GetChromePalette(opts)
-        bd:SetBackdropBorderColor(hoverPalette.accent[1], hoverPalette.accent[2], hoverPalette.accent[3], hoverPalette.accent[4])
+        -- Persist the accent tint so a scale refresh while hovered keeps it
+        -- (the chrome border is an ApplyChromeBackdrop frame with seeded data.*).
+        SkinBase.SetBackdropColors(bd, hoverPalette.accent, nil)
     end)
     button:HookScript("OnLeave", function(self)
         local bd = SkinBase.GetFrameData(self, key .. "Border")
         if not bd then return end
         local restPalette = SkinBase.GetChromePalette(opts)
-        bd:SetBackdropBorderColor(restPalette.border[1], restPalette.border[2], restPalette.border[3], restPalette.border[4])
+        SkinBase.SetBackdropColors(bd, restPalette.border, nil)
     end)
     SkinBase.SetFrameData(button, key .. "Hooked", true)
 end
@@ -2258,8 +2278,11 @@ function SkinBase.RefreshFrameBackdropColors(frame)
     local bd = SkinBase.GetBackdrop(frame)
     if not bd then return end
     local sr, sg, sb, sa, bgr, bgg, bgb, bga = SkinBase.GetSkinColors()
-    bd:SetBackdropColor(bgr, bgg, bgb, bga)
-    bd:SetBackdropBorderColor(sr, sg, sb, sa)
+    -- Route through the persist helper: bd is a CreateBackdrop child whose
+    -- pixelBackdropData.bgColor/.borderColor are seeded non-nil, so a bare
+    -- bd:SetBackdropColor would be discarded on the next scale-refresh rebuild
+    -- (RefreshPixelBackdrop prefers data.* over the _quiBg*/_quiBorder* fallback).
+    SkinBase.SetBackdropColors(bd, { sr, sg, sb, sa }, { bgr, bgg, bgb, bga })
 end
 
 ---------------------------------------------------------------------------
@@ -2323,6 +2346,29 @@ function SkinBase.StripTextures(frame)
         local region = select(i, frame:GetRegions())
         if region and region:IsObjectType("Texture") then
             region:SetAlpha(0)
+        end
+    end
+end
+
+-- StripTexturesExcept(frame, preserve)
+-- Like StripTextures, but skips any Texture region present as a key in the
+-- `preserve` set (region -> true). Used where a frame's icon / overlay
+-- textures must survive a blanket strip — e.g. equipment slots keep
+-- icon + ItemContextOverlay + IconOverlay/2 + searchOverlay + IconQuestTexture.
+-- Extracted from the byte-identical loops in character_pane/character.lua and
+-- character_pane/inspect.lua. `preserve` may be nil (then identical to
+-- StripTextures). Uses the boolean IsObjectType("Texture") predicate (matches
+-- StripTextures) rather than GetObjectType()=="Texture": GetObjectType's return
+-- is secret-aspect-tagged (SecretReturnsForAspect=ObjectType), so the string
+-- compare can throw in a restricted context; IsObjectType resolves C-side.
+function SkinBase.StripTexturesExcept(frame, preserve)
+    if not frame or not frame.GetNumRegions then return end
+    for i = 1, select("#", frame:GetRegions()) do
+        local region = select(i, frame:GetRegions())
+        if region and region.IsObjectType and region:IsObjectType("Texture") then
+            if not (preserve and preserve[region]) then
+                region:SetAlpha(0)
+            end
         end
     end
 end
@@ -2424,14 +2470,14 @@ function SkinBase.SkinCloseButton(closeButton)
         local bd = SkinBase.GetBackdrop(self)
         if bd then
             local r, g, b, a = SkinBase.GetSkinColors()
-            bd:SetBackdropBorderColor(math.min(r * 1.3, 1), math.min(g * 1.3, 1), math.min(b * 1.3, 1), a)
+            SkinBase.SetBackdropColors(bd, { math.min(r * 1.3, 1), math.min(g * 1.3, 1), math.min(b * 1.3, 1), a }, nil)
         end
     end)
     closeButton:HookScript("OnLeave", function(self)
         local bd = SkinBase.GetBackdrop(self)
         if bd then
             local r, g, b, a = SkinBase.GetSkinColors()
-            bd:SetBackdropBorderColor(r, g, b, a)
+            SkinBase.SetBackdropColors(bd, { r, g, b, a }, nil)
         end
     end)
 
@@ -2512,6 +2558,64 @@ function SkinBase.ClampAllTextures(frame)
     end
 end
 
+-- KillNineSlice(nineSlice, durable)
+-- Canonical NineSlice texture killer. Clears every named NineSlice part
+-- (corners/edges/center) plus every child Texture region, then hides the
+-- frame. Replaces the hand-rolled copies in gameplay/objectivetracker.lua
+-- (KillNineSlice) and character_pane/character.lua (HideNineSlice).
+--
+-- API SAFETY: never calls SetAtlas(nil). SimpleTextureBase:SetAtlas declares
+-- its atlas arg Nilable=false (tests/api-docs/blizzard/SimpleTextureBaseAPI-
+-- Documentation.lua:284) so a nil atlas is illegal; the prior hand-rolled
+-- killers' SetAtlas(nil) was an API violation. SetTexture(nil) is the
+-- sanctioned clear (textureAsset Nilable=true, same doc l.447) and drops any
+-- atlas too. IsObjectType("Texture") guards region typing C-side.
+--
+-- When `durable` is true an OnShow re-hide is installed so a later Blizzard
+-- re-Show of the NineSlice cannot bring its art back over the QUI skin
+-- (mirrors the character.lua HideNineSlice Show-reassert). Idempotent per frame
+-- via SetFrameData.
+--
+-- NOTE: system/tooltips.lua deliberately uses its OWN no-SetAlpha NineSlice
+-- hider — SetAlpha on a tooltip NineSlice propagates secret values into
+-- Blizzard layout (see that file). Do NOT route tooltips through this helper.
+local NINE_SLICE_PARTS = {
+    "TopLeftCorner", "TopRightCorner", "BottomLeftCorner", "BottomRightCorner",
+    "TopEdge", "BottomEdge", "LeftEdge", "RightEdge", "Center",
+}
+function SkinBase.KillNineSlice(nineSlice, durable)
+    if not nineSlice then return end
+
+    if nineSlice.GetNumRegions then
+        for i = 1, select("#", nineSlice:GetRegions()) do
+            local region = select(i, nineSlice:GetRegions())
+            if region and region.IsObjectType and region:IsObjectType("Texture") then
+                if region.SetTexture then region:SetTexture(nil) end
+                if region.SetShown then region:SetShown(false) end
+            end
+        end
+    end
+
+    for _, part in ipairs(NINE_SLICE_PARTS) do
+        local tex = nineSlice[part]
+        if tex then
+            if tex.SetTexture then tex:SetTexture(nil) end
+            if tex.SetShown then tex:SetShown(false) end
+        end
+    end
+
+    nineSlice:Hide()
+    if nineSlice.SetAlpha then nineSlice:SetAlpha(0) end
+
+    if durable and nineSlice.HookScript and not SkinBase.GetFrameData(nineSlice, "qNineSliceKilled") then
+        -- Re-hide on any Blizzard re-Show. Hooking OnShow (not the Show method
+        -- via hooksecurefunc) keeps this taint-free and only fires when the
+        -- frame actually transitions to shown.
+        nineSlice:HookScript("OnShow", function(self) self:Hide() end)
+        SkinBase.SetFrameData(nineSlice, "qNineSliceKilled", true)
+    end
+end
+
 -- PanelTabButtonTemplate's twelve named texture regions
 -- (Blizzard_SharedXML/Mainline/SharedUIPanelTemplates.xml:905-960).
 local PANEL_TAB_TEXTURES = {
@@ -2581,6 +2685,12 @@ end
 -- nil-safe: without CreateFont, only the fontstring SetFont path runs.
 function SkinBase.ApplyButtonFontObjects(button, opts)
     if not button then return end
+    -- Button face follows the global font toggle (decoupled from skinning).
+    local core = GetCore()
+    if not (core and core.db and core.db.profile and core.db.profile.general
+            and core.db.profile.general.applyGlobalFontToBlizzard) then
+        return
+    end
     opts = opts or {}
     local fs = button.Text or (button.GetFontString and button:GetFontString())
     local size = opts.size
@@ -2727,6 +2837,14 @@ local function IsTabSelected(tab, owner)
             local selected = PanelTemplates_GetSelectedTab(owner)
             if selected and tab:GetID() == selected then return true end
         end
+        -- Legacy PanelTemplates frames store the active index directly on the
+        -- owner (PanelTemplates_GetSelectedTab merely returns owner.selectedTab);
+        -- fall back to it so the verb resolves selection even where the global
+        -- accessor is unavailable (and so CharacterFrame/InspectFrame, which the
+        -- old per-frame forks read this way, keep working post-migration).
+        if owner.selectedTab and tab.GetID and tab:GetID() == owner.selectedTab then
+            return true
+        end
     end
     if tab.SelectedTexture and tab.SelectedTexture.IsShown and tab.SelectedTexture:IsShown() then
         return true
@@ -2744,8 +2862,9 @@ function SkinBase.RefreshTabSelected(tab, owner)
     local bg = SkinBase.GetFrameData(tab, "bgColor")
     if not bd or not sc or not bg then return end
 
+    local selected = IsTabSelected(tab, owner)
     local borderColor, bgColor
-    if IsTabSelected(tab, owner) then
+    if selected then
         borderColor = { sc[1], sc[2], sc[3], sc[4] }
         bgColor = { math.min(bg[1] + 0.10, 1), math.min(bg[2] + 0.10, 1), math.min(bg[3] + 0.10, 1), 1 }
     else
@@ -2758,6 +2877,24 @@ function SkinBase.RefreshTabSelected(tab, owner)
     -- bare SetBackdrop*Color updates only the live color, which RefreshPixelBackdrop
     -- discards on its next rebuild.
     SkinBase.ApplyPixelBackdrop(bd, 1, true, true, borderColor, bgColor)
+
+    -- Selection-state LABEL color, promoted from the former per-frame tab forks
+    -- (CharacterFrame/InspectFrame each carried a private copy) so EVERY tab strip
+    -- now reads selected/unselected identically: bright label when active, dimmed
+    -- when not. Runs after ReapplyTabFont (which drives the QUI font OBJECT) so this
+    -- SetTextColor lands on top; the selection hooks re-call RefreshTabSelected so it
+    -- survives Blizzard's per-state font-object swap. Gated on skinTabFont so tabs
+    -- that opted out of the QUI font (opts.font == false) keep their native label.
+    if SkinBase.GetFrameData(tab, "skinTabFont") then
+        local tabText = tab.Text or (tab.GetFontString and tab:GetFontString())
+        if tabText and tabText.SetTextColor then
+            if selected then
+                tabText:SetTextColor(0.9, 0.9, 0.9, 1)
+            else
+                tabText:SetTextColor(0.55, 0.55, 0.55, 1)
+            end
+        end
+    end
 end
 
 -- Tab hover: brighten border on enter, restore selected-state coloring on
@@ -2812,6 +2949,18 @@ function SkinBase.SkinTab(tab, owner, opts)
         tab:HookScript("OnLeave", function(self) SkinBase.RefreshTabSelected(self, owner) end)
         SkinBase.SetFrameData(tab, "qTabHoverHooked", true)
     end
+end
+
+-- CollectNumberedTabs(prefix, count) — gather the global frame tabs named
+-- "<prefix>Tab1".."<prefix>TabN" into an array (skipping any that don't exist).
+-- Shared by the per-frame skinners that feed SkinTabGroup (Merchant/GuildBank/Mail).
+function SkinBase.CollectNumberedTabs(prefix, count)
+    local tabs = {}
+    for i = 1, count do
+        local tab = _G[prefix .. "Tab" .. i]
+        if tab then tabs[#tabs + 1] = tab end
+    end
+    return tabs
 end
 
 function SkinBase.SkinTabGroup(tabs, owner, opts)
@@ -3097,6 +3246,25 @@ function SkinBase.SkinFontString(fontString, opts)
     end
 end
 
+-- Secret-Hierarchy / forbidden frames reject GetRegions()/GetChildren() in 12.0.7
+-- (SecretReturnsForAspect = Hierarchy). pcall converts the reject into an empty
+-- list instead of an error. Widget containers are skipped to avoid tainting their
+-- FontStrings. Used by every recursive font walk below.
+local function SafeWalkSkip(frame)
+    if not frame then return true end
+    if frame.IsForbidden and frame:IsForbidden() then return true end
+    if frame.widgetType or frame.RegisterForWidgetSet then return true end
+    return false
+end
+local function SafeRegions(frame)
+    local ok, r = pcall(function() return { frame:GetRegions() } end)
+    return ok and r or nil
+end
+local function SafeChildren(frame)
+    local ok, c = pcall(function() return { frame:GetChildren() } end)
+    return ok and c or nil
+end
+
 -- Walk a frame's fontstrings and apply the QUI font. Font is applied to EVERY
 -- fontstring (family/outline only; current size preserved), color is preserved
 -- unless opts.chrome is set (chrome labels take the themed/near-white color via
@@ -3107,9 +3275,11 @@ function SkinBase.SkinFrameText(frame, opts)
     opts = opts or {}
     local fontOpts = opts.chrome and { color = opts.color } or { fontOnly = true }
 
-    if frame.GetRegions then
-        for i = 1, select("#", frame:GetRegions()) do
-            local region = select(i, frame:GetRegions())
+    if SafeWalkSkip(frame) then return end
+
+    local regions = frame.GetRegions and SafeRegions(frame)
+    if regions then
+        for _, region in ipairs(regions) do
             if region and region.GetObjectType and region:GetObjectType() == "FontString" then
                 SkinBase.SkinFontString(region, fontOpts)
             end
@@ -3119,14 +3289,16 @@ function SkinBase.SkinFrameText(frame, opts)
     if opts.recurse and frame.GetChildren then
         local depth = opts.maxDepth or 6
         if depth > 0 then
-            for i = 1, select("#", frame:GetChildren()) do
-                local child = select(i, frame:GetChildren())
-                SkinBase.SkinFrameText(child, {
-                    recurse = true,
-                    maxDepth = depth - 1,
-                    chrome = opts.chrome,
-                    color = opts.color,
-                })
+            local children = SafeChildren(frame)
+            if children then
+                for _, child in ipairs(children) do
+                    SkinBase.SkinFrameText(child, {
+                        recurse = true,
+                        maxDepth = depth - 1,
+                        chrome = opts.chrome,
+                        color = opts.color,
+                    })
+                end
             end
         end
     end
@@ -3186,17 +3358,21 @@ function SkinBase.LockFrameTextObjects(frame, maxDepth)
     if frame.GetObjectType and frame:GetObjectType() == "Button" and frame.SetNormalFontObject then
         SkinBase.LockFontObject(frame, { fontOnly = true })
     end
-    if frame.GetRegions then
-        for i = 1, select("#", frame:GetRegions()) do
-            local region = select(i, frame:GetRegions())
+    if SafeWalkSkip(frame) then return end
+    local regions = frame.GetRegions and SafeRegions(frame)
+    if regions then
+        for _, region in ipairs(regions) do
             if region and region.GetObjectType and region:GetObjectType() == "FontString" then
                 SkinBase.LockFontObject(region, { fontOnly = true })
             end
         end
     end
     if maxDepth > 0 and frame.GetChildren then
-        for i = 1, select("#", frame:GetChildren()) do
-            SkinBase.LockFrameTextObjects(select(i, frame:GetChildren()), maxDepth - 1)
+        local children = SafeChildren(frame)
+        if children then
+            for _, child in ipairs(children) do
+                SkinBase.LockFrameTextObjects(child, maxDepth - 1)
+            end
         end
     end
 end
@@ -3226,9 +3402,13 @@ function SkinBase.ApplyButtonFontObjectsDeep(frame, maxDepth)
             SkinBase.SetFrameData(frame, "qBtnFontDriven", true)
         end
     end
+    if SafeWalkSkip(frame) then return end
     if maxDepth > 0 and frame.GetChildren then
-        for i = 1, select("#", frame:GetChildren()) do
-            SkinBase.ApplyButtonFontObjectsDeep(select(i, frame:GetChildren()), maxDepth - 1)
+        local children = SafeChildren(frame)
+        if children then
+            for _, child in ipairs(children) do
+                SkinBase.ApplyButtonFontObjectsDeep(child, maxDepth - 1)
+            end
         end
     end
 end
@@ -3253,6 +3433,59 @@ local function GetLabelFontString(frame)
     return frame.Text
 end
 
+local function SetFontStringColor(fs, color)
+    if not fs or not fs.SetTextColor or type(color) ~= "table" then return end
+    fs:SetTextColor(color[1] or 1, color[2] or 1, color[3] or 1, color[4] or 1)
+end
+
+local BUTTON_ART_KEYS = {
+    "Left", "Right", "Middle", "Center",
+    "NormalTexture", "HighlightTexture", "PushedTexture", "DisabledTexture",
+}
+
+local function SuppressButtonArt(button)
+    if not button then return end
+    for _, key in ipairs(BUTTON_ART_KEYS) do
+        local tex = button[key]
+        if tex and tex.SetAlpha then tex:SetAlpha(0) end
+    end
+    local highlight = button.GetHighlightTexture and button:GetHighlightTexture()
+    if highlight then highlight:SetAlpha(0) end
+    local pushed = button.GetPushedTexture and button:GetPushedTexture()
+    if pushed then pushed:SetAlpha(0) end
+    local normal = button.GetNormalTexture and button:GetNormalTexture()
+    if normal then normal:SetAlpha(0) end
+    local disabled = button.GetDisabledTexture and button:GetDisabledTexture()
+    if disabled then disabled:SetAlpha(0) end
+end
+
+function SkinBase.RefreshButtonVisualState(button)
+    if not button then return end
+    SuppressButtonArt(button)
+
+    if not SkinBase.GetFrameData(button, "skinFont") then return end
+
+    local color = SkinBase.GetFrameData(button, "skinFontColor")
+    local disabledColor = SkinBase.GetFrameData(button, "skinFontDisabledColor") or DISABLED_TEXT_COLOR
+    SkinBase.ApplyButtonFontObjects(button, { color = color, disabledColor = disabledColor })
+
+    if button.IsEnabled and not button:IsEnabled() then
+        SetFontStringColor(GetLabelFontString(button), disabledColor)
+    else
+        SetFontStringColor(GetLabelFontString(button), color)
+    end
+end
+
+local BUTTON_STATE_SCRIPTS = { "OnShow", "OnEnable", "OnDisable", "OnMouseDown", "OnMouseUp" }
+
+local function HookButtonVisualState(button)
+    if not button or not button.HookScript or SkinBase.GetFrameData(button, "qButtonVisualStateHooked") then return end
+    for _, script in ipairs(BUTTON_STATE_SCRIPTS) do
+        button:HookScript(script, SkinBase.RefreshButtonVisualState)
+    end
+    SkinBase.SetFrameData(button, "qButtonVisualStateHooked", true)
+end
+
 ---------------------------------------------------------------------------
 -- SkinButton(button, opts)
 --   opts.strip   : StripTextures instead of hiding named Left/Right/Middle/
@@ -3269,17 +3502,8 @@ function SkinBase.SkinButton(button, opts)
     if opts.strip then
         SkinBase.StripTextures(button)
     else
-        if button.Left then button.Left:SetAlpha(0) end
-        if button.Right then button.Right:SetAlpha(0) end
-        if button.Middle then button.Middle:SetAlpha(0) end
-        if button.Center then button.Center:SetAlpha(0) end
+        SuppressButtonArt(button)
     end
-    local highlight = button.GetHighlightTexture and button:GetHighlightTexture()
-    if highlight then highlight:SetAlpha(0) end
-    local pushed = button.GetPushedTexture and button:GetPushedTexture()
-    if pushed then pushed:SetAlpha(0) end
-    local normal = button.GetNormalTexture and button:GetNormalTexture()
-    if normal then normal:SetAlpha(0) end
 
     SkinBase.CreateBackdrop(button, sr, sg, sb, sa,
         math.min(bgr + boost, 1), math.min(bgg + boost, 1), math.min(bgb + boost, 1), 1)
@@ -3297,14 +3521,17 @@ function SkinBase.SkinButton(button, opts)
     if opts.font ~= false then
         SkinBase.SetFrameData(button, "skinFont", true)
         SkinBase.SetFrameData(button, "skinFontColor", opts.fontColor)
+        SkinBase.SetFrameData(button, "skinFontDisabledColor", opts.disabledFontColor or DISABLED_TEXT_COLOR)
         -- Drive the button's font OBJECTS (not a one-shot SetFont): UIPanel-style
         -- buttons swap their Highlight font object on hover and Disabled object on
         -- :Disable() WITHOUT calling a setter (so a Lock* hook never fires) — only
         -- driving the objects re-faces those swaps. Dim grey disabled color keeps
         -- disabled buttons reading as disabled.
-        SkinBase.ApplyButtonFontObjects(button, { color = opts.fontColor, disabledColor = DISABLED_TEXT_COLOR })
+        SkinBase.ApplyButtonFontObjects(button, { color = opts.fontColor, disabledColor = opts.disabledFontColor or DISABLED_TEXT_COLOR })
     end
     if opts.hover ~= false then AttachHover(button) end
+    HookButtonVisualState(button)
+    SkinBase.RefreshButtonVisualState(button)
     SkinBase.MarkStyled(button)
 end
 
@@ -3364,6 +3591,246 @@ function SkinBase.SkinScrollRow(row, opts)
 end
 
 ---------------------------------------------------------------------------
+-- SkinIcon(icon, opts)
+-- Skin an EXISTING Blizzard icon Texture in place: crop the default border
+-- padding to the QUI 0.08-0.92 TexCoord convention (shared by character/
+-- keystone/inspect) and parent a thin hollow pixel border around it. Taint-safe
+-- — only SetTexCoord on the texture plus a backdrop child on its host; never
+-- replaces the Blizzard texture. Idempotent per icon (border cached via
+-- SetFrameData "iconBorder"). Returns the border frame.
+--   opts.parent : frame to host the border (default icon:GetParent()).
+--   opts.pixels : border thickness, default CHROME.BORDER_PX.
+--   opts.border : {r,g,b,a} color (default skin border); on re-call recolors.
+--   opts.crop   : pass false to skip the TexCoord crop (already-cropped icons).
+---------------------------------------------------------------------------
+function SkinBase.SkinIcon(icon, opts)
+    if not icon or not icon.SetTexCoord then return end
+    opts = opts or {}
+    if opts.crop ~= false then
+        icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+    end
+
+    local existing = SkinBase.GetFrameData(icon, "iconBorder")
+    if existing then
+        if opts.border then SkinBase.SetBackdropColors(existing, opts.border, nil) end
+        return existing
+    end
+
+    local host = opts.parent or (icon.GetParent and icon:GetParent())
+    if not host then return end
+    local pixels = opts.pixels or SkinBase.CHROME.BORDER_PX or 1
+    local border = CreateFrame("Frame", nil, host, "BackdropTemplate")
+    SkinBase.SetExpandedPixelPoints(border, icon, pixels)
+    if border.SetFrameLevel and host.GetFrameLevel then
+        border:SetFrameLevel(host:GetFrameLevel())
+    end
+    if border.EnableMouse then border:EnableMouse(false) end
+
+    local bc = opts.border
+    if not bc then
+        local sr, sg, sb, sa = SkinBase.GetSkinColors()
+        bc = { sr, sg, sb, sa }
+    end
+    SkinBase.ApplyPixelBackdrop(border, pixels, false, false, bc)
+    SkinBase.SetFrameData(icon, "iconBorder", border)
+    return border
+end
+
+---------------------------------------------------------------------------
+-- SkinStatusBar(bar, opts)
+-- Skin an existing Blizzard StatusBar in place: flat fill texture (pixel-snapped
+-- so it doesn't vanish at fractional scale), optional fill color, and a thin QUI
+-- backdrop behind it. Idempotent (MarkStyled).
+--   opts.color    : {r,g,b,a} fill color (default GetSkinBarColor).
+--   opts.texture  : fill texture (default WHITE8x8).
+--   opts.backdrop : pass false to skip the surrounding QUI backdrop.
+--   opts.settings/opts.prefix : forwarded to GetSkinBarColor for themed bars.
+---------------------------------------------------------------------------
+function SkinBase.SkinStatusBar(bar, opts)
+    if not bar or SkinBase.IsStyled(bar) then return end
+    opts = opts or {}
+
+    if bar.SetStatusBarTexture then
+        bar:SetStatusBarTexture(opts.texture or DEFAULT_BACKDROP_TEXTURE)
+        UIKit.DisablePixelSnap(bar)
+    end
+    if bar.SetStatusBarColor then
+        local r, g, b, a
+        if opts.color then
+            r, g, b, a = opts.color[1], opts.color[2], opts.color[3], opts.color[4]
+        else
+            r, g, b, a = SkinBase.GetSkinBarColor(opts.settings, opts.prefix)
+        end
+        bar:SetStatusBarColor(r or 0.5, g or 0.5, b or 0.5, a or 1)
+    end
+    if opts.backdrop ~= false then
+        local sr, sg, sb, sa, bgr, bgg, bgb, bga = SkinBase.GetSkinColors()
+        SkinBase.CreateBackdrop(bar, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+    end
+    SkinBase.MarkStyled(bar)
+end
+
+---------------------------------------------------------------------------
+-- SkinNextPrevButton(button, direction, opts)
+-- Skin a Blizzard next/prev page-nav button: QUI backdrop + hover (via
+-- SkinButton{strip}) with a directional chevron glyph replacing the Blizzard
+-- arrow art. The QUI font carries the baked roman ◄/► glyphs. Idempotent.
+--   direction : "left"/"prev" → ◄, anything else → ►.
+--   opts.size : glyph font size (default 14).
+---------------------------------------------------------------------------
+function SkinBase.SkinNextPrevButton(button, direction, opts)
+    if not button or SkinBase.GetFrameData(button, "nextPrevStyled") then return end
+    opts = opts or {}
+
+    SkinBase.SkinButton(button, { strip = true })
+
+    -- Inset the QUI backdrop so it frames the chevron glyph rather than the button's
+    -- full hit-rect. Blizzard page buttons (e.g. InboxPrev/NextPageButton are 32x32
+    -- per MailFrame.xml) carry adjacent PREV/NEXT labels + neighbours; a full-bleed
+    -- backdrop overruns them ("border too big, runs into other elements"). 4px
+    -- matches the proven inset the mail arrows used before unification.
+    local bd = SkinBase.GetBackdrop(button)
+    if bd and SkinBase.SetInsetPixelPoints then
+        SkinBase.SetInsetPixelPoints(bd, button, opts.inset or 4)
+    end
+
+    if button.CreateFontString then
+        local glyph = button:CreateFontString(nil, "OVERLAY")
+        local font = (Helpers.GetGeneralFont and Helpers.GetGeneralFont()) or STANDARD_TEXT_FONT
+        glyph:SetFont(font, opts.size or 14, "OUTLINE")
+        local isPrev = direction == "left" or direction == "prev"
+        glyph:SetText(isPrev and "\226\151\132" or "\226\150\186") -- ◄ U+25C4 / ► U+25BA
+        glyph:SetPoint("CENTER")
+        glyph:SetTextColor(1, 1, 1, 1)
+        SkinBase.SetFrameData(button, "nextPrevGlyph", glyph)
+    end
+    SkinBase.SetFrameData(button, "nextPrevStyled", true)
+end
+
+---------------------------------------------------------------------------
+-- SkinCheckBox(check, opts)
+-- Skin an existing Blizzard CheckButton in place: hide the box art (normal/
+-- pushed/highlight), give it a small QUI backdrop box, and accent-tint the
+-- native check mark (state stays engine-driven). Idempotent (MarkStyled).
+---------------------------------------------------------------------------
+function SkinBase.SkinCheckBox(check, opts)
+    if not check or SkinBase.IsStyled(check) then return end
+    opts = opts or {}
+
+    -- Hide the Blizzard box art; keep the check mark itself.
+    local normal = check.GetNormalTexture and check:GetNormalTexture()
+    if normal then
+        if normal.SetTexture then normal:SetTexture(nil) end
+        if normal.SetAlpha then normal:SetAlpha(0) end
+    end
+    local pushed = check.GetPushedTexture and check:GetPushedTexture()
+    if pushed and pushed.SetAlpha then pushed:SetAlpha(0) end
+    local hl = check.GetHighlightTexture and check:GetHighlightTexture()
+    if hl and hl.SetAlpha then hl:SetAlpha(0) end
+
+    -- QUI backdrop box (BACKGROUND/BORDER); the check mark draws OVERLAY above it
+    -- — same layering the proven SkinCloseButton uses for its "x" label.
+    local sr, sg, sb, sa, bgr, bgg, bgb, bga = SkinBase.GetSkinColors()
+    SkinBase.CreateBackdrop(check, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+
+    -- Accent-tint the native check mark so it reads as a QUI check.
+    local ar, ag, ab = UIKit.GetAccentColor()
+    local checked = check.GetCheckedTexture and check:GetCheckedTexture()
+    if checked then
+        if checked.SetVertexColor and ar then checked:SetVertexColor(ar, ag, ab, 1) end
+        if checked.SetDrawLayer then checked:SetDrawLayer("OVERLAY", 7) end
+    end
+    local disabledChecked = check.GetDisabledCheckedTexture and check:GetDisabledCheckedTexture()
+    if disabledChecked and disabledChecked.SetVertexColor and ar then
+        disabledChecked:SetVertexColor(ar * 0.5, ag * 0.5, ab * 0.5, 1)
+    end
+
+    SkinBase.MarkStyled(check)
+end
+
+---------------------------------------------------------------------------
+-- HandleIconBorder(nativeBorder, quiBorder, opts)
+-- Drive a QUI border frame's color from a Blizzard item IconBorder by quality:
+-- hide the native ring and mirror its quality color onto the QUI border. The
+-- color is read straight from the SetVertexColor HOOK ARGS (forward-through —
+-- never compares the values, so it is secret-safe AND avoids GetVertexColor's
+-- MayReturnNothing). When Blizzard hides the ring (common item / no quality),
+-- the QUI border reverts to opts.defaultBorder. Idempotent per native border.
+--   quiBorder       : the QUI border frame (e.g. the one SkinIcon returns).
+--   opts.defaultBorder : {r,g,b,a} fallback when no quality (default: none).
+-- NOTE: covers the SetVertexColor quality path (the common case). Atlas-encoded
+-- quality borders are not mirrored.
+---------------------------------------------------------------------------
+function SkinBase.HandleIconBorder(nativeBorder, quiBorder, opts)
+    if not nativeBorder or not quiBorder then return end
+    if SkinBase.GetFrameData(nativeBorder, "iconBorderHandled") then return end
+    SkinBase.SetFrameData(nativeBorder, "iconBorderHandled", true)
+    opts = opts or {}
+    local default = opts.defaultBorder
+
+    if nativeBorder.SetVertexColor then
+        hooksecurefunc(nativeBorder, "SetVertexColor", function(_, r, g, b, a)
+            SkinBase.SetBackdropColors(quiBorder, { r, g, b, a or 1 }, nil)
+        end)
+    end
+    if default then
+        local function revert() SkinBase.SetBackdropColors(quiBorder, default, nil) end
+        if nativeBorder.Hide then hooksecurefunc(nativeBorder, "Hide", revert) end
+        if nativeBorder.SetShown then
+            hooksecurefunc(nativeBorder, "SetShown", function(_, shown)
+                if shown == false then revert() end
+            end)
+        end
+    end
+
+    -- Capture the native ring's CURRENT quality color once (it may have been set
+    -- before we installed the SetVertexColor hook). GetVertexColor MayReturnNothing
+    -- -> pcall; secret values forward through SetBackdropColors without comparison.
+    if nativeBorder.GetVertexColor then
+        local ok, r, g, b, a = pcall(nativeBorder.GetVertexColor, nativeBorder)
+        if ok and r then SkinBase.SetBackdropColors(quiBorder, { r, g, b, a or 1 }, nil) end
+    end
+
+    -- Hide the native ring; the QUI border now carries the quality color.
+    if nativeBorder.SetAlpha then nativeBorder:SetAlpha(0) end
+end
+
+---------------------------------------------------------------------------
+-- SkinTrimScrollBar(scrollBar, opts)
+-- Skin a WowTrimScrollBar / minimal scrollbar widget: hide track + background +
+-- arrow buttons and render the thumb as a thin pixel-snapped QUI fill. Promoted
+-- from frames/character.lua StyleThinScrollBar (which now delegates here).
+--   opts.color : {r,g,b} thumb color (default skin bar color).
+--   opts.width : thumb width in px (default 8).
+--   opts.alpha : thumb fill alpha (default 0.78).
+---------------------------------------------------------------------------
+function SkinBase.SkinTrimScrollBar(scrollBar, opts)
+    if not scrollBar then return end
+    opts = opts or {}
+
+    if scrollBar.Track then scrollBar.Track:SetAlpha(0) end
+    if scrollBar.Background then scrollBar.Background:SetAlpha(0) end
+
+    local thumb = scrollBar.ThumbTexture or (scrollBar.GetThumbTexture and scrollBar:GetThumbTexture()) or scrollBar.Thumb
+    if thumb then
+        local r, g, b
+        if opts.color then
+            r, g, b = opts.color[1], opts.color[2], opts.color[3]
+        else
+            r, g, b = SkinBase.GetSkinBarColor()
+        end
+        thumb:SetColorTexture(r or 0.5, g or 0.5, b or 0.5, opts.alpha or 0.78)
+        UIKit.DisablePixelSnap(thumb) -- thin quad vanishes off-grid at fractional scale without this
+        thumb:SetWidth((opts.width or 8) * SkinBase.GetPixelSize(scrollBar, 1))
+    end
+
+    local upBtn = scrollBar.ScrollUpButton or scrollBar.Back
+    local downBtn = scrollBar.ScrollDownButton or scrollBar.Forward
+    if upBtn then upBtn:SetAlpha(0); upBtn:SetSize(1, 1) end
+    if downBtn then downBtn:SetAlpha(0); downBtn:SetSize(1, 1) end
+end
+
+---------------------------------------------------------------------------
 -- Selection-state category list button (AH / crafting-orders category lists).
 -- Selected -> ROW depth + full border; unselected -> dimmer. State is read from
 -- the button's SelectedTexture visibility (kept for detection, alpha 0).
@@ -3373,13 +3840,28 @@ function SkinBase.RefreshCategorySelected(button)
     local sc = SkinBase.GetFrameData(button, "skinColor")
     if not bd or not sc then return end
     local selected = button.SelectedTexture and button.SelectedTexture:IsShown()
+    local label = button.Label or GetLabelFontString(button)
+    -- Persist through scale-refresh WITHOUT rebuilding the backdrop. CreateBackdrop
+    -- seeds pixelBackdropData.borderColor/bgColor with the full-alpha skin color;
+    -- RefreshPixelBackdrop (login/first-show/scale change) re-applies that cached
+    -- value, which is what snapped every category row back to a full-alpha border
+    -- ("all highlighted" on first open). Routing through SetBackdropColors fixed
+    -- the color but rebuilt the 4-texture backdrop on EVERY category bind
+    -- (OnFilterClicked refresh + AuctionHouseFilterButton_SetUp per row) = a
+    -- browse-time FPS stutter. Instead drop the cached colors so RefreshPixelBackdrop
+    -- falls back to the live _quiBorder*/_quiBg* fields, then set those via the cheap
+    -- bare setters (vertex recolor only, no SetPoint/texture rebuild).
+    local data = pixelBackdropData[bd]
+    if data then data.borderColor, data.bgColor = nil, nil end
+    local r, g, b, a = SkinBase.GetDepthColor("ROW")
     if selected then
         bd:SetBackdropBorderColor(sc[1], sc[2], sc[3], sc[4])
-        bd:SetBackdropColor(SkinBase.GetDepthColor("ROW"))
+        bd:SetBackdropColor(r, g, b, a)
+        SetFontStringColor(label, SkinBase.GetFrameData(button, "categorySelectedTextColor") or sc)
     else
         bd:SetBackdropBorderColor(sc[1], sc[2], sc[3], (sc[4] or 1) * 0.5)
-        local r, g, b = SkinBase.GetDepthColor("ROW")
         bd:SetBackdropColor(r, g, b, 0.7)
+        SetFontStringColor(label, SkinBase.GetFrameData(button, "categoryTextColor") or { 0.95, 0.95, 0.95, 1 })
     end
 end
 
@@ -3395,6 +3877,8 @@ function SkinBase.SkinCategoryButton(button, opts)
     SkinBase.CreateBackdrop(button, sr, sg, sb, sa)
     SkinBase.SetFrameData(button, "skinColor", { sr, sg, sb, sa })
     SkinBase.SetFrameData(button, "skinKind", "category")
+    SkinBase.SetFrameData(button, "categorySelectedTextColor", opts.selectedTextColor)
+    SkinBase.SetFrameData(button, "categoryTextColor", opts.textColor)
     -- Drive the QUI font onto the button's font objects (default, like SkinButton):
     -- category buttons swap their Highlight font object on hover with no setter
     -- call, so only object-driving survives it. opts.font == false opts out.
@@ -3473,8 +3957,11 @@ function SkinBase.SkinListContainer(list, rowStyler)
     if list.ScrollBox and rowStyler then
         SkinBase.HookScrollBoxAcquired(list.ScrollBox, rowStyler)
     end
-    if list.ScrollBar and list.ScrollBar.Background then
-        list.ScrollBar.Background:Hide()
+    -- Canonical thin QUI scrollbar (was a bare Background:Hide() that left the stock
+    -- thumb/track/arrows — the precedent every per-frame `ScrollBar.Background:Hide()`
+    -- copy was cloned from). Routing it here unifies every SkinListContainer consumer.
+    if list.ScrollBar then
+        SkinBase.SkinTrimScrollBar(list.ScrollBar)
     end
     -- The "no results"/error fontstring is re-SetText'd on state refresh; lock its
     -- font face so it doesn't render in the stock font after the one-shot pass.
@@ -3499,25 +3986,34 @@ function SkinBase.RefreshWidget(frame)
     if not kind then return end
     local sr, sg, sb, sa, bgr, bgg, bgb, bga = SkinBase.GetSkinColors()
 
+    -- Route theme-refresh recolors through SetBackdropColors so they update the
+    -- persisted pixelBackdropData and survive the next scale-refresh rebuild (a
+    -- bare bd:SetBackdropColor only touches _quiBg*/the live textures, which are
+    -- shadowed by the seeded data.* on rebuild). The SetFrameData skinColor/bgColor
+    -- re-stores stay so a later hover derives from the new colors.
     if kind == "button" or kind == "dropdown" then
         local boost = SkinBase.GetFrameData(frame, "bgBoost") or BG_BOOST_BUTTON
-        bd:SetBackdropColor(math.min(bgr + boost, 1), math.min(bgg + boost, 1), math.min(bgb + boost, 1), 1)
-        bd:SetBackdropBorderColor(sr, sg, sb, sa)
+        SkinBase.SetBackdropColors(bd,
+            { sr, sg, sb, sa },
+            { math.min(bgr + boost, 1), math.min(bgg + boost, 1), math.min(bgb + boost, 1), 1 })
         SkinBase.SetFrameData(frame, "skinColor", { sr, sg, sb, sa })
         if kind == "dropdown" then
             SkinBase.SetFrameData(frame, "bgColor", { bgr, bgg, bgb })
         end
     elseif kind == "editbox" then
-        bd:SetBackdropColor(bgr, bgg, bgb, bga)
-        bd:SetBackdropBorderColor(sr, sg, sb, sa)
+        SkinBase.SetBackdropColors(bd, { sr, sg, sb, sa }, { bgr, bgg, bgb, bga })
         SkinBase.SetFrameData(frame, "skinColor", { sr, sg, sb, sa })
     elseif kind == "row" then
         local boost = SkinBase.GetFrameData(frame, "bgBoost") or BG_BOOST_ROW
         local bgAlpha = SkinBase.GetFrameData(frame, "bgAlpha") or 0.6
         local mult = SkinBase.GetFrameData(frame, "borderAlphaMult") or 0.5
-        bd:SetBackdropColor(math.min(bgr + boost, 1), math.min(bgg + boost, 1), math.min(bgb + boost, 1), bgAlpha)
-        bd:SetBackdropBorderColor(sr, sg, sb, sa * mult)
+        SkinBase.SetBackdropColors(bd,
+            { sr, sg, sb, sa * mult },
+            { math.min(bgr + boost, 1), math.min(bgg + boost, 1), math.min(bgb + boost, 1), bgAlpha })
         SkinBase.SetFrameData(frame, "skinColor", { sr, sg, sb, sa * mult })
+    elseif kind == "category" then
+        SkinBase.SetFrameData(frame, "skinColor", { sr, sg, sb, sa })
+        SkinBase.RefreshCategorySelected(frame)
     end
 
     -- Re-apply the global QUI font on live font/theme changes for widgets that
@@ -3528,7 +4024,8 @@ function SkinBase.RefreshWidget(frame)
             SkinBase.SkinFontString(frame, { color = color })
         else
             -- Buttons: re-drive font objects so the QUI font survives hover/disable.
-            SkinBase.ApplyButtonFontObjects(frame, { color = color, disabledColor = DISABLED_TEXT_COLOR })
+            local disabledColor = SkinBase.GetFrameData(frame, "skinFontDisabledColor") or DISABLED_TEXT_COLOR
+            SkinBase.ApplyButtonFontObjects(frame, { color = color, disabledColor = disabledColor })
         end
     end
 end
@@ -3560,6 +4057,57 @@ function SkinBase.SkinButtonFrameTemplate(frame)
     SkinBase.CreateBackdrop(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     if frame.CloseButton then
         SkinBase.SkinCloseButton(frame.CloseButton)
+    end
+end
+
+---------------------------------------------------------------------------
+-- SkinWindow(frame, opts)
+-- The SINGLE canonical "skin a Blizzard window" sequence: chrome strip +
+-- backdrop + close button + button font OBJECTS, so every window gets
+-- UNIFORM treatment in ONE call. Replaces the error-prone per-frame manual
+-- composition of 4-5 helpers (the source of "some frames skinned more than
+-- others"). Every step is individually graceful/guarded, so it works on
+-- ButtonFrameTemplate, PortraitFrameTemplate, InsetFrameTemplate AND bare
+-- custom frames alike.
+-- Static-text face comes from the global font-object override (font_system.lua
+-- ApplyGlobalDefaultFont); SkinFrameText and LockFrameTextObjects are NOT
+-- called here — they are superseded by the global shared-object override.
+--   opts.depth        : ApplyButtonFontObjectsDeep depth (default 4)
+--   opts.tabs         : array of tab buttons -> SkinTabGroup (optional)
+--   opts.tabOwner     : owner for SkinTabGroup (default frame)
+--   opts.scrollBars   : array of scrollbars -> SkinTrimScrollBar (optional)
+--   opts.noClose      : skip close-button skinning
+--   opts.noButtonFonts: skip ApplyButtonFontObjectsDeep
+--   opts.noBackdrop   : skip CreateBackdrop (frame already has its own)
+-- Does NOT MarkSkinned — the caller owns the per-frame IsSkinned guard.
+---------------------------------------------------------------------------
+function SkinBase.SkinWindow(frame, opts)
+    if not frame then return end
+    opts = opts or {}
+    local depth = opts.depth or 4
+
+    SkinBase.HidePortraitFrameChrome(frame)
+    if not opts.noBackdrop then
+        local sr, sg, sb, sa, bgr, bgg, bgb, bga = SkinBase.GetSkinColors()
+        SkinBase.CreateBackdrop(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+    end
+    if not opts.noClose and frame.CloseButton then
+        SkinBase.SkinCloseButton(frame.CloseButton)
+    end
+    if opts.tabs then
+        SkinBase.SkinTabGroup(opts.tabs, opts.tabOwner or frame)
+    end
+
+    -- Button font OBJECTS only (engine hover/disable swap). Static text face
+    -- comes from the global font-object override.
+    if not opts.noButtonFonts then
+        SkinBase.ApplyButtonFontObjectsDeep(frame, depth)
+    end
+
+    if opts.scrollBars then
+        for _, bar in ipairs(opts.scrollBars) do
+            SkinBase.SkinTrimScrollBar(bar)
+        end
     end
 end
 

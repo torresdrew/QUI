@@ -242,9 +242,11 @@ local function RefreshBarFillAndTexture(bar)
 
     local statusBar = bar.StatusBar
     local g = GetGeneralSettings()
-    local tex = Helpers.GetGeneralTexture and Helpers.GetGeneralTexture() or FALLBACK_TEXTURE
-    if tex and statusBar.SetStatusBarTexture then
-        statusBar:SetStatusBarTexture(tex)
+    -- Helpers.GetGeneralTexture never existed, so the old expression always resolved to
+    -- the solid fallback. There is no per-module statusbar-texture setting for these bars,
+    -- so keep the solid fill; wiring an LSM statusbar texture would require a new setting.
+    if statusBar.SetStatusBarTexture then
+        statusBar:SetStatusBarTexture(FALLBACK_TEXTURE)
     end
 
     local mode = g.statusTrackingBarsBarColorMode or "accent"
@@ -345,7 +347,6 @@ local function EnsureBarSkinned(bar)
     HookBarUpdate(bar)
     HookBarTextVisibility(bar)
     RefreshBarAppearance(bar)
-    SkinBase.SkinFrameText(bar, { recurse = true })
 end
 
 local function SkinBarContainer(container)

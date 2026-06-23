@@ -25,8 +25,9 @@ QUICore.Loot = Loot
 -- Helper to get theme colors from QUI skin system
 local function GetThemeColors()
     local db = QUICore.db and QUICore.db.profile or {}
-    local sr, sg, sb, sa = Helpers.GetSkinBorderColor(db.loot or {})
-    local bgr, bgg, bgb, bga = Helpers.GetSkinBgColor()
+    -- Canonical 8-value resolver: border + per-module bg override path, consistent
+    -- with readycheck.lua, instead of pairing GetSkinBorderColor + override-less GetSkinBgColor.
+    local sr, sg, sb, sa, bgr, bgg, bgb, bga = SkinBase.GetSkinColors(db.loot or {}, "loot")
     return {bgr, bgg, bgb, bga}, {sr, sg, sb, sa}, {0.95, 0.96, 0.97, 1}
 end
 
@@ -263,7 +264,6 @@ local function CreateLootWindow()
         frame.slots[i] = CreateLootSlot(frame, i)
     end
 
-    SkinBase.SkinFrameText(frame, { recurse = true })
     return frame
 end
 
@@ -770,17 +770,10 @@ local function SkinLootHistoryElement(button)
     -- TAINT SAFETY: Use weak-keyed table instead of writing to Blizzard scroll element
     if hookedLootFrames[button] then return end
 
-    -- Strip background textures
+    -- Strip background textures (NameFrame/BorderFrame are parentKey'd under
+    -- BackgroundArtFrame, so this alpha covers them too)
     if button.BackgroundArtFrame then
         button.BackgroundArtFrame:SetAlpha(0)
-    end
-
-    if button.NameFrame then
-        button.NameFrame:SetAlpha(0)
-    end
-
-    if button.BorderFrame then
-        button.BorderFrame:SetAlpha(0)
     end
 
     -- Style the item icon
@@ -835,13 +828,10 @@ local function SkinGroupLootHistoryFrame()
 
     local bgColor, borderColor, textColor = GetThemeColors()
 
-    -- Strip Blizzard textures
-    if HistoryFrame.NineSlice then
-        HistoryFrame.NineSlice:SetAlpha(0)
-    end
-    if HistoryFrame.Bg then
-        HistoryFrame.Bg:SetAlpha(0)
-    end
+    -- Strip Blizzard chrome via the canonical helper (NineSlice, Bg,
+    -- TopTileStreaks, portrait, title bg) rather than a hand-picked NineSlice/Bg
+    -- pair — keeps the title text, hides the chrome our backdrop replaces.
+    SkinBase.HidePortraitFrameChrome(HistoryFrame)
 
     -- Apply QUI backdrop
     local hfBd = SkinBase.GetFrameData(HistoryFrame, "backdrop")
@@ -881,8 +871,10 @@ local function SkinGroupLootHistoryFrame()
     -- Style the dropdown if it exists
     local Dropdown = HistoryFrame.EncounterDropdown
     if Dropdown then
-        -- Basic dropdown styling
-        if Dropdown.NineSlice then Dropdown.NineSlice:SetAlpha(0) end
+        -- Canonical dropdown (was a no-op NineSlice alpha — the template draws via a
+        -- .Background atlas, so the stock control showed through). Matches the QUI
+        -- backdrop look every other dropdown (e.g. AH DurationDropdown) gets.
+        SkinBase.SkinDropdown(Dropdown)
     end
 
     -- Style the close button. ClosePanelButton inherits
@@ -932,6 +924,13 @@ local function SkinGroupLootHistoryFrame()
     -- Skin loot history elements as they're acquired from the pool.
     if HistoryFrame.ScrollBox then
         SkinBase.HookScrollBoxAcquired(HistoryFrame.ScrollBox, SkinLootHistoryElement)
+        -- SkinLootHistoryElement only restyles the row icon/border; the row's
+        -- ItemName/winner/roll FontStrings stay at stock GameFontNormal otherwise.
+        -- Route them through the canonical pooled-row font lock (the same single
+        -- source of truth peer modules use) so each acquired row carries the QUI font.
+        if SkinBase.HookScrollBoxRowFonts then
+            SkinBase.HookScrollBoxRowFonts(HistoryFrame.ScrollBox, 3)
+        end
     end
 
     -- Hook Show to re-apply theme each time frame is shown
@@ -1109,7 +1108,7 @@ DisableBlizzardLoot = function()
         end
 
         -- Hide individual roll frames as they're created
-        local numRollFrames = NUM_GROUP_LOOT_FRAMES or 4  -- Default to 4 if not defined
+        local numRollFrames = 4  -- NUM_GROUP_LOOT_FRAMES is file-local in Blizzard's GroupLootFrame.lua
         for i = 1, numRollFrames do
             local frame = _G["GroupLootFrame"..i]
             if frame then
@@ -1572,9 +1571,10 @@ local function CreateEditModeBorder(frame)
 
     local border = {}
 
-    -- Top border
+    -- Top border (DisablePixelSnap so the 2px quad stays on-grid at fractional UI scales)
     border.top = frame:CreateTexture(nil, "OVERLAY")
     border.top:SetColorTexture(unpack(EDIT_BORDER_COLOR))
+    SkinBase.DisablePixelSnap(border.top)
     border.top:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, 0)
     border.top:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 0, 0)
     border.top:SetHeight(EDIT_BORDER_SIZE)
@@ -1582,6 +1582,7 @@ local function CreateEditModeBorder(frame)
     -- Bottom border
     border.bottom = frame:CreateTexture(nil, "OVERLAY")
     border.bottom:SetColorTexture(unpack(EDIT_BORDER_COLOR))
+    SkinBase.DisablePixelSnap(border.bottom)
     border.bottom:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 0, 0)
     border.bottom:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", 0, 0)
     border.bottom:SetHeight(EDIT_BORDER_SIZE)
@@ -1589,6 +1590,7 @@ local function CreateEditModeBorder(frame)
     -- Left border
     border.left = frame:CreateTexture(nil, "OVERLAY")
     border.left:SetColorTexture(unpack(EDIT_BORDER_COLOR))
+    SkinBase.DisablePixelSnap(border.left)
     border.left:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, 0)
     border.left:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 0, 0)
     border.left:SetWidth(EDIT_BORDER_SIZE)
@@ -1596,6 +1598,7 @@ local function CreateEditModeBorder(frame)
     -- Right border
     border.right = frame:CreateTexture(nil, "OVERLAY")
     border.right:SetColorTexture(unpack(EDIT_BORDER_COLOR))
+    SkinBase.DisablePixelSnap(border.right)
     border.right:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 0, 0)
     border.right:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", 0, 0)
     border.right:SetWidth(EDIT_BORDER_SIZE)

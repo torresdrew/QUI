@@ -118,8 +118,10 @@ local function SkinBrowseOrders(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
         -- Filter dropdown (WowStyle1 dropdown — standard button textures don't apply)
         if searchBar.FilterDropdown then
             local dropdown = searchBar.FilterDropdown
-            -- belowChildren keeps the QUI backdrop BELOW the dropdown's children.
-            SkinBase.SkinButton(dropdown, { strip = true, font = true, belowChildren = true })
+            -- WowStyle1FilterDropdownTemplate (a DropdownButton) — route through the
+            -- canonical SkinDropdown (default strip), matching every other QUI
+            -- dropdown. belowChildren keeps the QUI backdrop below the reset "X".
+            SkinBase.SkinDropdown(dropdown, { belowChildren = true })
             -- The reset "X" (ResetButton) is purely a SHOW/hide issue, not
             -- z-order: it sits well above the backdrop, but Blizzard's
             -- WowDropdownFilterBehaviorMixin:ValidateResetState() only shows it
@@ -199,8 +201,10 @@ local function SkinBrowseOrders(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
             SkinBase.SetFrameData(categoryList, "clickHooked", true)
         end
 
-        if categoryList.ScrollBar and categoryList.ScrollBar.Background then
-            categoryList.ScrollBar.Background:Hide()
+        -- Canonical thin QUI scrollbar (was a bare Background:Hide() that left the
+        -- stock thumb/track/arrows).
+        if categoryList.ScrollBar then
+            SkinBase.SkinTrimScrollBar(categoryList.ScrollBar)
         end
     end
 
@@ -269,11 +273,9 @@ local function SkinForm(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
         end
         -- Duration dropdown
         if pc.DurationDropdown then
+            -- SkinDropdown faces+locks the dropdown text internally (LockDropdownText:
+            -- SkinFontString{fontOnly} + LockFontObject + LockFrameTextObjects(dropdown,2)).
             SkinBase.SkinDropdown(pc.DurationDropdown)
-            if pc.DurationDropdown.Text then
-                SkinBase.SkinFontString(pc.DurationDropdown.Text, { fontOnly = true })
-            end
-            SkinBase.LockFrameTextObjects(pc.DurationDropdown, 2)
         end
         -- Note edit box
         if pc.NoteEditBox then
@@ -282,13 +284,12 @@ local function SkinForm(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     end
 
     -- Dropdowns on the form
+    -- SkinDropdown already calls LockDropdownText internally, so no post-lock needed.
     if form.MinimumQuality and form.MinimumQuality.Dropdown then
         SkinBase.SkinDropdown(form.MinimumQuality.Dropdown)
-        SkinBase.LockDropdownText(form.MinimumQuality.Dropdown)
     end
     if form.OrderRecipientDropdown then
         SkinBase.SkinDropdown(form.OrderRecipientDropdown)
-        SkinBase.LockDropdownText(form.OrderRecipientDropdown)
     end
 
     -- Recipient target edit box
@@ -335,7 +336,6 @@ local function SkinCraftingOrders()
     SkinMyOrders(frame)
     SkinForm(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
 
-    SkinBase.SkinFrameText(frame, { recurse = true })
     SkinBase.MarkSkinned(frame)
 end
 

@@ -23,15 +23,6 @@ end
 
 local RefreshBackdropColors = SkinBase.RefreshFrameBackdropColors
 
-local function CollectNumberedTabs(prefix, count)
-    local tabs = {}
-    for i = 1, count do
-        local tab = _G[prefix .. "Tab" .. i]
-        if tab then tabs[#tabs + 1] = tab end
-    end
-    return tabs
-end
-
 local function ClampTexture(texture)
     if not texture then return end
     if SkinBase.ClampTextureHidden then
@@ -85,22 +76,6 @@ local function HideButtonStateTextures(button)
     if button.GetDisabledTexture then ClampTexture(button:GetDisabledTexture()) end
 end
 
-local function InsetButtonBackdrop(button, inset)
-    if not button then return end
-    local backdrop = SkinBase.GetBackdrop(button)
-    if not backdrop then return end
-
-    inset = inset or 0
-    if SkinBase.SetInsetPointsPx then
-        SkinBase.SetInsetPointsPx(backdrop, button, inset, inset, inset, inset)
-        return
-    end
-
-    backdrop:ClearAllPoints()
-    backdrop:SetPoint("TOPLEFT", button, "TOPLEFT", inset, -inset)
-    backdrop:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", -inset, inset)
-end
-
 local function LowerFrameBackdrop(frame)
     if not frame or not frame.GetFrameLevel then return end
     local backdrop = SkinBase.GetBackdrop(frame)
@@ -146,28 +121,25 @@ local function SkinMailIconButton(button)
         SkinBase.SetFrameData(button, "skinColor", { sr, sg, sb, sa })
         SkinBase.SetFrameData(button, "skinKind", "button")
         SkinBase.SetFrameData(button, "bgBoost", ICON_BUTTON_BG_BOOST)
+        SkinBase.SetFrameData(button, "skinFont", true) -- RefreshWidget re-faces on theme change
         SkinBase.MarkStyled(button)
     end
 
-    SkinBase.SkinFrameText(button, { recurse = true })
-    SkinBase.LockFrameTextObjects(button, 2)
+    -- Guarded once-per-button recursive face (avoids re-walking every region on each
+    -- InboxFrame_Update); theme-change re-face goes through RefreshWidget via skinFont.
+    SkinBase.LockPooledRowText(button, 2)
 end
 
 local function SkinInboxArtwork()
     HideMailArtwork(_G.InboxFrameBg)
 
-    SkinBase.SkinButton(_G.InboxPrevPageButton)
-    SkinBase.SkinButton(_G.InboxNextPageButton)
-    InsetButtonBackdrop(_G.InboxPrevPageButton, 4)
-    InsetButtonBackdrop(_G.InboxNextPageButton, 4)
-    if _G.InboxPrevPageButton and _G.InboxPrevPageButton.GetNormalTexture then
-        ClampTexture(_G.InboxPrevPageButton:GetNormalTexture())
-    end
-    if _G.InboxNextPageButton and _G.InboxNextPageButton.GetNormalTexture then
-        ClampTexture(_G.InboxNextPageButton:GetNormalTexture())
-    end
-    HideButtonStateTextures(_G.InboxPrevPageButton)
-    HideButtonStateTextures(_G.InboxNextPageButton)
+    -- Canonical directional chevron + QUI backdrop — byte-identical to the merchant
+    -- page arrows. Replaces the former bespoke SkinButton + InsetButtonBackdrop +
+    -- ClampTexture + HideButtonStateTextures stack, which left the raw Blizzard
+    -- spellbook-arrow NormalTexture showing inside a QUI box (the user-reported
+    -- merchant-vs-mail arrow mismatch). SkinNextPrevButton is idempotent.
+    if _G.InboxPrevPageButton then SkinBase.SkinNextPrevButton(_G.InboxPrevPageButton, "prev") end
+    if _G.InboxNextPageButton then SkinBase.SkinNextPrevButton(_G.InboxNextPageButton, "next") end
 end
 
 local function SkinMailItems()
@@ -177,8 +149,7 @@ local function SkinMailItems()
         local item = _G["MailItem" .. i]
         if item then
             SkinBase.SkinScrollRow(item, { hover = false })
-            SkinBase.SkinFrameText(item, { recurse = true })
-            SkinBase.LockFrameTextObjects(item, 3)
+            SkinBase.LockPooledRowText(item, 3) -- guarded once-per-row face (InboxFrame_Update fires often)
             SkinBase.SkinButton(_G["MailItem" .. i .. "ExpireTime"])
             SkinMailIconButton(_G["MailItem" .. i .. "Button"])
         end
@@ -189,9 +160,17 @@ end
 
 local function SkinMoneyInputFrame(moneyInput)
     if not moneyInput then return end
-    if moneyInput.GoldBox then SkinBase.SkinEditBox(moneyInput.GoldBox) end
-    if moneyInput.SilverBox then SkinBase.SkinEditBox(moneyInput.SilverBox) end
-    if moneyInput.CopperBox then SkinBase.SkinEditBox(moneyInput.CopperBox) end
+    -- MoneyInputFrameTemplate (Mainline) exposes the edit boxes as parentKey
+    -- gold/silver/copper (Blizzard_MoneyFrame/Mainline/MoneyInputFrame.xml:79/96/111);
+    -- the older LargeMoneyInputFrameTemplate uses GoldBox/SilverBox/CopperBox. The
+    -- previous *Box-only lookups were nil on the Mainline SendMail money input, so
+    -- accept either so both templates get skinned.
+    local gold = moneyInput.gold or moneyInput.GoldBox
+    local silver = moneyInput.silver or moneyInput.SilverBox
+    local copper = moneyInput.copper or moneyInput.CopperBox
+    if gold then SkinBase.SkinEditBox(gold) end
+    if silver then SkinBase.SkinEditBox(silver) end
+    if copper then SkinBase.SkinEditBox(copper) end
 end
 
 local function SkinSendMailArtwork()
@@ -214,12 +193,14 @@ local function SkinSendMailControls()
     SkinMoneyInputFrame(_G.SendMailMoney)
     SkinBase.SkinButton(_G.SendMailCancelButton)
     SkinBase.SkinButton(_G.SendMailMailButton)
-    SkinBase.SkinButton(_G.SendMailSendMoneyButton)
-    SkinBase.SkinButton(_G.SendMailCODButton)
+    -- Send-money / C.O.D. are RADIO CheckButtons (SendMailRadioButtonTemplate, per
+    -- MailFrame.xml:741/751), NOT push buttons — SkinButton stripped their radio
+    -- art. Route through the canonical checkbox/radio verb (QUI box + accent-tinted
+    -- indicator) so they match every other QUI toggle.
+    if _G.SendMailSendMoneyButton then SkinBase.SkinCheckBox(_G.SendMailSendMoneyButton) end
+    if _G.SendMailCODButton then SkinBase.SkinCheckBox(_G.SendMailCODButton) end
 
     if _G.SendMailFrame then
-        SkinBase.SkinFrameText(_G.SendMailFrame, { recurse = true })
-        SkinBase.LockFrameTextObjects(_G.SendMailFrame, 5)
         SkinBase.ApplyButtonFontObjectsDeep(_G.SendMailFrame, 4)
     end
 
@@ -251,8 +232,6 @@ local function SkinOpenMailFrame()
 
     LowerFrameBackdrop(frame)
     SkinOpenMailArtwork()
-    SkinBase.SkinFrameText(frame, { recurse = true })
-    SkinBase.LockFrameTextObjects(frame, 5)
     SkinBase.ApplyButtonFontObjectsDeep(frame, 4)
     SkinBase.SkinButton(_G.OpenMailReportSpamButton)
     SkinBase.SkinButton(_G.OpenMailCancelButton)
@@ -281,13 +260,11 @@ local function SkinMail()
     local frame = _G.MailFrame
     if frame and not SkinBase.IsSkinned(frame) then
         SkinBase.SkinButtonFrameTemplate(frame)
-        SkinBase.SkinTabGroup(CollectNumberedTabs("MailFrame", 2), frame)
+        SkinBase.SkinTabGroup(SkinBase.CollectNumberedTabs("MailFrame", 2), frame)
         SkinBase.MarkSkinned(frame)
     end
     if frame then
         LowerFrameBackdrop(frame)
-        SkinBase.SkinFrameText(frame, { recurse = true })
-        SkinBase.LockFrameTextObjects(frame, 4)
         SkinBase.ApplyButtonFontObjectsDeep(frame, 4)
     end
 

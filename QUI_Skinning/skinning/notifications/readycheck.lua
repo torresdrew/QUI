@@ -162,6 +162,9 @@ end
 local function RestyleButtonText(button)
     local text = button and button.GetFontString and button:GetFontString()
     if not text or not text.SetFont then return end
+    -- CJKFont (not bare SetFont/ApplyButtonFontObjects) is load-bearing here: it
+    -- provides the CJK glyph fallback the ready-check labels need and is pinned by
+    -- skinning_font_reassertions_test. Keep re-asserting it on each state refresh.
     local font = (ns.Helpers and ns.Helpers.GetGeneralFont and ns.Helpers.GetGeneralFont()) or STANDARD_TEXT_FONT
     CJKFont(text, font, 12, FONT_FLAGS)
     if text.SetDrawLayer then text:SetDrawLayer("OVERLAY", 7) end
@@ -365,36 +368,12 @@ local function SkinReadyCheckFrame()
         end)
     end)
 
-    -- Make frame movable (only when unlocked)
-    -- Defer to post-combat if in lockdown so skinning can still proceed
-    local function EnableDragging()
-        if InCombatLockdown() then
-            local f = CreateFrame("Frame")
-            f:RegisterEvent("PLAYER_REGEN_ENABLED")
-            f:SetScript("OnEvent", function(self)
-                self:UnregisterEvent("PLAYER_REGEN_ENABLED")
-                EnableDragging()
-            end)
-            return
-        end
-        frame:SetMovable(true)
-        frame:RegisterForDrag("LeftButton")
-    end
-    EnableDragging()
-    frame:HookScript("OnDragStart", function(self)
-        if InCombatLockdown() then return end
-        if SkinBase.GetFrameData(self, "unlocked") then
-            self:StartMoving()
-        end
-    end)
-    frame:HookScript("OnDragStop", function(self)
-        if InCombatLockdown() then return end
-        if SkinBase.GetFrameData(self, "unlocked") then
-            self:StopMovingOrSizing()
-        end
-    end)
+    -- Positioning is owned by the frameAnchoring system (QUI_ApplyFrameAnchor, invoked
+    -- from the Show hook above). The legacy drag block gated movement on an "unlocked"
+    -- frame-data flag that nothing ever sets, so StartMoving/StopMovingOrSizing were
+    -- unreachable and SetMovable/RegisterForDrag was pointless taint surface on the
+    -- protected ReadyCheckFrame — removed.
 
-    SkinBase.SkinFrameText(frame, { recurse = true })
     SkinBase.MarkSkinned(frame)
 end
 

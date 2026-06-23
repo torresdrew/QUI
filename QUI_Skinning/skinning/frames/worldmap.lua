@@ -9,8 +9,8 @@
 --     which is what carries NineSlice / Bg / TopTileStreaks / PortraitContainer
 --     / TitleContainer / CloseButton / MaximizeMinimizeFrame.
 --
--- So skinning WorldMapFrame == skinning its BorderFrame, plus killing the
--- BlackoutFrame dim overlay and the InsetBorderTop separator.
+-- So skinning WorldMapFrame == skinning its BorderFrame, plus hiding the
+-- BorderFrame.Underlay texture and the InsetBorderTop separator.
 ---------------------------------------------------------------------------
 
 local addonName, ns = ...
@@ -47,29 +47,16 @@ end
 
 local function ApplyBorderBackdrop(backdrop)
     if not backdrop then return end
+    -- Recolor via the shared persistence helper (same idiom as achievement/weeklyrewards),
+    -- rather than re-driving ApplyPixelBackdrop on the already-managed backdrop child.
     local sr, sg, sb, sa, bgr, bgg, bgb, bga = SkinBase.GetSkinColors()
-    SkinBase.ApplyPixelBackdrop(backdrop, 1, true, true, { sr, sg, sb, sa }, { bgr, bgg, bgb, bga })
-end
-
--- Quest-log rows (QuestScrollFrame) are FramePool-pooled (QuestMapFrame.lua:
--- titleFramePool / objectiveFramePool) and Blizzard re-applies their font
--- OBJECT + difficulty color on every QuestLogQuests_Update / hover, reverting a
--- one-shot SkinFrameText. After each layout pass, lock the active pool rows so
--- the QUI face survives (fontOnly keeps Blizzard's readable difficulty colors).
--- A pooled quest row only SetText's its fontstrings on bind (Blizzard never
--- re-CALLS SetFontObject), so the QUI face must be APPLIED (SkinFrameText) on
--- each cold-acquired row, then locked.
-local function styleQuestRow(f)
-    SkinBase.SkinFrameText(f, { recurse = true })
-    SkinBase.LockFrameTextObjects(f, 2)
+    SkinBase.SetBackdropColors(backdrop, { sr, sg, sb, sa }, { bgr, bgg, bgb, bga })
 end
 
 -- Section-header rows are BUTTONS with a declared HighlightFont: the engine swaps
 -- to the highlight font OBJECT on hover with no setter call, so also drive the
--- button font objects (LockFrameTextObjects alone can't beat the object-swap).
+-- button font objects.
 local function styleQuestHeader(f)
-    SkinBase.SkinFrameText(f, { recurse = true })
-    SkinBase.LockFrameTextObjects(f, 2)
     SkinBase.ApplyButtonFontObjects(f)
 end
 
@@ -82,8 +69,6 @@ end
 local function LockActiveQuestLogRows()
     local sf = _G.QuestScrollFrame
     if not sf then return end
-    eachActive(sf.titleFramePool, styleQuestRow)
-    eachActive(sf.objectiveFramePool, styleQuestRow)
     eachActive(sf.headerFramePool, styleQuestHeader)
     eachActive(sf.campaignHeaderFramePool, styleQuestHeader)
     eachActive(sf.campaignHeaderMinimalFramePool, styleQuestHeader)
@@ -108,7 +93,8 @@ local function SkinWorldMap()
     -- The shared helper handles chrome strip + backdrop + close button.
     -- BorderFrame is frameStrata="HIGH"; raise ScrollContainer and overlay
     -- controls to that strata so they stay above the full-frame skinned
-    -- backdrop while title controls remain above the canvas at frameLevel 510.
+    -- backdrop while title controls remain above the canvas at
+    -- MAP_OVERLAY_FRAME_LEVEL (200).
     if frame.BorderFrame then
         SkinBase.SkinButtonFrameTemplate(frame.BorderFrame)
         ApplyBorderBackdrop(SkinBase.GetBackdrop(frame.BorderFrame))
@@ -118,7 +104,6 @@ local function SkinWorldMap()
 
     RaiseMapCanvas(frame)
 
-    SkinBase.SkinFrameText(frame, { recurse = true })
     HookQuestLogText(frame)
     SkinBase.MarkSkinned(frame)
 end
@@ -143,3 +128,40 @@ if ns.Registry then
 end
 
 SkinBase.OnAddOnLoaded("Blizzard_WorldMap", SkinWorldMap, 0)
+
+---------------------------------------------------------------------------
+-- FlightMapFrame (taxi map) — same MapCanvasFrameTemplate split as WorldMap:
+-- its BorderFrame carries the PortraitFrameTemplate chrome. LOD: Blizzard_FlightMap.
+---------------------------------------------------------------------------
+local function SkinFlightMap()
+    if not IsSettingEnabled("skinFlightMap") then return end
+    local frame = _G.FlightMapFrame
+    if not frame or SkinBase.IsSkinned(frame) then return end
+
+    if frame.BorderFrame then
+        SkinBase.SkinButtonFrameTemplate(frame.BorderFrame)
+        ApplyBorderBackdrop(SkinBase.GetBackdrop(frame.BorderFrame))
+        if frame.BorderFrame.Underlay then frame.BorderFrame.Underlay:Hide() end
+        if frame.BorderFrame.InsetBorderTop then frame.BorderFrame.InsetBorderTop:Hide() end
+    end
+
+    SkinBase.MarkSkinned(frame)
+end
+
+local function RefreshFlightMap()
+    local frame = _G.FlightMapFrame
+    if not frame or not SkinBase.IsSkinned(frame) then return end
+    if frame.BorderFrame then
+        ApplyBorderBackdrop(SkinBase.GetBackdrop(frame.BorderFrame))
+    end
+end
+if ns.Registry then
+    ns.Registry:Register("skinFlightMap", {
+        refresh = RefreshFlightMap,
+        priority = 80,
+        group = "skinning",
+        importCategories = { "skinning", "theme" },
+    })
+end
+
+SkinBase.OnAddOnLoaded("Blizzard_FlightMap", SkinFlightMap, 0)

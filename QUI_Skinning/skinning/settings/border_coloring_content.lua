@@ -17,10 +17,6 @@ local Schema = Settings and Settings.Schema
 
 local BORDER_COLORING_SUBPAGE_INDEX = 11
 
-local PAD = (Shared and Shared.PADDING) or 15
-local HEADER_GAP = 26
-local SECTION_GAP = 14
-
 ---------------------------------------------------------------------------
 -- V3 layout helpers (mirrored from skinning_content.lua)
 ---------------------------------------------------------------------------

@@ -657,8 +657,20 @@ else
     SetupDebugInstrumentation() -- standalone test harness: no gate, run eagerly
 end
 
+-- Reentrancy latch. On Midnight, RefreshTooltipLayout's Show() nudge re-runs
+-- Blizzard's TooltipDataProcessor post-calls (Show -> C rebuild -> SetAttribute
+-- -> AttributeDelegate -> ProcessTooltipPostCalls). Those post-calls land back
+-- in our ID-injection path, which calls RefreshTooltipLayout -> Show() again,
+-- recursing until the C stack overflows. The per-tooltip dedupe can't break it
+-- because each rebuild re-fetches tooltip data with a fresh dataInstanceID, so
+-- the dedupe key differs every cycle. Lua is single-threaded and Show() is
+-- synchronous, so a plain boolean spanning the Show() call suppresses the whole
+-- nested storm.
+local tooltipRefreshInProgress = false
+
 local function RefreshTooltipLayout(tooltip)
     if not tooltip then return end
+    if tooltipRefreshInProgress then return end
     if tooltip.IsForbidden and tooltip:IsForbidden() then return end
 
     -- Re-layout of GameTooltip is unsafe while Blizzard widget containers are
@@ -688,24 +700,13 @@ local function RefreshTooltipLayout(tooltip)
     -- new FontStrings without updating the Lua-facing line/layout state. Show()
     -- is the only reliable nudge on Midnight; the skinning watcher re-hides
     -- NineSlice and the deferred refit below catches the final extents.
+    -- Show() re-runs the tooltip's own layout (GameTooltip_CalculatePadding on
+    -- 12.0.7), growing it to fit the appended lines. The skinning chrome is pure
+    -- SetAllPoints, so it tracks that new size — no addon-side extent refit.
     if tooltip == GameTooltip or not alreadyShown then
+        tooltipRefreshInProgress = true
         pcall(tooltip.Show, tooltip)
-    end
-
-    -- After AddLine/AddDoubleLine on a shown Midnight tooltip, the C-side
-    -- renders the new FontStrings but tooltip:GetHeight() does not grow.
-    -- The QUI chrome anchored via SetAllPoints tracks the stale height,
-    -- exposing Blizzard's backdrop on the appended lines (Target / M+ Rating).
-    -- The skinning module owns the chrome and re-anchors its bottom past
-    -- the tooltip's reported bottom by the actual FontString overflow.
-    local requestRefit = ns.QUI_RequestTooltipChromeRefit
-    if requestRefit then
-        pcall(requestRefit, tooltip, 3)
-        return
-    end
-    local refit = ns.QUI_RefitTooltipChromeToContent
-    if refit then
-        pcall(refit, tooltip)
+        tooltipRefreshInProgress = false
     end
 end
 
@@ -980,7 +981,7 @@ local function ShouldKeepTooltipVisible(tooltip)
         return true
     end
 
-    if Provider.IsFrameBlockingMouse and Provider:IsFrameBlockingMouse() then
+    if Provider.IsFrameBlockingMouse and Provider:IsFrameBlockingMouse(tooltip) then
         return true
     end
 
@@ -1896,13 +1897,7 @@ local function SetupTooltipHook()
     local function HandleUnitExtrasPost(tooltip, settings, unit)
         TooltipDebugCount("qol.unitExtrasPost")
         tooltipPlayerItemLevelGUID[tooltip] = nil
-        local changed = AddUnitTooltipInfoToTooltip(tooltip, unit, settings)
-        if changed then
-            local requestRefit = ns.QUI_RequestTooltipChromeRefit
-            if requestRefit then
-                pcall(requestRefit, tooltip, 2)
-            end
-        end
+        AddUnitTooltipInfoToTooltip(tooltip, unit, settings)
         ScheduleDeferredUnitInfo(tooltip, unit)
     end
 
@@ -2088,6 +2083,13 @@ local function SetupTooltipHook()
     end
 
     local function ShouldProcessTooltipIDs(tooltip)
+        -- Suppress re-fired post-calls during RefreshTooltipLayout's Show()
+        -- nudge. Without this the Show-triggered rebuild re-enters ID injection,
+        -- duplicating lines and recursing into a C stack overflow.
+        if tooltipRefreshInProgress then
+            TooltipDebugCount("qol.idPostSkipped")
+            return false
+        end
         if not ShouldShowTooltipIDs() then
             TooltipDebugCount("qol.idPostSkipped")
             return false

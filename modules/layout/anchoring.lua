@@ -2329,6 +2329,20 @@ local CASTBAR_ANCHOR_KEYS = {
 -- is also disabled so the child tracks the parent's growth edge instead
 -- of being frozen at a CENTER↔CENTER offset baked from the initial size.
 local DYNAMIC_SIZE_ANCHOR_KEYS = {
+    -- buffIcon: the CDM buff-icon container resizes itself at runtime
+    -- (LayoutBuffIcons calls SetSize per visible-icon count, every aura change
+    -- in combat). It MUST be pin-eligible like its buffBar sibling: when the
+    -- user anchors it (central frameAnchoring) to a restricted target — e.g.
+    -- buffIcon -> secondaryPower -> primaryPower -> an essential container that
+    -- hosts SecureActionButton icon children (clickableIcons) — AnchorOrPin has
+    -- to pin it to UIParent at absolute coords instead of relative-anchoring it
+    -- into the restricted anchor family. Without this, buffIcon inherits the
+    -- family's anchoring restriction and its in-combat SetSize/Show are
+    -- ADDON_ACTION_BLOCKED. The re-pin follow path (QUI_UpdateFramesAnchoredTo
+    -- in-combat whitelist) and CDM_LOGICAL_SIZE_KEYS already list buffIcon;
+    -- this was the missing trigger. The CDM-native ApplyBuffIconAnchor path
+    -- already pins correctly, but it is bypassed once a central anchor exists.
+    buffIcon = true,
     buffBar = true,
     buffFrame = true,
     debuffFrame = true,
