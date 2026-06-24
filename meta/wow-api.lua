@@ -7150,13 +7150,16 @@ C_HousingBlueprint = {}
 ---@param ... any
 ---@return boolean locationValid
 function C_HousingBlueprint.CanImportTypeFromCurrentLocation(type, ...) end
+--- Delete the specified owned blueprint; Listen for HousingBlueprintDeleteSuccess and HousingBlueprintDeleteFailure for results
 ---@param blueprintID? any
 ---@param ... any
 function C_HousingBlueprint.DeleteBlueprint(blueprintID, ...) end
+--- Saves out a new Blueprint of the specified type, using the specified name, if available, based on where the player is currently standing (see IsExportAvailable); Listen for HousingBlueprintExportSuccess and HousingBlueprintExportFailure for results
 ---@param type? any
 ---@param name? string
 ---@param ... any
 function C_HousingBlueprint.ExportBlueprint(type, name, ...) end
+--- Saves out a new Blueprint of the specified room, using the specified name, if available (see IsExportAvailable); Listen for HousingBlueprintExportSuccess and HousingBlueprintExportFailure for results
 ---@param name? string
 ---@param roomGUID? string
 ---@param ... any
@@ -7165,10 +7168,12 @@ function C_HousingBlueprint.ExportRoomBlueprint(name, roomGUID, ...) end
 ---@param ... any
 ---@return string hyperLink
 function C_HousingBlueprint.GetBlueprintHyperlink(blueprintShareCode, ...) end
+--- Returns what type of Blueprint the specified code is for; Will return HousingBlueprintType.None if code is invalid; Does NOT check whether the shareCode actually matches up to a real valid Blueprint
 ---@param shareCode? string
 ---@param ... any
 ---@return any type
 function C_HousingBlueprint.GetBlueprintTypeForCode(shareCode, ...) end
+--- Imports the specified blueprint, if available (see IsImportAvailable and CanImportTypeFromCurrentLocation); Listen for HousingBlueprintImportSuccess and HousingBlueprintImportFailure for results
 ---@param shareCode? string
 ---@param ... any
 function C_HousingBlueprint.ImportBlueprint(shareCode, ...) end
@@ -7180,10 +7185,12 @@ function C_HousingBlueprint.IsExportAvailable(...) end
 ---@param ... any
 ---@return boolean importAvailable
 function C_HousingBlueprint.IsImportAvailable(...) end
+--- Returns true if the string matches the valid expected format for a Blueprint Share Code; Does NOT check whether the shareCode actually matches up to a real valid Blueprint
 ---@param shareCode? string
 ---@param ... any
 ---@return boolean isValid
 function C_HousingBlueprint.IsShareCodeValid(shareCode, ...) end
+--- Rename the specified owned blueprint to the specified name; Listen for HousingBlueprintRenameSuccess and HousingBlueprintRenameFailure for results
 ---@param blueprintID? any
 ---@param newName? string
 ---@param ... any
@@ -7200,6 +7207,10 @@ function C_HousingBlueprint.RequestBlueprintContents(shareCode, ...) end
 ---@param optionalHouseGUID? string
 ---@param ... any
 function C_HousingBlueprint.RequestBlueprintContentsForContext(shareCode, optionalHouseGUID, ...) end
+--- Start the process of importing a Room Blueprint. This will lead to Layout Mode being opened, so the player can then select an available door to attach the room to
+---@param shareCode? string
+---@param ... any
+function C_HousingBlueprint.StartImportRoomBlueprint(shareCode, ...) end
 
 C_HousingCatalog = {}
 --- Creates a new instance of a HousingCatalog searcher; This can be used to asynchronously search/filter the HousingCatalog without affecting/being restricted by the filter state of other Housing Catalog UI displays
@@ -7741,6 +7752,10 @@ function C_HousingLayout.GetRoomPlacementBudget(...) end
 ---@param ... any
 ---@return string roomGUID
 function C_HousingLayout.GetRoomPlayerIsIn(...) end
+---@param ... any
+---@return number roomID
+---@return string shareCode
+function C_HousingLayout.GetSelectedBlueprintFloorplan(...) end
 --- If a door is selected, returns its component id and the guid of the room it belongs to; Otherwise returns nothing
 ---@param ... any
 ---@return number selectedDoorComponentID
@@ -7771,6 +7786,9 @@ function C_HousingLayout.HasAnySelections(...) end
 ---@param ... any
 ---@return boolean hasBudget
 function C_HousingLayout.HasRoomPlacementBudget(...) end
+---@param ... any
+---@return boolean hasSelectedBlueprintFloorplan
+function C_HousingLayout.HasSelectedBlueprintFloorplan(...) end
 --- Returns true if a door component is currently selected
 ---@param ... any
 ---@return boolean hasSelectedDoor
@@ -10080,6 +10098,12 @@ function C_Navigation.GetFrame(...) end
 ---@param ... any
 ---@return string unitToken
 function C_Navigation.GetNearestPartyMemberToken(...) end
+---@param uiMapID? number
+---@param ... any
+---@return number x
+---@return number y
+---@return string waypointDescription
+function C_Navigation.GetNextWaypointForMap(uiMapID, ...) end
 ---@param ... any
 ---@return any state
 function C_Navigation.GetTargetState(...) end
@@ -13875,12 +13899,6 @@ function C_SuperTrack.ClearSuperTrackedMapPin(...) end
 ---@param ... any
 ---@return any type
 function C_SuperTrack.GetHighestPrioritySuperTrackingType(...) end
----@param uiMapID? number
----@param ... any
----@return number x
----@return number y
----@return string waypointDescription
-function C_SuperTrack.GetNextWaypointForMap(uiMapID, ...) end
 ---@param ... any
 ---@return any trackableType
 ---@return number trackableID
