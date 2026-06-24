@@ -223,6 +223,45 @@ local function RestoreUnitFrameEvents(frame)
 end
 
 ---------------------------------------------------------------------------
+-- HELPERS: Combat-safe group unit-frame event stripping
+--
+-- Modern retail (12.x) pools the legacy party member frames via
+-- PartyFrame.PartyMemberFramePool (CreateFramePool with no name arg, so the
+-- legacy _G["PartyMemberFrame1".."4"] globals no longer resolve) -- the live
+-- frames must be reached through the pool. Raid-style party
+-- (CompactPartyFrameMember1-5) and raid (CompactRaidFrame1-40) frames are still
+-- created with explicit global names, so they resolve directly.
+--
+-- Event unregistration carries no protected-frame restriction (verified:
+-- UnregisterAllEvents has no SecretArguments/combat gate in
+-- SimpleFrameAPIDocumentation), so this runs safely in combat, unlike the
+-- Hide/reparent in HideBlizzard*Frames. Stripping events stops these frames
+-- running their UNIT_AURA / health handlers, which read secret values in 12.x
+-- and throw the instant any addon taint is ambient on the coalesced event batch.
+---------------------------------------------------------------------------
+local function StripBlizzardGroupEvents()
+    -- Party (legacy, pooled)
+    if PartyFrame and PartyFrame.PartyMemberFramePool then
+        for memberFrame in PartyFrame.PartyMemberFramePool:EnumerateActive() do
+            StripUnitFrameEvents(memberFrame)
+        end
+    end
+    -- Party (raid-style) + legacy global names (older clients that still create them)
+    if CompactPartyFrame then
+        for i = 1, 5 do
+            StripUnitFrameEvents(_G["CompactPartyFrameMember" .. i])
+        end
+    end
+    for i = 1, 4 do
+        StripUnitFrameEvents(_G["PartyMemberFrame" .. i])
+    end
+    -- Raid (globally named, 8 groups x 5)
+    for i = 1, 40 do
+        StripUnitFrameEvents(_G["CompactRaidFrame" .. i])
+    end
+end
+
+---------------------------------------------------------------------------
 -- HELPERS: Restore frame
 ---------------------------------------------------------------------------
 local function RestoreFrame(frame)
@@ -361,7 +400,20 @@ local function HideBlizzardPartyFrames()
         end
     end
 
-    -- Legacy PartyMemberFrame1-4
+    -- Party member frames. Modern retail pools these via
+    -- PartyFrame.PartyMemberFramePool (unnamed) -- the legacy
+    -- _G["PartyMemberFrame1".."4"] globals no longer resolve on 12.x, so
+    -- enumerate the live pool. Without this the pooled member frames keep
+    -- UNIT_AURA registered and process party auras, which throws under any
+    -- ambient addon taint in 12.x (secret isBossAura / maxValue).
+    if PartyFrame and PartyFrame.PartyMemberFramePool then
+        for memberFrame in PartyFrame.PartyMemberFramePool:EnumerateActive() do
+            SafeHideFrame(memberFrame)
+            StripUnitFrameEvents(memberFrame)
+            InstallShowHook(memberFrame)
+        end
+    end
+    -- Legacy global names retained for older clients that still create them.
     for i = 1, 4 do
         local pf = _G["PartyMemberFrame" .. i]
         if pf then
@@ -509,6 +561,18 @@ blizzardEventFrame:SetScript("OnEvent", function(_, event, addonName)
     end
 
     if not ShouldHide() then return end
+
+    -- Strip group unit-frame events immediately AND next-frame, even in combat.
+    -- A roster change can pool+arm a fresh member frame (its OnLoad registers
+    -- UNIT_AURA), and PARTY_MEMBER_ENABLE fires in combat. Event unregistration
+    -- is combat-safe while the Hide/reparent below is not, so the full hide stays
+    -- deferred to combat end. The next-frame pass runs after Blizzard's same-event
+    -- handler has created the frame, closing the in-combat window where a re-armed
+    -- frame would process secret aura/health data under ambient taint.
+    StripBlizzardGroupEvents()
+    C_Timer.After(0, function()
+        if ShouldHide() then StripBlizzardGroupEvents() end
+    end)
 
     if InCombatLockdown() then
         QUI_GFB.pendingHide = true
