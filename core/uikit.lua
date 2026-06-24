@@ -3393,8 +3393,17 @@ end
 function SkinBase.ApplyButtonFontObjectsDeep(frame, maxDepth)
     if not frame then return end
     maxDepth = maxDepth or 4
+    -- Filter forbidden/widget-set nodes BEFORE touching any widget method, in
+    -- parity with the sibling walkers (SkinFrameText/LockFrameTextObjects).
+    if SafeWalkSkip(frame) then return end
     if frame.GetObjectType then
-        local t = frame:GetObjectType()
+        -- GetChildren() can surface a node whose method table is reachable via
+        -- __index (so .GetObjectType is truthy) but which has no valid widget
+        -- handle, so the call raises "bad self" (e.g. TradePlayerInputMoneyFrame
+        -- under TradeFrame). A bare truthy-check does NOT protect against that;
+        -- pcall the probe and skip the node when it can't answer.
+        local ok, t = pcall(frame.GetObjectType, frame)
+        if not ok then return end
         if (t == "Button" or t == "CheckButton")
             and frame.GetFontString and frame:GetFontString()
             and not SkinBase.GetFrameData(frame, "qBtnFontDriven") then
@@ -3402,7 +3411,6 @@ function SkinBase.ApplyButtonFontObjectsDeep(frame, maxDepth)
             SkinBase.SetFrameData(frame, "qBtnFontDriven", true)
         end
     end
-    if SafeWalkSkip(frame) then return end
     if maxDepth > 0 and frame.GetChildren then
         local children = SafeChildren(frame)
         if children then
