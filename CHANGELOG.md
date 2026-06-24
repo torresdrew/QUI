@@ -11,6 +11,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v4.0.5-beta1 - 2026-06-23
+
+### Added
+- reworked click-casting for reference parity — per-frame secure proxies, click direction (up/down), and friend/enemy bind separation
+
+### Fixed
+- fixed raid/party name class colors lost in combat
+- fixed unreadable dark gossip text on skinned frames
+- fixed flight map canvas hidden behind skinned backdrop
+- hardened skin button-font walk against bad-self GetObjectType
+
 ## v4.0.4 - 2026-06-23
 
 ### Added
