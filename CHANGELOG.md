@@ -11,6 +11,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v4.0.5-beta2 - 2026-06-24
+
+### Fixed
+- fixed raid/party names blanking out for the rest of the session until /reload
+- fixed boss cast bars persisting on screen after a wipe
+
 ## v4.0.5-beta1 - 2026-06-23
 
 ### Added
