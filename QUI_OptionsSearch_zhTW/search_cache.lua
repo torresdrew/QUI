@@ -2615,7 +2615,7 @@ ns.QUI_SearchCache = {
             ["tileId"] = "global",
         },
         {
-            ["featureId"] = "moduleAddon_QUI_Alts",
+            ["featureId"] = "moduleFlag_alts",
             ["keywords"] = {
                 "Alt 角色",
                 "帳號共通角色快取上的 Alt 角色視窗。",
@@ -2727,6 +2727,19 @@ ns.QUI_SearchCache = {
                 "module",
             },
             ["label"] = "M+ 進度",
+            ["navType"] = "moduleToggle",
+            ["subPageIndex"] = 3,
+            ["tileId"] = "global",
+        },
+        {
+            ["featureId"] = "moduleAddon_QUI_UI",
+            ["keywords"] = {
+                "UI Bundle",
+                "Skinning, minimap, datatexts, info bar, QoL, and the alt roster.",
+                "模組插件",
+                "module",
+            },
+            ["label"] = "UI Bundle",
             ["navType"] = "moduleToggle",
             ["subPageIndex"] = 3,
             ["tileId"] = "global",
@@ -3468,32 +3481,6 @@ ns.QUI_SearchCache = {
             ["tileId"] = "global",
         },
         {
-            ["featureId"] = "moduleAddon_QUI_QoL",
-            ["keywords"] = {
-                "生活品質",
-                "生活品質功能、地下城工具與追蹤器。",
-                "模組插件",
-                "module",
-            },
-            ["label"] = "生活品質",
-            ["navType"] = "moduleToggle",
-            ["subPageIndex"] = 3,
-            ["tileId"] = "global",
-        },
-        {
-            ["featureId"] = "moduleAddon_QUI_Skinning",
-            ["keywords"] = {
-                "皮膚化",
-                "Blizzard UI 重塑外觀－角色面板、彈出視窗、提示。",
-                "模組插件",
-                "module",
-            },
-            ["label"] = "皮膚化",
-            ["navType"] = "moduleToggle",
-            ["subPageIndex"] = 3,
-            ["tileId"] = "global",
-        },
-        {
             ["featureId"] = "targetCastbar",
             ["keywords"] = {
                 "目標施法條",
@@ -3702,19 +3689,6 @@ ns.QUI_SearchCache = {
             ["tileId"] = "global",
         },
         {
-            ["featureId"] = "moduleAddon_QUI_Datatexts",
-            ["keywords"] = {
-                "資料文字",
-                "資料文字註冊表、提供者與自訂資料面板。",
-                "模組插件",
-                "module",
-            },
-            ["label"] = "資料文字",
-            ["navType"] = "moduleToggle",
-            ["subPageIndex"] = 3,
-            ["tileId"] = "global",
-        },
-        {
             ["featureId"] = "datatext",
             ["keywords"] = {
                 "資料文字面板",
@@ -3741,7 +3715,7 @@ ns.QUI_SearchCache = {
             ["tileId"] = "global",
         },
         {
-            ["featureId"] = "moduleAddon_QUI_InfoBar",
+            ["featureId"] = "moduleFlag_infobar",
             ["keywords"] = {
                 "資訊列",
                 "全寬頂/底部資訊條，帶有 datatext 小工具。",
@@ -3754,7 +3728,7 @@ ns.QUI_SearchCache = {
             ["tileId"] = "global",
         },
         {
-            ["featureId"] = "moduleAddon_QUI_Minimap",
+            ["featureId"] = "moduleFlag_minimap",
             ["keywords"] = {
                 "迷你地圖",
                 "迷你地圖重新外觀與按鈕抽屜。",

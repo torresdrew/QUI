@@ -229,7 +229,7 @@ local defaults = {
 
         -- Bags / Inventory module (Phase 1 data layer; Phase 2 bag window + takeover)
         bags = {
-            enabled = false,  -- master switch: scanning + UI takeover
+            enabled = false,  -- master switch; new profiles seed true (new_profile_defaults), existing untouched
             appearance = {
                 iconSize = 36,      -- item button pixel size
                 columns = 12,       -- grid columns (bag window)

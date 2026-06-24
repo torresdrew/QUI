@@ -1,0 +1,106 @@
+## Interface: 120100
+## Title: |cFF30D1FFQUI|r UI
+## IconTexture: Interface\AddOns\QUI\assets\QUI
+## Notes: QUI cosmetic + utility bundle (skinning, datatexts, minimap, info bar, QoL, alts)
+## Author: Zol
+## Version: 5.0.0-alpha3
+## Category: User Interface
+## Group: QUI
+## Dependencies: QUI
+## LoadOnDemand: 1
+
+bootstrap.lua [Bootstrap]
+
+skinning\character_pane\character.lua [Bootstrap]
+skinning\character_pane\inspect.lua [Bootstrap]
+skinning\base.lua [Bootstrap]
+skinning\gameplay\keystone.lua [Bootstrap]
+skinning\notifications\alerts.lua [Bootstrap]
+skinning\notifications\loot.lua [Bootstrap]
+skinning\gameplay\mplus_timer.lua [Bootstrap]
+skinning\frames\character.lua [Bootstrap]
+skinning\frames\statustracking.lua [Bootstrap]
+skinning\frames\inspect.lua [Bootstrap]
+skinning\gameplay\powerbaralt.lua [Bootstrap]
+skinning\notifications\readycheck.lua [Bootstrap]
+skinning\system\gamemenu.lua [Bootstrap]
+skinning\system\popups.lua [Bootstrap]
+skinning\frames\overrideactionbar.lua [Bootstrap]
+skinning\gameplay\objectivetracker.lua [Bootstrap]
+skinning\frames\instanceframes.lua [Bootstrap]
+skinning\frames\delves.lua [Bootstrap]
+skinning\frames\pvpmatch.lua [Bootstrap]
+skinning\frames\auctionhouse.lua [Bootstrap]
+skinning\frames\craftingorders.lua [Bootstrap]
+skinning\frames\professions.lua [Bootstrap]
+skinning\frames\interaction.lua [Bootstrap]
+skinning\frames\misc_frames.lua [Bootstrap]
+skinning\frames\mail.lua [Bootstrap]
+skinning\frames\social.lua [Bootstrap]
+skinning\frames\journals.lua [Bootstrap]
+skinning\frames\achievement.lua [Bootstrap]
+skinning\frames\worldmap.lua [Bootstrap]
+skinning\frames\weeklyrewards.lua [Bootstrap]
+skinning\system\tooltips.lua [Bootstrap]
+datatexts\alts_data.lua [Bootstrap]
+datatexts\datatexts.lua [Bootstrap]
+datatexts\providers_extra.lua [Bootstrap]
+datatexts\ldb_bridge.lua [Bootstrap]
+datatexts\datapanels.lua [Bootstrap]
+minimap\minimap.lua [Bootstrap]
+minimap\dungeon_data.lua [Bootstrap]
+minimap\init_inwindow.lua [Bootstrap]
+infobar\infobar.lua [Bootstrap]
+infobar\micromenu.lua [Bootstrap]
+infobar\travel.lua [Bootstrap]
+infobar\specswap.lua [Bootstrap]
+infobar\contextmenu.lua [Bootstrap]
+infobar\dragreorder.lua [Bootstrap]
+utility\keybinds.lua [Bootstrap]
+utility\consumablemacros.lua [Bootstrap]
+combat\rotationassist.lua [Bootstrap]
+combat\combattext.lua [Bootstrap]
+trackers\spellscanner.lua [Bootstrap]
+trackers\preytracker.lua [Bootstrap]
+trackers\atonement_counter.lua [Bootstrap]
+qol\qol.lua [Bootstrap]
+qol\blizzard_mover.lua [Bootstrap]
+qol\blizzard_mover_frames.lua [Bootstrap]
+qol\quicksalvage.lua [Bootstrap]
+qol\petwarning.lua [Bootstrap]
+qol\consumablecheck.lua [Bootstrap]
+qol\tooltip_provider.lua [Bootstrap]
+qol\tooltip_inspect.lua [Bootstrap]
+qol\tooltip.lua [Bootstrap]
+qol\combattimer.lua [Bootstrap]
+qol\actiontracker.lua [Bootstrap]
+qol\crosshair.lua [Bootstrap]
+qol\rangecheck.lua [Bootstrap]
+qol\reticle.lua [Bootstrap]
+qol\skyriding.lua [Bootstrap]
+qol\xptracker.lua [Bootstrap]
+qol\focuscastalert.lua [Bootstrap]
+dungeon\keystone.lua [Bootstrap]
+dungeon\mplus_timer.lua [Bootstrap]
+dungeon\mplus_progress.lua [Bootstrap]
+dungeon\teleport.lua [Bootstrap]
+dungeon\party_keystones.lua [Bootstrap]
+dungeon\brez_counter.lua [Bootstrap]
+# Alts: alts.lua + alts_trigger.lua stay eager (datatext provider, _G.QUI_RefreshAlts,
+# and the _G.QUI_OpenAltsRoster trigger). The heavy roster UI below is LAZY — untagged,
+# so it does not load at startup; the first roster-open does LoadAddOn("QUI_UI"), which
+# pulls the whole untagged remainder at once. roster_data.lua is consumed only by the
+# lazy views (no eager file reads Alts.RosterData at file scope), so it's lazy too.
+alts\alts.lua [Bootstrap]
+alts\alts_trigger.lua [Bootstrap]
+alts\roster_data.lua
+alts\views\shared.lua
+alts\views\window.lua
+alts\views\filter_popup.lua
+alts\views\roster.lua
+alts\views\professions.lua
+alts\views\reputations.lua
+alts\views\weeklies.lua
+alts\views\currencies.lua
+alts\views\equipment.lua
+alts\views\search.lua

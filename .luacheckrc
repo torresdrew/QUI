@@ -384,7 +384,7 @@ files["QUI_ActionBars/actionbars/actionbars_skinning.lua"] = {
     ignore = { "111", "112", "113", "121" },
 }
 
-files["QUI_QoL/dungeon/party_keystones.lua"] = {
+files["QUI_UI/dungeon/party_keystones.lua"] = {
     ignore = { "113" },
 }
 

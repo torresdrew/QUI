@@ -2680,19 +2680,6 @@ ns.QUI_SearchCache = {
             ["tileId"] = "global",
         },
         {
-            ["featureId"] = "moduleAddon_QUI_Datatexts",
-            ["keywords"] = {
-                "Datatexts",
-                "Реестр datatext, провайдеры и пользовательские панели данных.",
-                "Дополнения модуля",
-                "module",
-            },
-            ["label"] = "Datatexts",
-            ["navType"] = "moduleToggle",
-            ["subPageIndex"] = 3,
-            ["tileId"] = "global",
-        },
-        {
             ["featureId"] = "skyriding",
             ["keywords"] = {
                 "HUD Skyriding",
@@ -2701,6 +2688,19 @@ ns.QUI_SearchCache = {
                 "module",
             },
             ["label"] = "HUD Skyriding",
+            ["navType"] = "moduleToggle",
+            ["subPageIndex"] = 3,
+            ["tileId"] = "global",
+        },
+        {
+            ["featureId"] = "moduleAddon_QUI_UI",
+            ["keywords"] = {
+                "UI Bundle",
+                "Skinning, minimap, datatexts, info bar, QoL, and the alt roster.",
+                "Дополнения модуля",
+                "module",
+            },
+            ["label"] = "UI Bundle",
             ["navType"] = "moduleToggle",
             ["subPageIndex"] = 3,
             ["tileId"] = "global",
@@ -2732,7 +2732,7 @@ ns.QUI_SearchCache = {
             ["tileId"] = "global",
         },
         {
-            ["featureId"] = "moduleAddon_QUI_Alts",
+            ["featureId"] = "moduleFlag_alts",
             ["keywords"] = {
                 "Альты",
                 "Окно персонажей-альтов через общий для аккаунта кэш персонажей.",
@@ -2836,7 +2836,7 @@ ns.QUI_SearchCache = {
             ["tileId"] = "global",
         },
         {
-            ["featureId"] = "moduleAddon_QUI_InfoBar",
+            ["featureId"] = "moduleFlag_infobar",
             ["keywords"] = {
                 "Инфо-панель",
                 "Полноширинная верхняя/нижняя информационная панель с виджетами datatext.",
@@ -2921,7 +2921,7 @@ ns.QUI_SearchCache = {
             ["tileId"] = "global",
         },
         {
-            ["featureId"] = "moduleAddon_QUI_Minimap",
+            ["featureId"] = "moduleFlag_minimap",
             ["keywords"] = {
                 "Миникарта",
                 "Рескин миникарты и выдвижная панель кнопок.",
@@ -3389,19 +3389,6 @@ ns.QUI_SearchCache = {
             ["tileId"] = "global",
         },
         {
-            ["featureId"] = "moduleAddon_QUI_Skinning",
-            ["keywords"] = {
-                "Скининг",
-                "Рескин интерфейса Blizzard - окно персонажа, всплывашки, подсказки.",
-                "Дополнения модуля",
-                "module",
-            },
-            ["label"] = "Скининг",
-            ["navType"] = "moduleToggle",
-            ["subPageIndex"] = 3,
-            ["tileId"] = "global",
-        },
-        {
             ["featureId"] = "moduleAddon_QUI_Bags",
             ["keywords"] = {
                 "Сумки",
@@ -3514,19 +3501,6 @@ ns.QUI_SearchCache = {
                 "module",
             },
             ["label"] = "Трекер добычи",
-            ["navType"] = "moduleToggle",
-            ["subPageIndex"] = 3,
-            ["tileId"] = "global",
-        },
-        {
-            ["featureId"] = "moduleAddon_QUI_QoL",
-            ["keywords"] = {
-                "Улучшение качества жизни",
-                "Функции качества жизни, инструменты для подземелий и трекеры.",
-                "Дополнения модуля",
-                "module",
-            },
-            ["label"] = "Улучшение качества жизни",
             ["navType"] = "moduleToggle",
             ["subPageIndex"] = 3,
             ["tileId"] = "global",

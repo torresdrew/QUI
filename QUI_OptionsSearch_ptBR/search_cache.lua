@@ -2628,7 +2628,7 @@ ns.QUI_SearchCache = {
             ["tileId"] = "global",
         },
         {
-            ["featureId"] = "moduleAddon_QUI_Alts",
+            ["featureId"] = "moduleFlag_alts",
             ["keywords"] = {
                 "Alts",
                 "Janela de roster de alts sobre o cache de personagens da conta inteira.",
@@ -2649,19 +2649,6 @@ ns.QUI_SearchCache = {
                 "module",
             },
             ["label"] = "Alvo do alvo",
-            ["navType"] = "moduleToggle",
-            ["subPageIndex"] = 3,
-            ["tileId"] = "global",
-        },
-        {
-            ["featureId"] = "moduleAddon_QUI_Skinning",
-            ["keywords"] = {
-                "Aparência",
-                "Reposicionamento visual da UI da Blizzard - painel do personagem, popups, tooltips.",
-                "Addons do módulo",
-                "module",
-            },
-            ["label"] = "Aparência",
             ["navType"] = "moduleToggle",
             ["subPageIndex"] = 3,
             ["tileId"] = "global",
@@ -2855,7 +2842,7 @@ ns.QUI_SearchCache = {
             ["tileId"] = "global",
         },
         {
-            ["featureId"] = "moduleAddon_QUI_InfoBar",
+            ["featureId"] = "moduleFlag_infobar",
             ["keywords"] = {
                 "Barra de informações",
                 "Barra superior/inferior de informações em largura total com widgets datatext.",
@@ -3128,19 +3115,6 @@ ns.QUI_SearchCache = {
             ["tileId"] = "global",
         },
         {
-            ["featureId"] = "moduleAddon_QUI_Datatexts",
-            ["keywords"] = {
-                "Datatexts",
-                "Registro, provedores e painéis de dados personalizados de datatext.",
-                "Addons do módulo",
-                "module",
-            },
-            ["label"] = "Datatexts",
-            ["navType"] = "moduleToggle",
-            ["subPageIndex"] = 3,
-            ["tileId"] = "global",
-        },
-        {
             ["featureId"] = "buffFrame",
             ["keywords"] = {
                 "Frame de Buff",
@@ -3371,7 +3345,7 @@ ns.QUI_SearchCache = {
             ["tileId"] = "global",
         },
         {
-            ["featureId"] = "moduleAddon_QUI_Minimap",
+            ["featureId"] = "moduleFlag_minimap",
             ["keywords"] = {
                 "Minimapa",
                 "Re-skin do minimapa e gaveta de botões.",
@@ -3540,19 +3514,6 @@ ns.QUI_SearchCache = {
             ["tileId"] = "global",
         },
         {
-            ["featureId"] = "moduleAddon_QUI_QoL",
-            ["keywords"] = {
-                "Qualidade de vida",
-                "Recursos de qualidade de vida, ferramentas de masmorra e trackers.",
-                "Addons do módulo",
-                "module",
-            },
-            ["label"] = "Qualidade de vida",
-            ["navType"] = "moduleToggle",
-            ["subPageIndex"] = 3,
-            ["tileId"] = "global",
-        },
-        {
             ["featureId"] = "actionTracker",
             ["keywords"] = {
                 "Rastreador de Ação",
@@ -3682,6 +3643,19 @@ ns.QUI_SearchCache = {
                 "module",
             },
             ["label"] = "Texto de Combate",
+            ["navType"] = "moduleToggle",
+            ["subPageIndex"] = 3,
+            ["tileId"] = "global",
+        },
+        {
+            ["featureId"] = "moduleAddon_QUI_UI",
+            ["keywords"] = {
+                "UI Bundle",
+                "Skinning, minimap, datatexts, info bar, QoL, and the alt roster.",
+                "Addons do módulo",
+                "module",
+            },
+            ["label"] = "UI Bundle",
             ["navType"] = "moduleToggle",
             ["subPageIndex"] = 3,
             ["tileId"] = "global",

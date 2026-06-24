@@ -2828,7 +2828,7 @@ ns.QUI_SearchCache = {
             ["tileId"] = "global",
         },
         {
-            ["featureId"] = "moduleAddon_QUI_InfoBar",
+            ["featureId"] = "moduleFlag_infobar",
             ["keywords"] = {
                 "Barre d'infos",
                 "Barre d'informations supérieure/inférieure pleine largeur avec widgets datatext.",
@@ -3316,19 +3316,6 @@ ns.QUI_SearchCache = {
             ["tileId"] = "global",
         },
         {
-            ["featureId"] = "moduleAddon_QUI_Datatexts",
-            ["keywords"] = {
-                "Datatextes",
-                "Registre des datatextes, fournisseurs et panneaux de données personnalisés.",
-                "Modules d'addons",
-                "module",
-            },
-            ["label"] = "Datatextes",
-            ["navType"] = "moduleToggle",
-            ["subPageIndex"] = 3,
-            ["tileId"] = "global",
-        },
-        {
             ["featureId"] = "blizzardMover",
             ["keywords"] = {
                 "Déplaceur de cadres Blizzard",
@@ -3422,19 +3409,6 @@ ns.QUI_SearchCache = {
             ["tileId"] = "global",
         },
         {
-            ["featureId"] = "moduleAddon_QUI_Skinning",
-            ["keywords"] = {
-                "Habillage",
-                "Reskin de l'interface Blizzard - panneau personnage, popups, infobulles.",
-                "Modules d'addons",
-                "module",
-            },
-            ["label"] = "Habillage",
-            ["navType"] = "moduleToggle",
-            ["subPageIndex"] = 3,
-            ["tileId"] = "global",
-        },
-        {
             ["featureId"] = "rotationAssistIcon",
             ["keywords"] = {
                 "Icône d’assistance de rotation",
@@ -3500,7 +3474,7 @@ ns.QUI_SearchCache = {
             ["tileId"] = "global",
         },
         {
-            ["featureId"] = "moduleAddon_QUI_Minimap",
+            ["featureId"] = "moduleFlag_minimap",
             ["keywords"] = {
                 "Minimap",
                 "Reskin de la minimap et tiroir à boutons.",
@@ -3630,20 +3604,7 @@ ns.QUI_SearchCache = {
             ["tileId"] = "global",
         },
         {
-            ["featureId"] = "moduleAddon_QUI_QoL",
-            ["keywords"] = {
-                "Qualité de vie",
-                "Fonctions de qualité de vie, outils de donjon et trackers.",
-                "Modules d'addons",
-                "module",
-            },
-            ["label"] = "Qualité de vie",
-            ["navType"] = "moduleToggle",
-            ["subPageIndex"] = 3,
-            ["tileId"] = "global",
-        },
-        {
-            ["featureId"] = "moduleAddon_QUI_Alts",
+            ["featureId"] = "moduleFlag_alts",
             ["keywords"] = {
                 "Rerolls",
                 "Fenêtre des rerolls au-dessus du cache de personnages global au compte.",
@@ -3755,6 +3716,19 @@ ns.QUI_SearchCache = {
                 "module",
             },
             ["label"] = "Tracker de proie",
+            ["navType"] = "moduleToggle",
+            ["subPageIndex"] = 3,
+            ["tileId"] = "global",
+        },
+        {
+            ["featureId"] = "moduleAddon_QUI_UI",
+            ["keywords"] = {
+                "UI Bundle",
+                "Skinning, minimap, datatexts, info bar, QoL, and the alt roster.",
+                "Modules d'addons",
+                "module",
+            },
+            ["label"] = "UI Bundle",
             ["navType"] = "moduleToggle",
             ["subPageIndex"] = 3,
             ["tileId"] = "global",

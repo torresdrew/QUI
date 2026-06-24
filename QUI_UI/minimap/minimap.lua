@@ -4123,6 +4123,10 @@ end
 -- it adds no new chunk-level upvalue (Lua 5.1 caps those at 60).
 function Minimap_Module:InitializeOnce()
     if self._initialized then return end
+    -- Module dormancy gate (C7): honour minimap.enabled == false to skip init
+    -- entirely.  Default is true (key absent → runs unchanged).
+    local _p = QUICore and QUICore.db and QUICore.db.profile
+    if _p and _p.minimap and _p.minimap.enabled == false then return end
     self._initialized = true
     self:Initialize()
     -- LOD catch-up: these Blizzard LoD addons may already be loaded.

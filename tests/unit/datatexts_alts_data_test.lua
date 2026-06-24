@@ -1,8 +1,8 @@
 -- tests/unit/datatexts_alts_data_test.lua
 -- Run: lua tests/unit/datatexts_alts_data_test.lua
 local ns = {}
-local chunk = assert(loadfile("QUI_Datatexts/datatexts/alts_data.lua"))
-chunk("QUI_Datatexts", ns)
+local chunk = assert(loadfile("QUI_UI/datatexts/alts_data.lua"))
+chunk("QUI_UI", ns)
 local AD = ns.DatatextAltsData
 assert(AD, "AltsData published on ns.DatatextAltsData")
 

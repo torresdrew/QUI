@@ -19,13 +19,13 @@
 -- for the combat timer is combattimer_login_init_test.lua.
 
 local files = {
-    "QUI_QoL/qol/combattimer.lua",
-    "QUI_QoL/dungeon/brez_counter.lua",
-    "QUI_QoL/combat/combattext.lua",
-    "QUI_QoL/qol/actiontracker.lua",
-    "QUI_QoL/qol/crosshair.lua",
-    "QUI_QoL/qol/reticle.lua",
-    "QUI_Minimap/minimap/minimap.lua",
+    "QUI_UI/qol/combattimer.lua",
+    "QUI_UI/dungeon/brez_counter.lua",
+    "QUI_UI/combat/combattext.lua",
+    "QUI_UI/qol/actiontracker.lua",
+    "QUI_UI/qol/crosshair.lua",
+    "QUI_UI/qol/reticle.lua",
+    "QUI_UI/minimap/minimap.lua",
 }
 
 local function read(path)

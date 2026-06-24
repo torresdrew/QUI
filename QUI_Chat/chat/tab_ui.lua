@@ -821,7 +821,7 @@ local function OpenChatSettings(subPageIndex)
     QUI:OpenOptions()
     -- A cold open LoadAddOns QUI_Options synchronously, but the shell builds
     -- over the first frame; navigate next frame (the infobar deep-link pattern,
-    -- QUI_InfoBar/infobar/contextmenu.lua:155).
+    -- QUI_UI/infobar/contextmenu.lua:155).
     C_Timer.After(0, function()
         local gui = _G.QUI and _G.QUI.GUI
         local frame = gui and gui.MainFrame

@@ -8,7 +8,7 @@ local function readFile(path)
     return data
 end
 
-local source = readFile("QUI_QoL/qol/tooltip.lua")
+local source = readFile("QUI_UI/qol/tooltip.lua")
 
 assert(source:find("local function AddTooltipInfoLine", 1, true),
     "tooltip QoL additions should use a shared left-aligned wrapped line helper")
@@ -286,8 +286,8 @@ local function runHideFadeSelfFocusRegression()
         }),
     }
 
-    assert(loadfile("QUI_QoL/qol/tooltip_provider.lua"))("QUI", testNS)
-    assert(loadfile("QUI_QoL/qol/tooltip.lua"))("QUI", testNS)
+    assert(loadfile("QUI_UI/qol/tooltip_provider.lua"))("QUI", testNS)
+    assert(loadfile("QUI_UI/qol/tooltip.lua"))("QUI", testNS)
     testNS.TooltipProvider:InitializeEngine()
 
     local visibilityWatcher

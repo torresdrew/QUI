@@ -1723,7 +1723,7 @@ end
 -- Initialize after login. ns.WhenLoggedIn runs now if already logged in (the
 -- post-login LOD case after the suite split) rather than this addon's own
 -- ADDON_LOADED, which is NOT delivered when the core eager-LoadAddOn's the
--- module from OnEnable (see QUI_QoL/qol/tooltip_provider.lua). ns.WhenLoggedIn
+-- module from OnEnable (see QUI_UI/qol/tooltip_provider.lua). ns.WhenLoggedIn
 -- is nil only in the headless test harness.
 if ns.WhenLoggedIn then
     ns.WhenLoggedIn(function()

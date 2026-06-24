@@ -1287,7 +1287,7 @@ local PROFILE_IMPORT_CATEGORIES = {
         label = "QoL / Automation",
         description = "Automation helpers, popup blocker, consumables, and utility toggles.",
         recommended = true,
-        topLevelKeys = { "uiHider", "configPanelWidth", "configPanelAlpha", "configPanelScale", "optionsPanelCollapsibleStates" },
+        topLevelKeys = { "qol", "uiHider", "configPanelWidth", "configPanelAlpha", "configPanelScale", "optionsPanelCollapsibleStates" },
         generalKeys = PROFILE_QOL_GENERAL_KEYS,
     },
     {
@@ -1295,7 +1295,7 @@ local PROFILE_IMPORT_CATEGORIES = {
         label = "Skinning / Blizzard UI",
         description = "Tooltip, alerts, character pane, and Blizzard skinning options.",
         recommended = true,
-        topLevelKeys = { "alerts", "tooltip", "character", "loot", "lootRoll", "lootResults" },
+        topLevelKeys = { "skinning", "alerts", "tooltip", "character", "loot", "lootRoll", "lootResults" },
         generalKeys = PROFILE_SKINNING_GENERAL_KEYS,
     },
     {

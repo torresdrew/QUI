@@ -76,7 +76,7 @@ for _, f in ipairs({
     "surface_features", "nav", "sync", "renderer",
 }) do
     -- Both manifests need the "core/" prefix so e.g. provider_panels doesn't
-    -- collide with the module file QUI_QoL/qol/settings/provider_panels.lua.
+    -- collide with the module file QUI_UI/qol/settings/provider_panels.lua.
     check(not quiToc:find("core/settings/" .. f .. ".lua", 1, true),
         "QUI.toc must NOT load core/settings/" .. f .. ".lua (options-only)")
     check(optionsXml:find("core/settings/" .. f .. ".lua", 1, true) ~= nil,

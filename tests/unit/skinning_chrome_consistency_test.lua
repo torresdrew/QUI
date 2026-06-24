@@ -12,18 +12,18 @@ local function assertContains(text, needle, why) assert(text:find(needle, 1, tru
 -- depth boost may remain. Add { file, why } entries here (never silence the test
 -- by weakening a pattern).
 local ALLOWLIST = {
-    ["QUI_Skinning/skinning/base.lua"] = "selected-tab +0.10 emphasis (canonical tab look)",
-    ["QUI_Skinning/skinning/frames/character.lua"] = "selected-tab +0.10 emphasis (CharacterFrame tabs)",
+    ["QUI_UI/skinning/base.lua"] = "selected-tab +0.10 emphasis (canonical tab look)",
+    ["QUI_UI/skinning/frames/character.lua"] = "selected-tab +0.10 emphasis (CharacterFrame tabs)",
 }
 
 -- 1) Depth literals gone from the migrated widget + button files
 for _, f in ipairs({
-    "QUI_Skinning/skinning/frames/craftingorders.lua",
-    "QUI_Skinning/skinning/frames/professions.lua",
-    "QUI_Skinning/skinning/frames/instanceframes.lua",
-    "QUI_Skinning/skinning/frames/auctionhouse.lua",
-    "QUI_Skinning/skinning/notifications/readycheck.lua",
-    "QUI_Skinning/skinning/system/gamemenu.lua",
+    "QUI_UI/skinning/frames/craftingorders.lua",
+    "QUI_UI/skinning/frames/professions.lua",
+    "QUI_UI/skinning/frames/instanceframes.lua",
+    "QUI_UI/skinning/frames/auctionhouse.lua",
+    "QUI_UI/skinning/notifications/readycheck.lua",
+    "QUI_UI/skinning/system/gamemenu.lua",
 }) do
     local src = readFile(f)
     assertAbsent(src, "%+ 0%.02", f .. " must route +0.02 depth through GetDepthColor")
@@ -32,20 +32,20 @@ for _, f in ipairs({
 end
 
 -- 2) The 2px border outliers are normalized
-for _, f in ipairs({ "QUI_Skinning/skinning/notifications/loot.lua", "QUI_Skinning/skinning/gameplay/keystone.lua" }) do
+for _, f in ipairs({ "QUI_UI/skinning/notifications/loot.lua", "QUI_UI/skinning/gameplay/keystone.lua" }) do
     local src = readFile(f)
     assertAbsent(src, "ApplyPixelBackdrop%([^,]+, 2,", f .. " must not hardcode a 2px border (use CHROME.BORDER_PX or allowlist)")
 end
 
 -- 3) character_pane no longer defines its own border clone
-for _, f in ipairs({ "QUI_Skinning/skinning/character_pane/character.lua", "QUI_Skinning/skinning/character_pane/inspect.lua" }) do
+for _, f in ipairs({ "QUI_UI/skinning/character_pane/character.lua", "QUI_UI/skinning/character_pane/inspect.lua" }) do
     local src = readFile(f)
     assertAbsent(src, "local function RefreshOnePixelBorder", f .. " must retire its RefreshOnePixelBorder clone")
 end
 
 -- 4) Constants exist and are aliased
 -- The skinning engine was relocated into core/uikit.lua (loaded first, exposed as
--- both ns.UIKit and ns.SkinBase); QUI_Skinning/skinning/base.lua is now a thin stub, so
+-- both ns.UIKit and ns.SkinBase); QUI_UI/skinning/base.lua is now a thin stub, so
 -- the engine-content checks below read the merged kit at its new home.
 assertContains(readFile("core/utils.lua"), "Helpers.CHROME", "core/utils.lua must define Helpers.CHROME")
 assertContains(readFile("core/uikit.lua"), "SkinBase.CHROME = Helpers.CHROME", "uikit.lua must alias SkinBase.CHROME")
@@ -71,21 +71,21 @@ assertContains(readFile("core/uikit.lua"), "function SkinBase.CreateSecretAwareS
 --  SkinButtonFrameTemplate, or equivalent). Files that also still explicitly
 -- route text are verified individually in skinning_font_reassertions_test.
 for _, f in ipairs({
-    "QUI_Skinning/skinning/frames/achievement.lua", "QUI_Skinning/skinning/frames/auctionhouse.lua",
-    "QUI_Skinning/skinning/frames/character.lua", "QUI_Skinning/skinning/frames/craftingorders.lua",
-    "QUI_Skinning/skinning/frames/inspect.lua",
-    "QUI_Skinning/skinning/frames/instanceframes.lua",
-    "QUI_Skinning/skinning/frames/interaction.lua", "QUI_Skinning/skinning/frames/journals.lua",
-    "QUI_Skinning/skinning/frames/overrideactionbar.lua",
-    "QUI_Skinning/skinning/frames/professions.lua",
-    "QUI_Skinning/skinning/frames/social.lua", "QUI_Skinning/skinning/frames/statustracking.lua",
-    "QUI_Skinning/skinning/frames/weeklyrewards.lua", "QUI_Skinning/skinning/frames/worldmap.lua",
-    "QUI_Skinning/skinning/gameplay/keystone.lua", "QUI_Skinning/skinning/gameplay/mplus_timer.lua",
-    "QUI_Skinning/skinning/gameplay/objectivetracker.lua", "QUI_Skinning/skinning/gameplay/powerbaralt.lua",
-    "QUI_Skinning/skinning/notifications/alerts.lua", "QUI_Skinning/skinning/notifications/loot.lua",
-    "QUI_Skinning/skinning/notifications/readycheck.lua", "QUI_Skinning/skinning/system/gamemenu.lua",
-    "QUI_Skinning/skinning/system/popups.lua", "QUI_Skinning/skinning/system/tooltips.lua",
-    "QUI_Skinning/skinning/character_pane/character.lua", "QUI_Skinning/skinning/character_pane/inspect.lua",
+    "QUI_UI/skinning/frames/achievement.lua", "QUI_UI/skinning/frames/auctionhouse.lua",
+    "QUI_UI/skinning/frames/character.lua", "QUI_UI/skinning/frames/craftingorders.lua",
+    "QUI_UI/skinning/frames/inspect.lua",
+    "QUI_UI/skinning/frames/instanceframes.lua",
+    "QUI_UI/skinning/frames/interaction.lua", "QUI_UI/skinning/frames/journals.lua",
+    "QUI_UI/skinning/frames/overrideactionbar.lua",
+    "QUI_UI/skinning/frames/professions.lua",
+    "QUI_UI/skinning/frames/social.lua", "QUI_UI/skinning/frames/statustracking.lua",
+    "QUI_UI/skinning/frames/weeklyrewards.lua", "QUI_UI/skinning/frames/worldmap.lua",
+    "QUI_UI/skinning/gameplay/keystone.lua", "QUI_UI/skinning/gameplay/mplus_timer.lua",
+    "QUI_UI/skinning/gameplay/objectivetracker.lua", "QUI_UI/skinning/gameplay/powerbaralt.lua",
+    "QUI_UI/skinning/notifications/alerts.lua", "QUI_UI/skinning/notifications/loot.lua",
+    "QUI_UI/skinning/notifications/readycheck.lua", "QUI_UI/skinning/system/gamemenu.lua",
+    "QUI_UI/skinning/system/popups.lua", "QUI_UI/skinning/system/tooltips.lua",
+    "QUI_UI/skinning/character_pane/character.lua", "QUI_UI/skinning/character_pane/inspect.lua",
 }) do
     local src = readFile(f)
     assert(
@@ -100,7 +100,7 @@ for _, f in ipairs({
 end
 
 -- 6) Semantic color tokens preserved (guard against over-zealous color sweep)
-assertContains(readFile("QUI_Skinning/skinning/character_pane/character.lua"), "mastery = {",
+assertContains(readFile("QUI_UI/skinning/character_pane/character.lua"), "mastery = {",
     "character pane must keep its semantic stat-bar colors")
 
 -- 7) (#3) Render path unified: the SkinBase.SafeSetBackdrop wrapper + ApplySafeBackdrop
@@ -118,7 +118,7 @@ end
 do
     assertContains(readFile("core/uikit.lua"), "function SkinBase.SkinCategoryButton",
         "uikit.lua must define SkinCategoryButton (#2)")
-    for _, f in ipairs({ "QUI_Skinning/skinning/frames/auctionhouse.lua", "QUI_Skinning/skinning/frames/craftingorders.lua" }) do
+    for _, f in ipairs({ "QUI_UI/skinning/frames/auctionhouse.lua", "QUI_UI/skinning/frames/craftingorders.lua" }) do
         local src = readFile(f)
         assert(src:find("SkinCategoryButton", 1, true), f .. " must use SkinBase.SkinCategoryButton (#2)")
         assertAbsent(src, "local function StyleCategoryButton", f .. " must retire its inline StyleCategoryButton (#2)")
@@ -127,7 +127,7 @@ end
 
 -- 9) (#9) Character/inspect pane chrome and stat policy consolidation.
 do
-    for _, f in ipairs({ "QUI_Skinning/skinning/character_pane/character.lua", "QUI_Skinning/skinning/character_pane/inspect.lua" }) do
+    for _, f in ipairs({ "QUI_UI/skinning/character_pane/character.lua", "QUI_UI/skinning/character_pane/inspect.lua" }) do
         local src = readFile(f)
         assertContains(src, "ApplyChromeBackdrop", f .. " must route one-pixel chrome through the shared policy (#9)")
         assertContains(src, "SetInsetPixelPoints(region, relativeTo, pixels)", f .. " must keep only a thin inset wrapper (#9)")
@@ -137,7 +137,7 @@ do
             f .. " must not bypass the shared chrome policy (#9)")
     end
 
-    local characterPane = readFile("QUI_Skinning/skinning/character_pane/character.lua")
+    local characterPane = readFile("QUI_UI/skinning/character_pane/character.lua")
     assertContains(characterPane, "CreateSecretAwareStatPolicy",
         "character pane must use the shared secret-aware stat policy (#9)")
     assertContains(characterPane, "statPolicy:ApplyTooltip",

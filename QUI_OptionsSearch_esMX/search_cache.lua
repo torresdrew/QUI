@@ -2660,7 +2660,7 @@ ns.QUI_SearchCache = {
             ["tileId"] = "global",
         },
         {
-            ["featureId"] = "moduleAddon_QUI_Alts",
+            ["featureId"] = "moduleFlag_alts",
             ["keywords"] = {
                 "Alts",
                 "Ventana de registro de personajes alternos sobre la caché de personajes de toda la cuenta.",
@@ -2868,7 +2868,7 @@ ns.QUI_SearchCache = {
             ["tileId"] = "global",
         },
         {
-            ["featureId"] = "moduleAddon_QUI_InfoBar",
+            ["featureId"] = "moduleFlag_infobar",
             ["keywords"] = {
                 "Barra de información",
                 "Barra superior/inferior de información de ancho completo con widgets de datatext.",
@@ -3063,19 +3063,6 @@ ns.QUI_SearchCache = {
             ["tileId"] = "global",
         },
         {
-            ["featureId"] = "moduleAddon_QUI_QoL",
-            ["keywords"] = {
-                "Calidad de vida",
-                "Funciones de calidad de vida, herramientas para dungeons y trackers.",
-                "Complementos del módulo",
-                "module",
-            },
-            ["label"] = "Calidad de vida",
-            ["navType"] = "moduleToggle",
-            ["subPageIndex"] = 3,
-            ["tileId"] = "global",
-        },
-        {
             ["featureId"] = "moduleAddon_QUI_Chat",
             ["keywords"] = {
                 "Chat",
@@ -3162,32 +3149,6 @@ ns.QUI_SearchCache = {
                 "module",
             },
             ["label"] = "DF fijado 2",
-            ["navType"] = "moduleToggle",
-            ["subPageIndex"] = 3,
-            ["tileId"] = "global",
-        },
-        {
-            ["featureId"] = "moduleAddon_QUI_Datatexts",
-            ["keywords"] = {
-                "Datatexts",
-                "Registro de datatext, proveedores y paneles de datos personalizados.",
-                "Complementos del módulo",
-                "module",
-            },
-            ["label"] = "Datatexts",
-            ["navType"] = "moduleToggle",
-            ["subPageIndex"] = 3,
-            ["tileId"] = "global",
-        },
-        {
-            ["featureId"] = "moduleAddon_QUI_Skinning",
-            ["keywords"] = {
-                "Estilizado",
-                "Rediseño de la IU de Blizzard: panel de personaje, ventanas emergentes, tooltips.",
-                "Complementos del módulo",
-                "module",
-            },
-            ["label"] = "Estilizado",
             ["navType"] = "moduleToggle",
             ["subPageIndex"] = 3,
             ["tileId"] = "global",
@@ -3494,7 +3455,7 @@ ns.QUI_SearchCache = {
             ["tileId"] = "global",
         },
         {
-            ["featureId"] = "moduleAddon_QUI_Minimap",
+            ["featureId"] = "moduleFlag_minimap",
             ["keywords"] = {
                 "Minimapa",
                 "Reskin del minimapa y cajón de botones.",
@@ -3786,6 +3747,19 @@ ns.QUI_SearchCache = {
                 "module",
             },
             ["label"] = "Texto de combate",
+            ["navType"] = "moduleToggle",
+            ["subPageIndex"] = 3,
+            ["tileId"] = "global",
+        },
+        {
+            ["featureId"] = "moduleAddon_QUI_UI",
+            ["keywords"] = {
+                "UI Bundle",
+                "Skinning, minimap, datatexts, info bar, QoL, and the alt roster.",
+                "Complementos del módulo",
+                "module",
+            },
+            ["label"] = "UI Bundle",
             ["navType"] = "moduleToggle",
             ["subPageIndex"] = 3,
             ["tileId"] = "global",

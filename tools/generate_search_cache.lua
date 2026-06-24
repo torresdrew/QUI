@@ -172,26 +172,30 @@ local function should_load_script(path)
         if path:match("^QUI_Bags/bags/settings/") then
             return true
         end
-        if path:match("^QUI_Alts/alts/settings/") then
+        if path:match("^QUI_UI/alts/settings/") then
             return true
         end
-        if path:match("^QUI_InfoBar/infobar/settings/") then
+        if path:match("^QUI_UI/infobar/settings/") then
             return true
         end
-        if path == "QUI_Minimap/minimap/settings/minimap.lua" then
+        if path == "QUI_UI/minimap/settings/minimap.lua" then
             return true
         end
-        if path == "QUI_Datatexts/datatexts/settings/datatexts_features.lua" then
+        if path == "QUI_UI/datatexts/settings/datatexts_features.lua" then
             return true
         end
         if path:match("^QUI_ResourceBars/resourcebars/settings/") then
             return true
         end
-        if path:match("^QUI_Skinning/skinning/.+/settings/")
-            or path:match("^QUI_Skinning/skinning/settings/") then
+        if path:match("^QUI_UI/skinning/.+/settings/")
+            or path:match("^QUI_UI/skinning/settings/") then
             return true
         end
-        if path:match("^QUI_QoL/.+/settings/") then
+        if path:match("^QUI_UI/combat/settings/")
+            or path:match("^QUI_UI/dungeon/settings/")
+            or path:match("^QUI_UI/qol/settings/")
+            or path:match("^QUI_UI/trackers/settings/")
+            or path:match("^QUI_UI/utility/settings/") then
             return true
         end
         if path == "QUI_DamageMeter/damage_meter/settings/damage_meter_content.lua" then

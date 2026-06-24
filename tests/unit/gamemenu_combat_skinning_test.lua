@@ -223,7 +223,7 @@ local ns = {
     },
 }
 
-assert(loadfile("QUI_Skinning/skinning/system/gamemenu.lua"))("QUI", ns)
+assert(loadfile("QUI_UI/skinning/system/gamemenu.lua"))("QUI", ns)
 
 -- ---- 1) Install surface: exactly one frame hook, on InitButtons -----------
 local initHooks, scriptHooks = 0, 0

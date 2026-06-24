@@ -35,7 +35,7 @@ end
 ---------------------------------------------------------------------------
 -- Character equipment manager rows: PaperDoll rebinds row text/color.
 ---------------------------------------------------------------------------
-local character = readFile("QUI_Skinning/skinning/frames/character.lua")
+local character = readFile("QUI_UI/skinning/frames/character.lua")
 assertContains(character, "local function RestyleEquipmentSetEntryText(entry)",
     "equipment manager must split text restyle from one-time row chrome")
 local equipEntry = blockBetween(character, "local function SkinEquipmentSetEntry(entry)",
@@ -51,7 +51,7 @@ assertContains(equipRefresh, "RestyleEquipmentSetEntryText(entry)",
 ---------------------------------------------------------------------------
 -- Entitlement/RAF alerts: AlertFrame setup rebinds Title every toast.
 ---------------------------------------------------------------------------
-local alerts = readFile("QUI_Skinning/skinning/notifications/alerts.lua")
+local alerts = readFile("QUI_UI/skinning/notifications/alerts.lua")
 assertContains(alerts, "local function RestyleEntitlementAlertText(frame)",
     "entitlement alerts need a per-toast text restyle helper")
 local entitlement = blockBetween(alerts, "local function SkinEntitlementAlert(frame)",
@@ -65,7 +65,7 @@ assertOrdered(entitlement, "RestyleEntitlementAlertText(frame)",
 ---------------------------------------------------------------------------
 -- Professions/crafting/PVP/dropdown/interaction frames: lock text rebinds.
 ---------------------------------------------------------------------------
-local crafting = readFile("QUI_Skinning/skinning/frames/craftingorders.lua")
+local crafting = readFile("QUI_UI/skinning/frames/craftingorders.lua")
 local durationBlock = blockBetween(crafting, "-- Duration dropdown", "-- Note edit box")
 -- SkinDropdown owns the dropdown text durability: it faces the visible text in the QUI
 -- font (SkinFontString{fontOnly}) AND locks it against Blizzard SetFontObject
@@ -80,7 +80,7 @@ assertContains(crafting, "SkinBase.SkinDropdown(form.MinimumQuality.Dropdown)",
 assertContains(crafting, "SkinBase.SkinDropdown(form.OrderRecipientDropdown)",
     "customer order recipient dropdown must route through SkinDropdown (faces + locks its text)")
 
-local professions = readFile("QUI_Skinning/skinning/frames/professions.lua")
+local professions = readFile("QUI_UI/skinning/frames/professions.lua")
 local orderTypeTabs = blockBetween(professions, "-- Order type tab buttons",
     "    end\n\n    -- Order view")
 assertContains(orderTypeTabs, "SkinBase.SkinTab(tab, browseFrame, { hover = true })",
@@ -95,7 +95,7 @@ assertContains(orderView, "local noteTitle = orderView.OrderInfo and orderView.O
 assertContains(orderView, "SkinBase.LockFontObject(noteTitle, { fontOnly = true })",
     "crafter order note title must survive SetOrder font-object swaps")
 
-local instanceFrames = readFile("QUI_Skinning/skinning/frames/instanceframes.lua")
+local instanceFrames = readFile("QUI_UI/skinning/frames/instanceframes.lua")
 local pveGroupButtons = blockBetween(instanceFrames, "local function StyleGroupFinderButton(button",
     "-- Skin PVEFrame (main container)")
 assertContains(pveGroupButtons, "SkinBase.SkinFontString(button.name, { fontOnly = true })",
@@ -108,7 +108,7 @@ assertContains(instanceFrames, "SkinBase.SkinFontString(av.AutoAcceptButton.Labe
 -- LockFrameTextObjects(catButton, 2) was removed from PVP category button styling;
 -- global object override owns static text durability for these bare-root surfaces.
 
-local popups = readFile("QUI_Skinning/skinning/system/popups.lua")
+local popups = readFile("QUI_UI/skinning/system/popups.lua")
 -- popups.lua: SkinStaticPopup still calls SkinFrameText(chrome=true) for the
 -- per-popup text color pass; LockFrameTextObjects was removed (global override owns durability).
 assertContains(popups, "SkinBase.SkinFrameText(popup, { recurse = true",
@@ -118,7 +118,7 @@ assertContains(popups, "StyleButton(popup.ExtraButton or (name and _G[name .. \"
 assertContains(popups, "RefreshButtonState(self.ExtraButton or (recapName and _G[recapName .. \"ExtraButton\"]))",
     "StaticPopup recap refresh must include ExtraButton text state")
 
-local journals = readFile("QUI_Skinning/skinning/frames/journals.lua")
+local journals = readFile("QUI_UI/skinning/frames/journals.lua")
 local encounterTextFrame = blockBetween(journals, "local function SkinEncounterJournalTextFrame(frame)",
     "local function ScheduleEncounterJournalTextFrame(frame)")
 -- LockFrameTextObjects(frame, 3) was removed from SkinEncounterJournalTextFrame;
@@ -150,7 +150,7 @@ assertContains(journals, "hooksecurefunc(journal, \"RefreshView\"",
 assertContains(journals, "hooksecurefunc(journal, \"UpdateButton\"",
     "Heirlooms Journal must relock entries after UpdateButton font-object resets")
 
-local achievement = readFile("QUI_Skinning/skinning/frames/achievement.lua")
+local achievement = readFile("QUI_UI/skinning/frames/achievement.lua")
 -- Pooled list/stat rows must go through the guarded row-font helper (runs the
 -- recursive pass once per row) rather than an unguarded per-acquire re-skin —
 -- the unguarded form was the open-window hitch.
@@ -174,7 +174,7 @@ assertContains(achievement, "local function LockAchievementComparisonText()",
 assertContains(achievement, "AchievementFrameComparison.StatContainer.ScrollBox",
     "Achievement comparison stat ScrollBox must be locked")
 
-local auctionhouse = readFile("QUI_Skinning/skinning/frames/auctionhouse.lua")
+local auctionhouse = readFile("QUI_UI/skinning/frames/auctionhouse.lua")
 local auctionHouseTableXml = readFile("tests/framexml/Interface/AddOns/Blizzard_AuctionHouseUI/Shared/Blizzard_AuctionHouseTableBuilder.xml")
 assertContains(auctionHouseTableXml, "AuctionHouseTableHeaderStringTemplate\" mixin=\"AuctionHouseTableHeaderStringMixin\" inherits=\"ColumnDisplayButtonShortTemplate\"",
     "Auction House sort headers must still inherit the shared column-display button template")
@@ -217,7 +217,7 @@ assertContains(auctionhouse, "local function LockAuctionHouseBuyDialogText()",
 assertContains(auctionhouse, "AuctionHouseFrame.BuyDialog.Notification",
     "Auction House buy dialog notification text must be explicitly locked")
 
-local social = readFile("QUI_Skinning/skinning/frames/social.lua")
+local social = readFile("QUI_UI/skinning/frames/social.lua")
 assertContains(social, "HookListRows(frame.CommunitiesList.ScrollBox)",
     "Communities list rows must lock font-object resets")
 assertContains(social, "HookListRows(frame.ApplicantList.ScrollBox)",
@@ -229,8 +229,8 @@ assertContains(social, "local function LockGuildNameAlertText(frame)",
 assertContains(social, "SkinBase.LockFontObject(alert, { fontOnly = true })",
     "guild name alert must survive dynamic font-object resets")
 
-local interaction = readFile("QUI_Skinning/skinning/frames/interaction.lua")
-local mail = readFile("QUI_Skinning/skinning/frames/mail.lua")
+local interaction = readFile("QUI_UI/skinning/frames/interaction.lua")
+local mail = readFile("QUI_UI/skinning/frames/mail.lua")
 -- The interaction window skins (Bank/Merchant/Gossip/Quest/GuildBank/Trainer/
 -- Macro) route through the canonical SkinBase.SkinWindow, which BUNDLES the
 -- durable font lock (LockFrameTextObjects) — that bundling is pinned by
@@ -244,7 +244,7 @@ assert(skinWindowCount >= 5,
 local mailBtnFontCount = select(2, mail:gsub("SkinBase%.ApplyButtonFontObjectsDeep%(", ""))
 assert(mailBtnFontCount >= 1, "Mail skin must drive descendant button font objects via ApplyButtonFontObjectsDeep")
 
-local characterPane = readFile("QUI_Skinning/skinning/character_pane/character.lua")
+local characterPane = readFile("QUI_UI/skinning/character_pane/character.lua")
 local characterSettings = blockBetween(characterPane, "-- \"Settings\" label",
     "-- Close button (X)")
 assertContains(characterSettings, "CJKFont(gearLabel, GeneralFontFace(), 12, \"\")",
@@ -252,7 +252,7 @@ assertContains(characterSettings, "CJKFont(gearLabel, GeneralFontFace(), 12, \"\
 assertContains(characterSettings, "CJKFont(title, GeneralFontFace(), 14, \"\")",
     "Character settings panel title must route through CJK fallback")
 
-local inspectPane = readFile("QUI_Skinning/skinning/character_pane/inspect.lua")
+local inspectPane = readFile("QUI_UI/skinning/character_pane/inspect.lua")
 local inspectSettings = blockBetween(inspectPane, "local gearLabel = gearBtn:CreateFontString",
     "-- Close button")
 assertContains(inspectSettings, "CJKFont(gearLabel, GeneralFontFace(), 12, \"\")",
@@ -263,7 +263,7 @@ assertContains(inspectSettings, "CJKFont(title, GeneralFontFace(), 14, \"\")",
 ---------------------------------------------------------------------------
 -- Ready check: direct SetFont bypasses CJK fallback and button font objects.
 ---------------------------------------------------------------------------
-local readycheck = readFile("QUI_Skinning/skinning/notifications/readycheck.lua")
+local readycheck = readFile("QUI_UI/skinning/notifications/readycheck.lua")
 assertAbsent(readycheck, "text:SetFont(font, 12, FONT_FLAGS)",
     "ready-check button labels must not bypass CJK fallback")
 assertContains(readycheck, "CJKFont(text, font, 12, FONT_FLAGS)",
@@ -279,7 +279,7 @@ assertContains(readycheck, "CJKFont(text, GeneralFontFace(), 12, FONT_FLAGS)",
 -- font-object override. GameTooltip font sizing is now handled via SetFontObject on
 -- GameTooltipText/GameTooltipHeaderText (taint-safe); SkinFrameText is not called.
 -- Verify the tooltip skin still handles GameTooltip (the main text target).
-local tooltips = readFile("QUI_Skinning/skinning/system/tooltips.lua")
+local tooltips = readFile("QUI_UI/skinning/system/tooltips.lua")
 assertContains(tooltips, "pcall(GameTooltipText.SetFontObject, GameTooltipText, family)",
     "GameTooltip body text must size via the taint-safe SetFontObject path")
 
@@ -306,9 +306,9 @@ assertContains(rowFontHelper, "{ sync = true }",
     "HookScrollBoxRowFonts must run pure font locks synchronously before first paint")
 
 for _, frame in ipairs({
-    { path = "QUI_Skinning/skinning/frames/journals.lua",       what = "Collections journal rows" },
-    { path = "QUI_Skinning/skinning/frames/instanceframes.lua", what = "LFD/LFG list rows" },
-    { path = "QUI_Skinning/skinning/frames/social.lua",         what = "friends/guild list rows" },
+    { path = "QUI_UI/skinning/frames/journals.lua",       what = "Collections journal rows" },
+    { path = "QUI_UI/skinning/frames/instanceframes.lua", what = "LFD/LFG list rows" },
+    { path = "QUI_UI/skinning/frames/social.lua",         what = "friends/guild list rows" },
 }) do
     local src = readFile(frame.path)
     assertContains(src, "SkinBase.HookScrollBoxRowFonts(",
@@ -316,10 +316,10 @@ for _, frame in ipairs({
 end
 
 for _, frame in ipairs({
-    { path = "QUI_Skinning/skinning/frames/auctionhouse.lua",    what = "Auction House rows" },
-    { path = "QUI_Skinning/skinning/frames/craftingorders.lua",  what = "Crafting Orders rows" },
-    { path = "QUI_Skinning/skinning/frames/professions.lua",     what = "Professions rows" },
-    { path = "QUI_Skinning/skinning/frames/character.lua",       what = "Reputation/Currency rows" },
+    { path = "QUI_UI/skinning/frames/auctionhouse.lua",    what = "Auction House rows" },
+    { path = "QUI_UI/skinning/frames/craftingorders.lua",  what = "Crafting Orders rows" },
+    { path = "QUI_UI/skinning/frames/professions.lua",     what = "Professions rows" },
+    { path = "QUI_UI/skinning/frames/character.lua",       what = "Reputation/Currency rows" },
 }) do
     local src = readFile(frame.path)
     assertContains(src, "SkinBase.LockPooledRowText(",
@@ -329,27 +329,27 @@ end
 -- Reputation/Currency pooled rows skin via HookScrollBoxAcquired (they also do
 -- backdrop/icon work), so they route fonts through LockPooledRowText rather than
 -- an inline per-acquire recursive SkinFrameText that would revert on rebind.
-local characterRows = readFile("QUI_Skinning/skinning/frames/character.lua")
+local characterRows = readFile("QUI_UI/skinning/frames/character.lua")
 assertContains(characterRows, "SkinReputationEntry(row)\n                SkinBase.LockPooledRowText(row, 4)",
     "Reputation rows must lock pooled-row text after SkinReputationEntry")
 assertContains(characterRows, "SkinCurrencyEntry(row)\n                SkinBase.LockPooledRowText(row, 4)",
     "Currency rows must lock pooled-row text after SkinCurrencyEntry")
 
-local ahRow = blockBetween(readFile("QUI_Skinning/skinning/frames/auctionhouse.lua"),
+local ahRow = blockBetween(readFile("QUI_UI/skinning/frames/auctionhouse.lua"),
     "local function skinRow(row)", "end\n\n-- TableBuilder")
 assertContains(ahRow, "SkinBase.LockPooledRowText(row, 4)",
     "AH row text must route through the shared helper")
 assertAbsent(ahRow, "SkinBase.SkinFrameText(row, { recurse = true })",
     "AH row text must not do a duplicate recursive pass before LockPooledRowText")
 
-local coRow = blockBetween(readFile("QUI_Skinning/skinning/frames/craftingorders.lua"),
+local coRow = blockBetween(readFile("QUI_UI/skinning/frames/craftingorders.lua"),
     "local function skinRow(row)", "end\n\n-- Order-table")
 assertContains(coRow, "SkinBase.LockPooledRowText(row, 4)",
     "Crafting Orders row text must route through the shared helper")
 assertAbsent(coRow, "SkinBase.SkinFrameText(row, { recurse = true })",
     "Crafting Orders row text must not do a duplicate recursive pass before LockPooledRowText")
 
-local profRow = blockBetween(readFile("QUI_Skinning/skinning/frames/professions.lua"),
+local profRow = blockBetween(readFile("QUI_UI/skinning/frames/professions.lua"),
     "local function StyleScrollBoxRow(row)", "end\n\n---------------------------------------------------------------------------\n-- HIDE DECORATIONS")
 assertContains(profRow, "SkinBase.LockPooledRowText(row, 4)",
     "Professions row text must route through the shared helper")

@@ -1356,8 +1356,9 @@ Datatexts:Register("gold", {
             elseif button == "RightButton" then
                 ToggleAllBags()
             elseif button == "MiddleButton" then
-                if ns.Alts and ns.Alts.IsEnabled and ns.Alts.IsEnabled() and ns.Alts.Window then
-                    ns.Alts.Window.Toggle()
+                if ns.Alts and ns.Alts.IsEnabled and ns.Alts.IsEnabled() then
+                    -- Roster UI is lazy; the trigger loads it on first open.
+                    if _G.QUI_OpenAltsRoster then _G.QUI_OpenAltsRoster() end
                 else
                     print("|cff00ff00QUI:|r " .. ns.L["enable the Alts module (Options → Modules) to use the Alts window."])
                 end
@@ -1525,8 +1526,9 @@ Datatexts:Register("alts", {
         slotFrame:RegisterForClicks("AnyUp")
         slotFrame:SetScript("OnClick", function(_, button)
             if button == "LeftButton" then
-                if ns.Alts and ns.Alts.IsEnabled and ns.Alts.IsEnabled() and ns.Alts.Window then
-                    ns.Alts.Window.Toggle()
+                if ns.Alts and ns.Alts.IsEnabled and ns.Alts.IsEnabled() then
+                    -- Roster UI is lazy; the trigger loads it on first open.
+                    if _G.QUI_OpenAltsRoster then _G.QUI_OpenAltsRoster() end
                 else
                     print("|cff00ff00QUI:|r " .. ns.L["enable the Alts module (Options → Modules) to use the Alts window."])
                 end

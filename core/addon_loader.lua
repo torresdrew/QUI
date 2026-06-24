@@ -100,7 +100,17 @@ end
 local function CollectEligibleLODFolders(includeLate)
     local queue = {}
     for _, entry in ipairs(ns.AddonManifest or {}) do
-        if entry.class == "lod"
+        -- entry.folder guard: host-backed entries (no folder; they ship inside
+        -- another addon) are not independently loadable here, so skip them.
+        -- selfBootstrap guard: a folder whose eager tier loads via the
+        -- [Bootstrap] TOC directive at startup must NOT be LoadAddOn'd by the
+        -- automatic passes — that call would also pull its untagged lazy
+        -- remainder (e.g. QUI_UI's Alts roster), defeating the lazy tier. Its
+        -- lazy remainder loads via LoadLazyBlock on trigger; a live bundle
+        -- enable still loads it directly through SetModuleAddonEnabled.
+        if entry.folder
+            and entry.class == "lod"
+            and not entry.selfBootstrap
             and (includeLate or not entry.lateLoad)
             and not AddonLoader.IsModuleLoaded(entry.folder)
             and (not C_AddOns.DoesAddOnExist or C_AddOns.DoesAddOnExist(entry.folder))
@@ -198,6 +208,41 @@ function AddonLoader:LoadEnabledLODModules()
         C_Timer.After(0, step)
     end
     step()
+end
+
+---------------------------------------------------------------------------
+-- Lazy block loader (on-demand QUI_UI remainder)
+---------------------------------------------------------------------------
+
+-- Load the QUI_UI lazy remainder (currently the Alts roster UI) on first
+-- trigger. All-or-nothing: LoadAddOn pulls every not-yet-loaded QUI_UI file in
+-- one go. Combat-parks first (file-scope setup under lockdown is unaudited —
+-- same rationale as the stagger's step()), then anchoring catch-up, then runs
+-- onLoaded. Idempotent: a second call when QUI_UI is already loaded just runs
+-- onLoaded. Reuses LoadNow / ApplyAnchoringCatchUp / regenResumeFrame above.
+function AddonLoader:LoadLazyBlock(onLoaded)
+    local function go()
+        -- Call LoadAddOn unconditionally — idempotent by design (mirrors
+        -- AuctionHouseFrame_LoadUI). QUI_UI is a class="lod" addon whose
+        -- [Bootstrap]-tagged files compile at login, making IsAddOnLoaded
+        -- return true before the untagged (lazy) remainder has loaded.
+        -- Guarding on IsModuleLoaded therefore skips the very call that
+        -- pulls the lazy files (e.g. the Alts roster window), leaving
+        -- ns.Alts.Window nil and preventing the roster from opening.
+        LoadNow("QUI_UI")
+        ApplyAnchoringCatchUp()
+        if onLoaded then onLoaded() end
+    end
+    if InCombatLockdown and InCombatLockdown() then
+        if not regenResumeFrame then regenResumeFrame = CreateFrame("Frame") end
+        regenResumeFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+        regenResumeFrame:SetScript("OnEvent", function(self)
+            self:UnregisterEvent("PLAYER_REGEN_ENABLED")
+            C_Timer.After(0, go)
+        end)
+        return
+    end
+    go()
 end
 
 ---------------------------------------------------------------------------

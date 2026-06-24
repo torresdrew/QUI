@@ -113,7 +113,7 @@ function InCombatLockdown() return false end
 assert(loadfile("core/uikit.lua"))("QUI", ns)
 local SkinBase = ns.SkinBase
 assert(type(SkinBase) == "table", "SkinBase must load from uikit.lua")
-assert(loadfile("QUI_Skinning/skinning/frames/character.lua"))("QUI", ns)
+assert(loadfile("QUI_UI/skinning/frames/character.lua"))("QUI", ns)
 
 local API = _G.QUI_CharacterFrameSkinning
 assert(type(API) == "table" and type(API.Refresh) == "function",

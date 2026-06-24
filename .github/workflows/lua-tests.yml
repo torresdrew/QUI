@@ -50,4 +50,4 @@ jobs:
       - name: Install luacheck
         run: luarocks install luacheck
       - name: Lint (luacheck)
-        run: luacheck QUI_Debug/ core/ modules/ init.lua QUI_ActionBars/ QUI_Alts/ QUI_Bags/ QUI_CDM/ QUI_Chat/ QUI_DamageMeter/ QUI_Datatexts/ QUI_GroupFrames/ QUI_InfoBar/ QUI_Minimap/ QUI_Options/ QUI_OptionsSearch/ QUI_QoL/ QUI_ResourceBars/ QUI_Skinning/ QUI_UnitFrames/
+        run: luacheck QUI_Debug/ core/ modules/ init.lua QUI_ActionBars/ QUI_Bags/ QUI_CDM/ QUI_Chat/ QUI_DamageMeter/ QUI_GroupFrames/ QUI_Options/ QUI_OptionsSearch/ QUI_ResourceBars/ QUI_UI/ QUI_UnitFrames/

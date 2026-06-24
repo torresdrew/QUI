@@ -1,4 +1,4 @@
--- Verifies the LibDataBroker host (QUI_Datatexts/datatexts/ldb_bridge.lua)
+-- Verifies the LibDataBroker host (QUI_UI/datatexts/ldb_bridge.lua)
 -- against the real LibStub + CallbackHandler + LibDataBroker libraries, plus
 -- the registry/attach layer of datatexts.lua it rides on:
 --   * dataobjects existing BEFORE the bridge loads register as ldb:<name>
@@ -103,7 +103,7 @@ local ns = { Addon = QUICore, Helpers = {}, LSM = { Fetch = function() return ni
 local installLocale = dofile(ROOT .. "tests/helpers/locale.lua")
 installLocale(ns)
 
-assert(loadfile(ROOT .. "QUI_Datatexts/datatexts/datatexts.lua"))("QUI_Datatexts", ns)
+assert(loadfile(ROOT .. "QUI_UI/datatexts/datatexts.lua"))("QUI_Datatexts", ns)
 local Datatexts = QUICore.Datatexts
 assert(Datatexts, "datatexts.lua did not publish QUICore.Datatexts")
 
@@ -123,7 +123,7 @@ _G.QUI_RefreshInfoBar = function() refreshes.infobar = refreshes.infobar + 1 end
 _G.QUI_RefreshDatapanels = function() refreshes.datapanels = refreshes.datapanels + 1 end
 _G.QUI_RefreshMinimap = function() refreshes.minimap = refreshes.minimap + 1 end
 
-assert(loadfile(ROOT .. "QUI_Datatexts/datatexts/ldb_bridge.lua"))("QUI_Datatexts", ns)
+assert(loadfile(ROOT .. "QUI_UI/datatexts/ldb_bridge.lua"))("QUI_Datatexts", ns)
 
 local failures = 0
 local function check(cond, label)

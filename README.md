@@ -9,7 +9,7 @@ QUI is a modular World of Warcraft UI suite for Midnight 12.0+. It combines comb
 
 ## What is New in QUI 4
 
-- **Modular addon suite:** QUI now ships as a core addon plus feature folders such as `QUI_ActionBars`, `QUI_CDM`, `QUI_Chat`, `QUI_Bags`, `QUI_InfoBar`, `QUI_Alts`, and `QUI_Options`.
+- **Modular addon suite:** QUI now ships as a core addon plus feature folders such as `QUI_ActionBars`, `QUI_CDM`, `QUI_Chat`, `QUI_Bags`, `QUI_UI`, and `QUI_Options`.
 - **Module Addons page:** enable or disable whole feature addons from `/qui` without digging through the character-select addon list.
 - **Opt-in QUI Chat:** custom chat display with multi-window support, conversation tabs, an embedded Combat Log tab, copy window, tab overflow menu, and safer restore behavior.
 - **QUI Bags:** optional bag, bank, Warband bank, and guild bank windows with search everywhere, sorting, item badges, currency bar, merchant tools, and cached bank browsing.

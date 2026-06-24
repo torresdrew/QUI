@@ -158,7 +158,7 @@ local ns = {
     WhenLoggedIn = function(fn) fn() end,
 }
 
-assert(loadfile("QUI_Skinning/skinning/system/tooltips.lua"))("QUI", ns)
+assert(loadfile("QUI_UI/skinning/system/tooltips.lua"))("QUI", ns)
 -- Init already ran (ns.WhenLoggedIn fired synchronously during load). The
 -- eventFrame remains for post-init addon-tooltip discovery + combat restore.
 assert(eventFrame and eventFrame.scripts.OnEvent, "tooltip skinning must register an event handler")
@@ -193,7 +193,7 @@ local function assertAbsent(text, needle, reason)
     assert(not text:find(needle, 1, true), reason)
 end
 
-local tooltipSkinningSource = readFile("QUI_Skinning/skinning/system/tooltips.lua")
+local tooltipSkinningSource = readFile("QUI_UI/skinning/system/tooltips.lua")
 assertContains(tooltipSkinningSource, "local function IsInternalEmbeddedItemTooltipFrame(tooltip)",
     "tooltip skinning must centralize the embedded item reward tooltip guard")
 

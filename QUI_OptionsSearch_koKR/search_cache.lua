@@ -2731,6 +2731,19 @@ ns.QUI_SearchCache = {
             ["tileId"] = "global",
         },
         {
+            ["featureId"] = "moduleAddon_QUI_UI",
+            ["keywords"] = {
+                "UI Bundle",
+                "Skinning, minimap, datatexts, info bar, QoL, and the alt roster.",
+                "모듈 애드온",
+                "module",
+            },
+            ["label"] = "UI Bundle",
+            ["navType"] = "moduleToggle",
+            ["subPageIndex"] = 3,
+            ["tileId"] = "global",
+        },
+        {
             ["featureId"] = "xpTracker",
             ["keywords"] = {
                 "XP 추적기",
@@ -2935,19 +2948,6 @@ ns.QUI_SearchCache = {
             ["tileId"] = "global",
         },
         {
-            ["featureId"] = "moduleAddon_QUI_Datatexts",
-            ["keywords"] = {
-                "데이터텍스트",
-                "데이터텍스트 레지스트리, 제공자, 사용자 지정 데이터 패널.",
-                "모듈 애드온",
-                "module",
-            },
-            ["label"] = "데이터텍스트",
-            ["navType"] = "moduleToggle",
-            ["subPageIndex"] = 3,
-            ["tileId"] = "global",
-        },
-        {
             ["featureId"] = "datatext",
             ["keywords"] = {
                 "데이터텍스트 패널",
@@ -3024,7 +3024,7 @@ ns.QUI_SearchCache = {
             ["tileId"] = "global",
         },
         {
-            ["featureId"] = "moduleAddon_QUI_Minimap",
+            ["featureId"] = "moduleFlag_minimap",
             ["keywords"] = {
                 "미니맵",
                 "미니맵 스킨과 버튼 서랍.",
@@ -3089,7 +3089,7 @@ ns.QUI_SearchCache = {
             ["tileId"] = "global",
         },
         {
-            ["featureId"] = "moduleAddon_QUI_Alts",
+            ["featureId"] = "moduleFlag_alts",
             ["keywords"] = {
                 "부캐",
                 "계정 전체 캐릭터 캐시 위에 Alt 로스터 창.",
@@ -3162,19 +3162,6 @@ ns.QUI_SearchCache = {
                 "module",
             },
             ["label"] = "속죄 카운터",
-            ["navType"] = "moduleToggle",
-            ["subPageIndex"] = 3,
-            ["tileId"] = "global",
-        },
-        {
-            ["featureId"] = "moduleAddon_QUI_Skinning",
-            ["keywords"] = {
-                "스킨",
-                "Blizzard UI 재스킨 - 캐릭터 창, 팝업, 툴팁.",
-                "모듈 애드온",
-                "module",
-            },
-            ["label"] = "스킨",
             ["navType"] = "moduleToggle",
             ["subPageIndex"] = 3,
             ["tileId"] = "global",
@@ -3481,7 +3468,7 @@ ns.QUI_SearchCache = {
             ["tileId"] = "global",
         },
         {
-            ["featureId"] = "moduleAddon_QUI_InfoBar",
+            ["featureId"] = "moduleFlag_infobar",
             ["keywords"] = {
                 "정보 바",
                 "datatext 위젯이 있는 전체 너비 상/하단 정보 바입니다.",
@@ -3831,19 +3818,6 @@ ns.QUI_SearchCache = {
                 "module",
             },
             ["label"] = "펫 프레임",
-            ["navType"] = "moduleToggle",
-            ["subPageIndex"] = 3,
-            ["tileId"] = "global",
-        },
-        {
-            ["featureId"] = "moduleAddon_QUI_QoL",
-            ["keywords"] = {
-                "편의 기능",
-                "편의 기능, 던전 도구, 추적기.",
-                "모듈 애드온",
-                "module",
-            },
-            ["label"] = "편의 기능",
             ["navType"] = "moduleToggle",
             ["subPageIndex"] = 3,
             ["tileId"] = "global",

@@ -2811,7 +2811,7 @@ ns.QUI_SearchCache = {
             ["tileId"] = "global",
         },
         {
-            ["featureId"] = "moduleAddon_QUI_Alts",
+            ["featureId"] = "moduleFlag_alts",
             ["keywords"] = {
                 "Alts",
                 "Alt-Kader-Fenster über den kontoweiten Charakter-Cache.",
@@ -3133,19 +3133,6 @@ ns.QUI_SearchCache = {
             ["tileId"] = "global",
         },
         {
-            ["featureId"] = "moduleAddon_QUI_Datatexts",
-            ["keywords"] = {
-                "Datentexte",
-                "Datentext-Registrierung, Anbieter und benutzerdefinierte Datenpanels.",
-                "Modul-AddOns",
-                "module",
-            },
-            ["label"] = "Datentexte",
-            ["navType"] = "moduleToggle",
-            ["subPageIndex"] = 3,
-            ["tileId"] = "global",
-        },
-        {
             ["featureId"] = "debuffFrame",
             ["keywords"] = {
                 "Debuff-Rahmen",
@@ -3383,7 +3370,7 @@ ns.QUI_SearchCache = {
             ["tileId"] = "global",
         },
         {
-            ["featureId"] = "moduleAddon_QUI_InfoBar",
+            ["featureId"] = "moduleFlag_infobar",
             ["keywords"] = {
                 "Infoleiste",
                 "Vollbreite oben/unten Infoleiste mit Datentext-Widgets.",
@@ -3430,19 +3417,6 @@ ns.QUI_SearchCache = {
                 "module",
             },
             ["label"] = "Kampfwiederbelebungs-Zähler",
-            ["navType"] = "moduleToggle",
-            ["subPageIndex"] = 3,
-            ["tileId"] = "global",
-        },
-        {
-            ["featureId"] = "moduleAddon_QUI_QoL",
-            ["keywords"] = {
-                "Lebensqualität",
-                "Komfort-Funktionen, Dungeon-Werkzeuge und Tracker.",
-                "Modul-AddOns",
-                "module",
-            },
-            ["label"] = "Lebensqualität",
             ["navType"] = "moduleToggle",
             ["subPageIndex"] = 3,
             ["tileId"] = "global",
@@ -3500,7 +3474,7 @@ ns.QUI_SearchCache = {
             ["tileId"] = "global",
         },
         {
-            ["featureId"] = "moduleAddon_QUI_Minimap",
+            ["featureId"] = "moduleFlag_minimap",
             ["keywords"] = {
                 "Minimap",
                 "Minimap-Neugestaltung und Schaltflächen-Ablage.",
@@ -3667,19 +3641,6 @@ ns.QUI_SearchCache = {
             ["tileId"] = "global",
         },
         {
-            ["featureId"] = "moduleAddon_QUI_Skinning",
-            ["keywords"] = {
-                "Skinning",
-                "Blizzard-UI-Reskin – Charakterfenster, Popups, Tooltips.",
-                "Modul-AddOns",
-                "module",
-            },
-            ["label"] = "Skinning",
-            ["navType"] = "moduleToggle",
-            ["subPageIndex"] = 3,
-            ["tileId"] = "global",
-        },
-        {
             ["featureId"] = "playerFrame",
             ["keywords"] = {
                 "Spieler-Rahmen",
@@ -3805,6 +3766,19 @@ ns.QUI_SearchCache = {
                 "module",
             },
             ["label"] = "Totem-Leiste",
+            ["navType"] = "moduleToggle",
+            ["subPageIndex"] = 3,
+            ["tileId"] = "global",
+        },
+        {
+            ["featureId"] = "moduleAddon_QUI_UI",
+            ["keywords"] = {
+                "UI Bundle",
+                "Skinning, minimap, datatexts, info bar, QoL, and the alt roster.",
+                "Modul-AddOns",
+                "module",
+            },
+            ["label"] = "UI Bundle",
             ["navType"] = "moduleToggle",
             ["subPageIndex"] = 3,
             ["tileId"] = "global",

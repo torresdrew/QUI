@@ -109,11 +109,15 @@ end
 local function buildDirIndex(manifest)
     local idx = {}  -- idx["cdm"] = "QUI_CDM"
     for _, entry in ipairs(manifest) do
-        for _, src in ipairs(entry.sources) do
-            -- src is like "modules/cdm"
-            local dir = src:match("^modules/(.+)$")
-            if dir then
-                idx[dir] = entry.folder
+        -- Host-backed entries have no `sources` (they ship inside another
+        -- folder's addon); skip them so this index only maps real folders.
+        if entry.sources then
+            for _, src in ipairs(entry.sources) do
+                -- src is like "modules/cdm"
+                local dir = src:match("^modules/(.+)$")
+                if dir then
+                    idx[dir] = entry.folder
+                end
             end
         end
     end

@@ -2613,7 +2613,7 @@ ns.QUI_SearchCache = {
             ["tileId"] = "global",
         },
         {
-            ["featureId"] = "moduleAddon_QUI_Alts",
+            ["featureId"] = "moduleFlag_alts",
             ["keywords"] = {
                 "Alt",
                 "Finestra roster Alt sulla cache personaggi account-wide.",
@@ -2686,19 +2686,6 @@ ns.QUI_SearchCache = {
                 "module",
             },
             ["label"] = "Ancora tooltip",
-            ["navType"] = "moduleToggle",
-            ["subPageIndex"] = 3,
-            ["tileId"] = "global",
-        },
-        {
-            ["featureId"] = "moduleAddon_QUI_Skinning",
-            ["keywords"] = {
-                "Applicazione skin",
-                "Reskin UI Blizzard - scheda personaggio, popup, tooltip.",
-                "Addon modulo",
-                "module",
-            },
-            ["label"] = "Applicazione skin",
             ["navType"] = "moduleToggle",
             ["subPageIndex"] = 3,
             ["tileId"] = "global",
@@ -2918,7 +2905,7 @@ ns.QUI_SearchCache = {
             ["tileId"] = "global",
         },
         {
-            ["featureId"] = "moduleAddon_QUI_InfoBar",
+            ["featureId"] = "moduleFlag_infobar",
             ["keywords"] = {
                 "Barra info",
                 "Barra info superiore/inferiore a tutta larghezza con widget datatext.",
@@ -3230,19 +3217,6 @@ ns.QUI_SearchCache = {
             ["tileId"] = "global",
         },
         {
-            ["featureId"] = "moduleAddon_QUI_Datatexts",
-            ["keywords"] = {
-                "Datatext",
-                "Registro datatext, provider e datapanel personalizzati.",
-                "Addon modulo",
-                "module",
-            },
-            ["label"] = "Datatext",
-            ["navType"] = "moduleToggle",
-            ["subPageIndex"] = 3,
-            ["tileId"] = "global",
-        },
-        {
             ["featureId"] = "spotlightFrames",
             ["keywords"] = {
                 "Faro",
@@ -3512,7 +3486,7 @@ ns.QUI_SearchCache = {
             ["tileId"] = "global",
         },
         {
-            ["featureId"] = "moduleAddon_QUI_Minimap",
+            ["featureId"] = "moduleFlag_minimap",
             ["keywords"] = {
                 "Minimappa",
                 "Reskin minimappa e cassetto pulsanti.",
@@ -3611,19 +3585,6 @@ ns.QUI_SearchCache = {
                 "module",
             },
             ["label"] = "Progresso M+",
-            ["navType"] = "moduleToggle",
-            ["subPageIndex"] = 3,
-            ["tileId"] = "global",
-        },
-        {
-            ["featureId"] = "moduleAddon_QUI_QoL",
-            ["keywords"] = {
-                "Quality of Life",
-                "Funzioni quality-of-life, strumenti dungeon e tracker.",
-                "Addon modulo",
-                "module",
-            },
-            ["label"] = "Quality of Life",
             ["navType"] = "moduleToggle",
             ["subPageIndex"] = 3,
             ["tileId"] = "global",
@@ -3784,6 +3745,19 @@ ns.QUI_SearchCache = {
                 "module",
             },
             ["label"] = "Tracker preda",
+            ["navType"] = "moduleToggle",
+            ["subPageIndex"] = 3,
+            ["tileId"] = "global",
+        },
+        {
+            ["featureId"] = "moduleAddon_QUI_UI",
+            ["keywords"] = {
+                "UI Bundle",
+                "Skinning, minimap, datatexts, info bar, QoL, and the alt roster.",
+                "Addon modulo",
+                "module",
+            },
+            ["label"] = "UI Bundle",
             ["navType"] = "moduleToggle",
             ["subPageIndex"] = 3,
             ["tileId"] = "global",

@@ -42,23 +42,23 @@ if not (Registry and Schema
 end
 
 ---------------------------------------------------------------------------
--- Human-readable description for each sub-addon.
+-- Human-readable description for each sub-addon or host module row.
 ---------------------------------------------------------------------------
 local DESCS = {
+    -- Folder rows (real addon enable/disable).
     QUI_ActionBars   = ns.L["Action bars, keybinds, and buff borders."],
     QUI_CDM          = ns.L["Cooldown Manager bars and icons."],
     QUI_Chat         = ns.L["QUI chat display, windows, and whisper tabs."],
     QUI_GroupFrames  = ns.L["Party and raid frames."],
     QUI_ResourceBars = ns.L["Personal resource and power bars."],
     QUI_UnitFrames   = ns.L["Player, target, focus, and boss frames."],
-    QUI_Skinning     = ns.L["Blizzard UI reskin — character pane, popups, tooltips."],
-    QUI_Datatexts    = ns.L["Datatext registry, providers, and custom datapanels."],
-    QUI_Minimap      = ns.L["Minimap reskin and button drawer."],
-    QUI_QoL          = ns.L["Quality-of-life features, dungeon tools, and trackers."],
+    QUI_UI           = ns.L["Skinning, minimap, datatexts, info bar, QoL, and the alt roster."],
     QUI_DamageMeter  = ns.L["Built-in damage meter."],
-    QUI_InfoBar      = ns.L["Full-width top/bottom info bar with datatext widgets."],
     QUI_Bags         = ns.L["Bag, bank, guild bank, and storage windows with a cross-character cache."],
-    QUI_Alts         = ns.L["Alt roster window over the account-wide character cache."],
+    -- Host module rows (per-module flag in profile; no addon enable/disable).
+    minimap          = ns.L["Minimap reskin and button drawer."],
+    infobar          = ns.L["Full-width top/bottom info bar with datatext widgets."],
+    alts             = ns.L["Alt roster window over the account-wide character cache."],
 }
 
 ---------------------------------------------------------------------------
@@ -133,23 +133,24 @@ end
 -- One moduleEntry + stub feature per manifest entry.
 -- Entries whose folder is absent from disk are silently skipped.
 ---------------------------------------------------------------------------
--- Display labels (match the sub-addon TOC titles); search keywords are built
--- from these, so spaced names keep e.g. "damage meter" findable.
+-- Display labels (match the sub-addon TOC titles or module names); search
+-- keywords are built from these, so spaced names keep e.g. "damage meter"
+-- findable.
 local LABELS = {
+    -- Folder rows.
     QUI_ActionBars   = ns.L["Action Bars"],
     QUI_CDM          = ns.L["Cooldown Manager"],
     QUI_Chat         = ns.L["Chat"],
     QUI_GroupFrames  = ns.L["Group Frames"],
     QUI_ResourceBars = ns.L["Resource Bars"],
     QUI_UnitFrames   = ns.L["Unit Frames"],
-    QUI_Skinning     = ns.L["Skinning"],
-    QUI_Datatexts    = ns.L["Datatexts"],
-    QUI_Minimap      = ns.L["Minimap"],
-    QUI_QoL          = ns.L["Quality of Life"],
+    QUI_UI           = ns.L["UI Bundle"],
     QUI_DamageMeter  = ns.L["Damage Meter"],
-    QUI_InfoBar      = ns.L["Info Bar"],
     QUI_Bags         = ns.L["Bags"],
-    QUI_Alts         = ns.L["Alts"],
+    -- Host module rows (keyed by module id).
+    minimap          = ns.L["Minimap"],
+    infobar          = ns.L["Info Bar"],
+    alts             = ns.L["Alts"],
 }
 
 ---------------------------------------------------------------------------
@@ -188,10 +189,36 @@ end
 
 for _, entry in ipairs(ns.AddonManifest) do
     local folder    = entry.folder
-    local flagPath  = entry.legacyFlag  -- nil for most entries
+    local flagPath  = entry.legacyFlag  -- nil for most folder entries
 
-    -- Skip sub-addons not installed in this client.
-    if AddonExists(folder) then
+    if entry.hostAddon then
+        -- HOST-BACKED ENTRY: a module that ships inside QUI_UI.
+        -- Register a per-module flag row (reads/writes profile flag; no
+        -- EnableAddOn/DisableAddOn — a reload is needed for dormancy changes).
+        local mod = entry.module
+        local hostFlagPath = entry.flag  -- e.g. { "minimap", "enabled" }
+        if LABELS[mod] then             -- only modules with a surfaced row
+            local hostEntry = {
+                group        = ns.L["Module Addons"],
+                label        = LABELS[mod],
+                caption      = DESCS[mod] or "",
+                combatLocked = false,
+                isEnabled    = function()
+                    return ReadLegacyFlag(hostFlagPath)
+                end,
+                setEnabled   = function(val)
+                    WriteLegacyFlag(hostFlagPath, val and true or false)
+                    ShowReloadPrompt()
+                end,
+            }
+            Registry:RegisterFeature(Schema.Feature({
+                id          = "moduleFlag_" .. mod,
+                category    = "global",
+                moduleEntry = hostEntry,
+            }))
+        end
+
+    elseif folder and AddonExists(folder) then
         local moduleEntry = {
             group        = ns.L["Module Addons"],
             label        = LABELS[folder] or folder:match("^QUI_(.+)$") or folder,

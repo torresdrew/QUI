@@ -5332,5 +5332,7 @@ Pixel-perfect for 1920x1080",
     ["|cffff8800-|r Type /quiscan again to stop"] = "|cffff8800-|r Type /quiscan again to stop",
     ["|cffff8800Pending scanning: %d spells|r"] = "|cffff8800Pending scanning: %d spells|r",
     ["|cffff8800QUI:|r %d not found in scanned spells or items"] = "|cffff8800QUI:|r %d not found in scanned spells or items",
+    ["Skinning, minimap, datatexts, info bar, QoL, and the alt roster."] = "Skinning, minimap, datatexts, info bar, QoL, and the alt roster.",
+    ["UI Bundle"] = "UI Bundle",
     ["•  (dot)"] = "•  (dot)",
 }

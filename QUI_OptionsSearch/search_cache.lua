@@ -2768,7 +2768,7 @@ ns.QUI_SearchCache = {
             ["tileId"] = "global",
         },
         {
-            ["featureId"] = "moduleAddon_QUI_Alts",
+            ["featureId"] = "moduleFlag_alts",
             ["keywords"] = {
                 "Alts",
                 "Alt roster window over the account-wide character cache.",
@@ -3119,19 +3119,6 @@ ns.QUI_SearchCache = {
             ["tileId"] = "global",
         },
         {
-            ["featureId"] = "moduleAddon_QUI_Datatexts",
-            ["keywords"] = {
-                "Datatexts",
-                "Datatext registry, providers, and custom datapanels.",
-                "Module Addons",
-                "module",
-            },
-            ["label"] = "Datatexts",
-            ["navType"] = "moduleToggle",
-            ["subPageIndex"] = 3,
-            ["tileId"] = "global",
-        },
-        {
             ["featureId"] = "debuffFrame",
             ["keywords"] = {
                 "Debuff Frame",
@@ -3238,7 +3225,7 @@ ns.QUI_SearchCache = {
             ["tileId"] = "global",
         },
         {
-            ["featureId"] = "moduleAddon_QUI_InfoBar",
+            ["featureId"] = "moduleFlag_infobar",
             ["keywords"] = {
                 "Info Bar",
                 "Full-width top/bottom info bar with datatext widgets.",
@@ -3316,7 +3303,7 @@ ns.QUI_SearchCache = {
             ["tileId"] = "global",
         },
         {
-            ["featureId"] = "moduleAddon_QUI_Minimap",
+            ["featureId"] = "moduleFlag_minimap",
             ["keywords"] = {
                 "Minimap",
                 "Minimap reskin and button drawer.",
@@ -3498,19 +3485,6 @@ ns.QUI_SearchCache = {
             ["tileId"] = "global",
         },
         {
-            ["featureId"] = "moduleAddon_QUI_QoL",
-            ["keywords"] = {
-                "Quality of Life",
-                "Quality-of-life features, dungeon tools, and trackers.",
-                "Module Addons",
-                "module",
-            },
-            ["label"] = "Quality of Life",
-            ["navType"] = "moduleToggle",
-            ["subPageIndex"] = 3,
-            ["tileId"] = "global",
-        },
-        {
             ["featureId"] = "quickSalvage",
             ["keywords"] = {
                 "Quick Salvage",
@@ -3614,19 +3588,6 @@ ns.QUI_SearchCache = {
                 "module",
             },
             ["label"] = "Secondary Power",
-            ["navType"] = "moduleToggle",
-            ["subPageIndex"] = 3,
-            ["tileId"] = "global",
-        },
-        {
-            ["featureId"] = "moduleAddon_QUI_Skinning",
-            ["keywords"] = {
-                "Skinning",
-                "Blizzard UI reskin — character pane, popups, tooltips.",
-                "Module Addons",
-                "module",
-            },
-            ["label"] = "Skinning",
             ["navType"] = "moduleToggle",
             ["subPageIndex"] = 3,
             ["tileId"] = "global",
@@ -3770,6 +3731,19 @@ ns.QUI_SearchCache = {
                 "module",
             },
             ["label"] = "Totem Bar",
+            ["navType"] = "moduleToggle",
+            ["subPageIndex"] = 3,
+            ["tileId"] = "global",
+        },
+        {
+            ["featureId"] = "moduleAddon_QUI_UI",
+            ["keywords"] = {
+                "UI Bundle",
+                "Skinning, minimap, datatexts, info bar, QoL, and the alt roster.",
+                "Module Addons",
+                "module",
+            },
+            ["label"] = "UI Bundle",
             ["navType"] = "moduleToggle",
             ["subPageIndex"] = 3,
             ["tileId"] = "global",

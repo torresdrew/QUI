@@ -2,8 +2,8 @@
 ---
 --- Lives in core (loaded at login, before BOTH consumers) because the two
 --- consumers load in different contexts that have no common addon ancestor:
----   * QUI_InfoBar/infobar/contextmenu.lua  — via QUI_InfoBar.toc (LoD)
----   * QUI_InfoBar/infobar/settings/infobar_content.lua — via QUI_Options.toc (LoD)
+---   * QUI_UI/infobar/contextmenu.lua  — via QUI_UI.toc (LoD)
+---   * QUI_UI/infobar/settings/infobar_content.lua — via QUI_Options.toc (LoD)
 --- An addon-level shared file is nil in whichever addon happens not to be
 --- loaded; only a core symbol is guaranteed present for both.
 

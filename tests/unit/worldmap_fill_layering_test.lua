@@ -168,7 +168,7 @@ ns.SkinBase = {
     end,
 }
 
-assert(loadfile("QUI_Skinning/skinning/frames/worldmap.lua"))("QUI", ns)
+assert(loadfile("QUI_UI/skinning/frames/worldmap.lua"))("QUI", ns)
 -- worldmap.lua registers several addon-loaded callbacks (WorldMap, FlightMap);
 -- target the WorldMap one specifically.
 local capturedCallback = capturedCallbacks["Blizzard_WorldMap"]

@@ -14,13 +14,13 @@
 
 local EXPECTED = {
     -- Tier-1 fixes (2026-05-31):
-    { "QUI_QoL/dungeon/party_keystones.lua", "keyTrackerSkin" },
-    { "QUI_QoL/qol/combattimer.lua",        "combatTimerSkin" },
+    { "QUI_UI/dungeon/party_keystones.lua", "keyTrackerSkin" },
+    { "QUI_UI/qol/combattimer.lua",        "combatTimerSkin" },
     { "QUI_UnitFrames/unitframes/unitframes.lua",  "unitframesSkin" },
     { "QUI_GroupFrames/groupframes/groupframes.lua","groupframesSkin" },
-    { "QUI_QoL/qol/petwarning.lua",         "petWarningSkin" },
-    { "QUI_QoL/qol/consumablecheck.lua",    "consumablesSkin" },
-    { "QUI_Minimap/minimap/minimap.lua",        "minimapSkin" },
+    { "QUI_UI/qol/petwarning.lua",         "petWarningSkin" },
+    { "QUI_UI/qol/consumablecheck.lua",    "consumablesSkin" },
+    { "QUI_UI/minimap/minimap.lua",        "minimapSkin" },
     { "QUI_DamageMeter/damage_meter/damage_meter.lua", "damageMeterSkin" },
     { "QUI_ResourceBars/resourcebars/resourcebars.lua", "resourceBarsSkin" },
     { "QUI_CDM/cdm/cdm_bar_renderer.lua",   "cdmBarsSkin" },
@@ -30,8 +30,8 @@ local EXPECTED = {
     { "QUI_GroupFrames/groupframes/raidbuffs.lua",  "raidbuffsSkin" },
     -- Info bar + custom datapanels (2026-06): bar edge / panel borders track
     -- the skin via GetSkinBorderColor but register under group "data".
-    { "QUI_InfoBar/infobar/infobar.lua",        "infobarSkin" },
-    { "QUI_Datatexts/datatexts/datapanels.lua", "datapanelsSkin" },
+    { "QUI_UI/infobar/infobar.lua",        "infobarSkin" },
+    { "QUI_UI/datatexts/datapanels.lua", "datapanelsSkin" },
 }
 
 local function read(path)

@@ -39,7 +39,9 @@ SlashCmdList["QUIALTS"] = function()
         print("|cff00ff00QUI:|r the Alts module is disabled (Options → Modules).")
         return
     end
-    if Alts.Window then Alts.Window.Toggle() end
+    -- The roster UI is lazy; route through the trigger so the first /alts loads
+    -- the QUI_UI lazy block (combat-parked) before toggling the window.
+    if _G.QUI_OpenAltsRoster then _G.QUI_OpenAltsRoster() end
 end
 
 -- Options surfaces call _G.QUI_RefreshAlts after DB writes (bags precedent).

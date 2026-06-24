@@ -48,8 +48,12 @@ for folder in pairs(folders) do
 end
 
 for _, entry in ipairs(manifest) do
-    assert(releaseFolders[entry.folder],
-        "manifest folder is not discoverable as a shipped suite addon: " .. entry.folder)
+    -- Host-backed entries ship inside another folder's addon and have no
+    -- `folder` of their own, so there is no separate shipped folder to verify.
+    if entry.folder then
+        assert(releaseFolders[entry.folder],
+            "manifest folder is not discoverable as a shipped suite addon: " .. entry.folder)
+    end
 end
 
 for _, companion in ipairs({ "QUI_Options", "QUI_OptionsSearch" }) do

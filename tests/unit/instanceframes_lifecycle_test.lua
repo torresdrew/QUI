@@ -16,7 +16,7 @@ local function assertAbsent(text, needle, reason)
     assert(not text:find(needle, 1, true), reason)
 end
 
-local instanceframes = readFile("QUI_Skinning/skinning/frames/instanceframes.lua")
+local instanceframes = readFile("QUI_UI/skinning/frames/instanceframes.lua")
 local pveFrame = readFile("tests/framexml/Interface/AddOns/Blizzard_GroupFinder/Mainline/PVEFrame.lua")
 local pvpui = readFile("tests/framexml/Interface/AddOns/Blizzard_PVPUI/Mainline/Blizzard_PVPUI.lua")
 local challenges = readFile("tests/framexml/Interface/AddOns/Blizzard_ChallengesUI/Mainline/Blizzard_ChallengesUI.lua")
@@ -141,7 +141,7 @@ do
         SkinBase = SkinBase,
     }
 
-    assert(loadfile("QUI_Skinning/skinning/frames/instanceframes.lua"))("QUI", ns)
+    assert(loadfile("QUI_UI/skinning/frames/instanceframes.lua"))("QUI", ns)
 
     assert(categorySkinCalls == 2, "LFG category rows must use SkinCategoryButton for selected-state visuals")
     assert(buttonSkinCalls == 2, "Start/Find action buttons should still use the regular button skin")

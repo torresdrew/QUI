@@ -2615,7 +2615,7 @@ ns.QUI_SearchCache = {
             ["tileId"] = "global",
         },
         {
-            ["featureId"] = "moduleAddon_QUI_Alts",
+            ["featureId"] = "moduleFlag_alts",
             ["keywords"] = {
                 "Alt 角色",
                 "账号共享角色缓存上的 Alt 角色窗口。",
@@ -2706,6 +2706,19 @@ ns.QUI_SearchCache = {
             ["tileId"] = "global",
         },
         {
+            ["featureId"] = "moduleAddon_QUI_UI",
+            ["keywords"] = {
+                "UI Bundle",
+                "Skinning, minimap, datatexts, info bar, QoL, and the alt roster.",
+                "模块插件",
+                "module",
+            },
+            ["label"] = "UI Bundle",
+            ["navType"] = "moduleToggle",
+            ["subPageIndex"] = 3,
+            ["tileId"] = "global",
+        },
+        {
             ["featureId"] = "primaryPower",
             ["keywords"] = {
                 "主要能量",
@@ -2732,7 +2745,7 @@ ns.QUI_SearchCache = {
             ["tileId"] = "global",
         },
         {
-            ["featureId"] = "moduleAddon_QUI_InfoBar",
+            ["featureId"] = "moduleFlag_infobar",
             ["keywords"] = {
                 "信息栏",
                 "带数据文本小部件的全宽顶/底信息条。",
@@ -3112,7 +3125,7 @@ ns.QUI_SearchCache = {
             ["tileId"] = "global",
         },
         {
-            ["featureId"] = "moduleAddon_QUI_Minimap",
+            ["featureId"] = "moduleFlag_minimap",
             ["keywords"] = {
                 "小地图",
                 "小地图重皮肤和按钮抽屉。",
@@ -3311,19 +3324,6 @@ ns.QUI_SearchCache = {
             ["tileId"] = "global",
         },
         {
-            ["featureId"] = "moduleAddon_QUI_Datatexts",
-            ["keywords"] = {
-                "数据文字",
-                "数据文字注册、提供者和自定义数据面板。",
-                "模块插件",
-                "module",
-            },
-            ["label"] = "数据文字",
-            ["navType"] = "moduleToggle",
-            ["subPageIndex"] = 3,
-            ["tileId"] = "global",
-        },
-        {
             ["featureId"] = "datatext",
             ["keywords"] = {
                 "数据文字面板",
@@ -3499,19 +3499,6 @@ ns.QUI_SearchCache = {
                 "module",
             },
             ["label"] = "玩家框架",
-            ["navType"] = "moduleToggle",
-            ["subPageIndex"] = 3,
-            ["tileId"] = "global",
-        },
-        {
-            ["featureId"] = "moduleAddon_QUI_Skinning",
-            ["keywords"] = {
-                "皮肤化",
-                "Blizzard UI 重皮肤 - 角色面板、弹窗、提示。",
-                "模块插件",
-                "module",
-            },
-            ["label"] = "皮肤化",
             ["navType"] = "moduleToggle",
             ["subPageIndex"] = 3,
             ["tileId"] = "global",
@@ -3745,19 +3732,6 @@ ns.QUI_SearchCache = {
                 "module",
             },
             ["label"] = "警报锚点",
-            ["navType"] = "moduleToggle",
-            ["subPageIndex"] = 3,
-            ["tileId"] = "global",
-        },
-        {
-            ["featureId"] = "moduleAddon_QUI_QoL",
-            ["keywords"] = {
-                "质量提升",
-                "质量提升功能、地下城工具和追踪器。",
-                "模块插件",
-                "module",
-            },
-            ["label"] = "质量提升",
             ["navType"] = "moduleToggle",
             ["subPageIndex"] = 3,
             ["tileId"] = "global",

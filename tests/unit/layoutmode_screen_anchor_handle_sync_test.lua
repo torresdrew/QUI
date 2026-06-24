@@ -102,7 +102,7 @@ local fallbackPos = assert(syncBlock:find("local frame = def.getFrame and def.ge
 assert(fallbackPos > rectPos, "anchor-rect branch must take priority over the frame-center fallback")
 
 -- 2 + 3. Minimap mirror-ownership and HUD-latch guards.
-local minimap = readAll("QUI_Minimap/minimap/minimap.lua")
+local minimap = readAll("QUI_UI/minimap/minimap.lua")
 
 local ownsPos = assert(minimap:find("local function MirrorOwnsMinimap()", 1, true),
     "anchor-proxy mirror must gate on Minimap geometry ownership")

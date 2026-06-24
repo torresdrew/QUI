@@ -38,7 +38,7 @@ end
 -- minimap.lua
 -- ===========================================================================
 do
-    local src = readFile("QUI_Minimap/minimap/minimap.lua")
+    local src = readFile("QUI_UI/minimap/minimap.lua")
 
     -- Great-vault button: raw backdrop with hardcoded 0,0,0,0.8 gone
     assertAbsent(src, "SetBackdropColor%(0, 0, 0, 0%.8%)",
@@ -66,7 +66,7 @@ end
 -- petwarning.lua
 -- ===========================================================================
 do
-    local src = readFile("QUI_QoL/qol/petwarning.lua")
+    local src = readFile("QUI_UI/qol/petwarning.lua")
 
     -- Migrated dark bg literal must be gone
     assertAbsent(src, "SetBackdropColor%(0%.1, 0%.1, 0%.1, 0%.9%)",
@@ -85,7 +85,7 @@ end
 -- consumablecheck.lua
 -- ===========================================================================
 do
-    local src = readFile("QUI_QoL/qol/consumablecheck.lua")
+    local src = readFile("QUI_UI/qol/consumablecheck.lua")
 
     -- Migrated dark bg literal must be gone (the raw SetBackdropColor call)
     assertAbsent(src, "SetBackdropColor%(0%.05, 0%.05, 0%.05, 0%.95%)",
@@ -102,7 +102,7 @@ end
 -- combattimer.lua
 -- ===========================================================================
 do
-    local src = readFile("QUI_QoL/qol/combattimer.lua")
+    local src = readFile("QUI_UI/qol/combattimer.lua")
 
     -- Migrated hardcoded initial bg literal must be gone
     assertAbsent(src, "SetBackdropColor%(0, 0, 0, 0%.6%)",
@@ -117,7 +117,7 @@ end
 -- combattext.lua  (batch c)
 -- ===========================================================================
 do
-    local src = readFile("QUI_QoL/combat/combattext.lua")
+    local src = readFile("QUI_UI/combat/combattext.lua")
 
     -- Hardcoded font path must be gone
     assertAbsent(src, "Fonts\\\\FRIZQT__%.TTF",
@@ -136,7 +136,7 @@ end
 -- rotationassist.lua  (batch c)
 -- ===========================================================================
 do
-    local src = readFile("QUI_QoL/combat/rotationassist.lua")
+    local src = readFile("QUI_UI/combat/rotationassist.lua")
 
     -- STANDARD_TEXT_FONT at the initial keybind-create site must be gone
     -- (the fallback in the LSM fetch is also migrated)
@@ -162,7 +162,7 @@ end
 -- atonement_counter.lua  (batch c)
 -- ===========================================================================
 do
-    local src = readFile("QUI_QoL/trackers/atonement_counter.lua")
+    local src = readFile("QUI_UI/trackers/atonement_counter.lua")
 
     -- GetGeneralFontOutline must now be referenced (replaces hardcoded "OUTLINE")
     assertContains(src, "GetGeneralFontOutline",
@@ -181,7 +181,7 @@ end
 -- preytracker.lua  (batch c)
 -- ===========================================================================
 do
-    local src = readFile("QUI_QoL/trackers/preytracker.lua")
+    local src = readFile("QUI_UI/trackers/preytracker.lua")
 
     -- Hardcoded gray border literal must be gone from the CreateHuntPanel area
     assertAbsent(src, "0%.3, 0%.3, 0%.3",
@@ -298,7 +298,7 @@ end
 -- mplus_timer.lua  (Phase 3 batch b)
 -- ===========================================================================
 do
-    local src = readFile("QUI_QoL/dungeon/mplus_timer.lua")
+    local src = readFile("QUI_UI/dungeon/mplus_timer.lua")
 
     -- Hardcoded FRIZQT font path in GetForcesFont fallback must be gone
     assertAbsent(src, "Fonts\\\\FRIZQT__%.TTF",
