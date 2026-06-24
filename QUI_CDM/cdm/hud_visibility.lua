@@ -1112,6 +1112,20 @@ local function ShouldActionBarsBeVisible()
     return false
 end
 
+-- Exposed on the shared namespace for the action bar module (QUI_ActionBars)
+-- so its per-bar fade system can yield to this global location-hide decision.
+-- Without it, per-bar alwaysShow / force-show refreshes race the global fade
+-- and flicker the bars while skyriding (the override-bar swap fires action-bar
+-- events that re-run the per-bar fade setup, which pulls alpha back to 1).
+-- Returns true when the action bars should currently be hidden by the global
+-- visibility rules. Edit/Layout mode never hides — both keep all bars visible.
+ns.ShouldHideActionBarsForVisibility = function()
+    if Helpers.IsEditModeActive() or Helpers.IsLayoutModeActive() then
+        return false
+    end
+    return not ShouldActionBarsBeVisible()
+end
+
 local function OnActionBarsFadeUpdate(self)
     local targetAlpha = ReadNumber(ActionBarsVisibility.fadeTargetAlpha, 1)
     local vis = GetActionBarsVisibilitySettings()

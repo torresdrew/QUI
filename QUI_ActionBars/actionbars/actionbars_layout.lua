@@ -408,6 +408,19 @@ end
 
 IsInEditMode = Helpers.IsEditModeShown
 
+-- Global HUD visibility (the "appearances" page) can hide all action bars
+-- under location rules (skyriding / mounted / flying / in-vehicle). While a
+-- hide rule is active, that system owns the bar alpha via SetOwnedBarAlpha.
+-- The per-bar fade decisions below (alwaysShow, mouseover, force-show
+-- contexts) must yield to it — otherwise per-bar refreshes triggered by
+-- skyriding's own bar-page swaps pull alpha back to 1 and the bars flicker
+-- show/hide. Returns true when the global system has decided the bars must
+-- be hidden right now. No-ops (returns false) when CDM isn't loaded.
+local function GlobalVisibilityHidingBars()
+    local fn = ns.ShouldHideActionBarsForVisibility
+    return type(fn) == "function" and fn() == true
+end
+
 function SetOwnedBarAlpha(barKey, alpha)
     local container = ActionBarsOwned.containers[barKey]
     if not container then return end
@@ -576,6 +589,9 @@ function HookOwnedFrameForMouseover(frame, barKey)
 end
 
 function ActionBarsOwned:OnBarMouseEnter(barKey)
+    -- Global location-hide keeps bars hidden even on hover (skyriding/mounted).
+    if GlobalVisibilityHidingBars() then return end
+
     local state = GetOwnedBarFadeState(barKey)
     local fadeSettings = GetFadeSettings()
     local barSettings = GetBarSettings(barKey)
@@ -619,6 +635,9 @@ end
 
 function ActionBarsOwned:OnBarMouseLeave(barKey)
     if IsInEditMode() then return end
+
+    -- Global location-hide owns the alpha; don't re-show on mouse leave.
+    if GlobalVisibilityHidingBars() then return end
 
     local state = GetOwnedBarFadeState(barKey)
     local fadeSettings = GetFadeSettings()
@@ -744,6 +763,10 @@ function SetupOwnedBarMouseover(barKey)
         SetOwnedBarAlpha(barKey, 1)
         return
     end
+
+    -- Global location-hide (skyriding/mounted/flying) wins over per-bar
+    -- alwaysShow/force-show. Leave alpha to the global fade; don't force 1.
+    if GlobalVisibilityHidingBars() then return end
 
     local barSettings = GetBarSettings(barKey)
     local fadeSettings = GetFadeSettings()
