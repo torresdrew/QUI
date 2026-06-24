@@ -4588,6 +4588,7 @@ local defaults = {
             loadoutBindings = {},
             smartRes = true,
             showTooltip = true,
+            clickDirection = "down",
             unitFrames = {
                 player = false,
                 target = false,
