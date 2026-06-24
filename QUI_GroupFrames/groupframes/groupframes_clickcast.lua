@@ -48,19 +48,15 @@ local hookedFrames = Helpers.CreateStateTable() -- Tracks frames with OnEnter/On
 local secureWrappedFrames = Helpers.CreateStateTable() -- Tracks frames with secure WrapScript (permanent)
 local activeBindings = {} -- Resolved mouse bindings for current spec
 local keyboardBindings = {} -- Resolved SCROLL-WHEEL bindings (per-frame, hover-only)
--- Resolved KEYBOARD-KEY bindings. These are bound ONCE at setup to a single
--- hidden caster button instead of re-bound on every hover — the per-hover
--- SetBindingClick was being silently dropped on a tainted cold-boot secure
--- context (worked after /reload). @mouseover in the caster macro handles
--- targeting the hovered unit.
+-- Resolved KEYBOARD-KEY bindings. Each key's cast macro is written to every
+-- registered frame's per-frame proxy as a virtual button; the secure OnEnter wrap
+-- binds the key (priority override, header-owned) to the hovered frame's proxy by
+-- NAME, and OnLeave releases it so off-frame the key keeps its action-bar binding.
+-- @mouseover in the proxy's macro targets the hovered unit.
 local globalKeyBindings = {}
-local smartResSwapped = setmetatable({}, { __mode = "k" }) -- Per-frame: true when OnEnter swapped to res
 local isEnabled = false
-local currentKeyboardFrame = nil
--- Coalesces deferred "recovery" RefreshBindings (the on-hover trigger and the
--- data-ready event handlers) so a burst schedules only one. Declared up here
--- because the OnEnter hook installed in SetupFrameClickCast (below) closes over
--- both this flag and IsUnresolvedButConfigured, which is defined later.
+-- Coalesces deferred cold-login re-resolve fired by data-ready event handlers
+-- so a burst schedules only one.
 local dataReadyRefreshScheduled = false
 local IsUnresolvedButConfigured  -- forward-declared; used by the OnEnter recovery hook above its body
 local HasConfiguredBindings      -- forward-declared; kept local (body defined later, near IsUnresolvedButConfigured)
@@ -77,11 +73,25 @@ local PING_MACROS = {
 }
 
 -- Three-clause @mouseover cast macro shared by every spell-cast binding path
--- (keyboard attrs, caster macro, per-frame clickcast, smart-res restore).
+-- (mouse buttons, scroll/keyboard virtual buttons — all on the per-frame proxy).
 local function BuildMouseoverCastMacro(spell)
     return "/cast [@mouseover,help,nodead] " .. spell
         .. "; [@mouseover,harm,nodead] " .. spell
         .. "; [@mouseover] " .. spell
+end
+
+-- Single-clause @mouseover cast for friend/enemy bindings.
+-- The helpbutton/harmbutton remap is the filter; no help/harm clause needed.
+local function BuildPlainMouseoverCastMacro(spell)
+    return "/cast [@mouseover] " .. spell
+end
+
+-- Attribute name for a (possibly numeric) button suffix.
+-- Numeric mouse suffixes take no dash (helpbutton1), non-numeric virtual
+-- button names take a dash (helpbutton-keyf). Mirrors the secure engine's
+-- own resolution rule (tonumber(suffix) and "" or "-").
+local function ButtonAttrName(attr, suffix)
+    return attr .. (tonumber(suffix) and "" or "-") .. suffix
 end
 
 local PING_LABELS = {
@@ -219,8 +229,6 @@ local DANGLING_SNIPPET = [[
         return
     end
     self:ClearBindings()
-    local caster = self:GetFrameRef("cc-caster")
-    if caster then caster:ClearBindings() end
     currentHoverFrame = nil
 ]]
 
@@ -239,131 +247,59 @@ end
 
 -- WrapScript pre-body for OnEnter.
 -- `self` = the hovered frame, `owner` = the header (SecureHandlerBaseTemplate).
--- Two binding sets: per-frame SCROLL-WHEEL keys (header-owned, routed to the
--- frame's virtual buttons) and KEYBOARD keys (caster-owned, via the header's
--- "cc-caster" frame ref). This OnEnter wrap is THE keyboard bind path: edge-
--- driven, fully secure, and it fires in combat. Off-frame the key keeps its
--- action-bar binding; OnLeave/OnHide release the override, and the header's
--- clear-only dangling net (DANGLING_SNIPPET) covers a lost-cursor-without-OnLeave.
--- `currentHoverFrame` (a variable in the header's shared managed environment)
--- records the active hover so OnLeave/OnHide clear ONLY for that frame —
--- without it, any frame's leave/hide would wipe the binding the
--- currently-hovered frame just set during cold-login churn.
+-- Binds ALL override keys (scroll-wheel + keyboard) to the per-frame proxy by
+-- name via SetBindingClick. The proxy is named so SetBindingClick can find it
+-- by string name; the proxy holds the cast attrs so the right action fires.
+-- Edge-driven, fully secure, fires in combat. `currentHoverFrame` tracks the
+-- active hover so OnLeave clears ONLY for that frame.
 local ENTER_SNIPPET = [[
     owner:ClearBindings()
-    local caster = owner:GetFrameRef("cc-caster")
-    if caster then caster:ClearBindings() end
-
-    -- Claim the hover context (the clears above hand off the previous frame);
-    -- OnLeave/OnHide only clear while this stays the active frame.
     currentHoverFrame = self
 
-    -- Keyboard keys -> the global caster (only while this frame is a live
-    -- click-cast registration; the wraps themselves are permanent).
-    if caster and self:GetAttribute("clickcast-active") == 1 then
-        local kcount = caster:GetAttribute("cc-keycount") or 0
-        for i = 1, kcount do
-            local key = caster:GetAttribute("cc-key" .. i)
-            local vbtn = caster:GetAttribute("cc-vbtn" .. i)
-            if key and vbtn then
-                caster:SetBindingClick(true, key, caster, vbtn)
-            end
-        end
-    end
+    if self:GetAttribute("clickcast-active") ~= 1 then return end
 
-    -- Scroll-wheel keys -> this frame's virtual buttons (needs a frame name).
+    local pname = self:GetAttribute("clickcast-proxyname")
+    if not pname then return end
+
     local count = owner:GetAttribute("clickcast-keycount") or 0
     if count == 0 then return end
 
-    local frameName = self:GetName()
-    if not frameName then return end
-
     for i = 1, count do
-        local key = owner:GetAttribute("clickcast-key" .. i)
-        local vBtn = owner:GetAttribute("clickcast-vbtn" .. i)
-        if key and vBtn then
-            owner:SetBindingClick(true, key, frameName, vBtn)
+        local key  = owner:GetAttribute("clickcast-key"  .. i)
+        local vbtn = owner:GetAttribute("clickcast-vbtn" .. i)
+        if key and vbtn then
+            owner:SetBindingClick(true, key, pname, vbtn)
         end
     end
 ]]
 
 -- WrapScript pre-body for OnLeave. Guard on currentHoverFrame so a stale leave
 -- from a frame we've already moved off of can't clear the active bindings.
--- Releasing the caster here is THE clear path: on a direct frame->unit (e.g.
--- nameplate) transition the cursor crosses the frame boundary, so OnLeave fires
--- and returns the keyboard keys to the action bar immediately.
 local LEAVE_SNIPPET = [[
     if currentHoverFrame == self then
         owner:ClearBindings()
-        local caster = owner:GetFrameRef("cc-caster")
-        if caster then caster:ClearBindings() end
         currentHoverFrame = nil
     end
 ]]
 
--- WrapScript pre-body for OnHide — clears override bindings when the frame
--- hides while still hovered (e.g. group member leaves, unit watch hides frame).
--- Guarded like OnLeave so hiding a non-hovered frame (common during cold-login
--- group layout) doesn't wipe the active frame's bindings.
-local HIDE_SNIPPET = LEAVE_SNIPPET
+-- No OnHide wrap (matches the reference addon): a group/raid unit button
+-- recycles (hide/show) constantly during roster churn, and clearing on hide
+-- wipes the binding while the cursor is still parked on the frame -- with no
+-- re-arm under a stationary cursor the key then falls through to the action bar.
+-- A genuine lost cursor (frame hidden for real) is released by the clear-only
+-- dangling driver, which checks frame visibility.
 
--- No OnShow wrap: a frame hidden then re-shown under a stationary cursor gets no
--- OnEnter (the cursor never crossed the frame boundary), so it is re-armed on the
--- next cursor movement (OnEnter) or by the OOC re-register path
--- (RefreshHeaderOverrideBindings). We deliberately do NOT poll mouse-over to
--- re-arm: the prior insecure OnShow re-arm reached for the restricted-only
--- IsUnderMouse on a real frame and crashed, and a secure-side re-arm here would
--- reintroduce the same self-clearing tick the edge model exists to avoid. The
--- header's dangling net only ever clears, never re-arms.
 local CLEAR_HEADER_BINDINGS_SNIPPET = [[
     self:ClearBindings()
-    local caster = self:GetFrameRef("cc-caster")
-    if caster then caster:ClearBindings() end
     currentHoverFrame = nil
 ]]
 
--- Re-arm the bindings for the frame currently under the cursor (run via
--- header:Execute after out-of-combat re-registration, so `self` = header).
--- Mirrors ENTER_SNIPPET for both binding sets.
-local REFRESH_HEADER_BINDINGS_SNIPPET = [[
-    self:ClearBindings()
-    local caster = self:GetFrameRef("cc-caster")
-    if caster then caster:ClearBindings() end
-
-    local frame = self:GetFrameRef("clickcast-hover-frame")
-    if not frame then return end
-
-    -- Keep the hover tracker in sync so this frame's OnLeave clears correctly.
-    currentHoverFrame = frame
-
-    if caster and frame:GetAttribute("clickcast-active") == 1 then
-        local kcount = caster:GetAttribute("cc-keycount") or 0
-        for i = 1, kcount do
-            local key = caster:GetAttribute("cc-key" .. i)
-            local vbtn = caster:GetAttribute("cc-vbtn" .. i)
-            if key and vbtn then
-                caster:SetBindingClick(true, key, caster, vbtn)
-            end
-        end
-    end
-
-    local frameName = frame:GetName()
-    if not frameName then return end
-
-    local count = self:GetAttribute("clickcast-keycount") or 0
-    if count == 0 then return end
-
-    for i = 1, count do
-        local key = self:GetAttribute("clickcast-key" .. i)
-        local vBtn = self:GetAttribute("clickcast-vbtn" .. i)
-        if key and vBtn then
-            self:SetBindingClick(true, key, frameName, vBtn)
-        end
-    end
-]]
-
--- Wrap a frame's OnEnter/OnLeave/OnHide with secure handler snippets.
+-- Wrap a frame's OnEnter/OnLeave with secure handler snippets.
 -- Only called once per frame (tracked by secureWrappedFrames).
+-- No OnHide wrap: group/raid unit buttons recycle (hide/show) constantly during
+-- roster churn, and clearing on hide wipes the binding while the cursor is still
+-- parked on the frame. A genuine lost cursor is handled by the clear-only
+-- dangling driver (checks frame visibility).
 local function WrapFrameSecureHandlers(frame)
     if secureWrappedFrames[frame] then return end
     if InCombatLockdown() then return end
@@ -371,7 +307,6 @@ local function WrapFrameSecureHandlers(frame)
     local header = GetBindingHeader()
     SecureHandlerWrapScript(frame, "OnEnter", header, ENTER_SNIPPET)
     SecureHandlerWrapScript(frame, "OnLeave", header, LEAVE_SNIPPET)
-    SecureHandlerWrapScript(frame, "OnHide", header, HIDE_SNIPPET)
 
     secureWrappedFrames[frame] = true
 end
@@ -383,33 +318,30 @@ local function ClearHeaderOverrideBindings()
     end
 end
 
-local function RefreshHeaderOverrideBindings()
-    if InCombatLockdown() then return end
-
-    local header = bindingHeader
-    if not header or not header.Execute then return end
-
-    local frame = currentKeyboardFrame
-    if frame and registeredFrames[frame] and header.SetFrameRef then
-        header:SetFrameRef("clickcast-hover-frame", frame)
-        header:Execute(REFRESH_HEADER_BINDINGS_SNIPPET)
-    else
-        currentKeyboardFrame = nil
-        header:Execute(CLEAR_HEADER_BINDINGS_SNIPPET)
-    end
-end
-
 -- Build virtual button name from a binding's modifiers + key.
 local function GetVirtualButtonName(binding)
     return "key" .. (binding.modifiers or ""):gsub("%-", "") .. binding.key:lower()
 end
 
--- Update the header's key-mapping attributes for the per-frame (SCROLL-WHEEL)
--- override path. Keyboard keys no longer go through here — they bind once to the
--- caster button (see ApplyGlobalKeyboardBindings).
+-- Forward-declared; body assigned after GetCurrentSpecID/GetStableLoadoutID are defined.
+local KeyboardContextUnresolved
+
+-- Update the header's key-mapping attributes for ALL override-binding paths:
+-- both scroll-wheel (keyboardBindings) and keyboard keys (globalKeyBindings).
+-- The unified list is what the new ENTER_SNIPPET reads to bind all keys to the
+-- per-frame proxy on hover.
+-- Guard: if the keyboard resolve came up empty only because spec/loadout data
+-- hasn't landed yet (cold login), keep the last-good list — same logic as
+-- ApplyGlobalKeyboardBindings / KeyboardContextUnresolved.
 local function UpdateHeaderKeyAttributes()
     local header = GetBindingHeader()
     if InCombatLockdown() then return end
+
+    -- If globalKeyBindings is empty but context is transiently unresolved,
+    -- keep the existing header key list (last-good preservation).
+    if #globalKeyBindings == 0 and #keyboardBindings == 0 and KeyboardContextUnresolved() then
+        return
+    end
 
     -- Clear old attributes
     local oldCount = header:GetAttribute("clickcast-keycount") or 0
@@ -418,15 +350,26 @@ local function UpdateHeaderKeyAttributes()
         header:SetAttribute("clickcast-vbtn" .. i, nil)
     end
 
-    -- Set new attributes (keyboardBindings now holds only scroll-wheel bindings)
-    header:SetAttribute("clickcast-keycount", #keyboardBindings)
+    -- Unified list: scroll-wheel first, then keyboard keys
+    local total = #keyboardBindings + #globalKeyBindings
+    header:SetAttribute("clickcast-keycount", total)
 
-    for i, binding in ipairs(keyboardBindings) do
+    local idx = 0
+    for _, binding in ipairs(keyboardBindings) do
+        idx = idx + 1
         local modPrefix = ModifiersToBindingPrefix(binding.modifiers)
         local fullKey = modPrefix .. binding.key:upper()
         local vBtn = GetVirtualButtonName(binding)
-        header:SetAttribute("clickcast-key" .. i, fullKey)
-        header:SetAttribute("clickcast-vbtn" .. i, vBtn)
+        header:SetAttribute("clickcast-key" .. idx, fullKey)
+        header:SetAttribute("clickcast-vbtn" .. idx, vBtn)
+    end
+    for _, binding in ipairs(globalKeyBindings) do
+        idx = idx + 1
+        local modPrefix = ModifiersToBindingPrefix(binding.modifiers)
+        local fullKey = modPrefix .. binding.key:upper()
+        local vBtn = GetVirtualButtonName(binding)
+        header:SetAttribute("clickcast-key" .. idx, fullKey)
+        header:SetAttribute("clickcast-vbtn" .. idx, vBtn)
     end
 end
 
@@ -472,52 +415,251 @@ end
 local function GetTargetProxy(frame) return GetActionProxy(frame, targetProxies, "target") end
 local function GetMenuProxy(frame)   return GetActionProxy(frame, menuProxies, "togglemenu") end
 
--- Set virtual-button action attributes on a frame for keyboard bindings.
-local function SetFrameKeyAttributes(frame)
+---------------------------------------------------------------------------
+-- PER-FRAME SECURE PROXIES: pooled SecureActionButton per registered frame
+-- Each registered frame gets its own named proxy so the ENTER_SNIPPET can
+-- route ALL override keys (scroll + keyboard) to it via SetBindingClick by
+-- name. The proxy MUST be named because SetBindingClick silently no-ops on an
+-- unnamed button. `useparent-unit` lets the proxy resolve the unit from its
+-- parent unit button. proxyBackup snapshots the frame's original routing attrs
+-- before any routing write so they can be restored on disable.
+---------------------------------------------------------------------------
+local proxyPool      = setmetatable({}, { __mode = "k" })
+local proxyBackup    = setmetatable({}, { __mode = "k" })
+-- [proxy] = {remappedAttr = true, ...} — helpbutton-*/harmbutton-* remapped attrs written
+local proxyRemapVBtns = setmetatable({}, { __mode = "k" })
+-- [frame] = list of attr names written by WriteFrameRouting (cleared by TeardownFrameRouting).
+local frameRoutingWritten = setmetatable({}, { __mode = "k" })
+local proxyCounter = 0
+
+-- All modifier prefixes the secure engine recognises for mouse buttons.
+local ALL_MOD_PREFIXES = {
+    "", "alt-", "ctrl-", "shift-",
+    "alt-ctrl-", "alt-shift-", "ctrl-shift-", "alt-ctrl-shift-",
+}
+
+-- Build the complete list of per-button routing attribute names we snapshot
+-- in GetOrCreateProxy (before any write ever happens). Covers every
+-- modifier×button combination so reassert passes never overwrite the backup.
+local PROXY_BACKUP_ATTRS = (function()
+    local list = {}
+    local btns = { "1", "2", "3", "4", "5" }
+    for _, pfx in ipairs(ALL_MOD_PREFIXES) do
+        for _, n in ipairs(btns) do
+            list[#list + 1] = pfx .. "type"        .. n
+            list[#list + 1] = pfx .. "clickbutton" .. n
+        end
+    end
+    return list
+end)()
+
+-- Return (creating if needed) the per-frame proxy. Returns nil in combat.
+local function GetOrCreateProxy(frame)
+    local existing = proxyPool[frame]
+    if existing then return existing end
+    if InCombatLockdown() then return nil end
+
+    proxyCounter = proxyCounter + 1
+    local proxy = CreateFrame("Button",
+        "QUI_ClickCastProxy" .. proxyCounter,
+        frame, "SecureActionButtonTemplate")
+    proxy:SetAttribute("useparent-unit", true)
+    proxy:SetAttribute("useOnKeyDown", false)
+    proxy:RegisterForClicks("AnyUp")
+
+    -- Snapshot original routing attrs before any routing write.
+    local backup = {}
+    for _, attr in ipairs(PROXY_BACKUP_ATTRS) do
+        backup[attr] = frame:GetAttribute(attr)
+    end
+    proxyBackup[frame] = backup
+
+    proxyPool[frame] = proxy
+    return proxy
+end
+
+-- Return the stored proxy's name for this frame, or nil if none created yet.
+local function ProxyName(frame)
+    local proxy = proxyPool[frame]
+    if not proxy then return nil end
+    return proxy:GetName()
+end
+
+---------------------------------------------------------------------------
+-- BUTTON NUMBER HELPER
+---------------------------------------------------------------------------
+local BUTTON_NUMBERS = {
+    LeftButton = "1",
+    RightButton = "2",
+    MiddleButton = "3",
+    Button4 = "4",
+    Button5 = "5",
+}
+
+---------------------------------------------------------------------------
+-- A2: FRAME ROUTING — write/restore the click-delegation attrs on the frame
+-- that tell the SecureUnitButton system to hand each click to the proxy.
+---------------------------------------------------------------------------
+
+-- Write per-bound-button routing attrs on FRAME so only configured mouse buttons
+-- delegate to the proxy.  Unbound buttons (e.g. unbound right-click) are NOT
+-- touched, so Blizzard's native left=target and right=menu survive on group frames.
+-- Scroll-wheel entries in activeBindings are excluded (they use the override path).
+local function WriteFrameRouting(frame, proxy)
+    if InCombatLockdown() then return end
+
+    local written = {}
+    frameRoutingWritten[frame] = written
+
+    for _, b in ipairs(activeBindings) do
+        -- Scroll-wheel buttons are not real mouse buttons; skip them here.
+        if not SCROLL_WHEEL_KEYS[b.button] then
+            local prefix = ModifiersToAttributePrefix(b.modifiers)
+            local btnNum = BUTTON_NUMBERS[b.button]
+            if btnNum then
+                local typeAttr   = prefix .. "type"        .. btnNum
+                local clickAttr  = prefix .. "clickbutton" .. btnNum
+                -- backup[typeAttr] and backup[clickAttr] were captured in
+                -- GetOrCreateProxy (before any write), covering all modifier×button
+                -- combos.  No dynamic snapshot needed here.
+                frame:SetAttribute(typeAttr,  "click")
+                frame:SetAttribute(clickAttr, proxy)
+                written[#written + 1] = typeAttr
+                written[#written + 1] = clickAttr
+            end
+        end
+    end
+
+    frame:SetAttribute("clickcast-proxyname", proxy:GetName())
+end
+
+-- Restore every routing attr written by WriteFrameRouting (from backup or nil),
+-- then clear clickcast-proxyname.
+local function TeardownFrameRouting(frame)
+    if InCombatLockdown() then return end
+    local backup  = proxyBackup[frame]
+    local written = frameRoutingWritten[frame]
+    if written then
+        for _, attr in ipairs(written) do
+            local orig = backup and backup[attr]
+            frame:SetAttribute(attr, orig)
+        end
+        frameRoutingWritten[frame] = nil
+    end
+    frame:SetAttribute("clickcast-proxyname", nil)
+end
+
+---------------------------------------------------------------------------
+-- A3: Write cast attrs to the PROXY (not the frame).
+-- SetFrameKeyAttributes → proxy virtual buttons (scroll-wheel bindings).
+-- ClearFrameKeyAttributes → clears from proxy.
+---------------------------------------------------------------------------
+
+-- Set virtual-button action attributes on the PROXY for scroll-wheel bindings.
+local function SetFrameKeyAttributes(proxy, frame)
     if InCombatLockdown() then return end
     for _, binding in ipairs(keyboardBindings) do
         local vBtn = GetVirtualButtonName(binding)
         local actionType = binding.actionType or "spell"
 
         if actionType == "spell" then
-            frame:SetAttribute("type-" .. vBtn, "macro")
-            frame:SetAttribute("macrotext-" .. vBtn, BuildMouseoverCastMacro(binding.spell))
+            if binding.friend then
+                local remapped = "friend" .. vBtn
+                proxy:SetAttribute(ButtonAttrName("helpbutton", vBtn), remapped)
+                proxy:SetAttribute("type-" .. remapped, "macro")
+                proxy:SetAttribute("macrotext-" .. remapped, BuildPlainMouseoverCastMacro(binding.spell))
+                local remapSet = proxyRemapVBtns[proxy]
+                if not remapSet then remapSet = {}; proxyRemapVBtns[proxy] = remapSet end
+                remapSet[ButtonAttrName("helpbutton", vBtn)] = true
+                remapSet["type-" .. remapped] = true
+                remapSet["macrotext-" .. remapped] = true
+            elseif binding.enemy then
+                local remapped = "enemy" .. vBtn
+                proxy:SetAttribute(ButtonAttrName("harmbutton", vBtn), remapped)
+                proxy:SetAttribute("type-" .. remapped, "macro")
+                proxy:SetAttribute("macrotext-" .. remapped, BuildPlainMouseoverCastMacro(binding.spell))
+                local remapSet = proxyRemapVBtns[proxy]
+                if not remapSet then remapSet = {}; proxyRemapVBtns[proxy] = remapSet end
+                remapSet[ButtonAttrName("harmbutton", vBtn)] = true
+                remapSet["type-" .. remapped] = true
+                remapSet["macrotext-" .. remapped] = true
+            else
+                proxy:SetAttribute("type-" .. vBtn, "macro")
+                proxy:SetAttribute("macrotext-" .. vBtn, BuildMouseoverCastMacro(binding.spell))
+            end
         elseif actionType == "macro" then
-            frame:SetAttribute("type-" .. vBtn, "macro")
-            frame:SetAttribute("macrotext-" .. vBtn, binding.macro)
+            if binding.friend then
+                local remapped = "friend" .. vBtn
+                proxy:SetAttribute(ButtonAttrName("helpbutton", vBtn), remapped)
+                proxy:SetAttribute("type-" .. remapped, "macro")
+                proxy:SetAttribute("macrotext-" .. remapped, binding.macro)
+                local remapSet = proxyRemapVBtns[proxy]
+                if not remapSet then remapSet = {}; proxyRemapVBtns[proxy] = remapSet end
+                remapSet[ButtonAttrName("helpbutton", vBtn)] = true
+                remapSet["type-" .. remapped] = true
+                remapSet["macrotext-" .. remapped] = true
+            elseif binding.enemy then
+                local remapped = "enemy" .. vBtn
+                proxy:SetAttribute(ButtonAttrName("harmbutton", vBtn), remapped)
+                proxy:SetAttribute("type-" .. remapped, "macro")
+                proxy:SetAttribute("macrotext-" .. remapped, binding.macro)
+                local remapSet = proxyRemapVBtns[proxy]
+                if not remapSet then remapSet = {}; proxyRemapVBtns[proxy] = remapSet end
+                remapSet[ButtonAttrName("harmbutton", vBtn)] = true
+                remapSet["type-" .. remapped] = true
+                remapSet["macrotext-" .. remapped] = true
+            else
+                proxy:SetAttribute("type-" .. vBtn, "macro")
+                proxy:SetAttribute("macrotext-" .. vBtn, binding.macro)
+            end
         elseif actionType == "target" then
             -- Scroll/key triggers are never the default left-click, so a native
             -- "target" always hits the 12.0.7 gate -- route through the proxy.
-            local proxy = GetTargetProxy(frame)
-            if proxy then
-                frame:SetAttribute("type-" .. vBtn, "click")
-                frame:SetAttribute("clickbutton-" .. vBtn, proxy)
+            local tProxy = GetTargetProxy(frame)
+            if tProxy then
+                proxy:SetAttribute("type-" .. vBtn, "click")
+                proxy:SetAttribute("clickbutton-" .. vBtn, tProxy)
             end
         elseif actionType == "focus" then
-            frame:SetAttribute("type-" .. vBtn, "focus")
+            proxy:SetAttribute("type-" .. vBtn, "focus")
         elseif actionType == "assist" then
-            frame:SetAttribute("type-" .. vBtn, "assist")
+            proxy:SetAttribute("type-" .. vBtn, "assist")
         elseif actionType == "menu" then
-            local proxy = GetMenuProxy(frame)
-            if proxy then
-                frame:SetAttribute("type-" .. vBtn, "click")
-                frame:SetAttribute("clickbutton-" .. vBtn, proxy)
+            local mProxy = GetMenuProxy(frame)
+            if mProxy then
+                proxy:SetAttribute("type-" .. vBtn, "click")
+                proxy:SetAttribute("clickbutton-" .. vBtn, mProxy)
             end
         elseif actionType:match("^ping") then
-            frame:SetAttribute("type-" .. vBtn, "macro")
-            frame:SetAttribute("macrotext-" .. vBtn, PING_MACROS[actionType] or "/ping [@mouseover]")
+            proxy:SetAttribute("type-" .. vBtn, "macro")
+            proxy:SetAttribute("macrotext-" .. vBtn, PING_MACROS[actionType] or "/ping [@mouseover]")
         end
     end
 end
 
--- Clear virtual-button attributes from a frame.
-local function ClearFrameKeyAttributes(frame)
+-- Clear virtual-button scroll-wheel attributes from a proxy.
+local function ClearFrameKeyAttributes(proxy)
     if InCombatLockdown() then return end
     for _, binding in ipairs(keyboardBindings) do
         local vBtn = GetVirtualButtonName(binding)
-        frame:SetAttribute("type-" .. vBtn, nil)
-        frame:SetAttribute("macrotext-" .. vBtn, nil)
-        frame:SetAttribute("clickbutton-" .. vBtn, nil)
+        proxy:SetAttribute("type-" .. vBtn, nil)
+        proxy:SetAttribute("macrotext-" .. vBtn, nil)
+        proxy:SetAttribute("clickbutton-" .. vBtn, nil)
+        -- Clear any helpbutton/harmbutton remapped attrs written by friend/enemy bindings
+        proxy:SetAttribute(ButtonAttrName("helpbutton", vBtn), nil)
+        proxy:SetAttribute(ButtonAttrName("harmbutton", vBtn), nil)
+        proxy:SetAttribute("type-friend" .. vBtn, nil)
+        proxy:SetAttribute("macrotext-friend" .. vBtn, nil)
+        proxy:SetAttribute("type-enemy" .. vBtn, nil)
+        proxy:SetAttribute("macrotext-enemy" .. vBtn, nil)
+    end
+    -- Clear any tracked remapped attrs (covers mouse-path remaps too for scroll case)
+    local remapSet = proxyRemapVBtns[proxy]
+    if remapSet then
+        for attr in pairs(remapSet) do
+            proxy:SetAttribute(attr, nil)
+        end
+        proxyRemapVBtns[proxy] = nil
     end
 end
 
@@ -602,13 +744,16 @@ local function ResolveBindings()
         local spellName = (actionType == "spell") and ResolveSpellName(binding) or binding.spell
 
         if binding.key and hasAction then
-            -- Keyboard key: bound once to the global caster button (not per-hover).
+            -- Keyboard key: macro written to each frame's proxy; bound to the
+            -- hovered frame's proxy (by name) on the secure OnEnter wrap.
             table_insert(globalKeyBindings, {
                 key = binding.key,
                 modifiers = binding.modifiers or "",
                 spell = spellName,
                 macro = binding.macro,
                 actionType = actionType,
+                friend = binding.friend,
+                enemy = binding.enemy,
             })
         elseif binding.button and hasAction then
             local scrollKey = SCROLL_WHEEL_KEYS[binding.button]
@@ -621,6 +766,8 @@ local function ResolveBindings()
                     spell = spellName,
                     macro = binding.macro,
                     actionType = actionType,
+                    friend = binding.friend,
+                    enemy = binding.enemy,
                 })
             else
                 -- Mouse binding
@@ -630,6 +777,8 @@ local function ResolveBindings()
                     spell = spellName,
                     macro = binding.macro,
                     actionType = actionType,
+                    friend = binding.friend,
+                    enemy = binding.enemy,
                 })
             end
         end
@@ -637,38 +786,24 @@ local function ResolveBindings()
 end
 
 ---------------------------------------------------------------------------
--- GLOBAL KEYBOARD CASTER (hover-intercept model)
--- Keyboard keys are NOT owned by click-cast. The action bar keeps its normal
--- keybind, so off-frame the key fires your real action-bar ability. The per-frame
--- OnEnter secure wrap binds the key (priority override) to this hidden caster
--- button while the cursor is over a registered click-cast frame, and OnLeave/
--- OnHide (plus the header's clear-only dangling net) release it — so click-cast
--- intercepts on hover and the action bar takes back over off-hover. Binding is
--- edge-driven entirely in the secure environment (no state-driver poll deciding
--- the bind); the caster only holds the per-key cast macros, published once on
--- binding change. @mouseover in each macro targets the hovered unit.
+-- KEYBOARD KEY VIRTUAL BUTTONS ON PROXY (A3/A4)
+-- Keyboard keys are routed via the header's unified key list (UpdateHeaderKeyAttributes)
+-- to the per-frame proxy by name on hover (ENTER_SNIPPET). The proxy itself holds
+-- the cast attrs (virtual buttons) so the right action fires.
+-- True while the spec/loadout context is still landing: keep last-good state.
 ---------------------------------------------------------------------------
-local casterButton
-local casterVBtns = {} -- virtual buttons set last apply, cleared on re-apply
+local proxyKeyVBtns = setmetatable({}, { __mode = "k" }) -- [proxy] = {vBtn=true,...}
 
-local function GetCasterButton()
-    if not casterButton then
-        casterButton = CreateFrame("Button", "QUI_ClickCastCaster", UIParent,
-            "SecureActionButtonTemplate,SecureHandlerStateTemplate")
-        casterButton:RegisterForClicks("AnyDown", "AnyUp")
-        casterButton:Hide()
-        -- The per-frame OnEnter/OnLeave/OnHide secure wraps reach the caster
-        -- through the header's "cc-caster" frame ref to bind/clear the keyboard
-        -- keys on the hover edges. The caster itself only holds the cast macros.
-        GetBindingHeader():SetFrameRef("cc-caster", casterButton)
-    end
-    return casterButton
+KeyboardContextUnresolved = function()
+    local db = GetDB()
+    if not db or not db.clickCast or not db.clickCast.perSpec then return false end
+    if not GetCurrentSpecID() then return true end
+    if db.clickCast.perLoadout and not GetStableLoadoutID() then return true end
+    return false
 end
 
--- Macro for a keyboard binding on the caster. The caster is only bound while a
--- unit is under the cursor, so this is a pure @mouseover cast (off-frame, the
--- action bar's own keybind runs instead — not this).
-local function BuildCasterMacro(binding)
+-- Build the macro text for a keyboard binding on the proxy.
+local function BuildKeyMacro(binding)
     local actionType = binding.actionType or "spell"
     if actionType == "spell" then
         return BuildMouseoverCastMacro(binding.spell)
@@ -683,94 +818,188 @@ local function BuildCasterMacro(binding)
     elseif actionType:match("^ping") then
         return PING_MACROS[actionType] or "/ping [@mouseover]"
     end
-    return nil -- e.g. "menu": handled via togglemenu type attr, no macro
+    return nil
 end
 
--- True while the spec/loadout context is still landing (cold login): the talent
--- APIs return nil until populated, so an empty keyboard resolve is untrustworthy
--- and the last-good caster state should be kept. Once the context IS known, an
--- empty list is AUTHORITATIVE -- the user removed their last keyboard key, or this
--- spec simply has none -- and stale caster state must be cleared.
-local function KeyboardContextUnresolved()
-    local db = GetDB()
-    if not db or not db.clickCast or not db.clickCast.perSpec then return false end
-    if not GetCurrentSpecID() then return true end
-    if db.clickCast.perLoadout and not GetStableLoadoutID() then return true end
-    return false
-end
-
--- Publish the current keyboard keys (key list + per-key macros) to the caster so
--- the per-frame OnEnter wrap can bind them on hover. Set at setup / on binding
--- change, out of combat.
-local function ApplyGlobalKeyboardBindings()
+-- Write keyboard-key virtual-button cast attrs to a proxy.
+-- Called after GetOrCreateProxy; frame is the parent for target/menu sub-proxies.
+local function ApplyKeyboardAttrsToProxy(proxy, frame)
     if InCombatLockdown() then return end
-    -- Keep the last-good key list on a TRANSIENT empty resolve (spec/loadout data
-    -- not landed yet). Gate on the CONTEXT being unresolved, NOT on "any binding
-    -- configured" -- the old HasConfiguredBindings() guard counted mouse/scroll
-    -- bindings too, so removing the last keyboard key while a mouse binding
-    -- remained left the caster's stale key attributes in place. The removed key
-    -- then re-armed on hover and fired a dead action instead of falling through to
-    -- its normal binding, until a /reload rebuilt the caster from scratch.
     if #globalKeyBindings == 0 and KeyboardContextUnresolved() then return end
-    local btn = GetCasterButton()
 
-    -- Clear stale per-key attributes from the previous apply.
-    for vBtn in pairs(casterVBtns) do
-        btn:SetAttribute("type-" .. vBtn, nil)
-        btn:SetAttribute("macrotext-" .. vBtn, nil)
-        btn:SetAttribute("unit-" .. vBtn, nil)
+    -- Clear stale attrs from previous apply on this proxy.
+    local oldVBtns = proxyKeyVBtns[proxy]
+    if oldVBtns then
+        for vBtn in pairs(oldVBtns) do
+            proxy:SetAttribute("type-" .. vBtn, nil)
+            proxy:SetAttribute("macrotext-" .. vBtn, nil)
+            proxy:SetAttribute("unit-" .. vBtn, nil)
+            proxy:SetAttribute("clickbutton-" .. vBtn, nil)
+            proxy:SetAttribute(ButtonAttrName("helpbutton", vBtn), nil)
+            proxy:SetAttribute(ButtonAttrName("harmbutton", vBtn), nil)
+            proxy:SetAttribute("type-friend" .. vBtn, nil)
+            proxy:SetAttribute("macrotext-friend" .. vBtn, nil)
+            proxy:SetAttribute("type-enemy" .. vBtn, nil)
+            proxy:SetAttribute("macrotext-enemy" .. vBtn, nil)
+        end
     end
-    local oldCount = btn:GetAttribute("cc-keycount") or 0
-    for i = 1, oldCount do
-        btn:SetAttribute("cc-key" .. i, nil)
-        btn:SetAttribute("cc-vbtn" .. i, nil)
-    end
-    wipe(casterVBtns)
+    -- Clear old remap tracking for this proxy before rebuilding.
+    proxyRemapVBtns[proxy] = nil
+    local vBtnSet = {}
+    proxyKeyVBtns[proxy] = vBtnSet
 
-    btn:SetAttribute("cc-keycount", #globalKeyBindings)
-    for i, b in ipairs(globalKeyBindings) do
+    for _, b in ipairs(globalKeyBindings) do
         local vBtn = GetVirtualButtonName(b)
-        local fullKey = ModifiersToBindingPrefix(b.modifiers) .. b.key:upper()
-        casterVBtns[vBtn] = true
-        btn:SetAttribute("cc-key" .. i, fullKey)
-        btn:SetAttribute("cc-vbtn" .. i, vBtn)
-        if (b.actionType or "spell") == "menu" then
-            btn:SetAttribute("type-" .. vBtn, "togglemenu")
-            btn:SetAttribute("unit-" .. vBtn, "mouseover")
+        vBtnSet[vBtn] = true
+        local actionType = b.actionType or "spell"
+        if actionType == "menu" then
+            proxy:SetAttribute("type-" .. vBtn, "togglemenu")
+            proxy:SetAttribute("unit-" .. vBtn, "mouseover")
+        elseif actionType == "target" then
+            local tProxy = GetTargetProxy(frame)
+            if tProxy then
+                proxy:SetAttribute("type-" .. vBtn, "click")
+                proxy:SetAttribute("clickbutton-" .. vBtn, tProxy)
+            end
         else
-            local mt = BuildCasterMacro(b)
-            if mt then
-                btn:SetAttribute("type-" .. vBtn, "macro")
-                btn:SetAttribute("macrotext-" .. vBtn, mt)
+            local actionType2 = b.actionType or "spell"
+            if actionType2 == "spell" and b.friend then
+                local remapped = "friend" .. vBtn
+                proxy:SetAttribute(ButtonAttrName("helpbutton", vBtn), remapped)
+                proxy:SetAttribute("type-" .. remapped, "macro")
+                proxy:SetAttribute("macrotext-" .. remapped, BuildPlainMouseoverCastMacro(b.spell))
+                local remapSet = proxyRemapVBtns[proxy]
+                if not remapSet then remapSet = {}; proxyRemapVBtns[proxy] = remapSet end
+                remapSet[ButtonAttrName("helpbutton", vBtn)] = true
+                remapSet["type-" .. remapped] = true
+                remapSet["macrotext-" .. remapped] = true
+            elseif actionType2 == "spell" and b.enemy then
+                local remapped = "enemy" .. vBtn
+                proxy:SetAttribute(ButtonAttrName("harmbutton", vBtn), remapped)
+                proxy:SetAttribute("type-" .. remapped, "macro")
+                proxy:SetAttribute("macrotext-" .. remapped, BuildPlainMouseoverCastMacro(b.spell))
+                local remapSet = proxyRemapVBtns[proxy]
+                if not remapSet then remapSet = {}; proxyRemapVBtns[proxy] = remapSet end
+                remapSet[ButtonAttrName("harmbutton", vBtn)] = true
+                remapSet["type-" .. remapped] = true
+                remapSet["macrotext-" .. remapped] = true
+            elseif actionType2 == "macro" and b.friend then
+                local remapped = "friend" .. vBtn
+                proxy:SetAttribute(ButtonAttrName("helpbutton", vBtn), remapped)
+                proxy:SetAttribute("type-" .. remapped, "macro")
+                proxy:SetAttribute("macrotext-" .. remapped, b.macro)
+                local remapSet = proxyRemapVBtns[proxy]
+                if not remapSet then remapSet = {}; proxyRemapVBtns[proxy] = remapSet end
+                remapSet[ButtonAttrName("helpbutton", vBtn)] = true
+                remapSet["type-" .. remapped] = true
+                remapSet["macrotext-" .. remapped] = true
+            elseif actionType2 == "macro" and b.enemy then
+                local remapped = "enemy" .. vBtn
+                proxy:SetAttribute(ButtonAttrName("harmbutton", vBtn), remapped)
+                proxy:SetAttribute("type-" .. remapped, "macro")
+                proxy:SetAttribute("macrotext-" .. remapped, b.macro)
+                local remapSet = proxyRemapVBtns[proxy]
+                if not remapSet then remapSet = {}; proxyRemapVBtns[proxy] = remapSet end
+                remapSet[ButtonAttrName("harmbutton", vBtn)] = true
+                remapSet["type-" .. remapped] = true
+                remapSet["macrotext-" .. remapped] = true
+            else
+                local mt = BuildKeyMacro(b)
+                if mt then
+                    proxy:SetAttribute("type-" .. vBtn, "macro")
+                    proxy:SetAttribute("macrotext-" .. vBtn, mt)
+                end
             end
         end
     end
 end
 
-local function ClearGlobalKeyboardBindings()
+-- Clear keyboard-key virtual-button attrs from a proxy.
+local function ClearKeyboardAttrsFromProxy(proxy)
     if InCombatLockdown() then return end
-    if casterButton then
-        casterButton:SetAttribute("cc-keycount", 0)
-        if casterButton.Execute then casterButton:Execute("self:ClearBindings()") end
+    local oldVBtns = proxyKeyVBtns[proxy]
+    if not oldVBtns then return end
+    for vBtn in pairs(oldVBtns) do
+        proxy:SetAttribute("type-" .. vBtn, nil)
+        proxy:SetAttribute("macrotext-" .. vBtn, nil)
+        proxy:SetAttribute("unit-" .. vBtn, nil)
+        proxy:SetAttribute("clickbutton-" .. vBtn, nil)
+        -- Clear any helpbutton/harmbutton remapped attrs
+        proxy:SetAttribute(ButtonAttrName("helpbutton", vBtn), nil)
+        proxy:SetAttribute(ButtonAttrName("harmbutton", vBtn), nil)
+        proxy:SetAttribute("type-friend" .. vBtn, nil)
+        proxy:SetAttribute("macrotext-friend" .. vBtn, nil)
+        proxy:SetAttribute("type-enemy" .. vBtn, nil)
+        proxy:SetAttribute("macrotext-enemy" .. vBtn, nil)
+    end
+    proxyKeyVBtns[proxy] = nil
+    -- Clear any tracked remapped attrs from the mouse/scroll path
+    local remapSet = proxyRemapVBtns[proxy]
+    if remapSet then
+        for attr in pairs(remapSet) do
+            proxy:SetAttribute(attr, nil)
+        end
+        proxyRemapVBtns[proxy] = nil
     end
 end
 
--- No caster frame-hover gate: binding is decided by the per-frame OnEnter wrap,
--- which only exists on registered click-cast frames, so a bare @mouseover over a
--- nameplate / world unit can never arm a keyboard key. The old cc-frame<i> ref
--- list (consumed only by the removed mouseoverstate snippet's geometry gate) is
--- gone with it.
+-- Publish keyboard key attrs to ALL currently registered proxies.
+-- Called after ResolveBindings so the new globalKeyBindings list is live.
+local function ApplyGlobalKeyboardBindings()
+    if InCombatLockdown() then return end
+    for frame in pairs(registeredFrames) do
+        local proxy = proxyPool[frame]
+        if proxy then
+            ApplyKeyboardAttrsToProxy(proxy, frame)
+        end
+    end
+end
+
+-- Clear keyboard key attrs from all registered proxies (on disable/teardown).
+local function ClearGlobalKeyboardBindings()
+    if InCombatLockdown() then return end
+    for frame in pairs(registeredFrames) do
+        local proxy = proxyPool[frame]
+        if proxy then
+            ClearKeyboardAttrsFromProxy(proxy)
+        end
+    end
+end
 
 ---------------------------------------------------------------------------
--- BUTTON NUMBER HELPER
+-- CLICK DIRECTION: Controls whether source frames fire on key down, up, or both.
+-- The per-frame proxy always stays pinned to RegisterForClicks("AnyUp") because
+-- the delegated click sends no direction arg of its own — only the source frame's
+-- direction affects when the cast fires. This mirrors the reference addon's design.
 ---------------------------------------------------------------------------
-local BUTTON_NUMBERS = {
-    LeftButton = "1",
-    RightButton = "2",
-    MiddleButton = "3",
-    Button4 = "4",
-    Button5 = "5",
-}
+
+-- Return the RegisterForClicks argument(s) for the source frame based on the
+-- configured clickDirection setting:
+--   "both"        → "AnyUp", "AnyDown"
+--   "up"          → "AnyUp"
+--   "down" / nil  → "AnyDown"
+local function GetButtonDirections()
+    local db = GetDB()
+    local dir = db and db.clickCast and db.clickCast.clickDirection
+    if dir == "both" then
+        return "AnyUp", "AnyDown"
+    elseif dir == "up" then
+        return "AnyUp"
+    else
+        return "AnyDown"
+    end
+end
+
+-- True when the source frame should register the action on key/button DOWN
+-- (i.e. direction is "down" or "both"). False when "up" only.
+local function UseActionOnKeyDown()
+    local db = GetDB()
+    local dir = db and db.clickCast and db.clickCast.clickDirection
+    return dir ~= "up"
+end
+
+-- BUTTON_NUMBERS is defined above the A2 FRAME ROUTING section (moved up so
+-- WriteFrameRouting can reference it without a forward-declaration).
 
 ---------------------------------------------------------------------------
 -- FRAME SETUP: Apply click-cast attributes to a frame
@@ -782,68 +1011,162 @@ local function SetupFrameClickCast(frame)
     local db = GetDB()
     if not db or not db.clickCast or not db.clickCast.enabled then return end
 
-    -- Set secure attributes for each mouse binding
+    -- Get (or create) the per-frame named proxy.
+    local proxy = GetOrCreateProxy(frame)
+    if not proxy then return end
+
+    -- Write mouse cast attrs to the PROXY (A3).
     for _, binding in ipairs(activeBindings) do
         local prefix = ModifiersToAttributePrefix(binding.modifiers)
-
         local btnNum = BUTTON_NUMBERS[binding.button] or "1"
         local actionType = binding.actionType or "spell"
 
         if actionType == "spell" then
-            -- Use macro with @mouseover conditional for reliable targeting
-            frame:SetAttribute(prefix .. "type" .. btnNum, "macro")
-            frame:SetAttribute(prefix .. "macrotext" .. btnNum, BuildMouseoverCastMacro(binding.spell))
-        elseif actionType == "macro" then
-            frame:SetAttribute(prefix .. "type" .. btnNum, "macro")
-            frame:SetAttribute(prefix .. "macrotext" .. btnNum, binding.macro)
-        elseif actionType == "target" then
-            -- Plain unmodified left-click targets natively via Blizzard's default
-            -- click-binding interaction; every other target trigger is gated in
-            -- 12.0.7 -- route it through the ungated "click" proxy.
-            if prefix == "" and btnNum == "1" then
-                frame:SetAttribute(prefix .. "type" .. btnNum, "target")
+            if binding.friend then
+                -- Friend-only: helpbutton remap → cast on remapped button.
+                -- Engine resolution: SecureButton_GetModifiedAttribute reads
+                -- livemodifierprefix .. attrname .. GetButtonSuffix(button), so
+                -- for alt+LeftButton the attr is "alt-helpbutton1" (prefix before
+                -- the attr name, numeric btnNum appended without dash).
+                local helpAttr = prefix .. "helpbutton" .. btnNum  -- e.g. "shift-helpbutton1"
+                local remapped = "friend" .. btnNum                -- e.g. "friend1" (no prefix)
+                local typeAttr = prefix .. "type-friend" .. btnNum -- e.g. "shift-type-friend1"
+                local textAttr = prefix .. "macrotext-friend" .. btnNum
+                proxy:SetAttribute(helpAttr, remapped)
+                local macro
+                if db.clickCast.smartRes and prefix == "" and btnNum == "1" then
+                    local resSpell = GetResurrectionSpellName()
+                    if resSpell then
+                        macro = "/cast [@mouseover,help,dead] " .. resSpell
+                            .. "; [@mouseover] " .. binding.spell
+                    end
+                end
+                proxy:SetAttribute(typeAttr, "macro")
+                proxy:SetAttribute(textAttr, macro or BuildPlainMouseoverCastMacro(binding.spell))
+                -- Track remapped attrs for ClearFrameClickCast
+                local remapSet = proxyRemapVBtns[proxy]
+                if not remapSet then remapSet = {}; proxyRemapVBtns[proxy] = remapSet end
+                remapSet[helpAttr] = true
+                remapSet[typeAttr] = true
+                remapSet[textAttr] = true
+            elseif binding.enemy then
+                -- Enemy-only: harmbutton remap → cast on remapped button.
+                local harmAttr = prefix .. "harmbutton" .. btnNum  -- e.g. "shift-harmbutton1"
+                local remapped = "enemy" .. btnNum                 -- e.g. "enemy1" (no prefix)
+                local typeAttr = prefix .. "type-enemy" .. btnNum
+                local textAttr = prefix .. "macrotext-enemy" .. btnNum
+                proxy:SetAttribute(harmAttr, remapped)
+                proxy:SetAttribute(typeAttr, "macro")
+                proxy:SetAttribute(textAttr, BuildPlainMouseoverCastMacro(binding.spell))
+                -- Track remapped attrs for ClearFrameClickCast
+                local remapSet = proxyRemapVBtns[proxy]
+                if not remapSet then remapSet = {}; proxyRemapVBtns[proxy] = remapSet end
+                remapSet[harmAttr] = true
+                remapSet[typeAttr] = true
+                remapSet[textAttr] = true
             else
-                local proxy = GetTargetProxy(frame)
-                if proxy then
-                    frame:SetAttribute(prefix .. "type" .. btnNum, "click")
-                    frame:SetAttribute(prefix .. "clickbutton" .. btnNum, proxy)
+                -- Any (neither flag): 3-clause macro; smart-res on unmodified left-click.
+                local macro
+                if db.clickCast.smartRes and prefix == "" and btnNum == "1" then
+                    local resSpell = GetResurrectionSpellName()
+                    if resSpell then
+                        macro = "/cast [@mouseover,help,dead] " .. resSpell
+                            .. "; [@mouseover,help,nodead] " .. binding.spell
+                            .. "; [@mouseover,harm,nodead] " .. binding.spell
+                            .. "; [@mouseover] " .. binding.spell
+                    end
+                end
+                proxy:SetAttribute(prefix .. "type" .. btnNum, "macro")
+                proxy:SetAttribute(prefix .. "macrotext" .. btnNum, macro or BuildMouseoverCastMacro(binding.spell))
+            end
+        elseif actionType == "macro" then
+            if binding.friend then
+                -- Friend-only macro: helpbutton remap → run user macro on remapped button.
+                local helpAttr = prefix .. "helpbutton" .. btnNum
+                local remapped = "friend" .. btnNum
+                local typeAttr = prefix .. "type-friend" .. btnNum
+                local textAttr = prefix .. "macrotext-friend" .. btnNum
+                proxy:SetAttribute(helpAttr, remapped)
+                proxy:SetAttribute(typeAttr, "macro")
+                proxy:SetAttribute(textAttr, binding.macro)
+                local remapSet = proxyRemapVBtns[proxy]
+                if not remapSet then remapSet = {}; proxyRemapVBtns[proxy] = remapSet end
+                remapSet[helpAttr] = true
+                remapSet[typeAttr] = true
+                remapSet[textAttr] = true
+            elseif binding.enemy then
+                -- Enemy-only macro: harmbutton remap → run user macro on remapped button.
+                local harmAttr = prefix .. "harmbutton" .. btnNum
+                local remapped = "enemy" .. btnNum
+                local typeAttr = prefix .. "type-enemy" .. btnNum
+                local textAttr = prefix .. "macrotext-enemy" .. btnNum
+                proxy:SetAttribute(harmAttr, remapped)
+                proxy:SetAttribute(typeAttr, "macro")
+                proxy:SetAttribute(textAttr, binding.macro)
+                local remapSet = proxyRemapVBtns[proxy]
+                if not remapSet then remapSet = {}; proxyRemapVBtns[proxy] = remapSet end
+                remapSet[harmAttr] = true
+                remapSet[typeAttr] = true
+                remapSet[textAttr] = true
+            else
+                proxy:SetAttribute(prefix .. "type" .. btnNum, "macro")
+                proxy:SetAttribute(prefix .. "macrotext" .. btnNum, binding.macro)
+            end
+        elseif actionType == "target" then
+            -- Plain unmodified left-click targets natively; every other target
+            -- trigger is gated in 12.0.7 -- route through the ungated click proxy.
+            if prefix == "" and btnNum == "1" then
+                proxy:SetAttribute(prefix .. "type" .. btnNum, "target")
+            else
+                local tProxy = GetTargetProxy(frame)
+                if tProxy then
+                    proxy:SetAttribute(prefix .. "type" .. btnNum, "click")
+                    proxy:SetAttribute(prefix .. "clickbutton" .. btnNum, tProxy)
                 end
             end
         elseif actionType == "focus" then
-            frame:SetAttribute(prefix .. "type" .. btnNum, "focus")
+            proxy:SetAttribute(prefix .. "type" .. btnNum, "focus")
         elseif actionType == "assist" then
-            frame:SetAttribute(prefix .. "type" .. btnNum, "assist")
+            proxy:SetAttribute(prefix .. "type" .. btnNum, "assist")
         elseif actionType == "menu" then
-            -- Plain unmodified right-click opens the menu natively (default
-            -- interaction); other menu triggers are gated -- use the proxy.
+            -- Plain unmodified right-click opens menu natively; others gated.
             if prefix == "" and btnNum == "2" then
-                frame:SetAttribute(prefix .. "type" .. btnNum, "togglemenu")
+                proxy:SetAttribute(prefix .. "type" .. btnNum, "togglemenu")
             else
-                local proxy = GetMenuProxy(frame)
-                if proxy then
-                    frame:SetAttribute(prefix .. "type" .. btnNum, "click")
-                    frame:SetAttribute(prefix .. "clickbutton" .. btnNum, proxy)
+                local mProxy = GetMenuProxy(frame)
+                if mProxy then
+                    proxy:SetAttribute(prefix .. "type" .. btnNum, "click")
+                    proxy:SetAttribute(prefix .. "clickbutton" .. btnNum, mProxy)
                 end
             end
         elseif actionType:match("^ping") then
-            frame:SetAttribute(prefix .. "type" .. btnNum, "macro")
-            frame:SetAttribute(prefix .. "macrotext" .. btnNum, PING_MACROS[actionType] or "/ping [@mouseover]")
+            proxy:SetAttribute(prefix .. "type" .. btnNum, "macro")
+            proxy:SetAttribute(prefix .. "macrotext" .. btnNum, PING_MACROS[actionType] or "/ping [@mouseover]")
         end
     end
 
-    -- Hover wraps serve both override paths: scroll wheel (per-frame virtual
-    -- buttons) and keyboard keys (instant caster bind/clear on enter/leave).
-    if #keyboardBindings > 0 or #globalKeyBindings > 0 then
-        WrapFrameSecureHandlers(frame)
-    end
+    -- Write scroll-wheel virtual button cast attrs to proxy (A3).
     if #keyboardBindings > 0 then
-        SetFrameKeyAttributes(frame)
-        -- Enable mouse wheel on the frame so scroll bindings generate events
+        SetFrameKeyAttributes(proxy, frame)
         frame:EnableMouseWheel(true)
     end
 
-    -- Live-registration marker, read by the secure hover snippets (the wraps
-    -- are permanent; this is what un-gates them per registration cycle).
+    -- Write keyboard-key virtual button cast attrs to proxy (A3/A4).
+    ApplyKeyboardAttrsToProxy(proxy, frame)
+
+    -- Install secure hover wraps whenever there are any override keys (A4).
+    -- Always wrap registered frames — the snippets are no-ops if keycount=0.
+    WrapFrameSecureHandlers(frame)
+
+    -- Write frame routing attrs so clicks delegate to the proxy (A2).
+    WriteFrameRouting(frame, proxy)
+
+    -- Register the source frame for the configured click direction.
+    -- The proxy stays pinned to "AnyUp" (set in GetOrCreateProxy); only the
+    -- source frame changes so the engine sees the correct up/down event.
+    frame:RegisterForClicks(GetButtonDirections())
+
+    -- Live-registration marker, read by the secure hover snippets.
     frame:SetAttribute("clickcast-active", 1)
 
     registeredFrames[frame] = true
@@ -854,104 +1177,31 @@ local function SetupFrameClickCast(frame)
     if not hookedFrames[frame] then
         hookedFrames[frame] = true
 
-        frame:HookScript("OnEnter", function(self)
-            if not isEnabled then return end
-            currentKeyboardFrame = self
-            -- On-demand recovery: if click-cast is configured but still unresolved
-            -- (secure header stranded at keycount 0 -- spec/loadout data landed
-            -- after the startup retry window, or frames laid out late), rebuild now.
-            -- The frame is provably present and the player is reaching for the
-            -- keybind. Defer out of this (secure) event context via C_Timer.After(0)
-            -- so RefreshBindings' protected attribute writes don't taint; the flag
-            -- coalesces hovering several still-dead frames into one rebuild.
-            if IsUnresolvedButConfigured() and not dataReadyRefreshScheduled then
-                dataReadyRefreshScheduled = true
-                C_Timer.After(0, function()
-                    dataReadyRefreshScheduled = false
-                    -- If the data landed mid-combat (player reaching for the
-                    -- keybind during a pull), the secure rebuild can't run now.
-                    -- Don't drop the recovery: leave a pending request so
-                    -- PLAYER_REGEN_ENABLED revives the keybind the instant combat
-                    -- ends — otherwise keyboard click-cast stays dead for the rest
-                    -- of the session unless the player happens to hover again out
-                    -- of combat. Mirrors the talent-event / spec-change handlers.
-                    if not InCombatLockdown() then
-                        QUI_GFCC:RefreshBindings()
-                    else
-                        QUI_GFCC.pendingRefresh = true
-                    end
-                end)
-            end
-        end)
-        frame:HookScript("OnLeave", function(self)
-            if currentKeyboardFrame == self then
-                currentKeyboardFrame = nil
-                ClearHeaderOverrideBindings()
-            end
-        end)
-        frame:HookScript("OnHide", function(self)
-            if currentKeyboardFrame == self then
-                currentKeyboardFrame = nil
-                ClearHeaderOverrideBindings()
-            end
-        end)
-        -- No OnShow hook: re-show under a stationary cursor re-arms on the next
-        -- OnEnter (cursor move) or via the OOC re-register path. currentKeyboardFrame
-        -- is maintained only by the real OnEnter/OnLeave/OnHide pointer events, not
-        -- by an insecure mouse-over poll.
+        -- Binding lifecycle is SECURE-ONLY: the OnEnter wrap binds, the OnLeave
+        -- wrap clears, and the clear-only dangling driver releases a lost cursor.
+        -- Smart-res is baked into the proxy's left-click macro at setup time
+        -- (the [@mouseover,help,dead] clause), not swapped insecurely on hover.
 
-        -- Smart resurrection: hook to swap spell when target is dead.
-        -- Always install the hook — check db.clickCast.smartRes at runtime
-        -- so toggling the setting takes effect without reload.
-        local resSpell = GetResurrectionSpellName()
-        if resSpell then
-            local resMacro = "/cast [@mouseover] " .. resSpell
-            frame:HookScript("OnEnter", function(self)
+        -- Cold-login recovery: if spec/loadout data arrives after the bounded
+        -- startup retry is exhausted, a hover on any registered frame triggers
+        -- a one-shot re-resolve so keyboard click-cast revives without a /reload.
+        -- This is the only insecure OnEnter hook — it only schedules a timer and
+        -- never touches secure attributes directly.
+        frame:HookScript("OnEnter", function()
+            if not isEnabled then return end
+            if #globalKeyBindings > 0 then return end        -- already resolved
+            if KeyboardContextUnresolved() then return end   -- still unresolved
+            -- Spec data just landed but retry is exhausted — schedule recovery.
+            C_Timer.After(0, function()
                 if not isEnabled then return end
-                local ccdb = GetDB()
-                if not ccdb or not ccdb.clickCast or not ccdb.clickCast.smartRes then return end
-                if InCombatLockdown() then return end
-                local unit = self:GetAttribute("unit")
-                if unit and UnitIsDeadOrGhost(unit) and (UnitIsConnected(unit) or not UnitIsPlayer(unit)) then
-                    -- Swap left click to res
-                    smartResSwapped[self] = true
-                    self:SetAttribute("type1", "macro")
-                    self:SetAttribute("macrotext1", resMacro)
+                if InCombatLockdown() then
+                    -- Can't run secure setup mid-combat; defer to PLAYER_REGEN_ENABLED.
+                    QUI_GFCC.pendingRefresh = true
+                    return
                 end
+                QUI_GFCC:RefreshBindings()
             end)
-            frame:HookScript("OnLeave", function(self)
-                if not smartResSwapped[self] then return end
-                smartResSwapped[self] = nil
-                if not isEnabled then return end
-                if InCombatLockdown() then return end
-                -- Restore normal binding (only needed because OnEnter swapped to res)
-                local normalBinding = nil
-                for _, b in ipairs(activeBindings) do
-                    if b.button == "LeftButton" and (b.modifiers or "") == "" then
-                        normalBinding = b
-                        break
-                    end
-                end
-                if normalBinding then
-                    local actionType = normalBinding.actionType or "spell"
-                    if actionType == "spell" then
-                        self:SetAttribute("type1", "macro")
-                        self:SetAttribute("macrotext1", BuildMouseoverCastMacro(normalBinding.spell))
-                    elseif actionType == "macro" then
-                        self:SetAttribute("type1", "macro")
-                        self:SetAttribute("macrotext1", normalBinding.macro)
-                    elseif actionType:match("^ping") then
-                        self:SetAttribute("type1", "macro")
-                        self:SetAttribute("macrotext1", PING_MACROS[actionType] or "/ping [@mouseover]")
-                    else
-                        self:SetAttribute("type1", actionType)
-                    end
-                else
-                    -- Default: target (safe fallback when undoing a res swap)
-                    self:SetAttribute("type1", "target")
-                end
-            end)
-        end
+        end)
 
         -- Tooltip showing available bindings (mouse + keyboard).
         -- Always install the hook — check db.clickCast.showTooltip at runtime
@@ -979,8 +1229,8 @@ local function SetupFrameClickCast(frame)
                         0.8, 0.8, 0.8, 1, 1, 1
                     )
                 end
-                -- Keyboard keys live on the global caster (globalKeyBindings);
-                -- keyboardBindings holds only the per-frame scroll-wheel binds.
+                -- globalKeyBindings = keyboard keys; keyboardBindings = scroll-wheel
+                -- binds. Both render their macros on the per-frame proxy.
                 for _, keyTable in ipairs({ globalKeyBindings, keyboardBindings }) do
                     for _, binding in ipairs(keyTable) do
                         local modLabel = MODIFIER_LABELS[binding.modifiers or ""] or ""
@@ -1001,35 +1251,79 @@ local function SetupFrameClickCast(frame)
 end
 
 ---------------------------------------------------------------------------
--- CLEAR: Remove click-cast attributes from a frame
+-- CLEAR: Remove click-cast attributes from a frame (A5)
 ---------------------------------------------------------------------------
 local function ClearFrameClickCast(frame)
     if not frame or not registeredFrames[frame] then return end
     if InCombatLockdown() then return end
 
-    -- Clear all mouse click-cast attributes for every button/modifier combo
-    -- Prefixes in canonical alphabetical order (alt-ctrl-shift) to match WoW's secure template
-    local modPrefixes = { "", "alt-", "ctrl-", "shift-", "alt-ctrl-", "alt-shift-", "ctrl-shift-", "alt-ctrl-shift-" }
-    for _, prefix in ipairs(modPrefixes) do
-        for _, btnNum in pairs(BUTTON_NUMBERS) do
-            frame:SetAttribute(prefix .. "type" .. btnNum, nil)
-            frame:SetAttribute(prefix .. "macrotext" .. btnNum, nil)
-            frame:SetAttribute(prefix .. "clickbutton" .. btnNum, nil)
+    -- Restore the frame's original routing attrs (from backup) and clear proxyname.
+    TeardownFrameRouting(frame)
+
+    -- Clear cast attrs from the proxy.
+    local proxy = proxyPool[frame]
+    if proxy then
+        -- Clear mouse cast attrs from proxy.
+        local modPrefixes = { "", "alt-", "ctrl-", "shift-", "alt-ctrl-", "alt-shift-", "ctrl-shift-", "alt-ctrl-shift-" }
+        for _, prefix in ipairs(modPrefixes) do
+            for _, btnNum in pairs(BUTTON_NUMBERS) do
+                proxy:SetAttribute(prefix .. "type" .. btnNum, nil)
+                proxy:SetAttribute(prefix .. "macrotext" .. btnNum, nil)
+                proxy:SetAttribute(prefix .. "clickbutton" .. btnNum, nil)
+            end
         end
+        -- Clear helpbutton/harmbutton and remapped attrs for mouse bindings.
+        -- Attr names follow the engine's resolution format: prefix before the attr
+        -- name, numeric btnNum appended without dash (e.g. "shift-helpbutton1").
+        for _, prefix in ipairs(modPrefixes) do
+            for _, btnNum in pairs(BUTTON_NUMBERS) do
+                proxy:SetAttribute(prefix .. "helpbutton" .. btnNum, nil)
+                proxy:SetAttribute(prefix .. "harmbutton" .. btnNum, nil)
+                proxy:SetAttribute(prefix .. "type-friend" .. btnNum, nil)
+                proxy:SetAttribute(prefix .. "macrotext-friend" .. btnNum, nil)
+                proxy:SetAttribute(prefix .. "type-enemy" .. btnNum, nil)
+                proxy:SetAttribute(prefix .. "macrotext-enemy" .. btnNum, nil)
+            end
+        end
+        -- Clear any remaining tracked remap attrs.
+        local remapSet = proxyRemapVBtns[proxy]
+        if remapSet then
+            for attr in pairs(remapSet) do
+                proxy:SetAttribute(attr, nil)
+            end
+            proxyRemapVBtns[proxy] = nil
+        end
+        -- Clear scroll-wheel virtual-button attrs from proxy.
+        ClearFrameKeyAttributes(proxy)
+        -- Clear keyboard-key virtual-button attrs from proxy.
+        ClearKeyboardAttrsFromProxy(proxy)
     end
 
-    -- Clear keyboard virtual-button attributes
-    ClearFrameKeyAttributes(frame)
-
-    -- Drop out of the secure hover snippets (wraps are permanent; this gate
-    -- is what stops a cleared frame from re-binding the caster on hover).
+    -- Drop out of the secure hover snippets.
     frame:SetAttribute("clickcast-active", nil)
 
-    -- Restore default target/menu behavior
-    frame:SetAttribute("type1", "target")
-    frame:SetAttribute("type2", "togglemenu")
-
     registeredFrames[frame] = nil
+end
+
+---------------------------------------------------------------------------
+-- REASSERT: Re-apply frame routing after CompactUnitFrame_SetUnit clobbers (A5)
+---------------------------------------------------------------------------
+local function ReassertFrameClickRouting(frame)
+    if not registeredFrames[frame] then return end
+    if InCombatLockdown() then return end
+    local proxy = proxyPool[frame]
+    if not proxy then return end
+    WriteFrameRouting(frame, proxy)
+end
+
+local function ReassertAllFrameClickRouting()
+    if InCombatLockdown() then
+        QUI_GFCC.pendingRefresh = true
+        return
+    end
+    for frame in pairs(registeredFrames) do
+        ReassertFrameClickRouting(frame)
+    end
 end
 
 local function RegisterHeaderChildren(header)
@@ -1045,6 +1339,20 @@ end
 ---------------------------------------------------------------------------
 -- PUBLIC API
 ---------------------------------------------------------------------------
+
+-- Minimal test hook: exposes private pool/routing functions for unit tests.
+QUI_GFCC._test = {
+    GetOrCreateProxy             = GetOrCreateProxy,
+    ProxyName                    = ProxyName,
+    WriteFrameRouting            = WriteFrameRouting,
+    TeardownFrameRouting         = TeardownFrameRouting,
+    ReassertFrameClickRouting    = ReassertFrameClickRouting,
+    ApplyKeyboardAttrsToProxy    = ApplyKeyboardAttrsToProxy,
+    GetButtonDirections          = GetButtonDirections,
+    UseActionOnKeyDown           = UseActionOnKeyDown,
+    BuildPlainMouseoverCastMacro = BuildPlainMouseoverCastMacro,
+}
+
 function QUI_GFCC:Initialize()
     -- One-time per-character: copy legacy profile.quiGroupFrames.clickCast
     -- onto db.char.clickCast. Initialize can run before PLAYER_ENTERING_WORLD
@@ -1109,6 +1417,10 @@ function QUI_GFCC:RegisterAllFrames()
 
     -- Spotlight header children
     RegisterHeaderChildren(GF.spotlightHeader)
+
+    -- Re-assert frame routing for already-registered frames: CompactUnitFrame_SetUnit
+    -- clobbers *type1 etc. when it reassigns a unit to a header child on roster changes.
+    ReassertAllFrameClickRouting()
 end
 
 function QUI_GFCC:RegisterUnitFrames()
@@ -1155,7 +1467,6 @@ function QUI_GFCC:RefreshBindings()
         UpdateHeaderKeyAttributes()
         ClearHeaderOverrideBindings()
         ClearGlobalKeyboardBindings()
-        currentKeyboardFrame = nil
         isEnabled = false
         return
     end
@@ -1163,11 +1474,10 @@ function QUI_GFCC:RefreshBindings()
     -- Enable/refresh: resolve bindings and re-apply
     isEnabled = true
     ResolveBindings()
-    UpdateHeaderKeyAttributes()          -- scroll-wheel per-frame attrs
-    ApplyGlobalKeyboardBindings()        -- keyboard keys bound ONCE to the caster
-    self:RegisterAllFrames()             -- per-frame wrap (scroll only)
+    UpdateHeaderKeyAttributes()          -- scroll-wheel + keyboard key attrs on header
+    ApplyGlobalKeyboardBindings()        -- keyboard cast attrs on proxy virtual buttons
+    self:RegisterAllFrames()
     self:RegisterUnitFrames()
-    RefreshHeaderOverrideBindings()
 end
 
 function QUI_GFCC:IsEnabled()
@@ -1527,7 +1837,6 @@ eventFrame:SetScript("OnEvent", function(self, event)
             if not InCombatLockdown() then
                 QUI_GFCC:RegisterAllFrames()
                 QUI_GFCC:RegisterUnitFrames()
-                RefreshHeaderOverrideBindings()
             else
                 QUI_GFCC.pendingRefresh = true
             end

@@ -204,20 +204,24 @@ for _ = 1, 12 do
     flushAfter()
 end
 
--- Keyboard click-cast must now be applied: key F published to the global caster
--- with an @mouseover macro, and the OnEnter wrap binds it to the caster on hover.
-local caster = assert(_G.QUI_ClickCastCaster,
-    "BUG: caster button missing after spec data became ready")
-assert((caster:GetAttribute("cc-keycount") or 0) == 1,
-    "BUG: key F not published to the caster after cold login -- keyboard click-cast still dead")
-local mt = caster:GetAttribute("macrotext-keyf")
+-- Keyboard click-cast must now be applied: key F published to the header with a
+-- unified key list, and the proxy holds the cast macro.
+local header = assert(_G.QUI_ClickCastHeader,
+    "BUG: binding header missing after spec data became ready")
+assert((header:GetAttribute("clickcast-keycount") or 0) == 1,
+    "BUG: key F not published to the header after cold login -- keyboard click-cast still dead")
+
+local proxyName = child:GetAttribute("clickcast-proxyname")
+assert(proxyName, "BUG: frame missing clickcast-proxyname after registration")
+local proxy = assert(_G[proxyName],
+    "BUG: proxy not in _G after registration")
+local mt = proxy:GetAttribute("macrotext-keyf")
 assert(mt and mt:find("@mouseover", 1, true),
-    "BUG: caster macro for F missing @mouseover cast after cold login")
--- Hovering the registered frame binds F to the caster. The wrap exists only on
--- registered click-cast frames, so a nameplate / world mouseover can't steal the
--- key off the action bar.
+    "BUG: proxy macro for F missing @mouseover cast after cold login")
+-- Hovering the registered frame binds F to the proxy via the header.
 RunWrap(child, "OnEnter")
-assert(caster.overrideBindings.F and caster.overrideBindings.F.button == "keyf",
-    "BUG: hovering did not bind F to the caster after cold login")
+assert(header.overrideBindings.F and header.overrideBindings.F.target == proxyName
+    and header.overrideBindings.F.button == "keyf",
+    "BUG: hovering did not bind F to the proxy via header after cold login")
 
 print("OK: groupframes_clickcast_cold_login_catchup_test")

@@ -24,6 +24,7 @@ local function NewFrame(frameType, name, parent, template)
     local frame = {
         frameType = frameType, name = name, parent = parent, template = template,
         attributes = {}, scripts = {}, hooks = {}, events = {},
+        secureWraps = {}, overrideBindings = {}, frameRefs = {},
     }
     frameMT = frameMT or {
         __index = function(_, key)
@@ -34,6 +35,8 @@ local function NewFrame(frameType, name, parent, template)
                 end
             elseif key == "GetAttribute" then
                 return function(self, attr) return self.attributes[attr] end
+            elseif key == "GetName" then
+                return function(self) return self.name end
             elseif key == "SetScript" then
                 return function(self, s, h) self.scripts[s] = h end
             elseif key == "HookScript" then
@@ -42,6 +45,32 @@ local function NewFrame(frameType, name, parent, template)
                 return function(self, e) self.events[e] = true end
             elseif key == "CreateTexture" or key == "CreateFontString" then
                 return function(self) return NewFrame(key, nil, self, nil) end
+            elseif key == "EnableMouseWheel" then
+                return function(self, enabled) self.mouseWheelEnabled = enabled end
+            elseif key == "ClearBindings" then
+                return function(self) self.overrideBindings = {} end
+            elseif key == "SetBindingClick" then
+                return function(self, priority, bindKey, target, button)
+                    self.overrideBindings[bindKey] = { priority = priority, target = target, button = button }
+                end
+            elseif key == "SetFrameRef" then
+                return function(self, label, ref) self.frameRefs[label] = ref end
+            elseif key == "GetFrameRef" then
+                return function(self, label) return self.frameRefs[label] end
+            elseif key == "IsVisible" then
+                return function(self) return self.visible ~= false end
+            elseif key == "GetMousePosition" then
+                return function(self)
+                    if self.underMouse == true then return 0.5, 0.5 end
+                    return nil
+                end
+            elseif key == "Execute" then
+                return function(self, snippet)
+                    local loader = loadstring or load
+                    local chunk, err = loader("local self = ...\n" .. snippet)
+                    assert(chunk, err)
+                    return chunk(self)
+                end
             end
             return noop
         end,
@@ -134,51 +163,66 @@ GFCC:RegisterAllFrames()
 
 local a = child.attributes
 
--- ---- 1. plain unmodified left->target stays NATIVE ---------------------
-assert(a["type1"] == "target",
-    "plain left->target must stay native type=target (Blizzard default interaction), got: "
-    .. tostring(a["type1"]))
-assert(a["clickbutton1"] == nil,
-    "plain left->target must NOT use a click proxy")
+-- In the proxy routing model every click on the frame delegates through the
+-- click-cast proxy (frame type1="click", clickbutton1=proxy).  Cast and action
+-- attrs live on the proxy, not the frame directly.
+local proxyName = child:GetAttribute("clickcast-proxyname")
+assert(proxyName, "registered frame must have clickcast-proxyname after setup")
+local proxy = assert(_G[proxyName], "click-cast proxy must be in _G")
+local pa = proxy.attributes
 
--- ---- 2. plain unmodified right->menu stays NATIVE ----------------------
-assert(a["type2"] == "togglemenu",
-    "plain right->menu must stay native type=togglemenu, got: " .. tostring(a["type2"]))
-assert(a["clickbutton2"] == nil,
-    "plain right->menu must NOT use a click proxy")
+-- ---- 1. plain unmodified left->target: frame routes to proxy, proxy is "target"
+assert(a["type1"] == "click",
+    "frame type1 must be 'click' (delegates all clicks to proxy), got: " .. tostring(a["type1"]))
+assert(a["clickbutton1"] == proxy,
+    "frame clickbutton1 must be the click-cast proxy")
+assert(pa["type1"] == "target",
+    "proxy type1 must be 'target' for plain left->target, got: " .. tostring(pa["type1"]))
+assert(pa["clickbutton1"] == nil,
+    "proxy must NOT add another click indirection for plain target")
 
--- ---- 3. alt+left->target routes through the proxy ----------------------
-assert(a["alt-type1"] == "click",
-    "BUG: alt+left->target must route through the ungated click proxy (was the "
-    .. "12.0.7 gate dropping modified target), got type: " .. tostring(a["alt-type1"]))
-local tProxy = a["alt-clickbutton1"]
+-- ---- 2. plain unmodified right->menu: proxy carries togglemenu
+assert(a["type2"] == "click",
+    "frame type2 must be 'click' (delegates to proxy), got: " .. tostring(a["type2"]))
+assert(pa["type2"] == "togglemenu",
+    "proxy type2 must be 'togglemenu' for plain right->menu, got: " .. tostring(pa["type2"]))
+assert(pa["clickbutton2"] == nil,
+    "proxy must NOT add another click indirection for plain menu")
+
+-- ---- 3. alt+left->target: proxy routes through the ungated target sub-proxy
+assert(pa["alt-type1"] == "click",
+    "BUG: proxy alt-type1 must be 'click' to route modified target through ungated sub-proxy, got: "
+    .. tostring(pa["alt-type1"]))
+local tProxy = pa["alt-clickbutton1"]
 assert(type(tProxy) == "table" and tProxy.template == "SecureActionButtonTemplate",
-    "alt+left->target clickbutton must be a SecureActionButton proxy frame")
+    "proxy alt-clickbutton1 must be a SecureActionButton target sub-proxy")
 assert(tProxy.attributes["type1"] == "target" and tProxy.attributes["type"] == "target",
-    "target proxy must carry type=target on the bare + numbered buttons")
+    "target sub-proxy must carry type=target on bare + numbered buttons")
 assert(tProxy.attributes["useparent-unit"] == true,
-    "target proxy must resolve its unit from the parent unit button")
+    "target sub-proxy must resolve its unit from the parent unit button")
 assert(tProxy.attributes["useOnKeyDown"] == false,
-    "target proxy must act on the up-click regardless of the cast-on-keydown CVar")
+    "target sub-proxy must act on up-click regardless of cast-on-keydown CVar")
 
--- ---- 4. ctrl+right->menu routes through the proxy ----------------------
-assert(a["ctrl-type2"] == "click",
-    "BUG: ctrl+right->menu must route through the click proxy, got type: "
-    .. tostring(a["ctrl-type2"]))
-local mProxy = a["ctrl-clickbutton2"]
+-- ---- 4. ctrl+right->menu: proxy routes through the ungated menu sub-proxy
+assert(pa["ctrl-type2"] == "click",
+    "BUG: proxy ctrl-type2 must be 'click' to route modified menu through ungated sub-proxy, got: "
+    .. tostring(pa["ctrl-type2"]))
+local mProxy = pa["ctrl-clickbutton2"]
 assert(type(mProxy) == "table" and mProxy.template == "SecureActionButtonTemplate",
-    "ctrl+right->menu clickbutton must be a SecureActionButton proxy frame")
+    "proxy ctrl-clickbutton2 must be a SecureActionButton menu sub-proxy")
 assert(mProxy.attributes["type2"] == "togglemenu",
-    "menu proxy must carry type=togglemenu on the numbered button")
+    "menu sub-proxy must carry type=togglemenu on the numbered button")
 
--- ---- 5. target and menu proxies are distinct ---------------------------
-assert(tProxy ~= mProxy, "target and menu proxies must be separate buttons")
+-- ---- 5. target and menu sub-proxies are distinct
+assert(tProxy ~= mProxy, "target and menu sub-proxies must be separate buttons")
 
--- ---- 6. clearing the frame drops the proxy routing ---------------------
+-- ---- 6. RefreshBindings is idempotent
 inCombat = false
 GFCC:RefreshBindings()
--- After a refresh with the same bindings, the routing is re-applied (idempotent).
-assert(child.attributes["alt-type1"] == "click",
-    "after RefreshBindings, modified target routing should persist")
+-- After refresh with the same bindings, routing is re-applied.
+local proxyName2 = child:GetAttribute("clickcast-proxyname")
+local proxy2 = proxyName2 and _G[proxyName2]
+assert(proxy2 and proxy2.attributes["alt-type1"] == "click",
+    "after RefreshBindings, modified target routing should persist on proxy")
 
 print("OK: groupframes_clickcast_target_menu_proxy_test")

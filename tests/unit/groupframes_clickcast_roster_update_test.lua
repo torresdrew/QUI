@@ -21,6 +21,7 @@ local function NewFrame(frameType, name, parent, template)
     local frame = {
         frameType = frameType, name = name, parent = parent, template = template,
         attributes = {}, scripts = {}, hooks = {}, events = {},
+        secureWraps = {}, overrideBindings = {}, frameRefs = {},
     }
     frameMT = frameMT or {
         __index = function(_, key)
@@ -31,6 +32,8 @@ local function NewFrame(frameType, name, parent, template)
                 end
             elseif key == "GetAttribute" then
                 return function(self, attr) return self.attributes[attr] end
+            elseif key == "GetName" then
+                return function(self) return self.name end
             elseif key == "SetScript" then
                 return function(self, s, h) self.scripts[s] = h end
             elseif key == "HookScript" then
@@ -41,6 +44,32 @@ local function NewFrame(frameType, name, parent, template)
                 return function(self, e) self.events[e] = nil end
             elseif key == "CreateTexture" or key == "CreateFontString" then
                 return function(self) return NewFrame(key, nil, self, nil) end
+            elseif key == "EnableMouseWheel" then
+                return function(self, enabled) self.mouseWheelEnabled = enabled end
+            elseif key == "ClearBindings" then
+                return function(self) self.overrideBindings = {} end
+            elseif key == "SetBindingClick" then
+                return function(self, priority, bindKey, target, button)
+                    self.overrideBindings[bindKey] = { priority = priority, target = target, button = button }
+                end
+            elseif key == "SetFrameRef" then
+                return function(self, label, ref) self.frameRefs[label] = ref end
+            elseif key == "GetFrameRef" then
+                return function(self, label) return self.frameRefs[label] end
+            elseif key == "IsVisible" then
+                return function(self) return self.visible ~= false end
+            elseif key == "GetMousePosition" then
+                return function(self)
+                    if self.underMouse == true then return 0.5, 0.5 end
+                    return nil
+                end
+            elseif key == "Execute" then
+                return function(self, snippet)
+                    local loader = loadstring or load
+                    local chunk, err = loader("local self = ...\n" .. snippet)
+                    assert(chunk, err)
+                    return chunk(self)
+                end
             end
             return noop
         end,
@@ -132,10 +161,18 @@ end
 assert(eventFrame, "clickcast module should create an event frame")
 local function fire(event, ...) eventFrame.scripts["OnEvent"](eventFrame, event, ...) end
 
+-- Helper: given a registered child frame, return its click-cast proxy (or nil).
+local function getProxy(child)
+    local pname = child:GetAttribute("clickcast-proxyname")
+    return pname and _G[pname]
+end
+
 -- Initial state: solo, one frame registered.
 GFCC:Initialize()
 GFCC:RegisterAllFrames()
-assert(child1.attributes["type1"] == "macro", "player frame should be bound initially")
+-- With proxy routing: frame type1="click", cast attrs are on the proxy.
+local p1 = assert(getProxy(child1), "player frame should have a click-cast proxy after registration")
+assert(p1.attributes["type1"] == "macro", "player proxy should hold the spell macro action")
 
 -- Zone into a follower dungeon: the secure header creates a new follower button.
 local child2 = NewFrame("Button", "QUI_TestUnit2", nil, "SecureUnitButtonTemplate")
@@ -146,10 +183,12 @@ assert(child2.attributes["type1"] == nil, "sanity: new follower frame is unbound
 fire("GROUP_ROSTER_UPDATE")
 
 -- The new follower frame must get click-cast applied without a /reload.
-assert(child2.attributes["type1"] == "macro",
-    "BUG: after GROUP_ROSTER_UPDATE the new follower frame should be click-cast bound without /reload")
-assert(child2.attributes["macrotext1"] and child2.attributes["macrotext1"]:find("Rejuvenation", 1, true),
-    "new follower frame should cast the configured spell")
+local p2 = assert(getProxy(child2),
+    "BUG: after GROUP_ROSTER_UPDATE the new follower frame should have a proxy (click-cast bound without /reload)")
+assert(p2.attributes["type1"] == "macro",
+    "BUG: new follower proxy should hold the spell macro after GROUP_ROSTER_UPDATE")
+assert(p2.attributes["macrotext1"] and p2.attributes["macrotext1"]:find("Rejuvenation", 1, true),
+    "new follower proxy should cast the configured spell")
 
 -- Secure headers can be sparse while the roster is settling. A later child
 -- must not be skipped just because an earlier child slot is temporarily empty.
@@ -157,7 +196,9 @@ partyHeader.attributes["child2"] = nil
 local child4 = NewFrame("Button", "QUI_TestUnit4", nil, "SecureUnitButtonTemplate")
 partyHeader.attributes["child4"] = child4
 fire("GROUP_ROSTER_UPDATE")
-assert(child4.attributes["type1"] == "macro",
+local p4 = assert(getProxy(child4),
+    "BUG: sparse secure-header child4 should still get a proxy after roster update")
+assert(p4.attributes["type1"] == "macro",
     "BUG: sparse secure-header children should still be click-cast bound after roster updates")
 
 -- And the in-combat case should defer, then apply when combat ends.
@@ -168,7 +209,9 @@ fire("GROUP_ROSTER_UPDATE")
 assert(child3.attributes["type1"] == nil, "in combat, registration must be deferred (no secure writes)")
 inCombat = false
 fire("PLAYER_REGEN_ENABLED")
-assert(child3.attributes["type1"] == "macro",
-    "BUG: deferred roster registration should apply when combat ends")
+local p3 = assert(getProxy(child3),
+    "BUG: deferred roster child should have a proxy after combat ends")
+assert(p3.attributes["type1"] == "macro",
+    "BUG: deferred roster registration should apply spell macro when combat ends")
 
 print("OK: groupframes_clickcast_roster_update_test")

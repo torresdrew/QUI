@@ -20,6 +20,7 @@ local function NewFrame(frameType, name, parent, template)
     local frame = {
         frameType = frameType, name = name, parent = parent, template = template,
         attributes = {}, scripts = {}, hooks = {}, events = {},
+        secureWraps = {}, overrideBindings = {}, frameRefs = {},
     }
     frameMT = frameMT or {
         __index = function(_, key)
@@ -30,6 +31,8 @@ local function NewFrame(frameType, name, parent, template)
                 end
             elseif key == "GetAttribute" then
                 return function(self, attr) return self.attributes[attr] end
+            elseif key == "GetName" then
+                return function(self) return self.name end
             elseif key == "SetScript" then
                 return function(self, s, h) self.scripts[s] = h end
             elseif key == "HookScript" then
@@ -38,6 +41,32 @@ local function NewFrame(frameType, name, parent, template)
                 return function(self, e) self.events[e] = true end
             elseif key == "CreateTexture" or key == "CreateFontString" then
                 return function(self) return NewFrame(key, nil, self, nil) end
+            elseif key == "EnableMouseWheel" then
+                return function(self, enabled) self.mouseWheelEnabled = enabled end
+            elseif key == "ClearBindings" then
+                return function(self) self.overrideBindings = {} end
+            elseif key == "SetBindingClick" then
+                return function(self, priority, bindKey, target, button)
+                    self.overrideBindings[bindKey] = { priority = priority, target = target, button = button }
+                end
+            elseif key == "SetFrameRef" then
+                return function(self, label, ref) self.frameRefs[label] = ref end
+            elseif key == "GetFrameRef" then
+                return function(self, label) return self.frameRefs[label] end
+            elseif key == "IsVisible" then
+                return function(self) return self.visible ~= false end
+            elseif key == "GetMousePosition" then
+                return function(self)
+                    if self.underMouse == true then return 0.5, 0.5 end
+                    return nil
+                end
+            elseif key == "Execute" then
+                return function(self, snippet)
+                    local loader = loadstring or load
+                    local chunk, err = loader("local self = ...\n" .. snippet)
+                    assert(chunk, err)
+                    return chunk(self)
+                end
             end
             return noop
         end,
@@ -131,11 +160,17 @@ GFCC:Initialize()
 assert(GFCC:IsEnabled(), "click-cast should be enabled after Initialize")
 GFCC:RegisterAllFrames()
 
-assert(child.attributes["type1"] == "macro",
-    "after initial register, left-click should be a macro action")
-assert(child.attributes["macrotext1"]:find("Rejuvenation", 1, true),
-    "after initial register, left-click macro should cast Rejuvenation, got: "
-    .. tostring(child.attributes["macrotext1"]))
+-- In the proxy routing model, cast attrs live on the per-frame proxy, not the
+-- frame itself. The frame has type1="click" + clickbutton1=proxy.
+local proxyName = child:GetAttribute("clickcast-proxyname")
+assert(proxyName, "registered frame must have clickcast-proxyname")
+local proxy = assert(_G[proxyName], "proxy must be in _G")
+
+assert(proxy.attributes["type1"] == "macro",
+    "after initial register, proxy left-click should be a macro action")
+assert(proxy.attributes["macrotext1"]:find("Rejuvenation", 1, true),
+    "after initial register, proxy left-click macro should cast Rejuvenation, got: "
+    .. tostring(proxy.attributes["macrotext1"]))
 
 -- ---- 2. change the binding out of combat via the real UI path -----------
 -- The options UI changes "which click casts what" by removing the old binding
@@ -145,13 +180,17 @@ assert(GFCC:RemoveBinding(1))
 assert(GFCC:AddBinding({ button = "LeftButton", modifiers = "", actionType = "spell",
     spell = "Regrowth", spellID = 8936 }))
 
--- ---- 3. assert the live frame reflects the NEW binding ------------------
-assert(child.attributes["type1"] == "macro",
-    "after binding change, left-click should still be a macro action")
-assert(child.attributes["macrotext1"]:find("Regrowth", 1, true),
-    "BUG: after changing the binding out of combat, left-click macro should cast "
-    .. "Regrowth without a /reload. Got: " .. tostring(child.attributes["macrotext1"]))
-assert(not child.attributes["macrotext1"]:find("Rejuvenation", 1, true),
-    "BUG: stale Rejuvenation macro should be gone after the binding change")
+-- Re-fetch proxy after RefreshBindings (same frame, same proxy name).
+proxyName = child:GetAttribute("clickcast-proxyname")
+proxy = assert(_G[proxyName], "proxy must still be in _G after rebind")
+
+-- ---- 3. assert the live proxy reflects the NEW binding ------------------
+assert(proxy.attributes["type1"] == "macro",
+    "after binding change, proxy left-click should still be a macro action")
+assert(proxy.attributes["macrotext1"]:find("Regrowth", 1, true),
+    "BUG: after changing the binding out of combat, proxy left-click macro should cast "
+    .. "Regrowth without a /reload. Got: " .. tostring(proxy.attributes["macrotext1"]))
+assert(not proxy.attributes["macrotext1"]:find("Rejuvenation", 1, true),
+    "BUG: stale Rejuvenation macro should be gone from proxy after the binding change")
 
 print("OK: groupframes_clickcast_dynamic_apply_test")

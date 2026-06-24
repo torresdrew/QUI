@@ -157,30 +157,37 @@ local GFCC = assert(ns.QUI_GroupFrameClickCast)
 GFCC:Initialize()
 GFCC:RegisterAllFrames()
 
--- Keyboard keys are PUBLISHED to the global caster (its cast macros); the
--- OnEnter wrap binds them to the caster on hover, not a state-driver poll.
-local caster = assert(_G.QUI_ClickCastCaster, "caster button should exist for keyboard binding")
-assert(caster:GetAttribute("cc-key1") == "F", "key F should be published to the caster")
-assert(caster:GetAttribute("type-keyf") == "macro", "caster key virtual button should be configured")
+-- Keyboard keys are PUBLISHED to the binding header's unified key list;
+-- the per-frame proxy holds the cast macros; OnEnter binds them to the proxy by name.
+local header = assert(_G.QUI_ClickCastHeader, "binding header should exist for keyboard binding")
+local proxyName = child:GetAttribute("clickcast-proxyname")
+assert(proxyName, "registered frame must have clickcast-proxyname")
+local proxy = assert(_G[proxyName], "proxy must be in _G")
+
+assert(header:GetAttribute("clickcast-key1") == "F", "key F should be published to the header key list")
+assert(proxy:GetAttribute("type-keyf") == "macro", "proxy key virtual button should be configured")
 
 inCombat = false
 assert(GFCC:RemoveBinding(1))
 assert(GFCC:AddBinding({ key = "G", modifiers = "", actionType = "spell",
     spell = "Regrowth", spellID = 8936 }))
 
-assert(caster:GetAttribute("cc-key1") == "G",
-    "BUG: caster should now publish the new G key after changing key bindings")
-assert(caster:GetAttribute("type-keyf") == nil,
-    "BUG: stale F virtual button should be cleared from the caster after rebind")
-assert(caster:GetAttribute("type-keyg") == "macro", "new caster key virtual button should be configured")
-assert(caster:GetAttribute("macrotext-keyg"):find("Regrowth", 1, true),
-    "new caster key virtual button should cast Regrowth")
--- And the OnEnter secure wrap binds the current key (G) to the caster while the
--- cursor is over the registered frame. The wrap exists only on registered click-
--- cast frames, so bare @mouseover (nameplates/world) can never arm a key.
+-- Re-fetch proxy after rebind (same frame, same proxy).
+proxyName = child:GetAttribute("clickcast-proxyname")
+proxy = assert(_G[proxyName], "proxy must still be in _G after rebind")
+
+assert(header:GetAttribute("clickcast-key1") == "G",
+    "BUG: header should now publish the new G key after changing key bindings")
+assert(proxy:GetAttribute("type-keyf") == nil,
+    "BUG: stale F virtual button should be cleared from the proxy after rebind")
+assert(proxy:GetAttribute("type-keyg") == "macro", "new proxy key virtual button should be configured")
+assert(proxy:GetAttribute("macrotext-keyg"):find("Regrowth", 1, true),
+    "new proxy key virtual button should cast Regrowth")
+-- The OnEnter secure wrap binds the current key (G) to the proxy by name.
 RunWrap(child, "OnEnter")
-assert(caster.overrideBindings.G and caster.overrideBindings.G.button == "keyg",
-    "BUG: hovering should bind the new G key without /reload")
-assert(not caster.overrideBindings.F, "BUG: stale F binding should be gone after rebind")
+assert(header.overrideBindings.G and header.overrideBindings.G.target == proxyName
+    and header.overrideBindings.G.button == "keyg",
+    "BUG: hovering should bind the new G key to the proxy via header without /reload")
+assert(not header.overrideBindings.F, "BUG: stale F binding should be gone from header after rebind")
 
 print("OK: groupframes_clickcast_keyboard_dynamic_apply_test")

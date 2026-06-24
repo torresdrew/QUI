@@ -148,18 +148,18 @@ local GFCC = assert(ns.QUI_GroupFrameClickCast)
 specReady = true
 GFCC:Initialize()
 GFCC:RegisterAllFrames()
--- Keyboard key F is published once to the global caster button.
-local caster = assert(_G.QUI_ClickCastCaster, "caster button should exist")
-assert(caster:GetAttribute("cc-key1") == "F", "precondition: caster should publish key F")
+-- Keyboard key F is published once to the global binding header.
+local header = assert(_G.QUI_ClickCastHeader, "binding header should exist")
+assert(header:GetAttribute("clickcast-key1") == "F", "precondition: header should publish key F")
 
 -- A re-entrant Initialize() while spec data is momentarily unavailable must NOT
--- wipe the good caster key list -- a transient empty resolve keeps last-good and
+-- wipe the good header key list -- a transient empty resolve keeps last-good and
 -- lets the recovery re-resolve, rather than silently killing keyboard click-cast.
 specReady = false
 GFCC:Initialize()
 
-assert(caster:GetAttribute("cc-key1") == "F",
-    "BUG: re-entrant Initialize with spec data unavailable wiped the caster keyboard "
+assert(header:GetAttribute("clickcast-key1") == "F",
+    "BUG: re-entrant Initialize with spec data unavailable wiped the header keyboard "
     .. "key list -- silent keyboard click-cast death")
 
 print("OK: groupframes_clickcast_reinit_consistency_test")
