@@ -1205,50 +1205,55 @@ local function UpdateName(frame)
     if not frame or not frame.unit or not frame.nameText then return end
     local unit = frame.unit
 
-    if not UnitExists(unit) then
-        frame.nameText:SetText("")
-        return
-    end
-
     local isRaid = frame._isRaid
     local nameSettings = GetNameSettings(isRaid)
     if nameSettings and nameSettings.showName == false then
+        -- Config-driven hide is the only path that intentionally blanks the name.
         frame.nameText:SetText("")
         return
     end
 
-    local name = UnitName(unit)
-    if name then
-        -- UnitName is SecretWhenUnitIdentityRestricted: in restricted combat it
-        -- returns a secret string, and a bare `#name > maxLen` length pre-check
-        -- throws on a secret, aborting UpdateName and leaving the name blanked for
-        -- the rest of combat. TruncateUTF8 is secret-safe (it format-truncates a
-        -- secret and no-ops when the value is already short), so call it directly
-        -- without a Lua-side length compare; SetText is a secret-safe sink.
-        local maxLen = nameSettings and nameSettings.maxNameLength or 10
-        if maxLen > 0 and Helpers.TruncateUTF8 then
-            name = Helpers.TruncateUTF8(name, maxLen)
-        elseif maxLen > 0 and not (issecretvalue and issecretvalue(name)) and #name > maxLen then
-            name = name:sub(1, maxLen)
-        end
-        frame.nameText:SetText(name)
+    -- NON-DESTRUCTIVE on transient invalid reads. A shown frame can momentarily
+    -- report !UnitExists (or a nil UnitName) during a pull / phase / instance
+    -- transition. The only events that re-assert names are UNIT_NAME_UPDATE for
+    -- this exact unit and GROUP_ROSTER_UPDATE -> RefreshAllFrames; in a stable
+    -- raid roster neither need fire again for the rest of the fight, so blanking
+    -- here would leave the name empty until /reload. Keep the last good name:
+    -- empty slots are hidden by the secure header (stale text is never visible),
+    -- and a genuine player swap re-runs UpdateName via the unit-attribute
+    -- Level-3 path, which sets the correct new name.
+    if not UnitExists(unit) then return end
 
-        -- Color
-        if nameSettings and nameSettings.nameTextUseClassColor then
-            local _, class = UnitClass(unit)
-            if class then
-                local cc = RAID_CLASS_COLORS[class]
-                if cc then
-                    frame.nameText:SetTextColor(cc.r, cc.g, cc.b, 1)
-                    return
-                end
+    local name = UnitName(unit)
+    if not name then return end
+
+    -- UnitName is SecretWhenUnitIdentityRestricted: in restricted combat it
+    -- returns a secret string, and a bare `#name > maxLen` length pre-check
+    -- throws on a secret, aborting UpdateName and leaving the name blanked for
+    -- the rest of combat. TruncateUTF8 is secret-safe (it format-truncates a
+    -- secret and no-ops when the value is already short), so call it directly
+    -- without a Lua-side length compare; SetText is a secret-safe sink.
+    local maxLen = nameSettings and nameSettings.maxNameLength or 10
+    if maxLen > 0 and Helpers.TruncateUTF8 then
+        name = Helpers.TruncateUTF8(name, maxLen)
+    elseif maxLen > 0 and not (issecretvalue and issecretvalue(name)) and #name > maxLen then
+        name = name:sub(1, maxLen)
+    end
+    frame.nameText:SetText(name)
+
+    -- Color
+    if nameSettings and nameSettings.nameTextUseClassColor then
+        local _, class = UnitClass(unit)
+        if class then
+            local cc = RAID_CLASS_COLORS[class]
+            if cc then
+                frame.nameText:SetTextColor(cc.r, cc.g, cc.b, 1)
+                return
             end
         end
-        local tc = nameSettings and nameSettings.nameTextColor or COLORS.WHITE
-        frame.nameText:SetTextColor(tc[1], tc[2], tc[3], tc[4] or 1)
-    else
-        frame.nameText:SetText("")
     end
+    local tc = nameSettings and nameSettings.nameTextColor or COLORS.WHITE
+    frame.nameText:SetTextColor(tc[1], tc[2], tc[3], tc[4] or 1)
 end
 
 ---------------------------------------------------------------------------
