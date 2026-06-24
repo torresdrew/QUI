@@ -11,6 +11,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v4.0.5-beta3 - 2026-06-24
+
+### Fixed
+- fixed a taint crash caused by leftover events on legacy party frames
+- fixed action bars flickering on skyriding mount/dismount
+
 ## v4.0.5-beta2 - 2026-06-24
 
 ### Fixed
