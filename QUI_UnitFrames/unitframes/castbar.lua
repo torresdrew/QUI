@@ -3050,6 +3050,23 @@ function QUI_Castbar:CreateBossCastbar(unitFrame, unit, bossIndex)
 
     -- Unified OnUpdate handler - handles both real casts and preview
     local function BossCastBar_OnUpdate(self, elapsed)
+        -- Boss-gone guard: a boss can despawn mid-cast (wipe, evade, phase) with
+        -- no UNIT_SPELLCAST_STOP fired. In timer-driven (secret-timing) mode the
+        -- engine animates the bar and UnitCastingInfo is SecretWhenUnitSpellCast
+        -- Restricted -- it can keep returning a truthy secret, so the `spellName
+        -- or channelName` test below stays true and the no-cast hide branch never
+        -- runs. The bar then persists until the next Cast() re-evaluates (next
+        -- combat). UnitExists is NOT secret and returns a plain false once the
+        -- boss unit is gone, so gate on it first to tear the castbar down. Skip in
+        -- preview, where the unit need not exist.
+        if not self.isPreviewSimulation and not UnitExists(self.unit) then
+            ClearChannelTickState(self)
+            self:SetScript("OnUpdate", nil)
+            SetCastbarFrameVisible(self, false)
+            TryApplyDeferredCastbarRefresh(self)
+            return
+        end
+
         -- Check if actually casting (real cast takes priority)
         local spellName = UnitCastingInfo(self.unit)
         local channelName = UnitChannelInfo(self.unit)
