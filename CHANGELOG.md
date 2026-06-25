@@ -9,6 +9,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v5.0.0-alpha4 - 2026-06-25
+
+> ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will
+> not load on the 12.0.x live client. Stay on the v4.x beta line for live realms.
+
+### Changed
+- consolidated the six cosmetic addons — Skinning, Datatexts, Minimap, Info Bar,
+  QoL, and Alts — into a single LoadOnDemand bundle, **QUI_UI**, using 12.1's
+  per-file `[Bootstrap]` TOC directive. The visual tier loads at startup; the
+  Alts roster UI loads on first open. A "UI Bundle" toggle plus per-module
+  dormancy flags (minimap / info bar / alts) control it. ⚠️ Brand-new packaging
+  — if a cosmetic module doesn't appear, toggle it in Module Addons and `/reload`.
+- unified every aura surface — player, unit, group frames, and buff borders —
+  onto a single CustomAuraContainer render path, with a secret-safe stack count
+  and per-dispel borders under 12.0 secret values.
+- Bags now defaults **on** for new profiles (existing profiles are untouched).
+
+
 ## v5.0.0-alpha3 - 2026-06-23
 
 > ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will
