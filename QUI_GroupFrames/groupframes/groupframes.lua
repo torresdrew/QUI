@@ -3010,11 +3010,26 @@ local function DecorateGroupFrame(frame)
                 -- Unit cleared (frame hidden by header)
                 _state.unitGuidCache[self] = nil
                 if self.summonIcon then self.summonIcon:Hide() end
+                -- Disable the secure strip containers so they stop self-driving
+                -- a now-empty slot (combat-deferred; container is forbidden).
+                -- Dot-call: these take (frame), not (self, frame).
+                local GFADisable = ns.QUI_GroupFrameAuras
+                if GFADisable and GFADisable.DisableStripContainers then
+                    GFADisable.DisableStripContainers(self)
+                end
                 return
             end
 
             -- Register new mapping immediately (so events dispatch correctly)
             AddFrameToMap(value, self)
+
+            -- Re-point the secure strip containers at the new token (SetUnit +
+            -- re-enable). Combat-deferred — OnAttributeChanged fires in combat.
+            -- Dot-call: UpdateStripContainers takes (frame), not (self, frame).
+            local GFAStrip = ns.QUI_GroupFrameAuras
+            if GFAStrip and GFAStrip.UpdateStripContainers then
+                GFAStrip.UpdateStripContainers(self)
+            end
 
             -- GUID comparison: detect whether the actual player changed.
             -- UnitGUID returns secret strings during combat — coerce to nil
@@ -3046,6 +3061,12 @@ local function DecorateGroupFrame(frame)
     if currentUnit then
         frame.unit = currentUnit
         AddFrameToMap(currentUnit, frame)
+        -- Create + configure the secure strip containers once at decorate time.
+        -- Dot-call: takes (frame). Forbidden object → combat-deferred internally.
+        local GFADecorate = ns.QUI_GroupFrameAuras
+        if GFADecorate and GFADecorate.UpdateStripContainers then
+            GFADecorate.UpdateStripContainers(frame)
+        end
     end
 
     -- Register with Clique / click-cast
@@ -5839,11 +5860,19 @@ function QUI_GF:RefreshAllFrames(reason)
                 end
                 UpdateFrame(frame)
 
-                -- Auras: render strips + tracked auras from the per-unit cache.
+                -- Auras: MRB + healthTint feeder render from the per-unit cache;
+                -- the generic buff/debuff strips are drawn by the secure
+                -- CustomAuraContainer, (re)configured + re-anchored here. This
+                -- caller is NOT itself combat-gated — the forbidden-object
+                -- container work self-defers in combat (UpdateStripContainers
+                -- queues it on InCombatLockdown and replays OOC).
                 if auraCacheAvailable then
                     GFA:RenderFrame(frame)
                 elseif GFA and GFA.RefreshFrame then
                     GFA:RefreshFrame(frame)
+                end
+                if GFA and GFA.UpdateStripContainers then
+                    GFA.UpdateStripContainers(frame)
                 end
             end
         end

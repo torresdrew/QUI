@@ -138,6 +138,8 @@ core\settings\provider_features.lua
 core\settings\pins.lua
 core\settings\pins_lifecycle.lua
 core\rangeutils.lua
+core\aura_theme.lua
+core\aura_skin.lua
 
 
 

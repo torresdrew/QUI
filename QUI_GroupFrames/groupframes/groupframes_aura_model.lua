@@ -28,7 +28,8 @@ local DEFAULT_MISSING_RAID_BUFF_CHECKS = {
 
 local function defaultClassifications(auraType)
     if auraType == "HARMFUL" then
-        return { raid = true, raidInCombat = false, crowdControl = true }
+        -- No raidInCombat: RAID_IN_COMBAT is a HELPFUL-only aura filter.
+        return { raid = true, crowdControl = true }
     end
     return { raid = false, raidInCombat = false, cancelable = false, notCancelable = false,
              bigDefensive = false, externalDefensive = false }
@@ -122,7 +123,7 @@ function Model.DefaultStripBucket()
             durationColor = { 1, 1, 1, 1 }, durationUseTimeColor = true,
             showDurationColor = true, showExpiringPulse = true,
             filterMode = "off",
-            classifications = { raid = true, raidInCombat = false, crowdControl = true },
+            classifications = { raid = true, crowdControl = true },  -- HARMFUL: no raidInCombat (helpful-only filter)
             whitelist = {}, blacklist = {},
         },
         {

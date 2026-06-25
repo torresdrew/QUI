@@ -637,10 +637,11 @@ function QUICore:OnEnable()
         end
     end
 
-    -- Create secure player buff/debuff headers while the addon-load safe
+    -- Create the player buff/debuff aura containers while the addon-load safe
     -- window is still open. A delayed timer misses this window on combat
-    -- reloads, and SecureAuraHeaderTemplate cannot be safely bootstrapped
-    -- from addon code once combat lockdown is active.
+    -- reloads, and the forbidden CustomAuraContainer (the shared secure aura
+    -- model now used for the player, same as the unit/group frames) cannot be
+    -- created/configured from addon code once combat lockdown is active.
     if QUI.BuffBorders and QUI.BuffBorders.Init then
         QUI.BuffBorders.Init()
     end

@@ -63,7 +63,7 @@ globals = {
 -- WoW client globals — read-only from addon code.
 read_globals = {
     -- Frame creation / UI primitives
-    "CreateFrame", "EnumerateFrames", "UIParent", "WorldFrame", "GameTooltip",
+    "CreateFrame", "CreateFont", "EnumerateFrames", "UIParent", "WorldFrame", "GameTooltip",
     "QuickKeybindFrame", "ShowUIPanel", "UIFrameFadeOut", "Settings",
     "CooldownViewerSettings", "EventRegistry", "AssistedCombatManager",
     "STANDARD_TEXT_FONT", "UIErrorsFrame", "UISpecialFrames",
@@ -148,7 +148,7 @@ CR_VERSATILITY_DAMAGE_DONE CR_VERSATILITY_DAMAGE_TAKEN CR_VERSATILITY_TOOLTIP C_
 C_ClassColor C_Club C_CreatureInfo C_CurrencyInfo C_Cursor C_DateAndTime C_EncodingUtil C_FriendList
 C_GossipInfo C_GuildInfo C_IncomingSummon C_LevelLink C_MajorFactions C_Map C_MountJournal C_MythicPlus C_PaperDollInfo
 C_PetBattles C_PlayerInfo C_PvP C_QuestLog C_Reputation C_SpecializationInfo C_SummonInfo C_TaskQuest C_TransmogCollection
-C_Texture C_ToyBox C_UIWidgetManager C_WeeklyRewards C_WowTokenPublic CanExitVehicle CanGuildBankRepair CanInspect CanMerchantRepair ChallengesFrame ChallengesKeystoneFrame
+C_Texture C_ToyBox C_UIWidgetManager C_WeeklyRewards C_WowTokenPublic CanExitVehicle CanGuildBankRepair CanInspect CanMerchantRepair CancelItemTempEnchantment CancelUnitBuff ChallengesFrame ChallengesKeystoneFrame
 ChangeChatColor CharacterBackSlot CharacterChestSlot CharacterFeetSlot CharacterFinger0Slot CharacterFinger1Slot CharacterFrame CharacterFrameBg
 CharacterFrameInset CharacterFrameInsetRight CharacterFramePortrait CharacterFrameTab1 CharacterFrameTab2 CharacterFrameTab3 CharacterFrameTitleText CharacterHandsSlot
 CharacterHeadSlot CharacterLegsSlot CharacterLevelText CharacterMainHandSlot CharacterModelScene CharacterNeckSlot CharacterReagentBag0Slot CharacterSecondaryHandSlot
@@ -237,6 +237,7 @@ GUILD_BANK GUILDBANK_AWARD_MONEY_SUMMARY_FORMAT GUILDBANK_BUYTAB_MONEY_FORMAT GU
 GUILDBANK_MOVE_FORMAT GUILDBANK_REPAIR_MONEY_FORMAT GUILDBANK_UNLOCKTAB_FORMAT GUILDBANK_WITHDRAW_FORMAT GUILDBANK_WITHDRAWFORTAB_MONEY_FORMAT GUILDBANK_WITHDRAW_MONEY_FORMAT MAX_GUILDBANK_TABS
 ChatEdit_InsertLink HandleModifiedItemClick IsModifiedClick GetDenominationsFromCopper RecentTimeDate ColorManager MonthlyActivitiesFrameMixin SetCVarBitfield StaticPopup_OnClick
 ACCEPT CANCEL BANK QUESTION_MARK_ICON UNKNOWN NORMAL_FONT_COLOR_CODE bit debugstack
+AuraButtonBorderStyle
 ButtonFrameTemplate_ShowButtonBar WeeklyRewardsMixin
 ]]
 

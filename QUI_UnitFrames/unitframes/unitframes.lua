@@ -4617,14 +4617,12 @@ _G.QUI_RefreshAuras = function(unitKey)
                 local bossKey = "boss" .. i
                 local frame = QUI_UF.frames[bossKey]
                 if frame then
-                    QUI_UF._lastAuraUpdate[bossKey] = 0
                     QUI_UF.UpdateAuras(frame)
                 end
             end
         else
             local frame = QUI_UF.frames[unitKey]
             if frame then
-                QUI_UF._lastAuraUpdate[unitKey] = 0
                 QUI_UF.UpdateAuras(frame)
             end
         end
@@ -4633,7 +4631,6 @@ _G.QUI_RefreshAuras = function(unitKey)
         for _, key in ipairs({"player", "target", "focus", "pet", "targettarget"}) do
             local frame = QUI_UF.frames[key]
             if frame then
-                QUI_UF._lastAuraUpdate[key] = 0
                 QUI_UF.UpdateAuras(frame)
             end
         end
@@ -4642,7 +4639,6 @@ _G.QUI_RefreshAuras = function(unitKey)
             local bossKey = "boss" .. i
             local frame = QUI_UF.frames[bossKey]
             if frame then
-                QUI_UF._lastAuraUpdate[bossKey] = 0
                 QUI_UF.UpdateAuras(frame)
             end
         end

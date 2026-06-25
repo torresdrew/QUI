@@ -53,27 +53,19 @@ local AURA_GROW_OPTIONS = {
     { value = "DOWN", text = ns.L["Down"] },
 }
 
+-- The live buff/debuff strip is drawn by Blizzard's secure CustomAuraContainer,
+-- which filters ONLY by Blizzard filter string. Off and Classification map to
+-- those filter strings; the old per-spell Whitelist mode could not affect the
+-- secure container, so it was removed from the editor (see BuildZoneFilters in
+-- groupframes_auras.lua — off/whitelist already emitted the same bare filter).
 local FILTER_MODE_OPTIONS = {
     { value = "off", text = ns.L["Off (Show All)"] },
     { value = "classification", text = ns.L["Classification"] },
-    { value = "whitelist", text = ns.L["Whitelist (Only These Spells)"] },
 }
 
 local AURA_TYPE_OPTIONS = {
     { value = "HELPFUL", text = ns.L["Buffs (Helpful)"] },
     { value = "HARMFUL", text = ns.L["Debuffs (Harmful)"] },
-}
-
-local TRACKED_DISPLAY_OPTIONS = {
-    { value = "icon", text = ns.L["Icon"] },
-    { value = "square", text = ns.L["Colored Square"] },
-    { value = "bar", text = ns.L["Bar"] },
-    { value = "healthTint", text = ns.L["Health Bar Tint"] },
-}
-
-local BAR_ORIENTATION_OPTIONS = {
-    { value = "HORIZONTAL", text = ns.L["Horizontal"] },
-    { value = "VERTICAL", text = ns.L["Vertical"] },
 }
 
 local HEALTH_TINT_ANIMATION_OPTIONS = {
@@ -106,7 +98,8 @@ local HELPFUL_CLASSIFICATIONS = {
 
 local HARMFUL_CLASSIFICATIONS = {
     { key = "raid", label = ns.L["Raid"] },
-    { key = "raidInCombat", label = ns.L["Raid (In Combat)"] },
+    -- No raidInCombat: RAID_IN_COMBAT is a HELPFUL-only aura filter, so it only
+    -- exists on the buff side (a "HARMFUL|RAID_IN_COMBAT" filter is invalid).
     { key = "crowdControl", label = ns.L["Crowd Control"] },
 }
 
@@ -291,97 +284,6 @@ local function AddDurationColorWidgets(ctx, element)
     }))
 end
 
--- Curated suggestion presets for the whitelist/blacklist spell-list editors.
--- Mirrors the indicators editor: spec + tracked-cooldown suggestions for the
--- whitelist, the dedicated buff/debuff exclusion presets for the blacklist.
-local function GetSpellListPresets(element, fieldName)
-    if not SpellList then return {} end
-    if fieldName == "blacklist" then
-        if element.auraType == "HARMFUL" then
-            return (SpellList.GetDebuffBlacklistPresets and SpellList.GetDebuffBlacklistPresets()) or {}
-        end
-        return (SpellList.GetBuffBlacklistPresets and SpellList.GetBuffBlacklistPresets()) or {}
-    end
-    return (SpellList.GetDefaultPresets and SpellList.GetDefaultPresets()) or {}
-end
-
--- Whitelist / blacklist spell-list editor for a filterStrip element. Reuses the
--- shared spell-list widget (preset toggle rows + "Other" remove rows) and adds a
--- manual Spell ID input that writes into the {[spellID]=true} map. fieldName is
--- "whitelist" or "blacklist"; both are consumed by BuildFilterStripMatches.
-local function AddSpellListEditor(ctx, element, fieldName, title)
-    local GUI = ctx.GUI
-    local C = ctx.C
-    local add = ctx.AddDetailWidget
-    local onChange = ctx.onChange
-
-    if type(element[fieldName]) ~= "table" then
-        element[fieldName] = {}
-    end
-    local listTable = element[fieldName]
-
-    local header = GUI:CreateLabel(ctx.detailArea, "|cFFAAAAAA" .. title .. "|r", 11, C.textMuted)
-    header:SetJustifyH("LEFT")
-    add(header, 18, true)
-
-    if not (SpellList and SpellList.CreateListFrame) then
-        return
-    end
-
-    -- Manual Spell ID add row (mirrors the tracked-aura picker's manual input).
-    local manualRow = CreateFrame("Frame", nil, ctx.detailArea)
-    manualRow:SetHeight(24)
-
-    local inputBox = CreateFrame("EditBox", nil, manualRow, "BackdropTemplate")
-    inputBox:SetSize(80, 20)
-    inputBox:SetPoint("LEFT", 0, 0)
-    SkinBase.ApplyPixelBackdrop(inputBox, 1, true, false, { 0.25, 0.25, 0.25, 1 }, { 0.06, 0.06, 0.08, 1 })
-    inputBox:SetFontObject("GameFontNormalSmall")
-    inputBox:SetAutoFocus(false)
-    inputBox:SetMaxLetters(10)
-    inputBox:SetTextInsets(4, 4, 0, 0)
-    inputBox:SetScript("OnEscapePressed", function(self)
-        self:ClearFocus()
-    end)
-
-    local inputLabel = manualRow:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    inputLabel:SetPoint("LEFT", inputBox, "RIGHT", 4, 0)
-    inputLabel:SetText(ns.L["Spell ID"])
-    inputLabel:SetTextColor(0.5, 0.5, 0.5)
-
-    local addManualButton = CreateFrame("Button", nil, manualRow, "BackdropTemplate")
-    addManualButton:SetSize(40, 20)
-    addManualButton:SetPoint("LEFT", inputLabel, "RIGHT", 8, 0)
-    SkinBase.ApplyPixelBackdrop(addManualButton, 1, true, false, { 0.3, 0.3, 0.3, 1 }, { 0.15, 0.15, 0.15, 1 })
-    local addManualText = addManualButton:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    addManualText:SetPoint("CENTER")
-    addManualText:SetText(ns.L["Add"])
-    StyleSpellInputText(GUI, C, inputBox, inputLabel, addManualText)
-    local function CommitManual()
-        local spellID = tonumber(inputBox:GetText())
-        if spellID and spellID > 0 then
-            listTable[spellID] = true
-            inputBox:SetText("")
-            inputBox:ClearFocus()
-            onChange()
-            ctx.rebuild()
-        end
-    end
-    addManualButton:SetScript("OnClick", CommitManual)
-    inputBox:SetScript("OnEnterPressed", CommitManual)
-    add(manualRow, 26, true)
-
-    -- Preset toggle rows + "Other" remove rows. The list frame sizes itself; we
-    -- rebuild the detail area on layout change so the running Y reflows.
-    local presets = GetSpellListPresets(element, fieldName)
-    local listFrame = SpellList.CreateListFrame(ctx.detailArea, listTable, presets, function()
-        onChange()
-    end, function()
-        ctx.rebuild()
-    end)
-    add(listFrame, math.max(1, listFrame:GetHeight() or 1), true)
-end
-
 local function AddFilterStripConfig(ctx, element)
     local GUI = ctx.GUI
     local row = ctx.AddFormRow
@@ -399,16 +301,15 @@ local function AddFilterStripConfig(ctx, element)
     AddDurationTextWidgets(ctx, element)
     AddDurationColorWidgets(ctx, element)
 
-    -- Filtering.
+    -- Filtering. The live buff/debuff strip is a secure CustomAuraContainer that
+    -- filters ONLY by Blizzard filter string, so only Off and Classification
+    -- (which map to those strings) are offered.
     row(ns.L["Filter Mode"], GUI:CreateFormDropdown(ctx.detailArea, nil, FILTER_MODE_OPTIONS, "filterMode", element, function()
         ctx.NotifyChanged()
         rebuild()
     end, {
-        description = ns.L["Off shows everything; Classification shows only the categories ticked below; Whitelist shows only the spells you list. The blacklist below always hides its spells, in every mode."],
-        -- Whitelist and the always-on blacklist are spell-list editors (plain
-        -- labels, not searchable widgets); surface their names as keywords here so
-        -- a search for "whitelist"/"blacklist" lands on this strip's filtering.
-        keywords = { "Whitelist", "Blacklist", "filter", "exclude", "include", "spell list" },
+        description = ns.L["Off shows everything; Classification shows only the categories ticked below."],
+        keywords = { "filter", "include" },
     }))
     row(ns.L["Only My Auras"], GUI:CreateFormCheckbox(ctx.detailArea, nil, "onlyMine", element, onChange, {
         description = ns.L["Only show auras you applied."],
@@ -432,173 +333,60 @@ local function AddFilterStripConfig(ctx, element)
                 description = ns.L["Include auras Blizzard flags as "] .. entry.label .. ".",
             }))
         end
-    elseif filterMode == "whitelist" then
-        AddSpellListEditor(ctx, element, "whitelist", ns.L["Whitelist (only these spells are shown):"])
-    end
-
-    -- Blacklist is an always-on exclusion: BuildFilterStripMatches applies it
-    -- regardless of filterMode (even Off shows everything *except* these), so the
-    -- editor is shown unconditionally. Whitelist (the inclusion mode) stays gated
-    -- to filterMode == "whitelist" above.
-    AddSpellListEditor(ctx, element, "blacklist", ns.L["Blacklist (these spells are always hidden):"])
-end
-
-local function AddTrackedBarConfig(ctx, element)
-    local GUI = ctx.GUI
-    local row = ctx.AddFormRow
-    local onChange = ctx.onChange
-
-    if type(element.bar) ~= "table" then
-        element.bar = {}
-    end
-    local bar = element.bar
-    row(ns.L["Orientation"], GUI:CreateFormDropdown(ctx.detailArea, nil, BAR_ORIENTATION_OPTIONS, "orientation", bar, onChange, {
-        description = ns.L["Whether the bar drains horizontally or vertically as the aura ticks down."],
-    }))
-    row(ns.L["Thickness"], GUI:CreateFormSlider(ctx.detailArea, nil, 1, 20, 1, "thickness", bar, onChange, { deferOnDrag = true }, {
-        description = ns.L["Pixel thickness of the bar."],
-    }))
-    row(ns.L["Width / Height"], GUI:CreateFormSlider(ctx.detailArea, nil, 4, 200, 1, "length", bar, onChange, { deferOnDrag = true }, {
-        description = ns.L["Pixel length of the bar."],
-    }))
-    row(ns.L["Match Frame Width / Height"], GUI:CreateFormCheckbox(ctx.detailArea, nil, "matchFrameSize", bar, onChange, {
-        description = ns.L["Stretch the bar to match the frame size."],
-    }))
-    row(ns.L["Bar Color"], GUI:CreateFormColorPicker(ctx.detailArea, nil, "color", bar, onChange, nil, {
-        description = ns.L["Fill color of the bar while the aura is active."],
-    }))
-    row(ns.L["Background Color"], GUI:CreateFormColorPicker(ctx.detailArea, nil, "backgroundColor", bar, onChange, nil, {
-        description = ns.L["Color drawn behind the bar fill."],
-    }))
-    row(ns.L["Hide Border"], GUI:CreateFormCheckbox(ctx.detailArea, nil, "hideBorder", bar, onChange, {
-        description = ns.L["Remove the border drawn around the bar."],
-    }))
-    row(ns.L["Border Color"], GUI:CreateFormColorPicker(ctx.detailArea, nil, "borderColor", bar, onChange, nil, {
-        description = ns.L["Color of the bar's border."],
-    }))
-    row(ns.L["Border Size"], GUI:CreateFormSlider(ctx.detailArea, nil, 1, 8, 1, "borderSize", bar, onChange, { deferOnDrag = true }, {
-        description = ns.L["Pixel thickness of the bar's border."],
-    }))
-    row(ns.L["Low-Time Seconds"], GUI:CreateFormSlider(ctx.detailArea, nil, 0, 30, 0.5, "lowTimeThreshold", bar, onChange, {
-        precision = 1,
-        deferOnDrag = true,
-    }, {
-        description = ns.L["When remaining duration drops below this, the bar switches to the Low-Time Color."],
-    }))
-    row(ns.L["Low-Time Color"], GUI:CreateFormColorPicker(ctx.detailArea, nil, "lowTimeColor", bar, onChange, nil, {
-        description = ns.L["Bar color used once the remaining duration crosses the Low-Time threshold."],
-    }))
-end
-
--- Per-spell "Only Mine" overrides for a multi-spell tracked icon strip. Each
--- row writes element.onlyMineSpells[spellID] = true/false; Model.EffectiveOnlyMine
--- prefers a per-spell value over the element-level onlyMine. Only meaningful when
--- the strip tracks more than one spell (a single spell uses element-level onlyMine).
-local function AddPerSpellOnlyMineWidgets(ctx, element)
-    local GUI = ctx.GUI
-    local C = ctx.C
-    local add = ctx.AddDetailWidget
-    local row = ctx.AddFormRow
-    local onChange = ctx.onChange
-
-    local spells = element.spells or {}
-    if #spells <= 1 then
-        return
-    end
-    if type(element.onlyMineSpells) ~= "table" then
-        element.onlyMineSpells = {}
-    end
-
-    local header = GUI:CreateLabel(ctx.detailArea,
-        "|cFFAAAAAA" .. ns.L["Per-Spell Only Mine (overrides the element setting above):"] .. "|r", 11, C.textMuted)
-    header:SetJustifyH("LEFT")
-    add(header, 18, true)
-
-    for _, spellID in ipairs(spells) do
-        local label = GetSpellName(spellID) or (ns.L["Spell"] .. " " .. tostring(spellID))
-        row(label, GUI:CreateFormCheckbox(ctx.detailArea, nil, spellID, element.onlyMineSpells, onChange, {
-            description = ns.L["Only show this spell when you applied it. Overrides the element-level Only My Cast for this spell."],
-        }))
     end
 end
 
+-- Tracked element config. After the secure-container aura cutover the only LIVE
+-- tracked display is healthTint (the dispel/aggro health-bar tint, rendered by
+-- the engine); the old icon/square/bar tracked WATCHERS were dropped from the
+-- engine and can no longer be created here. healthTint watches the spells it
+-- carries and tints the health bar while any are present.
+--
+-- Legacy profiles may still hold icon/square/bar tracked elements (the model and
+-- preview renderer keep rendering them). We don't expose the removed controls for
+-- those — we show a short read-only notice instead — so the editor never crashes
+-- on an old element but is honest that its display is no longer configurable.
 local function AddTrackedConfig(ctx, element)
     local GUI = ctx.GUI
+    local C = ctx.C
     local row = ctx.AddFormRow
+    local add = ctx.AddDetailWidget
     local onChange = ctx.onChange
-    local rebuild = ctx.rebuild
 
     -- No embedded spell editor: a tracked element carries the single spell it
     -- was created with (top-level Spell ID box / picker). Spells are added only
     -- from there, one tracked element per spell.
 
-    row(ns.L["Display Type"], GUI:CreateFormDropdown(ctx.detailArea, nil, TRACKED_DISPLAY_OPTIONS, "displayType", element, function()
-        if element.displayType == "square" and type(element.color) ~= "table" then
-            element.color = { 0.2, 0.8, 0.2, 1 }
-        end
-        ctx.NotifyChanged()
-        rebuild()
-    end, {
-        description = ns.L["How this tracked aura displays: an icon strip, a colored square, a duration bar, or a health-bar tint."],
-    }))
+    local displayType = element.displayType or "icon"
+    if displayType ~= "healthTint" then
+        -- Legacy icon/square/bar watcher: removed feature. Degrade gracefully —
+        -- the model/preview still render it, but its display is no longer
+        -- editable. Surface a notice and stop (no removed controls).
+        local notice = GUI:CreateLabel(ctx.detailArea,
+            "|cFFAAAAAA" .. ns.L["This tracked display is no longer available. Delete it, or keep it as-is."] .. "|r",
+            11, C.textMuted)
+        notice:SetJustifyH("LEFT")
+        add(notice, 18, true)
+        return
+    end
+
+    if type(element.color) ~= "table" then
+        element.color = { 0.2, 0.8, 0.2, 1 }
+    end
+    if type(element.healthTint) ~= "table" then
+        element.healthTint = {}
+    end
 
     row(ns.L["Only My Cast"], GUI:CreateFormCheckbox(ctx.detailArea, nil, "onlyMine", element, onChange, {
         description = ns.L["Only track this aura when you applied it."],
-        -- Per-spell Only Mine overrides (multi-spell strips) render as plain
-        -- per-spell checkboxes below; keyword it here so the override is findable.
-        keywords = { "Only Mine", "Per-Spell Only Mine", "mine only" },
+        keywords = { "Only Mine", "mine only" },
     }))
-
-    local displayType = element.displayType or "icon"
-    if displayType == "bar" then
-        row(ns.L["Anchor"], GUI:CreateFormDropdown(ctx.detailArea, nil, NINE_POINT_OPTIONS, "anchor", element, onChange, {
-            description = ns.L["Where on the frame the bar is anchored."],
-        }))
-        row(ns.L["X Offset"], GUI:CreateFormSlider(ctx.detailArea, nil, -100, 100, 1, "offsetX", element, onChange, { deferOnDrag = true }, {
-            description = ns.L["Horizontal pixel offset from the anchor."],
-        }))
-        row(ns.L["Y Offset"], GUI:CreateFormSlider(ctx.detailArea, nil, -100, 100, 1, "offsetY", element, onChange, { deferOnDrag = true }, {
-            description = ns.L["Vertical pixel offset from the anchor."],
-        }))
-        AddTrackedBarConfig(ctx, element)
-    elseif displayType == "healthTint" then
-        if type(element.color) ~= "table" then
-            element.color = { 0.2, 0.8, 0.2, 1 }
-        end
-        if type(element.healthTint) ~= "table" then
-            element.healthTint = {}
-        end
-        row(ns.L["Tint Color"], GUI:CreateFormColorPicker(ctx.detailArea, nil, "color", element, onChange, nil, {
-            description = ns.L["Color tint applied across the health bar while the aura is active."],
-        }))
-        row(ns.L["Tint Animation"], GUI:CreateFormDropdown(ctx.detailArea, nil, HEALTH_TINT_ANIMATION_OPTIONS, "animation", element.healthTint, onChange, {
-            description = ns.L["How the health-bar tint appears when the aura is detected."],
-        }))
-    elseif displayType == "square" then
-        if type(element.color) ~= "table" then
-            element.color = { 0.2, 0.8, 0.2, 1 }
-        end
-        row(ns.L["Square Size"], GUI:CreateFormSlider(ctx.detailArea, nil, 4, 40, 1, "iconSize", element, onChange, { deferOnDrag = true }, {
-            description = ns.L["Pixel size of the colored square."],
-        }))
-        row(ns.L["Anchor"], GUI:CreateFormDropdown(ctx.detailArea, nil, NINE_POINT_OPTIONS, "anchor", element, onChange, {
-            description = ns.L["Where on the frame the square is anchored."],
-        }))
-        row(ns.L["X Offset"], GUI:CreateFormSlider(ctx.detailArea, nil, -100, 100, 1, "offsetX", element, onChange, { deferOnDrag = true }, {
-            description = ns.L["Horizontal pixel offset from the anchor."],
-        }))
-        row(ns.L["Y Offset"], GUI:CreateFormSlider(ctx.detailArea, nil, -100, 100, 1, "offsetY", element, onChange, { deferOnDrag = true }, {
-            description = ns.L["Vertical pixel offset from the anchor."],
-        }))
-        row(ns.L["Square Color"], GUI:CreateFormColorPicker(ctx.detailArea, nil, "color", element, onChange, nil, {
-            description = ns.L["Fill color of the colored square."],
-        }))
-    else
-        -- icon
-        AddPlacementWidgets(ctx, element, true)
-        AddDurationTextWidgets(ctx, element)
-        AddPerSpellOnlyMineWidgets(ctx, element)
-    end
+    row(ns.L["Tint Color"], GUI:CreateFormColorPicker(ctx.detailArea, nil, "color", element, onChange, nil, {
+        description = ns.L["Color tint applied across the health bar while the aura is active."],
+    }))
+    row(ns.L["Tint Animation"], GUI:CreateFormDropdown(ctx.detailArea, nil, HEALTH_TINT_ANIMATION_OPTIONS, "animation", element.healthTint, onChange, {
+        description = ns.L["How the health-bar tint appears when the aura is detected."],
+    }))
 end
 
 local function AddMissingRaidBuffConfig(ctx, element)
@@ -793,7 +581,6 @@ local function RebuildList(ctx)
     end
 
     local C = ctx.C
-    local GUI = ctx.GUI
     local accent = C.accent or { 0.204, 0.827, 0.6, 1 }
     local listY = 0
 
@@ -993,7 +780,7 @@ function AurasEditor.RenderAuras(host, auras, bucketKey, onChange, opts)
 
     local pickerHeader = listArea:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     pickerHeader:SetJustifyH("LEFT")
-    pickerHeader:SetText("|cFFAAAAAA" .. ns.L["Add Tracked Aura (click a suggestion or enter a Spell ID):"] .. "|r")
+    pickerHeader:SetText("|cFFAAAAAA" .. ns.L["Add Health Tint Watcher (click a suggestion or enter a Spell ID):"] .. "|r")
 
     -- Add buttons row (Filter strip / Missing raid buff).
     local addRow = CreateFrame("Frame", nil, listArea)
@@ -1081,13 +868,11 @@ function AurasEditor.RenderAuras(host, auras, bucketKey, onChange, opts)
         NotifyChanged()
     end
 
-    -- Re-entrancy guard: the spell-list editor's CreateListFrame fires its
-    -- onLayoutChanged callback (which calls rebuild) synchronously while it lays
-    -- out its rows. That happens *inside* a RebuildList pass, so a naive rebuild
-    -- would re-enter RebuildList -> RenderDetail -> AddSpellListEditor ->
-    -- CreateListFrame -> onLayoutChanged -> rebuild ... without end. The outer
-    -- pass already reads the list frame's final height after CreateListFrame
-    -- returns, so a rebuild requested mid-pass is redundant -- drop it.
+    -- Re-entrancy guard: a child widget that lays itself out synchronously inside
+    -- a RebuildList pass could fire a callback that calls rebuild again, re-entering
+    -- RebuildList -> RenderDetail -> ... -> rebuild without end. The outer pass
+    -- already reads each widget's final height as it returns, so any rebuild
+    -- requested mid-pass is redundant -- drop it.
     local rebuilding = false
     local rebuild
     rebuild = function()
@@ -1233,9 +1018,12 @@ function AurasEditor.RenderAuras(host, auras, bucketKey, onChange, opts)
         wipe(activeSuggestRows)
     end
 
+    -- New tracked elements are health-bar tint watchers: the icon/square/bar
+    -- tracked displays left the engine in the aura cutover, so healthTint is the
+    -- only LIVE tracked display the editor can create.
     ctx.AddTracked = function(spellID)
         spellID = tonumber(spellID) or spellID
-        local element = Model.NewTrackedElement(spellID and { spellID } or {}, "icon")
+        local element = Model.NewTrackedElement(spellID and { spellID } or {}, "healthTint")
         ctx.bucket[#ctx.bucket + 1] = element
         ctx.selectedIndex = #ctx.bucket
         NotifyChanged()

@@ -5,7 +5,6 @@
 ---------------------------------------------------------------------------
 local ADDON_NAME, ns = ...
 local QUICore = ns.Addon
-local Helpers = ns.Helpers
 
 local function CJKFont(fs, p, s, f)
     if ns.Helpers and ns.Helpers.ApplyFontWithFallback then
@@ -16,12 +15,10 @@ local function CJKFont(fs, p, s, f)
 end
 
 -- Upvalue caching for hot-path performance
-local pcall = pcall
 local ipairs = ipairs
 local CreateFrame = CreateFrame
 local GetTime = GetTime
 local C_Timer = C_Timer
-local math_floor = math.floor
 local pairs = pairs
 local rawget = rawget
 local type = type
@@ -37,8 +34,6 @@ local GetFontPath = QUI_UF._GetFontPath
 local GetFontOutline = QUI_UF._GetFontOutline
 local GetUnitSettings = QUI_UF._GetUnitSettings
 local UpdateFrame = QUI_UF._UpdateFrame
-local ApplyCooldownFromAura = Helpers.ApplyCooldownFromAura
-
 ---------------------------------------------------------------------------
 -- CONSTANTS
 ---------------------------------------------------------------------------
@@ -69,41 +64,17 @@ local BUFF_CLASSIFICATION_MAP = {
 }
 
 local DEBUFF_CLASSIFICATION_MAP = {
-    harmful     = { "HARMFUL|RAID", "HARMFUL|RAID_IN_COMBAT" },
+    -- RAID_IN_COMBAT is a HELPFUL-only AuraFilters token (Blizzard doc: "Combine
+    -- with Player & Helpful"); "HARMFUL|RAID_IN_COMBAT" is an invalid combo and
+    -- C_UnitAuras.GetUnitAuras hard-errors on it. The harmful key emits RAID only.
+    harmful     = { "HARMFUL|RAID" },
     dispellable = "HARMFUL|RAID_PLAYER_DISPELLABLE",
     crowdControl = "HARMFUL|CROWD_CONTROL",
 }
 
----------------------------------------------------------------------------
--- AURA THROTTLE STATE
----------------------------------------------------------------------------
-local AURA_THROTTLE = 0.15  -- Update every 150ms max
-local lastAuraUpdate = {}
-local function SetupDebugInstrumentation()
-    local mp = ns._memprobes or {}; ns._memprobes = mp
-    mp[#mp + 1] = { name = "UFA_lastAuraUpdate", tbl = lastAuraUpdate }
-end
-if ns.DebugRegister then -- gate contract: core/debug_gate.lua
-    ns.DebugRegister(SetupDebugInstrumentation)
-else
-    SetupDebugInstrumentation() -- standalone test harness: no gate, run eagerly
-end
-
--- Expose for QUI_RefreshAuras in unitframes.lua
-QUI_UF._lastAuraUpdate = lastAuraUpdate
-
 -- Boss engage is a global event; one shared listener avoids five frames
 -- reprocessing every transient boss-slot pulse.
 local bossEngageFrame
-
----------------------------------------------------------------------------
--- AURA ICON STATE (weak-keyed to avoid tainting frames with secret values)
----------------------------------------------------------------------------
--- auraData.auraInstanceID is a secret number during combat.  Storing it
--- directly on the Frame object taints the frame and propagates through
--- Blizzard's CooldownViewer → tContains → "attempt to compare secret".
--- A plain Lua side-table keeps the value off the frame entirely.
-local auraIconState = Helpers.CreateStateTable()
 
 -- Map a user anchor corner to the icon/frame attach points (flip vertical only
 -- for outside positioning) plus the 1px border-compensation X offset.
@@ -118,184 +89,6 @@ local function MapAuraAnchorToFramePoint(anchor)
     local map = AURA_ANCHOR_FRAMEPOINT[anchor]
     if not map then return nil, nil, nil end
     return map[1], map[2], map[3]
-end
-
----------------------------------------------------------------------------
--- AURA ICON SETTINGS
----------------------------------------------------------------------------
-
--- Apply aura icon settings (for real-time updates without recreating icons)
--- isDebuff: true for debuffs, false for buffs - uses per-type settings when available
--- Duration text uses Blizzard's built-in countdown (handles secret values internally)
-local function ApplyAuraIconSettings(icon, auraSettings, isDebuff)
-    if not icon then return end
-    auraSettings = auraSettings or {}
-
-    local fontPath = GetFontPath()
-    local fontOutline = GetFontOutline()
-
-    -- Determine prefix for per-type settings (debuff* or buff*)
-    local prefix = isDebuff and "debuff" or "buff"
-
-    -- Stack text settings (per-type with fallback to shared settings)
-    local showStack = auraSettings[prefix .. "ShowStack"]
-    if showStack == nil then showStack = auraSettings.showStack end
-    if showStack == nil then showStack = true end  -- default true
-
-    local stackSize = auraSettings[prefix .. "StackSize"] or auraSettings.stackSize or 10
-    local stackAnchor = auraSettings[prefix .. "StackAnchor"] or auraSettings.stackAnchor or "BOTTOMRIGHT"
-    local stackOffsetX = auraSettings[prefix .. "StackOffsetX"] or auraSettings.stackOffsetX or -1
-    local stackOffsetY = auraSettings[prefix .. "StackOffsetY"] or auraSettings.stackOffsetY or 1
-    local stackColor = auraSettings[prefix .. "StackColor"] or auraSettings.stackColor or {1, 1, 1, 1}
-
-    if icon.count then
-        CJKFont(icon.count, fontPath, stackSize, fontOutline)
-        icon.count:ClearAllPoints()
-        icon.count:SetPoint(stackAnchor, icon, stackAnchor, stackOffsetX, stackOffsetY)
-        icon.count:SetTextColor(stackColor[1] or 1, stackColor[2] or 1, stackColor[3] or 1, stackColor[4] or 1)
-    end
-    icon._showStack = showStack
-
-    -- Swipe toggle (per-type: debuffHideSwipe or buffHideSwipe)
-    local hideSwipe = auraSettings[prefix .. "HideSwipe"]
-    if hideSwipe == nil then hideSwipe = false end  -- default: show swipe
-    if icon.cooldown then
-        icon.cooldown:SetDrawSwipe(not hideSwipe)
-    end
-
-    -- Duration text settings (per-type)
-    local showDuration = auraSettings[prefix .. "ShowDuration"]
-    if showDuration == nil then showDuration = true end
-
-    local durationSize = auraSettings[prefix .. "DurationSize"] or 12
-    local durationAnchor = auraSettings[prefix .. "DurationAnchor"] or "CENTER"
-    local durationOffsetX = auraSettings[prefix .. "DurationOffsetX"] or 0
-    local durationOffsetY = auraSettings[prefix .. "DurationOffsetY"] or 0
-    local durationColor = auraSettings[prefix .. "DurationColor"] or {1, 1, 1, 1}
-
-    -- Safe duration text handling (pcall wrapped to prevent errors from breaking auras)
-    if icon.cooldown then
-        pcall(function()
-            -- Toggle Blizzard countdown visibility
-            if icon.cooldown.SetHideCountdownNumbers then
-                icon.cooldown:SetHideCountdownNumbers(not showDuration)
-            end
-
-            -- Find and style the countdown FontString (created lazily by Blizzard)
-            if showDuration and icon.cooldown.GetRegions then
-                for _, region in ipairs({ icon.cooldown:GetRegions() }) do
-                    if region and region.GetObjectType and region:GetObjectType() == "FontString" then
-                        if region.SetFont then
-                            CJKFont(region, fontPath, durationSize, fontOutline)
-                        end
-                        if region.ClearAllPoints and region.SetPoint then
-                            region:ClearAllPoints()
-                            region:SetPoint(durationAnchor, icon, durationAnchor, durationOffsetX, durationOffsetY)
-                        end
-                        if region.SetTextColor then
-                            region:SetTextColor(durationColor[1] or 1, durationColor[2] or 1, durationColor[3] or 1, durationColor[4] or 1)
-                        end
-                        break
-                    end
-                end
-            end
-        end)
-    end
-end
-
----------------------------------------------------------------------------
--- AURA ICON CREATION
----------------------------------------------------------------------------
-
-local function CreateAuraIcon(parent, index, size, auraSettings, isDebuff)
-    -- Use plain Frame (no BackdropTemplate) to avoid secret value crashes during combat
-    -- BackdropTemplate causes "arithmetic on secret value" errors when frame is resized
-    local icon = CreateFrame("Frame", nil, parent)
-    -- Use parent's strata but higher frame level to render above unit frame
-    -- (avoids showing through major UI panels like spellbook)
-    icon:SetFrameLevel(parent:GetFrameLevel() + 10)
-    icon:SetSize(size, size)
-
-    -- Enable mouse for tooltip interaction
-    icon:EnableMouse(true)
-
-    -- Aura data stored in side-table (auraIconState) to avoid frame taint
-    icon.filter = nil  -- "HELPFUL" or "HARMFUL" (safe string, kept on frame)
-
-    -- Tooltip scripts — read auraInstanceID from side-table, not the frame
-    icon:SetScript("OnEnter", function(self)
-        local state = auraIconState[self]
-        local unit = state and state.unit
-        local auraID = state and state.auraInstanceID
-        if unit and auraID then
-            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-            if self.filter and self.filter:find("HELPFUL", 1, true) then
-                GameTooltip:SetUnitBuffByAuraInstanceID(unit, auraID)
-            else
-                GameTooltip:SetUnitDebuffByAuraInstanceID(unit, auraID)
-            end
-            GameTooltip:Show()
-        end
-    end)
-
-    icon:SetScript("OnLeave", function()
-        GameTooltip:Hide()
-    end)
-
-    -- Border (using BACKGROUND texture to avoid secret value errors during combat)
-    local border = icon:CreateTexture(nil, "BACKGROUND", nil, -8)
-    border:SetColorTexture(0, 0, 0, 1)
-    local iconPx = QUICore:GetPixelSize(icon)
-    border:SetPoint("TOPLEFT", icon, "TOPLEFT", -iconPx, iconPx)
-    border:SetPoint("BOTTOMRIGHT", icon, "BOTTOMRIGHT", iconPx, -iconPx)
-    icon.border = border
-
-    -- Icon texture
-    local tex = icon:CreateTexture(nil, "ARTWORK")
-    tex:SetPoint("TOPLEFT", 0, 0)
-    tex:SetPoint("BOTTOMRIGHT", 0, 0)
-    tex:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-    icon.icon = tex
-
-    -- Cooldown swipe
-    local cd = CreateFrame("Cooldown", nil, icon, "CooldownFrameTemplate")
-    cd:SetAllPoints(icon)
-    cd:SetDrawEdge(false)
-    cd:SetReverse(true)
-    cd:SetSwipeTexture("Interface\\Buttons\\WHITE8X8")
-    cd:SetSwipeColor(0, 0, 0, 0.8)
-    cd.noOCC = true
-    -- noCooldownCount removed to enable Blizzard countdown text (styled via ApplyAuraIconSettings)
-    icon.cooldown = cd
-
-    -- Stack count — parented to an overlay frame above the cooldown swipe
-    local stackOverlay = CreateFrame("Frame", nil, icon)
-    stackOverlay:SetAllPoints(icon)
-    stackOverlay:SetFrameLevel(cd:GetFrameLevel() + 1)
-    local count = stackOverlay:CreateFontString(nil, "OVERLAY")
-    count:SetPoint("BOTTOMRIGHT", icon, "BOTTOMRIGHT", -iconPx, iconPx)  -- default, will be updated by settings
-    count:SetTextColor(1, 1, 1, 1)
-    icon.count = count
-    icon._showStack = true  -- default
-
-    -- Apply initial settings
-    ApplyAuraIconSettings(icon, auraSettings, isDebuff)
-
-    icon:Hide()
-    return icon
-end
-
-local function GetAuraIcon(container, index, parent, size, auraSettings, isDebuff)
-    if container[index] then
-        container[index]:SetSize(size, size)
-        -- Update settings on existing icon
-        ApplyAuraIconSettings(container[index], auraSettings, isDebuff)
-        return container[index]
-    end
-
-    local icon = CreateAuraIcon(parent, index, size, auraSettings, isDebuff)
-    container[index] = icon
-    return icon
 end
 
 local function IsClassificationEnabled(classifications, key)
@@ -338,45 +131,12 @@ local function BuildClassificationFilters(classifications, classificationMap)
     return filters
 end
 
-local function IsAuraFilteredOutByInstanceID(unit, auraInstanceID, filterString)
-    if not C_UnitAuras or not C_UnitAuras.IsAuraFilteredOutByInstanceID then
-        return nil
-    end
-    if not unit or not filterString then
-        return nil
-    end
-    if Helpers.IsSecretValue(auraInstanceID) then
-        return nil
-    end
-    if auraInstanceID == nil then
-        return nil
-    end
-
-    local ok, filteredOut = pcall(C_UnitAuras.IsAuraFilteredOutByInstanceID, unit, auraInstanceID, filterString)
-    if not ok or Helpers.IsSecretValue(filteredOut) then
-        return nil
-    end
-
-    return filteredOut
-end
-
-local function AuraPassesAnyFilter(unit, auraInstanceID, filters)
-    if not filters or #filters == 0 then
-        return true
-    end
-
-    for _, filterString in ipairs(filters) do
-        local filteredOut = IsAuraFilteredOutByInstanceID(unit, auraInstanceID, filterString)
-        if filteredOut == nil then
-            return true
-        end
-        if filteredOut == false then
-            return true
-        end
-    end
-
-    return false
-end
+-- NOTE: per-icon filtering (the legacy IsAuraFilteredOutByInstanceID /
+-- AuraPassesAnyFilter helpers) was removed when the LIVE display path moved to
+-- the secure CustomAuraContainer.  The container applies the SAME inclusion
+-- test, C_UnitAuras.IsAuraFilteredOutByInstanceID, internally for every
+-- registered filter string (see Blizzard_CustomAuraContainer:AddAura) — so the
+-- filter behaviour is identical, just driven C-side on secret-safe data.
 
 ---------------------------------------------------------------------------
 -- AURA UPDATE
@@ -403,317 +163,259 @@ local function BuildFilterString(base, filterDB)
     return table.concat(parts, "|")
 end
 
-local function UpdateAuras(frame)
-    if not frame or not frame.unit then return end
-    local unit = frame.unit
+---------------------------------------------------------------------------
+-- LIVE DISPLAY PATH — secure CustomAuraContainer
+---------------------------------------------------------------------------
+-- The live buff/debuff display is rendered by Blizzard's secure
+-- CustomAuraContainer (one container per zone), themed by QUI.AuraSkin.  The
+-- container self-drives UNIT_AURA and handles secret aura data internally — no
+-- QUI Lua ever reads a secret aura field on the live path.
+--
+-- LAYOUT-MODE PREVIEW keeps its own custom-icon renderer (the inline icon code
+-- in ShowAuraPreviewForFrame): a secure, self-driving container cannot be fed
+-- fake auras, so during preview the live container for that zone is disabled
+-- and the preview icons render alone; the container is restored on exit.
+-- The preview surface is self-contained and builds its icons inline.
+---------------------------------------------------------------------------
 
-    if not UnitExists(unit) then
-        -- Hide all auras
-        if frame.buffIcons then
-            for _, icon in ipairs(frame.buffIcons) do
-                icon:Hide()
-            end
-        end
-        if frame.debuffIcons then
-            for _, icon in ipairs(frame.debuffIcons) do
-                icon:Hide()
-            end
-        end
-        return
-    end
+local AuraSkin = (ns.Addon and ns.Addon.AuraSkin) or (_G.QUI and _G.QUI.AuraSkin)
 
-    -- Throttle updates
-    local now = GetTime()
-    local lastUpdate = lastAuraUpdate[unit] or 0
-    if (now - lastUpdate) < AURA_THROTTLE then
-        return
-    end
-    lastAuraUpdate[unit] = now
+-- Combat-deferral queue.  The container is a forbidden object: create / pool /
+-- anchor / filter changes are restricted in combat, so any such work attempted
+-- during InCombatLockdown() is queued and replayed on PLAYER_REGEN_ENABLED.
+local pendingCombatWork = {}        -- [frame] = true  (re-apply config OOC)
+local combatDeferFrame
 
-    -- Check if C_UnitAuras is available
-    if not C_UnitAuras or not C_UnitAuras.GetAuraDataByIndex then
-        return
-    end
-
-    -- Get settings from database
-    local settings = GetUnitSettings(frame.unitKey)
-    local auraSettings = settings and settings.auras or {}
-
-    local debuffFilterString = BuildFilterString("HARMFUL", auraSettings.debuffFilter)
-    local buffFilterString   = BuildFilterString("HELPFUL", auraSettings.buffFilter)
-
-    local iconSize = auraSettings.iconSize or 22  -- Debuff icon size
-    local buffIconSize = auraSettings.buffIconSize or 22  -- Buff icon size
-    local showBuffs = auraSettings.showBuffs ~= false  -- default true
-    local showDebuffs = auraSettings.showDebuffs ~= false  -- default true
-
-    -- Check if in preview mode for either aura type
-    local unitKey = frame.unitKey
-    local buffPreviewActive = QUI_UF.auraPreviewMode[unitKey .. "_buff"]
-    local debuffPreviewActive = QUI_UF.auraPreviewMode[unitKey .. "_debuff"]
-
-    -- Debuff settings
-    local debuffAnchor = auraSettings.debuffAnchor or "TOPLEFT"
-    local debuffGrow = auraSettings.debuffGrow or "RIGHT"
-    local debuffMaxIcons = auraSettings.debuffMaxIcons or 16
-    local debuffMaxPerRow = auraSettings.debuffMaxPerRow or 0
-    local debuffOffsetX = auraSettings.debuffOffsetX or 0
-    local debuffOffsetY = auraSettings.debuffOffsetY or 2
-    local debuffSpacing = auraSettings.debuffSpacing or auraSettings.iconSpacing or 2
-
-    -- Buff settings
-    local buffAnchor = auraSettings.buffAnchor or "BOTTOMLEFT"
-    local buffGrow = auraSettings.buffGrow or "RIGHT"
-    local buffMaxIcons = auraSettings.buffMaxIcons or 16
-    local buffMaxPerRow = auraSettings.buffMaxPerRow or 0
-    local buffOffsetX = auraSettings.buffOffsetX or 0
-    local buffOffsetY = auraSettings.buffOffsetY or -2
-    local buffSpacing = auraSettings.buffSpacing or auraSettings.iconSpacing or 2
-
-    local usePlayerTargetAuraFilters = unitKey == "player" or unitKey == "target"
-    local debuffClassificationFilters
-    if usePlayerTargetAuraFilters and auraSettings.debuffFilterMode == "classification" then
-        debuffClassificationFilters = BuildClassificationFilters(auraSettings.debuffClassifications, DEBUFF_CLASSIFICATION_MAP)
-    end
-    local buffClassificationFilters
-    if usePlayerTargetAuraFilters and auraSettings.buffFilterMode == "classification" then
-        buffClassificationFilters = BuildClassificationFilters(auraSettings.buffClassifications, BUFF_CLASSIFICATION_MAP)
-    end
-
-    -- Initialize containers
-    frame.buffIcons = frame.buffIcons or {}
-    frame.debuffIcons = frame.debuffIcons or {}
-
-    -- Hide existing icons first (skip if preview is active for that type)
-    if not buffPreviewActive then
-        for _, icon in ipairs(frame.buffIcons) do
-            icon:Hide()
-        end
-    end
-    if not debuffPreviewActive then
-        for _, icon in ipairs(frame.debuffIcons) do
-            icon:Hide()
-        end
-    end
-
-    -- Helper to safely set cooldown (handles secret values on enemy targets)
-    -- Uses duration object API when available for combat-safe cooldown display
-    local function SafeSetCooldown(cooldownFrame, auraData, unit)
-        if not cooldownFrame then return false end
-        if not auraData then return false end
-
-        return ApplyCooldownFromAura(
-            cooldownFrame,
-            unit,
-            auraData.auraInstanceID,
-            auraData.expirationTime,
-            auraData.duration,
-            true,
-            auraData.timeMod
-        )
-    end
-
-    -- Helper to safely display stack count using combat-safe API
-    -- Passes directly to SetText without comparing (return value may be secret-derived)
-    local function DisplayStackCount(countText, unit, auraInstanceID)
-        if not C_UnitAuras.GetAuraApplicationDisplayCount then
-            countText:SetText("")
-            return
-        end
-        if not Helpers.IsSecretValue(auraInstanceID) and auraInstanceID == nil then
-            countText:SetText("")
-            return
-        end
-        -- stackMinimum=2 means don't show "1", stackMaximum=99 for normal display
-        -- API returns "" for <2 stacks, number string for 2-99, "*" for 100+
-        local ok, stackText = pcall(C_UnitAuras.GetAuraApplicationDisplayCount, unit, auraInstanceID, 2, 99)
-        if ok then
-            countText:SetText(stackText)
-        else
-            countText:SetText("")
-        end
-    end
-
-    -- Populate debuffs (skip if preview is active). The structured filter is
-    -- applied C-side; the legacy classification filter is kept as a narrow
-    -- compatibility path for older profiles.
-    local debuffCount = 0
-    local debuffIndex = 1
-    if showDebuffs and not debuffPreviewActive then
-        while debuffCount < debuffMaxIcons do
-            local auraData = C_UnitAuras.GetAuraDataByIndex(unit, debuffIndex, debuffFilterString)
-            if not auraData then break end
-            debuffIndex = debuffIndex + 1
-
-            if debuffClassificationFilters and not AuraPassesAnyFilter(unit, auraData.auraInstanceID, debuffClassificationFilters) then
-                -- skip: debuff does not match selected Blizzard classifications
-            else
-
-            debuffCount = debuffCount + 1
-
-            local icon = GetAuraIcon(frame.debuffIcons, debuffCount, frame, iconSize, auraSettings, true)
-
-            -- Store aura data in side-table (auraInstanceID is secret during combat)
-            local state = auraIconState[icon]
-            if not state then state = {}; auraIconState[icon] = state end
-            state.unit = unit
-            state.auraInstanceID = auraData.auraInstanceID
-            icon.filter = "HARMFUL"
-
-            -- Safely set texture (icon field is always safe)
-            if auraData.icon then
-                icon.icon:SetTexture(auraData.icon)
-            end
-
-            -- Red border for debuffs
-            if icon.border then
-                icon.border:SetColorTexture(0.8, 0.2, 0.2, 1)
-            end
-
-            -- Cooldown (safely handles secret values via duration object API)
-            if SafeSetCooldown(icon.cooldown, auraData, unit) then
-                icon.cooldown:Show()
-            else
-                icon.cooldown:Hide()
-            end
-
-            -- Stack count (using combat-safe API, no comparisons on result)
-            if icon._showStack then
-                DisplayStackCount(icon.count, unit, auraData.auraInstanceID)
-                icon.count:Show()
-            else
-                icon.count:Hide()
-            end
-
-            -- Calculate position based on anchor and grow direction with optional row wrapping
-            local idx = debuffCount - 1
-            local col = idx
-            local row = 0
-            if debuffMaxPerRow > 0 then
-                col = idx % debuffMaxPerRow
-                row = math_floor(idx / debuffMaxPerRow)
-            end
-            local xPos, yPos = debuffOffsetX, debuffOffsetY
-            if debuffGrow == "RIGHT" then
-                xPos = xPos + col * (iconSize + debuffSpacing)
-                yPos = yPos + row * (iconSize + debuffSpacing)
-            elseif debuffGrow == "LEFT" then
-                xPos = xPos - col * (iconSize + debuffSpacing)
-                yPos = yPos + row * (iconSize + debuffSpacing)
-            elseif debuffGrow == "UP" then
-                yPos = yPos + col * (iconSize + debuffSpacing)
-                xPos = xPos + row * (iconSize + debuffSpacing)
-            elseif debuffGrow == "DOWN" then
-                yPos = yPos - col * (iconSize + debuffSpacing)
-                xPos = xPos + row * (iconSize + debuffSpacing)
-            end
-
-            -- Map user anchor to frame anchor points (flip vertical only for outside positioning)
-            -- Border compensation: icons have 1px border extending beyond frame
-            local iconPoint, framePoint, borderOffsetX = MapAuraAnchorToFramePoint(debuffAnchor)
-
-            icon:ClearAllPoints()
-            icon:SetPoint(iconPoint, frame, framePoint, xPos + (borderOffsetX or 0), yPos)
-            icon:Show()
-            end
-        end
-    end
-
-    -- Populate buffs (skip if preview is active). Every buff on every unit
-    -- renders regardless of source -- NPC self-buffs (enrages, mechanic
-    -- stacks) on target/focus and party/raid-cast buffs on the player frame
-    -- are all surfaced. Legacy classification filtering still applies if an
-    -- older profile has it enabled.
-    local buffCount = 0
-    local buffIndex = 1
-    if showBuffs and not buffPreviewActive then
-        while buffCount < buffMaxIcons do
-            local auraData = C_UnitAuras.GetAuraDataByIndex(unit, buffIndex, buffFilterString)
-            if not auraData then break end
-            buffIndex = buffIndex + 1
-
-            if buffClassificationFilters and not AuraPassesAnyFilter(unit, auraData.auraInstanceID, buffClassificationFilters) then
-                -- skip: buff does not match selected Blizzard classifications
-            else
-
-            buffCount = buffCount + 1
-
-            local icon = GetAuraIcon(frame.buffIcons, buffCount, frame, buffIconSize, auraSettings, false)
-
-            -- Store aura data in side-table (auraInstanceID is secret during combat)
-            local state = auraIconState[icon]
-            if not state then state = {}; auraIconState[icon] = state end
-            state.unit = unit
-            state.auraInstanceID = auraData.auraInstanceID
-            icon.filter = "HELPFUL"
-
-            -- Safely set texture
-            if auraData.icon then
-                icon.icon:SetTexture(auraData.icon)
-            end
-
-            -- Default black border for buffs
-            if icon.border then
-                icon.border:SetColorTexture(0, 0, 0, 1)
-            end
-
-            -- Cooldown (safely handles secret values via duration object API)
-            if SafeSetCooldown(icon.cooldown, auraData, unit) then
-                icon.cooldown:Show()
-            else
-                icon.cooldown:Hide()
-            end
-
-            -- Stack count (using combat-safe API, no comparisons on result)
-            if icon._showStack then
-                DisplayStackCount(icon.count, unit, auraData.auraInstanceID)
-                icon.count:Show()
-            else
-                icon.count:Hide()
-            end
-
-            -- Calculate position based on anchor and grow direction with optional row wrapping
-            local idx = buffCount - 1
-            local col = idx
-            local row = 0
-            if buffMaxPerRow > 0 then
-                col = idx % buffMaxPerRow
-                row = math_floor(idx / buffMaxPerRow)
-            end
-            local xPos, yPos = buffOffsetX, buffOffsetY
-            if buffGrow == "RIGHT" then
-                xPos = xPos + col * (buffIconSize + buffSpacing)
-                yPos = yPos - row * (buffIconSize + buffSpacing)
-            elseif buffGrow == "LEFT" then
-                xPos = xPos - col * (buffIconSize + buffSpacing)
-                yPos = yPos - row * (buffIconSize + buffSpacing)
-            elseif buffGrow == "UP" then
-                yPos = yPos + col * (buffIconSize + buffSpacing)
-                xPos = xPos + row * (buffIconSize + buffSpacing)
-            elseif buffGrow == "DOWN" then
-                yPos = yPos - col * (buffIconSize + buffSpacing)
-                xPos = xPos + row * (buffIconSize + buffSpacing)
-            end
-
-            -- Map user anchor to frame anchor points (flip vertical only for outside positioning)
-            -- Border compensation: icons have 1px border extending beyond frame
-            local iconPoint, framePoint, borderOffsetX = MapAuraAnchorToFramePoint(buffAnchor)
-
-            icon:ClearAllPoints()
-            icon:SetPoint(iconPoint, frame, framePoint, xPos + (borderOffsetX or 0), yPos)
-            icon:Show()
-            end
+local function FlushPendingCombatWork()
+    for frame in pairs(pendingCombatWork) do
+        pendingCombatWork[frame] = nil
+        if frame and QUI_UF.ApplyContainerConfig then
+            QUI_UF.ApplyContainerConfig(frame)
         end
     end
 end
 
+local function EnsureCombatDeferFrame()
+    if combatDeferFrame then return end
+    combatDeferFrame = CreateFrame("Frame")
+    combatDeferFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+    combatDeferFrame:SetScript("OnEvent", FlushPendingCombatWork)
+end
+
+local function QueueCombatWork(frame)
+    EnsureCombatDeferFrame()
+    pendingCombatWork[frame] = true
+end
+
+-- Resolve the Blizzard filter strings for a zone from the unit's aura settings.
+-- Mirrors the legacy live-path filter logic: classification mode emits the
+-- per-classification filter strings, otherwise the structured/base filter.
+local function ResolveZoneFilters(auraSettings, unitKey, isDebuff)
+    local base = isDebuff and "HARMFUL" or "HELPFUL"
+    local usePlayerTargetAuraFilters = (unitKey == "player" or unitKey == "target")
+
+    if isDebuff then
+        if usePlayerTargetAuraFilters and auraSettings.debuffFilterMode == "classification" then
+            local f = BuildClassificationFilters(auraSettings.debuffClassifications, DEBUFF_CLASSIFICATION_MAP)
+            if f and #f > 0 then return f end
+        end
+        return { BuildFilterString(base, auraSettings.debuffFilter) }
+    end
+
+    if usePlayerTargetAuraFilters and auraSettings.buffFilterMode == "classification" then
+        local f = BuildClassificationFilters(auraSettings.buffClassifications, BUFF_CLASSIFICATION_MAP)
+        if f and #f > 0 then return f end
+    end
+    return { BuildFilterString(base, auraSettings.buffFilter) }
+end
+
+-- Anchor a container OOC with fixed points relative to its unit frame.  The
+-- container is forbidden, so SetPoint/SetSize are NEVER called in combat.
+local function AnchorContainer(container, frame, anchor)
+    container:ClearAllPoints()
+    container:SetPoint(anchor or "TOPLEFT", frame, "BOTTOMLEFT", 0, -2)
+end
+
+-- Create (OOC) the two zone containers for a unit frame and theme/pool them via
+-- AuraSkin.  Idempotent — re-attaches/re-themes if maxIcons grew.
+local function EnsureContainers(frame, auraSettings)
+    -- Re-resolve defensively in case core/aura_skin.lua loaded after this file's
+    -- top-level chunk captured the (then-nil) upvalue.
+    AuraSkin = AuraSkin or (ns.Addon and ns.Addon.AuraSkin) or (_G.QUI and _G.QUI.AuraSkin)
+    if not AuraSkin or not CreateFrame then return false end
+
+    -- Full grid profiles built from the per-zone aura settings.  Key names match
+    -- exactly what the layout-mode preview path reads (ShowAuraPreviewForFrame),
+    -- so live container layout == preview layout.  (debuff iconSize is the shared
+    -- `iconSize`; buff iconSize is `buffIconSize` — mirrors the schema sliders.)
+    local debuffProfile = {
+        maxIcons    = auraSettings.debuffMaxIcons or 16,
+        iconSize    = auraSettings.iconSize or 22,
+        spacing     = auraSettings.debuffSpacing or auraSettings.iconSpacing or 2,
+        grow        = auraSettings.debuffGrow or "RIGHT",
+        maxPerRow   = auraSettings.debuffMaxPerRow or 0,
+        offsetX     = auraSettings.debuffOffsetX or 0,
+        offsetY     = auraSettings.debuffOffsetY or 2,
+        anchor      = auraSettings.debuffAnchor or "TOPLEFT",
+        borderSize  = auraSettings.debuffBorderSize or auraSettings.borderSize or 1,
+        fontSize    = auraSettings.debuffFontSize or auraSettings.fontSize or 11,
+        hideSwipe   = auraSettings.debuffHideSwipe ~= nil and auraSettings.debuffHideSwipe or (auraSettings.hideSwipe or false),
+        reverseSwipe = auraSettings.debuffReverseSwipe ~= nil and auraSettings.debuffReverseSwipe or (auraSettings.reverseSwipe or false),
+    }
+    local buffProfile = {
+        maxIcons    = auraSettings.buffMaxIcons or 16,
+        iconSize    = auraSettings.buffIconSize or 22,
+        spacing     = auraSettings.buffSpacing or auraSettings.iconSpacing or 2,
+        grow        = auraSettings.buffGrow or "RIGHT",
+        maxPerRow   = auraSettings.buffMaxPerRow or 0,
+        offsetX     = auraSettings.buffOffsetX or 0,
+        offsetY     = auraSettings.buffOffsetY or -2,
+        anchor      = auraSettings.buffAnchor or "BOTTOMLEFT",
+        borderSize  = auraSettings.buffBorderSize or auraSettings.borderSize or 1,
+        fontSize    = auraSettings.buffFontSize or auraSettings.fontSize or 11,
+        hideSwipe   = auraSettings.buffHideSwipe ~= nil and auraSettings.buffHideSwipe or (auraSettings.hideSwipe or false),
+        reverseSwipe = auraSettings.buffReverseSwipe ~= nil and auraSettings.buffReverseSwipe or (auraSettings.reverseSwipe or false),
+    }
+
+    if not frame.debuffContainer then
+        frame.debuffContainer = CreateFrame("AuraContainer", nil, frame, "CustomAuraContainerTemplate")
+    end
+    if not frame.buffContainer then
+        frame.buffContainer = CreateFrame("AuraContainer", nil, frame, "CustomAuraContainerTemplate")
+    end
+
+    AuraSkin.Attach(frame.debuffContainer, debuffProfile)
+    AuraSkin.Attach(frame.buffContainer, buffProfile)
+
+    AnchorContainer(frame.debuffContainer, frame, auraSettings.debuffAnchor)
+    AnchorContainer(frame.buffContainer, frame, auraSettings.buffAnchor)
+    return true
+end
+
+-- The container's AddAuraFilter eagerly runs C_UnitAuras.GetUnitAuras(unit,
+-- filterString); some AuraFilters tokens are only valid in a specific polarity
+-- combo and the C API hard-errors on a bad one (and AddAuraFilter inserts the
+-- filter BEFORE that throwing call, so a pcall around it would leave a poisoned
+-- filter that re-throws on every later UNIT_AURA). Pre-validate the string with
+-- our own (addon-allowed) GetUnitAuras and only hand accepted strings over.
+local function FilterStringUsable(unit, filterString)
+    if not (C_UnitAuras and C_UnitAuras.GetUnitAuras) then return true end
+    return (pcall(C_UnitAuras.GetUnitAuras, unit, filterString))
+end
+
+-- Add a zone's filter strings to its container, dropping any the C API rejects,
+-- and guaranteeing at least the base polarity so a zone never silently shows
+-- nothing when every classification filter is dropped.
+local function AddZoneFilters(container, unit, filters, base, maxIcons)
+    local added = 0
+    for _, filterString in ipairs(filters) do
+        if FilterStringUsable(unit, filterString) then
+            container:AddAuraFilter(filterString, { maxFrameCount = maxIcons })
+            added = added + 1
+        end
+    end
+    if added == 0 then
+        container:AddAuraFilter(base, { maxFrameCount = maxIcons })
+    end
+end
+
+-- Apply enable/disable + filter + unit config to the live containers.  This is
+-- the heart of the live path: filters and SetEnabled change, the container
+-- self-drives the rest.  Runs OOC only (callers defer via QueueCombatWork).
+local function ApplyContainerConfig(frame)
+    if not frame or not frame.unit then return end
+    local unitKey = frame.unitKey or frame.unit
+    local settings = GetUnitSettings(unitKey)
+    local auraSettings = settings and settings.auras or {}
+
+    if not EnsureContainers(frame, auraSettings) then return end
+
+    local showBuffs = auraSettings.showBuffs == true
+    local showDebuffs = auraSettings.showDebuffs == true
+
+    -- Preview mode owns the display for a zone while active: keep the live
+    -- container disabled so the fake preview icons render alone.  Boss frames
+    -- preview as a GROUP — ShowAuraPreview("boss", ...) sets the "boss_*" key for
+    -- all five — so map boss1..boss5 to "boss" here, or the live container would
+    -- re-enable on top of the preview.
+    local previewKey = unitKey
+    if type(unitKey) == "string" and unitKey:match("^boss%d+$") then previewKey = "boss" end
+    local buffPreviewActive = QUI_UF.auraPreviewMode[previewKey .. "_buff"]
+    local debuffPreviewActive = QUI_UF.auraPreviewMode[previewKey .. "_debuff"]
+
+    -- Per-zone icon cap: maxFrameCount caps how many auras the container shows
+    -- (it never assigns past the Nth registered button).  Match each zone's
+    -- maxIcons so the cap == the number of pooled buttons.
+    local debuffMaxIcons = auraSettings.debuffMaxIcons or 16
+    local buffMaxIcons = auraSettings.buffMaxIcons or 16
+
+    -- Debuff zone.  SetUnit BEFORE the filters so the container's eager
+    -- GetUnitAuras (inside AddAuraFilter) has a valid unit.
+    local dc = frame.debuffContainer
+    dc:SetUnit(frame.unit)
+    dc:ClearAuraFilters()
+    if showDebuffs and not debuffPreviewActive then
+        AddZoneFilters(dc, frame.unit, ResolveZoneFilters(auraSettings, unitKey, true), "HARMFUL", debuffMaxIcons)
+        dc:SetEnabled(true)
+        dc:Show()
+    else
+        dc:SetEnabled(false)
+        dc:Hide()
+    end
+
+    -- Buff zone
+    local bc = frame.buffContainer
+    bc:SetUnit(frame.unit)
+    bc:ClearAuraFilters()
+    if showBuffs and not buffPreviewActive then
+        AddZoneFilters(bc, frame.unit, ResolveZoneFilters(auraSettings, unitKey, false), "HELPFUL", buffMaxIcons)
+        bc:SetEnabled(true)
+        bc:Show()
+    else
+        bc:SetEnabled(false)
+        bc:Hide()
+    end
+end
+QUI_UF.ApplyContainerConfig = ApplyContainerConfig
+
+-- Public entry (callers in unitframes.lua depend on the name).  The live
+-- container self-drives UNIT_AURA, so this is no longer a per-frame render
+-- loop; it (re)applies enable/disable + filter config, deferring to OOC if the
+-- forbidden container can't be touched right now.
+local function UpdateAuras(frame)
+    if not frame or not frame.unit then return end
+    if InCombatLockdown() then
+        QueueCombatWork(frame)
+        return
+    end
+    ApplyContainerConfig(frame)
+end
+
+-- Suppress / restore the live containers around layout-mode preview.  Disabling
+-- + hiding lets the fake preview icons own the zone; restore re-applies live
+-- config (deferred if in combat).
+local function SuppressContainerForPreview(frame, isDebuff)
+    if not frame then return end
+    local container = isDebuff and frame.debuffContainer or frame.buffContainer
+    if not container then return end
+    if InCombatLockdown() then
+        QueueCombatWork(frame)
+        return
+    end
+    container:SetEnabled(false)
+    container:Hide()
+end
+
+-- (The legacy live-render body — the manual per-index aura polling loop and its
+--  SafeSetCooldown / DisplayStackCount closures — was removed when the live
+--  display moved to the secure CustomAuraContainer above, which reads aura data
+--  C-side and never hands a secret value to QUI Lua.)
 -- Expose for unitframes.lua callers
 QUI_UF.UpdateAuras = UpdateAuras
 
 local function RefreshBossFrameForEngage(frame)
     if not frame or not frame.unit then return end
 
-    lastAuraUpdate[frame.unit] = 0
     if UnitExists(frame.unit) then
         UpdateFrame(frame)
     end
@@ -744,10 +446,14 @@ local function SetupAuraTracking(frame)
 
     local unit = frame.unit
 
-    -- Register aura events and unit-change events based on unit type.
-    -- Use RegisterUnitEvent for C-level unit filtering instead of global
-    -- RegisterEvent — avoids Lua dispatch for every unit in the raid.
-    frame:RegisterUnitEvent("UNIT_AURA", unit)
+    -- Live aura display is now a secure CustomAuraContainer per zone — it
+    -- self-drives UNIT_AURA internally (see AuraContainerPrivateMixin), so QUI
+    -- no longer registers UNIT_AURA on the unit frame for aura rendering.  We
+    -- still listen for token-change events so the container re-points at the
+    -- new underlying unit when the token's subject changes (target/focus swap,
+    -- pet summon, ToT change) — the container's token string is unchanged in
+    -- those cases, so we force a re-parse via ApplyContainerConfig (which
+    -- clears + re-adds the filters → Blizzard UpdateAllAuras).
     if unit == "target" then
         frame:RegisterEvent("PLAYER_TARGET_CHANGED")
     elseif unit == "focus" then
@@ -760,7 +466,7 @@ local function SetupAuraTracking(frame)
     elseif unit:match("^boss%d+$") then
         EnsureBossEngageFrame()
     end
-    -- player: no extra event needed, UNIT_AURA handles it
+    -- player: token never changes; container handles UNIT_AURA on its own.
 
     -- Hook into existing OnEvent or create new one
     local oldOnEvent = frame:GetScript("OnEvent")
@@ -769,38 +475,27 @@ local function SetupAuraTracking(frame)
             oldOnEvent(self, event, arg1, ...)
         end
 
-        if event == "UNIT_AURA" and arg1 == self.unit then
-            -- Force immediate update by clearing throttle
-            lastAuraUpdate[self.unit] = 0
-            UpdateAuras(self)
-        elseif event == "PLAYER_TARGET_CHANGED" then
-            -- Update target and targettarget when target changes
+        if event == "PLAYER_TARGET_CHANGED" then
             if self.unit == "target" or self.unit == "targettarget" then
-                lastAuraUpdate[self.unit] = 0
                 UpdateAuras(self)
             end
         elseif event == "PLAYER_FOCUS_CHANGED" and self.unit == "focus" then
-            -- Clear throttle and update immediately on focus change
-            lastAuraUpdate["focus"] = 0
             UpdateAuras(self)
         elseif event == "UNIT_PET" and self.unit == "pet" then
-            -- Pet changed (summoned/dismissed)
-            lastAuraUpdate["pet"] = 0
             UpdateAuras(self)
         elseif event == "UNIT_TARGET" and self.unit == "targettarget" then
-            -- Target's target changed
-            lastAuraUpdate["targettarget"] = 0
             UpdateAuras(self)
         end
     end)
 
-    -- Initial updates to catch auras after load
+    -- Create + configure the containers once at load.  EnsureContainers /
+    -- anchoring touch a forbidden object, so do it OOC; UpdateAuras defers to
+    -- PLAYER_REGEN_ENABLED if we somehow land here in combat.
+    UpdateAuras(frame)
+
+    -- Re-apply shortly after load to catch the case where the unit frame's
+    -- final size/anchor settle a frame later (mirrors the legacy double-tap).
     C_Timer.After(0.2, function()
-        lastAuraUpdate[unit] = 0
-        UpdateAuras(frame)
-    end)
-    C_Timer.After(1.0, function()
-        lastAuraUpdate[unit] = 0
         UpdateAuras(frame)
     end)
 end
@@ -873,7 +568,13 @@ function QUI_UF:ShowAuraPreviewForFrame(frame, unitKey, auraType)
     frame[containerKey] = frame[containerKey] or {}
     local container = frame[containerKey]
 
-    -- Hide real auras of this type
+    -- Disable the live secure container for this zone so the fake preview icons
+    -- own the display.  (A self-driving secure container cannot be fed fake
+    -- auras — preview keeps the custom-icon renderer; restored on preview exit.)
+    SuppressContainerForPreview(frame, isDebuff)
+
+    -- Hide any legacy real-icon table that may exist (dead on the live path now,
+    -- but cleared defensively).
     local realContainer = isDebuff and frame.debuffIcons or frame.buffIcons
     if realContainer then
         for _, icon in ipairs(realContainer) do
@@ -1067,6 +768,5 @@ function QUI_UF:HideAuraPreviewForFrame(frame, unitKey, auraType)
     end
 
     -- Refresh real auras
-    lastAuraUpdate[unitKey] = 0
     UpdateAuras(frame)
 end

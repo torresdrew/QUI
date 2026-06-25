@@ -1,21 +1,25 @@
 -- tests/unit/buffborders_cancelaura_initialconfig_test.lua
 -- Run: lua tests/unit/buffborders_cancelaura_initialconfig_test.lua
 --
--- Regression guard for right-click-to-remove on buff/debuff border icons.
+-- Regression guard for right-click-to-remove on buff/debuff/temp-enchant icons.
 --
--- The secure aura header declares `type=cancelaura` on its children via the
--- header's `initialConfigFunction` attribute snippet (run once per child, in
--- the restricted environment, at child construction — see Blizzard_FrameXML
--- SecureGroupHeaders.lua SetupAuraButtonConfiguration). That `type` is what
--- routes a right-click through SECURE_ACTIONS.cancelaura -> CancelUnitBuff
--- (SecureTemplates.lua). It is the ONLY place QUI wires cancellation.
+-- Model history:
+--   * Old SecureAuraHeader model wired cancel via initialConfigFunction
+--     (type=cancelaura) in the restricted environment.
+--   * The B2 cutover used an insecure AuraButtonMixin whose OnClick called
+--     CancelUnitBuff directly.
+--   * The E4 unification moved the player onto the SHARED secure
+--     CustomAuraContainer: own-buff right-click cancel is now NATIVE — the
+--     CustomAuraButton intrinsic owns it C-side. QUI must NOT script the
+--     forbidden buttons or call CancelUnitBuff (that would be taint / dead code).
 --
--- CreateHeader installs that snippet correctly, but SyncHeaderAttributes
--- rewrites initialConfigFunction on every settings change and every
--- combat-end refresh. If the synced snippet only sets the icon size and drops
--- the cancel wiring, every child constructed after the first sync reaches
--- SecureActionButton_OnClick with no `type` attribute and right-click silently
--- does nothing. Guard that the synced snippet keeps the cancel wiring.
+-- What survives as a QUI-owned guarantee: the SEPARATE temp-enchant strip (temp
+-- weapon enchants are not auras and the secure container cannot show them) keeps a
+-- right-click cancel via CancelItemTempEnchantment, gated on InCombatLockdown
+-- (cancel is protected in combat for everyone). Guard that:
+--   * No Lua buff cancel remains (native intrinsic owns it).
+--   * The temp-enchant button OnClick acts only on RightButton.
+--   * It returns early under InCombatLockdown before CancelItemTempEnchantment.
 
 local function readFile(path)
     local fh = assert(io.open(path, "rb"), "failed to open " .. path)
@@ -26,25 +30,32 @@ end
 
 local source = readFile("QUI_ActionBars/actionbars/buffborders.lua")
 
--- Isolate the SyncHeaderAttributes body so we assert on the snippet it
--- installs, not on cancelaura references elsewhere in the file (CreateHeader,
--- comments).
-local syncStart = source:find("local function SyncHeaderAttributes", 1, true)
-assert(syncStart, "SyncHeaderAttributes must exist in buffborders.lua")
-local nextFn = source:find("\nlocal function ", syncStart + 1, true)
-assert(nextFn, "expected another local function after SyncHeaderAttributes")
-local syncBody = source:sub(syncStart, nextFn)
+-- Own-buff cancel is native; no Lua cancel path may remain.
+assert(not source:find("CancelUnitBuff", 1, true),
+    "buffborders.lua must NOT call CancelUnitBuff: own-buff cancel is native (CustomAuraButton intrinsic)")
+-- QUI must not SetScript an OnClick on a forbidden AuraButton (taint). AuraSkin
+-- creates the AuraButtons; buffborders never does. Assert no AuraButton creation
+-- here (the only buttons buffborders creates are the insecure temp-enchant ones).
+assert(not source:find('CreateFrame("AuraButton"', 1, true),
+    "buffborders.lua must NOT create forbidden AuraButtons (AuraSkin owns those)")
 
-assert(syncBody:find("initialConfigFunction", 1, true),
-    "SyncHeaderAttributes must (re)install the header's initialConfigFunction")
+-- The temp-enchant cancel must exist and be combat-gated on RightButton.
+-- Isolate the temp-enchant OnClick handler that performs the cancel (set via
+-- SetScript("OnClick", ...) on the insecure strip button); the cancel call lives
+-- AFTER that point, so anchor the search there to skip the comment/upvalue
+-- mentions of CancelItemTempEnchantment earlier in the file.
+local onClickStart = source:find('SetScript("OnClick"', 1, true)
+assert(onClickStart, "buffborders.lua temp-enchant button must set an OnClick handler")
+local cancelPos = source:find("CancelItemTempEnchantment", onClickStart, true)
+assert(cancelPos, "buffborders.lua must keep temp-enchant cancel via CancelItemTempEnchantment")
+local onClickBody = source:sub(onClickStart, cancelPos + 40)
 
-assert(syncBody:find("cancelaura", 1, true),
-    "SyncHeaderAttributes' initialConfigFunction must keep type=cancelaura so "
-    .. "header children created after a settings/combat-end refresh stay "
-    .. "right-click cancellable")
-
-assert(syncBody:find("SetFrameLevel", 1, true),
-    "SyncHeaderAttributes' initialConfigFunction must preserve the child frame "
-    .. "level declared at header creation")
+assert(onClickBody:find("RightButton", 1, true),
+    "temp-enchant OnClick must act only on RightButton")
+local combatPos = onClickBody:find("InCombatLockdown", 1, true)
+assert(combatPos, "temp-enchant OnClick must gate on InCombatLockdown (cancel is protected in combat)")
+local localCancelPos = onClickBody:find("CancelItemTempEnchantment", 1, true)
+assert(combatPos < localCancelPos,
+    "temp-enchant OnClick must check InCombatLockdown BEFORE CancelItemTempEnchantment")
 
 print("OK: buffborders_cancelaura_initialconfig_test")

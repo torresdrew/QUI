@@ -365,4 +365,7 @@ function QUICore:ApplyGlobalFont()
     if gui and gui.OnFontChanged then
         gui:OnFontChanged()
     end
+    -- NOTE: container aura count/duration text uses per-button SetFont (per-zone
+    -- size) in QUI.AuraSkin, not shared font objects, so it picks up a font change
+    -- on the next Attach (config change / reload) rather than live here.
 end
