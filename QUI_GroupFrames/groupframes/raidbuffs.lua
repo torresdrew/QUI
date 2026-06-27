@@ -213,6 +213,32 @@ local SELF_BUFFS = {
     },
 }
 
+-- Ally-maintenance buffs: single-target buffs the player keeps on an ally
+-- (not raid-wide, not self). "Missing" = no eligible ally carries MY copy.
+-- providerSpecIDs: gate to the exact healing spec (not class-wide).
+-- key/label: used by the engine's GetBuffName / GetSyntheticAura internals.
+local ALLY_BUFFS = {
+    {
+        key = "beacon",
+        name = "Beacon",
+        label = "Beacon",
+        providerClass = "PALADIN",
+        providerSpecIDs = { [65] = true },          -- Holy
+        ids = { 53563, 156910, 156322, 1244893 },   -- Beacon of Light/Faith, Eternal Flame, of the Savior
+        iconSpellID = 53563,
+    },
+    {
+        key = "earthShield",
+        name = "Earth Shield",
+        label = "Earth Shield",
+        providerClass = "SHAMAN",
+        providerSpecIDs = { [264] = true },          -- Restoration
+        ids = { 974, 383648 },
+        iconSpellID = 974,
+    },
+}
+ns.QUI_AllyBuffs = ALLY_BUFFS
+
 -- Get spell icon dynamically (handles expansion differences)
 local function GetBuffIcon(spellId)
     if C_Spell and C_Spell.GetSpellTexture then
@@ -643,6 +669,25 @@ local function GetRelevantBuffs()
                 end
             end
         end
+
+        -- Ally-maintenance buffs: remind the provider spec when no ally carries their copy.
+        -- Reuses MissingRaidBuffs engine methods to avoid logic duplication.
+        if ns.QUI_AllyBuffs and MissingRaidBuffs then
+            for _, buff in ipairs(ns.QUI_AllyBuffs) do
+                if MissingRaidBuffs:PlayerIsProviderSpec(buff)
+                    and MissingRaidBuffs._spellKnownProbe(buff)
+                    and not MissingRaidBuffs:AnyEligibleAllyHasMyBuff(buff.ids)
+                then
+                    table_insert(result, {
+                        name = buff.label or buff.name,
+                        stat = "Ally Buff",
+                        spellId = buff.iconSpellID or buff.ids[1],
+                        providerClass = buff.providerClass,
+                        isAllyBuff = true,
+                    })
+                end
+            end
+        end
     end
 
     -- Self-buffs: bypass group/instance filters (they matter solo)
@@ -664,6 +709,8 @@ local function GetRelevantBuffs()
 
     return result
 end
+-- Test seam: allows unit tests to call the scan directly without invoking UpdateDisplay.
+QUI_RaidBuffs._getRelevantBuffs = GetRelevantBuffs
 
 ---------------------------------------------------------------------------
 -- UI CREATION
@@ -1323,6 +1370,11 @@ for _, selfBuff in ipairs(SELF_BUFFS) do
     if selfBuff.anyBuffIDs then
         for id in pairs(selfBuff.anyBuffIDs) do trackedSpellIDs[id] = true end
     end
+end
+-- Ally-buff IDs (Beacon variants, Earth Shield): wake the standalone panel
+-- when these change on a group member (C2 parity for the non-group-frame surface).
+for _, allyBuff in ipairs(ALLY_BUFFS) do
+    for _, id in ipairs(allyBuff.ids) do trackedSpellIDs[id] = true end
 end
 
 -- Per-unit set of auraInstanceIDs currently held that map to a tracked buff.

@@ -1297,6 +1297,13 @@ local function UpdateAbsorbs(frame, _unit, _maxHP)
         return
     end
 
+    -- Absorb bar texture (composer-driven; cached so we only re-skin on change).
+    local absorbTexName = vdb.absorbs.texture or "Quazii v5"
+    if frame._absorbTexName ~= absorbTexName then
+        frame.absorbBar:SetStatusBarTexture(GetTexturePath(absorbTexName))
+        frame._absorbTexName = absorbTexName
+    end
+
     -- Geometry is set up at frame creation (SetFrameLevel, SetAllPoints,
     -- SetReverseFill, SetOrientation).  Only redo when orientation changes.
     if frame._absorbVertical ~= frame._isVerticalFill then

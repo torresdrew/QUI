@@ -336,9 +336,12 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
 
         local cornerFontW = GUI:CreateFormSlider(sc.frame, nil, 8, 16, 1, "cornerFontSize", bags.appearance, Refresh,
             { description = ns.L["Font size of corner text widgets (quantity, item level, binding, expansion)."] })
+        local cornerIconW = GUI:CreateFormSlider(sc.frame, nil, 8, 24, 1, "cornerIconSize", bags.appearance, Refresh,
+            { description = ns.L["Size of corner icon widgets (quality/rank badge, junk, equipment set)."] })
         local qualityTextW = GUI:CreateFormCheckbox(sc.frame, nil, "qualityColorText", bags.appearance, Refresh,
             { description = ns.L["Color corner text (item level, binding) by the item's quality instead of white."] })
-        sc.AddRow(row(sc.frame, ns.L["Corner Font Size"], cornerFontW), row(sc.frame, ns.L["Quality-Colored Text"], qualityTextW))
+        sc.AddRow(row(sc.frame, ns.L["Corner Font Size"], cornerFontW), row(sc.frame, ns.L["Corner Icon Size"], cornerIconW))
+        sc.AddRow(row(sc.frame, ns.L["Quality-Colored Text"], qualityTextW))
         L.closeSection(sc)
 
         -- BEHAVIOR

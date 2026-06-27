@@ -459,6 +459,15 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         s1.AddRow(row(s1.frame, ns.L["Text Color"], textColorW), row(s1.frame, ns.L["Anchor To"], anchorToW))
         L.closeSection(s1)
 
+        L.headerAt(ns.L["Sound"])
+        local s2 = L.sectionAt()
+        local soundEnW = GUI:CreateFormCheckbox(s2.frame, nil, "soundEnabled", fca, Refresh,
+            { description = ns.L["Play a sound when your focus begins an interruptible cast and your interrupt is ready. Best-effort: casts that are not interruptible may not be filtered out."] })
+        local soundW = GUI:CreateFormDropdown(s2.frame, nil, U.GetSoundList(), "sound", fca, Refresh,
+            { description = ns.L["Sound played for the focus interrupt alert."] })
+        s2.AddRow(row(s2.frame, ns.L["Play Sound"], soundEnW), row(s2.frame, ns.L["Sound"], soundW))
+        L.closeSection(s2)
+
         return FinishProviderPage(L, content, key, "focusCastAlert")
     end })
 
