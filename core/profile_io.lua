@@ -1606,15 +1606,16 @@ local function ParseProfileImportString(core, str)
         return false, payloadErr or "Import failed profile validation."
     end
 
-    -- Reject pre-3.5.11 exports. The incremental migrations that would upgrade
-    -- them (v2–v31) were removed in 4.0; if such an export reached the import
-    -- pipeline its RunOnProfile pass would hit the schema floor and wipe the
-    -- ACTIVE profile (it imports in place). A schemaless export (no version) is
-    -- left alone — it takes the normal fresh-data path, not the floor.
+    -- Reject exports below the migration floor (schema 47). The incremental
+    -- migrations that would upgrade them were removed in 5.0; if such an export
+    -- reached the import pipeline its RunOnProfile pass would hit the schema
+    -- floor and wipe the ACTIVE profile (it imports in place). A schemaless
+    -- export (no version) is left alone — it takes the normal fresh-data path,
+    -- not the floor.
     local floor = ns.Migrations and ns.Migrations.MIN_SUPPORTED_SCHEMA
     local importedSchema = tonumber(payload._schemaVersion)
     if floor and importedSchema and importedSchema > 0 and importedSchema < floor then
-        return false, ("This profile is too old to import (it predates 3.5.11). Minimum supported version is %d; this profile is %d.")
+        return false, ("This profile is too old to import. Minimum supported version is %d; this profile is %d.")
             :format(floor, importedSchema)
     end
 
@@ -2375,7 +2376,7 @@ function QUICore:ImportProfileFromValidatedPayload(payload, targetProfileName)
     return RunImportFullProfile(self, payload, targetProfileName)
 end
 
--- NOTE: the pre-3.5.11 floor reseed now lives in core/compatibility.lua
+-- NOTE: the below-floor reseed now lives in core/compatibility.lua
 -- (ReseedStarterFlaggedProfiles), seeding ns.NewProfileSeed onto floored
 -- profiles during BackwardsCompat -- no Starter Profile import, no reload.
 

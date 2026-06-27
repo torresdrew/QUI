@@ -2809,19 +2809,6 @@ ns.QUI_SearchCache = {
             ["tileId"] = "global",
         },
         {
-            ["featureId"] = "debuffFrame",
-            ["keywords"] = {
-                "减益框体",
-                "为当前的有害光环添加自定义边框。",
-                "显示",
-                "module",
-            },
-            ["label"] = "减益框体",
-            ["navType"] = "moduleToggle",
-            ["subPageIndex"] = 3,
-            ["tileId"] = "global",
-        },
-        {
             ["featureId"] = "modulesPage",
             ["keywords"] = {
                 "功能开关",

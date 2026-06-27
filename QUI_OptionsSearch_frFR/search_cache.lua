@@ -3062,19 +3062,6 @@ ns.QUI_SearchCache = {
             ["tileId"] = "global",
         },
         {
-            ["featureId"] = "debuffFrame",
-            ["keywords"] = {
-                "Cadre des débuffs",
-                "Auras néfastes actives avec bordures personnalisées.",
-                "Afficher",
-                "module",
-            },
-            ["label"] = "Cadre des débuffs",
-            ["navType"] = "moduleToggle",
-            ["subPageIndex"] = 3,
-            ["tileId"] = "global",
-        },
-        {
             ["featureId"] = "petFrame",
             ["keywords"] = {
                 "Cadre du familier",

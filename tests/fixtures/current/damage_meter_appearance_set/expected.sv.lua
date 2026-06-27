@@ -1646,6 +1646,7 @@ return {
           buffFrame = {
             autoHeight = false,
             autoWidth = false,
+            growAnchor = "TOPRIGHT",
             heightAdjust = 0,
             hideWithParent = false,
             keepInPlace = true,
@@ -1728,11 +1729,12 @@ return {
           debuffFrame = {
             autoHeight = false,
             autoWidth = false,
+            growAnchor = "TOPRIGHT",
             heightAdjust = 0,
             hideWithParent = false,
             keepInPlace = true,
             offsetX = 0,
-            offsetY = 0,
+            offsetY = -5,
             parent = "buffFrame",
             point = "TOPRIGHT",
             relative = "BOTTOMRIGHT",
@@ -6519,9 +6521,34 @@ return {
       Default = {
         _defaultsVersion = 3,
         _needsLateAbImport = true,
-        _schemaVersion = 47,
-        chat = {
-          enabled = false
+        _schemaVersion = 48,
+        damageMeter = {
+          appearance = {
+            global = {
+              fonts = {
+                header = {
+                  name = "Expressway",
+                  outline = "THICKOUTLINE",
+                  size = 14
+                },
+                rowName = {
+                  name = "Poppins Bold",
+                  outline = "OUTLINE",
+                  size = 12
+                },
+                rowValue = {
+                  name = "Poppins Medium",
+                  outline = "_inherit",
+                  size = 11
+                }
+              },
+              textures = {
+                background = "Square",
+                bar = "Quazii v3",
+                border = "Quazii v2"
+              }
+            }
+          }
         },
         quiUnitFrames = {
           focus = {

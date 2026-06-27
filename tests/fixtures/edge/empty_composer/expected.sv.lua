@@ -1646,6 +1646,7 @@ return {
           buffFrame = {
             autoHeight = false,
             autoWidth = false,
+            growAnchor = "TOPRIGHT",
             heightAdjust = 0,
             hideWithParent = false,
             keepInPlace = true,
@@ -1728,11 +1729,12 @@ return {
           debuffFrame = {
             autoHeight = false,
             autoWidth = false,
+            growAnchor = "TOPRIGHT",
             heightAdjust = 0,
             hideWithParent = false,
             keepInPlace = true,
             offsetX = 0,
-            offsetY = 0,
+            offsetY = -5,
             parent = "buffFrame",
             point = "TOPRIGHT",
             relative = "BOTTOMRIGHT",
@@ -6519,10 +6521,7 @@ return {
       Default = {
         _defaultsVersion = 3,
         _needsLateAbImport = true,
-        _schemaVersion = 47,
-        chat = {
-          enabled = false
-        },
+        _schemaVersion = 48,
         ncdm = {
           buff = {
             ownedSpells = {}
@@ -6530,21 +6529,17 @@ return {
           containers = {
             buff = {
               name = "Buff",
-              ownedSpells = {},
-              shape = "icon"
+              ownedSpells = {}
             },
             essential = {
-              ownedSpells = {},
-              shape = "icon"
+              ownedSpells = {}
             },
             trackedBar = {
               name = "BuffBar",
-              ownedSpells = {},
-              shape = "bar"
+              ownedSpells = {}
             },
             utility = {
-              ownedSpells = {},
-              shape = "icon"
+              ownedSpells = {}
             }
           },
           essential = {

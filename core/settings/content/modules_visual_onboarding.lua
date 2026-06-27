@@ -104,12 +104,6 @@ local VISUAL_MODULES = {
         hidden = HiddenFromFeatureToggles,
     },
     {
-        key = "debuffFrame", group = ns.L["Display"], label = ns.L["Debuff Frame"],
-        caption = ns.L["Active harmful auras with custom borders."],
-        combatLocked = true,
-        hidden = HiddenFromFeatureToggles,
-    },
-    {
         key = "chatFrame1", group = ns.L["Display"], label = ns.L["Chat Frame"],
         caption = ns.L["Custom chat frame replacing the default window."],
         combatLocked = true,

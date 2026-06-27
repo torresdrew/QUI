@@ -123,6 +123,17 @@ local function buildButtonArt(button)
     button.Icon = icon
     button:SetIcon(icon)
 
+    -- Dispel text symbol. AuraUtil.SetAuraSymbol only shows text when Blizzard's
+    -- colorblind mode asks for it, so wiring this is visually inert for the
+    -- normal case but uses the new 12.1 secure-side symbol path when needed.
+    local symbol = button:CreateFontString(nil, "OVERLAY", "TextStatusBarText")
+    symbol:SetPoint("TOPLEFT", button, "TOPLEFT", 2, -2)
+    button._quiSymbol = symbol
+    button:SetAuraSymbol(symbol, {
+        showWhenHarmful = true,
+        showWhenHelpful = false,
+    })
+
     -- Duration cooldown swipe (frame child).
     local cd = CreateFrame("Cooldown", nil, button, "CooldownFrameTemplate")
     cd:SetAllPoints(button)
@@ -166,6 +177,7 @@ local function styleButton(button, profile)
     local fontFlags = (Helpers and Helpers.GetGeneralFontOutline and Helpers.GetGeneralFontOutline()) or "OUTLINE"
     if fontPath and button._quiDuration then button._quiDuration:SetFont(fontPath, fontSize, fontFlags) end
     if fontPath and button._quiCount then button._quiCount:SetFont(fontPath, fontSize, fontFlags) end
+    if fontPath and button._quiSymbol then button._quiSymbol:SetFont(fontPath, fontSize, fontFlags) end
 
     -- Swipe (config on the Cooldown — appearance, not aura data).
     local cd = button._quiCooldown

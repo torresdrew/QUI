@@ -1646,6 +1646,7 @@ return {
           buffFrame = {
             autoHeight = false,
             autoWidth = false,
+            growAnchor = "TOPRIGHT",
             heightAdjust = 0,
             hideWithParent = false,
             keepInPlace = true,
@@ -1728,11 +1729,12 @@ return {
           debuffFrame = {
             autoHeight = false,
             autoWidth = false,
+            growAnchor = "TOPRIGHT",
             heightAdjust = 0,
             hideWithParent = false,
             keepInPlace = true,
             offsetX = 0,
-            offsetY = 0,
+            offsetY = -5,
             parent = "buffFrame",
             point = "TOPRIGHT",
             relative = "BOTTOMRIGHT",
@@ -6522,7 +6524,7 @@ return {
       Default = {
         _defaultsVersion = 3,
         _needsLateAbImport = true,
-        _schemaVersion = 47,
+        _schemaVersion = 48,
         actionBars = {
           bars = {
             bags = {
@@ -8104,7 +8106,6 @@ return {
             filterSensitive = false,
             maxEntries = 500
           },
-          enabled = false,
           fade = {
             delay = 30
           },
@@ -8296,14 +8297,14 @@ return {
           customBar_anon_1Lines = 1,
           customBar_anon_1PandemicBuffEnabled = true,
           customBar_anon_1PandemicDebuffEnabled = true,
+          customBar_anon_1PandemicEnabled = true,
           customBar_anon_1Scale = 0.5,
           customBar_anon_1Thickness = 1,
           customBar_anon_1XOffset = -20,
           customBar_anon_1YOffset = -20,
           custom_1776292480_7595Frequency = 0.10000000000000001,
           custom_1776292480_7595Lines = 1,
-          custom_1776292480_7595PandemicBuffEnabled = true,
-          custom_1776292480_7595PandemicDebuffEnabled = true,
+          custom_1776292480_7595PandemicEnabled = true,
           custom_1776292480_7595Scale = 0.5,
           custom_1776292480_7595Thickness = 1,
           custom_1776292480_7595XOffset = -20,
@@ -8615,7 +8616,6 @@ return {
             widthAdjust = 0
           },
           buffFrame = {
-            growAnchor = "TOPRIGHT",
             offsetX = -5
           },
           buffIcon = {
@@ -8993,10 +8993,6 @@ return {
             relative = "CENTER",
             sizeStable = true,
             widthAdjust = 0
-          },
-          debuffFrame = {
-            growAnchor = "TOPRIGHT",
-            offsetY = -25
           },
           equipmentDurability = {
             autoHeight = false,
@@ -13296,27 +13292,22 @@ return {
               ownedSpells = {
                 [1] = {
                   id = 49998,
-                  kind = "aura",
                   type = "spell"
                 },
                 [2] = {
                   id = 77535,
-                  kind = "aura",
                   type = "spell"
                 },
                 [3] = {
                   id = 207167,
-                  kind = "aura",
                   type = "spell"
                 },
                 [4] = {
                   id = 454822,
-                  kind = "aura",
                   type = "spell"
                 },
                 [5] = {
                   id = 391477,
-                  kind = "aura",
                   type = "spell"
                 }
               },
@@ -14020,9 +14011,6 @@ return {
           lockedToEssential = false,
           offsetY = -210,
           showPercent = false,
-          textSize = 16,
-          textX = 1,
-          textY = 3,
           texture = "Quazii v6",
           tickThickness = 2,
           unthrottledCPU = false,
@@ -14540,7 +14528,7 @@ return {
               debuffFilter = {
                 modifiers = {
                   INCLUDE_NAME_PLATE_ONLY = false,
-                  PLAYER = true,
+                  PLAYER = false,
                   RAID = false
                 }
               },
@@ -14558,7 +14546,8 @@ return {
               },
               debuffStackOffsetX = -1,
               debuffStackOffsetY = 1,
-              debuffStackSize = 10
+              debuffStackSize = 10,
+              onlyMyDebuffs = true
             },
             castbar = {
               bgColor = {
@@ -14781,6 +14770,7 @@ return {
               debuffStackOffsetX = -1,
               debuffStackOffsetY = 1,
               debuffStackSize = 10,
+              onlyMyDebuffs = false,
               showBuffs = true
             },
             castbar = {
@@ -14930,11 +14920,7 @@ return {
               opacity = 0.70000000000000007
             },
             auras = {
-              debuffFilter = {
-                modifiers = {
-                  PLAYER = true
-                }
-              }
+              onlyMyDebuffs = true
             },
             offsetX = -540,
             offsetY = 123
@@ -14957,12 +14943,13 @@ return {
               debuffFilter = {
                 modifiers = {
                   INCLUDE_NAME_PLATE_ONLY = false,
-                  PLAYER = true,
+                  PLAYER = false,
                   RAID = false
                 }
               },
               debuffHideSwipe = false,
-              debuffMaxPerRow = 0
+              debuffMaxPerRow = 0,
+              onlyMyDebuffs = true
             },
             castbar = {
               anchor = "none",
@@ -15110,6 +15097,9 @@ return {
             anchorGap = 0,
             anchorTo = "essential",
             auras = {
+              buffClassifications = {
+                important = false
+              },
               buffDurationAnchor = "CENTER",
               buffDurationColor = {
                 [1] = 1,
@@ -15130,6 +15120,9 @@ return {
               },
               buffHideSwipe = false,
               buffShowDuration = true,
+              debuffClassifications = {
+                important = false
+              },
               debuffDurationAnchor = "CENTER",
               debuffDurationColor = {
                 [1] = 1,
@@ -15304,11 +15297,7 @@ return {
               opacity = 0.70000000000000007
             },
             auras = {
-              debuffFilter = {
-                modifiers = {
-                  PLAYER = true
-                }
-              }
+              onlyMyDebuffs = true
             },
             enabled = true,
             offsetX = -687,
@@ -15324,6 +15313,9 @@ return {
             anchorTo = "essential",
             auras = {
               buffAnchor = "TOPRIGHT",
+              buffClassifications = {
+                important = false
+              },
               buffDurationAnchor = "CENTER",
               buffDurationColor = {
                 [1] = 1,
@@ -15347,6 +15339,9 @@ return {
               buffMaxPerRow = 0,
               buffShowDuration = true,
               buffSpacing = 0,
+              debuffClassifications = {
+                important = false
+              },
               debuffDurationAnchor = "CENTER",
               debuffDurationColor = {
                 [1] = 1,
@@ -15370,6 +15365,7 @@ return {
               debuffSpacing = 0,
               debuffStackOffsetX = 0,
               debuffStackOffsetY = 0,
+              onlyMyDebuffs = true,
               showBuffs = true,
               showDebuffs = true
             },
@@ -15571,6 +15567,7 @@ return {
               debuffStackOffsetX = -1,
               debuffStackOffsetY = 1,
               debuffStackSize = 10,
+              onlyMyDebuffs = false,
               showDebuffs = true
             },
             castbar = {

@@ -3633,19 +3633,6 @@ ns.QUI_SearchCache = {
             ["tileId"] = "global",
         },
         {
-            ["featureId"] = "debuffFrame",
-            ["keywords"] = {
-                "Riquadro dei debuff",
-                "Aure nocive attive con bordi personalizzati.",
-                "Mostra",
-                "module",
-            },
-            ["label"] = "Riquadro dei debuff",
-            ["navType"] = "moduleToggle",
-            ["subPageIndex"] = 3,
-            ["tileId"] = "global",
-        },
-        {
             ["featureId"] = "focusFrame",
             ["keywords"] = {
                 "Riquadro focus",

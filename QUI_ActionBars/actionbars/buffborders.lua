@@ -1,15 +1,18 @@
 -- buffborders.lua
--- Player buff/debuff icon display on Blizzard's SHARED secure CustomAuraContainer
--- model (the SAME path the unit/group frames use via QUI.AuraSkin). Two QUI named
--- anchor frames (QUI_BuffIconContainer / QUI_DebuffIconContainer) on UIParent are
--- the positioned, movable anchors; each owns a forbidden AuraContainer
+-- Player buff/debuff icon display on Blizzard's secure CustomAuraContainer
+-- model (the SAME path the unit/group frames use via QUI.AuraSkin). QUI exposes
+-- two named anchor frames (QUI_BuffIconContainer and QUI_DebuffIconContainer)
+-- on UIParent; each owns its own forbidden AuraContainer
 -- ("CustomAuraContainerTemplate") that QUI.AuraSkin pools CustomAuraButtons onto.
 -- The container self-drives UNIT_AURA and renders aura DATA C-side (secret-safe);
 -- QUI only changes filters + enable/unit OOC (the container is a forbidden object,
 -- so create/anchor/filter changes are combat-deferred to PLAYER_REGEN_ENABLED).
 --
--- Right-click cancel of own buffs is NATIVE: the CustomAuraButton intrinsic owns
--- it C-side. QUI never scripts the forbidden buttons.
+-- Right-click cancel of own buffs is a separate secure hit layer:
+-- CustomAuraButton has no OnClick path in 12.1, so QUI overlays a
+-- SecureAuraHeaderTemplate using SecureAuraButtonTemplate. The secure header owns
+-- UNIT_AURA/index updates and the secure cancelaura action; QUI never scripts the
+-- forbidden CustomAuraButtons and never calls CancelUnitBuff directly.
 --
 -- TEMP WEAPON ENCHANTS are NOT auras (GetWeaponEnchantInfo, never in UNIT_AURA),
 -- so the secure container cannot show them. They keep a SMALL SEPARATE insecure
@@ -87,13 +90,6 @@ local DEFAULTS = {
     buffGrowUp = false,
     buffInvertSwipeDarkening = false,
     buffRowSpacing = 0,
-    debuffIconsPerRow = 0,
-    debuffIconSpacing = 0,
-    debuffIconSize = 0,
-    debuffGrowLeft = false,
-    debuffGrowUp = false,
-    debuffInvertSwipeDarkening = false,
-    debuffRowSpacing = 0,
     showStacks = true,
     hideSwipe = false,
     -- Text positioning (per-frame)
@@ -279,12 +275,12 @@ end
 -- Weapon enchant cached total duration per slot
 local enchantCachedDuration = {}
 
--- The QUI named anchor frames (created in Init) — these ARE the published,
--- movable frames the anchoring system resolves by global name and positions.
--- Each owns a forbidden AuraContainer (._auraContainer) that AuraSkin pools
--- CustomAuraButtons onto.
+-- The QUI named anchor frames (created in Init) are the published, movable
+-- frames the anchoring system resolves by global name and positions. Each owns
+-- its own forbidden AuraContainer (._auraContainer) for one aura type.
 local buffContainer = nil       -- QUI_BuffIconContainer (named anchor frame)
 local debuffContainer = nil     -- QUI_DebuffIconContainer (named anchor frame)
+local buffCancelHeader = nil    -- SecureAuraHeaderTemplate overlay for buff right-click cancel
 local tempEnchantFrame = nil    -- small separate insecure temp-enchant strip
 local initialized = false
 
@@ -913,12 +909,10 @@ local function SetupPrivateAuras()
     end
 end
 
--- Position the 3 private-aura slots in a grid on the debuff anchor frame. The
--- container renders normal debuffs C-side and QUI cannot read the live debuff
--- count (it is C-side / secret-safe), so the slots anchor at a FIXED grid origin
--- (the grow corner) rather than after a Lua-known visible count. They still layer
--- correctly relative to the debuff grid (same parent, same grow corner) — they
--- occupy the leading cells; normal debuffs flow past them.
+-- Position the 3 private-aura slots on a FIXED reserved strip below the debuff
+-- grid's max extent. Private auras cannot join the engine pool and the live
+-- debuff count is secret-safe / unknown to Lua, so the slots sit one row below
+-- the debuff container's possible extent, on the same grow corner as that grid.
 local function LayoutPrivateAuraSlots()
     if not AddPrivateAuraAnchor or #paSlots == 0 or not debuffContainer then return end
 
@@ -933,23 +927,19 @@ local function LayoutPrivateAuraSlots()
     local profile = BuildZoneProfile(settings, false)
     local iconSize = profile.iconSize
     local spacing = profile.spacing
-    local iconsPerRow = profile.maxPerRow
     local growLeft = settings.debuffGrowLeft
     local growUp = settings.debuffGrowUp
     local xDir = growLeft and -1 or 1
-    local yDir = growUp and 1 or -1
     local point = profile.anchor
+    local _, gridH = GridExtent(profile)
+    local stripYBase = growUp and (gridH + spacing) or -(gridH + spacing)
 
-    for i, slot in ipairs(paSlots) do
-        local idx = i - 1
-        local col = idx % iconsPerRow
-        local row = math.floor(idx / iconsPerRow)
-
+    for i = 1, #paSlots do
+        local slot = paSlots[i]
         slot:SetSize(iconSize, iconSize)
         slot:ClearAllPoints()
-        slot:SetPoint(point, debuffContainer, point,
-            xDir * col * (iconSize + spacing),
-            yDir * row * (iconSize + spacing))
+        local x = xDir * (i - 1) * (iconSize + spacing)
+        slot:SetPoint(point, debuffContainer, point, x, stripYBase)
         StyleSlotBorders(slot, settings)
         slot:Show()
     end
@@ -1015,6 +1005,85 @@ local function EnsureZoneContainer(anchorFrame, profile)
     return container
 end
 
+local function EnsureBuffCancelHeader()
+    if buffCancelHeader or not buffContainer then return buffCancelHeader end
+
+    local ok, header = pcall(CreateFrame, "Frame", "QUI_BuffCancelHeader", buffContainer, "SecureAuraHeaderTemplate")
+    if not ok or not header then return nil end
+    buffCancelHeader = header
+    return buffCancelHeader
+end
+
+local function StyleBuffCancelChild(child, iconSize)
+    if not child then return end
+    pcall(child.SetSize, child, iconSize, iconSize)
+    pcall(child.SetAlpha, child, 0)
+    if child.SetPropagateMouseMotion then
+        pcall(child.SetPropagateMouseMotion, child, true)
+    end
+    if child.SetPassThroughButtons then
+        pcall(child.SetPassThroughButtons, child, "LeftButton")
+    end
+end
+
+local function RefreshBuffCancelChildren(header, iconSize, maxButtons)
+    if not header or not header.GetAttribute then return end
+    for i = 1, maxButtons do
+        local child = header:GetAttribute("child" .. i)
+        if child then
+            StyleBuffCancelChild(child, iconSize)
+        end
+    end
+end
+
+local function ConfigureBuffCancelHeader(settings, profile, buffMax, perRow, anyBuffs)
+    local header = EnsureBuffCancelHeader()
+    if not header then return end
+
+    if not anyBuffs then
+        pcall(header.Hide, header)
+        return
+    end
+
+    local iconSize = profile.iconSize or DEFAULT_ICON_SIZE
+    local spacing = profile.spacing or 2
+    local step = iconSize + spacing
+    local growLeft = settings and settings.buffGrowLeft
+    local growUp = settings and settings.buffGrowUp
+    local xOffset = growLeft and -step or step
+    local wrapYOffset = growUp and step or -step
+    local maxWraps = math.ceil(buffMax / perRow)
+    local filter = BuildAuraFilter(settings, true)
+    local initialConfig = string.format(
+        'self:SetWidth(%.3f); self:SetHeight(%.3f); self:SetAlpha(0); if self.SetPropagateMouseMotion then self:SetPropagateMouseMotion(true); end; if self.SetPassThroughButtons then self:SetPassThroughButtons("LeftButton"); end;',
+        iconSize, iconSize)
+
+    header:ClearAllPoints()
+    header:SetPoint(profile.anchor, buffContainer, profile.anchor, 0, 0)
+    header:SetSize(1, 1)
+    if header.SetFrameLevel and buffContainer.GetFrameLevel then
+        pcall(header.SetFrameLevel, header, (buffContainer:GetFrameLevel() or 0) + 40)
+    end
+
+    header:SetAttribute("unit", "player")
+    header:SetAttribute("filter", filter)
+    header:SetAttribute("template", "SecureAuraButtonTemplate")
+    header:SetAttribute("sortMethod", "INDEX")
+    header:SetAttribute("sortDirection", "+")
+    header:SetAttribute("separateOwn", 1)
+    header:SetAttribute("maxAuraCount", buffMax)
+    header:SetAttribute("point", profile.anchor)
+    header:SetAttribute("xOffset", xOffset)
+    header:SetAttribute("yOffset", 0)
+    header:SetAttribute("wrapAfter", perRow)
+    header:SetAttribute("wrapXOffset", 0)
+    header:SetAttribute("wrapYOffset", wrapYOffset)
+    header:SetAttribute("maxWraps", maxWraps)
+    header:SetAttribute("initialConfigFunction", initialConfig)
+    header:Show()
+    RefreshBuffCancelChildren(header, iconSize, buffMax)
+end
+
 -- Heart of the live path: (re)create containers, apply filters + unit + enable.
 -- OOC only (callers defer via QueueContainerWork). Re-assigned to the forward
 -- declaration above.
@@ -1027,54 +1096,64 @@ ApplyContainerConfig = function()
 
     local buffProfile = BuildZoneProfile(settings, true)
     local debuffProfile = BuildZoneProfile(settings, false)
+    local buffMax = buffProfile.maxIcons
+    local debuffMax = debuffProfile.maxIcons
+    local buffPerRow = buffProfile.maxPerRow
+    if buffPerRow < 1 then buffPerRow = 1 end
 
-    -- Size the named anchor frames to the full grid extent so the mover handle
-    -- covers the whole possible area (live count is C-side / unknown to Lua).
     local bw, bh = GridExtent(buffProfile)
-    local dw, dh = GridExtent(debuffProfile)
     buffContainer._naturalW, buffContainer._naturalH = bw, bh
-    debuffContainer._naturalW, debuffContainer._naturalH = dw, dh
     buffContainer:SetSize(bw, bh)
+
+    local dw, dh = GridExtent(debuffProfile)
+    debuffContainer._naturalW, debuffContainer._naturalH = dw, dh
     debuffContainer:SetSize(dw, dh)
 
-    -- Buff zone
-    local bc = EnsureZoneContainer(buffContainer, buffProfile)
-    if bc then
-        -- SetUnit BEFORE the filter so AddAuraFilter's eager C-side aura read has a unit.
-        bc:SetUnit("player")
-        bc:ClearAuraFilters()
-        if settings.enableBuffs and not settings.hideBuffFrame then
-            bc:AddAuraFilter(BuildAuraFilter(settings, true), { maxFrameCount = buffProfile.maxIcons })
-            bc:SetEnabled(true)
-            bc:Show()
+    local anyBuffs   = settings.enableBuffs   and not settings.hideBuffFrame
+    local anyDebuffs = settings.enableDebuffs and not settings.hideDebuffFrame
+
+    local buffAuraContainer = EnsureZoneContainer(buffContainer, buffProfile)
+    if buffAuraContainer then
+        -- SetUnit BEFORE the filters so AddAuraFilter's eager C-side aura read has a unit.
+        buffAuraContainer:SetUnit("player")
+        buffAuraContainer:ClearAuraFilters()
+        if anyBuffs then
+            buffAuraContainer:AddAuraFilter(BuildAuraFilter(settings, true), { maxFrameCount = buffMax })
+        end
+        if anyBuffs then
+            buffAuraContainer:SetEnabled(true)
+            buffAuraContainer:Show()
         else
-            bc:SetEnabled(false)
-            bc:Hide()
+            buffAuraContainer:SetEnabled(false)
+            buffAuraContainer:Hide()
         end
     end
 
-    -- Debuff zone
-    local dc = EnsureZoneContainer(debuffContainer, debuffProfile)
-    if dc then
-        dc:SetUnit("player")
-        dc:ClearAuraFilters()
-        if settings.enableDebuffs and not settings.hideDebuffFrame then
-            dc:AddAuraFilter(BuildAuraFilter(settings, false), { maxFrameCount = debuffProfile.maxIcons })
-            dc:SetEnabled(true)
-            dc:Show()
+    local debuffAuraContainer = EnsureZoneContainer(debuffContainer, debuffProfile)
+    if debuffAuraContainer then
+        debuffAuraContainer:SetUnit("player")
+        debuffAuraContainer:ClearAuraFilters()
+        if anyDebuffs then
+            debuffAuraContainer:AddAuraFilter(BuildAuraFilter(settings, false), { maxFrameCount = debuffMax })
+        end
+        if anyDebuffs then
+            debuffAuraContainer:SetEnabled(true)
+            debuffAuraContainer:Show()
         else
-            dc:SetEnabled(false)
-            dc:Hide()
+            debuffAuraContainer:SetEnabled(false)
+            debuffAuraContainer:Hide()
         end
     end
+
+    ConfigureBuffCancelHeader(settings, buffProfile, buffMax, buffPerRow, anyBuffs)
 
     -- Fade support (SetAlpha is unprotected on the named anchor frames).
-    if settings.enableBuffs and not settings.hideBuffFrame then
+    if anyBuffs then
         buffContainer:SetAlpha(settings.fadeBuffFrame and (settings.fadeOutAlpha or 0) or 1)
     else
         buffContainer:SetAlpha(0)
     end
-    if settings.enableDebuffs and not settings.hideDebuffFrame then
+    if anyDebuffs then
         debuffContainer:SetAlpha(settings.fadeDebuffFrame and (settings.fadeOutAlpha or 0) or 1)
     else
         debuffContainer:SetAlpha(0)
@@ -1201,7 +1280,10 @@ local function ShowPreview()
     previewActive = true
 
     local settings = GetSettings()
-    if not settings then return end
+    if not settings then
+        previewActive = false
+        return
+    end
 
     -- Disable the live secure containers so the fake icons own the zone.
     if not InCombatLockdown() then
@@ -1212,6 +1294,9 @@ local function ShowPreview()
         if debuffContainer._auraContainer then
             pcall(debuffContainer._auraContainer.SetEnabled, debuffContainer._auraContainer, false)
             pcall(debuffContainer._auraContainer.Hide, debuffContainer._auraContainer)
+        end
+        if buffCancelHeader then
+            pcall(buffCancelHeader.Hide, buffCancelHeader)
         end
     end
     if tempEnchantFrame then tempEnchantFrame:Hide() end
@@ -1229,6 +1314,8 @@ local function ShowPreview()
     previewBuffOverlay:SetFrameStrata("HIGH")
     previewBuffOverlay:Show()
 
+    previewBuffIcons = CreatePreviewGrid(previewBuffOverlay, PREVIEW_BUFF_TEXTURES, nil, settings, "buff", true)
+
     if not previewDebuffOverlay then
         previewDebuffOverlay = CreateFrame("Frame", nil, debuffContainer)
     end
@@ -1237,7 +1324,6 @@ local function ShowPreview()
     previewDebuffOverlay:SetFrameStrata("HIGH")
     previewDebuffOverlay:Show()
 
-    previewBuffIcons = CreatePreviewGrid(previewBuffOverlay, PREVIEW_BUFF_TEXTURES, nil, settings, "buff", true)
     previewDebuffIcons = CreatePreviewGrid(previewDebuffOverlay, PREVIEW_DEBUFF_TEXTURES, PREVIEW_DEBUFF_TYPES, settings, "debuff", false)
 
     buffContainer._naturalW = previewBuffOverlay._naturalW
@@ -1390,16 +1476,16 @@ end
 -- INITIALIZATION
 ---------------------------------------------------------------------------
 local function BuildFrames()
-    -- Plain insecure named anchor frames on UIParent. These ARE the published,
-    -- movable frames (QUI_BuffIconContainer / QUI_DebuffIconContainer) that the
-    -- anchoring system resolves by name and positions; SetSize/Show/SetPoint on
-    -- THESE are unprotected. Each owns a forbidden AuraContainer (created in
-    -- ApplyContainerConfig) parented to it.
+    -- Plain insecure named anchor frames on UIParent. These are the published,
+    -- movable frames that the anchoring system resolves by name and positions;
+    -- SetSize/Show/SetPoint on them are unprotected. Each owns one forbidden
+    -- AuraContainer (created in ApplyContainerConfig) parented to it.
     buffContainer = CreateFrame("Frame", "QUI_BuffIconContainer", UIParent)
-    debuffContainer = CreateFrame("Frame", "QUI_DebuffIconContainer", UIParent)
     buffContainer:SetSize(1, 1)
-    debuffContainer:SetSize(1, 1)
     buffContainer:SetClampedToScreen(true)
+
+    debuffContainer = CreateFrame("Frame", "QUI_DebuffIconContainer", UIParent)
+    debuffContainer:SetSize(1, 1)
     debuffContainer:SetClampedToScreen(true)
 
     -- Small SEPARATE insecure temp-enchant strip (synthetic non-aura entries).
@@ -1416,9 +1502,6 @@ Init = function()
     BuildFrames()
 
     local settings = GetSettings()
-
-    debuffContainer:ClearAllPoints()
-    debuffContainer:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", -205, -58)
 
     UpdateGrowAnchor("buffFrame")
     UpdateGrowAnchor("debuffFrame")

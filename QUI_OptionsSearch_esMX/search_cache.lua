@@ -3299,19 +3299,6 @@ ns.QUI_SearchCache = {
             ["tileId"] = "global",
         },
         {
-            ["featureId"] = "debuffFrame",
-            ["keywords"] = {
-                "Marco de debilitaciones",
-                "Auras perjudiciales activas con bordes personalizados.",
-                "Mostrar",
-                "module",
-            },
-            ["label"] = "Marco de debilitaciones",
-            ["navType"] = "moduleToggle",
-            ["subPageIndex"] = 3,
-            ["tileId"] = "global",
-        },
-        {
             ["featureId"] = "focusFrame",
             ["keywords"] = {
                 "Marco de foco",

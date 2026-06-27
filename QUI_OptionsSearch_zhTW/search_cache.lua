@@ -3377,19 +3377,6 @@ ns.QUI_SearchCache = {
             ["tileId"] = "global",
         },
         {
-            ["featureId"] = "debuffFrame",
-            ["keywords"] = {
-                "減益框架",
-                "以自訂邊框顯示作用中的有害光環。",
-                "顯示",
-                "module",
-            },
-            ["label"] = "減益框架",
-            ["navType"] = "moduleToggle",
-            ["subPageIndex"] = 3,
-            ["tileId"] = "global",
-        },
-        {
             ["featureId"] = "reticle",
             ["keywords"] = {
                 "準星",

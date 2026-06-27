@@ -3133,19 +3133,6 @@ ns.QUI_SearchCache = {
             ["tileId"] = "global",
         },
         {
-            ["featureId"] = "debuffFrame",
-            ["keywords"] = {
-                "Debuff-Rahmen",
-                "Aktive schädliche Auren mit benutzerdefinierten Rahmen.",
-                "Anzeige",
-                "module",
-            },
-            ["label"] = "Debuff-Rahmen",
-            ["navType"] = "moduleToggle",
-            ["subPageIndex"] = 3,
-            ["tileId"] = "global",
-        },
-        {
             ["featureId"] = "xpTracker",
             ["keywords"] = {
                 "EP-Tracker",

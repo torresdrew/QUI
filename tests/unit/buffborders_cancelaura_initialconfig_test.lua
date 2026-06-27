@@ -9,15 +9,17 @@
 --   * The B2 cutover used an insecure AuraButtonMixin whose OnClick called
 --     CancelUnitBuff directly.
 --   * The E4 unification moved the player onto the SHARED secure
---     CustomAuraContainer: own-buff right-click cancel is now NATIVE — the
---     CustomAuraButton intrinsic owns it C-side. QUI must NOT script the
---     forbidden buttons or call CancelUnitBuff (that would be taint / dead code).
+--     CustomAuraContainer. The 12.1 FrameXML pass showed CustomAuraButton has no
+--     click/cancel script, so own-buff right-click cancel is now a separate
+--     invisible SecureAuraHeader hit layer. QUI must NOT script the forbidden
+--     CustomAuraButtons or call CancelUnitBuff directly.
 --
 -- What survives as a QUI-owned guarantee: the SEPARATE temp-enchant strip (temp
 -- weapon enchants are not auras and the secure container cannot show them) keeps a
 -- right-click cancel via CancelItemTempEnchantment, gated on InCombatLockdown
 -- (cancel is protected in combat for everyone). Guard that:
---   * No Lua buff cancel remains (native intrinsic owns it).
+--   * No direct Lua buff cancel remains.
+--   * The secure cancel layer uses SecureAuraHeaderTemplate/SecureAuraButtonTemplate.
 --   * The temp-enchant button OnClick acts only on RightButton.
 --   * It returns early under InCombatLockdown before CancelItemTempEnchantment.
 
@@ -30,9 +32,19 @@ end
 
 local source = readFile("QUI_ActionBars/actionbars/buffborders.lua")
 
--- Own-buff cancel is native; no Lua cancel path may remain.
-assert(not source:find("CancelUnitBuff", 1, true),
-    "buffborders.lua must NOT call CancelUnitBuff: own-buff cancel is native (CustomAuraButton intrinsic)")
+-- Own-buff cancel is secure-header owned; no direct Lua cancel call may remain.
+assert(not source:find("CancelUnitBuff(", 1, true),
+    "buffborders.lua must NOT call CancelUnitBuff directly: own-buff cancel is secure-header owned")
+assert(source:find("SecureAuraHeaderTemplate", 1, true),
+    "buffborders.lua must create a SecureAuraHeaderTemplate cancel layer")
+assert(source:find("SecureAuraButtonTemplate", 1, true),
+    "buffborders.lua cancel layer must use SecureAuraButtonTemplate")
+assert(source:find('SetAttribute("filter", filter)', 1, true),
+    "buffborders.lua cancel layer must set the secure header filter")
+assert(source:find('SetAttribute("template", "SecureAuraButtonTemplate")', 1, true),
+    "buffborders.lua cancel layer must configure SecureAuraButtonTemplate")
+assert(source:find('SetAttribute("separateOwn", 1)', 1, true),
+    "buffborders.lua cancel layer must approximate CustomAuraContainer player-first ordering")
 -- QUI must not SetScript an OnClick on a forbidden AuraButton (taint). AuraSkin
 -- creates the AuraButtons; buffborders never does. Assert no AuraButton creation
 -- here (the only buttons buffborders creates are the insecure temp-enchant ones).

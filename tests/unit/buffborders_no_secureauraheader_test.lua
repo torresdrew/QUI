@@ -4,15 +4,16 @@
 -- buffborders.lua was unified onto the SHARED secure CustomAuraContainer model
 -- (Task E4): the player buff/debuff display now flows through the SAME container +
 -- QUI.AuraSkin path the unit/group frames use, replacing the bespoke insecure
--- pooled-button model. This source-text gate locks in the cutover:
---   * NO "SecureAuraHeader" reference may remain (the secure-header machinery was
---     deleted long ago and must never return).
+-- pooled-button model. The 12.1 FrameXML pass corrected one assumption:
+-- CustomAuraButton has no click/cancel script, so own-buff cancel needs a separate
+-- secure aura-header hit layer. This source-text gate locks in the model:
+--   * SecureAuraHeader may exist ONLY as an invisible cancel layer.
 --   * NO bespoke insecure QUI_AuraButtonTemplate / AuraButton pooling may remain
 --     (the player uses CustomAuraContainerTemplate via AuraSkin now).
 --   * Buff/debuff zones drive the container: CreateFrame("AuraContainer", ...),
 --     AuraSkin.Attach, AddAuraFilter, SetUnit("player"), SetEnabled.
---   * Right-click cancel of own buffs is NATIVE (the CustomAuraButton intrinsic
---     owns it C-side): there must be NO QUI buff-cancel OnClick / CancelUnitBuff.
+--   * Right-click cancel of own buffs is secure-header owned: there must be NO QUI
+--     buff-cancel OnClick and NO direct CancelUnitBuff call.
 --   * Temp weapon enchants keep a SMALL SEPARATE insecure strip with right-click
 --     CancelItemTempEnchantment (they are not auras; the container can't show them).
 --   * The entry contract MUST still publish _G.QUI_RefreshBuffBorders.
@@ -26,16 +27,23 @@ end
 
 local src = readAll("QUI_ActionBars/actionbars/buffborders.lua")
 
--- The secure-header machinery must stay gone.
-assert(not src:find("SecureAuraHeader", 1, true),
-    "buffborders.lua must not reference SecureAuraHeader")
+-- The secure header is allowed only as an invisible cancel layer, not as the
+-- visual aura renderer.
+assert(src:find("SecureAuraHeaderTemplate", 1, true),
+    "buffborders.lua must create a SecureAuraHeaderTemplate cancel layer for own-buff right-click")
+assert(src:find("SecureAuraButtonTemplate", 1, true),
+    "buffborders.lua cancel layer must use SecureAuraButtonTemplate")
+assert(src:find("SetPropagateMouseMotion", 1, true),
+    "buffborders.lua cancel layer must propagate mouse motion so AuraButton tooltips still work")
+assert(src:find("SetPassThroughButtons", 1, true),
+    "buffborders.lua cancel layer must pass through non-cancel clicks")
 
 -- The bespoke insecure pooled-button model must be gone (unified onto the shared
 -- container path).
 assert(not src:find("QUI_AuraButtonTemplate", 1, true),
     "buffborders.lua must NOT use the bespoke QUI_AuraButtonTemplate (player uses CustomAuraContainerTemplate via AuraSkin)")
-assert(not src:find("CancelUnitBuff", 1, true),
-    "buffborders.lua must NOT cancel buffs in Lua: own-buff right-click cancel is NATIVE (CustomAuraButton intrinsic, C-side)")
+assert(not src:find("CancelUnitBuff(", 1, true),
+    "buffborders.lua must NOT call CancelUnitBuff directly: own-buff cancel is secure-header owned")
 
 -- The player buff/debuff zones must drive the shared secure container.
 assert(src:find('CreateFrame("AuraContainer", nil, anchorFrame, "CustomAuraContainerTemplate")', 1, true),
@@ -50,6 +58,8 @@ assert(src:find("SetEnabled(true)", 1, true),
     "buffborders.lua must enable the container via SetEnabled(true)")
 assert(src:find("BuildAuraFilter", 1, true),
     "buffborders.lua must honor the user filter flags via BuildAuraFilter")
+assert(src:find("BuildAuraFilter(settings, true)", 1, true),
+    "buffborders.lua cancel header must use the same buff filter string as the visual container")
 
 -- The weapon-enchant strip is a small SEPARATE insecure display (synthetic non-
 -- aura entries the secure container cannot show) and keeps its own cancel.
@@ -73,11 +83,10 @@ assert(guardWindow:find("InCombatLockdown", 1, true),
 assert(guardWindow:find("RightButton", 1, true),
     "temp-enchant OnClick must act only on RightButton")
 
--- The forbidden container buttons must never be scripted by QUI (the intrinsic
--- owns native cancel). AuraSkin owns the buttons; buffborders must not SetScript a
--- buff/debuff button cancel.
-assert(not src:find("CancelUnitBuff", 1, true),
-    "buffborders.lua must not implement any Lua buff-cancel path (native intrinsic)")
+-- The forbidden container buttons must never be scripted by QUI. AuraSkin owns the
+-- CustomAuraButtons; buffborders must not SetScript a buff/debuff button cancel.
+assert(not src:find("CancelUnitBuff(", 1, true),
+    "buffborders.lua must not implement any direct Lua buff-cancel path")
 
 assert(src:find('_G.QUI_RefreshBuffBorders = ', 1, true),
     "buffborders.lua must still publish _G.QUI_RefreshBuffBorders (entry contract)")

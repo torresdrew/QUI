@@ -64,12 +64,10 @@ assert(not src:find("AuraSkin.DurationFormatter", 1, true),
 assert(not src:find("formatter = AuraSkin", 1, true),
     "aura_skin.lua must NOT pass a Lua formatter to SetDurationText")
 
--- Secret-safe inbound subset (matches Blizzard's official AuraButton example):
--- ApplyAuraInstance runs each Apply* in order (count -> border -> ... -> icon ->
--- visibility).  ApplyApplicationCount (`applications > 1`) and ApplyAuraBorder
--- (`auraData.isHarmful and ...`) BRANCH ON SECRET aura fields and throw on an
--- addon-created button; the swallowed throw blanks the button (icon + visibility
--- come AFTER and never run).  So ONLY the secret-safe setters are wired.
+-- Secure inbound subset (matches Blizzard's official CustomAuraButton contract):
+-- art regions are addon-created button children, then handed to the AuraButton
+-- inbound API. The secure-side apply path owns aura-data reads, dispel border,
+-- colorblind symbol text, stacks, duration, icon, and visibility.
 assert(src:find("SetIcon", 1, true),
     "aura_skin.lua must call SetIcon to wire the aura icon texture")
 assert(src:find("SetDurationCooldown", 1, true),
@@ -93,6 +91,10 @@ assert(src:find("button:SetAuraBorder", 1, true),
     "aura_skin.lua must wire SetAuraBorder for the per-dispel-type border colour")
 assert(src:find("showWhenHelpful = false", 1, true),
     "aura_skin.lua dispel border must set showWhenHelpful = false (buffs keep the static ring)")
+assert(src:find("button:SetAuraSymbol", 1, true),
+    "aura_skin.lua must wire SetAuraSymbol for Blizzard's colorblind dispel text")
+assert(src:find("_quiSymbol", 1, true),
+    "aura_skin.lua must store the SetAuraSymbol fontstring on button._quiSymbol")
 
 -- Static QUI border: a button-child texture ALWAYS shown (aura-data-INDEPENDENT,
 -- so it renders regardless of the secure apply path).  BACKGROUND draw layer.

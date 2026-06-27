@@ -2961,19 +2961,6 @@ ns.QUI_SearchCache = {
             ["tileId"] = "global",
         },
         {
-            ["featureId"] = "debuffFrame",
-            ["keywords"] = {
-                "디버프 프레임",
-                "사용자 지정 테두리가 있는 활성 해로운 오라.",
-                "표시",
-                "module",
-            },
-            ["label"] = "디버프 프레임",
-            ["navType"] = "moduleToggle",
-            ["subPageIndex"] = 3,
-            ["tileId"] = "global",
-        },
-        {
             ["featureId"] = "microMenu",
             ["keywords"] = {
                 "마이크로 메뉴",

@@ -172,7 +172,7 @@ local function StampOldDefaultsOnRawProfile(rawProfile, fallbackShadow)
     end
 
     -- Legacy default-stamp blocks (defaults v1/v2) were removed in 4.0: every
-    -- profile new enough to keep (schema >= 31, the 3.5.11 floor) is already at
+    -- profile new enough to keep (schema >= 47, the migration floor) is already at
     -- _defaultsVersion 3 and returns early above; older profiles are floored
     -- (wiped + reseeded) by Migrations. The v3 rescue below is retained as a
     -- harmless no-op safety net for any lingering _defaultsVersion==2 profile.
@@ -243,7 +243,7 @@ end
 -- BackwardsCompat: facade that orchestrates both tiers
 ---------------------------------------------------------------------------
 
--- Pre-3.5.11 floor reseed. Migrations backs up + wipes any profile older than
+-- Below-floor reseed (schema < 47). Migrations backs up + wipes any profile older than
 -- the schema floor and flags it `_needsStarterReseed`. Seed the shipped
 -- new-profile defaults onto each flagged raw profile and clear the flag.
 --
@@ -274,7 +274,7 @@ function QUI:BackwardsCompat()
         ns.Migrations.Run(self.db)
     end
 
-    -- Tier 2: reseed any profile the migration floor wiped (pre-3.5.11) with
+    -- Tier 2: reseed any profile the migration floor wiped (schema < 47) with
     -- the shipped new-profile defaults, before modules build.
     ReseedStarterFlaggedProfiles(self.db)
 

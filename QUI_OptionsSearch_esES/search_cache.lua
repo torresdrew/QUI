@@ -3330,19 +3330,6 @@ ns.QUI_SearchCache = {
             ["tileId"] = "global",
         },
         {
-            ["featureId"] = "debuffFrame",
-            ["keywords"] = {
-                "Marco de debuff",
-                "Perjuicios activos con bordes personalizados.",
-                "Mostrar",
-                "module",
-            },
-            ["label"] = "Marco de debuff",
-            ["navType"] = "moduleToggle",
-            ["subPageIndex"] = 3,
-            ["tileId"] = "global",
-        },
-        {
             ["featureId"] = "focusFrame",
             ["keywords"] = {
                 "Marco de foco",

@@ -4317,13 +4317,15 @@ local defaults = {
                 sizeStable = true, autoWidth = false, autoHeight = false,
                 hideWithParent = false, keepInPlace = true,
                 widthAdjust = 0, heightAdjust = 0,
+                growAnchor = "TOPRIGHT",
             },
             debuffFrame = {
                 point = "TOPRIGHT", parent = "buffFrame", relative = "BOTTOMRIGHT",
-                offsetX = 0, offsetY = 0,
+                offsetX = 0, offsetY = -5,
                 sizeStable = true, autoWidth = false, autoHeight = false,
                 hideWithParent = false, keepInPlace = true,
                 widthAdjust = 0, heightAdjust = 0,
+                growAnchor = "TOPRIGHT",
             },
             -- Micro menu and bags
             microMenu = {

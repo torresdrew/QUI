@@ -3519,19 +3519,6 @@ ns.QUI_SearchCache = {
             ["tileId"] = "global",
         },
         {
-            ["featureId"] = "debuffFrame",
-            ["keywords"] = {
-                "Фрейм дебаффов",
-                "Активные вредоносные ауры с пользовательскими границами.",
-                "Показ",
-                "module",
-            },
-            ["label"] = "Фрейм дебаффов",
-            ["navType"] = "moduleToggle",
-            ["subPageIndex"] = 3,
-            ["tileId"] = "global",
-        },
-        {
             ["featureId"] = "lootFrame",
             ["keywords"] = {
                 "Фрейм добычи",

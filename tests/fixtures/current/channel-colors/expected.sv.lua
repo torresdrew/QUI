@@ -1646,6 +1646,7 @@ return {
           buffFrame = {
             autoHeight = false,
             autoWidth = false,
+            growAnchor = "TOPRIGHT",
             heightAdjust = 0,
             hideWithParent = false,
             keepInPlace = true,
@@ -1728,11 +1729,12 @@ return {
           debuffFrame = {
             autoHeight = false,
             autoWidth = false,
+            growAnchor = "TOPRIGHT",
             heightAdjust = 0,
             hideWithParent = false,
             keepInPlace = true,
             offsetX = 0,
-            offsetY = 0,
+            offsetY = -5,
             parent = "buffFrame",
             point = "TOPRIGHT",
             relative = "BOTTOMRIGHT",
@@ -6519,7 +6521,7 @@ return {
       Default = {
         _defaultsVersion = 3,
         _needsLateAbImport = true,
-        _schemaVersion = 47,
+        _schemaVersion = 48,
         chat = {
           channelColors = {
             RAID = {
@@ -6537,8 +6539,7 @@ return {
               [2] = 0.69999999999999996,
               [3] = 1
             }
-          },
-          enabled = false
+          }
         },
         quiUnitFrames = {
           focus = {

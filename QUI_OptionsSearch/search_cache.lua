@@ -3119,19 +3119,6 @@ ns.QUI_SearchCache = {
             ["tileId"] = "global",
         },
         {
-            ["featureId"] = "debuffFrame",
-            ["keywords"] = {
-                "Debuff Frame",
-                "Active harmful auras with custom borders.",
-                "Display",
-                "module",
-            },
-            ["label"] = "Debuff Frame",
-            ["navType"] = "moduleToggle",
-            ["subPageIndex"] = 3,
-            ["tileId"] = "global",
-        },
-        {
             ["featureId"] = "powerBarAlt",
             ["keywords"] = {
                 "Encounter Power Bar",

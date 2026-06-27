@@ -1646,6 +1646,7 @@ return {
           buffFrame = {
             autoHeight = false,
             autoWidth = false,
+            growAnchor = "TOPRIGHT",
             heightAdjust = 0,
             hideWithParent = false,
             keepInPlace = true,
@@ -1728,11 +1729,12 @@ return {
           debuffFrame = {
             autoHeight = false,
             autoWidth = false,
+            growAnchor = "TOPRIGHT",
             heightAdjust = 0,
             hideWithParent = false,
             keepInPlace = true,
             offsetX = 0,
-            offsetY = 0,
+            offsetY = -5,
             parent = "buffFrame",
             point = "TOPRIGHT",
             relative = "BOTTOMRIGHT",
@@ -6518,12 +6520,9 @@ return {
     profiles = {
       Default = {
         _defaultsVersion = 3,
-        _schemaVersion = 47,
+        _schemaVersion = 48,
         cdm = {
           engine = "owned"
-        },
-        chat = {
-          enabled = false
         },
         quiUnitFrames = {
           focus = {

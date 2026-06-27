@@ -133,6 +133,36 @@ local function BuildSharedSection(tabContent, headerAt, sectionAt, closeSection,
     card.AddRow(Opts.BuildSettingRow(card.frame, ns.L["Fade Out Opacity"], fadeOutAlpha))
 
     closeSection(card)
+
+    local layoutCard = sectionAt()
+    local iconSize = GUI:CreateFormSlider(layoutCard.frame, nil, 0, 64, 1, "buffIconSize", settings, RefreshBuffBorders, nil,
+        { description = ns.L["Pixel size of each icon. Set to 0 to use the default size."] })
+    local iconsPerRow = GUI:CreateFormSlider(layoutCard.frame, nil, 0, 20, 1, "buffIconsPerRow", settings, RefreshBuffBorders, nil,
+        { description = ns.L["Maximum number of icons before wrapping to a new row. Set to 0 to use the default row length."] })
+    layoutCard.AddRow(
+        Opts.BuildSettingRow(layoutCard.frame, ns.L["Icon Size"], iconSize),
+        Opts.BuildSettingRow(layoutCard.frame, ns.L["Icons Per Row"], iconsPerRow)
+    )
+
+    local iconSpacing = GUI:CreateFormSlider(layoutCard.frame, nil, 0, 12, 1, "buffIconSpacing", settings, RefreshBuffBorders, nil,
+        { description = ns.L["Horizontal gap between icons in the same row."] })
+    local rowSpacing = GUI:CreateFormSlider(layoutCard.frame, nil, 0, 20, 1, "buffRowSpacing", settings, RefreshBuffBorders, nil,
+        { description = ns.L["Vertical gap between wrapped rows of icons."] })
+    layoutCard.AddRow(
+        Opts.BuildSettingRow(layoutCard.frame, ns.L["Icon Spacing"], iconSpacing),
+        Opts.BuildSettingRow(layoutCard.frame, ns.L["Row Spacing"], rowSpacing)
+    )
+
+    local growProxy = CreateGrowDirectionProxy(settings, "buff")
+    local growDirection = GUI:CreateFormDropdown(layoutCard.frame, nil, GROW_DIRECTION_OPTIONS, "growDirection", growProxy, RefreshBuffBorders,
+        { description = ns.L["Choose which direction new icons are added from the anchor corner."] })
+    local invertSwipe = GUI:CreateFormToggle(layoutCard.frame, nil, "buffInvertSwipeDarkening", settings, RefreshBuffBorders,
+        { description = ns.L["Invert the swipe shading so the cooldown fill darkens in the opposite direction."] })
+    layoutCard.AddRow(
+        Opts.BuildSettingRow(layoutCard.frame, ns.L["Grow Direction"], growDirection),
+        Opts.BuildSettingRow(layoutCard.frame, ns.L["Invert Swipe Darkening"], invertSwipe)
+    )
+    closeSection(layoutCard)
 end
 
 local function BuildAuraSection(tabContent, headerAt, sectionAt, closeSection, settings, spec)
@@ -157,36 +187,6 @@ local function BuildAuraSection(tabContent, headerAt, sectionAt, closeSection, s
         Opts.BuildSettingRow(general.frame, ns.L["Fade On Mouseover"], fadeFrame)
     )
     closeSection(general)
-
-    local layout = sectionAt()
-    local iconSize = GUI:CreateFormSlider(layout.frame, nil, 0, 64, 1, spec.iconSizeKey, settings, RefreshBuffBorders, nil,
-        { description = ns.L["Pixel size of each icon. Set to 0 to use the default size."] })
-    local iconsPerRow = GUI:CreateFormSlider(layout.frame, nil, 0, 20, 1, spec.iconsPerRowKey, settings, RefreshBuffBorders, nil,
-        { description = ns.L["Maximum number of icons before wrapping to a new row. Set to 0 to use the default row length."] })
-    layout.AddRow(
-        Opts.BuildSettingRow(layout.frame, ns.L["Icon Size"], iconSize),
-        Opts.BuildSettingRow(layout.frame, ns.L["Icons Per Row"], iconsPerRow)
-    )
-
-    local iconSpacing = GUI:CreateFormSlider(layout.frame, nil, 0, 12, 1, spec.iconSpacingKey, settings, RefreshBuffBorders, nil,
-        { description = ns.L["Horizontal gap between icons in the same row."] })
-    local rowSpacing = GUI:CreateFormSlider(layout.frame, nil, 0, 20, 1, spec.rowSpacingKey, settings, RefreshBuffBorders, nil,
-        { description = ns.L["Vertical gap between wrapped rows of icons."] })
-    layout.AddRow(
-        Opts.BuildSettingRow(layout.frame, ns.L["Icon Spacing"], iconSpacing),
-        Opts.BuildSettingRow(layout.frame, ns.L["Row Spacing"], rowSpacing)
-    )
-
-    local growProxy = CreateGrowDirectionProxy(settings, spec.prefix)
-    local growDirection = GUI:CreateFormDropdown(layout.frame, nil, GROW_DIRECTION_OPTIONS, "growDirection", growProxy, RefreshBuffBorders,
-        { description = ns.L["Choose which direction new icons are added from the anchor corner."] })
-    local invertSwipe = GUI:CreateFormToggle(layout.frame, nil, spec.invertSwipeKey, settings, RefreshBuffBorders,
-        { description = ns.L["Invert the swipe shading so the cooldown fill darkens in the opposite direction."] })
-    layout.AddRow(
-        Opts.BuildSettingRow(layout.frame, ns.L["Grow Direction"], growDirection),
-        Opts.BuildSettingRow(layout.frame, ns.L["Invert Swipe Darkening"], invertSwipe)
-    )
-    closeSection(layout)
 
     local text = sectionAt()
     local stackAnchor = GUI:CreateFormDropdown(text.frame, nil, Opts.NINE_POINT_ANCHOR_OPTIONS, spec.stackAnchorKey, settings, RefreshBuffBorders,
@@ -363,11 +363,6 @@ local function BuildBuffDebuffTab(tabContent)
         showBordersKey = "showBuffBorders",
         hideFrameKey = "hideBuffFrame",
         fadeKey = "fadeBuffFrame",
-        invertSwipeKey = "buffInvertSwipeDarkening",
-        iconSizeKey = "buffIconSize",
-        iconsPerRowKey = "buffIconsPerRow",
-        iconSpacingKey = "buffIconSpacing",
-        rowSpacingKey = "buffRowSpacing",
         stackAnchorKey = "buffStackTextAnchor",
         stackOffsetXKey = "buffStackTextOffsetX",
         stackOffsetYKey = "buffStackTextOffsetY",
@@ -404,11 +399,6 @@ local function BuildBuffDebuffTab(tabContent)
         showBordersKey = "showDebuffBorders",
         hideFrameKey = "hideDebuffFrame",
         fadeKey = "fadeDebuffFrame",
-        invertSwipeKey = "debuffInvertSwipeDarkening",
-        iconSizeKey = "debuffIconSize",
-        iconsPerRowKey = "debuffIconsPerRow",
-        iconSpacingKey = "debuffIconSpacing",
-        rowSpacingKey = "debuffRowSpacing",
         stackAnchorKey = "debuffStackTextAnchor",
         stackOffsetXKey = "debuffStackTextOffsetX",
         stackOffsetYKey = "debuffStackTextOffsetY",

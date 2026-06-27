@@ -16,6 +16,11 @@ local function TooltipDebugBypassSkin()
     return dbg and dbg.bypassSkin == true
 end
 
+local function TooltipDebugAuraButtonTooltipProbe()
+    local dbg = ns.QUI_TooltipDebug
+    return dbg and dbg.tryAuraButtonTooltipSkin == true
+end
+
 local function TooltipDebugBegin()
     local dbg = ns.QUI_TooltipDebug
     if dbg and dbg.enabled then
@@ -847,16 +852,63 @@ end
 local function IsProtectedTooltip(tip)
     if not tip then return true end
     if tip.IsForbidden and tip:IsForbidden() then return true end
+    if Helpers.FrameIsProtected and Helpers.FrameIsProtected(tip) then return true end
     local owner = tip.GetOwner and tip:GetOwner()
     if not owner then return false end
     local current = owner
     for _ = 1, 10 do
         if not current then break end
         if current.IsForbidden and current:IsForbidden() then return true end
+        if Helpers.FrameIsProtected and Helpers.FrameIsProtected(current) then return true end
         local ok, parent = pcall(current.GetParent, current)
         current = ok and parent or nil
     end
     return false
+end
+
+local function IsAuraButtonTooltip(tooltip)
+    if not tooltip then return false end
+    if tooltip.GetName then
+        local ok, name = pcall(tooltip.GetName, tooltip)
+        if ok and name == "AuraButtonTooltip" then
+            return true
+        end
+    end
+
+    local owner
+    if tooltip.GetOwner then
+        local ok, result = pcall(tooltip.GetOwner, tooltip)
+        if ok then owner = result end
+    end
+    if owner and owner.GetObjectType then
+        local ok, objectType = pcall(owner.GetObjectType, owner)
+        if ok and objectType == "AuraButton" then
+            return true
+        end
+    end
+
+    return false
+end
+
+local auraTooltipProbeHooked = false
+local auraTooltipProbeObserved = 0
+
+local function HandleForbiddenAuraTooltip(tooltip)
+    if not IsAuraButtonTooltip(tooltip) then
+        TooltipDebugCount("skin.protectedTooltipSkipped")
+        return
+    end
+
+    TooltipDebugCount("skin.auraButtonTooltipForbidden")
+    auraTooltipProbeObserved = auraTooltipProbeObserved + 1
+    if not TooltipDebugAuraButtonTooltipProbe() then
+        return
+    end
+
+    -- PTR-only diagnostic: AuraButtonTooltip is forbidden and hidden from the
+    -- global environment. Keep the experiment opt-in and fully pcall-wrapped.
+    local ok = pcall(ApplyTooltipChrome, tooltip)
+    TooltipDebugCount(ok and "skin.auraButtonTooltipProbeOk" or "skin.auraButtonTooltipProbeFail")
 end
 
 HookTooltipOnShow = function(tooltip)
@@ -1085,6 +1137,14 @@ local function SetupPostProcessor()
         TooltipDebugCount("skin.postCall")
         if not tooltip or tooltip == EmbeddedItemTooltip then return end
         if IsInternalEmbeddedItemTooltipFrame(tooltip) then return end
+        if IsProtectedTooltip(tooltip) then
+            if tooltip == GameTooltip then
+                FallbackToNineSlice(tooltip)
+            else
+                HandleForbiddenAuraTooltip(tooltip)
+            end
+            return
+        end
         SafeHookTooltipOnShow(tooltip)
         -- TAINT SAFETY: Defer GameTooltip to the watcher (same as backdrop hooks).
         if tooltip == GameTooltip then
@@ -1112,6 +1172,10 @@ local function SetupPostProcessor()
 
     TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Item, RunHandlePostCall)
     TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Spell, RunHandlePostCall)
+    local auraTooltipType = Enum.TooltipDataType.UnitAura or Enum.TooltipDataType.Aura
+    if auraTooltipType then
+        TooltipDataProcessor.AddTooltipPostCall(auraTooltipType, RunHandlePostCall)
+    end
     TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Unit, function(tooltip)
         RunHandlePostCall(tooltip)
         -- Health bar hiding (independent of skinning)
@@ -1122,6 +1186,30 @@ local function SetupPostProcessor()
             end
         end
     end)
+end
+
+local function SetupAuraTooltipProbeHook()
+    if auraTooltipProbeHooked then return end
+    if not PrivateAurasTooltipMixin or not PrivateAurasTooltipMixin.ShowAuraTooltip then return end
+
+    hooksecurefunc(PrivateAurasTooltipMixin, "ShowAuraTooltip", function(tooltip)
+        -- AuraButtonTooltip can bypass addon-visible TooltipDataProcessor
+        -- callbacks. Observe this boundary without reading unit/aura payloads.
+        HandleForbiddenAuraTooltip(tooltip)
+    end)
+    auraTooltipProbeHooked = true
+end
+
+ns.QUI_GetAuraTooltipProbeStatus = function()
+    local mixin = PrivateAurasTooltipMixin
+    return {
+        skinningLoaded = true,
+        probeEnabled = TooltipDebugAuraButtonTooltipProbe() == true,
+        mixinVisible = mixin ~= nil,
+        showAuraTooltipVisible = mixin and type(mixin.ShowAuraTooltip) == "function" or false,
+        hookInstalled = auraTooltipProbeHooked == true,
+        observedTooltips = auraTooltipProbeObserved,
+    }
 end
 
 ---------------------------------------------------------------------------
@@ -1257,6 +1345,7 @@ eventFrame:RegisterEvent("ADDON_LOADED")
 eventFrame:SetScript("OnEvent", function(self, event, arg1)
     -- After initialization, discover addon tooltips on each ADDON_LOADED
     if event == "ADDON_LOADED" and initialized then
+        SetupAuraTooltipProbeHook()
         QueueExtraTooltipDiscovery()
         return
     end
@@ -1321,6 +1410,7 @@ local function InitializeTooltipSkinning()
     SetupBackdropStyleHooks()
     SetupHealthBarHook()
     SetupPostProcessor()
+    SetupAuraTooltipProbeHook()
     DiscoverExtraTooltips()
     eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
     initialized = true

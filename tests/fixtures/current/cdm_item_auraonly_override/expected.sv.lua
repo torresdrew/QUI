@@ -1646,6 +1646,7 @@ return {
           buffFrame = {
             autoHeight = false,
             autoWidth = false,
+            growAnchor = "TOPRIGHT",
             heightAdjust = 0,
             hideWithParent = false,
             keepInPlace = true,
@@ -1728,11 +1729,12 @@ return {
           debuffFrame = {
             autoHeight = false,
             autoWidth = false,
+            growAnchor = "TOPRIGHT",
             heightAdjust = 0,
             hideWithParent = false,
             keepInPlace = true,
             offsetX = 0,
-            offsetY = 0,
+            offsetY = -5,
             parent = "buffFrame",
             point = "TOPRIGHT",
             relative = "BOTTOMRIGHT",
@@ -6519,31 +6521,11 @@ return {
       Default = {
         _defaultsVersion = 3,
         _needsLateAbImport = true,
-        _schemaVersion = 47,
-        chat = {
-          enabled = false
-        },
+        _schemaVersion = 48,
         ncdm = {
           containers = {
             ["customBar:mybar"] = {
-              activeGlowColor = {
-                [1] = 1,
-                [2] = 0.84999999999999998,
-                [3] = 0.29999999999999999,
-                [4] = 1
-              },
-              activeGlowEnabled = true,
-              activeGlowFrequency = 0.25,
-              activeGlowLines = 8,
-              activeGlowScale = 1,
-              activeGlowThickness = 2,
-              activeGlowType = "Pixel Glow",
               containerType = "customBar",
-              dynamicLayout = false,
-              hideGCD = true,
-              keybindContext = "customTrackers",
-              layoutDirection = "HORIZONTAL",
-              noDesaturateWithCharges = false,
               ownedSpells = {
                 [1] = {
                   displayMode = "auraOnly",
@@ -6551,58 +6533,7 @@ return {
                   kind = "cooldown",
                   type = "item"
                 }
-              },
-              row1 = {
-                aspectRatioCrop = 1,
-                borderColorTable = {
-                  [1] = 0,
-                  [2] = 0,
-                  [3] = 0,
-                  [4] = 1
-                },
-                borderSize = 2,
-                durationAnchor = "CENTER",
-                durationOffsetX = 0,
-                durationOffsetY = 0,
-                durationSize = 13,
-                durationTextColor = {
-                  [1] = 1,
-                  [2] = 1,
-                  [3] = 1,
-                  [4] = 1
-                },
-                hideDurationText = false,
-                hideStackText = false,
-                iconCount = 8,
-                iconSize = 28,
-                opacity = 1,
-                padding = 4,
-                stackAnchor = "BOTTOMRIGHT",
-                stackOffsetX = 3,
-                stackOffsetY = -1,
-                stackSize = 9,
-                stackTextColor = {
-                  [1] = 1,
-                  [2] = 1,
-                  [3] = 1,
-                  [4] = 1
-                },
-                xOffset = 0,
-                yOffset = 0,
-                zoom = 0
-              },
-              row2 = {
-                iconCount = 0
-              },
-              row3 = {
-                iconCount = 0
-              },
-              shape = "icon",
-              showActiveState = true,
-              showItemCharges = true,
-              showProfessionQuality = true,
-              tooltipContext = "customTrackers",
-              visibilityMode = "always"
+              }
             }
           }
         },

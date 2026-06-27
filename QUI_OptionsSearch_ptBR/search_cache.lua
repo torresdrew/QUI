@@ -3449,19 +3449,6 @@ ns.QUI_SearchCache = {
             ["tileId"] = "global",
         },
         {
-            ["featureId"] = "debuffFrame",
-            ["keywords"] = {
-                "Quadro de Debuffs",
-                "Auras prejudiciais ativas com bordas personalizadas.",
-                "Exibir",
-                "module",
-            },
-            ["label"] = "Quadro de Debuffs",
-            ["navType"] = "moduleToggle",
-            ["subPageIndex"] = 3,
-            ["tileId"] = "global",
-        },
-        {
             ["featureId"] = "focusFrame",
             ["keywords"] = {
                 "Quadro de Foco",
