@@ -92,8 +92,23 @@ local function CacheableName(name)
     return name
 end
 
--- Proactive NAME->class seeding from the local player + group roster. Lazy
--- seeding (above) only fills nameClassCache after a sender has spoken at least
+local function StoreNameClass(name, englishClass)
+    if IsSecret(englishClass) or type(englishClass) ~= "string" or englishClass == "" then return end
+    local key = CacheableName(name)
+    if key then nameClassCache[key] = englishClass end
+end
+
+local function StoreNameClassAliases(name, englishClass)
+    StoreNameClass(name, englishClass)
+    if type(name) ~= "string" or IsSecret(name) then return end
+    if _G.Ambiguate then
+        local ok, short = pcall(_G.Ambiguate, name, "short")
+        if ok then StoreNameClass(short, englishClass) end
+    end
+end
+
+-- Proactive NAME->class seeding from the local player, group roster, and guild
+-- roster. Lazy seeding (above) only fills nameClassCache after a sender has spoken at least
 -- once while NON-SECRET -- so a cold login straight into a Mythic+ pull leaves
 -- it EMPTY exactly when it is needed: the player's own first party line (and
 -- every groupmate's) is dispatched in combat, the GUID is already secret, and
@@ -124,20 +139,64 @@ local function SeedUnitClass(unit)
     local getName = _G.GetUnitName
     if not getName then return end
     local full = CacheableName(getName(unit, true))
-    if full then nameClassCache[full] = englishClass end
+    StoreNameClass(full, englishClass)
     local short = CacheableName(getName(unit, false))
-    if short then nameClassCache[short] = englishClass end
+    StoreNameClass(short, englishClass)
 end
 
--- Seed the name->class cache from every currently-known unit. Cheap (≤41 units,
--- plain-string writes); safe to call repeatedly. Idempotent: a class is
--- immutable per character within a session, so re-seeding only refreshes keys.
-function Format.SeedKnownClasses()
+local function InChatMessagingLockdown()
+    local CI = _G.C_ChatInfo
+    if not (CI and CI.InChatMessagingLockdown) then return false end
+    local ok, restricted = pcall(CI.InChatMessagingLockdown)
+    return ok and restricted == true or false
+end
+
+local function SeedGuildMemberClasses()
+    -- C_Club guild-member APIs are themselves SecretInChatMessagingLockdown in
+    -- generated docs. Seed only before/after restricted chat dispatches; the
+    -- combat renderer then consumes the plain name->class cache.
+    if InChatMessagingLockdown() then return end
+    local Club, CreatureInfo = _G.C_Club, _G.C_CreatureInfo
+    if not (Club and Club.GetGuildClubId and Club.GetClubMembers and Club.GetMemberInfo) then return end
+    if not (CreatureInfo and CreatureInfo.GetClassInfo) then return end
+
+    local okClub, clubId = pcall(Club.GetGuildClubId)
+    if not okClub or IsSecret(clubId) or clubId == nil then return end
+    local okMembers, members = pcall(Club.GetClubMembers, clubId)
+    if not okMembers or IsSecret(members) or type(members) ~= "table" then return end
+
+    for i = 1, #members do
+        local memberId = members[i]
+        if not IsSecret(memberId) and type(memberId) == "number" then
+            local okInfo, info = pcall(Club.GetMemberInfo, clubId, memberId)
+            if okInfo and not IsSecret(info) and type(info) == "table" then
+                local name, classID = info.name, info.classID
+                if not IsSecret(name) and type(name) == "string" and name ~= ""
+                    and not IsSecret(classID) and type(classID) == "number" then
+                    local okClass, classInfo = pcall(CreatureInfo.GetClassInfo, classID)
+                    if okClass and not IsSecret(classInfo) and type(classInfo) == "table" then
+                        StoreNameClassAliases(name, classInfo.classFile)
+                    end
+                end
+            end
+        end
+    end
+end
+
+-- Seed the name->class cache from currently-known units, plus the guild roster
+-- when requested. Unit seeding is cheap (≤41 units); guild seeding is reserved
+-- for login/guild-roster sync and is guarded out of chat messaging lockdown.
+-- Idempotent: a class is immutable per character within a session, so
+-- re-seeding only refreshes keys.
+function Format.SeedKnownClasses(includeGuild)
     SeedUnitClass("player")
     if _G.IsInRaid and _G.IsInRaid() then
         for i = 1, 40 do SeedUnitClass("raid" .. i) end
     elseif _G.IsInGroup and _G.IsInGroup() then
         for i = 1, 4 do SeedUnitClass("party" .. i) end
+    end
+    if includeGuild ~= false then
+        SeedGuildMemberClasses()
     end
 end
 
