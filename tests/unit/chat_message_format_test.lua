@@ -652,6 +652,62 @@ do
     string.format = realFormat
 end
 
+-- Plain body + secret sender + secret GUID in combat: the body itself is a
+-- normal string, but the sender identity is restricted. The formatter must still
+-- build a class-colored sender prefix from fixed templates and the raw GUID;
+-- otherwise the line degrades to plain body and renders in the chat-type color.
+do
+    local meta = getmetatable(secret)
+    local function sentinel()
+        local s = setmetatable({}, meta)
+        secrets[s] = true
+        return s
+    end
+
+    local secretSender = sentinel()
+    local secretGuid = sentinel()
+    local shown = sentinel()
+    local coloredShown = sentinel()
+    local coloredLink = sentinel()
+    local coloredPrefix = sentinel()
+    local coloredFinal = sentinel()
+
+    local prevGPI = _G.GetPlayerInfoByGUID
+    _G.GetPlayerInfoByGUID = function(gg)
+        if rawequal(gg, secretGuid) then return "Mage", "MAGE" end
+        return prevGPI(gg)
+    end
+
+    local realFormat = string.format
+    string.format = function(fmt, ...)
+        local a1, a2 = ...
+        if fmt == "[%s]" and rawequal(a1, secretSender) then
+            return shown
+        elseif fmt == "|c%s%s|r" and a1 == "ff3fc7eb" and rawequal(a2, shown) then
+            return coloredShown
+        elseif fmt == "|Hplayer:%s|h%s|h" and rawequal(a1, secretSender) and rawequal(a2, coloredShown) then
+            return coloredLink
+        elseif fmt == "%s%s" and a1 == "" and rawequal(a2, coloredLink) then
+            return coloredLink
+        elseif fmt == "[P] %s: " and rawequal(a1, coloredLink) then
+            return coloredPrefix
+        elseif fmt == "%s%s" and rawequal(a1, coloredPrefix) and a2 == "plain body" then
+            return coloredFinal
+        end
+        return realFormat(fmt, ...)
+    end
+
+    local got = F.BuildEventLine("CHAT_MSG_PARTY", {
+        text = "plain body",
+        rawSender = secretSender,
+        rawGuid = secretGuid,
+    })
+
+    string.format = realFormat
+    _G.GetPlayerInfoByGUID = prevGPI
+    assert(rawequal(got, coloredFinal), "plain body with secret sender+GUID keeps class-colored prefix")
+end
+
 -- Secret sender + secret GUID in combat: player-name color should still be
 -- preserved by resolving class from the raw GUID, without storing or comparing
 -- the secret identity.
