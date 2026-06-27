@@ -241,6 +241,51 @@ do
     for k, v in pairs(prev) do _G[k] = v end
 end
 
+-- Guild member seeding (cold-login-into-combat guild fix). Guild senders are not
+-- always group units, so the group roster seed above cannot warm their
+-- name->class entries. Blizzard Communities resolves guild roster class display
+-- from C_Club member classID -> C_CreatureInfo classFile; QUI uses the same
+-- plain class token to warm the sender-name cache before chat lockdown.
+do
+    local prev = {
+        C_ChatInfo = _G.C_ChatInfo, C_Club = _G.C_Club, C_CreatureInfo = _G.C_CreatureInfo,
+        IsInGroup = _G.IsInGroup, IsInRaid = _G.IsInRaid, UnitExists = _G.UnitExists,
+        UnitIsPlayer = _G.UnitIsPlayer, UnitClass = _G.UnitClass, GetUnitName = _G.GetUnitName,
+    }
+    _G.C_ChatInfo = { InChatMessagingLockdown = function() return false end }
+    _G.C_Club = {
+        GetGuildClubId = function() return 55 end,
+        GetClubMembers = function(clubId)
+            assert(clubId == 55, "guild seed used wrong club id")
+            return { 77 }
+        end,
+        GetMemberInfo = function(clubId, memberId)
+            assert(clubId == 55 and memberId == 77, "guild seed used wrong member")
+            return { name = "Guildie-OtherRealm", classID = 8 }
+        end,
+    }
+    _G.C_CreatureInfo = {
+        GetClassInfo = function(classID)
+            assert(classID == 8, "guild seed used wrong class id")
+            return { classFile = "MAGE" }
+        end,
+    }
+    _G.UnitExists = function() return false end
+    _G.IsInGroup = function() return false end
+    _G.IsInRaid = function() return false end
+
+    F.SeedKnownClasses()
+
+    local secretGuid = setmetatable({}, { __tostring = explode, __concat = explode, __len = explode })
+    secrets[secretGuid] = true
+    eq("seed guild combat color",
+        F.DecorateSender("CHAT_MSG_GUILD", "hi", "Guildie-OtherRealm", nil, nil, nil, nil, nil, nil, nil, nil, nil, secretGuid),
+        "|cff3fc7ebGuildie|r")
+    secrets[secretGuid] = nil
+
+    for k, v in pairs(prev) do _G[k] = v end
+end
+
 -- ============ short mode (channelShorten enabled, letter preset) ============
 
 -- SAY: no type prefix in short mode; full player link carries lineID:chatType:chatTarget

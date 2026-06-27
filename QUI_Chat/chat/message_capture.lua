@@ -263,7 +263,10 @@ end
 SYSTEM_EVENTS.UPDATE_CHAT_WINDOWS = function() MaybePullGMOTD() end
 SYSTEM_EVENTS.CHANNEL_UI_UPDATE = function() MaybePullGMOTD() end
 SYSTEM_EVENTS.CHANNEL_LEFT = function() MaybePullGMOTD() end
-SYSTEM_EVENTS.GUILD_ROSTER_UPDATE = function() MaybePullGMOTD() end
+SYSTEM_EVENTS.GUILD_ROSTER_UPDATE = function()
+    if Format.SeedKnownClasses then Format.SeedKnownClasses(true) end
+    MaybePullGMOTD()
+end
 SYSTEM_EVENTS.PLAYER_GUILD_UPDATE = function() MaybePullGMOTD() end
 
 local function FlushPendingMotd()
@@ -433,7 +436,7 @@ end
 -- non-secret, so this stays correct even when the update fires mid-combat (a
 -- member joining during a pull) -- keeping their chat lines class-colored.
 SYSTEM_EVENTS.GROUP_ROSTER_UPDATE = function()
-    if Format.SeedKnownClasses then Format.SeedKnownClasses() end
+    if Format.SeedKnownClasses then Format.SeedKnownClasses(false) end
 end
 
 SYSTEM_EVENTS.ALTERNATIVE_DEFAULT_LANGUAGE_CHANGED = function()

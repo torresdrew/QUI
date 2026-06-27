@@ -274,6 +274,25 @@ assert(hookCount == 1, "repeat Setup does not stack hooks")
 
 local fire = function(event, ...) captureFrame._onEvent(captureFrame, event, ...) end
 
+-- Guild roster updates also warm the formatter's name->class cache so guild chat
+-- senders who are not group units still class-color when the first visible line
+-- arrives during chat messaging lockdown.
+do
+    local prevSeed = ns.QUI.Chat.MessageFormat.SeedKnownClasses
+    local prevIsInGuild = _G.IsInGuild
+    local seedCalls = 0
+    ns.QUI.Chat.MessageFormat.SeedKnownClasses = function(includeGuild)
+        assert(includeGuild == true, "GUILD_ROSTER_UPDATE must include guild cache warm")
+        seedCalls = seedCalls + 1
+    end
+    _G.IsInGuild = function() return false end
+    Store.Clear()
+    fire("GUILD_ROSTER_UPDATE")
+    assert(seedCalls == 1, "GUILD_ROSTER_UPDATE warms known class cache, got " .. seedCalls)
+    ns.QUI.Chat.MessageFormat.SeedKnownClasses = prevSeed
+    _G.IsInGuild = prevIsInGuild
+end
+
 -- Plain capture: formatted line + event color + metadata
 fire("CHAT_MSG_SAY", "hello", "Bob")
 assert(Store.Size() == 1, "captured 1")
