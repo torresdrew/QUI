@@ -656,6 +656,17 @@ local function BuildPlayerLink(typeKey, chatGroup, p, linkDisplayText)
     return ("|Hplayer:%s:%d:%s:%s|h%s|h"):format(sender, lid, chatGroup, target, linkDisplayText)
 end
 
+local function BuildSecretSenderLink(p)
+    if not IsSecret(p.rawSender) then return nil end
+    if not IsSecret(p.text) and not (p.rawGuid or p.guid) then return nil end
+    local shown = string.format("[%s]", p.rawSender)
+    local colorStr = SenderClassColorStr(p.rawGuid or p.guid, p.sender)
+    if colorStr then
+        shown = string.format("|c%s%s|r", colorStr, shown)
+    end
+    return string.format("|Hplayer:%s|h%s|h", p.rawSender, shown)
+end
+
 -- ---------------------------------------------------------------------------
 -- Normal (non-secret body) line — MessageFormatter parity
 -- ---------------------------------------------------------------------------
@@ -688,19 +699,36 @@ local function FormatNormalLine(event, typeKey, p)
 
     local pflag = PFlag(p.flags, p.zoneID, p.chNum)
     local sender = type(p.sender) == "string" and p.sender or ""
+    local usingDifferentLanguage = type(p.language) == "string" and p.language ~= ""
+        and p.language ~= RelevantDefaultLanguage(typeKey)
 
-    -- Secret/absent sender on a player-typed line: degrade to the bare body
-    -- (a "%s says:" with an empty name reads worse than no prefix). Monster
-    -- types keep Blizzard's empty-name format below.
+    -- Secret sender with a raw GUID can still build a fixed-template player
+    -- prefix. Truly absent/no-handle senders degrade to the bare body (a "%s
+    -- says:" with an empty name reads worse than no prefix). Monster types keep
+    -- Blizzard's empty-name format below.
     if showLink and sender == "" and typeKey ~= "TEXT_EMOTE" then
+        local secretLink = BuildSecretSenderLink(p)
+        if secretLink then
+            local linkWithFlag = string.format("%s%s", pflag, secretLink)
+            local fmt = OutFormat(typeKey)
+            if usingDifferentLanguage then
+                fmt = fmt .. ("[%s] "):format(p.language)
+            end
+            local prefix = string.format(fmt, linkWithFlag)
+            if HasChannelContext(p, typeKey) then
+                local deco = ChannelDecoration(p)
+                if deco ~= "" then
+                    prefix = string.format("%s%s", deco, prefix)
+                end
+            end
+            return string.format("%s%s", prefix, msg)
+        end
         if HasChannelContext(p, typeKey) then
             return ChannelDecoration(p) .. msg
         end
         return msg
     end
 
-    local usingDifferentLanguage = type(p.language) == "string" and p.language ~= ""
-        and p.language ~= RelevantDefaultLanguage(typeKey)
     local usingEmote = typeKey == "EMOTE" or typeKey == "TEXT_EMOTE"
 
     local display = p.decorated or sender
@@ -974,15 +1002,7 @@ function Format.WrapSecretEventLine(event, p)
         if type(p.sender) == "string" and p.sender ~= "" then
             link = BuildPlayerLink(typeKey, chatGroup, p, ("[%s]"):format(p.decorated or p.sender))
         elseif IsSecret(p.rawSender) then
-            local shown = string.format("[%s]", p.rawSender)
-            -- Sender name is secret here, so name recovery can't apply; the
-            -- secret GUID is the only handle (p.sender is nil -> passed for
-            -- signature clarity only).
-            local colorStr = SenderClassColorStr(p.rawGuid or p.guid, p.sender)
-            if colorStr then
-                shown = string.format("|c%s%s|r", colorStr, shown)
-            end
-            link = string.format("|Hplayer:%s|h%s|h", p.rawSender, shown)
+            link = BuildSecretSenderLink(p)
         end
         if link then
             prefix = string.format(OutFormat(typeKey), string.format("%s%s", pflag, link))
