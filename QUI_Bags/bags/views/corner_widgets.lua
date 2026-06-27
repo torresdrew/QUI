@@ -141,6 +141,7 @@ end
 function CornerWidgets.Apply(button, ctx, appearance)
     local corners = appearance and appearance.corners
     local fontSize = (appearance and appearance.cornerFontSize) or 11
+    local iconSize = (appearance and appearance.cornerIconSize) or 12
     for _, c in ipairs(CORNERS) do
         local payload
         if ctx and corners then
@@ -158,6 +159,7 @@ function CornerWidgets.Apply(button, ctx, appearance)
                 slot.tex:Hide()
             else
                 slot.tex:SetAtlas(payload.atlas)
+                slot.tex:SetSize(iconSize, iconSize)
                 slot.tex:Show()
                 slot.fs:Hide()
             end

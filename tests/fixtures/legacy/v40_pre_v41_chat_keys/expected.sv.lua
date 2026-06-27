@@ -488,6 +488,7 @@ return {
             columns = 12,
             contextFading = true,
             cornerFontSize = 11,
+            cornerIconSize = 12,
             corners = {
               bl1 = "equipment_set",
               bl2 = "none",
@@ -715,6 +716,7 @@ return {
           showInGroup = false,
           showInInstance = false,
           showOnMouseover = false,
+          showWhenHealthBelow100 = false,
           showWhenTargetExists = false
         },
         character = {
@@ -2413,6 +2415,8 @@ return {
             fontSize = 26,
             offsetX = 0,
             offsetY = -120,
+            sound = "None",
+            soundEnabled = false,
             text = "Focus is casting. Kick!",
             textColor = {
               [1] = 1,
@@ -3945,7 +3949,8 @@ return {
                 [4] = 1
               },
               enabled = true,
-              opacity = 0.69999999999999996
+              opacity = 0.69999999999999996,
+              texture = "Quazii v5"
             },
             auras = {
               enabled = true
@@ -4247,7 +4252,8 @@ return {
                 [4] = 1
               },
               enabled = true,
-              opacity = 0.69999999999999996
+              opacity = 0.69999999999999996,
+              texture = "Quazii v5"
             },
             auras = {
               enabled = true
@@ -5458,6 +5464,7 @@ return {
             },
             texture = "Quazii v5",
             useClassColor = true,
+            useClassColorBg = false,
             width = 240
           },
           target = {
@@ -5698,6 +5705,15 @@ return {
             height = 40,
             hideHealthPercentSymbol = false,
             hidePowerPercentSymbol = false,
+            indicators = {
+              combat = {
+                anchor = "TOPRIGHT",
+                enabled = false,
+                offsetX = -2,
+                offsetY = 2,
+                size = 16
+              }
+            },
             invertHealthDirection = false,
             leaderIcon = {
               anchor = "TOPLEFT",

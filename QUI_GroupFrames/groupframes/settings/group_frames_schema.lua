@@ -1411,6 +1411,11 @@ local function RenderHealthSection(sectionHost, ctx)
         absorbClassRow
     )
 
+    local absorbTextureDropdown = gui:CreateFormDropdown(absorbCard.frame, nil, optionsAPI.GetTextureList(), "texture", absorbs, refresh, {
+        description = ns.L["Texture used for the absorb shield overlay bar."],
+    })
+    absorbCard.AddRow(optionsAPI.BuildSettingRow(absorbCard.frame, ns.L["Absorb Texture"], absorbTextureDropdown))
+
     local absorbColorPicker = gui:CreateFormColorPicker(absorbCard.frame, nil, "color", absorbs, refresh, nil, {
         description = ns.L["Tint used for the absorb overlay when Use Class Color is off."],
     })

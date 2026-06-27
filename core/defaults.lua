@@ -138,6 +138,8 @@ local defaults = {
                 fontOutline = "OUTLINE", -- "", "OUTLINE", "THICKOUTLINE"
                 textColor = {1, 0.2, 0.2, 1},
                 useClassColor = false,
+                soundEnabled = false,
+                sound = "None", -- LSM sound key; "None" = silent
             },
             -- Consumable Check (enabled by default)
             consumableCheckEnabled = true,       -- Master toggle
@@ -257,6 +259,7 @@ local defaults = {
                     br1 = "quantity",      br2 = "none",
                 },
                 cornerFontSize = 11,    -- corner text size (quantity/ilvl/binding)
+                cornerIconSize = 12,    -- corner icon size (quality/rank badge, junk, set)
                 qualityColorText = false, -- corner text in item-quality color
                 greyJunk = false,       -- desaturate junk items
                 markUnusable = false,   -- red-tint items whose tooltip says unusable
@@ -994,6 +997,7 @@ local defaults = {
             showInGroup = false,
             showInInstance = false,
             showOnMouseover = false,
+            showWhenHealthBelow100 = false,
             fadeDuration = 0.2,
             fadeOutAlpha = 0,
             hideWhenMounted = true,
@@ -2022,6 +2026,7 @@ local defaults = {
                 anchorYOffset = 0,
                 texture = "Quazii v5",
                 useClassColor = true,
+                useClassColorBg = false,   -- class-color the backdrop behind the health bar
                 customHealthColor = { 0.2, 0.6, 0.2, 1 },
                 -- Portrait
                 showPortrait = false,
@@ -2250,6 +2255,15 @@ local defaults = {
                 anchorTo = "disabled",
                 anchorGap = 10,
                 anchorYOffset = 0,
+                indicators = {
+                    combat = {
+                        enabled = false,      -- Disabled by default
+                        size = 16,
+                        anchor = "TOPRIGHT",
+                        offsetX = -2,
+                        offsetY = 2,
+                    },
+                },
                 texture = "Quazii v5 Inverse",
                 invertHealthDirection = false,   -- false = default right-to-left depletion, true = left-to-right
                 useClassColor = true,
@@ -3029,7 +3043,7 @@ local defaults = {
                     levelOffsetY = 0,
                     levelTextColor = { 1, 1, 1, 1 },
                 },
-                absorbs = { enabled = true, color = { 1, 1, 1, 1 }, opacity = 0.7 },
+                absorbs = { enabled = true, texture = "Quazii v5", color = { 1, 1, 1, 1 }, opacity = 0.7 },
                 healAbsorbs = { enabled = true, color = { 0.5, 0.1, 0.1 }, opacity = 0.6 },
                 healPrediction = { enabled = true, color = { 0.2, 1, 0.2 }, opacity = 0.5 },
                 indicators = {
@@ -3169,7 +3183,7 @@ local defaults = {
                     levelOffsetY = 0,
                     levelTextColor = { 1, 1, 1, 1 },
                 },
-                absorbs = { enabled = true, color = { 1, 1, 1, 1 }, opacity = 0.7 },
+                absorbs = { enabled = true, texture = "Quazii v5", color = { 1, 1, 1, 1 }, opacity = 0.7 },
                 healAbsorbs = { enabled = true, color = { 0.5, 0.1, 0.1 }, opacity = 0.6 },
                 healPrediction = { enabled = true, color = { 0.2, 1, 0.2 }, opacity = 0.5 },
                 indicators = {

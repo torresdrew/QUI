@@ -156,7 +156,10 @@ local function BuildHUDVisibilityTab(tabContent)
         ns.L["CDM Visibility"],
         db.cdmVisibility,
         function() if _G.QUI_RefreshCDMVisibility then _G.QUI_RefreshCDMVisibility() end end,
-        function() if _G.QUI_RefreshCDMMouseover then _G.QUI_RefreshCDMMouseover() end end
+        function() if _G.QUI_RefreshCDMMouseover then _G.QUI_RefreshCDMMouseover() end end,
+        {
+            {key = "showWhenHealthBelow100", label = ns.L["Show When Health < 100%"], default = false},
+        }
     )
 
     -- ========== Unitframes Visibility ==========

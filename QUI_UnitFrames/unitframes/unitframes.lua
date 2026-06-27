@@ -1365,10 +1365,11 @@ local function UpdateIndicators(frame)
         end
     end
 
-    -- Combat indicator
+    -- Combat indicator (player or target; UnitAffectingCombat returns a plain
+    -- bool so the target's combat state is safe to test directly)
     if frame.combatIndicator then
         local combat = indSettings.combat
-        if combat and combat.enabled and UnitAffectingCombat("player") then
+        if combat and combat.enabled and UnitAffectingCombat(frame.unit or "player") then
             frame.combatIndicator:Show()
         else
             frame.combatIndicator:Hide()
@@ -2672,6 +2673,12 @@ local function CreateUnitFrame(unit, unitKey)
     if general and general.darkMode then
         bgColor = general.darkModeBgColor or { 0.25, 0.25, 0.25, 1 }
     end
+    -- Class-colored backdrop (player units only; class is safe to read). Keeps
+    -- the configured alpha so it composites the same over the health fill.
+    if settings and settings.useClassColorBg and UnitIsPlayer(unit) then
+        local cr, cg, cb = GetUnitClassColor(unit)
+        if cr then bgColor = { cr, cg, cb, bgColor[4] or 1 } end
+    end
 
     -- Pixel-perfect border size
     local borderPx = settings.borderSize or 1
@@ -3054,6 +3061,13 @@ local function CreateUnitFrame(unit, unitKey)
         frame:RegisterEvent("UPDATE_SHAPESHIFT_FORM") -- Stance/form text
     end
 
+    -- Combat indicator for the target frame: the target's combat flag can flip
+    -- without a target change, so watch UNIT_FLAGS. UnitAffectingCombat returns
+    -- a plain bool, so reading the target's combat state in Lua is safe.
+    if unitKey == "target" then
+        frame:RegisterUnitEvent("UNIT_FLAGS", unit)
+    end
+
     frame:SetScript("OnEvent", function(self, event, arg1)
         if event == "PLAYER_ENTERING_WORLD" then
             -- Skip refresh if HUD visibility has this frame hidden — the
@@ -3114,6 +3128,11 @@ local function CreateUnitFrame(unit, unitKey)
                or event == "PLAYER_REGEN_DISABLED" or event == "PLAYER_REGEN_ENABLED" then
             -- Indicator events (player only)
             if self.unitKey == "player" then
+                UpdateIndicators(self)
+            end
+        elseif event == "UNIT_FLAGS" then
+            -- Target combat indicator: refresh when the target's flags change.
+            if self.unitKey == "target" then
                 UpdateIndicators(self)
             end
         elseif event == "UPDATE_SHAPESHIFT_FORM" then
@@ -3965,6 +3984,11 @@ function QUI_UF:RefreshFrame(unitKey)
         bgColor = general and general.defaultBgColor or { skinBgR, skinBgG, skinBgB, 0.9 }
         healthOpacity = general and general.defaultHealthOpacity or general and general.defaultOpacity or 1.0
         bgOpacity = general and general.defaultBgOpacity or general and general.defaultOpacity or 1.0
+    end
+    -- Class-colored backdrop (player units only; class is safe to read).
+    if settings and settings.useClassColorBg and frame.unit and UnitIsPlayer(frame.unit) then
+        local cr, cg, cb = GetUnitClassColor(frame.unit)
+        if cr then bgColor = { cr, cg, cb, bgColor[4] or 1 } end
     end
     local bgAlpha = (bgColor[4] or 1) * bgOpacity
 
