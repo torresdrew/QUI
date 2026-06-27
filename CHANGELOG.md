@@ -11,6 +11,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v4.0.5-beta4 - 2026-06-27
+
+### Added
+- Group Frames: reminders when an ally is missing your single-target maintenance buff (Beacon of Light, Earth Shield) — for Holy Paladin and Resto Shaman
+- Group Frames: absorb bar texture option in the composer
+- Unit Frames / Cooldowns: option to show frames only when health is below 100%
+- Unit Frames: option to class-color the health bar background
+- Bags: corner icon size slider (quality / junk / set badges)
+- Focus & cast alert: optional sound when it fires
+
+### Fixed
+- class colors now apply to guild chat senders seen for the first time during combat
+- class-colored name prefix kept on combat messages from hidden senders
+
 ## v4.0.5-beta3 - 2026-06-24
 
 ### Fixed
