@@ -31,14 +31,14 @@ end
 -- The 21 "remaining" converted modules plus minimap, the native damage meter,
 -- and chat-tab chrome == 24 keys, plus the CDM Buff Icons/Bars (aura/auraBar)
 -- container border entry, plus the unit-frame main border (unitFrame) == 25 keys,
--- plus the two resource bars (primary/secondary) == 27 keys.
+-- plus the two resource bars (primary/secondary) and the lust timer == 28 keys.
 local EXPECTED_KEYS = {
     "minimap", "buttonDrawer", "datatext", "crosshair", "castbar", "castbarIcon",
     "portrait", "skyriding", "xpTracker", "preyTracker", "atonement",
     "combatTimer", "brezCounter", "actionTracker", "actionTrackerIcon",
     "rotationAssist", "cdmContainers", "cdmBuffContainers", "mplusTimer",
     "readyCheck", "alerts", "chat", "tooltip", "damageMeter", "unitFrame",
-    "resourceBarPrimary", "resourceBarSecondary",
+    "resourceBarPrimary", "resourceBarSecondary", "lustTimer",
 }
 local expectedLookup = {}
 for _, k in ipairs(EXPECTED_KEYS) do expectedLookup[k] = true end

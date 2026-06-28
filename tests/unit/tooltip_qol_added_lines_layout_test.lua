@@ -31,7 +31,7 @@ end
 local requiredInfoLines = {
     'AddTooltipInfoLine(tooltip, label, string.format("%.1f", itemLevel)',
     'AddTooltipInfoLine(tooltip, ns.L["Target"], targetInfo.name',
-    'AddTooltipInfoLine(tooltip, ns.L["Mount"], mountName',
+    'AddTooltipInfoLine(tooltip, ns.L["Mount"], mountValue',
     'AddTooltipInfoLine(tooltip, ns.L["M+ Rating"], string.format("%.1f", rating)',
     'AddTooltipInfoLine(tooltip, ns.L["Spell ID"], tostring(spellID)',
     'AddTooltipInfoLine(tooltip, ns.L["Icon ID"], tostring(iconID)',

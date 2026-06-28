@@ -466,6 +466,17 @@ SkinButton = function(button, settings)
     if cooldown then
         cooldown:ClearAllPoints()
         cooldown:SetAllPoints(button)
+        -- Recharge edge: re-add the cooldown swipe edge (the bright moving spark)
+        -- when enabled by the shared cooldown-swipe setting. Action-bar button
+        -- cooldowns previously never applied this, unlike CDM. Read-only profile
+        -- access (no mutation); default on, since showRechargeEdge defaults true.
+        -- The fade hide/show logic saves/restores GetDrawEdge, so it stays in sync.
+        if cooldown.SetDrawEdge then
+            local prof = ns.Helpers and ns.Helpers.GetProfile and ns.Helpers.GetProfile()
+            local cs = prof and prof.cooldownSwipe
+            local showEdge = (not cs) or cs.showRechargeEdge ~= false
+            cooldown:SetDrawEdge(showEdge and true or false)
+        end
     end
 
     -- If the button is currently hidden (bar faded out or empty slot),
@@ -475,6 +486,9 @@ SkinButton = function(button, settings)
         if state.backdrop and state.backdrop:IsShown() then state.backdrop:Hide(); state._fhBg = true end
         if state.normal and state.normal:IsShown() then state.normal:Hide(); state._fhNorm = true end
         if state.gloss and state.gloss:IsShown() then state.gloss:Hide(); state._fhGloss = true end
+        -- SkinButton just re-applied the recharge edge above; drop the stale saved
+        -- edge so FadeHideEffects re-captures the fresh value to restore on unfade.
+        state._fhCooldownEdge = nil
         FadeHideEffects(button, state)
     end
 

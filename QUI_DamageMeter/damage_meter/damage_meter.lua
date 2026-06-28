@@ -1253,6 +1253,33 @@ local function ResolveAppearance(windowID, ...)
 end
 QUI_DamageMeter.ResolveAppearance = ResolveAppearance
 
+local function WalkRawPath(root, ...)
+    local n = select("#", ...)
+    local node = root
+    for i = 1, n do
+        if type(node) ~= "table" then return nil end
+        node = rawget(node, select(i, ...))
+    end
+    return node
+end
+
+local function ResolveExplicitAppearance(windowID, ...)
+    local s = GetSettings()
+    if not (s and s.appearance) then return nil end
+    if windowID and type(s.appearance.perWindow) == "table" then
+        local override = rawget(s.appearance.perWindow, windowID)
+        local v = WalkRawPath(override, ...)
+        if v ~= nil then return v end
+    end
+    return WalkRawPath(s.appearance.global, ...)
+end
+
+local function ResolveWindowBgAlpha(windowID, bg)
+    local a = ResolveExplicitAppearance(windowID, "windowBgAlpha")
+    if a ~= nil then return a end
+    return (bg and bg[4] ~= nil) and bg[4] or 0.85
+end
+
 local function ApplyRowBackgroundVisibility(row, windowID)
     if not (row and row.BarBg) then return end
     row.BarBg:SetShown(ResolveAppearance(windowID, "showRowBackground") ~= false)
@@ -1500,6 +1527,23 @@ function Window:_SetRowSource(row, source, maxAmount)
 
     row.Name:SetText((source.rank or 0) .. ". " .. (ShortenName(source.name) or "?"))
 
+    -- Name text color: class-color when enabled and the class is known,
+    -- otherwise the configured Row Name color. Set here (per refresh) so the
+    -- color tracks whichever player occupies this row after sorting. classFilename
+    -- is non-secret; SetTextColor never touches the (possibly secret) name string.
+    local rnc = ResolveAppearance(windowID, "colors", "rowName") or { 1, 1, 1, 1 }
+    local nameColor
+    if ResolveAppearance(windowID, "useClassColorNames") and source.classFilename and RAID_CLASS_COLORS then
+        nameColor = Helpers.GetClassColorTable(source.classFilename)
+    end
+    if nameColor then
+        -- Use the configured Row Name alpha so class color respects name opacity
+        -- (matches _ApplyColors, avoiding an alpha flicker between the two paths).
+        row.Name:SetTextColor(nameColor.r, nameColor.g, nameColor.b, rnc[4] or 1)
+    else
+        row.Name:SetTextColor(rnc[1] or 1, rnc[2] or 1, rnc[3] or 1, rnc[4] or 1)
+    end
+
     -- Value: primary metric per the meter type, with the OTHER metric in
     -- parens as secondary. For Dps/Hps types, primary = amountPerSecond and
     -- secondary = totalAmount; for everything else, primary = totalAmount
@@ -1603,7 +1647,8 @@ function Window:_ApplyColors()
             end
             bg = { _r or 0, _g or 0, _b or 0, 0.85 }
         end
-        self.backdropTex:SetColorTexture(bg[1] or 0, bg[2] or 0, bg[3] or 0, bg[4] or 0.85)
+        local a = ResolveWindowBgAlpha(windowID, bg)
+        self.backdropTex:SetColorTexture(bg[1] or 0, bg[2] or 0, bg[3] or 0, a)
     end
 
     -- Window border (nil = accent). The 1px border frame is built in Window:New;
@@ -1628,17 +1673,26 @@ function Window:_ApplyColors()
     if not self.rows then return end
     local rn = ResolveAppearance(windowID, "colors", "rowName")  or { 1, 1, 1, 1 }
     local rv = ResolveAppearance(windowID, "colors", "rowValue") or { 1, 1, 1, 1 }
+    local classNames = ResolveAppearance(windowID, "useClassColorNames")
+    -- Resolve a row's name color: class color when enabled and known, else rowName.
+    local function nameRGBA(row)
+        if classNames and row._source and row._source.classFilename then
+            local nc = Helpers.GetClassColorTable(row._source.classFilename)
+            if nc then return nc.r, nc.g, nc.b, rn[4] or 1 end
+        end
+        return rn[1] or 1, rn[2] or 1, rn[3] or 1, rn[4] or 1
+    end
     for i = 1, #self.rows do
         local row = self.rows[i]
         if row then
-            if row.Name  then row.Name:SetTextColor(rn[1] or 1, rn[2] or 1, rn[3] or 1, rn[4] or 1)  end
+            if row.Name  then row.Name:SetTextColor(nameRGBA(row)) end
             if row.Value then row.Value:SetTextColor(rv[1] or 1, rv[2] or 1, rv[3] or 1, rv[4] or 1) end
         end
     end
     -- Also style the sticky self-row when present.
     if self.stickyRow then
         local r = self.stickyRow
-        if r.Name  then r.Name:SetTextColor(rn[1] or 1, rn[2] or 1, rn[3] or 1, rn[4] or 1)  end
+        if r.Name  then r.Name:SetTextColor(nameRGBA(r)) end
         if r.Value then r.Value:SetTextColor(rv[1] or 1, rv[2] or 1, rv[3] or 1, rv[4] or 1) end
     end
 end
@@ -2385,7 +2439,8 @@ function Window.New(windowID)
         end
         appBg = { _r or 0, _g or 0, _b or 0, 0.85 }
     end
-    bgTex:SetColorTexture(appBg[1], appBg[2], appBg[3], appBg[4])
+    local appA = ResolveWindowBgAlpha(windowID, appBg)
+    bgTex:SetColorTexture(appBg[1], appBg[2], appBg[3], appA)
     self.backdrop = backdrop
     self.backdropTex = bgTex
 
@@ -2690,7 +2745,8 @@ function Breakdown.New(parentWindow)
         end
         bg = { _r or 0, _g or 0, _b or 0, 0.85 }
     end
-    bgTex:SetColorTexture(bg[1], bg[2], bg[3], bg[4])
+    local bdA = ResolveWindowBgAlpha(self.parentWindowID, bg)
+    bgTex:SetColorTexture(bg[1], bg[2], bg[3], bdA)
     self.backdropTex = bgTex
 
     -- Header

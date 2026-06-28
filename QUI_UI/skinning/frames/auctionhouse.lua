@@ -23,11 +23,19 @@ local function HideAuctionHouseDecorations()
     SkinBase.HidePortraitFrameChrome(AuctionHouseFrame)
 
     -- MoneyFrame inset (AH-specific — not part of PortraitFrameTemplate)
-    if AuctionHouseFrame.MoneyFrameInset then
-        AuctionHouseFrame.MoneyFrameInset:Hide()
-        if AuctionHouseFrame.MoneyFrameInset.NineSlice then AuctionHouseFrame.MoneyFrameInset.NineSlice:Hide() end
+    local core = GetCore()
+    local settings = core and core.db and core.db.profile and core.db.profile.general
+    local hideGold = settings and settings.showAuctionHouseGold == false
+    if hideGold then
+        if AuctionHouseFrame.MoneyFrameInset then
+            AuctionHouseFrame.MoneyFrameInset:Hide()
+            if AuctionHouseFrame.MoneyFrameInset.NineSlice then AuctionHouseFrame.MoneyFrameInset.NineSlice:Hide() end
+        end
+        if AuctionHouseFrame.MoneyFrameBorder then AuctionHouseFrame.MoneyFrameBorder:Hide() end
+    else
+        if AuctionHouseFrame.MoneyFrameInset then AuctionHouseFrame.MoneyFrameInset:Show() end
+        if AuctionHouseFrame.MoneyFrameBorder then AuctionHouseFrame.MoneyFrameBorder:Show() end
     end
-    if AuctionHouseFrame.MoneyFrameBorder then AuctionHouseFrame.MoneyFrameBorder:Hide() end
 
     -- Hide the full Inset frame (helper already covered its NineSlice/Bg)
     if AuctionHouseFrame.Inset then AuctionHouseFrame.Inset:Hide() end

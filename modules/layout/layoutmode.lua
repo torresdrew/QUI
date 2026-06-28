@@ -3705,6 +3705,19 @@ do
             return db and db.general and db.general[subKey]
         end
 
+        local function AlertAnchorsEnabled()
+            local db = GetProfileDB()
+            local general = db and db.general
+            return general and (general.skinAlerts ~= false or general.controlAlertAnchors == true)
+        end
+
+        local function SetAlertAnchorsEnabled(val)
+            local db = GetProfileDB()
+            local general = db and db.general
+            if not general then return end
+            general.controlAlertAnchors = val and true or false
+        end
+
         local QOL_ELEMENTS = {
             {
                 key = "buffFrame", label = ns.L["Buff Frame"], group = ns.L["Display"], order = 3,
@@ -3817,6 +3830,14 @@ do
                 refresh = "QUI_RefreshCombatTimer",
                 previewOn  = function() if _G.QUI_ToggleCombatTimerPreview then _G.QUI_ToggleCombatTimerPreview(true) end end,
                 previewOff = function() if _G.QUI_ToggleCombatTimerPreview then _G.QUI_ToggleCombatTimerPreview(false) end end,
+            },
+            {
+                key = "lustTimer", label = ns.L["Lust Timer"], group = ns.L["QoL"], order = 4,
+                frame = "QUI_LustTimer",
+                dbKey = "lustTimer", enabledField = "enabled",
+                refresh = "QUI_RefreshLustTimer",
+                previewOn  = function() if _G.QUI_ToggleLustTimerPreview then _G.QUI_ToggleLustTimerPreview(true) end end,
+                previewOff = function() if _G.QUI_ToggleLustTimerPreview then _G.QUI_ToggleLustTimerPreview(false) end end,
             },
             {
                 key = "brezCounter", label = ns.L["Brez Counter"], group = ns.L["Instance"], order = 1,
@@ -3939,6 +3960,14 @@ do
                 previewOff = function() if _G.QUI_HideTotemBarPreview then _G.QUI_HideTotemBarPreview() end end,
             },
             {
+                key = "raidMarkersBar", label = ns.L["Raid Markers Bar"], group = ns.L["Action Bars"], order = 21,
+                frame = "QUI_RaidMarkersBar",
+                dbKey = "raidMarkersBar", enabledField = "enabled",
+                refresh = "QUI_RefreshRaidMarkersBar",
+                previewOn  = function() if _G.QUI_ShowRaidMarkersBarPreview then _G.QUI_ShowRaidMarkersBarPreview() end end,
+                previewOff = function() if _G.QUI_HideRaidMarkersBarPreview then _G.QUI_HideRaidMarkersBarPreview() end end,
+            },
+            {
                 key = "partyKeystones", label = ns.L["Party Keystones"], group = ns.L["Instance"], order = 6,
                 frame = "QUIKeyTrackerFrame",
                 dbGetter = function() return GetProfileDB() and GetProfileDB().general end,
@@ -3962,18 +3991,24 @@ do
                 frame = "QUI_AlertFrameHolder",
                 dbGetter = function() return GetProfileDB() and GetProfileDB().general end,
                 enabledField = "skinAlerts",
+                isEnabled = AlertAnchorsEnabled,
+                setEnabled = SetAlertAnchorsEnabled,
             },
             {
                 key = "toastAnchor", label = ns.L["Toast Anchor"], group = ns.L["Display"], order = 10,
                 frame = "QUI_EventToastHolder",
                 dbGetter = function() return GetProfileDB() and GetProfileDB().general end,
                 enabledField = "skinAlerts",
+                isEnabled = AlertAnchorsEnabled,
+                setEnabled = SetAlertAnchorsEnabled,
             },
             {
                 key = "bnetToastAnchor", label = ns.L["BNet Toast Anchor"], group = ns.L["Display"], order = 11,
                 frame = "QUI_BNetToastHolder",
                 dbGetter = function() return GetProfileDB() and GetProfileDB().general end,
                 enabledField = "skinAlerts",
+                isEnabled = AlertAnchorsEnabled,
+                setEnabled = SetAlertAnchorsEnabled,
             },
             {
                 key = "powerBarAlt", label = ns.L["Encounter Power Bar"], group = ns.L["Display"], order = 12,
@@ -4000,11 +4035,11 @@ do
                 group = info.group,
                 order = info.order,
                 isOwned = true,
-                isEnabled = function()
+                isEnabled = info.isEnabled or function()
                     local db = GetDB()
                     return db and db[info.enabledField] ~= false
                 end,
-                setEnabled = function(val)
+                setEnabled = info.setEnabled or function(val)
                     local db = GetDB()
                     if not db then return end
                     local old = db[info.enabledField]

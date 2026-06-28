@@ -271,11 +271,20 @@ local function CreateIconBare(parent, spellEntry)
     icon.StackText = icon.TextOverlay:CreateFontString(nil, "OVERLAY", nil, 7)
     icon.StackText:SetPoint("BOTTOMRIGHT")
 
+    -- .AbsorbText (OVERLAY, sublayer 7 — parented to TextOverlay, above swipe).
+    -- Opt-in shield/absorb amount shown at the BOTTOM edge of buff icons
+    -- (showAbsorbAmount). Created hidden; the row styling pass positions it and
+    -- the per-tick update shows it only when an absorb amount is present.
+    icon.AbsorbText = icon.TextOverlay:CreateFontString(nil, "OVERLAY", nil, 7)
+    icon.AbsorbText:SetPoint("BOTTOM")
+    icon.AbsorbText:Hide()
+
     -- Set a default font so SetText() never fires before row styling applies.
     local defaultFont = GetGeneralFont()
     local defaultOutline = GetGeneralFontOutline()
     CJKFont(icon.DurationText, defaultFont, 10, defaultOutline)
     CJKFont(icon.StackText, defaultFont, 10, defaultOutline)
+    CJKFont(icon.AbsorbText, defaultFont, 10, defaultOutline)
 
     -- Metadata
     icon._spellEntry = spellEntry

@@ -148,13 +148,24 @@ local function RenderAuraElementsPreview(frame, auras, auraLevel, powerHeight, p
 
             local iconAnchor = (IconLayout and IconLayout.GetIconAnchorForGrow
                 and IconLayout.GetIconAnchorForGrow(anchor, growDir)) or anchor
+            -- Multi-row wrapping: mirror the live renderer (groupframes_aura_render.lua)
+            -- so the preview wraps icons into rows when "Icons Per Row" is set.
+            -- Without perRow/rowDir, CalculateSlotOffset falls back to single-row.
+            local perRow = tonumber(element.iconsPerRow) or 0
+            if perRow < 0 then perRow = 0 end
+            local rowDir
+            if growDir == "UP" or growDir == "DOWN" then
+                rowDir = (type(anchor) == "string" and anchor:find("RIGHT")) and "LEFT" or "RIGHT"
+            else
+                rowDir = (type(anchor) == "string" and anchor:find("BOTTOM")) and "UP" or "DOWN"
+            end
             for i = 1, count do
                 local iconFrame = CreateFrame("Frame", nil, frame, "BackdropTemplate")
                 iconFrame:SetSize(iconSize, iconSize)
                 iconFrame:SetFrameLevel(auraLevel)
                 local slotX, slotY = 0, 0
                 if IconLayout and IconLayout.CalculateSlotOffset then
-                    slotX, slotY = IconLayout.CalculateSlotOffset(i, iconSize, spacing, growDir, count)
+                    slotX, slotY = IconLayout.CalculateSlotOffset(i, iconSize, spacing, growDir, count, perRow, rowDir)
                 else
                     slotX = (i - 1) * (iconSize + spacing)
                 end

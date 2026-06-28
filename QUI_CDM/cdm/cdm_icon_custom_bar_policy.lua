@@ -412,6 +412,20 @@ function CDMIconCustomBarPolicy.Create(callbacks)
             else
                 icon.Cooldown:SetSwipeColor(0, 0, 0, 0)
             end
+        elseif icon._customBarActive and icon._lastAuraDurObj and containerDB.showAuraSwipe == true
+            and ns.CDMRenderers and ns.CDMRenderers.ApplyDurationObjectCooldown then
+            -- Aura-mode swipe (opt-in): drain the tracked aura's DurationObject so a
+            -- custom bar tracking a buff shows the same radial swipe the icon
+            -- containers draw. The DurationObject is forwarded straight to the C-side
+            -- setter (ApplyDurationObjectCooldown) — no Lua duration read — so it is
+            -- secret-safe in combat. Default off → existing custom bars are unchanged.
+            -- Only draw the swipe when the binder is available, so a missing
+            -- DurationObject path never leaves a misleading static full swipe.
+            icon.Cooldown:SetDrawEdge(false)
+            icon.Cooldown:SetSwipeTexture("Interface\\Buttons\\WHITE8X8")
+            icon.Cooldown:SetSwipeColor(0, 0, 0, 0.6)
+            icon.Cooldown:SetDrawSwipe(true)
+            ns.CDMRenderers.ApplyDurationObjectCooldown(icon.Cooldown, icon._lastAuraDurObj, true, false)
         elseif not icon._customBarActive then
             icon.Cooldown:SetDrawSwipe(false)
             icon.Cooldown:SetDrawEdge(false)

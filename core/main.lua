@@ -680,8 +680,10 @@ function QUICore:OnEnable()
     -- deferred path was dead code — QUICore.UnitFrames is never assigned — and
     -- wiring it up would break secure creation on combat reloads.)
     RunAfterFirstFrame(function()
-        -- Initialize alert/toast skinning
-        if self.Alerts and self.db.profile.general and self.db.profile.general.skinAlerts then
+        -- Initialize alert/toast handling unconditionally: the anchor movers are
+        -- created regardless of skinning so users can reposition alert/toast frames
+        -- even with QUI alert skinning disabled. Skinning stays gated inside Initialize.
+        if self.Alerts and self.db.profile.general then
             self.Alerts:Initialize()
         end
         -- Apply global font to Blizzard UI elements

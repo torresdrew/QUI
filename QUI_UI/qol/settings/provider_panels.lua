@@ -230,6 +230,54 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
     end })
 
     ---------------------------------------------------------------------------
+    -- LUST TIMER
+    ---------------------------------------------------------------------------
+    RegisterSharedOnly("lustTimer", { build = function(content, key, _width)
+        local db = U.GetProfileDB()
+        if not db or not db.lustTimer then return 80 end
+        local lt = db.lustTimer
+        local L = MakeLayout(content)
+        local function Refresh() if _G.QUI_RefreshLustTimer then _G.QUI_RefreshLustTimer() end end
+
+        L.headerAt(ns.L["General"])
+        local s1 = L.sectionAt()
+        local enabledW = GUI:CreateFormCheckbox(s1.frame, nil, "enabled", lt, Refresh,
+            { description = ns.L["Show a bar + countdown for an active Bloodlust/Heroism-family buff on you. Detected when the buff is applied out of combat (the usual pre-pull case)."] })
+        local widthW = GUI:CreateFormSlider(s1.frame, nil, 60, 400, 1, "width", lt, Refresh,
+            { description = ns.L["Pixel width of the lust timer bar."] })
+        s1.AddRow(row(s1.frame, ns.L["Enabled"], enabledW), row(s1.frame, ns.L["Width"], widthW))
+
+        local heightW = GUI:CreateFormSlider(s1.frame, nil, 8, 80, 1, "height", lt, Refresh,
+            { description = ns.L["Pixel height of the lust timer bar."] })
+        local barTexW = GUI:CreateFormDropdown(s1.frame, nil, U.GetTextureList(), "barTexture", lt, Refresh,
+            { description = ns.L["Statusbar texture used for the lust timer fill."] })
+        s1.AddRow(row(s1.frame, ns.L["Height"], heightW), row(s1.frame, ns.L["Bar Texture"], barTexW))
+        L.closeSection(s1)
+
+        L.headerAt(ns.L["Text"])
+        local s2 = L.sectionAt()
+        local barColorW = GUI:CreateFormColorPicker(s2.frame, nil, "barColor", lt, Refresh, nil,
+            { description = ns.L["Fill color of the lust timer bar."] })
+        local showLabelW = GUI:CreateFormCheckbox(s2.frame, nil, "showLabel", lt, Refresh,
+            { description = ns.L["Show the Lust label on the left of the bar."] })
+        s2.AddRow(row(s2.frame, ns.L["Bar Color"], barColorW), row(s2.frame, ns.L["Show Label"], showLabelW))
+
+        local fontSizeW = GUI:CreateFormSlider(s2.frame, nil, 8, 24, 1, "fontSize", lt, Refresh,
+            { description = ns.L["Font size of the label text."] })
+        local textColorW = GUI:CreateFormColorPicker(s2.frame, nil, "textColor", lt, Refresh, nil,
+            { description = ns.L["Color of the label text."] })
+        s2.AddRow(row(s2.frame, ns.L["Font Size"], fontSizeW), row(s2.frame, ns.L["Text Color"], textColorW))
+
+        BuildUseCustomFontRow(s2, lt, Refresh, ns.L["Custom font for the label text. Requires Use Custom Font to be enabled."])
+        L.closeSection(s2)
+
+        BuildBackdropSection(L, lt, Refresh, ns.L["lust timer"])
+        BuildBorderSection(L, lt, Refresh)
+
+        return FinishProviderPage(L, content, key, "lustTimer")
+    end })
+
+    ---------------------------------------------------------------------------
     -- BREZ COUNTER
     ---------------------------------------------------------------------------
     RegisterSharedOnly("brezCounter", { build = function(content, key, _width)
@@ -1018,6 +1066,10 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             { description = ns.L["Display spell ID and icon ID on buff, debuff, and spell tooltips. May not populate in combat."] })
         s2.AddRow(row(s2.frame, ns.L["Tooltip Font Size"], fontSizeW), row(s2.frame, ns.L["Show Spell/Icon IDs"], spellIDsW))
 
+        local maxStackW = GUI:CreateFormCheckbox(s2.frame, nil, "showItemMaxStackSize", tooltip, RefreshTooltips,
+            { description = ns.L["Append the maximum stack size to stackable item tooltips."] })
+        s2.AddRow(row(s2.frame, ns.L["Show Item Max Stack Size"], maxStackW))
+
         local classColorNameW = GUI:CreateFormCheckbox(s2.frame, nil, "classColorName", tooltip, RefreshTooltips,
             { description = ns.L["Color player names in tooltips by their class."] })
         local hideDelayW = GUI:CreateFormSlider(s2.frame, nil, 0, 2, 0.1, "hideDelay", tooltip, RefreshTooltips,
@@ -1032,13 +1084,19 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
 
         local showTargetW = GUI:CreateFormCheckbox(s2.frame, nil, "showTooltipTarget", tooltip, RefreshTooltips,
             { description = ns.L["Show the unit's current target on its tooltip. Updates live as the target changes."] })
+        local showTargetedByW = GUI:CreateFormCheckbox(s2.frame, nil, "showTargetedBy", tooltip, RefreshTooltips,
+            { description = ns.L["List which group or raid members are currently targeting the hovered unit. Out of combat only."] })
+        s2.AddRow(row(s2.frame, ns.L["Show Target"], showTargetW), row(s2.frame, ns.L["Show Targeted By"], showTargetedByW))
+
         local showMountW = GUI:CreateFormCheckbox(s2.frame, nil, "showPlayerMount", tooltip, RefreshTooltips,
             { description = ns.L["Show the active mount's name on mounted player tooltips."] })
-        s2.AddRow(row(s2.frame, ns.L["Show Target"], showTargetW), row(s2.frame, ns.L["Show Player Mount"], showMountW))
+        s2.AddRow(row(s2.frame, ns.L["Show Player Mount"], showMountW))
 
+        local showMountCollectedW = GUI:CreateFormCheckbox(s2.frame, nil, "showMountCollected", tooltip, RefreshTooltips,
+            { description = ns.L["Append a green check if you have collected the displayed mount, or a red cross if you have not."] })
         local showMythicW = GUI:CreateFormCheckbox(s2.frame, nil, "showPlayerMythicRating", tooltip, RefreshTooltips,
             { description = ns.L["Show the player's Mythic+ rating on player tooltips."] })
-        s2.AddRow(row(s2.frame, ns.L["Show M+ Rating"], showMythicW))
+        s2.AddRow(row(s2.frame, ns.L["Show Mount Collected Status"], showMountCollectedW), row(s2.frame, ns.L["Show M+ Rating"], showMythicW))
 
         local hideGuildW = GUI:CreateFormToggle(s2.frame, nil, "hideGuildName", tooltip, RefreshTooltips,
             { description = ns.L["Strip the guild name line from player tooltips."] })

@@ -1218,6 +1218,7 @@ local _auraResult = {
     auraUnit = "player",
     durObj = nil,
     auraData = nil,
+    absorbPoints = nil,
     count = nil,
     resolvedAuraSpellID = nil,
     hasExpirationTime = nil,
@@ -1284,6 +1285,7 @@ local function WipeAuraResult()
     _auraCountResult.shown = false
     _auraCountResult.source = nil
     _auraResult.auraData = nil
+    _auraResult.absorbPoints = nil
     _auraResult.resolvedAuraSpellID = nil
     _auraResult.hasExpirationTime = nil
     _auraResult.hideDurationText = nil
@@ -1296,6 +1298,19 @@ end
 
 local function SetResolvedAuraSpellID(result, auraData, fallbackID)
     if not result then return end
+    -- Capture the absorb/shield amount points for the opt-in buff-icon
+    -- AbsorbText feature. AuraData.points[1] is the shield amount and is SECRET
+    -- in PvE combat — we only ever store the points table reference here (no
+    -- arithmetic/compare/format on the amount; it is later piped straight
+    -- through AbbreviateNumbers→FontString:SetText, both AllowedWhenTainted).
+    -- A fully-secret points field is dropped to nil so downstream indexing
+    -- stays safe. We only set (never clear) so an earlier phase's capture is
+    -- not clobbered by a later nil-auraData fallback call; WipeAuraResult
+    -- clears it at resolve entry.
+    local pts = auraData and auraData.points
+    if pts ~= nil and not (issecretvalue and issecretvalue(pts)) then
+        result.absorbPoints = pts
+    end
     local sid = GetCleanAuraSpellID(auraData)
     if not IsUsableTableKey(sid) then
         sid = fallbackID

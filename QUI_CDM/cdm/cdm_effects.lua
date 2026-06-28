@@ -798,6 +798,85 @@ ClearPandemicState = function(icon)
 end
 
 ---------------------------------------------------------------------------
+-- GROW / POP on buff apply (opt-in: ncdm.buff.growOnApply; buff icons only).
+--
+-- When a tracked buff becomes ACTIVE (the renderer's false->true transition of
+-- the NON-secret icon._auraActive flag), briefly scale the ARTWORK texture
+-- (icon.Icon) up then settle it back. Scaling ONLY the texture -- never the
+-- icon frame -- keeps the effect visually isolated: neighbor icons anchor to
+-- the icon FRAME, so the texture's transient scale cannot shift layout.
+--
+-- Taint: the trigger reads only icon._auraActive (CDInfo.isActive is
+-- NeverSecret) and the plain non-secret growOnApply flag; the animation is a
+-- local insecure Scale anim built from plain number literals (SetScaleFrom/To
+-- are AllowedWhenUntainted and never see a secret). No protected frame touched.
+---------------------------------------------------------------------------
+local GROW_POP_PEAK     = 1.25   -- peak scale of the pop
+local GROW_POP_UP_SEC   = 0.10   -- grow phase duration
+local GROW_POP_DOWN_SEC = 0.15   -- settle phase duration (total ~0.25s)
+
+-- Lazy-build the Scale animation group on the texture itself. Created ONLY on
+-- the first pop the feature actually plays, so the default-off path never
+-- allocates an animation object. Returns nil if the target can't be animated.
+local function EnsureGrowPop(tex)
+    if not tex or not tex.CreateAnimationGroup then return nil end
+    local ag = tex._quiGrowPop
+    if ag then return ag end
+
+    ag = tex:CreateAnimationGroup()
+
+    local up = ag:CreateAnimation("Scale")
+    up:SetOrder(1)
+    up:SetDuration(GROW_POP_UP_SEC)
+    up:SetScaleFrom(1, 1)
+    up:SetScaleTo(GROW_POP_PEAK, GROW_POP_PEAK)
+    up:SetOrigin("CENTER", 0, 0)
+    up:SetSmoothing("OUT")
+
+    local down = ag:CreateAnimation("Scale")
+    down:SetOrder(2)
+    down:SetDuration(GROW_POP_DOWN_SEC)
+    down:SetScaleFrom(GROW_POP_PEAK, GROW_POP_PEAK)
+    down:SetScaleTo(1, 1)
+    down:SetOrigin("CENTER", 0, 0)
+    down:SetSmoothing("IN")
+
+    tex._quiGrowPop = ag
+    return ag
+end
+
+-- Called by the renderer on the buff icon's false->true active edge. Gated on
+-- the live buff-container growOnApply flag; returns (creating nothing) when off.
+local function PlayGrowPop(icon)
+    if not icon then return end
+    local tex = icon.Icon
+    if not tex then return end
+
+    -- Opt-in gate: read the live buff-container settings (ncdm.buff). Plain
+    -- table lookups on a non-secret flag; nothing is allocated when off.
+    local db = Shared and Shared.GetContainerDB and Shared.GetContainerDB("buff")
+    if not db or not db.growOnApply then return end
+
+    local ag = EnsureGrowPop(tex)
+    if not ag then return end
+    if ag:IsPlaying() then ag:Stop() end  -- restart cleanly on rapid re-apply
+    ag:Play()
+end
+
+-- Reset on icon recycle/hide so a mid-pop frame never carries its transient
+-- scale into the next viewer. Stop() reverts the texture to its base scale.
+local function StopGrowPop(icon)
+    local tex = icon and icon.Icon
+    local ag = tex and tex._quiGrowPop
+    if ag then
+        if ag:IsPlaying() then ag:Stop() end
+        -- Explicitly clear any transient scale so a recycled icon never inherits
+        -- a mid-pop scale (Stop() mid-animation does not guarantee a base reset).
+        tex:SetScale(1)
+    end
+end
+
+---------------------------------------------------------------------------
 -- CHECK OVERLAY STATE: query API + event-based tracking
 ---------------------------------------------------------------------------
 local function IsOverlayQueryActive(spellID)
@@ -1238,6 +1317,8 @@ ns._OwnedGlows = {
     IsSpellCastable = IsSpellCastable,
     UpdatePandemicGlow = UpdatePandemicGlow,
     ClearPandemicState = ClearPandemicState,
+    PlayGrowPop = PlayGrowPop,
+    StopGrowPop = StopGrowPop,
     HandleUnitAuraChanged = HandleUnitAuraChanged,
     DisableRuntime = DisableRuntime,
     GetGlowState = function(icon)
@@ -1674,7 +1755,10 @@ local function ApplySwipeToIcon(icon, settings)
     end
 
     -- Apply swipe styling to QUI's native icon.Cooldown.
-    local showEdge = showSwipe and (mode == "aura" or (mode == "cooldown" and settings.showRechargeEdge))
+    -- Buff/aura edge is independently toggleable (showBuffEdge) so users can keep
+    -- the radial darkening while dropping the bright edge on buff icons.
+    local showEdge = showSwipe and ((mode == "aura" and SettingEnabled(settings.showBuffEdge, true))
+        or (mode == "cooldown" and settings.showRechargeEdge))
 
     local function applyToCooldown(cd)
         if not cd then return end
@@ -1721,9 +1805,11 @@ local function ApplySwipeToBuffChild(icon, settings)
 
     -- Buff viewer children are always auras in the buff viewer
     local showSwipe = SettingEnabled(settings.showBuffIconSwipe, true)
+    -- Edge is independently toggleable (keep radial, drop the bright edge).
+    local showEdge = showSwipe and SettingEnabled(settings.showBuffEdge, true)
 
     icon.Cooldown:SetDrawSwipe(showSwipe)
-    icon.Cooldown:SetDrawEdge(showSwipe)
+    icon.Cooldown:SetDrawEdge(showEdge)
 
     if not showSwipe then
         icon.Cooldown:SetSwipeColor(0, 0, 0, 0)

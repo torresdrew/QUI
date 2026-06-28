@@ -96,6 +96,7 @@ tiles\help_content.lua
 ..\QUI_UI\qol\settings\pet_warning.lua
 ..\QUI_UI\qol\settings\consumables.lua
 ..\QUI_UI\qol\settings\combat_timer.lua
+..\QUI_UI\qol\settings\lust_timer.lua
 ..\QUI_UI\qol\settings\tooltip_anchor.lua
 ..\QUI_UI\qol\settings\provider_panels.lua
 ..\QUI_UI\qol\settings\action_tracker.lua
