@@ -11,6 +11,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v4.0.5-beta6 - 2026-06-28
+
+### Fixed
+- Focus & cast alert: the interrupt sound now follows the same interruptibility signal as the on-screen alert, so it is no longer dropped on casts where interruptibility is hidden
+
 ## v4.0.5-beta5 - 2026-06-28
 
 ### Added
