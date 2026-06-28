@@ -402,6 +402,32 @@ assert(stubCustomTabs[1] == tabA and stubCustomTabs[2] == tabB and stubCustomTab
     (stubCustomTabs[2] and stubCustomTabs[2].name or "?") .. "," ..
     (stubCustomTabs[3] and stubCustomTabs[3].name or "?"))
 
+-- (e6) Scrolled-window drag maps visible buttons to real display indexes.
+stubCustomTabs[1] = tabA; stubCustomTabs[2] = tabB; stubCustomTabs[3] = tabC
+local overflowBar = getBar()
+overflowBar.width = 200
+TU.Rebuild()
+assert(inst1().scrollRightBtn and inst1().scrollRightBtn:IsShown(), "(e6) right scroll control shown")
+inst1().scrollRightBtn._OnClick(inst1().scrollRightBtn)
+assert(inst1().visibleFirst == 2 and inst1().visibleLast == 3,
+    "(e6) scrolled slice should show slots 2-3")
+assignGeometry()
+local betaScrolled = assert(getCustomBtnAt(2), "(e6) Beta button exists")
+local gammaScrolled = assert(getCustomBtnAt(3), "(e6) Gamma button exists")
+_G.GetCursorPosition = function()
+    return (betaScrolled._left or 0) + (betaScrolled.width or 50) / 2 - 5
+end
+gammaScrolled._OnDragStart(gammaScrolled)
+gammaScrolled._OnDragStop(gammaScrolled)
+assert(stubCustomTabs[1] == tabA and stubCustomTabs[2] == tabC and stubCustomTabs[3] == tabB,
+    "(e6) scrolled drag should move Gamma before Beta, got " ..
+    (stubCustomTabs[1] and stubCustomTabs[1].name or "?") .. "," ..
+    (stubCustomTabs[2] and stubCustomTabs[2].name or "?") .. "," ..
+    (stubCustomTabs[3] and stubCustomTabs[3].name or "?"))
+overflowBar.width = 4000
+stubCustomTabs[1] = tabA; stubCustomTabs[2] = tabB; stubCustomTabs[3] = tabC
+TU.Rebuild()
+
 -- ─── (g) Conversation (whisper) tabs drag-reorder among saved tabs ────────
 
 stubCustomTabs[1] = tabA; stubCustomTabs[2] = tabB; stubCustomTabs[3] = tabC

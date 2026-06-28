@@ -44,6 +44,12 @@ local function GetInstance(windowID)
             activeCustomSig = nil,
             draggingBtn = nil,
             dragIndicator = nil,
+            scrollOffset = 0, -- zero-based first visible tab index
+            visibleFirst = nil,
+            visibleLast = nil,
+            hasOverflow = false,
+            scrollLeftBtn = nil,
+            scrollRightBtn = nil,
             bar = nil,
         }
         instances[windowID] = inst
@@ -163,11 +169,9 @@ local function ReorderableButtonMidpoints(inst)
     local positions = {}
     for i = 1, #inst.buttons do
         local b = inst.buttons[i]
-        -- Overflow-hidden tabs are always the TAIL of the display order, so
-        -- skipping them keeps position indices == display indices for every
-        -- visible tab (a drop past the last visible tab inserts before the
-        -- hidden suffix). Hidden buttons have no rect (points cleared) and
-        -- would otherwise trip the unmeasurable abort below.
+        -- Hidden buttons have no reliable rect after windowed overflow layout,
+        -- so measure only visible reorderable buttons and retain their real
+        -- display index for the reorder operation.
         if IsReorderableID(b.frameID) and (not b.IsShown or b:IsShown()) then
             -- GetLeft: MayReturnNothing + SecretWhenAnchoringSecret.
             -- GetWidth: SecretWhenAnchoringSecret + ConstSecretAccessor.
@@ -176,7 +180,7 @@ local function ReorderableButtonMidpoints(inst)
             local w    = b.GetWidth and b:GetWidth()
             if type(left) == "number" and not IsSecret(left)
                and type(w) == "number" and not IsSecret(w) then
-                positions[#positions + 1] = { mid = left + w / 2, button = b }
+                positions[#positions + 1] = { mid = left + w / 2, button = b, displayIndex = i }
             else
                 -- Any unmeasurable button would compress slot indices relative
                 -- to tab indices, producing a misaligned reorder. Abort entirely.
@@ -283,15 +287,17 @@ local function OnTabDragStop(self)
     if not cx then return end
     local positions = ReorderableButtonMidpoints(inst)
     if #positions < 2 then return end
-    -- `from` is the dragged button's DISPLAY index (positions cover every tab
-    -- on the bar, in bar order — saved and conversation alike).
+    -- `from` is the dragged button's real display index, while positions may
+    -- contain only the visible slice during windowed overflow layout.
     local from
     for i = 1, #positions do
-        if positions[i].button == self then from = i; break end
+        if positions[i].button == self then from = positions[i].displayIndex; break end
     end
     if not from then return end
     local insertPos = ComputeDropIndex(positions, cx)
-    local to = (insertPos > from) and (insertPos - 1) or insertPos
+    local insertDisplay = positions[insertPos] and positions[insertPos].displayIndex
+        or (positions[#positions].displayIndex + 1)
+    local to = (insertDisplay > from) and (insertDisplay - 1) or insertDisplay
     local moved, savedChanged = ReorderDisplayTab(inst, from, to)
     if moved then
         TabUI.Rebuild()
@@ -475,19 +481,22 @@ local function NormalizeFrameID(frameID)
     return frameID
 end
 
--- Tab overflow: when the tabs outgrow the bar, the rightmost tabs Hide and a
--- compact "»" button takes their place; clicking it opens a menu listing the
--- hidden tabs (click activates, middle-click closes a conversation — the same
--- gestures as the bar). Hidden tabs stay in inst.buttons so unread counting,
--- activation and pruning see them; only their points/visibility differ.
+-- Tab scroll state: when the tabs outgrow the bar, a later layout pass will
+-- window the visible range and keep hidden tabs in inst.buttons so unread
+-- counting, activation and pruning see the full tab list.
 -- inst.firstHidden = index of the first hidden button, nil when all fit.
-local ShowOverflowMenu -- defined after ActivateFrameID (menu entries activate)
+local LayoutInstance
 
-local function EnsureOverflowButton(inst)
-    local btn = inst.overflowBtn
+local SCROLL_CONTROL_WIDTH = 24
+
+local function EnsureScrollControl(inst, side)
+    local key = (side == "left") and "scrollLeftBtn" or "scrollRightBtn"
+    local btn = inst[key]
     if btn then return btn end
+
     btn = CreateFrame("Button", nil, inst.bar)
     btn:SetHeight(BAR_HEIGHT)
+    btn:SetWidth(SCROLL_CONTROL_WIDTH)
     btn:EnableMouse(true)
     btn.label = btn:CreateFontString(nil, "OVERLAY")
     ApplyTabFont(btn.label, 11)
@@ -496,35 +505,35 @@ local function EnsureOverflowButton(inst)
     btn.underline:SetHeight(1)
     btn.underline:SetPoint("BOTTOMLEFT", btn, "BOTTOMLEFT", 1, 0)
     btn.underline:SetPoint("BOTTOMRIGHT", btn, "BOTTOMRIGHT", -1, 0)
-    btn.label:SetText("»")
-    local sw = btn.label.GetStringWidth and btn.label:GetStringWidth()
-    btn._quiTabW = ((type(sw) == "number" and not IsSecret(sw) and sw > 0) and sw or 10)
-        + (TAB_LABEL_PAD_X * 2)
-    btn:SetWidth(btn._quiTabW)
+    btn.label:SetText(side == "left" and "<" or ">")
+    btn._quiTabW = SCROLL_CONTROL_WIDTH
     btn:RegisterForClicks("LeftButtonUp")
-    btn:SetScript("OnClick", function() ShowOverflowMenu(inst) end)
-    inst.overflowBtn = btn
+    btn:SetScript("OnClick", function()
+        local delta = (side == "left") and -1 or 1
+        if inst.ScrollTabs then inst.ScrollTabs(delta) end
+    end)
+    inst[key] = btn
     return btn
 end
 
--- Active tab hidden -> full active styling (chrome + underline); any hidden
--- unread -> accent label; otherwise dim. The bar-level cue for state the
--- hidden tabs can no longer show themselves.
-local function RestyleOverflowButton(inst)
-    local btn = inst.overflowBtn
-    if not (btn and inst.firstHidden and btn:IsShown()) then return end
+local function HiddenState(inst, fromIndex, toIndex)
     local activeHidden, unreadHidden = false, false
-    for i = inst.firstHidden, #inst.buttons do
-        local fid = inst.buttons[i].frameID
+    for i = fromIndex, toIndex do
+        local btn = inst.buttons[i]
+        local fid = btn and btn.frameID
         if fid then
             if fid == inst.activeID then activeHidden = true end
             local u = inst.unread[fid]
             if u and u > 0 then unreadHidden = true end
         end
     end
+    return activeHidden, unreadHidden
+end
+
+local function PaintScrollControl(btn, activeHidden, unreadHidden, enabled)
     PaintTabChrome(btn, activeHidden)
     local accent, dim = ThemeText()
-    local c = (activeHidden or unreadHidden) and accent or dim
+    local c = (activeHidden or unreadHidden or enabled) and accent or dim
     if btn.label and btn.label.SetTextColor then
         btn.label:SetTextColor(c[1], c[2], c[3])
     end
@@ -536,12 +545,46 @@ local function RestyleOverflowButton(inst)
     end
 end
 
--- Position every button left-to-right from each one's stored width
--- (btn._quiTabW — our own SetWidth value, so no secret-width reads), hiding
--- the tail into the overflow menu when the row would outgrow the bar. An
--- unknown bar width (stub bars, pre-first-layout 0, secret while anchoring
--- is combat-restricted) disables overflow handling: everything lays out.
-local function LayoutInstance(inst)
+local function RestyleScrollControls(inst)
+    if not (inst.scrollLeftBtn and inst.scrollRightBtn) then return end
+    if not (inst.hasOverflow and inst.visibleFirst and inst.visibleLast) then return end
+    local leftActive, leftUnread = HiddenState(inst, 1, inst.visibleFirst - 1)
+    local rightActive, rightUnread = HiddenState(inst, inst.visibleLast + 1, #inst.buttons)
+    PaintScrollControl(inst.scrollLeftBtn, leftActive, leftUnread, inst.scrollOffset > 0)
+    PaintScrollControl(inst.scrollRightBtn, rightActive, rightUnread, inst.visibleLast < #inst.buttons)
+end
+
+local function ClampScrollOffset(inst, maxOffset)
+    maxOffset = math.max(0, maxOffset or 0)
+    inst.scrollOffset = math.max(0, math.min(inst.scrollOffset or 0, maxOffset))
+end
+
+local function FitVisibleRange(buttons, startIndex, availableWidth)
+    local last, used = startIndex - 1, 0
+    for i = startIndex, #buttons do
+        local w = (buttons[i]._quiTabW or 0) + PAD_X
+        if last >= startIndex and used + w > availableWidth then break end
+        if w > availableWidth and last >= startIndex then break end
+        used = used + w
+        last = i
+        if used >= availableWidth then break end
+    end
+    return math.max(startIndex, last)
+end
+
+local function ComputeMaxOffset(buttons, availableWidth)
+    if #buttons <= 1 then return 0 end
+    local maxOffset = 0
+    for offset = 0, #buttons - 1 do
+        local first = offset + 1
+        local last = FitVisibleRange(buttons, first, availableWidth)
+        maxOffset = offset
+        if last >= #buttons then break end
+    end
+    return maxOffset
+end
+
+LayoutInstance = function(inst)
     if not inst.bar then return end
     local buttons = inst.buttons
     local n = #buttons
@@ -552,24 +595,50 @@ local function LayoutInstance(inst)
     local total = 0
     for i = 1, n do total = total + (buttons[i]._quiTabW or 0) + PAD_X end
 
-    -- Rightmost tabs hide first; the leftmost tab always stays. Visible tabs
-    -- must also leave room for the overflow button itself.
-    local visible = n
-    if avail and total > avail and n > 1 then
-        local moreW = EnsureOverflowButton(inst)._quiTabW + PAD_X
-        local w = total
-        while visible > 1 and w + moreW > avail do
-            w = w - ((buttons[visible]._quiTabW or 0) + PAD_X)
-            visible = visible - 1
-        end
-    end
-    inst.firstHidden = (visible < n) and (visible + 1) or nil
+    local overflow = avail and total > avail and n > 1
+    local left = EnsureScrollControl(inst, "left")
+    local right = EnsureScrollControl(inst, "right")
 
-    local x = 0
+    if not overflow then
+        inst.scrollOffset = 0
+        inst.visibleFirst = n > 0 and 1 or nil
+        inst.visibleLast = n > 0 and n or nil
+        inst.hasOverflow = false
+        inst.firstHidden = nil
+        local x = 0
+        for i = 1, n do
+            local btn = buttons[i]
+            btn:ClearAllPoints()
+            btn:SetPoint("BOTTOMLEFT", inst.bar, "BOTTOMLEFT", x, 0)
+            x = x + (btn._quiTabW or 0) + PAD_X
+            btn:Show()
+        end
+        left:Hide()
+        right:Hide()
+        return
+    end
+
+    local middleWidth = math.max(1, avail - (SCROLL_CONTROL_WIDTH * 2) - (PAD_X * 2))
+    ClampScrollOffset(inst, ComputeMaxOffset(buttons, middleWidth))
+    local first = inst.scrollOffset + 1
+    local last = FitVisibleRange(buttons, first, middleWidth)
+    inst.visibleFirst = first
+    inst.visibleLast = last
+    inst.hasOverflow = true
+    inst.firstHidden = (first > 1) and 1 or ((last < n) and (last + 1) or nil)
+
+    left:ClearAllPoints()
+    left:SetPoint("BOTTOMLEFT", inst.bar, "BOTTOMLEFT", 0, 0)
+    left:Show()
+    right:ClearAllPoints()
+    right:SetPoint("BOTTOMRIGHT", inst.bar, "BOTTOMRIGHT", 0, 0)
+    right:Show()
+
+    local x = SCROLL_CONTROL_WIDTH + PAD_X
     for i = 1, n do
         local btn = buttons[i]
         btn:ClearAllPoints()
-        if i <= visible then
+        if i >= first and i <= last then
             btn:SetPoint("BOTTOMLEFT", inst.bar, "BOTTOMLEFT", x, 0)
             x = x + (btn._quiTabW or 0) + PAD_X
             btn:Show()
@@ -578,19 +647,33 @@ local function LayoutInstance(inst)
         end
     end
 
-    if inst.firstHidden then
-        local more = EnsureOverflowButton(inst)
-        more:ClearAllPoints()
-        more:SetPoint("BOTTOMLEFT", inst.bar, "BOTTOMLEFT", x, 0)
-        more:Show()
-        RestyleOverflowButton(inst)
-    elseif inst.overflowBtn then
-        inst.overflowBtn:Hide()
-    end
+    RestyleScrollControls(inst)
 end
 
 -- Forward declaration so TabUI.ActivateConversation can reference it.
 local RebuildInstance
+
+local function EnsureFrameIDVisible(inst, frameID)
+    if not (inst.hasOverflow and frameID) then return end
+    local targetIndex
+    for i = 1, #inst.buttons do
+        if inst.buttons[i].frameID == frameID then
+            targetIndex = i
+            break
+        end
+    end
+    if not targetIndex then return end
+    if inst.visibleFirst and inst.visibleLast
+        and targetIndex >= inst.visibleFirst and targetIndex <= inst.visibleLast then
+        return
+    end
+    if inst.visibleFirst and targetIndex < inst.visibleFirst then
+        inst.scrollOffset = targetIndex - 1
+    elseif inst.visibleLast and targetIndex > inst.visibleLast then
+        inst.scrollOffset = targetIndex - 1
+    end
+    LayoutInstance(inst)
+end
 
 local function ActivateFrameID(inst, frameID, userInitiated)
     frameID = NormalizeFrameID(frameID)
@@ -663,65 +746,9 @@ local function ActivateFrameID(inst, frameID, userInitiated)
     for i = 1, #inst.buttons do
         StyleButton(inst.buttons[i], inst.buttons[i].frameID == inst.activeID)
     end
-    RestyleOverflowButton(inst)
+    EnsureFrameIDVisible(inst, frameID)
+    RestyleScrollControls(inst)
     return true
-end
-
--- Menu listing the overflow-hidden tabs in display order. Entries capture the
--- frameID VALUE (never the button — it may be pool-recycled while the menu is
--- open); activation re-validates against the live buttons. Unread counts are
--- plain Lua numbers (incremented locally), safe to concatenate.
-ShowOverflowMenu = function(inst)
-    if not (_G.MenuUtil and _G.MenuUtil.CreateContextMenu) then return end
-    if not (inst.firstHidden and inst.overflowBtn) then return end
-    _G.MenuUtil.CreateContextMenu(inst.overflowBtn, function(_, rootDescription)
-        for i = inst.firstHidden, #inst.buttons do
-            local btn = inst.buttons[i]
-            local fid = btn.frameID
-            if fid then
-                local text = type(btn._quiTabLabel) == "string" and btn._quiTabLabel or "?"
-                -- Conversation tint, mirrored as an inline color code. The
-                -- components come from ChatTypeInfo reads: skip on secrets
-                -- (arithmetic on a secret throws).
-                local tintC = btn.labelColor
-                if tintC and type(tintC[1]) == "number" and not IsSecret(tintC[1])
-                    and type(tintC[2]) == "number" and not IsSecret(tintC[2])
-                    and type(tintC[3]) == "number" and not IsSecret(tintC[3]) then
-                    text = string.format("|cff%02x%02x%02x%s|r",
-                        math.floor(tintC[1] * 255 + 0.5),
-                        math.floor(tintC[2] * 255 + 0.5),
-                        math.floor(tintC[3] * 255 + 0.5), text)
-                end
-                local u = inst.unread[fid]
-                if u and u > 0 then
-                    text = text .. " (" .. (u > 99 and "99+" or tostring(u)) .. ")"
-                end
-                local entry = rootDescription:CreateButton(text, function(_, inputData)
-                    if inputData and inputData.buttonName == "MiddleButton" then
-                        if type(fid) == "string" then
-                            local Conv = ns.QUI.Chat.ConversationManager
-                            if Conv and Conv.Close then Conv.Close(fid:sub(6)) end
-                        end
-                        return
-                    end
-                    ActivateFrameID(inst, fid, true)
-                end)
-                -- Middle-click close needs the extra click registration;
-                -- AddInitializer (NOT SetFinalInitializer, which would
-                -- replace the stock button finalizer that styles the row).
-                if entry and entry.AddInitializer then
-                    entry:AddInitializer(function(rowBtn)
-                        if rowBtn.RegisterForClicks then
-                            rowBtn:RegisterForClicks("LeftButtonUp", "MiddleButtonUp")
-                        end
-                    end)
-                end
-            end
-        end
-        if rootDescription.SetScrollMode then
-            rootDescription:SetScrollMode(BAR_HEIGHT * 18)
-        end
-    end)
 end
 
 function TabUI.ActivateFrameID(windowID, frameID)
@@ -977,7 +1004,7 @@ RebuildInstance = function(inst)
         btn.labelColor = labelColor -- conversation tabs tint by whisper color
         btn._inst = inst -- re-bind on pool reuse (buttons never migrate between instances)
         btn.label:SetText(label)
-        btn._quiTabLabel = type(label) == "string" and label or nil -- overflow menu text
+        btn._quiTabLabel = type(label) == "string" and label or nil
         local sw = btn.label.GetStringWidth and btn.label:GetStringWidth()
         local w = (sw and not IsSecret(sw) and sw or 30)
             + (TAB_LABEL_PAD_X * 2)
@@ -1030,7 +1057,7 @@ RebuildInstance = function(inst)
         end
     end
 
-    -- Position the row and overflow the tail before activation reconciliation
+    -- Position the row before activation reconciliation.
     -- (its fallback path can return out of this rebuild early).
     LayoutInstance(inst)
 
@@ -1077,6 +1104,10 @@ RebuildInstance = function(inst)
             TabManager.SetActiveTab(inst.windowID, t)
         end
     end
+    if inst.activeID then
+        EnsureFrameIDVisible(inst, inst.activeID)
+    end
+    RestyleScrollControls(inst)
 end
 
 function TabUI.Rebuild()
@@ -1101,6 +1132,23 @@ function TabUI.OnWindowDeleted(windowID)
     TabUI.EnsureAttached()
 end
 
+local function ConfigureBarScripts(inst)
+    if not inst.bar then return end
+    inst.bar:SetScript("OnSizeChanged", function() LayoutInstance(inst) end)
+    inst.ScrollTabs = function(delta)
+        if not inst.hasOverflow then return false end
+        local old = inst.scrollOffset or 0
+        inst.scrollOffset = old + (delta or 0)
+        LayoutInstance(inst)
+        return inst.scrollOffset ~= old
+    end
+    if inst.bar.EnableMouseWheel then inst.bar:EnableMouseWheel(true) end
+    inst.bar:SetScript("OnMouseWheel", function(_, delta)
+        if type(delta) ~= "number" or delta == 0 then return end
+        inst.ScrollTabs(delta > 0 and -1 or 1)
+    end)
+end
+
 -- Create or re-parent inst.bar onto container, then anchor and level it.
 -- Returns immediately if the bar already has the right parent (idempotent).
 local function AttachBar(inst, container, name)
@@ -1109,12 +1157,14 @@ local function AttachBar(inst, container, name)
         inst.bar:SetHeight(BAR_HEIGHT)
         -- Bar width follows the container (anchored both sides below): re-run
         -- the overflow layout whenever it resolves or the window resizes.
-        inst.bar:SetScript("OnSizeChanged", function() LayoutInstance(inst) end)
+        ConfigureBarScripts(inst)
     elseif inst.bar:GetParent() ~= container then
         -- Recycled instance slot pointing at a new container (window
         -- deletion shuffle): re-parent before re-anchoring.
         inst.bar:SetParent(container)
+        ConfigureBarScripts(inst)
     else
+        ConfigureBarScripts(inst)
         return
     end
     inst.bar:ClearAllPoints()
@@ -1164,9 +1214,9 @@ function TabUI.EnsureAttached()
                                 changed = true
                             end
                         end
-                        -- Overflow-hidden tabs can't show their own badge;
-                        -- surface unread on the "»" button instead.
-                        if changed then RestyleOverflowButton(inst) end
+                        -- Hidden tabs can't show their own badge; refresh the
+                        -- scroll controls so unread state remains visible.
+                        if changed then RestyleScrollControls(inst) end
                     end
                 end
             end)
