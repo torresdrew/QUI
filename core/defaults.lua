@@ -80,10 +80,12 @@ local defaults = {
             objectiveTrackerTextColor = { 0.8, 0.8, 0.8, 1.0 },  -- Objective text color (light gray)
             skinInstanceFrames = false,  -- Skin PVE/Dungeon/PVP frames (opt-in)
             skinAuctionHouse = true,  -- Skin Auction House frame (opt-in)
+            showAuctionHouseGold = true,  -- Keep gold/money display visible on the skinned Auction House
             skinCraftingOrders = true,  -- Skin Crafting Orders frame (opt-in)
             skinProfessions = true,  -- Skin Professions frame (opt-in)
             skinBgColor = { 0.008, 0.008, 0.008, 1 },  -- Skinning background color (with alpha)
             skinAlerts = true,  -- Skin alert/toast frames
+            controlAlertAnchors = false,  -- Keep alert/toast anchor movers even when skinAlerts is off
             alertsBorderColorSource = "inherit",  -- Alert border color: "inherit" | "theme" | "class" | "custom"
             alertsBorderColor = {0, 0, 0, 1},     -- Alert border custom color (used when source == "custom")
             skinCharacterFrame = true,  -- Skin Character Frame (Character, Reputation, Currency tabs)
@@ -363,9 +365,11 @@ local defaults = {
                         -- second)". false = primary value only.
                         showSecondaryValue = true,
                         useClassColor    = true,
+                        useClassColorNames = false,  -- Class-color row name text (opt-in)
                         barColorAccent   = true,
                         barColor         = { 0.35, 0.55, 0.8, 1 },  -- {r,g,b,a} array form (CreateFormColorPicker contract)
                         barFillAlpha     = 1.0,
+                        windowBgAlpha    = 0.85,  -- Window background opacity, independent of bar fill alpha
                         showRowBackground = true,
                         -- LSM media names. nil = inherit QUI defaults
                         -- (Phase 1 hardcoded WHITE8x8 for bars; backgrounds + borders
@@ -751,6 +755,8 @@ local defaults = {
                 durationOffsetX = 0,
                 durationOffsetY = 0,
                 durationAnchor = "CENTER",
+                showAbsorbAmount = false,  -- Show shield/absorb amount at bottom edge of buff icons
+                growOnApply = false,  -- Pop/scale buff icon up briefly when the buff is first applied
                 stackSize = 12,     -- Stack count text font size (8 to 24)
                 stackOffsetX = 0,
                 stackOffsetY = 0,
@@ -928,6 +934,8 @@ local defaults = {
                     hideDurationText = false, durationSize = 12,
                     durationOffsetX = 0, durationOffsetY = 0,
                     durationAnchor = "CENTER",
+                    showAbsorbAmount = false,  -- Show shield/absorb amount at bottom edge of buff icons
+                    growOnApply = false,  -- Pop/scale buff icon up briefly when the buff is first applied
                     stackSize = 12, stackOffsetX = 0, stackOffsetY = 0,
                     stackAnchor = "BOTTOM",
                     anchorTo = "disabled",
@@ -1629,6 +1637,7 @@ local defaults = {
             borderColor = {0.376, 0.647, 0.980, 1}, -- Custom border color (used when borderColorSource == "custom")
             borderColorSource = "inherit",     -- Border color: "inherit" | "theme" | "class" | "custom"
             showSpellIDs = true,               -- Show spell ID and icon ID on buff/debuff tooltips
+            showItemMaxStackSize = false,      -- Append max stack size to stackable item tooltips (opt-in)
             showPlayerItemLevel = true,        -- Show inspected player item level on player tooltips
             colorPlayerItemLevel = true,       -- Color tooltip player item level by configured ilvl brackets
             itemLevelBrackets = {
@@ -1655,6 +1664,8 @@ local defaults = {
             hideGuildName = false,             -- Hide guild name line from player tooltips
             showTooltipTarget = true,          -- Show target of unit on tooltip
             showPlayerMount = true,            -- Show active mount on player tooltip
+            showMountCollected = true,         -- Append collected check/x to the mount line
+            showTargetedBy = true,             -- List group/raid members targeting the unit (out of combat)
             showPlayerMythicRating = true,     -- Show M+ rating on player tooltip
         },
 
@@ -2863,6 +2874,13 @@ local defaults = {
                 levelAnchor = "RIGHT",
                 levelOffsetX = -4,
                 levelOffsetY = 0,
+                -- Inline Target of Target (shows ">> ToT Name" after the boss name)
+                showInlineToT = false,
+                totSeparator = " >> ",
+                totUseClassColor = true,
+                totDividerUseClassColor = false,
+                totDividerColor = {1, 1, 1, 1},
+                totNameCharLimit = 0,
                 -- Health text
                 showHealth = true,
                 healthDisplayStyle = "both",
@@ -2966,6 +2984,15 @@ local defaults = {
             -- Position
             position = { offsetX = -400, offsetY = 0 },      -- party position
             raidPosition = { offsetX = -400, offsetY = 0 },   -- raid position (always separate)
+            -- Per-raid-size position deltas, ADDED to raidPosition when enabled, so
+            -- small/medium/large raids can sit at different spots. Default 0 = no
+            -- change vs a single raid position. Bucketed by GetGroupMode().
+            raidPerSizePositions = false,
+            raidSizeOffsets = {
+                small  = { offsetX = 0, offsetY = 0 },
+                medium = { offsetX = 0, offsetY = 0 },
+                large  = { offsetX = 0, offsetY = 0 },
+            },
 
             -- Self-first toggles split by mode. Party keeps the separate self header;
             -- raid uses its own ordering path and should never render a duplicate lead block.
@@ -3003,6 +3030,7 @@ local defaults = {
                     sortMethod = "INDEX",
                     sortByRole = true,
                     groupBy = "GROUP",
+                    hideDPS = false,
                 },
                 health = {
                     showHealthText = true,
@@ -3068,6 +3096,7 @@ local defaults = {
                         },
                     },
                     targetHighlight = { enabled = true, color = { 1, 1, 1, 0.6 }, fillOpacity = 0.12 },
+                    cleanseGlow = { enabled = false, color = { 0.1, 1.0, 0.1, 1 } },
                     defensiveIndicator = { enabled = false, iconSize = 16, maxIcons = 3, spacing = 2, growDirection = "RIGHT", position = "CENTER", offsetX = 0, offsetY = 0, reverseSwipe = true, durationTextSize = 12 },
                 },
                 targetedSpells = { enabled = true, iconSize = 24, maxIcons = 3, spacing = 2, growDirection = "CENTER", position = "CENTER", offsetX = 0, offsetY = 0, reverseSwipe = true },
@@ -3183,6 +3212,14 @@ local defaults = {
                     levelOffsetY = 0,
                     levelTextColor = { 1, 1, 1, 1 },
                 },
+                groupNumber = {
+                    showGroupNumber = false,            -- opt-in; per-group "Group N" header (raid, groupBy=GROUP)
+                    groupNumberFontSize = 12,
+                    groupNumberAnchor = "TOPRIGHT",     -- block-relative; above the group
+                    groupNumberOffsetX = 0,
+                    groupNumberOffsetY = 0,
+                    groupNumberTextColor = { 1, 1, 1, 1 },
+                },
                 absorbs = { enabled = true, texture = "Quazii v5", color = { 1, 1, 1, 1 }, opacity = 0.7 },
                 healAbsorbs = { enabled = true, color = { 0.5, 0.1, 0.1 }, opacity = 0.6 },
                 healPrediction = { enabled = true, color = { 0.2, 1, 0.2 }, opacity = 0.5 },
@@ -3208,6 +3245,7 @@ local defaults = {
                         },
                     },
                     targetHighlight = { enabled = true, color = { 1, 1, 1, 0.6 }, fillOpacity = 0.12 },
+                    cleanseGlow = { enabled = false, color = { 0.1, 1.0, 0.1, 1 } },
                     defensiveIndicator = { enabled = false, iconSize = 16, maxIcons = 3, spacing = 2, growDirection = "RIGHT", position = "CENTER", offsetX = 0, offsetY = 0, reverseSwipe = true, durationTextSize = 12 },
                 },
                 targetedSpells = { enabled = true, iconSize = 24, maxIcons = 3, spacing = 2, growDirection = "CENTER", position = "CENTER", offsetX = 0, offsetY = 0, reverseSwipe = true },
@@ -3369,6 +3407,29 @@ local defaults = {
             onlyShowInEncounters = false,  -- If true, only show during boss encounters (not general combat)
         },
 
+        -- Lust Timer (Bloodlust-family buff bar)
+        lustTimer = {
+            enabled = false,
+            xOffset = 0,
+            yOffset = -120,
+            width = 160,
+            height = 22,
+            barTexture = "Solid",
+            barColor = { 0.6, 0.2, 0.2, 1 },
+            showLabel = true,
+            fontSize = 13,
+            useCustomFont = false,
+            font = "Quazii",
+            textColor = { 1, 1, 1, 1 },
+            showBackdrop = true,
+            backdropColor = { 0, 0, 0, 0.6 },
+            borderSize = 1,
+            borderTexture = "None",
+            borderColorSource = "inherit",
+            borderColor = { 0, 0, 0, 1 },
+            hideBorder = false,
+        },
+
         -- XP Tracker
         xpTracker = {
             enabled = false,
@@ -3454,6 +3515,7 @@ local defaults = {
             showCooldownSwipe = true,   -- Actual spell cooldown swipe
 
             showRechargeEdge = true,    -- Show edge texture on cooldown swipe (recharge edge)
+            showBuffEdge = true,        -- Show bright edge on buff/aura icon swipes (off = keep radial only)
 
             showActionSwipe = true,     -- Action bar cooldown swipe
             showNcdmSwipe = true,       -- NCDM cooldown swipe
@@ -3580,6 +3642,7 @@ local defaults = {
         -- QUI Autohides
         uiHider = {
             hideObjectiveTrackerAlways = false,  -- Hide Objective Tracker always
+            keepTrackerInDelvesScenarios = false,  -- Keep tracker shown in delves/scenarios despite autohide
             hideObjectiveTrackerInstanceTypes = {
                 mythicPlus = false,
                 mythicDungeon = false,
@@ -3644,6 +3707,8 @@ local defaults = {
                 toggleOffsetY = 0,      -- Vertical offset for the toggle button
                 openOnMouseover = true, -- Open drawer when hovering the toggle button
                 autoHideToggle = false, -- Auto-hide the toggle button (show on minimap hover)
+                showTooltip = true,     -- Show the info tooltip when hovering the toggle button
+
                 hiddenButtons = {},     -- Table of button names hidden from the drawer (e.g., { ["LibDBIcon10_Details"] = true })
                 autoHideDelay = 1.5,    -- Seconds after mouse leave before hiding (0 = no auto-hide)
                 buttonSize = 28,        -- Size of collected buttons in pixels
@@ -3691,6 +3756,14 @@ local defaults = {
                 scale = 1.0,
                 offsetX = 1,
                 offsetY = -1,
+            },
+
+            -- Tracking/eye button position override (default corner keeps the
+            -- difficulty-aware top-left placement when anchor is TOPLEFT).
+            trackingConfig = {
+                anchor = "TOPLEFT",
+                offsetX = 0,
+                offsetY = 0,
             },
 
             -- Clock (anchored top-left) - disabled by default, user can enable
@@ -3970,6 +4043,17 @@ local defaults = {
             showSwipe = true,
             swipeColor = {0, 0, 0, 0.6},
         },
+        raidMarkersBar = {
+            enabled = false,
+            locked = false,
+            offsetX = 0,
+            offsetY = -200,
+            growDirection = "RIGHT",
+            iconSize = 36,
+            spacing = 4,
+            borderSize = 2,
+            zoom = 0,
+        },
 
         -- DandersFrames Integration: Anchor DF containers to QUI elements
         dandersFrames = {
@@ -4086,6 +4170,8 @@ local defaults = {
             customBars = 5,
             -- Totem bar
             totemBar = 5,
+            -- Raid markers bar
+            raidMarkersBar = 5,
             -- Group frames (party/raid)
             groupFrames = 4,
             groupPetFrames = 3,
@@ -4541,6 +4627,13 @@ local defaults = {
             totemBar = {
                 point = "CENTER", parent = "screen", relative = "BOTTOM",
                 offsetX = 0, offsetY = 200,
+                sizeStable = true, autoWidth = false, autoHeight = false,
+                hideWithParent = false, keepInPlace = true,
+                widthAdjust = 0, heightAdjust = 0,
+            },
+            raidMarkersBar = {
+                point = "CENTER", parent = "screen", relative = "BOTTOM",
+                offsetX = 0, offsetY = 240,
                 sizeStable = true, autoWidth = false, autoHeight = false,
                 hideWithParent = false, keepInPlace = true,
                 widthAdjust = 0, heightAdjust = 0,

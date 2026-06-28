@@ -8,6 +8,7 @@ local Helpers = ns.Helpers
 -- Default settings
 local DEFAULTS = {
     hideObjectiveTrackerAlways = false,
+    keepTrackerInDelvesScenarios = false,
     hideObjectiveTrackerInstanceTypes = {
         mythicPlus = false,
         mythicDungeon = false,
@@ -174,11 +175,47 @@ local function ShouldHideInCurrentInstance(instanceTypes)
     return false
 end
 
+-- Helper: Whether the player is currently in a Delve or a Scenario.
+-- READ-ONLY API access only; defensive against absent/restricted C_ namespaces
+-- so this never errors and never taints the hide/show path.
+local function IsInDelveOrScenario()
+    -- Delve: HasActiveDelve() -> bool; GetTieredEntranceType() -> number,
+    -- where TieredEntranceType.Delve == 1 (DelvesConstantsDocumentation).
+    local delves = _G.C_DelvesUI
+    if delves then
+        if delves.HasActiveDelve then
+            local ok, active = pcall(delves.HasActiveDelve)
+            if ok and active then return true end
+        end
+        if delves.GetTieredEntranceType then
+            local ok, entranceType = pcall(delves.GetTieredEntranceType)
+            if ok and entranceType == 1 then return true end
+        end
+    end
+
+    -- Scenario: GetScenarioInfo() returns a table while in a scenario, nil
+    -- otherwise (delves also register here, which is fine — keep either way).
+    if C_ScenarioInfo and C_ScenarioInfo.GetScenarioInfo then
+        local ok, info = pcall(C_ScenarioInfo.GetScenarioInfo)
+        if ok and info then return true end
+    end
+
+    return false
+end
+
 -- Whether the objective tracker should be hidden for the given settings table:
 -- either always-hidden, or hidden for the current instance type.
 local function ShouldHideObjectiveTracker(s)
-    return s.hideObjectiveTrackerAlways
+    local wouldHide = s.hideObjectiveTrackerAlways
         or ShouldHideInCurrentInstance(s.hideObjectiveTrackerInstanceTypes)
+
+    -- Opt-in override: keep the tracker visible in delves/scenarios so their
+    -- objectives stay readable even when autohide would otherwise hide it.
+    if wouldHide and s.keepTrackerInDelvesScenarios and IsInDelveOrScenario() then
+        return false
+    end
+
+    return wouldHide
 end
 
 -- Apply hide/show commands based on saved settings
@@ -670,6 +707,9 @@ eventFrame:RegisterEvent("PLAYER_ROLES_ASSIGNED")
 eventFrame:RegisterEvent("ADDON_LOADED")
 eventFrame:RegisterEvent("CHALLENGE_MODE_START")
 eventFrame:RegisterEvent("CHALLENGE_MODE_RESET")
+eventFrame:RegisterEvent("SCENARIO_UPDATE")
+eventFrame:RegisterEvent("SCENARIO_COMPLETED")
+eventFrame:RegisterEvent("ACTIVE_DELVE_DATA_UPDATE")
 eventFrame:RegisterEvent("UNIT_ENTERED_VEHICLE")
 eventFrame:RegisterEvent("UNIT_EXITED_VEHICLE")
 if C_PetBattles then
@@ -905,4 +945,3 @@ C_Timer.After(1.5, function()
         ApplyHideSettings()
     end)
 end)
-

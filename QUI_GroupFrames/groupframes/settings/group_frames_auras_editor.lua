@@ -247,6 +247,9 @@ local function AddPlacementWidgets(ctx, element, includeStrip)
         row(ns.L["Spacing"], GUI:CreateFormSlider(ctx.detailArea, nil, 0, 8, 1, "spacing", element, onChange, { deferOnDrag = true }, {
             description = ns.L["Pixel gap between adjacent icons."],
         }))
+        row(ns.L["Icons Per Row"], GUI:CreateFormSlider(ctx.detailArea, nil, 0, 10, 1, "iconsPerRow", element, onChange, { deferOnDrag = true }, {
+            description = ns.L["Wrap icons onto a new row after this many. 0 keeps them on a single row. Extra rows stack away from the anchored frame edge."],
+        }))
     end
     row(ns.L["X Offset"], GUI:CreateFormSlider(ctx.detailArea, nil, -100, 100, 1, "offsetX", element, onChange, { deferOnDrag = true }, {
         description = ns.L["Horizontal pixel offset from the anchor."],

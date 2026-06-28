@@ -630,7 +630,9 @@ local tooltipUnitInfoState = setmetatable({}, {__mode = "k"})
 -- Mount Name Cache
 local mountNameCache = {}
 local mountNameCacheTime = {}
+local mountIDCache = {}
 local mountSpellNameCache = {}
+local mountSpellIDCache = {}
 local mountSpellNameCacheCount = 0
 local mountNameCacheCount = 0
 local mountNameCacheLastPrune = 0
@@ -1195,6 +1197,7 @@ local function EnsureTooltipUnitInfoState(tooltip, guid)
         state = {
             guid = guid,
             targetAdded = false,
+            targetedByAdded = false,
             mountResolved = false,
             mountName = nil,
             mountNextAuraIndex = 1,
@@ -1269,15 +1272,91 @@ local function AddTooltipTargetInfo(tooltip, unit, state)
     return true
 end
 
-local function SetMountSpellNameCache(spellID, mountName)
+local TARGETED_BY_MAX_NAMES = 10
+
+-- Returns the member's display name when groupUnit is currently targeting
+-- mouseoverUnit, otherwise nil. UnitIsUnit is SecretWhenUnitComparisonRestricted
+-- (secret in combat); callers must already be out of combat.
+local function GetTargetingMemberName(groupUnit, mouseoverUnit)
+    local okExists, exists = pcall(UnitExists, groupUnit)
+    if not okExists or not exists or Helpers.IsSecretValue(exists) then return nil end
+    -- Don't list the hovered unit as targeting itself.
+    local okSelf, isSelf = pcall(UnitIsUnit, groupUnit, mouseoverUnit)
+    if not okSelf or Helpers.IsSecretValue(isSelf) or isSelf then return nil end
+    local okTarget, targetsUnit = pcall(UnitIsUnit, groupUnit .. "target", mouseoverUnit)
+    if not okTarget or Helpers.IsSecretValue(targetsUnit) or not targetsUnit then return nil end
+    local okName, name = pcall(UnitName, groupUnit)
+    if not okName or not name or name == "" or Helpers.IsSecretValue(name) then return nil end
+    return name
+end
+
+local function ResolveTooltipTargetedBy(unit)
+    if not unit then return nil end
+    -- UnitIsUnit returns a secret while restricted in combat, so the whole scan
+    -- is out-of-combat only — never call UnitIsUnit during a lockdown.
+    if InCombatLockdown() then return nil end
+    if not IsInGroup() and not IsInRaid() then return nil end
+
+    local names
+    local count = 0
+
+    if IsInRaid() then
+        for i = 1, GetNumGroupMembers() do
+            if count >= TARGETED_BY_MAX_NAMES then break end
+            local name = GetTargetingMemberName("raid" .. i, unit)
+            if name then
+                names = names and (names .. ", " .. name) or name
+                count = count + 1
+            end
+        end
+    elseif IsInGroup() then
+        for i = 1, GetNumGroupMembers() - 1 do
+            if count >= TARGETED_BY_MAX_NAMES then break end
+            local name = GetTargetingMemberName("party" .. i, unit)
+            if name then
+                names = names and (names .. ", " .. name) or name
+                count = count + 1
+            end
+        end
+        if count < TARGETED_BY_MAX_NAMES then
+            local name = GetTargetingMemberName("player", unit)
+            if name then
+                names = names and (names .. ", " .. name) or name
+            end
+        end
+    end
+
+    return names
+end
+
+local function AddTooltipTargetedByInfo(tooltip, unit, state)
+    if not tooltip or not unit or not state then return false end
+    if state.targetedByAdded then return false end
+    if InCombatLockdown() then return false end
+
+    local names = ResolveTooltipTargetedBy(unit)
+    -- Latch even on an empty scan: snapshot semantics, mirroring targetAdded.
+    -- Prevents re-scanning the group every deferred OnUpdate tick.
+    state.targetedByAdded = true
+    if not names then return false end
+
+    EnsureTooltipInfoSpacer(tooltip, state)
+    AddTooltipInfoLine(tooltip, ns.L["Targeted By"], names, 0.7, 0.82, 1, 1, 1, 1)
+    TooltipDebugCount("qol.targetedByAdded")
+    return true
+end
+
+local function SetMountSpellNameCache(spellID, mountName, mountID)
     if not spellID then return end
     if mountSpellNameCache[spellID] == nil then
         mountSpellNameCacheCount = mountSpellNameCacheCount + 1
     end
     mountSpellNameCache[spellID] = mountName or false
+    mountSpellIDCache[spellID] = mountID or false
 
     if mountSpellNameCacheCount > MOUNT_SPELL_CACHE_MAX_ENTRIES then
         wipe(mountSpellNameCache)
+        wipe(mountSpellIDCache)
         mountSpellNameCacheCount = 0
     end
 end
@@ -1290,7 +1369,7 @@ local function GetMountNameFromSpellID(spellID)
     local cached = mountSpellNameCache[spellID]
     if cached ~= nil then
         TooltipDebugCount(cached and "qol.mountSpellCacheHit" or "qol.mountSpellCacheNegHit")
-        return cached or nil
+        return cached or nil, mountSpellIDCache[spellID] or nil
     end
     TooltipDebugCount("qol.mountSpellCacheMiss")
 
@@ -1313,8 +1392,8 @@ local function GetMountNameFromSpellID(spellID)
         return nil
     end
 
-    SetMountSpellNameCache(spellID, mountName)
-    return mountName
+    SetMountSpellNameCache(spellID, mountName, mountID)
+    return mountName, mountID
 end
 
 local function ClearCachedMountName(guid)
@@ -1324,6 +1403,7 @@ local function ClearCachedMountName(guid)
     end
     mountNameCache[guid] = nil
     mountNameCacheTime[guid] = nil
+    mountIDCache[guid] = nil
 end
 
 local function PruneMountNameCache(now, force)
@@ -1339,6 +1419,7 @@ local function PruneMountNameCache(now, force)
         if (now - timestamp) > MOUNT_CACHE_TTL then
             mountNameCache[guid] = nil
             mountNameCacheTime[guid] = nil
+            mountIDCache[guid] = nil
             mountNameCacheCount = mountNameCacheCount - 1
         elseif timestamp < oldestTime then
             oldestTime = timestamp
@@ -1371,16 +1452,17 @@ local function GetCachedMountName(guid)
     end
 
     local cached = mountNameCache[guid]
-    return cached or nil, true
+    return cached or nil, true, mountIDCache[guid] or nil
 end
 
-local function SetCachedMountName(guid, mountName)
+local function SetCachedMountName(guid, mountName, mountID)
     if not guid then return end
     local now = GetTime()
     if mountNameCacheTime[guid] == nil then
         mountNameCacheCount = mountNameCacheCount + 1
     end
     mountNameCache[guid] = mountName or false
+    mountIDCache[guid] = mountID or false
     mountNameCacheTime[guid] = now
     PruneMountNameCache(now, false)
 end
@@ -1396,10 +1478,10 @@ local function GetMountedPlayerMountName(unit, state)
     local guid = UnitGUID(unit)
     if not guid or Helpers.IsSecretValue(guid) then return nil, true end
 
-    local cachedName, cacheHit = GetCachedMountName(guid)
+    local cachedName, cacheHit, cachedMountID = GetCachedMountName(guid)
     if cacheHit then
         TooltipDebugCount(cachedName and "qol.mountCacheHit" or "qol.mountCacheNegHit")
-        return cachedName, true
+        return cachedName, true, cachedMountID
     end
     TooltipDebugCount("qol.mountCacheMiss")
 
@@ -1417,10 +1499,10 @@ local function GetMountedPlayerMountName(unit, state)
             end
 
             if auraData.spellId then
-                local mountName = GetMountNameFromSpellID(auraData.spellId)
+                local mountName, mountID = GetMountNameFromSpellID(auraData.spellId)
                 if mountName then
-                    SetCachedMountName(guid, mountName)
-                    return mountName, true
+                    SetCachedMountName(guid, mountName, mountID)
+                    return mountName, true, mountID
                 end
             end
         end
@@ -1435,10 +1517,10 @@ local function GetMountedPlayerMountName(unit, state)
             end
 
             if spellID then
-                local mountName = GetMountNameFromSpellID(spellID)
+                local mountName, mountID = GetMountNameFromSpellID(spellID)
                 if mountName then
-                    SetCachedMountName(guid, mountName)
-                    return mountName, true
+                    SetCachedMountName(guid, mountName, mountID)
+                    return mountName, true, mountID
                 end
             end
         end
@@ -1459,7 +1541,7 @@ local function AddTooltipMountInfo(tooltip, unit, state)
     if not tooltip or not unit or not state then return false end
     if state.mountResolved and not state.mountName then return false end
 
-    local mountName, resolved = GetMountedPlayerMountName(unit, state)
+    local mountName, resolved, mountID = GetMountedPlayerMountName(unit, state)
     if resolved then
         state.mountResolved = true
         state.mountName = mountName
@@ -1475,7 +1557,20 @@ local function AddTooltipMountInfo(tooltip, unit, state)
     if state.lastMountName == mountName then return false end
 
     EnsureTooltipInfoSpacer(tooltip, state)
-    AddTooltipInfoLine(tooltip, ns.L["Mount"], mountName, 0.65, 1, 0.65, 1, 1, 1)
+    local mountValue = mountName
+    if mountID and not Helpers.IsSecretValue(mountID)
+        and C_MountJournal and C_MountJournal.GetMountInfoByID then
+        local settings = Provider:GetSettings()
+        if settings and IsSettingEnabled(settings, "showMountCollected", true) then
+            local okC, _, _, _, _, _, _, _, _, _, _, isCollected =
+                pcall(C_MountJournal.GetMountInfoByID, mountID)
+            if okC and isCollected ~= nil and not Helpers.IsSecretValue(isCollected) then
+                mountValue = mountName .. " " ..
+                    (isCollected and "|cff20ff20\226\156\147|r" or "|cffff4040\226\156\151|r")
+            end
+        end
+    end
+    AddTooltipInfoLine(tooltip, ns.L["Mount"], mountValue, 0.65, 1, 0.65, 1, 1, 1)
     state.lastMountName = mountName
     TooltipDebugCount("qol.mountAdded")
     return true
@@ -1530,6 +1625,10 @@ local function AddUnitTooltipInfoToTooltip(tooltip, unit, settings)
 
     if IsSettingEnabled(settings, "showTooltipTarget", true) then
         changed = AddTooltipTargetInfo(tooltip, unit, state) or changed
+    end
+
+    if IsSettingEnabled(settings, "showTargetedBy", true) then
+        changed = AddTooltipTargetedByInfo(tooltip, unit, state) or changed
     end
 
     if IsSettingEnabled(settings, "showPlayerMythicRating", true) and not state.ratingResolved then
@@ -1947,6 +2046,8 @@ local function SetupTooltipHook()
 
     -- Spell ID tracking (per-tooltip dedupe signature)
     local tooltipSpellIDAdded = setmetatable({}, {__mode = "k"})
+    -- Max stack size tracking (independent per-tooltip dedupe signature)
+    local tooltipMaxStackAdded = setmetatable({}, {__mode = "k"})
 
     -- TAINT SAFETY: Use a separate watcher frame to detect GameTooltip
     -- hide/clear instead of HookScript("OnHide"/"OnTooltipCleared").
@@ -1974,6 +2075,7 @@ local function SetupTooltipHook()
             ResetTooltipHideFade()
             InvalidatePendingSetUnit()
             tooltipSpellIDAdded[GameTooltip] = nil
+            tooltipMaxStackAdded[GameTooltip] = nil
             tooltipPlayerItemLevelGUID[GameTooltip] = nil
             tooltipUnitInfoState[GameTooltip] = nil
         elseif shown then
@@ -2079,7 +2181,7 @@ local function SetupTooltipHook()
 
     local function ShouldShowTooltipIDs()
         local settings = Provider:GetSettings()
-        return settings and settings.enabled and settings.showSpellIDs
+        return settings and settings.enabled and (settings.showSpellIDs or settings.showItemMaxStackSize)
     end
 
     local function ShouldProcessTooltipIDs(tooltip)
@@ -2227,6 +2329,29 @@ local function SetupTooltipHook()
         end
     end
 
+    local function AddItemMaxStackSizeToTooltip(tooltip, itemID, data, skipShow)
+        if not itemID then return end
+        local settings = Provider:GetSettings()
+        if not settings or not settings.enabled or not settings.showItemMaxStackSize then return end
+        if type(itemID) ~= "number" then return end
+        if type(issecretvalue) == "function" and issecretvalue(itemID) then return end
+        if not C_Item or not C_Item.GetItemMaxStackSizeByID then return end
+
+        local okStack, stackSize = pcall(C_Item.GetItemMaxStackSizeByID, itemID)
+        if not okStack or type(stackSize) ~= "number" or stackSize <= 1 then return end
+
+        local dedupeKey = BuildItemIDDedupeKey(data, itemID)
+        if tooltipMaxStackAdded[tooltip] == dedupeKey then return end
+        tooltipMaxStackAdded[tooltip] = dedupeKey
+
+        tooltip:AddLine(" ")
+        AddTooltipInfoLine(tooltip, ns.L["Max Stack"], tostring(stackSize), 0.5, 0.8, 1, 1, 1, 1)
+
+        if not skipShow then
+            RefreshTooltipLayout(tooltip)
+        end
+    end
+
     local function TryAddSpellIDFromTooltipData(tooltip, data)
         local spellID = ResolveSpellIDFromTooltipData(tooltip, data, true)
         if spellID then
@@ -2245,6 +2370,13 @@ local function SetupTooltipHook()
         local itemID = ResolveItemIDFromTooltipData(tooltip, data, true)
         if itemID then
             AddItemIDToTooltip(tooltip, itemID, data)
+        end
+    end
+
+    local function TryAddItemMaxStackSizeFromTooltipData(tooltip, data)
+        local itemID = ResolveItemIDFromTooltipData(tooltip, data, true)
+        if itemID then
+            AddItemMaxStackSizeToTooltip(tooltip, itemID, data)
         end
     end
 
@@ -2296,6 +2428,7 @@ local function SetupTooltipHook()
         if not InCombatLockdown() then
             if ShouldProcessTooltipIDs(tooltip) then
                 pcall(TryAddItemIDFromTooltipData, tooltip, data)
+                pcall(TryAddItemMaxStackSizeFromTooltipData, tooltip, data)
             end
         end
 

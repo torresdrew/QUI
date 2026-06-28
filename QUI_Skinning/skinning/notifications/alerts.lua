@@ -976,10 +976,8 @@ local function PostAlertMove()
     end
 end
 
+local alertHolderHooked = false
 local function CreateAlertMover()
-    local _, enabled = GetAlertSettings()
-    if not enabled then return end
-
     -- Create holder frame
     if not alertHolder then
         alertHolder = CreateFrame("Frame", "QUI_AlertFrameHolder", UIParent)
@@ -1023,19 +1021,21 @@ local function CreateAlertMover()
         ReplaceSubSystemAnchors(alertFrameSubSystem)
     end
 
-    -- Hook for any new subsystems added later
-    -- TAINT SAFETY: Defer to break taint chain from secure context.
-    hooksecurefunc(AlertFrame, "AddAlertFrameSubSystem", function(_, alertFrameSubSystem)
-        C_Timer.After(0, function()
-            ReplaceSubSystemAnchors(alertFrameSubSystem)
+    -- Hook once (idempotent across re-inits). TAINT SAFETY: deferred so the
+    -- hook bodies run outside the secure execution context.
+    if not alertHolderHooked then
+        alertHolderHooked = true
+        -- Hook for any new subsystems added later.
+        hooksecurefunc(AlertFrame, "AddAlertFrameSubSystem", function(_, alertFrameSubSystem)
+            C_Timer.After(0, function()
+                ReplaceSubSystemAnchors(alertFrameSubSystem)
+            end)
         end)
-    end)
-
-    -- Hook UpdateAnchors to reposition after Blizzard updates
-    -- TAINT SAFETY: Defer to break taint chain from secure context.
-    hooksecurefunc(AlertFrame, "UpdateAnchors", function()
-        C_Timer.After(0, PostAlertMove)
-    end)
+        -- Hook UpdateAnchors to reposition after Blizzard updates.
+        hooksecurefunc(AlertFrame, "UpdateAnchors", function()
+            C_Timer.After(0, PostAlertMove)
+        end)
+    end
 
     -- Disable mouse on GroupLootContainer for cleaner interaction, and opt it
     -- out of Blizzard's UIParent frame-position manager.
@@ -1113,9 +1113,6 @@ local function HookEventToastFrame()
 end
 
 local function CreateEventToastMover()
-    local _, enabled = GetAlertSettings()
-    if not enabled then return end
-
     -- Always create the holder frame so frameAnchoring can position it,
     -- even if EventToastManagerFrame doesn't exist yet
     if not toastHolder then
@@ -1209,9 +1206,6 @@ local function HookBNetToastFrame()
 end
 
 local function CreateBNetToastMover()
-    local _, enabled = GetAlertSettings()
-    if not enabled then return end
-
     -- Always create the holder frame so frameAnchoring can position it,
     -- even if BNToastFrame doesn't exist yet
     if not bnetToastHolder then
@@ -1457,13 +1451,19 @@ end
 
 function Alerts:Initialize()
     local _, enabled = GetAlertSettings()
+    -- Anchor movers are created when skinning is ON, or when the user opted in to
+    -- keep anchor control while unskinned. This keeps alert/toast frames
+    -- repositionable without QUI skinning, while leaving existing unskinned users
+    -- on Blizzard's default placement unless they enable the option.
+    local controlAnchors = GetGeneralSettings().controlAlertAnchors
+    if enabled or controlAnchors then
+        CreateAlertMover()
+        CreateEventToastMover()
+        CreateBNetToastMover()
+    end
+
     if not enabled then return end
 
-    -- Hook all alert systems for skinning
+    -- Hook all alert systems for skinning (only when alert skinning is enabled).
     self:HookAlertSystems()
-
-    -- Create movers for custom alert positioning
-    CreateAlertMover()
-    CreateEventToastMover()
-    CreateBNetToastMover()
 end

@@ -89,6 +89,8 @@ local NON_SECRET_RAID_BUFF_IDS = {
     [53563] = true, [156910] = true, [156322] = true, [1244893] = true,
     -- Earth Shield (Restoration Shaman ally buff)
     [974] = true, [383648] = true,
+    -- Source of Magic (Augmentation Evoker ally buff)
+    [369459] = true,
 }
 
 MRB.RaidBuffs = RAID_BUFFS

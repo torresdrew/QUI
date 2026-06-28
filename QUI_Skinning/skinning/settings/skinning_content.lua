@@ -561,6 +561,7 @@ local function BuildSkinningTab(tabContent)
     ---------------------------------------------------------------------------
     if general.skinPowerBarAlt == nil then general.skinPowerBarAlt = true end
     if general.skinAlerts == nil then general.skinAlerts = true end
+    if general.controlAlertAnchors == nil then general.controlAlertAnchors = false end
     if general.skinContextMenus == nil then general.skinContextMenus = true end
     if general.skinReadyCheck == nil then general.skinReadyCheck = true end
     if general.skinStaticPopups == nil then general.skinStaticPopups = true end
@@ -605,8 +606,10 @@ local function BuildSkinningTab(tabContent)
     local sSBF = L.sectionAt()
     local blizFrames = {
         {key="skinAlerts",            label=ns.L["Alert Frames (Req. Reload)"],            dbT=general,         desc=ns.L["Skin the achievement, loot, and level-up alert popups. Requires a reload."]},
+        {key="controlAlertAnchors",   label=ns.L["Alert Anchor Control When Unskinned"],   dbT=general,         desc=ns.L["When Alert Frames skinning is off, still create the QUI alert/toast anchor movers so you can reposition those frames. Requires a reload."]},
         {key="skinAchievement",       label=ns.L["Achievement Frame (Req. Reload)"],       dbT=general,         desc=ns.L["Skin the Achievements window. Bespoke achievement-themed artwork is stripped — categories list parchment and watermark dragon are hidden. Requires a reload."]},
         {key="skinAuctionHouse",      label=ns.L["Auction House (Req. Reload)"],           dbT=general,         desc=ns.L["Skin the Auction House window and its tabs. Requires a reload."]},
+        {key="showAuctionHouseGold",  label=ns.L["Show Gold on Auction House"],            dbT=general,         desc=ns.L["Keep your gold/money display visible on the skinned Auction House. Requires a reload."]},
         {key="skinBank",              label=ns.L["Bank (Req. Reload)"],                    dbT=general,         desc=ns.L["Skin the player Bank window. Requires a reload."]},
         {key="skinCollections",       label=ns.L["Collections Journal (Req. Reload)"],     dbT=general,         desc=ns.L["Skin the Mounts / Pets / Toys / Wardrobe / Heirlooms window. Requires a reload."]},
         {key="skinCommunities",       label=ns.L["Communities (Req. Reload)"],             dbT=general,         desc=ns.L["Skin the Guilds and Communities window. Requires a reload."]},

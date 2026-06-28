@@ -87,6 +87,7 @@ do
         }
 
         local GetTotemBarDB = Helpers.CreateDBGetter("totemBar")
+        local GetRaidMarkersBarDB = Helpers.CreateDBGetter("raidMarkersBar")
 
         local SETTINGS_DB_KEY_MAP = {
             petBar = "pet", stanceBar = "stance",
@@ -157,6 +158,36 @@ do
             return content:GetHeight()
         end
 
+        local function BuildRaidMarkersBarSettings(content)
+            local markersDB = GetRaidMarkersBarDB()
+            if not markersDB then return 80 end
+
+            local sections = {}
+            local function relayout() U.StandardRelayout(content, sections) end
+
+            local function RefreshRaidMarkersBar()
+                if type(_G.QUI_RefreshRaidMarkersBar) == "function" then
+                    _G.QUI_RefreshRaidMarkersBar()
+                end
+            end
+
+            CreateCollapsible(content, ns.L["Layout"], FORM_ROW + 8, function(body)
+                local sy = -4
+                P(GUI:CreateFormCheckbox(body, ns.L["Enabled"],
+                    "enabled", markersDB, RefreshRaidMarkersBar,
+                    { description = ns.L["Show a bar of buttons that place raid target markers on your target. Requires raid lead or assist in a group."] }), body, sy)
+                sy = sy - FORM_ROW
+                P(GUI:CreateFormDropdown(body, ns.L["Grow Direction"],
+                    totemBarGrowOptions, "growDirection", markersDB, RefreshRaidMarkersBar,
+                    { description = ns.L["Direction the raid markers bar grows."] }), body, sy)
+            end, sections, relayout)
+
+            U.BuildPositionCollapsible(content, "raidMarkersBar", nil, sections, relayout)
+
+            relayout()
+            return content:GetHeight()
+        end
+
         local function BuildSpecialButtonSettings(content, barKey, barDB)
             local sections = {}
             local function relayout() U.StandardRelayout(content, sections) end
@@ -218,6 +249,9 @@ do
         local function BuildBarSettings(content, barKey, width)
             if barKey == "totemBar" then
                 return BuildTotemBarSettings(content)
+            end
+            if barKey == "raidMarkersBar" then
+                return BuildRaidMarkersBarSettings(content)
             end
 
             local db = GetDB()

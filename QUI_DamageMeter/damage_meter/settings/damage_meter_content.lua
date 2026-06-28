@@ -460,8 +460,13 @@ BuildNativeDamageMeterTab = function(tabContent)
         return GUI:CreateFormSlider(p, nil, 0.1, 1.0, 0.05, "barFillAlpha", bt, ApplyNative,
             { description = ns.L["Opacity of the bar fill (0.1-1.0)."] })
     end)
+    local winBgW = override(sBars.frame, "windowBgAlpha", function(p, bt)
+        return GUI:CreateFormSlider(p, nil, 0, 1, 0.05, "windowBgAlpha", bt, ApplyNative,
+            { description = ns.L["Opacity of the window background, independent of the bars (0-1)."] })
+    end)
     pending = placeOverrideRow(sBars, ns.L["Bar Texture"], texW, pending)
     pending = placeOverrideRow(sBars, ns.L["Bar Fill Alpha"], fillW, pending)
+    pending = placeOverrideRow(sBars, ns.L["Window Background Opacity"], winBgW, pending)
 
     local rowBgW = override(sBars.frame, "showRowBackground", function(p, bt)
         return GUI:CreateFormCheckbox(p, nil, "showRowBackground", bt, ApplyNative,
@@ -471,12 +476,17 @@ BuildNativeDamageMeterTab = function(tabContent)
         return GUI:CreateFormCheckbox(p, nil, "useClassColor", bt, ApplyNative,
             { description = ns.L["Color bars by class instead of accent/custom."] })
     end)
+    local classNamesW = override(sBars.frame, "useClassColorNames", function(p, bt)
+        return GUI:CreateFormCheckbox(p, nil, "useClassColorNames", bt, ApplyNative,
+            { description = ns.L["Color each row's player name by class instead of the Row Name color."] })
+    end)
     local accentW = override(sBars.frame, "barColorAccent", function(p, bt)
         return GUI:CreateFormCheckbox(p, nil, "barColorAccent", bt, ApplyNative,
             { description = ns.L["When class color is off, use QUI accent color. Otherwise the custom Bar Color below is used."] })
     end)
     pending = placeOverrideRow(sBars, ns.L["Show Row Background"], rowBgW, pending)
     pending = placeOverrideRow(sBars, ns.L["Use Class Color"], classW, pending)
+    pending = placeOverrideRow(sBars, ns.L["Class Color Names"], classNamesW, pending)
     pending = placeOverrideRow(sBars, ns.L["Use Accent (class off)"], accentW, pending)
 
     local colorW = override(sBars.frame, "barColor", function(p, bt)

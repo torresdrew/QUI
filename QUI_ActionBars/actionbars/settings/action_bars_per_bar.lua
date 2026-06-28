@@ -29,6 +29,7 @@ local BAR_OPTIONS = {
     { value = "extraActionButton", text = ns.L["Extra Action Button"] },
     { value = "zoneAbility",       text = ns.L["Zone Ability"] },
     { value = "totemBar",  text = ns.L["Totem Bar"] },
+    { value = "raidMarkersBar", text = ns.L["Raid Markers Bar"] },
 }
 
 local LOOKUP_KEYS = {

@@ -2682,6 +2682,7 @@ local _cooldownStateScratch = {
     auraInstanceID = nil,
     auraUnit = nil,
     auraData = nil,
+    absorbPoints = nil,
     resolvedAuraSpellID = nil,
     hasExpirationTime = nil,
     hideDurationText = nil,
@@ -2735,6 +2736,7 @@ local function WipeCooldownState()
     s.auraInstanceID = nil
     s.auraUnit = nil
     s.auraData = nil
+    s.absorbPoints = nil
     s.resolvedAuraSpellID = nil
     s.hasExpirationTime = nil
     s.hideDurationText = nil
@@ -2802,6 +2804,19 @@ local function CopyCountFactsToState(state, count, mirrorBacked)
     state.countMirrorBacked = mirrorBacked == true and count ~= nil or nil
 end
 
+-- Absorb/shield amount points for the opt-in buff-icon AbsorbText feature.
+-- Returns only a plain (non-secret) points table reference, or nil. The
+-- amount (points[1]) may still be secret — that is fine, it is only ever
+-- passed through AbbreviateNumbers→SetText, never compared/formatted. A
+-- fully-secret points field is dropped so downstream indexing stays safe.
+local function ExtractAbsorbPoints(auraData)
+    local pts = auraData and auraData.points
+    if pts ~= nil and not (issecretvalue and issecretvalue(pts)) then
+        return pts
+    end
+    return nil
+end
+
 local function CopyAuraFactsToState(state, aura)
     if not aura then return end
     local auraActive = aura.isActive == true
@@ -2811,6 +2826,10 @@ local function CopyAuraFactsToState(state, aura)
     state.auraInstanceID = aura.auraInstanceID
     state.auraUnit = aura.auraUnit
     state.auraData = aura.auraData
+    -- Forward the absorb points captured by the spelldata resolver. Unlike
+    -- aura.auraData (nilled in combat), absorbPoints survives lockdown so the
+    -- shield amount stays renderable while a defensive is active.
+    state.absorbPoints = aura.absorbPoints
     state.resolvedAuraSpellID = aura.resolvedAuraSpellID or state.spellID
     state.hasExpirationTime = aura.hasExpirationTime
     state.hideDurationText = aura.hideDurationText
@@ -2972,6 +2991,9 @@ local function ApplyMirrorPayloadToCooldownState(state, payload)
     state.auraInstanceID = payload.auraInstanceID
     state.auraUnit = payload.auraUnit
     state.auraData = payload.auraData
+    -- Blizzard-mirror payloads keep auraData across combat, so derive the
+    -- absorb points straight from it for the opt-in buff-icon AbsorbText.
+    state.absorbPoints = ExtractAbsorbPoints(payload.auraData)
     state.resolvedAuraSpellID = payload.spellID
     state.hasExpirationTime = payload.hasExpirationTime
     state.hideDurationText = payload.hideDurationText

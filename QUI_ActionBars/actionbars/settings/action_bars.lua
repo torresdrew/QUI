@@ -52,7 +52,7 @@ end
 Registry:RegisterFeature(Schema.Feature({
     id = "actionBarsGeneral",
     moverKey = "bar1",
-    lookupKeys = { "extraActionButton", "zoneAbility", "totemBar" },
+    lookupKeys = { "extraActionButton", "zoneAbility", "totemBar", "raidMarkersBar" },
     category = "frames",
     nav = {
         tileId = "action_bars",

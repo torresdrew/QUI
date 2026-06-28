@@ -1893,14 +1893,24 @@ local function UpdateDispelOverlay(frame)
     if not frame or not frame.unit or not frame.dispelOverlay then return end
     local isRaid = frame._isRaid
     local healerSettings = GetHealerSettings(isRaid)
-    if not healerSettings or not healerSettings.dispelOverlay or healerSettings.dispelOverlay.enabled == false then
+    local dispelCfg = healerSettings and healerSettings.dispelOverlay
+    local glowCfg = healerSettings and healerSettings.cleanseGlow
+    -- Border defaults to ON when the key is absent (legacy behavior); glow is
+    -- strictly opt-in. Both consume the SAME playerDispellable probe below, so a
+    -- user can run glow-only, border-only, or both off (fast early-out).
+    local borderOn = dispelCfg ~= nil and dispelCfg.enabled ~= false
+    local glowOn = glowCfg ~= nil and glowCfg.enabled == true
+    local glowFrame = frame.cleanseGlow
+    if not borderOn and not glowOn then
         frame.dispelOverlay:Hide()
+        if glowFrame then glowFrame:Hide() end
         return
     end
 
     local _, isDeadOrGhost = GetUnitLifeState(frame.unit)
     if not UnitExists(frame.unit) or isDeadOrGhost then
         frame.dispelOverlay:Hide()
+        if glowFrame then glowFrame:Hide() end
         return
     end
 
@@ -1975,6 +1985,27 @@ local function UpdateDispelOverlay(frame)
     end
 
     if not hasDispellable then
+        overlay:Hide()
+        if glowFrame then glowFrame:Hide() end
+        return
+    end
+
+    -- Cleanse-ready glow: same non-secret playerDispellable membership, an
+    -- independent flat-color layer. Resolve it HERE (before the border color
+    -- paths, which early-return on success). Flat configured color only — no
+    -- secret dispel-type curve is forwarded, so this stays secret-safe.
+    if glowFrame then
+        if glowOn then
+            local gc = glowCfg and glowCfg.color
+            glowFrame.tex:SetVertexColor((gc and gc[1]) or 0.1, (gc and gc[2]) or 1.0, (gc and gc[3]) or 0.1, (gc and gc[4]) or 1.0)
+            glowFrame:Show()
+        else
+            glowFrame:Hide()
+        end
+    end
+
+    -- Glow can run standalone; if the border is disabled, stop here (glow shown).
+    if not borderOn then
         overlay:Hide()
         return
     end
@@ -2921,6 +2952,25 @@ local function DecorateGroupFrame(frame)
     dispelOverlay:Hide()
     frame.dispelOverlay = dispelOverlay
 
+    -- Cleanse-ready glow: an additive halo (distinct from the dispel border tint)
+    -- shown when the player can dispel a debuff here. Driven by UpdateDispelOverlay
+    -- off the same non-secret playerDispellable probe; insecure texture, taint-safe.
+    local cleanseGlow = frame.cleanseGlow or CreateFrame("Frame", nil, frame)
+    cleanseGlow:ClearAllPoints()
+    cleanseGlow:SetPoint("TOPLEFT", frame, "TOPLEFT", -4, 4)
+    cleanseGlow:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", 4, -4)
+    cleanseGlow:SetFrameLevel(frame:GetFrameLevel() + 7)
+    local glowTex = cleanseGlow.tex
+    if not glowTex then
+        glowTex = cleanseGlow:CreateTexture(nil, "OVERLAY")
+        glowTex:SetTexture("Interface\\Buttons\\UI-ActionButton-Border")
+        glowTex:SetBlendMode("ADD")
+        cleanseGlow.tex = glowTex
+    end
+    glowTex:SetAllPoints(cleanseGlow)
+    cleanseGlow:Hide()
+    frame.cleanseGlow = cleanseGlow
+
     -- Defensive indicator icons are allocated lazily by UpdateDefensiveIndicator
     -- so profiles with the feature disabled do not pay for 5 cooldown frames
     -- on every group member.
@@ -3164,13 +3214,63 @@ local function EnsureAnchorFrame(key)
 end
 
 local function GetAnchorPosition(key, db)
+    local x, y
     if key == "raid" and db and db.unifiedPosition == false then
         local pos = db.raidPosition
-        return pos and pos.offsetX or -400, pos and pos.offsetY or 0
+        x, y = pos and pos.offsetX or -400, pos and pos.offsetY or 0
+    else
+        local pos = db and db.position
+        x, y = pos and pos.offsetX or -400, pos and pos.offsetY or 0
     end
 
-    local pos = db and db.position
-    return pos and pos.offsetX or -400, pos and pos.offsetY or 0
+    -- Per-raid-size delta: shift the raid root for small/medium/large raids when
+    -- enabled. Raid key only; GetGroupMode() returns party/small/medium/large and
+    -- "party" has no offset entry, so non-raid contexts (incl. layout preview) keep
+    -- the base. Insecure root reposition; runs on the combat-deferred anchor path.
+    if key == "raid" then
+        local offX, offY = QUI_GF:GetRaidSizeOffset(db)
+        x = x + offX
+        y = y + offY
+    end
+
+    return x, y
+end
+
+function QUI_GF:GetRaidSizeOffset(db)
+    if db and db.raidPerSizePositions and db.raidSizeOffsets then
+        local off = db.raidSizeOffsets[GetGroupMode()]
+        if off then
+            return off.offsetX or 0, off.offsetY or 0
+        end
+    end
+    return 0, 0
+end
+
+function QUI_GF:ApplyRaidAnchorWithSizeOffset(db)
+    if not (_G.QUI_HasFrameAnchor and _G.QUI_HasFrameAnchor("raidFrames")) then
+        return false
+    end
+
+    local anchoring = ns.QUI_Anchoring
+    local faDB = QUICore and QUICore.db and QUICore.db.profile and QUICore.db.profile.frameAnchoring
+    local settings = faDB and faDB.raidFrames
+    if not (anchoring and anchoring.ApplyFrameAnchor and settings) then
+        if _G.QUI_ApplyFrameAnchor then _G.QUI_ApplyFrameAnchor("raidFrames") end
+        return true
+    end
+
+    local offX, offY = self:GetRaidSizeOffset(db)
+    if offX == 0 and offY == 0 then
+        anchoring:ApplyFrameAnchor("raidFrames", settings)
+        return true
+    end
+
+    local effective = {}
+    for k, v in pairs(settings) do effective[k] = v end
+    effective.offsetX = (effective.offsetX or 0) + offX
+    effective.offsetY = (effective.offsetY or 0) + offY
+    anchoring:ApplyFrameAnchor("raidFrames", effective)
+    return true
 end
 
 -- Compute a fallback size for an anchor root when no headers are visible
@@ -3419,8 +3519,7 @@ local function UpdateAnchorFrames()
             elseif partyRoot:GetNumPoints() == 0 then
                 partyRoot:SetPoint("CENTER", UIParent, "CENTER", partyX, partyY)
             end
-            if hasAnchor and hasAnchor("raidFrames") and applyAnchor then
-                applyAnchor("raidFrames")
+            if QUI_GF:ApplyRaidAnchorWithSizeOffset(db) then
             elseif raidRoot:GetNumPoints() == 0 then
                 raidRoot:SetPoint("CENTER", UIParent, "CENTER", raidX, raidY)
             end
@@ -3443,8 +3542,7 @@ local function UpdateAnchorFrames()
     elseif partyRoot:GetNumPoints() == 0 then
         partyRoot:SetPoint("CENTER", UIParent, "CENTER", partyX, partyY)
     end
-    if hasAnchor and hasAnchor("raidFrames") and applyAnchor then
-        applyAnchor("raidFrames")
+    if QUI_GF:ApplyRaidAnchorWithSizeOffset(db) then
     elseif raidRoot:GetNumPoints() == 0 then
         raidRoot:SetPoint("CENTER", UIParent, "CENTER", raidX, raidY)
     end
@@ -3534,6 +3632,16 @@ local function ConfigurePartyHeader(header)
         local sortMethod = layout.sortMethod or "INDEX"
         header:SetAttribute("sortMethod", sortMethod)
     end
+
+    -- Hide DPS-role frames: the party header sets NO groupFilter, so the secure
+    -- header's roleFilter-only branch (non-strict) keeps only units whose role is
+    -- in the list. "TANK,HEALER" hides DAMAGER/NONE. (Raid CANNOT use this: its
+    -- groupFilter is load-bearing for group layout, and roleFilter then OR-matches
+    -- every unit by subgroup — see SecureGroupHeaders.lua:411-442 — so raid hide-DPS
+    -- is intentionally party-only.) Routed through the combat-deferred config path;
+    -- the change-guard avoids a redundant protected re-layout. A DPS player who
+    -- enables this hides their OWN frame too (role-based, expected).
+    _state.SetHeaderAttributeIfChanged(header, "roleFilter", layout.hideDPS and "TANK,HEALER" or nil)
 
     -- Frame size via initial config
     header:SetAttribute("_initialAttributeNames", "unit-width,unit-height")
@@ -3744,6 +3852,69 @@ local function ConfigureRaidGroupHeaders()
 end
 
 ---------------------------------------------------------------------------
+-- MULTI-HEADER: Per-group "Group N" header label
+---------------------------------------------------------------------------
+-- One insecure FontString host per raid group header (the block origin). Rides
+-- the secure header so no combat reposition is needed; text is static per group.
+-- Visibility gates on raid + groupBy==GROUP + showGroupNumber. Defined on _state
+-- (table field) to stay under the Lua 5.1 200-local-per-chunk cap.
+function _state.UpdateRaidGroupLabel(header, g, layout)
+    if not header then return end
+    local vdb = GetVisualDB(true)
+    local s = vdb and vdb.groupNumber
+    local groupedByGroup = ((layout and layout.groupBy) or "GROUP") == "GROUP"
+    local show = s and s.showGroupNumber == true and groupedByGroup and header:IsShown()
+
+    local lbl = header._quiGroupLabel
+    if not show then
+        if lbl then lbl:Hide() end
+        return
+    end
+
+    if not lbl then
+        -- Out of combat only (PositionRaidGroupHeaders early-returns in combat).
+        -- Insecure child on the secure header; we never call protected methods on
+        -- the header from here, so no taint.
+        lbl = CreateFrame("Frame", nil, header)
+        lbl:SetAllPoints(header)
+        lbl.text = lbl:CreateFontString(nil, "OVERLAY")
+        header._quiGroupLabel = lbl
+    end
+    -- Sit above the member buttons (child frames outrank the header's own regions).
+    lbl:SetFrameLevel(header:GetFrameLevel() + 10)
+
+    local size = tonumber(s.groupNumberFontSize) or 12
+    ns.Helpers.ApplyFontWithFallback(lbl.text, GetFontPath(true), size, GetFontOutline(true))
+    lbl.text:SetText(((ns.L and ns.L["Group"]) or "Group") .. " " .. g)
+    local c = s.groupNumberTextColor or COLORS.WHITE
+    lbl.text:SetTextColor(c[1] or 1, c[2] or 1, c[3] or 1, c[4] or 1)
+    lbl.text:SetWordWrap(false)
+
+    -- Place the label OUTSIDE the block on the chosen side: a TOP anchor pins the
+    -- label's BOTTOM to the block's TOP (label sits above), not its TOP to the TOP
+    -- (which buries it inside the first unit). CENTER stays inside-centered.
+    local anchor = s.groupNumberAnchor or "TOPRIGHT"
+    local selfPoint, blockPoint = anchor, anchor
+    if anchor == "CENTER" then
+        selfPoint, blockPoint = "CENTER", "CENTER"
+    elseif anchor:find("TOP") then
+        selfPoint = (anchor:gsub("TOP", "BOTTOM"))
+    elseif anchor:find("BOTTOM") then
+        selfPoint = (anchor:gsub("BOTTOM", "TOP"))
+    elseif anchor == "LEFT" then
+        selfPoint = "RIGHT"
+    elseif anchor == "RIGHT" then
+        selfPoint = "LEFT"
+    end
+    lbl.text:ClearAllPoints()
+    lbl.text:SetPoint(selfPoint, lbl, blockPoint,
+        tonumber(s.groupNumberOffsetX) or 0, tonumber(s.groupNumberOffsetY) or 0)
+
+    lbl:Show()
+    lbl.text:Show()
+end
+
+---------------------------------------------------------------------------
 -- MULTI-HEADER: Position per-group headers with group spacing
 ---------------------------------------------------------------------------
 local function PositionRaidGroupHeaders()
@@ -3768,7 +3939,7 @@ local function PositionRaidGroupHeaders()
     local raidRoot = QUI_GF.anchorFrames.raid
     local prevHeader = nil
 
-    for _, header in ipairs(QUI_GF.raidGroupHeaders) do
+    for g, header in ipairs(QUI_GF.raidGroupHeaders) do
         if header and header:IsShown() then
             header:ClearAllPoints()
 
@@ -3838,6 +4009,18 @@ local function PositionRaidGroupHeaders()
 
             prevHeader = header
         end
+        _state.UpdateRaidGroupLabel(header, g, layout)
+    end
+end
+
+-- Re-resolve every raid group label after a settings change. Out-of-combat only;
+-- in combat the _pending.groupReflow path re-runs PositionRaidGroupHeaders.
+function _state.RefreshAllRaidGroupLabels()
+    if InCombatLockdown() then return end
+    if not QUI_GF.raidGroupHeaders then return end
+    local layout = GetLayoutSettings(true)
+    for g, header in ipairs(QUI_GF.raidGroupHeaders) do
+        _state.UpdateRaidGroupLabel(header, g, layout)
     end
 end
 
@@ -5918,6 +6101,17 @@ function QUI_GF:RefreshSettings()
             local raidPos = db.raidPosition
             local raidOffX = raidPos and raidPos.offsetX or -400
             local raidOffY = raidPos and raidPos.offsetY or 0
+            -- Apply the per-raid-size delta here too (mirrors GetAnchorPosition) so
+            -- this direct-set is consistent with the authoritative UpdateAnchorFrames
+            -- pass that runs later in RefreshSettings, rather than relying on override
+            -- ordering. Keeps the raidPosition base (no unifiedPosition divergence).
+            if db.raidPerSizePositions and db.raidSizeOffsets then
+                local szOff = db.raidSizeOffsets[GetGroupMode()]
+                if szOff then
+                    raidOffX = raidOffX + (szOff.offsetX or 0)
+                    raidOffY = raidOffY + (szOff.offsetY or 0)
+                end
+            end
             raidRoot:SetPoint("CENTER", UIParent, "CENTER", raidOffX, raidOffY)
         end
     end
@@ -5995,6 +6189,11 @@ function QUI_GF:RefreshSettings()
     if not InCombatLockdown() then
         self:RefreshAllFrames()
     end
+
+    -- Re-resolve per-group "Group N" labels for visual-only changes (color/anchor/
+    -- offset/toggle) that don't otherwise re-run the header layout pass. Self-guards
+    -- combat.
+    _state.RefreshAllRaidGroupLabels()
 end
 
 ---------------------------------------------------------------------------

@@ -1591,7 +1591,16 @@ local function UpdateCustomMailButton()
     customMailButton:SetFrameStrata("MEDIUM")
     customMailButton:SetFrameLevel((Minimap:GetFrameLevel() or 0) + 10)
     customMailButton:ClearAllPoints()
-    customMailButton:SetPoint("BOTTOMLEFT", Minimap, "BOTTOMLEFT", 2, 2)
+    -- Position overridable via mailConfig (anchor + pixel offsets + scale); the
+    -- fallbacks reproduce the historical fixed BOTTOMLEFT +2,+2 / scale 1 exactly,
+    -- so a profile without mailConfig is byte-identical to before. Mirrors the
+    -- trackingConfig / dungeonEye pattern. QUI-owned insecure button, no taint.
+    local mc = settings.mailConfig
+    local mailAnchor = (mc and mc.anchor) or "BOTTOMLEFT"
+    local mailOX = (mc and mc.offsetX) or 2
+    local mailOY = (mc and mc.offsetY) or 2
+    customMailButton:SetScale((mc and mc.scale) or 1)
+    customMailButton:SetPoint(mailAnchor, Minimap, mailAnchor, mailOX, mailOY)
     customMailButton:Show()
 end
 
@@ -1798,16 +1807,23 @@ local function UpdateButtonVisibility()
         end
     end
 
-    -- Tracking button - position at top left (next to difficulty if shown)
+    -- Tracking button - position at top left (next to difficulty if shown),
+    -- overridable via trackingConfig (anchor + pixel offsets).
     if MinimapCluster and MinimapCluster.Tracking then
         local trackingFrame = MinimapCluster.Tracking
         if settings.showTracking then
+            local tc = settings.trackingConfig
+            local anchor = (tc and tc.anchor) or "TOPLEFT"
+            local ox = (tc and tc.offsetX) or 0
+            local oy = (tc and tc.offsetY) or 0
             trackingFrame:SetParent(Minimap)
             trackingFrame:ClearAllPoints()
-            if settings.showDifficulty then
-                trackingFrame:SetPoint("TOPLEFT", Minimap, "TOPLEFT", 35, -2)
+            if anchor == "TOPLEFT" then
+                -- Default corner keeps the difficulty-aware nudge, plus any user offset.
+                local baseX = settings.showDifficulty and 35 or 2
+                trackingFrame:SetPoint("TOPLEFT", Minimap, "TOPLEFT", baseX + ox, -2 + oy)
             else
-                trackingFrame:SetPoint("TOPLEFT", Minimap, "TOPLEFT", 2, -2)
+                trackingFrame:SetPoint(anchor, Minimap, anchor, ox, oy)
             end
         else
             trackingFrame:SetParent(hiddenButtonParent)
@@ -3006,6 +3022,9 @@ local function CreateDrawerToggleButton()
         local s = GetSettings()
         if s and s.buttonDrawer and s.buttonDrawer.openOnMouseover ~= false then
             ShowDrawer()
+        end
+        if s and s.buttonDrawer and s.buttonDrawer.showTooltip == false then
+            return
         end
         GameTooltip:SetOwner(self, "ANCHOR_LEFT")
         GameTooltip:AddLine(ns.L["Addon Button Drawer"])

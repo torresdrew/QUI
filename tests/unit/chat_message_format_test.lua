@@ -139,6 +139,14 @@ eq("decorate ambiguate", F.DecorateSender("CHAT_MSG_SAY", "hi", "Bob-Realm"), "B
 eq("decorate class color",
     F.DecorateSender("CHAT_MSG_SAY", "hi", "Bob-Realm", nil, nil, nil, nil, nil, nil, nil, nil, nil, "Player-1-MAGE"),
     "|cff3fc7ebBob|r")
+do
+    local saved = settings.modifiers.classColors
+    settings.modifiers.classColors = nil
+    eq("decorate class color default-on",
+        F.DecorateSender("CHAT_MSG_SAY", "hi", "Default-Realm", nil, nil, nil, nil, nil, nil, nil, nil, nil, "Player-1-MAGE"),
+        "|cff3fc7ebDefault|r")
+    settings.modifiers.classColors = saved
+end
 -- Truly-unknown player (never resolved, so absent from the name cache) stays
 -- plain. Uses a fresh name -- "Bob-Realm" was seeded MAGE just above, and the
 -- name cache now (correctly) recolors any later line from a known name.
@@ -165,6 +173,87 @@ do
         "|cff3fc7ebBob|r")
     _G.GetPlayerInfoByGUID = prevGPI
     secrets[secretGuid] = nil
+end
+
+-- Secret CLASS routing (the real in-game combat case the plain-string stubs
+-- above cannot reach: a Lua harness cannot mint a real engine secret). Under
+-- lockdown GetPlayerInfoByGUID returns a SECRET englishClass for a secret GUID.
+-- A secret cannot be a table key, so the colorizer must NOT index
+-- RAID_CLASS_COLORS[class] -- it routes the secret class through
+-- C_ClassColor.GetClassColor + ColorMixin:WrapTextInColorCode (both
+-- AllowedWhenTainted). This proves the name is still colored without ever keying
+-- a table on the secret class -- the divergence from stock that dropped raid/
+-- party colors when QUI rejected the secret class instead of forwarding it.
+do
+    local secretGuid = setmetatable({}, { __tostring = explode, __concat = explode, __len = explode })
+    local secretClass = setmetatable({}, { __tostring = explode, __concat = explode, __len = explode })
+    secrets[secretGuid] = true
+    secrets[secretClass] = true
+    local prevGPI = _G.GetPlayerInfoByGUID
+    local prevCC = _G.C_ClassColor
+    _G.GetPlayerInfoByGUID = function(gg)
+        if rawequal(gg, secretGuid) then return secretClass, secretClass end
+        return prevGPI(gg)
+    end
+    local sawClass
+    _G.C_ClassColor = {
+        GetClassColor = function(cls)
+            sawClass = cls
+            return { WrapTextInColorCode = function(_, t) return "CC:" .. t end }
+        end,
+    }
+    eq("decorate secret class routes via C_ClassColor",
+        F.DecorateSender("CHAT_MSG_PARTY", "hi", "Zed-Realm", nil, nil, nil, nil, nil, nil, nil, nil, nil, secretGuid),
+        "CC:Zed")
+    eq("secret class forwarded to C_ClassColor", rawequal(sawClass, secretClass), true)
+    _G.GetPlayerInfoByGUID = prevGPI
+    _G.C_ClassColor = prevCC
+    secrets[secretGuid] = nil
+    secrets[secretClass] = nil
+end
+
+do
+    local src = assert(io.open("QUI_Chat/chat/message_format.lua", "r")):read("*a")
+    assert(not src:find("wrapped%s*~=%s*nil"),
+        "secret-safe class color wrapping must use truthiness, not ~= nil")
+end
+
+do
+    local prevFilter = _G.ChatFrameUtil.ProcessSenderNameFilters
+    local seenCount
+    local seenArg15
+    _G.ChatFrameUtil.ProcessSenderNameFilters = function(_, decorated, ...)
+        seenCount = select("#", ...)
+        seenArg15 = select(15, ...)
+        return decorated
+    end
+    local p = F.BuildPayloadFromArgs("CHAT_MSG_SAY",
+        "hi", "Bob-Realm", nil, nil, nil, nil, nil, nil, nil, nil, 42,
+        "Player-1-MAGE", nil, nil, nil, nil, true)
+    eq("sender filter receives Blizzard arg count", seenCount, 14)
+    eq("sender filter hides arg17 suppressRaidIcons", seenArg15, nil)
+    eq("payload keeps arg17 suppressIcons", p.suppressIcons, true)
+    _G.ChatFrameUtil.ProcessSenderNameFilters = prevFilter
+end
+
+-- Parity: stock ChatFrameUtil.GetDecoratedSenderName resolves the color via
+-- C_ClassColor.GetClassColor FIRST for NON-secret classes too (RAID_CLASS_COLORS
+-- is only the no-C_ClassColor fallback). Proves QUI matches that order so a class
+-- C_ClassColor knows but RAID_CLASS_COLORS lacks (login burst) still colors.
+do
+    local prevCC = _G.C_ClassColor
+    local sawClass
+    _G.C_ClassColor = {
+        GetClassColor = function(cls)
+            sawClass = cls
+            return { WrapTextInColorCode = function(_, t) return "CC:" .. t end }
+        end,
+    }
+    eq("non-secret class uses C_ClassColor first",
+        F.DecorateSender("CHAT_MSG_SAY", "hi", "Bob-Realm", nil, nil, nil, nil, nil, nil, nil, nil, nil, "Player-1-MAGE"),
+        "CC:Bob")
+    eq("non-secret class forwarded to C_ClassColor", sawClass, "MAGE")
+    _G.C_ClassColor = prevCC
 end
 
 -- Combat name-cache recovery (the party/raid/guild fix). In live combat the
@@ -203,13 +292,16 @@ end
 -- Demon Hunter name in party chat, plus cross-realm groupmates.
 do
     local roster = {
-        player = { loc = "Demon Hunter", class = "DEMONHUNTER", full = "Drew",          short = "Drew" },
-        party1 = { loc = "Mage",         class = "MAGE",        full = "Zin-OtherRealm", short = "Zin"  },
+        player = { loc = "Demon Hunter", class = "DEMONHUNTER", full = "Drew",             short = "Drew" },
+        party1 = { loc = "Mage",         class = "MAGE",        full = "Zin-OtherRealm",   short = "Zin"  },
+        party2 = { loc = "Mage",         class = "MAGE",        full = "Kara-Other Realm", short = "Kara", guid = "Player-2-MAGE" },
     }
     local prev = {
         IsInGroup = _G.IsInGroup, IsInRaid = _G.IsInRaid, UnitExists = _G.UnitExists,
         UnitIsPlayer = _G.UnitIsPlayer, UnitClass = _G.UnitClass, GetUnitName = _G.GetUnitName,
+        UnitName = _G.UnitName, UnitGUID = _G.UnitGUID,
     }
+    _G.UnitName = nil
     _G.IsInGroup = function() return true end
     _G.IsInRaid = function() return false end
     _G.UnitExists = function(u) return roster[u] ~= nil end
@@ -220,6 +312,9 @@ do
     _G.GetUnitName = function(u, server)
         local e = roster[u]; if not e then return nil end
         return server and e.full or e.short
+    end
+    _G.UnitGUID = function(u)
+        local e = roster[u]; return e and e.guid or nil
     end
 
     F.SeedKnownClasses()
@@ -236,9 +331,44 @@ do
     eq("seed roster cross-realm color",
         F.DecorateSender("CHAT_MSG_PARTY", "hi", "Zin-OtherRealm", nil, nil, nil, nil, nil, nil, nil, nil, nil, secretGuid),
         "|cff3fc7ebZin|r")
+    -- Some APIs expose spaced realm names while chat args use compact realm
+    -- names. Store both aliases so the cold-combat fallback hits either form.
+    eq("seed roster compact realm alias color",
+        F.DecorateSender("CHAT_MSG_PARTY", "hi", "Kara-OtherRealm", nil, nil, nil, nil, nil, nil, nil, nil, nil, secretGuid),
+        "|cff3fc7ebKara|r")
+    -- UnitGUID is readable outside identity restriction; cache it too so a cold
+    -- player-info lookup still colors a non-secret sender GUID.
+    eq("seed roster guid cache color",
+        F.DecorateSender("CHAT_MSG_PARTY", "hi", "Cold-Realm", nil, nil, nil, nil, nil, nil, nil, nil, nil, "Player-2-MAGE"),
+        "|cff3fc7ebCold|r")
     secrets[secretGuid] = nil
 
     for k, v in pairs(prev) do _G[k] = v end
+    _G.UnitName = prev.UnitName
+    _G.UnitGUID = prev.UnitGUID
+end
+
+do
+    local prev = {
+        IsInGroup = _G.IsInGroup, IsInRaid = _G.IsInRaid, UnitExists = _G.UnitExists,
+        UnitIsPlayer = _G.UnitIsPlayer, UnitClass = _G.UnitClass, GetUnitName = _G.GetUnitName,
+        UnitName = _G.UnitName, UnitGUID = _G.UnitGUID,
+    }
+    _G.IsInGroup = function() return false end
+    _G.IsInRaid = function() return false end
+    _G.UnitExists = function(u) return u == "player" end
+    _G.UnitIsPlayer = function() return true end
+    _G.UnitClass = function() return "Mage", "MAGE" end
+    _G.UnitGUID = function() return nil end
+    _G.UnitName = nil
+    _G.GetUnitName = function() error("secret unit name read", 2) end
+
+    local ok = pcall(F.SeedKnownClasses, false)
+    assert(ok, "SeedKnownClasses must survive restricted roster names")
+
+    for k, v in pairs(prev) do _G[k] = v end
+    _G.UnitName = prev.UnitName
+    _G.UnitGUID = prev.UnitGUID
 end
 
 -- Guild member seeding (cold-login-into-combat guild fix). Guild senders are not
@@ -341,6 +471,18 @@ eq("bn kstring target", F.BuildEventLine("CHAT_MSG_BN_WHISPER_INFORM",
 
 -- Absent text -> nil (capture guards non-empty strings; nothing to render)
 eq("nil text", F.BuildEventLine("CHAT_MSG_SAY", { sender = "Ann" }), nil)
+
+-- Raw event entrypoint: formatter owns raw CHAT_MSG args and returns both the
+-- rendered line and a safe payload for capture metadata/storage.
+do
+    local line, p, secretBody = F.BuildEventLineFromArgs("CHAT_MSG_CHANNEL",
+        "wts", "Ann", nil, "2. Trade", nil, nil, nil, 2, "Trade")
+    eq("raw args line", line, "|Hchannel:channel:2|h[T]|h |Hplayer:Ann:0:CHANNEL:2|h[Ann]|h: wts")
+    eq("raw args sender", p.sender, "Ann")
+    eq("raw args raw sender", p.rawSender, "Ann")
+    eq("raw args channel name", p.chName, "Trade")
+    eq("raw args secret flag", secretBody, false)
+end
 
 -- Secret sender (capture passes sender=nil) degrades to the bare body
 eq("secret sender", F.BuildEventLine("CHAT_MSG_SAY", { text = "hello", rawSender = secret }), "hello")
@@ -751,6 +893,76 @@ do
     string.format = realFormat
     _G.GetPlayerInfoByGUID = prevGPI
     assert(rawequal(got, coloredFinal), "plain body with secret sender+GUID keeps class-colored prefix")
+end
+
+-- Instance-chat secret identity in combat: GetPlayerInfoByGUID can return
+-- nothing for the secret GUID, but UnitClassFromGUID is secret-arg allowed and
+-- returns a non-secret class filename. This keeps M+ instance-chat prefixes
+-- class-colored when both sender and GUID are restricted.
+do
+    local meta = getmetatable(secret)
+    local function sentinel()
+        local s = setmetatable({}, meta)
+        secrets[s] = true
+        return s
+    end
+
+    local secretSender = sentinel()
+    local secretGuid = sentinel()
+    local shown = sentinel()
+    local coloredShown = sentinel()
+    local plainLink = sentinel()
+    local coloredLink = sentinel()
+    local plainPrefix = sentinel()
+    local coloredPrefix = sentinel()
+    local plainFinal = sentinel()
+    local coloredFinal = sentinel()
+
+    local prevGPI = _G.GetPlayerInfoByGUID
+    local prevUCFG = _G.UnitClassFromGUID
+    _G.GetPlayerInfoByGUID = function(gg)
+        if rawequal(gg, secretGuid) then return nil end
+        return prevGPI(gg)
+    end
+    _G.UnitClassFromGUID = function(gg)
+        if rawequal(gg, secretGuid) then return "Demon Hunter", "DEMONHUNTER", 12 end
+        return nil
+    end
+
+    local realFormat = string.format
+    string.format = function(fmt, ...)
+        local a1, a2 = ...
+        if fmt == "[%s]" and rawequal(a1, secretSender) then
+            return shown
+        elseif fmt == "|c%s%s|r" and a1 == "ffa330c9" and rawequal(a2, shown) then
+            return coloredShown
+        elseif fmt == "|Hplayer:%s|h%s|h" and rawequal(a1, secretSender) and rawequal(a2, shown) then
+            return plainLink
+        elseif fmt == "|Hplayer:%s|h%s|h" and rawequal(a1, secretSender) and rawequal(a2, coloredShown) then
+            return coloredLink
+        elseif fmt == "%s%s" and a1 == "" and rawequal(a2, plainLink) then
+            return plainLink
+        elseif fmt == "%s%s" and a1 == "" and rawequal(a2, coloredLink) then
+            return coloredLink
+        elseif fmt == "[IL] %s: " and rawequal(a1, plainLink) then
+            return plainPrefix
+        elseif fmt == "[IL] %s: " and rawequal(a1, coloredLink) then
+            return coloredPrefix
+        elseif fmt == "%s%s" and rawequal(a1, plainPrefix) and a2 == "focus kick" then
+            return plainFinal
+        elseif fmt == "%s%s" and rawequal(a1, coloredPrefix) and a2 == "focus kick" then
+            return coloredFinal
+        end
+        return realFormat(fmt, ...)
+    end
+
+    local got = F.BuildEventLineFromArgs("CHAT_MSG_INSTANCE_CHAT_LEADER",
+        "focus kick", secretSender, nil, nil, nil, nil, nil, nil, nil, nil, nil, secretGuid)
+
+    string.format = realFormat
+    _G.GetPlayerInfoByGUID = prevGPI
+    _G.UnitClassFromGUID = prevUCFG
+    assert(rawequal(got, coloredFinal), "instance-chat secret GUID uses UnitClassFromGUID class color")
 end
 
 -- Secret sender + secret GUID in combat: player-name color should still be

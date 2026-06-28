@@ -2401,7 +2401,7 @@ local function RenderTextTargetOfTargetSection(sectionHost, ctx)
     local optionsAPI = GetOptionsAPI()
     local unitKey = ctx and ctx.options and ctx.options.unitKey or nil
     local unit = ResolveUnitDB(unitKey)
-    if not gui or not optionsAPI or not unit or unitKey ~= "target" then
+    if not gui or not optionsAPI or not unit or (unitKey ~= "target" and unitKey ~= "boss") then
         return nil
     end
 
@@ -2583,7 +2583,7 @@ local function RenderTextPowerSection(sectionHost, ctx)
     local anchorDropdown = gui:CreateFormDropdown(card.frame, nil, optionsAPI.NINE_POINT_ANCHOR_OPTIONS, "powerTextAnchor", unit.unitDB, RefreshUnitFrames, {
         description = ns.L["Where on the frame the power text is anchored. X/Y Offset below nudges it from this anchor point."],
     })
-    local xOffsetSlider = gui:CreateFormSlider(card.frame, nil, -100, 100, 1, "powerTextOffsetX", unit.unitDB, RefreshUnitFrames, { deferOnDrag = true }, {
+    local xOffsetSlider = gui:CreateFormSlider(card.frame, nil, -500, 500, 1, "powerTextOffsetX", unit.unitDB, RefreshUnitFrames, { deferOnDrag = true }, {
         description = ns.L["Horizontal pixel offset for the power text from its anchor. Positive moves right, negative moves left."],
     })
     card.AddRow(
@@ -2940,7 +2940,7 @@ local function BuildTextTabFeature(unitKey)
     end
 
     local sections = { "name", "level" }
-    if unitKey == "target" then
+    if unitKey == "target" or unitKey == "boss" then
         sections[#sections + 1] = "targetOfTarget"
     end
     sections[#sections + 1] = "health"

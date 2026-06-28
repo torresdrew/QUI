@@ -1633,9 +1633,14 @@ local function UpdateName(frame)
         name = TruncateName(name, maxLen)
     end
 
-    -- Inline Target of Target for target frame only
-    if frame.unitKey == "target" and settings.showInlineToT then
-        local totUnit = "targettarget"
+    -- Inline Target of Target — target frame + boss frames (the boss's own target).
+    -- Boss-ToT refreshes on the boss frame's existing UpdateFrame cadence (health
+    -- ticks etc.), so it stays current in combat without dedicated UNIT_TARGET
+    -- wiring. Names/colors are secret-safe (GetUnitClassColor returns plain numbers,
+    -- TruncateName C-side-formats secret names, UnitName feeds SetText which accepts
+    -- secrets) so an ally boss-target in restricted combat never errors.
+    if (frame.unitKey == "target" or frame.unitKey == "boss") and settings.showInlineToT then
+        local totUnit = (frame.unitKey == "boss") and (frame.unit .. "target") or "targettarget"
         if UnitExists(totUnit) then
             local totName = UnitName(totUnit) or ""
             local totCharLimit = settings.totNameCharLimit
@@ -2121,6 +2126,11 @@ local function CreateBossFrame(unit, frameKey, bossIndex)
             if eventUnit == self.unit then
                 UpdateLevelText(self)
             end
+        elseif event == "UNIT_TARGET" then
+            local eventUnit = ...
+            if eventUnit == self.unit then
+                UpdateName(self)
+            end
         elseif event == "RAID_TARGET_UPDATE" then
             UpdateTargetMarker(self)
         elseif event == "UNIT_CLASSIFICATION_CHANGED" then
@@ -2141,6 +2151,7 @@ local function CreateBossFrame(unit, frameKey, bossIndex)
     frame:RegisterUnitEvent("UNIT_MAXPOWER", unit)
     frame:RegisterUnitEvent("UNIT_NAME_UPDATE", unit)
     frame:RegisterUnitEvent("UNIT_LEVEL", unit)
+    frame:RegisterUnitEvent("UNIT_TARGET", unit)
     frame:RegisterEvent("RAID_TARGET_UPDATE")  -- Target marker (skull, cross, etc.)
 
     -- Classification icon events (boss frames) - only register if feature enabled
