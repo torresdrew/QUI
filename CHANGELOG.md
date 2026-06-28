@@ -11,6 +11,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v4.0.5-beta5 - 2026-06-28
+
+### Added
+- Action Bars: new raid marker bar — buttons to set raid target markers
+- Quality of Life: Bloodlust / Heroism timer showing time remaining while Lust is active
+- Cooldowns: buff icons can show absorb amount, a grow-on-apply pop, and a swipe edge
+- Group Frames: cleanse glow, an option to hide DPS, and per-group "Group N" header labels for raids
+- Unit Frames: inline Target-of-Target name with class-color option; separate raid frame positions per group size
+- Alerts: option to enable/disable QUI control of alert and toast anchors
+
+### Fixed
+- Damage Meter: a window background opacity of 0 is now respected instead of falling back to the default
+- Chat: class colors hold up better for senders first seen during combat
+- Boss Frames: name now refreshes when the boss changes target
+
 ## v4.0.5-beta4 - 2026-06-27
 
 ### Added
