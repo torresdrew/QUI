@@ -58,7 +58,12 @@ local function BuildAutohideTab(tabContent)
     local sOT = L.sectionAt()
     local hideAlwaysW = GUI:CreateFormCheckbox(sOT.frame, nil, "hideObjectiveTrackerAlways", db.uiHider, RefreshUIHider,
         { description = ns.L["Hide the quest and objective tracker everywhere, ignoring the per-instance toggles below."] })
-    sOT.AddRow(row(sOT.frame, ns.L["Hide Always"], hideAlwaysW))
+    local keepDelvesW = GUI:CreateFormCheckbox(sOT.frame, nil, "keepTrackerInDelvesScenarios", db.uiHider, RefreshUIHider,
+        { description = ns.L["Keep the objective tracker visible while in a Delve or Scenario, even when an autohide rule above would hide it, so you can follow their objectives."] })
+    sOT.AddRow(
+        row(sOT.frame, ns.L["Hide Always"], hideAlwaysW),
+        row(sOT.frame, ns.L["Keep Tracker in Delves & Scenarios"], keepDelvesW)
+    )
 
     pairEntries(sOT, {
         {key = "mythicPlus",      label = ns.L["Hide in Mythic+"],            desc = ns.L["Hide the objective tracker while you are running a Mythic+ keystone."]},

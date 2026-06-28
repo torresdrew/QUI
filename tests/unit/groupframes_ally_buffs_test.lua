@@ -114,10 +114,20 @@ for _, id in ipairs({974, 383648}) do
     assert(found, "earth shield id " .. id)
 end
 
+local som = byName["Source of Magic"]
+assert(som and som.providerClass == "EVOKER", "Source of Magic EVOKER")
+-- Augmentation Evoker spec id = 1473
+assert(som.providerSpecIDs and som.providerSpecIDs[1473], "Source of Magic gated to Augmentation (1473)")
+do
+    local found = false
+    for _, x in ipairs(som.ids) do if x == 369459 then found = true end end
+    assert(found, "source of magic id 369459")
+end
+
 -- All in-scope ids must be on the engine non-secret whitelist
 local MRB = ns.QUI_GroupFrameMissingRaidBuffs
 local wl = MRB.NonSecretRaidBuffIDs
-for _, id in ipairs({53563, 156910, 156322, 1244893, 974, 383648}) do
+for _, id in ipairs({53563, 156910, 156322, 1244893, 974, 383648, 369459}) do
     assert(wl[id], "id " .. id .. " whitelisted as non-secret")
 end
 print("OK: groupframes_ally_buffs_test Task1")

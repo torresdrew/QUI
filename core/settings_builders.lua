@@ -730,6 +730,7 @@ end
 SettingsBuilders.PROVIDER_LABELS = {
     -- Gameplay · Combat
     combatTimer        = "Combat Timer",
+    lustTimer          = "Lust Timer",
     brezCounter        = "Battle Res Counter",
     atonementCounter   = "Atonement Counter",
     rotationAssistIcon = "Rotation Assist",
@@ -765,6 +766,7 @@ SettingsBuilders.PROVIDER_LABELS = {
     extraActionButton = "Extra Action Button",
     zoneAbility       = "Zone Ability",
     totemBar          = "Totem Bar",
+    raidMarkersBar    = "Raid Markers Bar",
 
     -- Group Frames
     partyFrames     = "Party Frames",

@@ -142,6 +142,10 @@ function CDMLayout.BuildRows(settings)
                 stackFont = row.stackFont,
                 hideStackText = row.hideStackText,
                 opacity = row.opacity or 1.0,
+                -- Per-row horizontal growth/alignment. nil or "inherit" =
+                -- use the container's existing centered layout (unchanged).
+                -- "CENTERED"/"LEFT"/"RIGHT" override only this row's icons.
+                growDirection = row.growDirection,
             }
         end
     end
@@ -389,7 +393,22 @@ function CDMLayout.BuildIconLayout(settings, icons, opts)
                     else
                         rowCenterY = currentY - (iconHeight / 2) + rowConfig.yOffset
                     end
-                    local rowStartX = -rowWidth / 2 + iconWidth / 2
+                    -- Per-row horizontal growth. Default (nil/"inherit"/"CENTERED")
+                    -- keeps the row centered in the container box — byte-identical
+                    -- to the prior behavior. "RIGHT" left-aligns the row within the
+                    -- container box (grows toward the right); "LEFT" right-aligns it
+                    -- (grows toward the left). Container width (maxRowWidth) and all
+                    -- container metrics are computed earlier and are unaffected, so
+                    -- only this row's narrower-than-widest icons shift inside the box.
+                    local rowGrow = rowConfig.growDirection
+                    local rowStartX
+                    if rowGrow == "RIGHT" then
+                        rowStartX = -maxRowWidth / 2 + iconWidth / 2
+                    elseif rowGrow == "LEFT" then
+                        rowStartX = maxRowWidth / 2 - rowWidth + iconWidth / 2
+                    else
+                        rowStartX = -rowWidth / 2 + iconWidth / 2
+                    end
                     x = rowStartX + ((i - 1) * (iconWidth + rowConfig.padding)) + (rowConfig.xOffset or 0)
                     y = rowCenterY
                 end

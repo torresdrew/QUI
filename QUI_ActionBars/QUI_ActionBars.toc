@@ -30,3 +30,4 @@ actionbars\actionbars_per_bar_builders.lua
 actionbars\gse_compat.lua
 actionbars\buffborders.lua
 actionbars\totems.lua
+actionbars\raidmarkers.lua

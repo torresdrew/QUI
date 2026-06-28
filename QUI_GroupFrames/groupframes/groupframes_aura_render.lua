@@ -837,6 +837,17 @@ function R.RenderIcon(self, frame, element, matches)
         offY = offY + bottomPad
     end
 
+    local perRow = SafeToNumber(element.iconsPerRow, 0)
+    if perRow < 0 then perRow = 0 end
+    -- Rows stack away from the anchored frame edge: a BOTTOM-anchored strip
+    -- grows its extra rows upward, a RIGHT-anchored vertical strip leftward.
+    local rowDir
+    if growDir == "UP" or growDir == "DOWN" then
+        rowDir = (type(anchor) == "string" and anchor:find("RIGHT")) and "LEFT" or "RIGHT"
+    else
+        rowDir = (type(anchor) == "string" and anchor:find("BOTTOM")) and "UP" or "DOWN"
+    end
+
     local IL = IconLayout()
     local iconAnchor = (IL and IL.GetIconAnchorForGrow and IL.GetIconAnchorForGrow(anchor, growDir))
         or anchor
@@ -851,6 +862,7 @@ function R.RenderIcon(self, frame, element, matches)
         or state._offX ~= offX
         or state._offY ~= offY
         or state._bottomPad ~= bottomPad
+        or state._perRow ~= perRow
     state._count = count
     state._iconSize = iconSize
     state._growDir = growDir
@@ -859,6 +871,7 @@ function R.RenderIcon(self, frame, element, matches)
     state._offX = offX
     state._offY = offY
     state._bottomPad = bottomPad
+    state._perRow = perRow
 
     -- Hoisted once per render: the skin border color is identical for every icon,
     -- and the config generation gates the per-element setters inside ApplyIconData.
@@ -878,7 +891,7 @@ function R.RenderIcon(self, frame, element, matches)
             icon:ClearAllPoints()
             local slotX, slotY = 0, 0
             if IL and IL.CalculateSlotOffset then
-                slotX, slotY = IL.CalculateSlotOffset(idx, iconSize, spacing, growDir, count)
+                slotX, slotY = IL.CalculateSlotOffset(idx, iconSize, spacing, growDir, count, perRow, rowDir)
             else
                 slotX = (idx - 1) * (iconSize + spacing)
             end

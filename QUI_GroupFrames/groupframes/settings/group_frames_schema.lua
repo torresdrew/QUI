@@ -925,6 +925,56 @@ local function RenderLayoutSection(sectionHost, ctx)
             description = ns.L["Limit visible raid groups by instance size: groups 1-4 in Mythic and 1-6 otherwise."],
         })
         card.AddRow(optionsAPI.BuildSettingRow(card.frame, ns.L["Limit Groups by Raid Size"], limitGroupsCheckbox))
+
+        -- Per-raid-size position deltas (added to the Edit-Mode base position).
+        -- Seeded lazily in case the profile predates the keys.
+        local gfdb = groupFrames.gfdb
+        if type(gfdb.raidSizeOffsets) ~= "table" then
+            gfdb.raidSizeOffsets = {}
+        end
+        for _, bucket in ipairs({ "small", "medium", "large" }) do
+            if type(gfdb.raidSizeOffsets[bucket]) ~= "table" then
+                gfdb.raidSizeOffsets[bucket] = { offsetX = 0, offsetY = 0 }
+            end
+        end
+
+        local perSizeCheckbox = gui:CreateFormCheckbox(card.frame, nil, "raidPerSizePositions", gfdb, refresh, {
+            description = ns.L["Position raid frames differently for small (15 or fewer), medium (16-25), and large (26+) raids. The offsets below are added to the base raid position set in Edit Mode; you must be in that raid size to see them apply."],
+        })
+        card.AddRow(optionsAPI.BuildSettingRow(card.frame, ns.L["Per-Size Raid Positions"], perSizeCheckbox))
+
+        local smallX = gui:CreateFormSlider(card.frame, nil, -500, 500, 1, "offsetX", gfdb.raidSizeOffsets.small, refresh, { deferOnDrag = true }, {
+            description = ns.L["Horizontal offset for small raids, added to the base raid position."],
+        })
+        local smallY = gui:CreateFormSlider(card.frame, nil, -500, 500, 1, "offsetY", gfdb.raidSizeOffsets.small, refresh, { deferOnDrag = true }, {
+            description = ns.L["Vertical offset for small raids, added to the base raid position."],
+        })
+        card.AddRow(
+            optionsAPI.BuildSettingRow(card.frame, ns.L["Small Raid X"], smallX),
+            optionsAPI.BuildSettingRow(card.frame, ns.L["Small Raid Y"], smallY)
+        )
+
+        local medX = gui:CreateFormSlider(card.frame, nil, -500, 500, 1, "offsetX", gfdb.raidSizeOffsets.medium, refresh, { deferOnDrag = true }, {
+            description = ns.L["Horizontal offset for medium raids, added to the base raid position."],
+        })
+        local medY = gui:CreateFormSlider(card.frame, nil, -500, 500, 1, "offsetY", gfdb.raidSizeOffsets.medium, refresh, { deferOnDrag = true }, {
+            description = ns.L["Vertical offset for medium raids, added to the base raid position."],
+        })
+        card.AddRow(
+            optionsAPI.BuildSettingRow(card.frame, ns.L["Medium Raid X"], medX),
+            optionsAPI.BuildSettingRow(card.frame, ns.L["Medium Raid Y"], medY)
+        )
+
+        local largeX = gui:CreateFormSlider(card.frame, nil, -500, 500, 1, "offsetX", gfdb.raidSizeOffsets.large, refresh, { deferOnDrag = true }, {
+            description = ns.L["Horizontal offset for large raids, added to the base raid position."],
+        })
+        local largeY = gui:CreateFormSlider(card.frame, nil, -500, 500, 1, "offsetY", gfdb.raidSizeOffsets.large, refresh, { deferOnDrag = true }, {
+            description = ns.L["Vertical offset for large raids, added to the base raid position."],
+        })
+        card.AddRow(
+            optionsAPI.BuildSettingRow(card.frame, ns.L["Large Raid X"], largeX),
+            optionsAPI.BuildSettingRow(card.frame, ns.L["Large Raid Y"], largeY)
+        )
     else
         local showPlayerCheckbox = gui:CreateFormCheckbox(card.frame, nil, "showPlayer", layout, refresh, {
             description = ns.L["Include the player's own frame in the party display."],
@@ -946,6 +996,13 @@ local function RenderLayoutSection(sectionHost, ctx)
         card.AddRow(
             optionsAPI.BuildSettingRow(card.frame, ns.L["Always Show Self First"], selfFirstCheckbox),
             optionsAPI.BuildSettingRow(card.frame, ns.L["Sort by Role (Tank > Healer > DPS)"], sortByRoleCheckbox)
+        )
+
+        local hideDPSCheckbox = gui:CreateFormCheckbox(card.frame, nil, "hideDPS", layout, refresh, {
+            description = ns.L["Show only tank and healer frames in the party, hiding damage dealers. Note: a DPS-spec player hides their own frame too. Party only (raid uses group-based filtering)."],
+        })
+        card.AddRow(
+            optionsAPI.BuildSettingRow(card.frame, ns.L["Hide DPS Frames"], hideDPSCheckbox)
         )
     end
 
@@ -1692,6 +1749,83 @@ local function RenderNameSection(sectionHost, ctx)
     return builder.Height()
 end
 
+-- Raid-only: party has no subgroups. Additive label (default OFF).
+local function RenderGroupNumberSection(sectionHost, ctx)
+    local gui = GetGUI()
+    local optionsAPI = GetOptionsAPI()
+    local groupFrames = ResolveGroupFramesDB(ctx and ctx.options and ctx.options.contextMode)
+    if not gui or not optionsAPI or not groupFrames or groupFrames.contextMode ~= "raid" then
+        return nil
+    end
+
+    local groupNumber = EnsureSubTable(groupFrames.contextDB, "groupNumber")
+    if not groupNumber then
+        return nil
+    end
+
+    local builder = CreateSectionBuilder(sectionHost, ctx, CreateSearchContext("appearance"))
+    if not builder then
+        return nil
+    end
+
+    local refresh = function()
+        RefreshGroupFrames(groupFrames.contextMode)
+    end
+
+    builder.Header(ns.L["Group Header"])
+    builder.Description(ns.L["Shows a single \"Group N\" header above each raid subgroup block. Requires Group By = Group; party frames have no subgroups, so this is raid-only."])
+
+    local card = builder.Card()
+    local fontSizeRow, anchorRow, xOffsetRow, yOffsetRow, textColorRow
+    local function UpdateGroupNumberRows()
+        local alpha = groupNumber.showGroupNumber == true and 1.0 or 0.4
+        if fontSizeRow then fontSizeRow:SetAlpha(alpha) end
+        if anchorRow then anchorRow:SetAlpha(alpha) end
+        if xOffsetRow then xOffsetRow:SetAlpha(alpha) end
+        if yOffsetRow then yOffsetRow:SetAlpha(alpha) end
+        if textColorRow then textColorRow:SetAlpha(alpha) end
+    end
+
+    local showCheckbox = gui:CreateFormCheckbox(card.frame, nil, "showGroupNumber", groupNumber, function()
+        refresh()
+        UpdateGroupNumberRows()
+    end, {
+        description = ns.L["Show a single \"Group N\" header above each raid subgroup (requires Group By = Group)."],
+    })
+    local fontSizeSlider = gui:CreateFormSlider(card.frame, nil, 6, 24, 1, "groupNumberFontSize", groupNumber, refresh, { deferOnDrag = true }, {
+        description = ns.L["Font size used for the group header label."],
+    })
+    fontSizeRow = optionsAPI.BuildSettingRow(card.frame, ns.L["Font Size"], fontSizeSlider)
+    card.AddRow(
+        optionsAPI.BuildSettingRow(card.frame, ns.L["Show Group Header"], showCheckbox),
+        fontSizeRow
+    )
+
+    local anchorDropdown = gui:CreateFormDropdown(card.frame, nil, NINE_POINT_OPTIONS, "groupNumberAnchor", groupNumber, refresh, {
+        description = ns.L["Where the \"Group N\" header anchors relative to the group block. X/Y Offset below nudges it from that point."],
+    })
+    anchorRow = optionsAPI.BuildSettingRow(card.frame, ns.L["Anchor"], anchorDropdown)
+    local xOffsetSlider = gui:CreateFormSlider(card.frame, nil, -100, 100, 1, "groupNumberOffsetX", groupNumber, refresh, { deferOnDrag = true }, {
+        description = ns.L["Horizontal pixel offset for the group header from its anchor. Positive moves right, negative moves left."],
+    })
+    xOffsetRow = optionsAPI.BuildSettingRow(card.frame, ns.L["X Offset"], xOffsetSlider)
+    card.AddRow(anchorRow, xOffsetRow)
+
+    local yOffsetSlider = gui:CreateFormSlider(card.frame, nil, -100, 100, 1, "groupNumberOffsetY", groupNumber, refresh, { deferOnDrag = true }, {
+        description = ns.L["Vertical pixel offset for the group header from its anchor. Positive moves up, negative moves down."],
+    })
+    yOffsetRow = optionsAPI.BuildSettingRow(card.frame, ns.L["Y Offset"], yOffsetSlider)
+    local textColorPicker = gui:CreateFormColorPicker(card.frame, nil, "groupNumberTextColor", groupNumber, refresh, nil, {
+        description = ns.L["Color used for the group header text."],
+    })
+    textColorRow = optionsAPI.BuildSettingRow(card.frame, ns.L["Text Color"], textColorPicker)
+    card.AddRow(yOffsetRow, textColorRow)
+
+    UpdateGroupNumberRows()
+    builder.CloseCard(card)
+    return builder.Height()
+end
+
 local function RenderLevelSection(sectionHost, ctx)
     local gui = GetGUI()
     local optionsAPI = GetOptionsAPI()
@@ -2008,6 +2142,26 @@ local function RenderDispelOverlaySection(sectionHost, ctx)
 
     UpdateDispelRows()
     builder.CloseCard(dispelCard)
+
+    local glow = EnsureSubTable(healer, "cleanseGlow")
+    if glow then
+        if type(glow.color) ~= "table" then
+            glow.color = { 0.1, 1.0, 0.1, 1 }
+        end
+        builder.Header(ns.L["Cleanse-Ready Glow"])
+        local glowCard = builder.Card()
+        local glowEnableCheckbox = gui:CreateFormCheckbox(glowCard.frame, nil, "enabled", glow, refresh, {
+            description = ns.L["Show an additive glow around the frame whenever you can dispel a debuff on this unit. Independent of the dispel border above; works on its own."],
+        })
+        local glowColorPicker = gui:CreateFormColorPicker(glowCard.frame, nil, "color", glow, refresh, nil, {
+            description = ns.L["Color of the cleanse-ready glow."],
+        })
+        glowCard.AddRow(
+            optionsAPI.BuildSettingRow(glowCard.frame, ns.L["Enable Cleanse-Ready Glow"], glowEnableCheckbox),
+            optionsAPI.BuildSettingRow(glowCard.frame, ns.L["Glow Color"], glowColorPicker)
+        )
+        builder.CloseCard(glowCard)
+    end
 
     return builder.Height()
 end
@@ -2861,6 +3015,7 @@ local GENERAL_TAB_FEATURE = CreateMultiSectionTabFeature("groupFramesGeneralTab"
 local APPEARANCE_TAB_FEATURE = CreateMultiSectionTabFeature("groupFramesAppearanceTab", {
     { id = "appearance", minHeight = 160, render = RenderAppearanceSection },
     { id = "name", minHeight = 140, render = RenderNameSection },
+    { id = "groupNumber", minHeight = 140, render = RenderGroupNumberSection },
     { id = "power", minHeight = 140, render = RenderPowerSection },
     { id = "threat", minHeight = 140, render = RenderThreatSection },
     { id = "dispelOverlay", minHeight = 140, render = RenderDispelOverlaySection },

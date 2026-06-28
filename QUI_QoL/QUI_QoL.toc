@@ -31,6 +31,7 @@ qol\tooltip_provider.lua
 qol\tooltip_inspect.lua
 qol\tooltip.lua
 qol\combattimer.lua
+qol\lusttimer.lua
 qol\actiontracker.lua
 qol\crosshair.lua
 qol\rangecheck.lua

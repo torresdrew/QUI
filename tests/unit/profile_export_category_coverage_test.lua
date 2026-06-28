@@ -109,6 +109,24 @@ check("select-all export returns a QUI1 string",
 local selPayload, selDErr = decode(selStr)
 check("select-all export decodes", selPayload ~= nil, selDErr)
 
+local timersOnlyStr, timersOnlyErr = h.QUICore:ExportProfileSelectionToString({ "trackersTimers" })
+local timersOnlyPayload, timersOnlyDErr = decode(timersOnlyStr)
+check("timers-only export decodes", timersOnlyPayload ~= nil, timersOnlyErr or timersOnlyDErr)
+if timersOnlyPayload then
+    check("timers-only export excludes raid marker action bar",
+          timersOnlyPayload.raidMarkersBar == nil,
+          "raidMarkersBar belongs to actionBarsRaidMarkersBar, not trackersTimers")
+end
+
+local raidMarkersStr, raidMarkersErr = h.QUICore:ExportProfileSelectionToString({ "actionBarsRaidMarkersBar" })
+local raidMarkersPayload, raidMarkersDErr = decode(raidMarkersStr)
+check("raid-marker action-bars export decodes", raidMarkersPayload ~= nil, raidMarkersErr or raidMarkersDErr)
+if raidMarkersPayload then
+    check("raid-marker action-bars export includes raidMarkersBar",
+          raidMarkersPayload.raidMarkersBar ~= nil,
+          "actionBarsRaidMarkersBar should own raidMarkersBar")
+end
+
 if fullPayload and selPayload then
     -- Top-level coverage.
     local missingTop = {}

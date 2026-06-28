@@ -1648,6 +1648,7 @@ local FRAME_RESOLVERS = {
     brezCounter = function() return _G["QUI_BrezCounter"] end,
     atonementCounter = function() return _G["QUI_AtonementCounter"] end,
     combatTimer = function() return _G["QUI_CombatTimer"] end,
+    lustTimer = function() return _G["QUI_LustTimer"] end,
     rangeCheck = function() return _G["QUI_RangeCheckFrame"] end,
     actionTracker = function() return _G["QUI_ActionTracker"] end,
     xpTracker = function() return _G["QUI_XPTracker"] end,
@@ -1663,6 +1664,9 @@ local FRAME_RESOLVERS = {
         if owned then return owned end
         if IsModuleDisabled("totemBar") then return nil end
         return _G["TotemFrame"]
+    end,
+    raidMarkersBar = function()
+        return ns.QUI_RaidMarkersBar and ns.QUI_RaidMarkersBar.container
     end,
     readyCheck = function()
         if IsModuleDisabled("general", "skinReadyCheck") then return nil end
@@ -1889,6 +1893,7 @@ local FRAME_ANCHOR_INFO = {
     brezCounter     = { displayName = "Brez Counter",          category = "QoL",               order = 1 },
     atonementCounter = { displayName = "Atonement Counter",    category = "QoL",               order = 2 },
     combatTimer     = { displayName = "Combat Timer",          category = "QoL",               order = 3 },
+    lustTimer       = { displayName = "Lust Timer",            category = "QoL",               order = 14 },
     rangeCheck      = { displayName = "Target Distance Bracket Display", category = "QoL",      order = 4 },
     actionTracker   = { displayName = "Action Tracker",        category = "QoL",               order = 5 },
     xpTracker       = { displayName = "XP Tracker",            category = "QoL",               order = 6 },

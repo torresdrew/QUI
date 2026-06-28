@@ -22,6 +22,16 @@ local Settings = ns.Settings
 local FullSurface = Settings and Settings.FullSurface
 local ClearFrame = FullSurface and FullSurface.ClearFrame
 
+-- Anchor corner → { iconPoint, framePoint, borderOffsetX }. Mirrors the live
+-- renderer (unitframe_auras.lua) so the preview anchors aura icons OUTSIDE the
+-- frame edge (vertical flip) exactly like the real frames do.
+local AURA_ANCHOR_FRAMEPOINT = {
+    TOPLEFT     = { "BOTTOMLEFT",  "TOPLEFT",     1 },
+    TOPRIGHT    = { "BOTTOMRIGHT", "TOPRIGHT",   -1 },
+    BOTTOMLEFT  = { "TOPLEFT",     "BOTTOMLEFT",  1 },
+    BOTTOMRIGHT = { "TOPRIGHT",    "BOTTOMRIGHT", -1 },
+}
+
 local function ResolveModel(feature)
     local model = feature and feature.model or nil
     if type(model) == "function" then
@@ -420,7 +430,13 @@ local function BuildMockFrame(host)
     -- icon is a small frame with a bg + art texture. Pooled so RefreshMock
     -- just re-positions rather than re-creating on every setting tweak.
     local function CreateAuraIcon(iconTexPath)
-        local icon = CreateFrame("Frame", nil, host)
+        -- Parent to mock (not host) and elevate the frame level so the aura
+        -- icons draw ABOVE the health bar — mirrors the live renderer
+        -- (unitframe_auras.lua: icon:SetFrameLevel(parent:GetFrameLevel() + 10)).
+        -- Without an explicit level, the icon frame and the mock's health-bar
+        -- texture share an undefined sibling draw order and the bar can win.
+        local icon = CreateFrame("Frame", nil, mock)
+        icon:SetFrameLevel(mock:GetFrameLevel() + 10)
         icon._art = icon:CreateTexture(nil, "ARTWORK")
         icon._art:SetTexture(iconTexPath)
         icon._art:SetTexCoord(0.08, 0.92, 0.08, 0.92)
@@ -629,8 +645,11 @@ local function RefreshMock()
             rawName = rawName:sub(1, maxLen)
         end
 
-        -- Target-only inline ToT suffix (class-colored divider when toggled).
-        if State.selectedUnit == "target" and unitDB.showInlineToT then
+        -- Inline ToT suffix for target + boss frames (mirrors live unitframes.lua:1642;
+        -- boss shows the boss's own target). Color codes (divider/class hex) are
+        -- intentionally omitted in the preview -- it shows the composed name+sep+ToT;
+        -- live applies the coloring.
+        if (State.selectedUnit == "target" or State.selectedUnit == "boss") and unitDB.showInlineToT then
             local sep = unitDB.totSeparator or " >> "
             local totName = ns.L["TargetOfTarget"]
             local totMax = unitDB.totNameCharLimit or 0
@@ -785,13 +804,21 @@ local function RefreshMock()
         elseif grow == "DOWN" then dx, dy = 0, -step
         else dx, dy = step, 0 end
 
+        -- Map the user anchor corner to icon/frame attach points (flip vertical
+        -- for OUTSIDE positioning) + 1px border-comp X offset — mirrors the live
+        -- renderer's AURA_ANCHOR_FRAMEPOINT (unitframe_auras.lua). Live anchors
+        -- icons outside the frame edge (e.g. TOPLEFT = icons' BOTTOMLEFT pinned
+        -- to the frame's TOPLEFT, sitting ABOVE the frame); preview must match.
+        local map = AURA_ANCHOR_FRAMEPOINT[anchor] or AURA_ANCHOR_FRAMEPOINT.TOPLEFT
+        local iconPoint, framePoint, bx = map[1], map[2], map[3]
+
         for i = 1, 6 do
             local icon = pool[i]
             if i <= count then
                 icon:Show()
                 icon:SetSize(sz, sz)
                 icon:ClearAllPoints()
-                icon:SetPoint(anchor, mock, anchor, ox + dx * (i - 1), oy + dy * (i - 1))
+                icon:SetPoint(iconPoint, mock, framePoint, ox + bx + dx * (i - 1), oy + dy * (i - 1))
                 icon._art:ClearAllPoints()
                 icon._art:SetPoint("TOPLEFT", 1, -1)
                 icon._art:SetPoint("BOTTOMRIGHT", -1, 1)

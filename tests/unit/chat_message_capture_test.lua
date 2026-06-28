@@ -223,6 +223,15 @@ assert(loadfile("QUI_Chat/chat/message_capture.lua"))("QUI", ns)
 local Capture = ns.QUI.Chat.MessageCapture
 local Store = ns.QUI.Chat.MessageStore
 
+assert(type(ns.QUI.Chat.MessageFormat.BuildEventLineFromArgs) == "function",
+    "message capture must use the formatter raw-args entrypoint")
+local rawFormatCalls = 0
+local realBuildEventLineFromArgs = ns.QUI.Chat.MessageFormat.BuildEventLineFromArgs
+ns.QUI.Chat.MessageFormat.BuildEventLineFromArgs = function(...)
+    rawFormatCalls = rawFormatCalls + 1
+    return realBuildEventLineFromArgs(...)
+end
+
 -- Keyword-alert recording stub: capture consults it at event time (not load).
 local kaCalls = 0
 ns.QUI.Chat.KeywordAlert = { ProcessForCapture = function(m, author) kaCalls = kaCalls + 1; return m end }
@@ -302,6 +311,7 @@ assert(e1.e == "CHAT_MSG_SAY" and e1.k == "SAY" and e1.t == 1234, "metadata")
 assert(e1.r == 1 and e1.g == 1 and e1.b == 1, "event color")
 assert(kaCalls >= 1, "capture consults keyword highlighter")
 assert(e1.gid == nil or e1.gid == false, "no guid arg -> no gid")
+assert(rawFormatCalls == 1, "capture formats via raw-args formatter, got " .. rawFormatCalls)
 
 -- URL decoration runs at capture (settings.urls.enabled)
 fire("CHAT_MSG_SAY", "see URLX now", "Bob")

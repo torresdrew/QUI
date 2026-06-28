@@ -288,6 +288,16 @@ local CUSTOM_BAR_GROW_DIRECTION_OPTIONS = {
     { value = "UP", text = ns.L["Up"] },
 }
 
+-- Per-row horizontal growth for Essential/Utility rows. "inherit" reproduces
+-- the container's existing centered layout exactly; the others align a row that
+-- is narrower than the widest row to the left/right of the container box.
+local ROW_GROW_DIRECTION_OPTIONS = {
+    { value = "inherit", text = ns.L["Inherit (Container Default)"] },
+    { value = "CENTERED", text = ns.L["Centered"] },
+    { value = "RIGHT", text = ns.L["Grow Right"] },
+    { value = "LEFT", text = ns.L["Grow Left"] },
+}
+
 local function GetGUI()
     return QUI and QUI.GUI or nil
 end
@@ -688,7 +698,7 @@ local function AppendTrackerGeneralSection(builder, gui, optionsAPI, tracker, co
     builder.CloseCard(card)
 end
 
-local function AppendTrackerRowSection(builder, gui, optionsAPI, rowNum, rowData, refresh)
+local function AppendTrackerRowSection(builder, gui, optionsAPI, rowNum, rowData, refresh, containerType)
     if not builder or not gui or not optionsAPI or type(rowData) ~= "table" then
         return
     end
@@ -708,6 +718,11 @@ local function AppendTrackerRowSection(builder, gui, optionsAPI, rowNum, rowData
             stackAnchor = "BOTTOMRIGHT",
             opacity = 1.0,
         })
+        -- Per-row growth direction is an essential/utility multi-row feature only;
+        -- customBar is single-row and has its own container-level Grow Direction.
+        if containerType ~= "customBar" then
+            Helpers.EnsureDefaults(rowData, { growDirection = "inherit" })
+        end
     end
 
     builder.Header(ns.L["Row "] .. rowNum)
@@ -762,6 +777,15 @@ local function AppendTrackerRowSection(builder, gui, optionsAPI, rowNum, rowData
         optionsAPI.BuildSettingRow(card.frame, ns.L["Row Y-Offset"], rowYOffsetSlider),
         optionsAPI.BuildSettingRow(card.frame, ns.L["Row X-Offset"], rowXOffsetSlider)
     )
+
+    if containerType ~= "customBar" then
+        local rowGrowDirectionDropdown = gui:CreateFormDropdown(card.frame, nil, ROW_GROW_DIRECTION_OPTIONS, "growDirection", rowData, refresh, {
+            description = ns.L["Horizontal growth for this row. Inherit keeps the container's centered layout. Grow Right/Left hug this row to the left/right edge of the container when it has fewer icons than the widest row. Applies only when Layout Direction is Horizontal."],
+        })
+        card.AddRow(
+            optionsAPI.BuildSettingRow(card.frame, ns.L["Grow Direction"], rowGrowDirectionDropdown)
+        )
+    end
 
     local rowOpacitySlider = gui:CreateFormSlider(card.frame, nil, 0, 1.0, 0.05, "opacity", rowData, refresh, nil, {
         description = ns.L["Opacity of every icon in this row. 0 is fully transparent, 1 is fully opaque."],
@@ -1333,6 +1357,21 @@ local function RenderLayoutSection(sectionHost, ctx)
                 description = ns.L["Vertical pixel offset for the stack count from its anchor."],
             })
             textCard.AddRow(optionsAPI.BuildSettingRow(textCard.frame, ns.L["Stack Y Offset"], stackYSlider))
+
+            local showAbsorbCheckbox = gui:CreateFormCheckbox(textCard.frame, nil, "showAbsorbAmount", tracker, refresh, {
+                description = ns.L["Show the remaining shield/absorb amount (e.g. 84k) at the bottom edge of buff icons that track an absorb. The duration text at the top is unchanged."],
+            })
+            textCard.AddRow(optionsAPI.BuildSettingRow(textCard.frame, ns.L["Show Absorb Amount"], showAbsorbCheckbox))
+
+            -- Buff-apply pop: only the built-in buff viewer ("buff") renders it
+            -- at runtime, so the toggle is shown only for that container to
+            -- avoid a dead switch on custom aura containers.
+            if containerKey == "buff" then
+                local growOnApplyCheckbox = gui:CreateFormCheckbox(textCard.frame, nil, "growOnApply", tracker, refresh, {
+                    description = ns.L["Briefly scale a buff icon up then settle it when the buff is first applied, for a subtle pop. Off by default."],
+                })
+                textCard.AddRow(optionsAPI.BuildSettingRow(textCard.frame, ns.L["Grow On Apply"], growOnApplyCheckbox))
+            end
             builder.CloseCard(textCard)
         else
             builder.Header(ns.L["General"])
@@ -1595,7 +1634,7 @@ local function RenderLayoutSection(sectionHost, ctx)
             local rowData = tracker["row" .. rowNum]
             if rowData then
                 builder.Spacer(6)
-                AppendTrackerRowSection(builder, gui, optionsAPI, rowNum, rowData, refresh)
+                AppendTrackerRowSection(builder, gui, optionsAPI, rowNum, rowData, refresh, tracker.containerType)
             end
         end
 
@@ -1793,6 +1832,16 @@ local function RenderFiltersSection(sectionHost, ctx)
     )
     updateNoDesaturateState()
 
+    -- Aura swipe is custom-bar only (the radial swipe on a bar tracking a buff).
+    if tracker.containerType == "customBar" then
+        local showAuraSwipeCheckbox = gui:CreateFormCheckbox(card.frame, nil, "showAuraSwipe", tracker, refresh, {
+            description = ns.L["On a custom bar tracking an aura, draw a radial swipe that drains with the aura's remaining duration."],
+        })
+        card.AddRow(
+            optionsAPI.BuildSettingRow(card.frame, ns.L["Show Aura Swipe"], showAuraSwipeCheckbox)
+        )
+    end
+
     local qualityCheckbox = gui:CreateFormCheckbox(card.frame, nil, "showProfessionQuality", tracker, refresh, {
         description = ns.L["Show the profession-quality indicator on crafted item icons in this container."],
     })
@@ -1957,12 +2006,16 @@ local function RenderEffectsSection(sectionHost, ctx)
     local rechargeEdgeCheckbox = gui:CreateFormCheckbox(swipeCard.frame, nil, "showRechargeEdge", effectsCtx.swipeDB, RefreshSwipe, {
         description = ns.L["Show a bright edge on the active recharge slice for spells with charges."],
     })
+    local buffEdgeCheckbox = gui:CreateFormCheckbox(swipeCard.frame, nil, "showBuffEdge", effectsCtx.swipeDB, RefreshSwipe, {
+        description = ns.L["Show a bright edge on buff/aura icon swipes. Turn off to keep the radial darkening without the edge."],
+    })
     swipeCard.AddRow(
         optionsAPI.BuildSettingRow(swipeCard.frame, ns.L["Buff/Debuff Swipe"], buffSwipeCheckbox),
         optionsAPI.BuildSettingRow(swipeCard.frame, ns.L["Show Buff/Debuff Phase on Cooldown Icons"], cooldownIconAuraPhaseCheckbox)
     )
     swipeCard.AddRow(
-        optionsAPI.BuildSettingRow(swipeCard.frame, ns.L["Recharge Edge"], rechargeEdgeCheckbox)
+        optionsAPI.BuildSettingRow(swipeCard.frame, ns.L["Recharge Edge"], rechargeEdgeCheckbox),
+        optionsAPI.BuildSettingRow(swipeCard.frame, ns.L["Buff Icon Edge"], buffEdgeCheckbox)
     )
     builder.CloseCard(swipeCard)
     builder.Spacer(10)
