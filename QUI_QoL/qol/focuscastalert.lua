@@ -245,18 +245,23 @@ local function IsEventUnitFocus(event, unit)
     return unit == "focus"
 end
 
--- Play the configured interrupt sound once per cast, gated on the non-secret
--- UNIT_SPELLCAST_INTERRUPTIBLE edge. Interruptibility is a secret value at cast
--- start, so it can't gate the sound the way SetAlphaFromBoolean gates the visual
--- alert; this fires on the interruptible-state event instead. Coverage is
--- best-effort — a cast that starts interruptible and never changes state may not
--- emit this event, so the sound can be missed (never falsely played, latched).
+-- Play the configured interrupt sound once per cast. Plain true still means the
+-- cast is known non-interruptible; plain false and secret values are treated as
+-- alert candidates because the visual path resolves secret interruptibility via
+-- SetAlphaFromBoolean outside Lua. Best-effort: a restricted non-interruptible
+-- cast can still produce sound, matching the option copy's conservative promise.
 local function MaybePlayInterruptSound()
     if state.soundPlayed then return end
     local settings = GetSettings()
     if not settings or not settings.enabled or not settings.soundEnabled then return end
     local soundName = settings.sound
     if not soundName or soundName == "None" or soundName == "" then return end
+
+    local raw = state.rawNotInterruptible
+    local rawIsSecret = IsSecretValue(raw)
+    if raw == nil then return end
+    if not rawIsSecret and raw ~= false then return end
+
     if not IsInterruptReady() then return end
     local LSM = ns.LSM
     local path = LSM and LSM:Fetch("sound", soundName)
@@ -538,6 +543,9 @@ local function UpdateAlert()
     ApplyAlertText(settings.text)
     state.frame:Show()
     ApplyInterruptAlpha()
+    -- Drive the audio cue off the same interruptibility signal that gates the
+    -- visual alpha. Self-gated + latched, so polling it each ticker tick is safe.
+    MaybePlayInterruptSound()
 end
 
 -- Start or stop the cooldown poll ticker. The ticker only needs to run
