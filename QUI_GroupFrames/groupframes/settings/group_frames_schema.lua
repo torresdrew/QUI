@@ -43,6 +43,12 @@ local PET_ANCHOR_OPTIONS = {
     { value = "RIGHT", text = ns.L["Right of Group"] },
     { value = "LEFT", text = ns.L["Left of Group"] },
 }
+local TARGET_FRAME_ANCHOR_OPTIONS = {
+    { value = "BOTTOM", text = ns.L["Below Member"] },
+    { value = "TOP", text = ns.L["Above Member"] },
+    { value = "RIGHT", text = ns.L["Right of Member"] },
+    { value = "LEFT", text = ns.L["Left of Member"] },
+}
 local SPOTLIGHT_FILTER_OPTIONS = {
     { value = "ROLE", text = ns.L["By Role"] },
     { value = "NAME", text = ns.L["By Name"] },
@@ -1182,6 +1188,85 @@ local function RenderRangePetSection(sectionHost, ctx)
 
     UpdatePetCells()
     builder.CloseCard(petCard)
+    return builder.Height()
+end
+
+-- Party-only: a small "target frame" companion per party member, anchored
+-- beside that member's frame, showing the member's current target (name +
+-- health). Runtime lives in groupframes_party_targets.lua.
+local function RenderPartyTargetsSection(sectionHost, ctx)
+    local gui = GetGUI()
+    local optionsAPI = GetOptionsAPI()
+    local groupFrames = ResolveGroupFramesDB(ctx and ctx.options and ctx.options.contextMode)
+    if not gui or not optionsAPI or not groupFrames then
+        return nil
+    end
+
+    local targets = EnsureSubTable(groupFrames.contextDB, "targetFrames")
+    if not targets then
+        return nil
+    end
+
+    local builder = CreateSectionBuilder(sectionHost, ctx, CreateSearchContext("general"))
+    if not builder then
+        return nil
+    end
+
+    local refresh = function()
+        RefreshGroupFrames(groupFrames.contextMode)
+    end
+
+    builder.Header(ns.L["Party Target Frames"])
+    builder.Description(ns.L["Show each party member's current target (name and health) beside their frame."])
+
+    local card = builder.Card()
+    local widthCell, heightCell, anchorCell, gapCell, nameCell
+    local function UpdateCells()
+        local alpha = targets.enabled and 1.0 or 0.4
+        if widthCell then widthCell:SetAlpha(alpha) end
+        if heightCell then heightCell:SetAlpha(alpha) end
+        if anchorCell then anchorCell:SetAlpha(alpha) end
+        if gapCell then gapCell:SetAlpha(alpha) end
+        if nameCell then nameCell:SetAlpha(alpha) end
+    end
+
+    local enabledCheckbox = gui:CreateFormCheckbox(card.frame, nil, "enabled", targets, function()
+        refresh()
+        UpdateCells()
+    end, {
+        description = ns.L["Show a small target frame for each party member."],
+    })
+    local widthSlider = gui:CreateFormSlider(card.frame, nil, 40, 300, 1, "width", targets, refresh, { deferOnDrag = true }, {
+        description = ns.L["Width of each target frame in pixels."],
+    })
+    widthCell = optionsAPI.BuildSettingRow(card.frame, ns.L["Target Frame Width"], widthSlider)
+    card.AddRow(
+        optionsAPI.BuildSettingRow(card.frame, ns.L["Enable Party Target Frames"], enabledCheckbox),
+        widthCell
+    )
+
+    local heightSlider = gui:CreateFormSlider(card.frame, nil, 10, 60, 1, "height", targets, refresh, { deferOnDrag = true }, {
+        description = ns.L["Height of each target frame in pixels."],
+    })
+    heightCell = optionsAPI.BuildSettingRow(card.frame, ns.L["Target Frame Height"], heightSlider)
+    local anchorDropdown = gui:CreateFormDropdown(card.frame, nil, TARGET_FRAME_ANCHOR_OPTIONS, "anchorTo", targets, refresh, {
+        description = ns.L["Where each target frame sits relative to its party member frame."],
+    })
+    anchorCell = optionsAPI.BuildSettingRow(card.frame, ns.L["Target Frame Anchor"], anchorDropdown)
+    card.AddRow(heightCell, anchorCell)
+
+    local gapSlider = gui:CreateFormSlider(card.frame, nil, 0, 20, 1, "anchorGap", targets, refresh, { deferOnDrag = true }, {
+        description = ns.L["Gap between each target frame and its party member frame."],
+    })
+    gapCell = optionsAPI.BuildSettingRow(card.frame, ns.L["Target Frame Gap"], gapSlider)
+    local nameCheckbox = gui:CreateFormCheckbox(card.frame, nil, "showName", targets, refresh, {
+        description = ns.L["Show the target's name on the target frame."],
+    })
+    nameCell = optionsAPI.BuildSettingRow(card.frame, ns.L["Show Target Name"], nameCheckbox)
+    card.AddRow(gapCell, nameCell)
+
+    UpdateCells()
+    builder.CloseCard(card)
     return builder.Height()
 end
 
@@ -3010,6 +3095,16 @@ local GENERAL_TAB_FEATURE = CreateMultiSectionTabFeature("groupFramesGeneralTab"
     { id = "copySettings", minHeight = 88, render = RenderGeneralCopySettingsSection },
 })
 
+-- Party variant appends the Party Target Frames section (party-only feature;
+-- raid would mean up to 40 extra secure frames).
+local GENERAL_PARTY_TAB_FEATURE = CreateMultiSectionTabFeature("groupFramesGeneralPartyTab", {
+    { id = "enable", minHeight = 42, render = RenderGeneralEnableSection },
+    { id = "rangepet", minHeight = 140, render = RenderRangePetSection },
+    { id = "partyTargets", minHeight = 200, render = RenderPartyTargetsSection },
+    { id = "healer", minHeight = 140, render = RenderHealerSection },
+    { id = "copySettings", minHeight = 88, render = RenderGeneralCopySettingsSection },
+})
+
 -- Appearance now also hosts the Dispel Overlay section (folded in from its old
 -- standalone tab).
 local APPEARANCE_TAB_FEATURE = CreateMultiSectionTabFeature("groupFramesAppearanceTab", {
@@ -3088,7 +3183,10 @@ local function RenderFeatureTab(feature, host, contextMode)
 end
 
 function GroupFramesSchema.RenderGeneralTab(host, contextMode)
-    return RenderFeatureTab(GENERAL_TAB_FEATURE, host, contextMode)
+    -- Party gets the Party Target Frames section appended; raid does not.
+    local feature = NormalizeContextMode(contextMode) == "party"
+        and GENERAL_PARTY_TAB_FEATURE or GENERAL_TAB_FEATURE
+    return RenderFeatureTab(feature, host, contextMode)
 end
 
 function GroupFramesSchema.RenderAppearanceTab(host, contextMode)
