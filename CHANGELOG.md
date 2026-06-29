@@ -9,6 +9,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v5.0.0-alpha6 - 2026-06-29
+
+> ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will
+> not load on the 12.0.x live client. Stay on the v4.x beta line for live realms.
+
+### Changed
+- folded the **QUI_UI** add-on back into the main QUI add-on, so the suite now
+  installs one fewer sibling folder. Skinning, datatexts, info bar, alts, minimap,
+  and the QoL features all load from main. Info bar, alts, datatexts, and skinning
+  now default **on** — if you had never toggled Info Bar or Alts off, they will
+  appear after this update; turn them off under Module Add-ons.
+- combat-end recovery now re-applies backdrops only to the frames that errored
+  during combat instead of rescanning every frame, and the buff-border / aura
+  headers no longer rebuild on a normal combat end.
+
+### Fixed
+- fix(chat): when reloading in combat, the Blizzard chat frames are now hidden
+  immediately instead of lingering beside the QUI chat until combat ends.
+- fix(cdm): the cooldown re-anchor engine no longer throws a protected-call error
+  when resizing cooldown containers in combat; the resize is deferred to combat end.
+
 ## v5.0.0-alpha5 - 2026-06-29
 
 > ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will
