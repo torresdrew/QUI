@@ -349,6 +349,11 @@ function CDMReanchorRealEnv.BuildEnv(ctx)
         getSettings = ctx.getSettings,
         resolveAdditional = ctx.resolveAdditional or function() return {} end,
         onMetrics = ctx.onMetrics,
+        -- Combat-lockdown predicate shared with the shell deps. applySize gates its
+        -- protected container:SetSize on this (the container parents secure click
+        -- overlays, so SetSize is blocked in combat); deferred resize recovers on
+        -- PLAYER_REGEN_ENABLED. true = mutation allowed (out of combat or init-safe window).
+        canMutate = canMutateProtectedShells,
         buildLayout = Layout and Layout.BuildIconLayout or nil,
         pixelRound = function(v, c)
             if Core and Core.PixelRound then return Core:PixelRound(v, c) end

@@ -23,13 +23,21 @@ local function MakePositionOwned(env)
     end
 end
 
--- applySize: replicates the container sizing (cdm_containers.lua:2713-2716) + metrics stash
+-- applySize: replicates the container sizing (cdm_containers.lua:2713-2716) + metrics stash.
+-- The container parents secure click overlays (SecureActionButtonTemplate via
+-- CDMIcons.UpdateSecureClickOverlay), so its SetSize is a PROTECTED call -- raw in combat it
+-- throws ADDON_ACTION_BLOCKED. Gate on env.canMutate exactly like the sibling shell deps
+-- (mintShell / positionShell / begin-endShellPass / resetShells all short-circuit on the same
+-- combat predicate); the deferred resize is recovered by the PLAYER_REGEN_ENABLED RefreshAll,
+-- which re-runs this pass out of combat. The pcall is a final guard so an unforeseen protected
+-- edge cannot reach the error handler. The metrics stash (onMetrics) is plain Lua bookkeeping
+-- (viewerState fields + ncdm._last* persistence, no protected calls) -- it always runs.
 local function MakeApplySize(env)
     return function(container, metrics)
         local w = metrics.iconWidth or 0
         local h = metrics.totalHeight or 0
-        if w > 0 and h > 0 then
-            container:SetSize(w, h)
+        if w > 0 and h > 0 and ((not env.canMutate) or env.canMutate()) then
+            pcall(container.SetSize, container, w, h)
         end
         if env.onMetrics then env.onMetrics(container, metrics) end
     end
