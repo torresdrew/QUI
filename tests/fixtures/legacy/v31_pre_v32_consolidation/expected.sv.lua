@@ -4307,6 +4307,14 @@ return {
               enabled = true,
               outOfRangeAlpha = 0.40000000000000002
             },
+            targetFrames = {
+              anchorGap = 2,
+              anchorTo = "BOTTOM",
+              enabled = false,
+              height = 22,
+              showName = true,
+              width = 120
+            },
             targetedSpells = {
               enabled = true,
               growDirection = "CENTER",
