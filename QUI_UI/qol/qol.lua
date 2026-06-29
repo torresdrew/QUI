@@ -1182,7 +1182,18 @@ local function SetupAuctionHouseFilter()
     local function applyFilter()
         local settings = GetSettings()
         if not settings or not settings.auctionHouseExpansionFilter then return end
-        searchBar.FilterButton.filters[Enum.AuctionHouseFilter.CurrentExpansionOnly] = true
+        local filterButton = searchBar.FilterButton
+        if not filterButton then return end
+
+        local filters
+        if type(filterButton.GetFilters) == "function" then
+            filters = filterButton:GetFilters()
+        else
+            filters = filterButton.filters
+        end
+        if not filters then return end
+
+        filters[Enum.AuctionHouseFilter.CurrentExpansionOnly] = true
         searchBar:UpdateClearFiltersButton()
         searchBox:SetFocus()
     end

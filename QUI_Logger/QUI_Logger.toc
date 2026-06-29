@@ -3,6 +3,7 @@
 ## Notes: Dev-only event stream recorder. Not for release.
 ## Author: Drew
 ## Version: 0.1.0
+## Group: QUI
 ## SavedVariablesPerCharacter: QUI_LoggerDB
 
 recorder.lua

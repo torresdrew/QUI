@@ -335,7 +335,23 @@ SlashCmdList["QUI_CDM"] = function()
 end
 
 function QUI:SlashCommandOpen(input)
-    if input and input == "debug" then
+    local isUISmokeCommand = input and input:match("^uitest")
+
+    if isUISmokeCommand and (input == "uitest" or input:match("^uitest%s")) then
+        local subcmd = input:match("^uitest%s*(.*)$") or ""
+        local ok, reason = self:EnsureDebugToolsLoaded()
+        if not ok then
+            print("|cff60A5FAQUI:|r UI smoke runner could not be loaded (" .. tostring(reason) .. ").")
+            return
+        end
+
+        if ns.UISmoke and type(ns.UISmoke.HandleSlash) == "function" then
+            ns.UISmoke.HandleSlash(subcmd)
+        else
+            print("|cff60A5FAQUI:|r UI smoke runner did not initialize.")
+        end
+        return
+    elseif input and input == "debug" then
         self.db.char.debug.reload = true
         QUI:SafeReload()
     elseif input and (input == "layout" or input == "unlock" or input == "editmode") then
@@ -824,31 +840,22 @@ function QUI:ADDON_LOADED(_, addonName)
     self:UnregisterOptionalPullAlias()
 end
 
--- Recover QUI frames with orphaned overlays (backdropInfo set, backdropColor nil).
--- Uses backup _quiBg* fields stored by Helpers.SetFrameBackdropColor.
--- Falls back to default dark color for QUI-named frames without backup fields.
-local strsub = string.sub
+-- Recover QUI frames whose backdrop color/border apply was deferred or errored
+-- during combat. Helpers.SetFrameBackdrop{Color,BorderColor} record such frames
+-- in ns._backdropColorRecovery and stash the intended color in _quiBg*/_quiBorder*;
+-- here we re-apply from that cache and clear the entry. Draining this targeted
+-- queue replaces the old whole-UI EnumerateFrames scan that ran every combat end.
 local function RecoverQUIBackdrops()
-    local f = EnumerateFrames()
-    while f do
-        if f.backdropInfo and f.backdropInfo.bgFile and not f.backdropColor then
-            if f._quiBgR then
-                pcall(f.SetBackdropColor, f, f._quiBgR, f._quiBgG, f._quiBgB, f._quiBgA or 1)
-                if f._quiBorderR then
-                    pcall(f.SetBackdropBorderColor, f, f._quiBorderR, f._quiBorderG, f._quiBorderB, f._quiBorderA or 1)
-                end
-            else
-                -- Fallback: QUI-named frames without backup colors get default dark.
-                -- No QUI frame intentionally has a white background; a nil backdropColor
-                -- means the initial SetBackdropColor was lost (taint, error, timing).
-                local name = f.GetName and f:GetName()
-                if name and type(name) == "string" and strsub(name, 1, 4) == "QUI_" then
-                    pcall(f.SetBackdropColor, f, 0.05, 0.05, 0.05, 0.95)
-                    pcall(f.SetBackdropBorderColor, f, 0, 0, 0, 1)
-                end
-            end
+    local queue = ns._backdropColorRecovery
+    if not queue then return end
+    for f in pairs(queue) do
+        queue[f] = nil
+        if f._quiBgR then
+            pcall(f.SetBackdropColor, f, f._quiBgR, f._quiBgG, f._quiBgB, f._quiBgA or 1)
         end
-        f = EnumerateFrames(f)
+        if f._quiBorderR then
+            pcall(f.SetBackdropBorderColor, f, f._quiBorderR, f._quiBorderG, f._quiBorderB, f._quiBorderA or 1)
+        end
     end
 end
 

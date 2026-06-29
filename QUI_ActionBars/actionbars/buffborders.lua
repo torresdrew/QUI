@@ -317,10 +317,13 @@ local buffBorderStats
 -- InCombatLockdown() is queued and replayed on PLAYER_REGEN_ENABLED.
 ---------------------------------------------------------------------------
 local pendingContainerWork = false
-local combatDeferFrame
 
 local function ApplyContainerConfig() end  -- forward declaration
 
+-- Replays container work that was deferred because it was attempted in combat
+-- (AuraContainer is a forbidden object). Run from the always-registered
+-- PLAYER_REGEN_ENABLED handler below; the pendingContainerWork gate makes combat
+-- end a no-op unless work was actually queued — no unconditional full rebuild.
 local function FlushPendingContainerWork()
     if pendingContainerWork then
         pendingContainerWork = false
@@ -328,15 +331,7 @@ local function FlushPendingContainerWork()
     end
 end
 
-local function EnsureCombatDeferFrame()
-    if combatDeferFrame then return end
-    combatDeferFrame = CreateFrame("Frame")
-    combatDeferFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
-    combatDeferFrame:SetScript("OnEvent", FlushPendingContainerWork)
-end
-
 local function QueueContainerWork()
-    EnsureCombatDeferFrame()
     pendingContainerWork = true
 end
 
@@ -1551,11 +1546,14 @@ enchantEventFrame:SetScript("OnEvent", function(self, event, unit)
     end
 end)
 
--- Combat-end handler: replay deferred container work + private-aura cleanup.
+-- Combat-end handler: replay container work that was deferred during combat.
+-- Gated by pendingContainerWork (set only when ApplyOrDefer hits an in-combat
+-- forbidden-object restriction), so this is a no-op on a normal combat end and
+-- no longer triggers a full secure-header rebuild every time combat ends.
 local paRegenFrame = CreateFrame("Frame")
 paRegenFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
 paRegenFrame:SetScript("OnEvent", function()
-    TryDeferredFullRefresh()
+    FlushPendingContainerWork()
 end)
 
 -- Debug instrumentation.

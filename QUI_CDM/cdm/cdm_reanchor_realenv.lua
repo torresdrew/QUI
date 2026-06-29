@@ -8,6 +8,27 @@ local _, ns = ...
 local CDMReanchorRealEnv = {}
 ns.CDMReanchorRealEnv = CDMReanchorRealEnv
 
+-- Item-frame-level mutations on a re-anchored Blizzard CDM frame (SetFrameStrata/
+-- SetFrameLevel via the shell lift, SetIgnoreParentAlpha + native countdown SetFont
+-- inside Decorate) taint the secret-tracked CooldownViewer item when run from
+-- insecure code -- Blizzard's own per-item OnEvent refresh then throws on secret
+-- cooldown/aura values (compare/arithmetic). Running the whole decorate pass under
+-- securecall attributes the writes to a secure context, matching the re-anchor
+-- reference addons (one securecalls the same strata/level ops; another avoids them
+-- entirely). Child-widget restyle (swipe/icon crop) is taint-safe either way --
+-- folded under the one boundary so there is a single, unambiguous chokepoint.
+local _securecall = securecallfunction or function(fn, ...) return fn(...) end
+
+local function _DecorateWork(decorator, live, shell, rowConfig)
+    if shell and live.SetFrameStrata and shell.GetFrameStrata then
+        live:SetFrameStrata(shell:GetFrameStrata())
+        if live.SetFrameLevel and shell.GetFrameLevel then
+            live:SetFrameLevel(shell:GetFrameLevel() + 1)
+        end
+    end
+    return decorator:Decorate(live, rowConfig)
+end
+
 function CDMReanchorRealEnv.BuildEnv(ctx)
     ctx = ctx or {}
     local Containers = ctx.CDMContainers or ns.CDMContainers
@@ -70,15 +91,12 @@ function CDMReanchorRealEnv.BuildEnv(ctx)
             end,
         })
         decorate = function(live, shell, rowConfig)
-            -- Render the Blizzard frame above its shell. It stays a viewer child in a
-            -- different parent chain, so set strata/level explicitly (not parent-derived).
-            if shell and live.SetFrameStrata and shell.GetFrameStrata then
-                live:SetFrameStrata(shell:GetFrameStrata())
-                if live.SetFrameLevel and shell.GetFrameLevel then
-                    live:SetFrameLevel(shell:GetFrameLevel() + 1)
-                end
-            end
-            return decorator:Decorate(live, rowConfig)
+            -- Render the Blizzard frame above its shell (viewer child, different parent
+            -- chain -> strata/level set explicitly, not parent-derived) then chrome-
+            -- decorate it. The whole pass runs under securecall so the item-level
+            -- strata/level/IgnoreParentAlpha/font writes do not taint the secret-tracked
+            -- CDM frame's native OnEvent refresh. See _DecorateWork.
+            return _securecall(_DecorateWork, decorator, live, shell, rowConfig)
         end
     end
 
