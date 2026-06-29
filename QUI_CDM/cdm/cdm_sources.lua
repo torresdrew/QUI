@@ -14,7 +14,6 @@ ns.CDMSources = CDMSources
 local C_Spell = C_Spell
 local C_Item = C_Item
 local C_UnitAuras = C_UnitAuras
-local Shared = ns.CDMShared
 local WoW_IsSecretValue = issecretvalue
 
 -- WoW provides `wipe`; the standalone test harness does not. Local fallback so
@@ -28,13 +27,6 @@ local function HasOpaqueValue(value)
         return true
     end
     return value ~= nil
-end
-
-local function IsCooldownMirrorCategory(category)
-    if Shared and Shared.IsCooldownMirrorCategory then
-        return Shared.IsCooldownMirrorCategory(category)
-    end
-    return category == "essential" or category == "utility"
 end
 
 -- Direct API references hoisted at load. Wrappers below call these without
@@ -598,19 +590,6 @@ end
 function CDMSources.QueryUnitAuras(unit, filter, maxCount)
     if not unit or not _C_GetUnitAuras then return nil end
     return _C_GetUnitAuras(unit, filter, maxCount)
-end
-
-function CDMSources.QueryMirroredCooldownState(spellID, viewerType)
-    local mirror = ns.CDMBlizzMirror
-    if not mirror or not spellID then return nil end
-    if IsCooldownMirrorCategory(viewerType)
-       and mirror.GetMirroredStateForViewer then
-        return mirror.GetMirroredStateForViewer(spellID, viewerType)
-    end
-    if mirror.FindCooldownState then
-        return mirror.FindCooldownState(spellID)
-    end
-    return nil
 end
 
 ---------------------------------------------------------------------------

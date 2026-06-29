@@ -18,8 +18,7 @@
     Invariants:
         * No game events are registered.
         * Never calls into CDM runtime event scheduling.
-        * Never touches the Blizzard CDM mirror (enforced by
-          CDMIconFactory.AcquireForPreview skipping TryBindIconToBlizz).
+        * Bypasses runtime icon binding (uses CDMIconFactory.AcquireForPreview).
         * Preview icons/bars are not pooled with runtime frames.
         * Glow is delegated to the shared runtime applier
           (ns._OwnedGlows.ApplyGlowWithKey) so every glow setting renders

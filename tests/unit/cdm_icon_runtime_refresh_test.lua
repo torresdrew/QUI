@@ -89,8 +89,6 @@ local mirrorAuraIcon = makeIcon("mirrorAura", {
     type = "spell",
     viewerType = "essential",
 })
-mirrorAuraIcon._blizzMirrorCooldownID = 505
-mirrorAuraIcon._blizzMirrorCategory = "essential"
 local idleIcon = makeIcon("idle", {
     id = 606,
     spellID = 606,
@@ -127,14 +125,8 @@ local durationKeyClears = 0
 local stableClears = 0
 local spellCacheInvalidations = {}
 local barAuraRefreshMarks = {}
-local mirrorStates = {
-    ["505:essential"] = {
-        auraInstanceID = 9001,
-        auraUnit = "target",
-    },
-}
 -- Names the isDefinitivelySelfAuraIcon stub reports as PROVABLE player
--- self-auras (mirror selfAura == true). Populated by the target-scope test.
+-- self-auras. Populated by the target-scope test.
 local selfAuraNames = {}
 
 local ns = {}
@@ -186,9 +178,6 @@ local controller = module.Create({
     end,
     isDefinitivelySelfAuraIcon = function(icon)
         return icon ~= nil and selfAuraNames[icon.name] == true
-    end,
-    getMirrorStateByCooldownID = function(cooldownID, category)
-        return mirrorStates[tostring(cooldownID) .. ":" .. tostring(category)]
     end,
     getItemIDForEntry = function(entry)
         return entry and entry.itemID
@@ -391,6 +380,10 @@ reset(clearedBindings)
 wipe(barAuraRefreshMarks)
 stackRequested = false
 local schedulesBeforeAuraDelta = #schedules
+-- Aura deltas match the icon's stamped aura instance/unit (previously sourced
+-- from the removed Blizzard mirror state lookup).
+mirrorAuraIcon._auraInstanceID = 9001
+mirrorAuraIcon._auraUnit = "target"
 mirrorAuraIcon._lastDurObjKey = "aura:9001"
 mirrorAuraIcon._lastDurObj = { token = "stale-target-aura-duration" }
 mirrorAuraIcon._lastResolvedMode = "aura"
@@ -398,7 +391,7 @@ mirrorAuraIcon._lastResolvedSourceID = 9001
 controller:Handle("UNIT_AURA", "target", {
     updatedAuraInstanceIDs = { 9001 },
 })
-assert(auraApplied.mirrorAura == 1, "aura delta should match mirror-backed aura instance IDs")
+assert(auraApplied.mirrorAura == 1, "aura delta should match stamped aura instance IDs")
 assert(clearedBindings.mirrorAura == 1, "target aura deltas should invalidate stale aura DurationObject bindings before re-resolve")
 assert(mirrorAuraIcon._lastDurObjKey == nil, "target aura delta invalidation should clear the previous duration key")
 assert(#barAuraRefreshMarks == 1
@@ -710,14 +703,10 @@ local selfAuraIcon = makeIcon("selfAura", {
     id = 909, spellID = 909, kind = "aura", type = "spell",
     viewerType = "buff", containerType = "aura",
 })
-selfAuraIcon._blizzMirrorCooldownID = 909
-selfAuraIcon._blizzMirrorCategory = "buff"
 local targetAuraIcon = makeIcon("targetAura", {
     id = 910, spellID = 910, kind = "aura", type = "spell",
     viewerType = "buff", containerType = "aura",
 })
-targetAuraIcon._blizzMirrorCooldownID = 910
-targetAuraIcon._blizzMirrorCategory = "buff"
 local buffPool = iconPools.buff
 buffPool[#buffPool + 1] = selfAuraIcon
 buffPool[#buffPool + 1] = targetAuraIcon

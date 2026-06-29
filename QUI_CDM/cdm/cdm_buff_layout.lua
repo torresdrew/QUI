@@ -1059,6 +1059,15 @@ end
 LayoutBuffBars = function()
     local viewer = GetBuffBarViewer()
     if not viewer then return end
+    -- Re-anchor engine: relocate the native Blizzard BuffBar frames (their own
+    -- StatusBar fill/timer kept) into the QUI trackedBar container instead of
+    -- building owned StatusBars from mirror data -- removes bars from the mirror.
+    -- IN-GAME PENDING: bar-specific vertical-stack layout tuning. Custom bars keep
+    -- the cdm_bar_renderer path (this is the built-in trackedBar surface only).
+    if ns._cdmBoot then
+        ns._cdmBoot:RefreshBuiltin("trackedBar")
+        return
+    end
     if isBarLayoutRunning then return end
 
     isBarLayoutRunning = true

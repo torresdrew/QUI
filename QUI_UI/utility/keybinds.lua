@@ -1066,6 +1066,12 @@ local function ApplyKeybindToIcon(icon, viewerName)
     --   _isOwnedEntry:  Composer/owned containers (cdm_spelldata ResolveOwnedEntry)
     -- Both carry .type and .id; either should be treated as an item entry.
     local spellEntry = icon._spellEntry
+    -- Re-anchored Blizzard CDM frames carry no _spellEntry (we never write keys
+    -- onto Blizzard frames); resolve the curated entry the re-anchor engine
+    -- claimed this frame for, so its spellID/name drive the keybind like an owned icon.
+    if not spellEntry and _G.QUI_ResolveCDMFrameEntry then
+        spellEntry = _G.QUI_ResolveCDMFrameEntry(icon)
+    end
     local customEntry = icon._customCDMEntry
         or (spellEntry and (spellEntry._isCustomEntry or spellEntry._isOwnedEntry) and spellEntry)
     local isItemEntry = customEntry and (customEntry.type == "item" or customEntry.type == "trinket" or customEntry.type == "slot")
@@ -1529,10 +1535,24 @@ end
 -- Resolve a viewer's icon-container children list, or nil if no viewer.
 local function GetViewerChildren(viewerName)
     local viewer = _G.QUI_GetCDMViewerFrame and _G.QUI_GetCDMViewerFrame(viewerName)
-    if not viewer then return nil end
-
-    local container = viewer.viewerFrame or viewer
-    return { container:GetChildren() }
+    local out
+    if viewer then
+        local container = viewer.viewerFrame or viewer
+        out = { container:GetChildren() }
+    end
+    -- Re-anchor engine: Blizzard CDM frames re-anchored into this container stay
+    -- parented to the Blizzard viewer, so they are NOT in container:GetChildren().
+    -- Append them so keybinds cover every icon (not just owned synthetic ones).
+    if _G.QUI_GetReanchoredCDMFrames then
+        local extra = _G.QUI_GetReanchoredCDMFrames(viewerName)
+        if extra and #extra > 0 then
+            out = out or {}
+            for i = 1, #extra do
+                out[#out + 1] = extra[i]
+            end
+        end
+    end
+    return out
 end
 
 -- Update keybinds on all icons in a viewer
@@ -1828,10 +1848,16 @@ local function ApplyRotationHelperToIcon(icon, settings, nextSpellID, nextBaseSp
 
     -- Get the icon's spell ID
     local iconSpellID
+    -- Re-anchored Blizzard frames have no _spellEntry; resolve the curated entry
+    -- the re-anchor engine claimed this frame for (covers rotation glow on them too).
+    local resolvedEntry = icon._spellEntry
+    if not resolvedEntry and _G.QUI_ResolveCDMFrameEntry then
+        resolvedEntry = _G.QUI_ResolveCDMFrameEntry(icon)
+    end
     local ok, result = pcall(function()
         -- Try owned engine _spellEntry first
-        if icon._spellEntry then
-            return icon._spellEntry.overrideSpellID or icon._spellEntry.spellID or icon._spellEntry.id
+        if resolvedEntry then
+            return resolvedEntry.overrideSpellID or resolvedEntry.spellID or resolvedEntry.id
         end
         -- Try cooldownID for compatibility with older-style cooldown frames
         if icon.cooldownID then
@@ -1874,10 +1900,11 @@ local function ApplyRotationHelperToIcon(icon, settings, nextSpellID, nextBaseSp
         if not isNextSpell and nextBaseSpellID and iconSpellID == nextBaseSpellID then
             isNextSpell = true
         end
-        -- Check both IDs on the spell entry
-        if not isNextSpell and icon._spellEntry then
-            local entryBase = icon._spellEntry.spellID
-            local entryOvr = icon._spellEntry.overrideSpellID
+        -- Check both IDs on the spell entry (owned _spellEntry or the re-anchored
+        -- frame's resolved curated entry).
+        if not isNextSpell and resolvedEntry then
+            local entryBase = resolvedEntry.spellID
+            local entryOvr = resolvedEntry.overrideSpellID
             if entryBase and (entryBase == nextSpellID or (nextBaseSpellID and entryBase == nextBaseSpellID)) then
                 isNextSpell = true
             elseif entryOvr and (entryOvr == nextSpellID or (nextBaseSpellID and entryOvr == nextBaseSpellID)) then
@@ -1927,6 +1954,17 @@ local function UpdateViewerRotationHelper(viewerName, nextSpellID, nextBaseSpell
     -- When the icon is reused for a different spell, the stale overlay
     -- would reappear.  Processing hidden icons ensures overlays get
     -- cleaned up on recycled frames.
+    -- Re-anchored Blizzard frames aren't in the owned pool / container children;
+    -- process them so the rotation glow covers every icon, not just owned ones.
+    local function ProcessReanchored()
+        if not _G.QUI_GetReanchoredCDMFrames then return end
+        local extra = _G.QUI_GetReanchoredCDMFrames(viewerName)
+        if not extra then return end
+        for i = 1, #extra do
+            ApplyRotationHelperToIcon(extra[i], settings, nextSpellID, nextBaseSpellID)
+        end
+    end
+
     local CDMIconFactory = QUI.CDMIconFactory
     if CDMIconFactory then
         local pool = CDMIconFactory:GetIconPool(viewerName)
@@ -1934,13 +1972,17 @@ local function UpdateViewerRotationHelper(viewerName, nextSpellID, nextBaseSpell
             for _, icon in ipairs(pool) do
                 ApplyRotationHelperToIcon(icon, settings, nextSpellID, nextBaseSpellID)
             end
+            ProcessReanchored()
             return
         end
     end
 
     -- Fallback: use GetChildren if CDMIcons pool is unavailable
     local viewer = _G.QUI_GetCDMViewerFrame and _G.QUI_GetCDMViewerFrame(viewerName)
-    if not viewer then return end
+    if not viewer then
+        ProcessReanchored()
+        return
+    end
     local container = viewer.viewerFrame or viewer
     local n = select('#', container:GetChildren())
     for i = 1, n do
@@ -1949,6 +1991,7 @@ local function UpdateViewerRotationHelper(viewerName, nextSpellID, nextBaseSpell
             ApplyRotationHelperToIcon(child, settings, nextSpellID, nextBaseSpellID)
         end
     end
+    ProcessReanchored()
 end
 
 -- Update rotation helper on all viewers.

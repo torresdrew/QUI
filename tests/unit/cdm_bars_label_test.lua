@@ -157,45 +157,24 @@ assert(calls[1].formatString == "%s%s", "shared display count should append to t
 assert(calls[1].args[2] == " (6)", "shared count value should be the rendered suffix")
 
 local capturedParams
-local function NormalizeTestMirrorCategory(category)
-    if category == "essential"
-        or category == "utility"
-        or category == "buff"
-        or category == "trackedBar" then
-        return category
-    end
-    return nil
-end
-
+-- Mirrors the live CDMResolvers.BuildCooldownStateContext contract: the context
+-- carries entry/spellID/containerKey only. The Blizzard mirror identity
+-- resolution path was removed from the bar renderer, so the context no longer
+-- carries mirrorCooldownID/mirrorCategory.
 local function BuildTestCooldownStateContext(owner, entry, runtimeSpellID, options)
     local context = owner._cooldownStateContext
     if not context then
         context = {}
         owner._cooldownStateContext = context
     end
-    local identity = ns.CDMResolvers.ResolveBlizzardMirrorIdentityState
-        and ns.CDMResolvers.ResolveBlizzardMirrorIdentityState(entry)
     context.entry = entry
     context.runtimeSpellID = runtimeSpellID
-    if identity then
-        context.mirrorCooldownID = identity.cooldownID
-        context.mirrorCategory = identity.category
-    else
-        context.mirrorCooldownID = entry and entry.cooldownID
-        context.mirrorCategory = entry
-            and (NormalizeTestMirrorCategory(entry.blizzardMirrorCategory)
-                or NormalizeTestMirrorCategory(entry.viewerCategory)
-                or NormalizeTestMirrorCategory(entry.viewerType))
-            or nil
-    end
     context.containerKey = (options and options.containerKey)
         or (entry and entry.viewerType)
         or (options and options.fallbackContainerKey)
     context.totemSlot = options and options.totemSlot
     context.useBuffSwipe = options and options.useBuffSwipe
     context.skipAuraPhase = options and options.skipAuraPhase == true
-    context.cachedMirrorState = options and options.cachedMirrorState
-    context.cachedMirrorSourceID = options and options.cachedMirrorSourceID
     return context
 end
 
@@ -234,10 +213,10 @@ local bar = {
 bars:UpdateOwnedBarAura(bar)
 
 assert(capturedParams, "bar update should call ResolveCooldownState")
-assert(capturedParams.mirrorCooldownID == 5872,
-    "bar resolver params should carry the exact mirror cooldownID")
-assert(capturedParams.mirrorCategory == "trackedBar",
-    "bar resolver params should carry the exact mirror category")
+assert(capturedParams.runtimeSpellID == 195182,
+    "bar resolver params should carry the bar spellID")
+assert(capturedParams.containerKey == "trackedBar",
+    "bar resolver params should carry the bar container key")
 
 capturedParams = nil
 bar._spellEntry.viewerType = "customBar"
@@ -246,99 +225,30 @@ bar._spellEntry.cooldownID = 91002
 bars:UpdateOwnedBarAura(bar)
 
 assert(capturedParams, "custom bar update should call ResolveCooldownState")
-assert(capturedParams.mirrorCooldownID == 91002,
-    "custom bar resolver params should still carry the exact mirror cooldownID")
-assert(capturedParams.mirrorCategory == nil,
-    "custom bar resolver params should not invent a non-native mirror category")
+assert(capturedParams.runtimeSpellID == 195182,
+    "custom bar resolver params should carry the bar spellID")
+assert(capturedParams.containerKey == "customBar",
+    "custom bar resolver params should carry the custom-bar container key")
 
-local sharedIdentityEntry
+local barAuraDuration = { token = "bar-aura-duration" }
+local barAuraData = { icon = 98765 }
+local barStateEntry
+local barStateSpellID
+local appliedAuraTexture
 ns.CDMResolvers = {
     BuildCooldownStateContext = BuildTestCooldownStateContext,
-    ResolveBlizzardMirrorIdentityState = function(entry)
-        sharedIdentityEntry = entry
-        return {
-            cooldownID = 73542,
-            category = "buff",
-        }
-    end,
     ResolveCooldownState = function(context)
-        capturedParams = context
+        barStateEntry = context.entry
+        barStateSpellID = context.runtimeSpellID
         return {
-            mode = "inactive",
-            active = false,
-            isActive = false,
-            spellID = context and context.runtimeSpellID,
-        }
-    end,
-}
-capturedParams = nil
-bar._spellEntry = {
-    id = 1242998,
-    spellID = 1242998,
-    name = "Blood Shield",
-    kind = "aura",
-    type = "spell",
-    viewerType = "customBar",
-}
-bar._spellID = 1242998
-
-bars:UpdateOwnedBarAura(bar)
-
-assert(sharedIdentityEntry == bar._spellEntry,
-    "bar aura update should use the shared entry mirror identity resolver")
-assert(capturedParams.mirrorCooldownID == 73542,
-    "bar resolver params should carry shared mirror cooldownID")
-assert(capturedParams.mirrorCategory == "buff",
-    "bar resolver params should carry shared mirror category")
-
-local barMirrorDuration = { token = "bar-mirror-duration" }
-local barMirrorAuraData = { icon = 98765 }
-local mirrorStateEntry
-local mirrorStateCooldownID
-local mirrorStateCategory
-local mirrorStateSpellID
-local cachedBarMirrorState
-local cachedBarMirrorSourceID
-local appliedMirrorAuraTexture
-local barMirrorState = {
-    cooldownID = 73543,
-    viewerCategory = "trackedBar",
-    durObj = barMirrorDuration,
-}
-ns.CDMResolvers = {
-    BuildCooldownStateContext = BuildTestCooldownStateContext,
-    ResolveBlizzardMirrorIdentityState = function(entry)
-        sharedIdentityEntry = entry
-        return {
-            cooldownID = 73543,
-            category = "trackedBar",
-        }
-    end,
-    ResolveCooldownState = function(context)
-        mirrorStateEntry = context.entry
-        mirrorStateCooldownID = context.mirrorCooldownID
-        mirrorStateCategory = context.mirrorCategory
-        mirrorStateSpellID = context.runtimeSpellID
-        cachedBarMirrorState = context.cachedMirrorState
-        cachedBarMirrorSourceID = context.cachedMirrorSourceID
-        return {
-            mirrorBacked = true,
             active = true,
             isActive = true,
             mode = "aura",
-            durObj = barMirrorDuration,
+            durObj = barAuraDuration,
             auraUnit = "target",
-            auraData = barMirrorAuraData,
+            auraData = barAuraData,
             spellID = context.runtimeSpellID,
             hasExpirationTime = true,
-            count = {
-                value = 4,
-                sinkText = 4,
-                shown = true,
-                source = "mirror-text",
-            },
-            sourceID = "mirror:73543:1",
-            mirrorState = barMirrorState,
         }
     end,
 }
@@ -353,52 +263,34 @@ bar._spellEntry = {
 bar._spellID = 343294
 bar.IconTexture = {
     SetTexture = function(_, texture)
-        appliedMirrorAuraTexture = texture
+        appliedAuraTexture = texture
     end,
 }
 
 bars:UpdateOwnedBarAura(bar)
 
-assert(sharedIdentityEntry == bar._spellEntry,
-    "bar state resolution should use the shared mirror identity resolver")
-assert(mirrorStateEntry == bar._spellEntry,
+assert(barStateEntry == bar._spellEntry,
     "bar state resolution should receive the bar entry")
-assert(mirrorStateCooldownID == 73543,
-    "bar state resolution should receive the resolved mirror cooldownID")
-assert(mirrorStateCategory == "trackedBar",
-    "bar state resolution should receive the resolved mirror category")
-assert(mirrorStateSpellID == 343294,
+assert(barStateSpellID == 343294,
     "bar state resolution should receive the bar spellID")
-assert(bar._active == true, "valid bar mirror payload should render as active")
-assert(bar._auraDataUnit == "target", "valid bar mirror payload should pass aura unit to render")
-assert(appliedMirrorAuraTexture == 98765,
-    "valid bar mirror payload should pass auraData through to runtime texture rendering")
-assert(bar._cdmRuntimeState and bar._cdmRuntimeState.mirrorState == barMirrorState,
-    "bar runtime state should keep the renderer mirror state on the bar frame")
-assert(bar._cdmRuntimeState and bar._cdmRuntimeState.mirrorSourceID == "mirror:73543:1",
-    "bar runtime state should keep the mirror source key on the bar frame")
+assert(bar._active == true, "active bar aura payload should render as active")
+assert(bar._auraDataUnit == "target", "active bar aura payload should pass aura unit to render")
+assert(appliedAuraTexture == 98765,
+    "active bar aura payload should pass auraData through to runtime texture rendering")
 
 bars:UpdateOwnedBarAura(bar)
--- The bar must NOT feed its frame-owned mirror state back into the resolve.
--- GetStateByCooldownID returns a per-key PackState table refreshed only when
--- called, and the resolver's cached-state fast path deliberately skips
--- re-querying the live mirror -- so a snapshot cached while an aura was
--- inactive freezes a cross-category buff bar at mode=inactive even after the
--- buff goes live (the "won't activate until a rebuild / breaks on /reload"
--- bug). Resolving fresh each poll, like the icon path, reads the live aura.
-assert(cachedBarMirrorState == nil,
-    "bar resolver context must not feed a cached mirror state (resolve fresh each poll)")
-assert(cachedBarMirrorSourceID == nil,
-    "bar resolver context must not feed a cached mirror source key")
+-- The bar must NOT feed a cached state back into the resolve. The resolver's
+-- cached-state fast path deliberately skips re-querying live data, so a
+-- snapshot cached while an aura was inactive would freeze a cross-category
+-- buff bar at mode=inactive even after the buff goes live (the "won't activate
+-- until a rebuild / breaks on /reload" bug). Resolving fresh each poll, like
+-- the icon path, reads the live aura.
 
 local spellCooldownDurObj = { token = "spell-cooldown-duration" }
 local spellCooldownTimerDuration
 local spellCooldownQueryID
 ns.CDMResolvers = {
     BuildCooldownStateContext = BuildTestCooldownStateContext,
-    ResolveBlizzardMirrorIdentityState = function()
-        return nil
-    end,
     ResolveCooldownState = function(context)
         local spellID = context and context.runtimeSpellID
         spellCooldownQueryID = spellID
@@ -475,9 +367,6 @@ local itemCooldownNumericWrites = 0
 local itemCooldownTextArg
 ns.CDMResolvers = {
     BuildCooldownStateContext = BuildTestCooldownStateContext,
-    ResolveBlizzardMirrorIdentityState = function()
-        return nil
-    end,
     ResolveCooldownState = function(context)
         itemCooldownContext = context
         return {
@@ -594,15 +483,8 @@ local combatAuraData = {
 }
 ns.CDMResolvers = {
     BuildCooldownStateContext = BuildTestCooldownStateContext,
-    ResolveBlizzardMirrorIdentityState = function()
-        return {
-            cooldownID = 80808,
-            category = "trackedBar",
-        }
-    end,
     ResolveCooldownState = function(context)
         return {
-            mirrorBacked = true,
             active = true,
             isActive = true,
             mode = "aura",
@@ -675,15 +557,8 @@ local immediateTimerDirection
 local immediateMinMaxCalls = 0
 ns.CDMResolvers = {
     BuildCooldownStateContext = BuildTestCooldownStateContext,
-    ResolveBlizzardMirrorIdentityState = function()
-        return {
-            cooldownID = 48707,
-            category = "trackedBar",
-        }
-    end,
     ResolveCooldownState = function(context)
         return {
-            mirrorBacked = true,
             active = true,
             isActive = true,
             mode = "aura",
@@ -768,7 +643,6 @@ ns.CDMResolvers = {
     BuildCooldownStateContext = BuildTestCooldownStateContext,
     ResolveCooldownState = function(context)
         return {
-            mirrorBacked = true,
             active = true,
             isActive = true,
             mode = "aura",

@@ -4,8 +4,8 @@ local _, ns = ...
 -- CDM Icon Stack Policy
 --
 -- Private controller used by CDMIcons. It owns stack/count resolution,
--- mirror stack authority, aura application fallbacks, and stack text
--- show/hide policy. CDMIconStackText owns only the FontString write sink.
+-- aura application fallbacks, and stack text show/hide policy.
+-- CDMIconStackText owns only the FontString write sink.
 ---------------------------------------------------------------------------
 
 local CDMIconStackPolicy = {}
@@ -49,32 +49,6 @@ function CDMIconStackPolicy.Create(callbacks)
         return callbacks.getAuraRuntime and callbacks.getAuraRuntime() or ns.CDMAuraRuntime
     end
 
-    local function Mirror()
-        return callbacks.getMirror and callbacks.getMirror() or ns.CDMBlizzMirror
-    end
-
-    local function SafeBoolean(value)
-        if callbacks.safeBoolean then
-            return callbacks.safeBoolean(value)
-        end
-        if issecretvalue(value) then
-            return nil
-        end
-        return value and true or false
-    end
-
-    local function BooleanOrSecret(value)
-        if issecretvalue(value) then return value, true end
-        if value == nil then return nil, false end
-        if value == true then return true, false end
-        if value == false then return false, false end
-        return nil, false
-    end
-
-    local function BooleanOrSecretIsPresent(value, valueIsSecret)
-        return valueIsSecret or value ~= nil
-    end
-
     local function IsAuraEntry(entry)
         return callbacks.isAuraEntry and callbacks.isAuraEntry(entry) or false
     end
@@ -83,177 +57,6 @@ function CDMIconStackPolicy.Create(callbacks)
         return callbacks.isBuiltinAuraContainerKey
             and callbacks.isBuiltinAuraContainerKey(containerKey)
             or false
-    end
-
-    local function MirrorStateEffectiveCooldownChargesShown(m)
-        local cooldownChargesShown, cooldownChargesShownSecret =
-            BooleanOrSecret(m and m.cooldownChargesShown)
-        local chargeCountFrameShown, chargeCountFrameShownSecret =
-            BooleanOrSecret(m and m.chargeCountFrameShown)
-        local chargeTextOwnerShown, chargeTextOwnerShownSecret =
-            BooleanOrSecret(m and m.chargeTextOwnerShown)
-        -- Secret show gates are not decoded here. Keep them intact so the
-        -- FontString alpha sink can evaluate them with C_CurveUtil and avoid
-        -- hiding valid cast-count text from a stale clean parent frame state.
-        if BooleanOrSecretIsPresent(cooldownChargesShown, cooldownChargesShownSecret) then
-            return cooldownChargesShown, cooldownChargesShownSecret
-        end
-        if BooleanOrSecretIsPresent(chargeTextOwnerShown, chargeTextOwnerShownSecret) then
-            return chargeTextOwnerShown, chargeTextOwnerShownSecret
-        end
-        if BooleanOrSecretIsPresent(chargeCountFrameShown, chargeCountFrameShownSecret) then
-            return chargeCountFrameShown, chargeCountFrameShownSecret
-        end
-        if m
-            and (m.stackTextSource == "ChargeCount"
-                or controller:ValueIsPresent(m.cooldownChargesCount)) then
-            return false, false
-        end
-        return nil, false
-    end
-
-    local function MirrorStateChargeCountShown(m)
-        local shown, shownSecret = MirrorStateEffectiveCooldownChargesShown(m)
-        return shownSecret or shown == true
-    end
-
-    local function MirrorStateUsesCooldownCountText(m)
-        return SafeBoolean(m and m.wasSetFromCooldown) == true
-            and SafeBoolean(m and m.wasSetFromCharges) ~= true
-            and MirrorStateChargeCountShown(m) == true
-    end
-
-    -- The borrowed cross-category aura applications value is captured from the
-    -- source child via two owners -- the raw SetText(number) argument and the
-    -- rendered owner:GetText() string -- which alternate per UNIT_AURA. Returning
-    -- a numeric value verbatim makes the essential icon's count flip secret-number
-    -- <-> secret-string every refresh (a visible flicker). Coerce a numeric value
-    -- to the rendered string the buff icon shows (C_StringUtil.TruncateWhenZero,
-    -- the secret-safe number->display path the working aura-stack write uses), so
-    -- consecutive frames write a stable glyph. type() is safe on secret values.
-    -- NOTE: scoped to the carried aura value only -- coercing the resolver's other
-    -- return paths regressed the buff icon and the host ChargeCount, so don't.
-    local function StabilizeMirrorAuraStackText(value)
-        if type(value) == "number" and C_StringUtil and C_StringUtil.TruncateWhenZero then
-            return C_StringUtil.TruncateWhenZero(value)
-        end
-        return value
-    end
-
-    local function ResolveMirrorStackTextFromState(m, cooldownChargeAuthority, auraRenderActive)
-        -- Cross-category aura: the host child carries only its own (chargeless)
-        -- ChargeCount text, but the borrowed aura's real applications text was
-        -- captured from the source child onto auraStackText (see
-        -- CaptureAuraInstanceFromChildFrame). Prefer it so the essential icon
-        -- shows the same count the buff/tracked icon shows. A secret value
-        -- renders fine via SetText (the source icon proves it); only the
-        -- chargeless ChargeCount secret paints blank.
-        --
-        -- Gated on auraRenderActive: the carried count belongs to the borrowed
-        -- aura, so it must only show while the icon is actually rendering that
-        -- aura. When the icon is on cooldown (debuff still up but the spell's
-        -- own cooldown is showing) or the viewer is configured not to show the
-        -- aura phase, the resolved mode is not "aura" and the count stays off.
-        if auraRenderActive
-            and controller:ValueIsPresent(m.auraStackText)
-            and SafeBoolean(m.auraStackTextShown) ~= false then
-            return StabilizeMirrorAuraStackText(m.auraStackText),
-                m.auraStackTextSource or "Applications", nil, true, m.auraStackTextShown
-        end
-
-        local mirrorIsCharge = SafeBoolean(m.charges) == true
-            or SafeBoolean(m.hasCharges) == true
-            or SafeBoolean(m.wasSetFromCharges) == true
-        local cooldownCountText = MirrorStateUsesCooldownCountText(m)
-            and not mirrorIsCharge
-
-        local chargeCountShown = MirrorStateChargeCountShown(m)
-        local cooldownChargesShown, cooldownChargesShownSecret =
-            MirrorStateEffectiveCooldownChargesShown(m)
-        local chargeTextOwnerShown, chargeTextOwnerShownSecret =
-            BooleanOrSecret(m.chargeTextOwnerShown)
-        local chargeCountFrameShown, chargeCountFrameShownSecret =
-            BooleanOrSecret(m.chargeCountFrameShown)
-
-        local stackText = m.stackText
-        local stackSource = m.stackTextSource
-        local stackIsVisible = SafeBoolean(m.stackTextShown) ~= false
-        local countText = m.cooldownChargesCount
-        local countTextPresent = controller:ValueIsPresent(countText)
-        local stackChargeTextPresent = stackSource == "ChargeCount"
-            and stackIsVisible
-            and controller:ValueIsPresent(stackText)
-        if cooldownChargeAuthority then
-            if chargeCountShown == true then
-                if countTextPresent then
-                        return countText, "ChargeCount", nil, true
-                end
-                if stackChargeTextPresent then
-                    return stackText, "ChargeCount", nil, true
-                end
-            end
-
-            if stackSource == "ChargeCount"
-                or countTextPresent
-                or BooleanOrSecretIsPresent(cooldownChargesShown, cooldownChargesShownSecret)
-                or BooleanOrSecretIsPresent(chargeTextOwnerShown, chargeTextOwnerShownSecret)
-                or BooleanOrSecretIsPresent(chargeCountFrameShown, chargeCountFrameShownSecret) then
-                return nil, "ChargeCount", true, true
-            end
-            return nil, nil, true, true
-        end
-
-        if m.stackTextSource == "ChargeCount" and chargeCountShown ~= true then
-            return nil, m.stackTextSource, true, true
-        end
-
-        if stackIsVisible and controller:ValueIsPresent(stackText) then
-            local source = m.stackTextSource or "Applications"
-            local visibilityGate
-            if source ~= "ChargeCount" then
-                visibilityGate = m.stackTextShown
-            end
-            return stackText, source, nil, true, visibilityGate
-        end
-
-        if countTextPresent
-            and chargeCountShown == true then
-            return countText, "ChargeCount", nil, true
-        end
-
-        if SafeBoolean(m.stackTextShown) == false then
-            return nil, m.stackTextSource, true, true
-        end
-
-        return nil, m.stackTextSource, nil, true
-    end
-
-    local function StampIconMirrorCountFields(icon, m)
-        if not icon then return end
-        if not m then
-            icon.cooldownChargesCount = nil
-            icon.cooldownChargesShown = nil
-            icon.chargeCountFrameShown = nil
-            icon.chargeTextOwnerShown = nil
-            icon.stackText = nil
-            icon.stackTextSource = nil
-            icon.stackTextShown = nil
-            icon.stackTextEpoch = nil
-            icon.wasSetFromCooldown = nil
-            icon.wasSetFromCharges = nil
-            return
-        end
-
-        icon.cooldownChargesCount = m.cooldownChargesCount
-        icon.cooldownChargesShown = MirrorStateEffectiveCooldownChargesShown(m)
-        icon.chargeCountFrameShown = m.chargeCountFrameShown
-        icon.chargeTextOwnerShown = m.chargeTextOwnerShown
-        icon.stackText = m.stackText
-        icon.stackTextSource = m.stackTextSource
-        icon.stackTextShown = m.stackTextShown
-        icon.stackTextEpoch = m.stackTextEpoch
-        icon.wasSetFromCooldown = m.wasSetFromCooldown
-        icon.wasSetFromCharges = m.wasSetFromCharges
     end
 
     function controller:TextHasDisplay(text)
@@ -634,54 +437,6 @@ function CDMIconStackPolicy.Create(callbacks)
         return nil
     end
 
-    function controller:ResolveMirrorStackText(icon)
-        local mirror = Mirror()
-        local cooldownID = icon and icon._blizzMirrorCooldownID
-        local category = icon and icon._blizzMirrorCategory
-        local resolvedState
-        if cooldownID == nil then
-            local entry = icon and icon._spellEntry
-            if callbacks.resolveMirrorIdentityState and entry then
-                local identity = callbacks.resolveMirrorIdentityState(entry)
-                if identity then
-                    cooldownID = identity.cooldownID
-                    category = identity.category
-                    resolvedState = identity.state
-                end
-            end
-            if cooldownID == nil then
-                StampIconMirrorCountFields(icon, nil)
-                return nil, nil, false
-            end
-        end
-        if not (mirror and mirror.GetStateByCooldownID) then
-            StampIconMirrorCountFields(icon, nil)
-            return nil, nil, true
-        end
-
-        local m = resolvedState
-        if not m and callbacks.getCachedMirrorStateForIcon then
-            m = callbacks.getCachedMirrorStateForIcon(icon)
-        end
-        if not m and callbacks.refreshCachedMirrorStateForIcon then
-            m = callbacks.refreshCachedMirrorStateForIcon(icon)
-        end
-        if not m then
-            m = mirror.GetStateByCooldownID(cooldownID, category)
-        end
-        if not m then
-            StampIconMirrorCountFields(icon, nil)
-            return nil, nil, true, nil, false
-        end
-        StampIconMirrorCountFields(icon, m)
-        local entry = icon and icon._spellEntry
-        local cooldownChargeAuthority = not (entry and IsAuraEntry(entry))
-        local auraRenderActive = icon and icon._resolvedCooldownMode == "aura"
-        local stackText, stackSource, stackHidden, hasState =
-            ResolveMirrorStackTextFromState(m, cooldownChargeAuthority, auraRenderActive)
-        return stackText, stackSource, true, stackHidden, hasState
-    end
-
     function controller:ResolveIconStackText(icon)
         if not icon or not icon._spellEntry then
             return nil, nil
@@ -689,27 +444,10 @@ function CDMIconStackPolicy.Create(callbacks)
         local entry = icon._spellEntry
 
         if IsAuraEntry(entry) then
-            -- Mirror-primary. A mirror-backed aura's captured frame text is the
-            -- authoritative source in combat: target-debuff C_UnitAuras data is
-            -- restricted there, so the live GetApplications query returns nothing
-            -- even for a debuff that genuinely stacks (e.g. Reaper's Mark). The
-            -- Blizzard CDM mirror child captured the rendered count, so prefer it.
-            -- The secret stack value forwards verbatim to the FontString -- it is
-            -- never Lua-compared (a secret applications value can't be). This is
-            -- the same frame text the essential icon borrows via the cross-category
-            -- carry; the live query below is only the out-of-combat / non-mirrored
-            -- fallback.
-            local mirrorText, mirrorSource, mirrorBacked, mirrorStackHidden =
-                controller:ResolveMirrorStackText(icon)
-            if controller:TextHasDisplay(mirrorText) then
-                return mirrorText, mirrorSource or "Applications", true, mirrorStackHidden
-            end
-
-            local mirrorTextKnown = controller:ValueIsPresent(mirrorText)
-            if mirrorBacked and (mirrorTextKnown or mirrorStackHidden) then
-                return nil, mirrorSource, true, mirrorStackHidden
-            end
-
+            -- Live aura applications query. In-combat target-debuff C_UnitAuras
+            -- data is restricted, so this returns nothing even for a debuff that
+            -- genuinely stacks (e.g. Reaper's Mark) -- it is the out-of-combat /
+            -- unrestricted path.
             local active, auraUnit, instID
             if callbacks.resolveAuraActiveState then
                 active, auraUnit, instID = callbacks.resolveAuraActiveState(entry)
@@ -732,15 +470,6 @@ function CDMIconStackPolicy.Create(callbacks)
         if callbacks.queryOverrideSpell then
             local overrideID = callbacks.queryOverrideSpell(sid)
             if overrideID then sid = overrideID end
-        end
-
-        local mirrorText, mirrorSource, mirrorBacked, mirrorStackHidden =
-            controller:ResolveMirrorStackText(icon)
-        if controller:TextHasDisplay(mirrorText) then
-            return mirrorText, mirrorSource, true, mirrorStackHidden
-        end
-        if mirrorBacked then
-            return nil, mirrorSource, true, mirrorStackHidden
         end
 
         local svDB = callbacks.getChargeMetadataDB and callbacks.getChargeMetadataDB() or nil
@@ -838,7 +567,7 @@ function CDMIconStackPolicy.Create(callbacks)
         end
 
         if controller:ValueIsPresent(count.sinkText) or showZero then
-            if showZero or count.mirrorAuthoritative or AuraCountTextHasDisplay(stackValue) then
+            if showZero or AuraCountTextHasDisplay(stackValue) then
                 local sink = Sink()
                 if sink and sink.Show then
                     sink.Show(icon, stackValue, count.source or "Applications", count.visibilityGate)
@@ -858,7 +587,7 @@ function CDMIconStackPolicy.Create(callbacks)
             displayText = C_StringUtil.TruncateWhenZero(stackValue)
         end
 
-        if count.mirrorAuthoritative or AuraCountTextHasDisplay(displayText) then
+        if AuraCountTextHasDisplay(displayText) then
             local sink = Sink()
             if sink and sink.Show then
                 sink.Show(icon, displayText, count.source or "Applications", count.visibilityGate)
@@ -870,41 +599,6 @@ function CDMIconStackPolicy.Create(callbacks)
         else
             controller:Clear(icon)
         end
-    end
-
-    function controller:ApplyMirrorStackText(icon, mirrorState, showZero)
-        if not (icon and mirrorState) then
-            return false
-        end
-
-        StampIconMirrorCountFields(icon, mirrorState)
-        local entry = icon and icon._spellEntry
-        local cooldownChargeAuthority = not (entry and IsAuraEntry(entry))
-        local auraRenderActive = icon and icon._resolvedCooldownMode == "aura"
-        local stackText, stackSource, stackHidden, _, visibilityGate =
-            ResolveMirrorStackTextFromState(mirrorState, cooldownChargeAuthority, auraRenderActive)
-        if stackHidden or controller:ValueIsMissing(stackText) then
-            return false
-        end
-
-        local count = icon._mirrorStackCountPayload
-        if not count then
-            count = {}
-            icon._mirrorStackCountPayload = count
-        end
-        count.sinkText = stackText
-        count.value = stackText
-        count.shown = true
-        count.source = stackSource or "Applications"
-        count.visibilityGate = visibilityGate
-        if not issecretvalue(count.visibilityGate) and count.visibilityGate == nil then
-            count.visibilityGate = MirrorStateEffectiveCooldownChargesShown(mirrorState)
-        end
-        count.mirrorAuthoritative = true
-
-        controller:ApplyAuraCountText(icon, count, showZero, true)
-        icon._lastMirrorStackTextEpoch = mirrorState.stackTextEpoch
-        return true
     end
 
     return controller

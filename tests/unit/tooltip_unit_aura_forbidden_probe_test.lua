@@ -12,6 +12,10 @@ local function assertContains(text, needle, reason)
     assert(text:find(needle, 1, true), reason)
 end
 
+local function assertNotContains(text, needle, reason)
+    assert(not text:find(needle, 1, true), reason)
+end
+
 local function assertOrder(text, first, second, reason)
     local firstIndex = assert(text:find(first, 1, true), "missing first marker: " .. first)
     local secondIndex = assert(text:find(second, 1, true), "missing second marker: " .. second)
@@ -38,18 +42,29 @@ local postCallBody = assert(tooltipSkin:match("local function HandlePostCall%(to
 
 assertOrder(
     postCallBody,
+    "if tooltip == GameTooltip then",
     "if IsProtectedTooltip(tooltip) then",
-    "SafeHookTooltipOnShow(tooltip)",
-    "forbidden/protected aura tooltip checks must run before installing Show/NineSlice hooks")
+    "GameTooltip must use its own protected-owner path before non-GameTooltip tooltip checks")
 
-assertContains(tooltipSkin, "dbg.tryAuraButtonTooltipSkin == true",
-    "AuraButtonTooltip skinning attempts must be opt-in through tooltip debug state")
+assertContains(
+    postCallBody,
+    "if IsProtectedTooltip(tooltip) then\n            HandleForbiddenAuraTooltip(tooltip)\n            return\n        end\n        SafeHookTooltipOnShow(tooltip)",
+    "forbidden/protected non-GameTooltip aura checks must run before installing Show/NineSlice hooks")
+
+assertNotContains(tooltipSkin, "if not TooltipDebugAuraButtonTooltipProbe() then",
+    "AuraButtonTooltip skinning must not be suppressed behind the old debug-only probe gate")
+
+assertContains(tooltipSkin, "not IsEnabled() and not TooltipDebugAuraButtonTooltipProbe()",
+    "AuraButtonTooltip skinning must run by default when tooltip skinning is enabled")
 
 assertContains(tooltipSkin, "pcall(ApplyTooltipChrome, tooltip)",
-    "AuraButtonTooltip experiments must be pcall-guarded")
+    "AuraButtonTooltip skinning attempts must be pcall-guarded")
 
 assertContains(tooltipSkin, "TooltipDebugCount(\"skin.auraButtonTooltipForbidden\")",
     "forbidden AuraButtonTooltip encounters must be visible in tooltip debug counters")
+
+assertContains(tooltipQOL, "AppendCounter(parts, \"skin.auraButtonTooltipSkinOk\", \"auraTipOk\")",
+    "tooltip debug reports must surface successful AuraButtonTooltip skin attempts")
 
 assertContains(tooltipSkin, "PrivateAurasTooltipMixin",
     "AuraButtonTooltip probing must hook the real PrivateAurasTooltipMixin boundary")
@@ -196,6 +211,9 @@ local ns = {
         End = function() end,
     },
     SkinBase = {
+        CHROME = {
+            BG_FALLBACK = {0, 0, 0, 1},
+        },
         SkinFrameText = function() end,
     },
     UIKit = {
@@ -230,10 +248,21 @@ local auraTooltipHook = assert(methodHooks[PrivateAurasTooltipMixin]
 
 local auraButtonTooltip = makeFrame("AuraButtonTooltip")
 auraButtonTooltip.forbidden = true
+local styleFrameCountBeforeAuraTip = #createdStyleFrames
 auraTooltipHook(auraButtonTooltip, "player", { auraInstanceID = 1 })
 
 assert(debugCounts["skin.auraButtonTooltipForbidden"] == 1,
     "ShowAuraTooltip hook should count forbidden AuraButtonTooltip even when TooltipDataProcessor is silent")
+assert(debugCounts["skin.auraButtonTooltipSkinOk"] == 1,
+    "AuraButtonTooltip should attempt QUI chrome by default when tooltip skinning is enabled"
+        .. " (ok=" .. tostring(debugCounts["skin.auraButtonTooltipSkinOk"])
+        .. " fail=" .. tostring(debugCounts["skin.auraButtonTooltipSkinFail"]) .. ")")
+assert(#createdStyleFrames > styleFrameCountBeforeAuraTip,
+    "AuraButtonTooltip should receive a QUI-owned chrome frame by default")
+
+auraTooltipHook(auraButtonTooltip, "player", { auraInstanceID = 1 })
+assert(debugCounts["skin.auraButtonTooltipStableSkip"] == 1,
+    "AuraButtonTooltip should stable-skip repeated Blizzard refreshes after chrome is active")
 
 local status = assert(ns.QUI_GetAuraTooltipProbeStatus and ns.QUI_GetAuraTooltipProbeStatus(),
     "tooltip skinning must expose AuraButtonTooltip probe status at runtime")
@@ -241,6 +270,6 @@ assert(status.skinningLoaded == true, "probe status should report the skinning m
 assert(status.mixinVisible == true, "probe status should report PrivateAurasTooltipMixin visibility")
 assert(status.showAuraTooltipVisible == true, "probe status should report ShowAuraTooltip visibility")
 assert(status.hookInstalled == true, "probe status should report the direct ShowAuraTooltip hook is installed")
-assert(status.observedTooltips == 1, "probe status should count observed AuraButtonTooltip invocations")
+assert(status.observedTooltips == 2, "probe status should count observed AuraButtonTooltip invocations")
 
 print("OK: tooltip_unit_aura_forbidden_probe_test")

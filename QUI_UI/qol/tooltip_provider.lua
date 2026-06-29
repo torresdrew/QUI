@@ -252,6 +252,24 @@ local BUILTIN_CDM_KEYS = {
     trackedBar = true,
 }
 
+local EXPLICIT_TOOLTIP_CONTEXTS = {
+    abilities = true,
+    items = true,
+    frames = true,
+    cdm = true,
+    customTrackers = true,
+    npcs = true,
+}
+
+local function GetExplicitTooltipContext(frame)
+    if not frame then return nil end
+    local context = frame._quiTooltipContext or frame.__quiTooltipContext
+    if type(context) == "string" and EXPLICIT_TOOLTIP_CONTEXTS[context] then
+        return context
+    end
+    return nil
+end
+
 local function GetCDMTooltipContextForKey(key)
     if type(key) ~= "string" then return "cdm" end
     if BUILTIN_CDM_KEYS[key] then return "cdm" end
@@ -395,6 +413,12 @@ function TooltipProvider:GetTooltipContext(owner)
     local chain = GetFrameChain(owner)
 
     for _, frame in ipairs(chain) do
+        local explicitContext = GetExplicitTooltipContext(frame)
+        if explicitContext then
+            SetCachedContext(owner, explicitContext, now)
+            return explicitContext
+        end
+
         local state = getIS and getIS(frame)
         local entry = state and state._spellEntry
         local viewerType = entry and entry.viewerType

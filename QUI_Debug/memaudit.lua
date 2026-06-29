@@ -142,15 +142,6 @@ local function RegisterCDMCacheProbes()
             N(s.capturedAuraUnits) + N(s.capturedAuraSpellKeys) + N(s.capturedAuraNameKeys)
     end)
 
-    AddProbe("CDM_cache_blizzMirror", function()
-        local bm = CallFunction(ns.CDMBlizzMirror and ns.CDMBlizzMirror.GetCacheStats)
-        return N(bm.mirrorStates) + N(bm.packedStates),
-            N(bm.childFrames) + N(bm.cooldownInfo) + N(bm.defaultCooldownInfo)
-            + N(bm.spellMapEntries) + N(bm.directSpellMapEntries)
-            + N(bm.spellNameEntries) + N(bm.totemSpellIDEntries) + N(bm.activeTotems)
-            + N(bm.auraCandidateCaches) + N(bm.spellCandidateCaches)
-    end)
-
     AddProbe("CDM_cache_iconPools", function()
         local ic = CallStats(ns.CDMIcons, "GetCacheStats")
         return N(ic.activeIcons) + N(ic.recycleIcons),

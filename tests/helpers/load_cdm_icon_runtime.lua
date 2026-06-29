@@ -39,9 +39,6 @@ return function(ns)
     if not ns.CDMIconStackPolicy then
         loadChunk("QUI_CDM/cdm/cdm_icon_renderer.lua", "cdm_icon_stack_policy.lua")("QUI", ns)
     end
-    if not ns.CDMIconMirrorIndex then
-        loadChunk("QUI_CDM/cdm/cdm_icon_renderer.lua", "cdm_icon_mirror_index.lua")("QUI", ns)
-    end
     if not ns.CDMIconRuntimeRefresh then
         loadChunk("QUI_CDM/cdm/cdm_icon_renderer.lua", "cdm_icon_runtime_refresh.lua")("QUI", ns)
     end

@@ -430,7 +430,22 @@ local proxyBackup    = setmetatable({}, { __mode = "k" })
 local proxyRemapVBtns = setmetatable({}, { __mode = "k" })
 -- [frame] = list of attr names written by WriteFrameRouting (cleared by TeardownFrameRouting).
 local frameRoutingWritten = setmetatable({}, { __mode = "k" })
+-- [proxy] = {attrName = true, ...} — every mouse cast attr written by SetupFrameClickCast.
+-- ClearFrameClickCast clears exactly these instead of blind-sweeping the full 8×5
+-- modifier×button matrix (~360 SetAttribute/frame), which on a full raid (100+
+-- frames) blew WoW's "script ran too long" watchdog inside RefreshBindings.
+local proxyWrittenAttrs = setmetatable({}, { __mode = "k" })
 local proxyCounter = 0
+
+-- Write a mouse cast attr on the proxy and record it so the clear path can remove
+-- exactly what was set. Unbound modifier×button combos are never touched.
+local function RecordCastAttr(proxy, attr, value)
+    proxy:SetAttribute(attr, value)
+    if value == nil then return end
+    local set = proxyWrittenAttrs[proxy]
+    if not set then set = {}; proxyWrittenAttrs[proxy] = set end
+    set[attr] = true
+end
 
 -- All modifier prefixes the secure engine recognises for mouse buttons.
 local ALL_MOD_PREFIXES = {
@@ -1032,7 +1047,7 @@ local function SetupFrameClickCast(frame)
                 local remapped = "friend" .. btnNum                -- e.g. "friend1" (no prefix)
                 local typeAttr = prefix .. "type-friend" .. btnNum -- e.g. "shift-type-friend1"
                 local textAttr = prefix .. "macrotext-friend" .. btnNum
-                proxy:SetAttribute(helpAttr, remapped)
+                RecordCastAttr(proxy, helpAttr, remapped)
                 local macro
                 if db.clickCast.smartRes and prefix == "" and btnNum == "1" then
                     local resSpell = GetResurrectionSpellName()
@@ -1041,29 +1056,17 @@ local function SetupFrameClickCast(frame)
                             .. "; [@mouseover] " .. binding.spell
                     end
                 end
-                proxy:SetAttribute(typeAttr, "macro")
-                proxy:SetAttribute(textAttr, macro or BuildPlainMouseoverCastMacro(binding.spell))
-                -- Track remapped attrs for ClearFrameClickCast
-                local remapSet = proxyRemapVBtns[proxy]
-                if not remapSet then remapSet = {}; proxyRemapVBtns[proxy] = remapSet end
-                remapSet[helpAttr] = true
-                remapSet[typeAttr] = true
-                remapSet[textAttr] = true
+                RecordCastAttr(proxy, typeAttr, "macro")
+                RecordCastAttr(proxy, textAttr, macro or BuildPlainMouseoverCastMacro(binding.spell))
             elseif binding.enemy then
                 -- Enemy-only: harmbutton remap → cast on remapped button.
                 local harmAttr = prefix .. "harmbutton" .. btnNum  -- e.g. "shift-harmbutton1"
                 local remapped = "enemy" .. btnNum                 -- e.g. "enemy1" (no prefix)
                 local typeAttr = prefix .. "type-enemy" .. btnNum
                 local textAttr = prefix .. "macrotext-enemy" .. btnNum
-                proxy:SetAttribute(harmAttr, remapped)
-                proxy:SetAttribute(typeAttr, "macro")
-                proxy:SetAttribute(textAttr, BuildPlainMouseoverCastMacro(binding.spell))
-                -- Track remapped attrs for ClearFrameClickCast
-                local remapSet = proxyRemapVBtns[proxy]
-                if not remapSet then remapSet = {}; proxyRemapVBtns[proxy] = remapSet end
-                remapSet[harmAttr] = true
-                remapSet[typeAttr] = true
-                remapSet[textAttr] = true
+                RecordCastAttr(proxy, harmAttr, remapped)
+                RecordCastAttr(proxy, typeAttr, "macro")
+                RecordCastAttr(proxy, textAttr, BuildPlainMouseoverCastMacro(binding.spell))
             else
                 -- Any (neither flag): 3-clause macro; smart-res on unmodified left-click.
                 local macro
@@ -1076,8 +1079,8 @@ local function SetupFrameClickCast(frame)
                             .. "; [@mouseover] " .. binding.spell
                     end
                 end
-                proxy:SetAttribute(prefix .. "type" .. btnNum, "macro")
-                proxy:SetAttribute(prefix .. "macrotext" .. btnNum, macro or BuildMouseoverCastMacro(binding.spell))
+                RecordCastAttr(proxy, prefix .. "type" .. btnNum, "macro")
+                RecordCastAttr(proxy, prefix .. "macrotext" .. btnNum, macro or BuildMouseoverCastMacro(binding.spell))
             end
         elseif actionType == "macro" then
             if binding.friend then
@@ -1086,62 +1089,52 @@ local function SetupFrameClickCast(frame)
                 local remapped = "friend" .. btnNum
                 local typeAttr = prefix .. "type-friend" .. btnNum
                 local textAttr = prefix .. "macrotext-friend" .. btnNum
-                proxy:SetAttribute(helpAttr, remapped)
-                proxy:SetAttribute(typeAttr, "macro")
-                proxy:SetAttribute(textAttr, binding.macro)
-                local remapSet = proxyRemapVBtns[proxy]
-                if not remapSet then remapSet = {}; proxyRemapVBtns[proxy] = remapSet end
-                remapSet[helpAttr] = true
-                remapSet[typeAttr] = true
-                remapSet[textAttr] = true
+                RecordCastAttr(proxy, helpAttr, remapped)
+                RecordCastAttr(proxy, typeAttr, "macro")
+                RecordCastAttr(proxy, textAttr, binding.macro)
             elseif binding.enemy then
                 -- Enemy-only macro: harmbutton remap → run user macro on remapped button.
                 local harmAttr = prefix .. "harmbutton" .. btnNum
                 local remapped = "enemy" .. btnNum
                 local typeAttr = prefix .. "type-enemy" .. btnNum
                 local textAttr = prefix .. "macrotext-enemy" .. btnNum
-                proxy:SetAttribute(harmAttr, remapped)
-                proxy:SetAttribute(typeAttr, "macro")
-                proxy:SetAttribute(textAttr, binding.macro)
-                local remapSet = proxyRemapVBtns[proxy]
-                if not remapSet then remapSet = {}; proxyRemapVBtns[proxy] = remapSet end
-                remapSet[harmAttr] = true
-                remapSet[typeAttr] = true
-                remapSet[textAttr] = true
+                RecordCastAttr(proxy, harmAttr, remapped)
+                RecordCastAttr(proxy, typeAttr, "macro")
+                RecordCastAttr(proxy, textAttr, binding.macro)
             else
-                proxy:SetAttribute(prefix .. "type" .. btnNum, "macro")
-                proxy:SetAttribute(prefix .. "macrotext" .. btnNum, binding.macro)
+                RecordCastAttr(proxy, prefix .. "type" .. btnNum, "macro")
+                RecordCastAttr(proxy, prefix .. "macrotext" .. btnNum, binding.macro)
             end
         elseif actionType == "target" then
             -- Plain unmodified left-click targets natively; every other target
             -- trigger is gated in 12.0.7 -- route through the ungated click proxy.
             if prefix == "" and btnNum == "1" then
-                proxy:SetAttribute(prefix .. "type" .. btnNum, "target")
+                RecordCastAttr(proxy, prefix .. "type" .. btnNum, "target")
             else
                 local tProxy = GetTargetProxy(frame)
                 if tProxy then
-                    proxy:SetAttribute(prefix .. "type" .. btnNum, "click")
-                    proxy:SetAttribute(prefix .. "clickbutton" .. btnNum, tProxy)
+                    RecordCastAttr(proxy, prefix .. "type" .. btnNum, "click")
+                    RecordCastAttr(proxy, prefix .. "clickbutton" .. btnNum, tProxy)
                 end
             end
         elseif actionType == "focus" then
-            proxy:SetAttribute(prefix .. "type" .. btnNum, "focus")
+            RecordCastAttr(proxy, prefix .. "type" .. btnNum, "focus")
         elseif actionType == "assist" then
-            proxy:SetAttribute(prefix .. "type" .. btnNum, "assist")
+            RecordCastAttr(proxy, prefix .. "type" .. btnNum, "assist")
         elseif actionType == "menu" then
             -- Plain unmodified right-click opens menu natively; others gated.
             if prefix == "" and btnNum == "2" then
-                proxy:SetAttribute(prefix .. "type" .. btnNum, "togglemenu")
+                RecordCastAttr(proxy, prefix .. "type" .. btnNum, "togglemenu")
             else
                 local mProxy = GetMenuProxy(frame)
                 if mProxy then
-                    proxy:SetAttribute(prefix .. "type" .. btnNum, "click")
-                    proxy:SetAttribute(prefix .. "clickbutton" .. btnNum, mProxy)
+                    RecordCastAttr(proxy, prefix .. "type" .. btnNum, "click")
+                    RecordCastAttr(proxy, prefix .. "clickbutton" .. btnNum, mProxy)
                 end
             end
         elseif actionType:match("^ping") then
-            proxy:SetAttribute(prefix .. "type" .. btnNum, "macro")
-            proxy:SetAttribute(prefix .. "macrotext" .. btnNum, PING_MACROS[actionType] or "/ping [@mouseover]")
+            RecordCastAttr(proxy, prefix .. "type" .. btnNum, "macro")
+            RecordCastAttr(proxy, prefix .. "macrotext" .. btnNum, PING_MACROS[actionType] or "/ping [@mouseover]")
         end
     end
 
@@ -1263,29 +1256,21 @@ local function ClearFrameClickCast(frame)
     -- Clear cast attrs from the proxy.
     local proxy = proxyPool[frame]
     if proxy then
-        -- Clear mouse cast attrs from proxy.
-        local modPrefixes = { "", "alt-", "ctrl-", "shift-", "alt-ctrl-", "alt-shift-", "ctrl-shift-", "alt-ctrl-shift-" }
-        for _, prefix in ipairs(modPrefixes) do
-            for _, btnNum in pairs(BUTTON_NUMBERS) do
-                proxy:SetAttribute(prefix .. "type" .. btnNum, nil)
-                proxy:SetAttribute(prefix .. "macrotext" .. btnNum, nil)
-                proxy:SetAttribute(prefix .. "clickbutton" .. btnNum, nil)
+        -- Clear exactly the mouse cast attrs we wrote (bounded by the number of
+        -- bindings) instead of blind-sweeping the full 8×5 modifier×button matrix.
+        -- The old sweep was ~360 SetAttribute/frame; on a full raid (100+ frames)
+        -- the synchronous clear loop in RefreshBindings tripped WoW's 10s
+        -- "script ran too long" watchdog.
+        local writtenSet = proxyWrittenAttrs[proxy]
+        if writtenSet then
+            for attr in pairs(writtenSet) do
+                proxy:SetAttribute(attr, nil)
             end
+            proxyWrittenAttrs[proxy] = nil
         end
-        -- Clear helpbutton/harmbutton and remapped attrs for mouse bindings.
-        -- Attr names follow the engine's resolution format: prefix before the attr
-        -- name, numeric btnNum appended without dash (e.g. "shift-helpbutton1").
-        for _, prefix in ipairs(modPrefixes) do
-            for _, btnNum in pairs(BUTTON_NUMBERS) do
-                proxy:SetAttribute(prefix .. "helpbutton" .. btnNum, nil)
-                proxy:SetAttribute(prefix .. "harmbutton" .. btnNum, nil)
-                proxy:SetAttribute(prefix .. "type-friend" .. btnNum, nil)
-                proxy:SetAttribute(prefix .. "macrotext-friend" .. btnNum, nil)
-                proxy:SetAttribute(prefix .. "type-enemy" .. btnNum, nil)
-                proxy:SetAttribute(prefix .. "macrotext-enemy" .. btnNum, nil)
-            end
-        end
-        -- Clear any remaining tracked remap attrs.
+        -- Clear any remaining tracked remap attrs (the keyboard path resets the
+        -- shared remap set, so mouse remaps clear via writtenSet above; this
+        -- catches whatever the active keyboard apply left tracked).
         local remapSet = proxyRemapVBtns[proxy]
         if remapSet then
             for attr in pairs(remapSet) do

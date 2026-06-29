@@ -411,6 +411,19 @@ local function AddMissingRaidBuffConfig(ctx, element)
                 description = ns.L["Show this icon when the unit is missing this raid buff."],
             }))
         end
+        -- CDM "Group Buff" entries merged into MRB.RaidBuffs (source=="cdm") aren't
+        -- in the built-in MISSING_RAID_BUFF_OPTIONS list; surface them so they can be
+        -- toggled in manual mode too.
+        local merged = MissingRaidBuffs and MissingRaidBuffs.RaidBuffs
+        if type(merged) == "table" then
+            for _, entry in ipairs(merged) do
+                if entry.source == "cdm" then
+                    row(entry.label or entry.key, GUI:CreateFormCheckbox(ctx.detailArea, nil, entry.key, element.buffChecks, onChange, {
+                        description = ns.L["Show this icon when the unit is missing this raid buff."],
+                    }))
+                end
+            end
+        end
     end
 
     AddPlacementWidgets(ctx, element, true)

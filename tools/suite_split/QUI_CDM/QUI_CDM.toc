@@ -24,11 +24,9 @@ cdm\cdm_effects.lua
 cdm\cdm_aura_catalog.lua
 cdm\cdm_aura_runtime.lua
 cdm\cdm_spelldata.lua
-cdm\cdm_blizz_mirror.lua
 cdm\cdm_icon_factory.lua
 cdm\cdm_icon_stack_text.lua
 cdm\cdm_icon_stack_policy.lua
-cdm\cdm_icon_mirror_index.lua
 cdm\cdm_icon_runtime_refresh.lua
 cdm\cdm_icon_update_scheduler.lua
 cdm\cdm_icon_refresh_batch.lua

@@ -661,13 +661,6 @@ function CDMIconRuntimeRefresh.Create(callbacks)
                 local matches = iconAuraInstanceID
                     and ids[iconAuraInstanceID]
                     and (not unit or icon._auraUnit == unit)
-                if not matches and icon and icon._blizzMirrorCooldownID and callbacks.getMirrorStateByCooldownID then
-                    local state = callbacks.getMirrorStateByCooldownID(icon._blizzMirrorCooldownID, icon._blizzMirrorCategory)
-                    local mirrorAuraInstanceID = state and state.auraInstanceID
-                    matches = mirrorAuraInstanceID
-                        and ids[mirrorAuraInstanceID]
-                        and (not unit or state.auraUnit == unit or icon._auraUnit == unit)
-                end
                 if not matches
                     and entryMatchesSpellIdentifierSet(callbacks, icon, entry, spellIDs, hasSpellIDs) then
                     matches = true

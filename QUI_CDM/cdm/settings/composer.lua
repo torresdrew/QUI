@@ -2427,7 +2427,7 @@ local function ShowEntryContextMenu(anchorCell, entry, entryIndex)
     end
 
     menu:SetScript("OnUpdate", function(self)
-        if not MouseIsOver(self) and (IsMouseButtonDown("LeftButton") or IsMouseButtonDown("RightButton")) then
+        if not self:IsMouseOver() and (IsMouseButtonDown("LeftButton") or IsMouseButtonDown("RightButton")) then
             self:Hide()
         end
     end)
@@ -3510,7 +3510,12 @@ RefreshAddList = function()
                             if containerDB.removedSpells then
                                 ns.CDMSpellData:ClearRemoved(containerDB, entryRef._slotID)
                             end
-                            addResult = spellData:AddTrinketSlot(activeContainer, entryRef._slotID, targetRow, itemKind)
+                            addResult = spellData:AddTrinketSlot(activeContainer, entryRef._slotID, targetRow, itemKind, entrySource)
+                        elseif addType == "consumable" then
+                            if containerDB.removedSpells then
+                                ns.CDMSpellData:ClearRemoved(containerDB, addID)
+                            end
+                            addResult = spellData:AddConsumable(activeContainer, addID, targetRow, itemKind, entrySource)
                         elseif addType == "item" then
                             addResult = spellData:AddItem(activeContainer, addID, targetRow, itemKind)
                         else
@@ -3962,7 +3967,7 @@ local function ShowContainerContextMenu(containerKey, anchorFrame)
 
     -- Auto-hide when clicking elsewhere
     menu:SetScript("OnUpdate", function(self)
-        if not MouseIsOver(self) and IsMouseButtonDown("LeftButton") then
+        if not self:IsMouseOver() and IsMouseButtonDown("LeftButton") then
             self:Hide()
         end
     end)

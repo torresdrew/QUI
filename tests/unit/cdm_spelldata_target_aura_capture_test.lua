@@ -79,9 +79,6 @@ local ns = {
             return nil
         end,
     },
-    CDMBlizzMirror = {
-        HandleUnitAuraChanged = noop,
-    },
     CDMIcons = {
         HandleRuntimeRefresh = noop,
     },

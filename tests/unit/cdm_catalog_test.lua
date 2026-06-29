@@ -82,7 +82,7 @@ _G.CooldownViewerSettings = {
 local catalog = assert(ns.CDMCatalog, "CDMCatalog table was not exported")
 local available = catalog.GetAvailableSpellsForContainer("essential", "cooldown", {}, {})
 
-assert(#available == 3, "late-bound C_CooldownViewer should populate learned, unlearned, and untracked add entries")
+assert(#available == 2, "built-in Blizzard CDM picker should use the rendered provider category")
 
 local bySpellID = {}
 for _, entry in ipairs(available) do
@@ -98,9 +98,16 @@ assert(bySpellID[67890].name == "Unlearned CDM Spell", "wrong unlearned spell na
 assert(bySpellID[67890].icon == 87654, "wrong unlearned spell icon")
 assert(bySpellID[67890].isKnown == false, "unlearned CDM spell should retain isKnown=false")
 
-assert(bySpellID[13579], "untracked CDM spell missing from add catalog")
-assert(bySpellID[13579].name == "Untracked CDM Spell", "wrong untracked spell name")
-assert(bySpellID[13579].icon == 76543, "wrong untracked spell icon")
+assert(not bySpellID[13579], "built-in picker must not offer non-rendered raw CDM entries")
+
+local customAvailable = catalog.GetAvailableSpellsForContainer("customCooldown", "cooldown", {}, {})
+local customBySpellID = {}
+for _, entry in ipairs(customAvailable) do
+    customBySpellID[entry.spellID] = entry
+end
+assert(customBySpellID[13579], "custom cooldown picker should still include raw CDM defaults")
+assert(customBySpellID[13579].name == "Untracked CDM Spell", "wrong untracked spell name")
+assert(customBySpellID[13579].icon == 76543, "wrong untracked spell icon")
 
 local seeded, seedReady = catalog.SeedFromBlizzard("essential")
 assert(seedReady == true, "seed should report ready when the tracked provider returns a category list")

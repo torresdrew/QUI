@@ -847,23 +847,29 @@ SafeHookTooltipOnShow = function(tooltip)
 end
 
 -- Detect protected/forbidden tooltip context (world map secure code, etc.).
--- When the tooltip is owned by a protected frame, addon styling would taint
--- the execution context.  Fall back to NineSlice in these cases.
+-- Non-GameTooltip frames still use this as a hard stop before installing hooks.
+local GetTooltipOwnerRestriction
 local function IsProtectedTooltip(tip)
     if not tip then return true end
     if tip.IsForbidden and tip:IsForbidden() then return true end
     if Helpers.FrameIsProtected and Helpers.FrameIsProtected(tip) then return true end
+    local restriction = GetTooltipOwnerRestriction(tip)
+    return restriction ~= nil
+end
+
+GetTooltipOwnerRestriction = function(tip)
+    if not tip then return "missing" end
     local owner = tip.GetOwner and tip:GetOwner()
-    if not owner then return false end
+    if not owner then return nil end
     local current = owner
     for _ = 1, 10 do
         if not current then break end
-        if current.IsForbidden and current:IsForbidden() then return true end
-        if Helpers.FrameIsProtected and Helpers.FrameIsProtected(current) then return true end
+        if current.IsForbidden and current:IsForbidden() then return "forbidden" end
+        if Helpers.FrameIsProtected and Helpers.FrameIsProtected(current) then return "protected" end
         local ok, parent = pcall(current.GetParent, current)
         current = ok and parent or nil
     end
-    return false
+    return nil
 end
 
 local function IsAuraButtonTooltip(tooltip)
@@ -901,14 +907,23 @@ local function HandleForbiddenAuraTooltip(tooltip)
 
     TooltipDebugCount("skin.auraButtonTooltipForbidden")
     auraTooltipProbeObserved = auraTooltipProbeObserved + 1
-    if not TooltipDebugAuraButtonTooltipProbe() then
+    if not IsEnabled() and not TooltipDebugAuraButtonTooltipProbe() then
         return
     end
 
-    -- PTR-only diagnostic: AuraButtonTooltip is forbidden and hidden from the
-    -- global environment. Keep the experiment opt-in and fully pcall-wrapped.
+    local okStable, stable = pcall(IsChromeStable, tooltip)
+    if okStable and stable then
+        TooltipDebugCount("skin.auraButtonTooltipStableSkip")
+        return
+    end
+
+    -- AuraButtonTooltip is forbidden and hidden from the global environment.
+    -- Keep the skin attempt pcall-wrapped so unsupported clients fall back to
+    -- Blizzard chrome instead of breaking the secure AuraContainer path.
     local ok = pcall(ApplyTooltipChrome, tooltip)
-    TooltipDebugCount(ok and "skin.auraButtonTooltipProbeOk" or "skin.auraButtonTooltipProbeFail")
+    local okApplied, applied = pcall(IsChromeStable, tooltip)
+    TooltipDebugCount(ok and okApplied and applied
+        and "skin.auraButtonTooltipSkinOk" or "skin.auraButtonTooltipSkinFail")
 end
 
 HookTooltipOnShow = function(tooltip)
@@ -1090,6 +1105,23 @@ local function SetupBackdropStyleHooks()
         end)
     end
 
+    -- Plain hover tooltips often use GameTooltip:SetOwner(...), then
+    -- SetText/AddLine/Show without passing through GameTooltip_SetDefaultAnchor
+    -- or TooltipDataProcessor. GameTooltip still cannot use a broad Show hook
+    -- or restyle watcher, so SetOwner is the narrowest trigger that catches those
+    -- safe plain-text hovers. Protected owners defer to the later data post-call;
+    -- forbidden owners still fall back, and combat routes through CombatRefreshTooltip.
+    if GameTooltip then
+        hooksecurefunc(GameTooltip, "SetOwner", function(self)
+            if not IsEnabled() or self ~= GameTooltip then return end
+            if GetTooltipOwnerRestriction(self) then
+                TooltipDebugCount("skin.setOwnerDeferred")
+                return
+            end
+            StyleGameTooltip(self)
+        end)
+    end
+
     -- EmbeddedItemTooltip: lives inside GameTooltip for world quest rewards
     -- but also shows standalone (objective tracker)
     if EmbeddedItemTooltip then
@@ -1137,21 +1169,21 @@ local function SetupPostProcessor()
         TooltipDebugCount("skin.postCall")
         if not tooltip or tooltip == EmbeddedItemTooltip then return end
         if IsInternalEmbeddedItemTooltipFrame(tooltip) then return end
-        if IsProtectedTooltip(tooltip) then
-            if tooltip == GameTooltip then
-                FallbackToNineSlice(tooltip)
-            else
-                HandleForbiddenAuraTooltip(tooltip)
-            end
-            return
-        end
-        SafeHookTooltipOnShow(tooltip)
-        -- TAINT SAFETY: Defer GameTooltip to the watcher (same as backdrop hooks).
         if tooltip == GameTooltip then
+            if GetTooltipOwnerRestriction(tooltip) == "forbidden" then
+                FallbackToNineSlice(tooltip)
+                return
+            end
+            SafeHookTooltipOnShow(tooltip)
             TooltipDebugCount("skin.postGameTooltip")
             StyleGameTooltip(tooltip)
             return
         end
+        if IsProtectedTooltip(tooltip) then
+            HandleForbiddenAuraTooltip(tooltip)
+            return
+        end
+        SafeHookTooltipOnShow(tooltip)
         if InCombatLockdown() then
             CombatRefreshTooltip(tooltip)
         else
@@ -1298,8 +1330,10 @@ StyleGameTooltip = function(tooltip)
         return
     end
 
-    -- Protected/world-map secure owner: addon styling would taint. Fall back.
-    if IsProtectedTooltip(tooltip) then
+    -- Forbidden owners are not safe to inspect/style. Protected owners are common
+    -- for action/unit/aura hovers; those are handled by the later data post-call
+    -- path so base GameTooltip chrome can still be refreshed in and out of combat.
+    if GetTooltipOwnerRestriction(tooltip) == "forbidden" then
         FallbackToNineSlice(tooltip)
         return
     end

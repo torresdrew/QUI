@@ -5,8 +5,7 @@
     All bars are simple Frame objects with StatusBar children — no protected
     attributes, eliminating combat taint concerns for frame operations.
 
-    All bar state flows through QUI's resolver pipeline. When a composer entry
-    is backed by a native viewer child, bars render that mirror payload directly.
+    All bar state flows through QUI's resolver pipeline.
 
     Pattern mirrors cdm_icon_renderer.lua pool management.
 ]]
@@ -1397,7 +1396,6 @@ end
 local IsSpellCooldownEntry
 
 local _barCooldownStateContextOptions = {
-    mirrorIdentityPolicy = "entry-or-fallback",
     fallbackContainerKey = "trackedBar",
 }
 
@@ -1411,21 +1409,6 @@ function BuildBarCooldownStateContext(bar, entry, spellID)
     options.totemSlot = bar and bar._totemSlot
     options.useBuffSwipe = not IsSpellCooldownEntry(entry)
     options.skipAuraPhase = nil
-    -- Do NOT feed a cached mirror state into the resolve. GetStateByCooldownID
-    -- returns a per-key PackState table that is only refreshed when it is
-    -- called, and the resolver's cached-state fast path deliberately skips
-    -- re-querying the mirror (asserted by cdm_resolvers_cooldown_state_test).
-    -- So a state cached while an aura was inactive stays frozen at
-    -- mode=inactive even after the buff goes live -- the cross-category
-    -- buff-bar "won't activate until a rebuild / breaks again on /reload" bug.
-    -- A buff-viewer aura (cdID in the buff category) placed in the trackedBar
-    -- container binds correctly but the frozen cache masks its live aura.
-    -- Resolving fresh each poll -- exactly what the icon path does (it never
-    -- feeds a cache) -- reads the live mirror and is cheap at the bar's 0.5s
-    -- cadence; aura-mode fill stays stable via the DurationObject
-    -- userdata-identity check, and cooldown-mode keys off the spellID.
-    options.cachedMirrorState = nil
-    options.cachedMirrorSourceID = nil
     return builder(bar, entry, spellID, options)
 end
 
@@ -1469,9 +1452,6 @@ function CDMBars:UpdateOwnedBarAura(bar)
         countValue = count and count.value or nil,
         countSource = count and count.source or nil,
         hasExpirationTime = r.hasExpirationTime,
-        mirrorBacked = r.mirrorBacked == true,
-        mirrorState = r.mirrorState,
-        mirrorSourceID = r.sourceID,
     })
 
     local _bname = entry and entry.name

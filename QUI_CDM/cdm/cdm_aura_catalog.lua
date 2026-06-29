@@ -23,22 +23,13 @@ local function IsUsableID(id)
     return id > 0
 end
 
-function CDMAuraCatalog.HasDirectAuraChild(mirror, spellID)
-    if not (mirror and mirror.GetDirectCooldownIDForViewer and IsUsableID(spellID)) then
-        return false
-    end
-    return mirror.GetDirectCooldownIDForViewer(spellID, "buff")
-        or mirror.GetDirectCooldownIDForViewer(spellID, "trackedBar")
-end
-
-function CDMAuraCatalog.ResolveEntryAuraDisplay(entryID, abilityToAuraSpellID, mirror)
+function CDMAuraCatalog.ResolveEntryAuraDisplay(entryID, abilityToAuraSpellID)
     if not IsUsableID(entryID) then
         return entryID, false
     end
 
     local mappedID = abilityToAuraSpellID and abilityToAuraSpellID[entryID]
-    if IsUsableID(mappedID)
-        and not CDMAuraCatalog.HasDirectAuraChild(mirror, entryID) then
+    if IsUsableID(mappedID) then
         return mappedID, true
     end
 

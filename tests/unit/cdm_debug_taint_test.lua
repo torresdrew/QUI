@@ -56,13 +56,6 @@ C_Timer = {
 local ns = {
     CDMIcons = {},
     CDMIconFactory = { _iconPools = {} },
-    CDMBlizzMirror = {
-        GetRawCooldownViewerDebugLines = function()
-            return {
-                "[CDM raw] summary categorySetEntries=2 viewerChildren=2 mirrorInfoEntries=2",
-            }
-        end,
-    },
 }
 
 assert(loadfile("QUI_Debug/cdm_debug.lua"))("QUI_Debug", ns)
@@ -93,8 +86,5 @@ _G.QUI_CDM_TAINT_DEBUG = true
 _G.QUI_CDM_TAINT_FILTER = nil
 Debug.Taint("hook.Clear", "cdID", 1)
 assert(lastEditBox.text:find("hook.Clear", 1, true), "global taint debug should render unfiltered labels")
-
-SlashCmdList["QUI_CDMDEBUG"]("raw")
-assert(lastEditBox.text:find("categorySetEntries=2", 1, true), "/cdmdebug raw should render raw lines in the debug EditBox")
 
 print("OK: cdm_debug_taint_test")

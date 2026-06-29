@@ -187,7 +187,7 @@ function CDMLayout.SortIconsByAssignedRow(icons, rows)
 
     local overflow = {}
     for _, icon in ipairs(icons) do
-        local ar = icon._spellEntry and icon._spellEntry._assignedRow
+        local ar = (icon._spellEntry and icon._spellEntry._assignedRow) or icon._assignedRow
         local rn = findRowWithRoom(ar)
         if rn then
             buckets[rn][#buckets[rn] + 1] = icon

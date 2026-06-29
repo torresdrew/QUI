@@ -24,7 +24,6 @@ local DEFAULT_REASONS = {
     spellID = true,
     auraDelta = true,
     usability = true,
-    mirror = true,
     other = true,
 }
 

@@ -115,6 +115,69 @@ function MRB:RegisterActivePredicate(predicate)
     end
 end
 
+-- Merge the player's Blizzard CDM "Group Buff" curated list into the tracked set.
+-- CDM items carry no provider class -> treated as always-relevant per-unit (see
+-- ElementShouldCheckBuff). APIs read from _G at call time so a later
+-- COOLDOWN_VIEWER_DATA_LOADED refresh picks up data that loads after login.
+local function BuildCDMGroupBuffEntries(out)
+    local CV = _G.C_CooldownViewer
+    if not (CV and CV.GetGroupBuffItems) then return end
+    local okItems, items = pcall(CV.GetGroupBuffItems)
+    if not okItems or type(items) ~= "table" then return end
+
+    local hidden = {}
+    local UA = _G.C_UnitAuras
+    if UA and UA.GetHiddenGroupBuffs then
+        local okHidden, hiddenIDs = pcall(UA.GetHiddenGroupBuffs)
+        if okHidden and type(hiddenIDs) == "table" then
+            for _, sid in ipairs(hiddenIDs) do hidden[sid] = true end
+        end
+    end
+
+    -- spellIDs already covered by a built-in entry's ids
+    local builtinIDs = {}
+    for i = 1, #out do
+        local ids = out[i].ids
+        if type(ids) == "table" then
+            for j = 1, #ids do builtinIDs[ids[j]] = true end
+        end
+    end
+
+    local seen = {}
+    for _, item in ipairs(items) do
+        local sid = item.spellID
+        if type(sid) == "number" and not IsSecretValue(sid)
+            and not hidden[sid] and not builtinIDs[sid] and not seen[sid] then
+            seen[sid] = true
+            out[#out + 1] = {
+                key = "cdm:" .. sid,
+                ids = { sid },
+                label = (type(item.name) == "string" and item.name) or ("Spell " .. sid),
+                providerClass = nil,
+                iconSpellID = sid,
+                source = "cdm",
+            }
+        end
+    end
+end
+
+-- Rebuild MRB.RaidBuffs IN PLACE (consumers hold the reference). Built-in entries
+-- stay (they have no `source`); previously-merged CDM entries are dropped and
+-- re-merged, so this is idempotent and safe to call on every refresh event.
+function MRB:RebuildRaidBuffs()
+    for i = #RAID_BUFFS, 1, -1 do
+        if RAID_BUFFS[i].source == "cdm" then
+            table.remove(RAID_BUFFS, i)
+        end
+    end
+    BuildCDMGroupBuffEntries(RAID_BUFFS)
+    for i = 1, #RAID_BUFFS do
+        RegisterSnapshotIDs(RAID_BUFFS[i].ids)
+    end
+end
+
+MRB:RebuildRaidBuffs()
+
 local function SafeBoolean(fn, unit, fallback)
     if not fn then return fallback end
     local ok, value = pcall(fn, unit)
@@ -358,7 +421,10 @@ end
 
 local function ElementShouldCheckBuff(element, buff)
     if element.classDetection ~= false then
+        -- Built-in buffs gate to the player's class; CDM Group Buff entries carry
+        -- no providerClass and are always relevant (show on any unit lacking them).
         return CLASS_TO_BUFF_KEY[GetPlayerClass() or ""] == buff.key
+            or buff.providerClass == nil
     end
     local checks = element.buffChecks
     if type(checks) ~= "table" then
@@ -366,6 +432,7 @@ local function ElementShouldCheckBuff(element, buff)
     end
     return checks[buff.key] == true
 end
+MRB.ElementShouldCheckBuff = ElementShouldCheckBuff
 
 function MRB:BuildMatches(unit, element, out)
     out = out or {}
@@ -478,6 +545,10 @@ local function EnsureEventFrame()
     snapshotEventFrame:RegisterEvent("UNIT_IN_RANGE_UPDATE")
     snapshotEventFrame:RegisterEvent("ENCOUNTER_START")
     snapshotEventFrame:RegisterEvent("CHALLENGE_MODE_START")
+    -- CDM Group Buff list changes (12.x). pcall-guarded: RegisterEvent errors on
+    -- an unknown event name on clients that predate these.
+    pcall(function() snapshotEventFrame:RegisterEvent("COOLDOWN_VIEWER_DATA_LOADED") end)
+    pcall(function() snapshotEventFrame:RegisterEvent("HIDDEN_GROUP_BUFFS_CHANGED") end)
     snapshotEventFrame:SetScript("OnEvent", function(_, event, unit)
         if event == "PLAYER_REGEN_DISABLED" then
             MRB:SnapshotRaidBuffAuras()
@@ -489,6 +560,9 @@ local function EnsureEventFrame()
             RefreshUnit(unit)
         elseif event == "GROUP_ROSTER_UPDATE" then
             C_Timer.After(0.25, RefreshAll)
+        elseif event == "COOLDOWN_VIEWER_DATA_LOADED" or event == "HIDDEN_GROUP_BUFFS_CHANGED" then
+            MRB:RebuildRaidBuffs()
+            RefreshAll()
         else
             RefreshAll()
         end

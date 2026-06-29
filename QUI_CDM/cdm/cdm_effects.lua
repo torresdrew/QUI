@@ -158,12 +158,12 @@ local function GatherIconSpellIDs(icon)
     local runtimeState = GetIconRuntimeState(icon)
     if runtimeState then
         VisitRawSpellID(runtimeState.spellID)
-        local mirrorState = runtimeState.mirrorState or runtimeState.state
-        if mirrorState then
-            VisitRawSpellID(mirrorState.overrideTooltipSpellID)
-            VisitRawSpellID(mirrorState.overrideSpellID)
-            VisitRawSpellID(mirrorState.spellID)
-            local linkedSpellIDs = mirrorState.linkedSpellIDs
+        local state = runtimeState.state
+        if state then
+            VisitRawSpellID(state.overrideTooltipSpellID)
+            VisitRawSpellID(state.overrideSpellID)
+            VisitRawSpellID(state.spellID)
+            local linkedSpellIDs = state.linkedSpellIDs
             if type(linkedSpellIDs) == "table" then
                 for _, linkedSpellID in ipairs(linkedSpellIDs) do
                     VisitRawSpellID(linkedSpellID)
@@ -372,12 +372,12 @@ local function AddIconToGlowMaps(icon)
     local runtimeState = GetIconRuntimeState(icon)
     if runtimeState then
         AddGlowMapID(runtimeState.spellID, icon)
-        local mirrorState = runtimeState.mirrorState or runtimeState.state
-        if mirrorState then
-            AddGlowMapID(mirrorState.overrideTooltipSpellID, icon)
-            AddGlowMapID(mirrorState.overrideSpellID, icon)
-            AddGlowMapID(mirrorState.spellID, icon)
-            local linkedSpellIDs = mirrorState.linkedSpellIDs
+        local state = runtimeState.state
+        if state then
+            AddGlowMapID(state.overrideTooltipSpellID, icon)
+            AddGlowMapID(state.overrideSpellID, icon)
+            AddGlowMapID(state.spellID, icon)
+            local linkedSpellIDs = state.linkedSpellIDs
             if type(linkedSpellIDs) == "table" then
                 for _, linkedSpellID in ipairs(linkedSpellIDs) do
                     AddGlowMapID(linkedSpellID, icon)
@@ -822,15 +822,6 @@ IsOverlayed = function(spellID)
         return IsOverlayQueryActive(spellID)
     end
     return false
-end
-
--- Hand the resolver our authoritative proc-overlay signal so it can tell a
--- genuine proc override (overlay active -> show ready) from a form/spec override
--- that shares the base cooldown (no overlay -> show the cooldown swipe). See
--- IsTransientProcOverrideReady in cdm_resolvers.lua. cdm_resolvers loads before
--- this file, so CDMResolvers is present.
-if ns.CDMResolvers and ns.CDMResolvers.SetProcOverlayProbe then
-    ns.CDMResolvers.SetProcOverlayProbe(IsOverlayed)
 end
 
 local function EvaluateGlowForIcon(icon)
