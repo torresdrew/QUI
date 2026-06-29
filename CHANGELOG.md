@@ -9,6 +9,45 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v5.0.0-alpha5 - 2026-06-29
+
+> ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will
+> not load on the 12.0.x live client. Stay on the v4.x beta line for live realms.
+
+> 🔄 **Profile schema migrated to v48.** Player buffs and debuffs are now two
+> separate aura containers. Your profile is backed up automatically before the
+> migration runs; profiles older than schema v47 are backed up, reset, and
+> reseeded from the starter preset instead of step-migrated.
+
+### Added
+- player buffs and debuffs now render on two independent aura containers, each
+  with its own mover target, so they can be positioned and styled separately.
+- rebuilt the CDM cooldown engine to reposition Blizzard's own cooldown icons in
+  place (SetPoint re-anchor) instead of cloning them — no reparenting of Blizzard
+  frames. Item cooldowns with no spell ID (trinkets, combat/health potions,
+  healthstone) are tracked by slot/category.
+- merged Blizzard's CDM Group Buffs into the missing-raid-buff tracker; CDM-
+  sourced buffs surface as manual toggles in the Auras editor.
+- added an ally maintenance-buff reminder (Beacon of Light / Earth Shield), an
+  action-bar raid-marker bar, and a Bloodlust/Heroism cooldown timer.
+- added CDM buff-icon absorb-amount text, grow-on-apply, and buff-edge options.
+- added Group Frames per-group "Group N" headers, cleanse glow, and a hide-DPS
+  toggle; Unit Frames inline target-of-target, class-color, and per-size raid
+  positions; a composer absorb-bar texture picker.
+- added horizontal scroll with overflow controls to chat window tabs.
+
+### Changed
+- the boss-frame out-of-range alpha is now driven by range-update events instead
+  of a polling ticker.
+
+### Fixed
+- fix(chat): keep player class colors on guild and party/raid senders through
+  combat lockdown and on cold-login-into-combat, including plain-body lines with
+  a secret sender.
+- fix(qol): the focus/cast-alert interrupt sound now follows the same
+  interruptibility signal that gates the alert visual.
+
+
 ## v5.0.0-alpha4 - 2026-06-25
 
 > ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will
