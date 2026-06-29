@@ -11,6 +11,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v4.0.5-beta8 - 2026-06-29
+
+### Fixed
+- Unit Frames: boss frame out-of-range fading is now event-driven, removing the alpha flicker that could occur as bosses moved in and out of range
+
 ## v4.0.5-beta7 - 2026-06-29
 
 ### Added
