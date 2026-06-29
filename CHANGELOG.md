@@ -11,6 +11,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v4.0.5-beta7 - 2026-06-29
+
+### Added
+- Chat: window tabs now scroll horizontally with overflow controls, so tabs beyond the visible width can be reached
+
 ## v4.0.5-beta6 - 2026-06-28
 
 ### Fixed
