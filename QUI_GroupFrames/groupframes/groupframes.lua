@@ -5402,6 +5402,10 @@ local function GRU_DeferredWork()
     QUI_GF:RefreshAllFrames("roster")
     -- Ensure ticker is running (may not have started yet on first roster event)
     StartRangeCheck()
+    -- Re-anchor party target companions to the rebuilt unit→frame map (the
+    -- frame showing partyN may now be a different object after a re-sort).
+    local PartyTargets = ns.QUI_GroupFramePartyTargets
+    if PartyTargets then PartyTargets:Reanchor(QUI_GF) end
 end
 
 -- Coalescing OnUpdate: fires once on the render frame AFTER the GRU burst.
@@ -6194,6 +6198,12 @@ function QUI_GF:RefreshSettings()
     -- offset/toggle) that don't otherwise re-run the header layout pass. Self-guards
     -- combat.
     _state.RefreshAllRaidGroupLabels()
+
+    -- Configure party target companion frames (party-only; self-gates on its
+    -- own enable flag and defers its own secure work in combat). Reaches here
+    -- only out of combat — the in-combat path returned at _pending.refreshSettings.
+    local PartyTargets = ns.QUI_GroupFramePartyTargets
+    if PartyTargets then PartyTargets:Configure(self) end
 end
 
 ---------------------------------------------------------------------------
@@ -6281,6 +6291,12 @@ function QUI_GF:Disable()
     _state.cachedModuleEnabled = false
     UnregisterEvents()
     StopRangeCheck()
+
+    -- Party target companions are unit-watched independently of the headers;
+    -- tear them down so they don't linger when the module is disabled. Teardown
+    -- self-guards combat (stops its ticker now, finishes the hide post-combat).
+    local PartyTargets = ns.QUI_GroupFramePartyTargets
+    if PartyTargets then PartyTargets:Teardown() end
 
     if InCombatLockdown() then return end
 

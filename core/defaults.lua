@@ -3135,6 +3135,17 @@ local defaults = {
                     anchorTo = "BOTTOM",
                     anchorGap = 2,
                 },
+                -- Per-member "target frame" companions (name + health of each
+                -- party member's current target). Party only. See
+                -- groupframes_party_targets.lua.
+                targetFrames = {
+                    enabled = false,
+                    width = 120,
+                    height = 22,
+                    anchorTo = "BOTTOM",   -- BOTTOM/TOP/LEFT/RIGHT of each member frame
+                    anchorGap = 2,
+                    showName = true,
+                },
                 dimensions = {
                     partyWidth = 150, partyHeight = 80,
                 },
