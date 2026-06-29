@@ -16,135 +16,127 @@ local endPos = assert(source:find("%-%-%-+%s*\n%-%- CREATE: Unit Frame", startPo
     "Boss Range Alpha section should end before CreateUnitFrame")
 local body = source:sub(startPos, endPos)
 
-assert(body:find("BOSS_RANGE_CHANGE_CONFIRMATIONS", 1, true),
-    "boss range alpha should debounce range flips instead of applying single-sample changes")
-assert(body:find("local inRange, checkedRange = UnitInRange(unit)", 1, true),
-    "boss range fallback must read UnitInRange's checkedRange result")
-assert(body:find("checkedRange == false", 1, true),
-    "boss range fallback must treat unchecked UnitInRange results as indeterminate")
-assert(body:find("return nil", body:find("checkedRange == false", 1, true), true),
-    "unchecked boss range results should be skipped, not treated as in or out of range")
-assert(body:find("if inRange == nil then", 1, true),
-    "boss range alpha should skip indeterminate samples from spell range checks")
-assert(body:find("bossRange.pending", 1, true),
-    "boss range alpha should keep pending samples until a range change is stable")
-assert(body:find("not bossRange.hostileSpell and not bossRange.friendlySpell", 1, true),
-    "boss range alpha should run when either a hostile or friendly range spell is available")
+-- Event-driven design: range alpha is driven by the engine's edge-triggered
+-- UNIT_IN_RANGE_UPDATE event, never by a polling ticker. The secret in-range
+-- payload is resolved by a secret-safe sink, so there is no per-tick flicker.
+assert(body:find('RegisterUnitEvent("UNIT_IN_RANGE_UPDATE"', 1, true),
+    "boss range alpha should register the per-unit UNIT_IN_RANGE_UPDATE event")
+assert(body:find("boss1", 1, true) and body:find("boss5", 1, true),
+    "boss range alpha should register UNIT_IN_RANGE_UPDATE for boss1-boss5")
+assert(body:find("isInRange", 1, true),
+    "boss range alpha should consume the UNIT_IN_RANGE_UPDATE isInRange payload")
+assert(body:find("EvaluateColorValueFromBoolean", 1, true),
+    "boss range alpha should resolve the secret in-range bool via the C_CurveUtil sink")
+assert(not body:find("C_Timer.NewTicker", 1, true),
+    "boss range alpha must be event-driven, not polled on a ticker")
+assert(not body:find("IsSpellInRange", 1, true),
+    "event-driven boss range alpha must not poll spell range each tick")
+assert(not body:find("BOSS_RANGE_CHANGE_CONFIRMATIONS", 1, true),
+    "event-driven boss range alpha has no debounce-confirmation counter")
 
 do
-    local rangeStart = assert(source:find("local BOSS_RANGE_CHECK_INTERVAL", 1, true),
-        "boss range alpha constants should exist")
+    local rangeStart = assert(source:find("local bossRange = {", 1, true),
+        "boss range alpha state table should exist")
     local rangeEnd = assert(source:find("---------------------------------------------------------------------------\n-- CREATE: Unit Frame",
         rangeStart, true), "boss range alpha section should end before CreateUnitFrame")
     local loader = loadstring or load
-    local chunk = "local UpdateBossRangeAlpha\n"
+    local chunk = "local UpdateBossRangeAlpha, SeedBossFrameRangeAlpha\n"
         .. source:sub(rangeStart, rangeEnd - 1)
-        .. "\nreturn { UpdateBossRangeAlpha = UpdateBossRangeAlpha }"
+        .. "\nreturn { StartBossRangeCheck = StartBossRangeCheck,"
+        .. " UpdateBossRangeAlpha = UpdateBossRangeAlpha,"
+        .. " SeedBossFrameRangeAlpha = SeedBossFrameRangeAlpha }"
 
-    local units = {
-        boss1 = { hostile = true },
-        boss2 = { assist = true },
+    local boss1Alpha
+    local bossFrame = {
+        unit = "boss1",
+        SetAlpha = function(_, alpha) boss1Alpha = alpha end,
     }
-    local boss2Alphas = {}
-    local boss2SpellRangeCalls = 0
-    local unitInRangeCalls = 0
 
     Helpers = {
-        IsLayoutModeActive = function()
-            return false
-        end,
+        IsLayoutModeActive = function() return false end,
     }
     QUI_UF = {
-        frames = {
-            boss1 = {
-                unit = "boss1",
-                SetAlpha = function() end,
-            },
-            boss2 = {
-                unit = "boss2",
-                SetAlpha = function(_, alpha)
-                    boss2Alphas[#boss2Alphas + 1] = alpha
-                end,
-            },
-        },
+        frames = { boss1 = bossFrame },
     }
 
-    function IsSecretValue()
-        return false
-    end
-
     function GetUnitSettings()
-        return {
-            range = {
-                enabled = true,
-                outOfRangeAlpha = 0.4,
-            },
-        }
+        return { range = { enabled = true, outOfRangeAlpha = 0.4 } }
     end
 
-    function UnitClass()
-        return "Priest", "PRIEST"
+    function UnitExists(unit)
+        return unit == "boss1"
     end
 
-    function GetSpecialization()
-        return nil
-    end
-
-    function IsPlayerSpell()
-        return true
-    end
-
-    C_Spell = {
-        IsSpellInRange = function(_, unit)
-            if unit == "boss2" then
-                boss2SpellRangeCalls = boss2SpellRangeCalls + 1
-                return false
-            end
-            return true
+    -- Secret-safe sink: resolve the (possibly secret) boolean to an alpha.
+    C_CurveUtil = {
+        EvaluateColorValueFromBoolean = function(value, ifTrue, ifFalse)
+            if value then return ifTrue end
+            return ifFalse
         end,
     }
 
-    function UnitExists(unit)
-        return units[unit] ~= nil
-    end
+    -- A polling ticker must never be created in the event-driven design.
+    C_Timer = {
+        NewTicker = function()
+            error("boss range alpha must not create a polling ticker")
+        end,
+    }
 
-    function UnitIsDeadOrGhost()
-        return false
-    end
-
-    function UnitCanAttack(_, unit)
-        return units[unit] and units[unit].hostile or false
-    end
-
-    function UnitCanAssist(_, unit)
-        return units[unit] and units[unit].assist or false
-    end
-
-    function UnitIsFriend(_, unit)
-        return units[unit] and units[unit].assist or false
-    end
-
-    function InCombatLockdown()
-        return true
-    end
-
-    function UnitInRange(unit)
-        assert(unit == "boss2", "only the friendly boss unit should fall back to UnitInRange")
-        unitInRangeCalls = unitInRangeCalls + 1
-        return (unitInRangeCalls % 2) == 0, true
+    local eventFrame
+    function CreateFrame()
+        local frame = { unitEvents = {}, events = {} }
+        function frame:RegisterUnitEvent(event, ...)
+            self.unitEvents[event] = { ... }
+        end
+        function frame:RegisterEvent(event)
+            self.events[event] = true
+        end
+        function frame:SetScript(script, handler)
+            if script == "OnEvent" then self.onEvent = handler end
+        end
+        eventFrame = frame
+        return frame
     end
 
     local api = assert(loader(chunk))()
-    for _ = 1, 4 do
-        api.UpdateBossRangeAlpha()
-    end
 
-    assert(boss2SpellRangeCalls == 4,
-        "friendly/healable boss units should use friendly spell range checks")
-    assert(unitInRangeCalls == 0,
-        "friendly/healable boss units should not use UnitInRange for boss range alpha")
-    assert(#boss2Alphas == 1 and boss2Alphas[1] == 0.4,
-        "out-of-range friendly/healable boss units should dim without flickering")
+    api.StartBossRangeCheck()
+    assert(eventFrame, "StartBossRangeCheck should create the shared event frame")
+    local registeredUnits = eventFrame.unitEvents["UNIT_IN_RANGE_UPDATE"]
+    assert(registeredUnits,
+        "boss range alpha should register UNIT_IN_RANGE_UPDATE as a unit event")
+    do
+        local seen = {}
+        for _, u in ipairs(registeredUnits) do seen[u] = true end
+        for i = 1, 5 do
+            assert(seen["boss" .. i],
+                "UNIT_IN_RANGE_UPDATE should be registered for boss" .. i)
+        end
+    end
+    assert(boss1Alpha == 1,
+        "StartBossRangeCheck should baseline existing boss frames to full alpha")
+    assert(eventFrame.onEvent, "boss range alpha should install an OnEvent handler")
+
+    -- Out of range: dim to the configured out-of-range alpha (single apply, no flicker).
+    eventFrame.onEvent(eventFrame, "UNIT_IN_RANGE_UPDATE", "boss1", false)
+    assert(boss1Alpha == 0.4,
+        "out-of-range boss should dim to outOfRangeAlpha via the secret-safe sink")
+
+    -- Back in range: restore full alpha.
+    eventFrame.onEvent(eventFrame, "UNIT_IN_RANGE_UPDATE", "boss1", true)
+    assert(boss1Alpha == 1,
+        "in-range boss should return to full alpha")
+
+    -- A range update for an absent boss slot must not touch existing frames.
+    eventFrame.onEvent(eventFrame, "UNIT_IN_RANGE_UPDATE", "boss3", false)
+    assert(boss1Alpha == 1,
+        "range update for an absent boss slot should not change other frames")
+
+    -- Spawn seed keeps the frame fully visible until the engine reports range.
+    boss1Alpha = nil
+    api.SeedBossFrameRangeAlpha(bossFrame)
+    assert(boss1Alpha == 1,
+        "a freshly spawned boss frame should seed to full alpha")
 end
 
 local auraSource = readAll("QUI_UnitFrames/unitframes/unitframe_auras.lua")
@@ -218,6 +210,12 @@ do
     local units = {}
     function UnitExists(unit)
         return units[unit] ~= nil
+    end
+
+    -- Aura setup runs its full OOC path so the engage-frame assertions below
+    -- exercise real event registration (not the deferred combat queue).
+    function InCombatLockdown()
+        return false
     end
 
     local unitGuidCalls = 0
