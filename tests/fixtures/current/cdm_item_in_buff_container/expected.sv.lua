@@ -425,7 +425,7 @@ return {
             zone = true
           },
           currencyFilter = {},
-          enabled = false,
+          enabled = true,
           reputationFilter = {},
           scanners = {
             lockouts = true,
@@ -2636,7 +2636,7 @@ return {
           },
           borderColorSource = "inherit",
           borderSize = 1,
-          enabled = false,
+          enabled = true,
           fadeRestOpacity = 0,
           fontSize = 12,
           height = 22,
@@ -4007,6 +4007,7 @@ return {
           width = 250
         },
         quiDatatexts = {
+          enabled = true,
           panels = {}
         },
         quiGroupFrames = {
@@ -6316,6 +6317,9 @@ return {
           useRawPixels = true,
           visibility = "always",
           width = 234
+        },
+        skinning = {
+          enabled = true
         },
         skyriding = {
           backgroundColor = {

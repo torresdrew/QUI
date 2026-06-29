@@ -174,11 +174,13 @@ local function run()
     -- Validate all manifest source dirs exist on disk
     local missing = {}
     for _, entry in ipairs(manifest) do
-        for _, src in ipairs(entry.sources) do
-            local path = ROOT .. "/" .. src
-            local ok = os.execute(("test -d %q"):format(path))
-            if ok ~= 0 and ok ~= true then
-                missing[#missing + 1] = src
+        if entry.sources then  -- coreModule entries have no sources; skip them
+            for _, src in ipairs(entry.sources) do
+                local path = ROOT .. "/" .. src
+                local ok = os.execute(("test -d %q"):format(path))
+                if ok ~= 0 and ok ~= true then
+                    missing[#missing + 1] = src
+                end
             end
         end
     end
@@ -215,14 +217,16 @@ local function run()
     -- Pre-count planned moves for validation BEFORE writing anything
     local mvCount = 0
     for _, entry in ipairs(manifest) do
-        for _, src in ipairs(entry.sources) do
-            if src:match("^modules/") then
-                mvCount = mvCount + 1
+        if entry.sources then  -- coreModule entries have no sources; skip them
+            for _, src in ipairs(entry.sources) do
+                if src:match("^modules/") then
+                    mvCount = mvCount + 1
+                end
             end
         end
     end
-    if mvCount ~= 14 then
-        io.write("ERROR: expected 14 git mv lines, got " .. mvCount
+    if mvCount ~= 8 then
+        io.write("ERROR: expected 8 git mv lines, got " .. mvCount
             .. "; update the manifest or this tool\n")
         os.exit(1)
     end
@@ -326,7 +330,9 @@ local function run()
     -----------------------------------------------------------------------
     local folderFiles = {}
     for _, entry in ipairs(manifest) do
-        folderFiles[entry.folder] = {}
+        if entry.folder then  -- skip coreModule entries (no folder)
+            folderFiles[entry.folder] = {}
+        end
     end
     local coreBody = {}
 
@@ -356,16 +362,18 @@ local function run()
     end
 
     -----------------------------------------------------------------------
-    -- Validate: every remaining modules\ line in coreBody must be
-    -- layout / ui / integrations.
+    -- Validate: every remaining modules\ line in coreBody must NOT be
+    -- owned by any sub-addon folder entry (layout/ui/integrations and the
+    -- coreModule dirs all have no dirIdx entry, so they pass silently).
     -----------------------------------------------------------------------
-    local coreDirs = M.CORE_DIRS
+    local dirIdx = buildDirIndex(manifest)
     local hasUnclassified = false
     for _, line in ipairs(coreBody) do
         if line:match("^modules\\") then
             local dir = line:match("^modules\\([^\\]+)\\")
-            if not dir or not coreDirs[dir] then
-                io.write("UNCLASSIFIED core line: " .. line .. "\n")
+            if dir and dirIdx[dir] then
+                io.write("UNCLASSIFIED core line (should be in "
+                    .. dirIdx[dir] .. "): " .. line .. "\n")
                 hasUnclassified = true
             end
         end
@@ -386,29 +394,31 @@ local function run()
     -----------------------------------------------------------------------
     local folderCounts = {}
     for _, entry in ipairs(manifest) do
-        local folder = entry.folder
-        mkdir(ROOT .. "/tools/suite_split/" .. folder)
+        if entry.folder then  -- skip coreModule entries (no folder, no sub-addon TOC)
+            local folder = entry.folder
+            mkdir(ROOT .. "/tools/suite_split/" .. folder)
 
-        local header = M.BuildHeader(entry, interfaceLine, versionLine)
-        local fileLines = folderFiles[folder] or {}
+            local header = M.BuildHeader(entry, interfaceLine, versionLine)
+            local fileLines = folderFiles[folder] or {}
 
-        -- header ends with \n; strip trailing newline so join produces exactly one blank line
-        local tocOut = { (header:gsub("\n$", "")) }
-        tocOut[#tocOut + 1] = ""   -- blank line between header and file list
-        tocOut[#tocOut + 1] = "bootstrap.lua"
-        for _, fl in ipairs(fileLines) do
-            tocOut[#tocOut + 1] = fl
+            -- header ends with \n; strip trailing newline so join produces exactly one blank line
+            local tocOut = { (header:gsub("\n$", "")) }
+            tocOut[#tocOut + 1] = ""   -- blank line between header and file list
+            tocOut[#tocOut + 1] = "bootstrap.lua"
+            for _, fl in ipairs(fileLines) do
+                tocOut[#tocOut + 1] = fl
+            end
+
+            writeFile(ROOT .. "/tools/suite_split/" .. folder .. "/" .. folder .. ".toc",
+                table.concat(tocOut, "\n") .. "\n")
+
+            -- Count actual file lines (not section comments, not empty, not bootstrap)
+            local count = 0
+            for _, fl in ipairs(fileLines) do
+                if fl ~= "" and not fl:match("^#") then count = count + 1 end
+            end
+            folderCounts[folder] = count
         end
-
-        writeFile(ROOT .. "/tools/suite_split/" .. folder .. "/" .. folder .. ".toc",
-            table.concat(tocOut, "\n") .. "\n")
-
-        -- Count actual file lines (not section comments, not empty, not bootstrap)
-        local count = 0
-        for _, fl in ipairs(fileLines) do
-            if fl ~= "" and not fl:match("^#") then count = count + 1 end
-        end
-        folderCounts[folder] = count
     end
 
     -----------------------------------------------------------------------
@@ -437,26 +447,28 @@ local function run()
         "",
     }
     for _, entry in ipairs(manifest) do
-        local folder = entry.folder
-        sh[#sh + 1] = "mkdir -p " .. folder
-        for _, src in ipairs(entry.sources) do
-            -- src is "modules/cdm" → guarded git mv modules/cdm QUI_CDM/cdm
-            local dir = src:match("^modules/(.+)$")
-            local dest = folder .. "/" .. dir
-            sh[#sh + 1] = "if [ -d " .. src .. " ]; then"
-            sh[#sh + 1] = "  [ -e " .. dest .. " ] && { echo \"ERROR: " .. dest
-                .. " exists\" >&2; exit 1; }"
-            sh[#sh + 1] = "  git mv " .. src .. " " .. dest
-            sh[#sh + 1] = "  echo \"moved: " .. src .. " -> " .. dest .. "\""
-            sh[#sh + 1] = "else"
-            sh[#sh + 1] = "  echo \"skip: " .. src .. " already moved\""
-            sh[#sh + 1] = "fi"
+        if entry.folder then  -- skip coreModule entries (no folder, no git mv)
+            local folder = entry.folder
+            sh[#sh + 1] = "mkdir -p " .. folder
+            for _, src in ipairs(entry.sources) do
+                -- src is "modules/cdm" → guarded git mv modules/cdm QUI_CDM/cdm
+                local dir = src:match("^modules/(.+)$")
+                local dest = folder .. "/" .. dir
+                sh[#sh + 1] = "if [ -d " .. src .. " ]; then"
+                sh[#sh + 1] = "  [ -e " .. dest .. " ] && { echo \"ERROR: " .. dest
+                    .. " exists\" >&2; exit 1; }"
+                sh[#sh + 1] = "  git mv " .. src .. " " .. dest
+                sh[#sh + 1] = "  echo \"moved: " .. src .. " -> " .. dest .. "\""
+                sh[#sh + 1] = "else"
+                sh[#sh + 1] = "  echo \"skip: " .. src .. " already moved\""
+                sh[#sh + 1] = "fi"
+            end
+            sh[#sh + 1] = "cp tools/suite_split/" .. folder .. "/" .. folder
+                .. ".toc " .. folder .. "/"
+            sh[#sh + 1] = "cp core/templates/subaddon_bootstrap.lua "
+                .. folder .. "/bootstrap.lua"
+            sh[#sh + 1] = ""
         end
-        sh[#sh + 1] = "cp tools/suite_split/" .. folder .. "/" .. folder
-            .. ".toc " .. folder .. "/"
-        sh[#sh + 1] = "cp core/templates/subaddon_bootstrap.lua "
-            .. folder .. "/bootstrap.lua"
-        sh[#sh + 1] = ""
     end
 
     writeFile(ROOT .. "/tools/suite_split/git_mv.sh",
@@ -469,8 +481,10 @@ local function run()
     io.write(string.format("  git mv commands: %d\n", mvCount))
     io.write("  Per-folder file counts:\n")
     for _, entry in ipairs(manifest) do
-        io.write(string.format("    %-20s  %d files\n",
-            entry.folder, folderCounts[entry.folder] or 0))
+        if entry.folder then  -- skip coreModule entries (no folder)
+            io.write(string.format("    %-20s  %d files\n",
+                entry.folder, folderCounts[entry.folder] or 0))
+        end
     end
     local coreFileCount = 0
     for _, line in ipairs(coreBody) do

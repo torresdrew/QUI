@@ -122,7 +122,7 @@ local ns = {
     },
 }
 
-assert(loadfile("QUI_UI/qol/focuscastalert.lua"))("QUI", ns)
+assert(loadfile("modules/qol/focuscastalert.lua"))("QUI", ns)
 assert(eventFrame and eventFrame.scripts and eventFrame.scripts.OnEvent, "focus cast alert event handler missing")
 
 eventFrame.scripts.OnEvent(eventFrame, "UNIT_SPELLCAST_START", "focus", "CastGUID", 116)

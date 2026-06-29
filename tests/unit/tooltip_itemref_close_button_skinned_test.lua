@@ -109,7 +109,7 @@ local ns = {
     WhenLoggedIn = function(fn) fn() end,
 }
 
-assert(loadfile("QUI_UI/skinning/system/tooltips.lua"))("QUI", ns)
+assert(loadfile("modules/skinning/system/tooltips.lua"))("QUI", ns)
 
 -- ItemRefTooltip.CloseButton must have been routed through SkinCloseButton.
 local sawItemRefClose = false

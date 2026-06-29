@@ -425,7 +425,7 @@ return {
             zone = true
           },
           currencyFilter = {},
-          enabled = false,
+          enabled = true,
           reputationFilter = {},
           scanners = {
             lockouts = true,
@@ -2636,7 +2636,7 @@ return {
           },
           borderColorSource = "inherit",
           borderSize = 1,
-          enabled = false,
+          enabled = true,
           fadeRestOpacity = 0,
           fontSize = 12,
           height = 22,
@@ -4007,6 +4007,7 @@ return {
           width = 250
         },
         quiDatatexts = {
+          enabled = true,
           panels = {}
         },
         quiGroupFrames = {
@@ -6317,6 +6318,9 @@ return {
           visibility = "always",
           width = 234
         },
+        skinning = {
+          enabled = true
+        },
         skyriding = {
           backgroundColor = {
             [1] = 0.10199999999999999,
@@ -7221,7 +7225,6 @@ return {
             [3418] = false,
             [3420] = false
           },
-          enabled = true,
           reputationFilter = {
             [21] = false,
             [47] = false,
@@ -9542,7 +9545,6 @@ return {
         },
         infobar = {
           bgOpacity = 35,
-          enabled = true,
           height = 25,
           micromenu = {
             buttons = {

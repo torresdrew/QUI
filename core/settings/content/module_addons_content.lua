@@ -1,29 +1,37 @@
 ---------------------------------------------------------------------------
--- Module Addons — one toggle row per QUI sub-addon.
+-- Module Addons — one toggle row per QUI sub-addon or core module.
 --
--- The toggle drives Blizzard's addon enable state, which controls whether
--- the sub-addon's code is present at all (zero cost when off after reload).
+-- Two row shapes:
 --
--- Three entries carry a manifest legacyFlag (chat.enabled, quiGroupFrames.enabled, bags.enabled).
--- These flags act as dormant guards: their module's own init skips setup when
--- the flag is false.  For those entries the row shows OFF when either the
--- addon is disabled OR the flag is false, and heals the flag to true on
--- enable so the module becomes fully active after reload.
+--   FOLDER ROW (entry.folder): drives Blizzard's addon enable state.
+--     The toggle controls whether the sub-addon's code is present at all
+--     (zero cost when off after reload).
 --
---   isEnabled  (with legacyFlag): IsModuleAddonEnabled(folder) AND flag ~= false
---   setEnabled(true):  write flag → true (if path materialized), then
---                      SetModuleAddonEnabled(folder, true)
---   setEnabled(false): write flag → false (same nil-safe walk), then
---                      SetModuleAddonEnabled(folder, false)
+--     Three entries carry a manifest legacyFlag (chat.enabled,
+--     quiGroupFrames.enabled, bags.enabled). These flags act as dormant
+--     guards: their module's own init skips setup when the flag is false.
+--     For those entries the row shows OFF when either the addon is disabled
+--     OR the flag is false, and heals the flag to true on enable so the
+--     module becomes fully active after reload.
 --
---   off             → DisableAddOn + reload prompt (zero cost next reload)
---   on  (LOD class) → EnableAddOn + LoadAddOn live, no reload needed
---   on  (login cls) → EnableAddOn + reload prompt
---   on  (dep disabled) → dependency prompt (enable dep + retry)
---   on  (legacyFlag, already loaded) → healed flag + reload prompt
---       Enabling a dormant-guarded module that is already loaded (login-class)
---       returns "loaded" from the loader, but the module's activation runs at
---       load time — so a reload is still needed when the flag was false.
+--       isEnabled  (with legacyFlag): IsModuleAddonEnabled(folder) AND flag ~= false
+--       setEnabled(true):  write flag → true (if path materialized), then
+--                          SetModuleAddonEnabled(folder, true)
+--       setEnabled(false): write flag → false (same nil-safe walk), then
+--                          SetModuleAddonEnabled(folder, false)
+--
+--       off             → DisableAddOn + reload prompt (zero cost next reload)
+--       on  (LOD class) → EnableAddOn + LoadAddOn live, no reload needed
+--       on  (login cls) → EnableAddOn + reload prompt
+--       on  (dep disabled) → dependency prompt (enable dep + retry)
+--       on  (legacyFlag, already loaded) → healed flag + reload prompt
+--
+--   CORE-MODULE ROW (entry.coreModule): a module that ships inside the main
+--     QUI addon (no separate sub-addon folder). The toggle writes a profile
+--     flag and shows a reload prompt; no EnableAddOn/DisableAddOn is called.
+--
+--       isEnabled:      ReadLegacyFlag(entry.flag)
+--       setEnabled(v):  WriteLegacyFlag(entry.flag, v) + ShowReloadPrompt()
 --
 -- "not installed" (folder absent from disk): the row is silently skipped so
 -- the panel never shows a toggle for a sub-addon the user hasn't deployed.
@@ -52,13 +60,14 @@ local DESCS = {
     QUI_GroupFrames  = ns.L["Party and raid frames."],
     QUI_ResourceBars = ns.L["Personal resource and power bars."],
     QUI_UnitFrames   = ns.L["Player, target, focus, and boss frames."],
-    QUI_UI           = ns.L["Skinning, minimap, datatexts, info bar, QoL, and the alt roster."],
     QUI_DamageMeter  = ns.L["Built-in damage meter."],
     QUI_Bags         = ns.L["Bag, bank, guild bank, and storage windows with a cross-character cache."],
-    -- Host module rows (per-module flag in profile; no addon enable/disable).
+    -- Core-module rows (profile-flag toggle; no addon enable/disable; reload required).
     minimap          = ns.L["Minimap reskin and button drawer."],
     infobar          = ns.L["Full-width top/bottom info bar with datatext widgets."],
     alts             = ns.L["Alt roster window over the account-wide character cache."],
+    datatexts        = ns.L["Standalone datatext panels."],
+    skinning         = ns.L["Reskin of Blizzard frames, tooltips, and windows."],
 }
 
 ---------------------------------------------------------------------------
@@ -144,13 +153,14 @@ local LABELS = {
     QUI_GroupFrames  = ns.L["Group Frames"],
     QUI_ResourceBars = ns.L["Resource Bars"],
     QUI_UnitFrames   = ns.L["Unit Frames"],
-    QUI_UI           = ns.L["UI Bundle"],
     QUI_DamageMeter  = ns.L["Damage Meter"],
     QUI_Bags         = ns.L["Bags"],
-    -- Host module rows (keyed by module id).
+    -- Core-module rows (keyed by coreModule id).
     minimap          = ns.L["Minimap"],
     infobar          = ns.L["Info Bar"],
     alts             = ns.L["Alts"],
+    datatexts        = ns.L["Datatexts"],
+    skinning         = ns.L["Skinning"],
 }
 
 ---------------------------------------------------------------------------
@@ -191,11 +201,11 @@ for _, entry in ipairs(ns.AddonManifest) do
     local folder    = entry.folder
     local flagPath  = entry.legacyFlag  -- nil for most folder entries
 
-    if entry.hostAddon then
-        -- HOST-BACKED ENTRY: a module that ships inside QUI_UI.
+    if entry.hostAddon or entry.coreModule then
+        -- CORE-MODULE ENTRY: a module that ships inside the main QUI addon.
         -- Register a per-module flag row (reads/writes profile flag; no
         -- EnableAddOn/DisableAddOn — a reload is needed for dormancy changes).
-        local mod = entry.module
+        local mod = entry.module or entry.coreModule
         local hostFlagPath = entry.flag  -- e.g. { "minimap", "enabled" }
         if LABELS[mod] then             -- only modules with a surfaced row
             local hostEntry = {

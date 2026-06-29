@@ -306,7 +306,7 @@ local defaults = {
         },
 
         alts = {
-            enabled = false, -- master switch (Module Addons row)
+            enabled = true, -- master switch (Module Addons row)
             window = { point = "CENTER", x = 0, y = 0, width = 920, height = 540 },
             columns = {
                 ilvl = true, gold = true, played = true, rested = true,
@@ -3908,12 +3908,17 @@ local defaults = {
 
         -- Additional Datapanels (user-created, independent of minimap)
         quiDatatexts = {
+            enabled = true,  -- master switch (Module Addons row); gates the standalone datatext panels
             panels = {},  -- Array of panel configurations
+        },
+
+        skinning = {
+            enabled = true,  -- master switch (Module Addons row); gates all Blizzard-frame skinning
         },
 
         -- Info Bar (full-width top/bottom datatext bar — QUI_InfoBar module)
         infobar = {
-            enabled = false,
+            enabled = true,
             position = "TOP",            -- "TOP" | "BOTTOM"
             height = 22,
             fontSize = 12,

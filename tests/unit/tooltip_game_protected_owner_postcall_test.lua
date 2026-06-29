@@ -157,7 +157,7 @@ local ns = {
     WhenLoggedIn = function(fn) fn() end,
 }
 
-assert(loadfile("QUI_UI/skinning/system/tooltips.lua"))("QUI", ns)
+assert(loadfile("modules/skinning/system/tooltips.lua"))("QUI", ns)
 
 local itemPostCall = assert(callbacks[Enum.TooltipDataType.Item],
     "tooltip skinning must register an item TooltipDataProcessor post-call")

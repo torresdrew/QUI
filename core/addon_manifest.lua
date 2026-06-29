@@ -9,14 +9,6 @@
 --     folder     — sibling addon folder name
 --     class      — "login" (loads with the loading screen) | "lod" (LoadOnDemand,
 --                  loaded by the core post-login, in manifest order)
---     selfBootstrap — true on a lod entry whose eager tier loads via the
---                  [Bootstrap] TOC directive at startup; the core's automatic
---                  LOD passes (eager + staggered) MUST skip it (a LoadAddOn
---                  there would also pull the lazy remainder, defeating the
---                  lazy tier). The lazy remainder loads via
---                  AddonLoader:LoadLazyBlock on its trigger; a live bundle
---                  enable from the Module Addons row still loads via
---                  SetModuleAddonEnabled (LoadNow, deliberate user action).
 --     legacyFlag — profile-DB path of the module's dormant-guard flag, or nil.
 --                  Present on entries (QUI_Chat, QUI_GroupFrames, QUI_Bags) that
 --                  default to off for stock-chat / opt-in users.  Consumed by the
@@ -27,16 +19,13 @@
 --                  inside the sub-addon each keeps its dir name (modules/cdm →
 --                  QUI_CDM/cdm/...)
 --
---   HOST-BACKED ENTRY — a module that ships inside another folder's addon (its
---   host) rather than as its own sibling folder. Has NO `folder` field, so the
---   loader and folder/TOC-checking consumers skip it (see the `entry.folder`
---   guards in core/addon_loader.lua and core/settings/content/module_addons_content.lua).
---   Only minimap/infobar/alts have individual per-module flag rows (they gate
---   cleanly at init).  skinning/datatexts/qol ride the QUI_UI bundle and have
---   no individual toggle.
+--   CORE-MODULE ENTRY — a module that ships inside the main QUI addon (no
+--   separate folder, no host addon). Has NO `folder` field, so the loader and
+--   folder/TOC-checking consumers skip it (see the `entry.folder` guards in
+--   core/addon_loader.lua and core/settings/content/module_addons_content.lua).
+--   Rendered as a profile-flag toggle row by module_addons_content.lua.
 --   Fields:
---     hostAddon  — folder name of the sibling addon that physically ships this module
---     module     — the module's top-level subdir inside the host (e.g. "minimap")
+--     coreModule — the module identifier (e.g. "minimap")
 --     flag       — profile-DB path of the module's enable flag.
 ---------------------------------------------------------------------------
 local MANIFEST = {
@@ -50,18 +39,17 @@ local MANIFEST = {
     { folder = "QUI_UnitFrames",   class = "login",                                                  sources = { "modules/unitframes" } },
     -- lod class: loaded post-login in THIS order (cosmetics first).
     --
-    -- QUI_UI is the merged cosmetic + utility bundle: the former QUI_Skinning,
-    -- QUI_Datatexts, QUI_Minimap, QUI_InfoBar, QUI_QoL and QUI_Alts sub-addons
-    -- now ship as module subdirs inside one LOD folder. Intra-bundle file load
-    -- order (datatexts before minimap so the 3-slot panel finds the registry;
-    -- minimap eager-skinned before first render; infobar after its datatext
-    -- registry) is governed by QUI_UI/QUI_UI.toc, not by this manifest.
-    { folder = "QUI_UI", class = "lod", selfBootstrap = true, sources = {} },
-    -- Host-backed entries: the three per-module flag rows that gate cleanly.
-    -- skinning/datatexts/qol ride the QUI_UI bundle and have no individual row.
-    { hostAddon = "QUI_UI", module = "minimap",   flag = { "minimap",   "enabled" } },
-    { hostAddon = "QUI_UI", module = "infobar",   flag = { "infobar",   "enabled" } },
-    { hostAddon = "QUI_UI", module = "alts",      flag = { "alts",      "enabled" } },
+    -- coreModule entries: modules that now ship inside the main QUI addon and
+    -- carry a profile-flag toggle (no folder → loader/TOC consumers skip them;
+    -- no separate sub-addon). Rendered as profile-flag
+    -- rows by core/settings/content/module_addons_content.lua. qol has no entry
+    -- here — it stays always-on; its per-feature general.* flags toggle each
+    -- QoL feature individually.
+    { coreModule = "minimap",   flag = { "minimap",      "enabled" } },
+    { coreModule = "infobar",   flag = { "infobar",      "enabled" } },
+    { coreModule = "alts",      flag = { "alts",         "enabled" } },
+    { coreModule = "datatexts", flag = { "quiDatatexts", "enabled" } },
+    { coreModule = "skinning",  flag = { "skinning",     "enabled" } },
     { folder = "QUI_DamageMeter",  class = "lod",                                                    sources = { "modules/damage_meter" } },
     -- Opt-in, default-off (legacyFlag bags.enabled): ships enabled but stays
     -- dormant until the user turns it on via the Module Addons row. Loads via

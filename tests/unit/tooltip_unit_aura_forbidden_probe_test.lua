@@ -22,8 +22,8 @@ local function assertOrder(text, first, second, reason)
     assert(firstIndex < secondIndex, reason)
 end
 
-local tooltipSkin = readFile("QUI_UI/skinning/system/tooltips.lua")
-local tooltipQOL = readFile("QUI_UI/qol/tooltip.lua")
+local tooltipSkin = readFile("modules/skinning/system/tooltips.lua")
+local tooltipQOL = readFile("modules/qol/tooltip.lua")
 
 assertContains(tooltipSkin, "local auraTooltipType = Enum.TooltipDataType.UnitAura or Enum.TooltipDataType.Aura",
     "tooltip skinning must resolve the aura tooltip type with a client-version fallback")
@@ -224,7 +224,7 @@ local ns = {
     WhenLoggedIn = function(fn) fn() end,
 }
 
-assert(loadfile("QUI_UI/skinning/system/tooltips.lua"))("QUI", ns)
+assert(loadfile("modules/skinning/system/tooltips.lua"))("QUI", ns)
 local auraPostCall = assert(callbacks[Enum.TooltipDataType.UnitAura],
     "tooltip skinning must register a UnitAura TooltipDataProcessor callback")
 

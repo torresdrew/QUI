@@ -1,10 +1,12 @@
 -- tests/unit/qui_ui_module_dormancy_test.lua
--- Verifies per-module dormancy defaults (C8r):
---   minimap.enabled   = true   (default-on, pre-existing key)
---   infobar.enabled   = false  (bar opt-in — unchanged behaviour)
---   alts.enabled      = false  (opt-in — unchanged behaviour)
--- skinning/datatexts/qol flags were C7-only and have been removed; they ride
--- the QUI_UI bundle and have no individual toggle (no init coordinator).
+-- Verifies per-module dormancy defaults after the coreModule refactor:
+--   minimap.enabled      = true   (default-on)
+--   infobar.enabled      = true   (default-on; infobar ships inside core)
+--   alts.enabled         = true   (default-on; alts ships inside core)
+--   skinning.enabled     = true   (now gated: coreModule entry + Module Addons row)
+--   quiDatatexts.enabled = true   (now gated: coreModule entry, DB key is quiDatatexts)
+--   qol.enabled          = nil/absent (qol stays always-on; no master flag)
+--
 -- Also smoke-tests the minimap init gate: InitializeOnce returns without
 -- touching _initialized when minimap.enabled == false.
 -- Run: lua5.1 tests/unit/qui_ui_module_dormancy_test.lua
@@ -26,37 +28,39 @@ end
 
 -- ── 1. Default values ────────────────────────────────────────────────────────
 
--- skinning/datatexts/qol blocks must NOT exist at all (C7 removed; ride bundle).
-check("skinning block absent (rides QUI_UI bundle)",
-    profile.skinning == nil or (profile.skinning and profile.skinning.enabled == nil),
-    "profile.skinning.enabled must not be set — skinning has no individual gate")
-check("datatexts block absent (rides QUI_UI bundle)",
-    profile.datatexts == nil or (profile.datatexts and profile.datatexts.enabled == nil),
-    "profile.datatexts.enabled must not be set — datatexts has no individual gate")
-check("qol block absent (rides QUI_UI bundle)",
-    profile.qol == nil or (profile.qol and profile.qol.enabled == nil),
-    "profile.qol.enabled must not be set — qol has no individual gate")
+-- skinning and datatexts now have master enable flags (coreModule entries).
+check("skinning block exists with .enabled gate",
+    type(profile.skinning) == "table" and profile.skinning.enabled == true,
+    "profile.skinning.enabled must be true — skinning is now a gated coreModule")
+check("quiDatatexts block exists with .enabled gate",
+    type(profile.quiDatatexts) == "table" and profile.quiDatatexts.enabled == true,
+    "profile.quiDatatexts.enabled must be true — datatexts is now a gated coreModule (DB key=quiDatatexts)")
+
+-- qol stays always-on: no master enable flag (per-feature general.* flags only).
+check("qol block has no .enabled gate (qol always-on)",
+    profile.qol == nil or (type(profile.qol) == "table" and profile.qol.enabled == nil),
+    "profile.qol.enabled must not be set — qol has no individual master gate")
 
 check("minimap block exists",
     type(profile.minimap) == "table",
     "profile.minimap must be a table")
 check("minimap.enabled default true",
     profile.minimap and profile.minimap.enabled == true,
-    "minimap.enabled must default to true (pre-existing key)")
+    "minimap.enabled must default to true")
 
 check("infobar block exists",
     type(profile.infobar) == "table",
     "profile.infobar must be a table")
-check("infobar.enabled default false (bar opt-in unchanged)",
-    profile.infobar and profile.infobar.enabled == false,
-    "infobar.enabled must remain false — bar is opt-in; changing it would show the bar for everyone")
+check("infobar.enabled default true",
+    profile.infobar and profile.infobar.enabled == true,
+    "infobar.enabled must default to true — infobar ships inside core")
 
 check("alts block exists",
     type(profile.alts) == "table",
     "profile.alts must be a table")
-check("alts.enabled default false (opt-in unchanged)",
-    profile.alts and profile.alts.enabled == false,
-    "alts.enabled must remain false — alts is opt-in")
+check("alts.enabled default true",
+    profile.alts and profile.alts.enabled == true,
+    "alts.enabled must default to true — alts ships inside core")
 
 -- ── 2. Minimap init gate smoke-test ──────────────────────────────────────────
 -- Stub the minimal WoW + QUI globals needed to load minimap.lua without
@@ -131,7 +135,7 @@ local initializeCalled = false
 -- Initialize ran; the gate must NOT set _initialized.
 
 local ok, err = pcall(function()
-    assert(loadfile("QUI_UI/minimap/minimap.lua"))("QUI_UI", ns)
+    assert(loadfile("modules/minimap/minimap.lua"))("QUI", ns)
 end)
 
 if not ok then

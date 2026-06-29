@@ -77,7 +77,7 @@ local ns = {
     },
 }
 
-assert(loadfile("QUI_UI/qol/tooltip_provider.lua"))("QUI", ns)
+assert(loadfile("modules/qol/tooltip_provider.lua"))("QUI", ns)
 
 local provider = assert(ns.TooltipProvider, "tooltip provider should be exported")
 local cdmIcon = makeFrame("QUICDMIcon1")

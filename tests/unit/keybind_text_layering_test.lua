@@ -273,7 +273,7 @@ do
     addon.FormatKeybind = coreNs.FormatKeybind
 end
 
-assert(loadfile("QUI_UI/utility/keybinds.lua"))("QUI", addon)
+assert(loadfile("modules/utility/keybinds.lua"))("QUI", addon)
 
 addon.Keybinds.UpdateViewer("customQuality")
 

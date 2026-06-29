@@ -20,7 +20,7 @@ end
 
 local buffBorders = readFile("QUI_ActionBars/actionbars/buffborders.lua")
 local cdmBars = readFile("QUI_CDM/cdm/cdm_bar_renderer.lua")
-local partyKeystones = readFile("QUI_UI/dungeon/party_keystones.lua")
+local partyKeystones = readFile("modules/dungeon/party_keystones.lua")
 
 assert(buffBorders:find("local function GetBorderSizePx", 1, true),
     "buff border module must convert configured border size through the pixel helper")
@@ -48,12 +48,12 @@ local rawBackdropFiles = {
     "QUI_GroupFrames/groupframes/groupframes_editmode.lua",
     "QUI_GroupFrames/groupframes/settings/group_frames_auras_editor.lua",
     "core/diagnostics_console.lua",
-    "QUI_UI/utility/settings/keybinds_content.lua",
+    "modules/utility/settings/keybinds_content.lua",
     "QUI_Chat/chat/settings/chat_frame1_provider.lua",
-    "QUI_UI/trackers/preytracker.lua",
+    "modules/trackers/preytracker.lua",
     "modules/layout/layoutmode_settings.lua",
     "QUI_CDM/cdm/settings/composer.lua",
-    "QUI_UI/qol/consumablecheck.lua",
+    "modules/qol/consumablecheck.lua",
 }
 
 for _, path in ipairs(rawBackdropFiles) do
@@ -63,9 +63,9 @@ for _, path in ipairs(rawBackdropFiles) do
 end
 
 local characterBorderFiles = {
-    "QUI_UI/skinning/frames/character.lua",
-    "QUI_UI/skinning/character_pane/character.lua",
-    "QUI_UI/skinning/character_pane/inspect.lua",
+    "modules/skinning/frames/character.lua",
+    "modules/skinning/character_pane/character.lua",
+    "modules/skinning/character_pane/inspect.lua",
 }
 
 for _, path in ipairs(characterBorderFiles) do
@@ -81,11 +81,11 @@ for _, path in ipairs(characterBorderFiles) do
 end
 
 local rawBorderOffsetFiles = {
-    "QUI_UI/qol/actiontracker.lua",
-    "QUI_UI/skinning/gameplay/keystone.lua",
-    "QUI_UI/skinning/notifications/loot.lua",
-    "QUI_UI/skinning/frames/overrideactionbar.lua",
-    "QUI_UI/skinning/frames/instanceframes.lua",
+    "modules/qol/actiontracker.lua",
+    "modules/skinning/gameplay/keystone.lua",
+    "modules/skinning/notifications/loot.lua",
+    "modules/skinning/frames/overrideactionbar.lua",
+    "modules/skinning/frames/instanceframes.lua",
 }
 
 for _, path in ipairs(rawBorderOffsetFiles) do
@@ -97,9 +97,9 @@ for _, path in ipairs(rawBorderOffsetFiles) do
 end
 
 local rawTwoPixelBorderOffsetFiles = {
-    "QUI_UI/skinning/gameplay/powerbaralt.lua",
-    "QUI_UI/skinning/frames/statustracking.lua",
-    "QUI_UI/skinning/notifications/alerts.lua",
+    "modules/skinning/gameplay/powerbaralt.lua",
+    "modules/skinning/frames/statustracking.lua",
+    "modules/skinning/notifications/alerts.lua",
 }
 
 for _, path in ipairs(rawTwoPixelBorderOffsetFiles) do
@@ -134,7 +134,7 @@ assert(not layoutModeUi:find("guide:SetWidth%(1%)"),
 
 -- The skinning engine was relocated into core/uikit.lua (loaded first, exposed as
 -- both ns.UIKit and ns.SkinBase). The scale-refreshing pixel backdrop helper now
--- lives there; QUI_UI/skinning/base.lua is a thin stub.
+-- lives there; modules/skinning/base.lua is a thin stub.
 local skinBase = readFile("core/uikit.lua")
 assert(skinBase:find("function SkinBase.ApplyPixelBackdrop", 1, true),
     "skinning base must expose a scale-refreshing pixel backdrop helper")
@@ -160,7 +160,7 @@ for _, path in ipairs(listLuaFiles("modules/skinning")) do
     assert(not src:find("line:SetHeight%(1%)"),
         path .. " must not create one-pixel skinning lines with raw 1 UI-unit height")
 
-    if path ~= "QUI_UI/skinning/base.lua" then
+    if path ~= "modules/skinning/base.lua" then
         local pos = 1
         while true do
             local startPos = src:find(":SetBackdrop%(%s*%{", pos)

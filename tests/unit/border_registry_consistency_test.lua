@@ -47,7 +47,7 @@ for _, k in ipairs(EXPECTED_KEYS) do expectedLookup[k] = true end
 -- the files known to Register (kept in sync with grep) if `find` is unavailable.
 local function listModuleLuaFiles()
     local files = {}
-    local p = io.popen and io.popen("find QUI_ActionBars QUI_CDM QUI_Chat QUI_DamageMeter QUI_GroupFrames QUI_ResourceBars QUI_UI QUI_UnitFrames modules/layout modules/ui modules/integrations -name '*.lua' -type f 2>/dev/null")
+    local p = io.popen and io.popen("find QUI_ActionBars QUI_CDM QUI_Chat QUI_DamageMeter QUI_GroupFrames QUI_ResourceBars QUI_UnitFrames modules -name '*.lua' -type f 2>/dev/null")
     if p then
         for line in p:lines() do
             files[#files + 1] = line
@@ -59,22 +59,22 @@ local function listModuleLuaFiles()
     return {
         "QUI_CDM/cdm/cdm_container_border_registry.lua",
         "QUI_Chat/chat/chat.lua",
-        "QUI_UI/combat/rotationassist.lua",
+        "modules/combat/rotationassist.lua",
         "QUI_DamageMeter/damage_meter/damage_meter.lua",
-        "QUI_UI/dungeon/brez_counter.lua",
-        "QUI_UI/datatexts/datapanels.lua",
-        "QUI_UI/minimap/minimap.lua",
-        "QUI_UI/qol/actiontracker.lua",
-        "QUI_UI/qol/combattimer.lua",
-        "QUI_UI/qol/crosshair.lua",
-        "QUI_UI/qol/skyriding.lua",
-        "QUI_UI/qol/xptracker.lua",
-        "QUI_UI/skinning/gameplay/mplus_timer.lua",
-        "QUI_UI/skinning/notifications/alerts.lua",
-        "QUI_UI/skinning/notifications/readycheck.lua",
-        "QUI_UI/skinning/system/tooltips.lua",
-        "QUI_UI/trackers/atonement_counter.lua",
-        "QUI_UI/trackers/preytracker.lua",
+        "modules/dungeon/brez_counter.lua",
+        "modules/datatexts/datapanels.lua",
+        "modules/minimap/minimap.lua",
+        "modules/qol/actiontracker.lua",
+        "modules/qol/combattimer.lua",
+        "modules/qol/crosshair.lua",
+        "modules/qol/skyriding.lua",
+        "modules/qol/xptracker.lua",
+        "modules/skinning/gameplay/mplus_timer.lua",
+        "modules/skinning/notifications/alerts.lua",
+        "modules/skinning/notifications/readycheck.lua",
+        "modules/skinning/system/tooltips.lua",
+        "modules/trackers/atonement_counter.lua",
+        "modules/trackers/preytracker.lua",
         "QUI_UnitFrames/unitframes/unitframes.lua",
     }
 end
@@ -88,7 +88,7 @@ local function readFile(path)
 end
 
 local function assertBorderColoringRefreshBroadcast()
-    local src = assert(readFile("QUI_UI/skinning/settings/border_coloring_content.lua"),
+    local src = assert(readFile("modules/skinning/settings/border_coloring_content.lua"),
         "cannot open border coloring settings file")
 
     local refreshPos = src:find("local function RefreshBorderColoring", 1, true)

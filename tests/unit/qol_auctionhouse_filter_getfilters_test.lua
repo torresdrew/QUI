@@ -88,7 +88,7 @@ local ns = {
     },
 }
 
-assert(loadfile("QUI_UI/qol/qol.lua"))("QUI", ns)
+assert(loadfile("modules/qol/qol.lua"))("QUI", ns)
 
 local qolFrame = assert(createdFrames[1], "qol.lua should create its event frame first")
 local onEvent = assert(qolFrame.scripts.OnEvent, "qol.lua should register an OnEvent handler")

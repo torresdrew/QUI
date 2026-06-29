@@ -8,12 +8,12 @@ local T = assert(loadfile("tools/split_suite_tocs.lua"))()
 local manifest = assert(loadfile("core/addon_manifest.lua"))()
 assert(T.ClassifyLine([[modules\cdm\cdm_shared.lua]], manifest) == "QUI_CDM")
 assert(T.ClassifyLine([[modules\damage_meter\damage_meter.lua]], manifest) == "QUI_DamageMeter")
--- The six cosmetic modules merged into the host-backed QUI_UI bundle: their
--- manifest entries no longer carry a `modules/<dir>` source mapping, so the
--- one-shot splitter classifies them as core-or-unknown (nil), like any dir it
--- no longer owns. (The merge is governed by QUI_UI/QUI_UI.toc, not this tool.)
-assert(T.ClassifyLine([[modules\dungeon\mplus_timer.lua]], manifest) == nil, "merged into QUI_UI; no longer split-owned")
-assert(T.ClassifyLine([[modules\skinning\base.lua]], manifest) == nil, "merged into QUI_UI; no longer split-owned")
+-- The coreModule dirs (skinning, minimap, infobar, alts, datatexts, qol,
+-- combat, dungeon, trackers, utility) ship inside the main QUI addon; their
+-- manifest entries carry no `sources` mapping, so the one-shot splitter
+-- classifies them as core (nil) — like any dir it does not own.
+assert(T.ClassifyLine([[modules\dungeon\mplus_timer.lua]], manifest) == nil, "coreModule dir; ships in QUI core")
+assert(T.ClassifyLine([[modules\skinning\base.lua]], manifest) == nil, "coreModule dir; ships in QUI core")
 assert(T.ClassifyLine([[modules\layout\anchoring.lua]], manifest) == nil, "layout stays core")
 assert(T.ClassifyLine([[core\utils.lua]], manifest) == nil)
 assert(T.ClassifyLine([[# == comment ==]], manifest) == nil)
@@ -28,12 +28,12 @@ assert(T.RewriteForSubAddon([[modules\damage_meter\damage_meter.lua]]) == [[dama
 -- dir the splitter still owns (damage_meter → QUI_DamageMeter).
 assert(T.RewriteOptionsLine([[..\QUI\modules\damage_meter\settings\x.lua]], manifest)
     == [[..\QUI_DamageMeter\damage_meter\settings\x.lua]])
--- The six merged cosmetic dirs are no longer split-owned, so their old
+-- The coreModule dirs are no longer split-owned, so their old
 -- ..\QUI\modules\<dir>\ lines fall through unchanged (like any core dir).
 assert(T.RewriteOptionsLine([[..\QUI\modules\skinning\settings\x.lua]], manifest)
-    == [[..\QUI\modules\skinning\settings\x.lua]], "merged into QUI_UI; not split-rewritten")
+    == [[..\QUI\modules\skinning\settings\x.lua]], "coreModule dir; not split-rewritten")
 assert(T.RewriteOptionsLine([[..\QUI\modules\utility\settings\keybinds_content.lua]], manifest)
-    == [[..\QUI\modules\utility\settings\keybinds_content.lua]], "merged into QUI_UI; not split-rewritten")
+    == [[..\QUI\modules\utility\settings\keybinds_content.lua]], "coreModule dir; not split-rewritten")
 assert(T.RewriteOptionsLine([[..\QUI\core\settings\foo.lua]], manifest)
     == [[..\QUI\core\settings\foo.lua]], "core-side lines untouched")
 assert(T.RewriteOptionsLine([[shared.lua]], manifest) == [[shared.lua]])
