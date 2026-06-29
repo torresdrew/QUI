@@ -563,6 +563,66 @@ local function ClearAuraStateForIcon(icon, entry)
     end
 end
 
+---------------------------------------------------------------------------
+-- Absorb/shield amount text (opt-in: showAbsorbAmount; buff icons only).
+--
+-- The amount lives at AuraData.points[1] and is SECRET in PvE combat. The
+-- ONLY operations performed on it are AbbreviateNumbers(...) -- which is
+-- AllowedWhenTainted (accepts secrets) -- piped straight into
+-- FontString:SetText, also AllowedWhenTainted. No arithmetic, comparison,
+-- string.format, or tostring ever touches the amount. r.absorbPoints is
+-- captured upstream (cdm_spelldata SetResolvedAuraSpellID) as a plain table
+-- reference; a fully-secret points table was already dropped to nil at
+-- capture, so indexing pts[1] here is safe.
+--
+-- Attached to _resolverRuntimePolicy (a file-scope table) rather than declared
+-- as file-scope `local function`s: cdm_icon_renderer.lua sits at Lua 5.1's
+-- 200-local main-chunk ceiling, so new top-level locals fail to compile.
+---------------------------------------------------------------------------
+function _resolverRuntimePolicy.SetAbsorbTextFromPoints(fs, pts)
+    fs:SetText(AbbreviateNumbers(pts[1]))
+    fs:Show()
+end
+
+function _resolverRuntimePolicy.UpdateIconAbsorbText(icon, entry, r)
+    local fs = icon and icon.AbsorbText
+    if not fs then return end
+    local show = false
+    local rowConfig = icon._rowConfig
+    if r
+        and entry and entry.viewerType == "buff"
+        and rowConfig and rowConfig.showAbsorbAmount then
+        local pts = r.absorbPoints
+        -- pts is nil or a plain table (capture site dropped secret tables).
+        -- pts[1] (the amount) may be secret; nil-check is allowed, magnitude
+        -- compare is not. pcall contains any unexpected fault so combat never
+        -- errors out of the per-tick path.
+        if pts and pts[1] ~= nil then
+            if pcall(_resolverRuntimePolicy.SetAbsorbTextFromPoints, fs, pts) then
+                show = true
+            end
+        end
+    end
+    if not show then
+        fs:SetText("")
+        fs:Hide()
+    end
+end
+
+-- Buff grow/pop on the aura active edge. Both call sites already gate on
+-- entry.viewerType == "buff" and a confirmed _auraActive flip, so this only
+-- picks direction. PlayGrowPop self-gates on ncdm.buff.growOnApply and on
+-- icon.Icon existing -- nothing is allocated when the feature is off.
+function _resolverRuntimePolicy.ApplyBuffGrowPopEdge(icon)
+    local glows = ns._OwnedGlows
+    if not glows then return end
+    if icon._auraActive == true then
+        if glows.PlayGrowPop then glows.PlayGrowPop(icon) end
+    elseif glows.StopGrowPop then
+        glows.StopGrowPop(icon)
+    end
+end
+
 local function ApplyAuraStateToIcon(icon, entry, sid, r)
     if not r then
         ClearAuraStateForIcon(icon, entry)
@@ -2480,6 +2540,30 @@ local function ConfigureIcon(icon, rowConfig)
         icon.StackText:Hide()
     end
 
+    -- Absorb/shield amount text (opt-in: showAbsorbAmount). Mirrors the
+    -- DurationText font/size/color but anchors to the BOTTOM edge so the
+    -- remaining-seconds text at the top stays untouched. Visibility is decided
+    -- per-tick by UpdateIconAbsorbText (only when an absorb amount exists);
+    -- this block just styles/positions the FontString, or hides it when off.
+    if icon.AbsorbText then
+        if rowConfig.showAbsorbAmount then
+            local absorbSize = (durationSize and durationSize > 0) and durationSize or 12
+            local atc = rowConfig.durationTextColor or {1, 1, 1, 1}
+            if ns.Helpers and ns.Helpers.ApplyFontWithFallback then
+                ns.Helpers.ApplyFontWithFallback(icon.AbsorbText, durationFont, absorbSize, generalOutline)
+            else
+                icon.AbsorbText:SetFont(durationFont, absorbSize, generalOutline)
+            end
+            icon.AbsorbText:SetTextColor(atc[1], atc[2], atc[3], atc[4] or 1)
+            icon.AbsorbText:ClearAllPoints()
+            icon.AbsorbText:SetPoint("BOTTOM", icon, "BOTTOM", 0, 0)
+            icon.AbsorbText:SetDrawLayer("OVERLAY", 7)
+        else
+            icon.AbsorbText:SetText("")
+            icon.AbsorbText:Hide()
+        end
+    end
+
     -- Apply row opacity
     local opacity = rowConfig.opacity or 1.0
     icon:SetAlpha(opacity)
@@ -2866,6 +2950,7 @@ local function UpdateIconCooldownOwned(icon)
 
             if _resolverRuntimePolicy.ResolvedAuraStateIsActive(r) then
                 ApplyAuraStateToIcon(icon, entry, auraSpellID, r)
+                _resolverRuntimePolicy.UpdateIconAbsorbText(icon, entry, r)
 
                 if r.isTotemInstance then
                     ClearIconStackText(icon)
@@ -2911,6 +2996,7 @@ local function UpdateIconCooldownOwned(icon)
             else
                 local wasAuraActive = icon._auraActive
                 ApplyAuraStateToIcon(icon, entry, auraSpellID, r)
+                _resolverRuntimePolicy.UpdateIconAbsorbText(icon, entry, nil)
 
                 if icon.Icon then
                     local baseTex = GetEntryTexture(entry) or GetSpellTexture(auraSpellID)
@@ -4202,6 +4288,7 @@ local function RefreshAllIcon(icon, context)
     if entry and entry.viewerType == "buff"
        and wasAuraActive ~= (icon._auraActive == true) then
         _resolverRuntimePolicy.RequestBuffIconLayoutRefresh()
+        _resolverRuntimePolicy.ApplyBuffGrowPopEdge(icon)
     end
 
     local editMode = context.editMode
@@ -4670,6 +4757,11 @@ function CDMIcons.OnFactoryIconReleased(icon)
     if ns._OwnedGlows and ns._OwnedGlows.ClearPandemicState then
         ns._OwnedGlows.ClearPandemicState(icon)
     end
+    -- Clear any in-flight grow/pop so a mid-animation texture scale never
+    -- carries into the next viewer this pooled icon is recycled into.
+    if ns._OwnedGlows and ns._OwnedGlows.StopGrowPop then
+        ns._OwnedGlows.StopGrowPop(icon)
+    end
     -- Keybind and rotation-helper overlays are parented to pooled icons.
     -- Clear them before the factory recycles the frame into another viewer.
     if _G.QUI_ClearKeybindIconState then
@@ -5110,6 +5202,7 @@ function _resolverRuntimePolicy.ApplyAuraScopedResolvedCooldown(icon, entry, edi
        and wasAuraActive ~= (icon._auraActive == true)
        and _resolverRuntimePolicy.RequestBuffIconLayoutRefresh then
         _resolverRuntimePolicy.RequestBuffIconLayoutRefresh()
+        _resolverRuntimePolicy.ApplyBuffGrowPopEdge(icon)
     end
 
     return true
