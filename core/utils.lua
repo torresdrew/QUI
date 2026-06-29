@@ -2159,20 +2159,37 @@ function Helpers.PlaceRow(widget, body, sy, rowHeight)
     return sy - (rowHeight or 32)
 end
 
+-- Frames whose backdrop color/border apply threw (secret-value arithmetic in a
+-- protected context). Re-applied from the _quiBg*/_quiBorder* cache on the next
+-- PLAYER_REGEN_ENABLED (drained by init.lua RecoverQUIBackdrops). This targeted
+-- queue replaces the old whole-UI EnumerateFrames scan that ran every combat end.
+-- NOTE: deliberately NOT gated on InCombatLockdown — skinning runs during combat,
+-- so queueing every in-combat color set would re-create combat-end churn.
+local _backdropColorRecovery = Helpers.CreateStateTable()
+ns._backdropColorRecovery = _backdropColorRecovery
+
 --- Sets backdrop color and stores the sanctioned `_quiBg*` render cache used
 --- by QUI-owned/manual backdrop refresh paths. Do not use these fields for
 --- general frame state; use Helpers.CreateStateTable/SkinBase.SetFrameData for
 --- lifecycle flags on Blizzard frames.
 function Helpers.SetFrameBackdropColor(frame, r, g, b, a)
-    frame:SetBackdropColor(r, g, b, a)
+    -- Cache BEFORE the live apply so combat-end recovery has the intended color
+    -- even if SetBackdropColor errors on a secret value mid-combat.
     frame._quiBgR, frame._quiBgG, frame._quiBgB, frame._quiBgA = r, g, b, a
+    local ok = pcall(frame.SetBackdropColor, frame, r, g, b, a)
+    if not ok then
+        _backdropColorRecovery[frame] = true
+    end
 end
 
 --- Sets backdrop border color and stores the sanctioned `_quiBorder*` render
 --- cache used by QUI-owned/manual backdrop refresh paths.
 function Helpers.SetFrameBackdropBorderColor(frame, r, g, b, a)
-    frame:SetBackdropBorderColor(r, g, b, a)
     frame._quiBorderR, frame._quiBorderG, frame._quiBorderB, frame._quiBorderA = r, g, b, a
+    local ok = pcall(frame.SetBackdropBorderColor, frame, r, g, b, a)
+    if not ok then
+        _backdropColorRecovery[frame] = true
+    end
 end
 
 function Helpers.EnsureDefaults(tbl, defaults)

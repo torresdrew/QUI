@@ -227,6 +227,12 @@ end
 -- Layout mode preview state
 local previewActive = false
 
+-- Set when FullRefresh bails because it ran during combat (SetAttribute/SetSize
+-- on secure children is protected in combat). The PLAYER_REGEN_ENABLED handler
+-- replays exactly one FullRefresh at combat end only when this is set, instead
+-- of rebuilding unconditionally every time combat ends.
+local pendingCombatRefresh = false
+
 -- Private aura state (player debuffs hidden from addon APIs)
 local PA_MAX_SLOTS = 3
 local paSlots = {}
@@ -1864,7 +1870,13 @@ end
 
 local function FullRefresh()
     if not buffContainer or not debuffContainer then return end
-    if InCombatLockdown() and not ns._inInitSafeWindow then return end
+    if InCombatLockdown() and not ns._inInitSafeWindow then
+        -- Can't SetAttribute/SetSize on secure children in combat; defer the
+        -- whole pass and let the combat-end handler replay it once.
+        pendingCombatRefresh = true
+        return
+    end
+    pendingCombatRefresh = false
 
     ManageBlizzardFrames()
 
@@ -2036,11 +2048,15 @@ enchantEventFrame:SetScript("OnEvent", function(self, event, unit)
     end
 end)
 
--- Combat-end handler: re-sync secure header attributes (SetAttribute on
--- SecureAuraHeaderTemplate is protected in combat) and force a restyle.
+-- Combat-end handler: replay a settings-driven refresh that was deferred during
+-- combat (SetAttribute on SecureAuraHeaderTemplate is protected in combat).
+-- Gated by pendingCombatRefresh — set only when FullRefresh bailed on
+-- InCombatLockdown — so a normal combat end is a no-op and no longer re-syncs
+-- header attributes / restyles every aura child every time combat ends.
 local paRegenFrame = CreateFrame("Frame")
 paRegenFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
 paRegenFrame:SetScript("OnEvent", function()
+    if not pendingCombatRefresh then return end
     TryDeferredFullRefresh()
 end)
 
