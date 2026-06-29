@@ -611,14 +611,28 @@ local function ApplyNow()
     end
 end
 
--- Idempotent; transition-latched. The FIRST application waits for
--- PLAYER_ENTERING_WORLD + one timer tick; later flips apply immediately.
+-- Idempotent; transition-latched. The FIRST application normally waits for
+-- PLAYER_ENTERING_WORLD + one timer tick (lets Blizzard finish its chat setup
+-- and holds the IsActive ownership flip until past the login burst); later
+-- flips apply immediately.
+--
+-- EXCEPTION — combat /reload: the deferred PEW + C_Timer.After(0) path runs the
+-- first SuppressAll AFTER the load-time protected grace (the ADDON_LOADED->PEW
+-- window that still permits protected writes — the same one display_layer.lua
+-- relies on) has closed, while the character is still in combat. SuppressAll's
+-- SetParent reparents of the Blizzard chat frames (ChatFrame1, GeneralDockManager,
+-- tabs, button frames) are then silently blocked, so Blizzard chat lingers beside
+-- the QUI display until combat ends (when an incidental Blizzard reparent finally
+-- trips our enforcement hooks). When we load under combat lockdown, apply
+-- synchronously here instead: this call runs inside chat's ADDON_LOADED handler,
+-- still within the grace, so the protected reparents land immediately. The PEW
+-- path stays armed but ApplyNow's transition latch makes the post-PEW re-apply a
+-- no-op.
 function Suppress.Apply()
     if pewSeen then
         ApplyNow()
         return
     end
-    pendingApply = true
     if not pewFrame and _G.CreateFrame then
         pewFrame = CreateFrame("Frame")
         pewFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
@@ -634,5 +648,13 @@ function Suppress.Apply()
                 end
             end
         end)
+    end
+    if type(_G.InCombatLockdown) == "function" and _G.InCombatLockdown() then
+        -- Combat /reload: land the protected reparents now, in the grace.
+        pendingApply = false
+        ApplyNow()
+    else
+        -- Normal load: defer the first application to PEW as before.
+        pendingApply = true
     end
 end
