@@ -11,6 +11,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v4.0.5-beta9 - 2026-06-29
+
+### Added
+- Group Frames: party target frames — a small companion frame beside each party member showing that member's current target (name and health). Party only, off by default.
+
+### Changed
+- Performance: combat-end processing now refreshes only the frames that need it via targeted queues, instead of re-scanning the whole UI on every combat end (buff borders and skin backdrop recovery).
+
+### Fixed
+- Chat: Blizzard chat suppression now applies synchronously when reloading during combat, so the Blizzard chat no longer lingers beside the QUI chat until combat ends.
+- Quality of Life: the auction house expansion filter is now read via GetFilters when available, fixing the Current-Expansion-Only filter when the underlying field is missing.
+
 ## v4.0.5-beta8 - 2026-06-29
 
 ### Fixed
