@@ -810,6 +810,50 @@ ClearPandemicState = function(icon)
 end
 
 ---------------------------------------------------------------------------
+-- PANDEMIC BRIDGE HELPERS (re-anchored Blizzard CDM frames)
+-- Re-anchored live frames never carry _spellEntry/_auraActive/_lastAuraDurObj,
+-- so UpdatePandemicGlow can't drive them. Their pandemic signal is Blizzard's
+-- own state machine (ShowPandemicStateFrame/HidePandemicStateFrame hooks in
+-- CDMReanchorPandemic); these helpers supply the settings gate and the visual,
+-- painted on the QUI-OWNED overlay child -- never on the live frame itself.
+---------------------------------------------------------------------------
+-- Reusable probe: IsPandemicMirroringEnabled reads icon._spellEntry (+ the
+-- cached _auraIsHarmful, absent here -> "either toggle on" fallback, matching
+-- the owned path's combat-applied-aura case). Scratch table avoids a per-call
+-- allocation -- the Show hook re-fires every OnUpdate tick during pandemic.
+local _pandemicEntryProbe = {}
+
+local function IsPandemicEnabledForEntry(entry)
+    if not entry then return false end
+    _pandemicEntryProbe._spellEntry = entry
+    local enabled = IsPandemicMirroringEnabled(_pandemicEntryProbe)
+    _pandemicEntryProbe._spellEntry = nil
+    return enabled
+end
+
+-- Same flash sheet + tint as the owned-icon PandemicGlow frame. The overlay is
+-- a QUI-owned child, so writing a key on it is legal (never on the live frame).
+local function ApplyPandemicToOverlay(overlay)
+    if not overlay then return end
+    local tex = overlay._quiPandemicTex
+    if not tex and overlay.CreateTexture then
+        tex = overlay:CreateTexture(nil, "OVERLAY")
+        tex:SetTexture(PANDEMIC_TEXTURE)
+        tex:SetTexCoord(0, 1, 0, 1)
+        tex:SetBlendMode("ADD")
+        tex:SetAllPoints(overlay)
+        tex:SetVertexColor(1, 0.85, 0.2, 1)
+        overlay._quiPandemicTex = tex
+    end
+    if tex then tex:Show() end
+end
+
+local function ClearPandemicFromOverlay(overlay)
+    local tex = overlay and overlay._quiPandemicTex
+    if tex then tex:Hide() end
+end
+
+---------------------------------------------------------------------------
 -- GROW / POP on buff apply (opt-in: ncdm.buff.growOnApply; buff icons only).
 --
 -- When a tracked buff becomes ACTIVE (the renderer's false->true transition of
@@ -1358,6 +1402,10 @@ ns._OwnedGlows = {
     IsSpellCastable = IsSpellCastable,
     UpdatePandemicGlow = UpdatePandemicGlow,
     ClearPandemicState = ClearPandemicState,
+    -- Pandemic bridge for re-anchored Blizzard CDM frames (CDMReanchorPandemic).
+    IsPandemicEnabledForEntry = IsPandemicEnabledForEntry,
+    ApplyPandemicToOverlay = ApplyPandemicToOverlay,
+    ClearPandemicFromOverlay = ClearPandemicFromOverlay,
     PlayGrowPop = PlayGrowPop,
     StopGrowPop = StopGrowPop,
     HandleUnitAuraChanged = HandleUnitAuraChanged,

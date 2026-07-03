@@ -636,12 +636,17 @@ end
 -- Eager eviction triggered by UNIT_AURA's `removedAuraInstanceIDs` payload.
 -- Walks every cached entry on `unit` and forwards its stored auraInstanceID
 -- to GetAuraDataByAuraInstanceID; nil response means the instance is gone.
--- The stored instID is NeverSecret. Eviction is by Lua table identity via
--- ReleaseCapturedEntry. Inlined pcall avoids a forward reference to
--- QueryAuraData, which is declared later in the file.
+-- Eviction is by Lua table identity via ReleaseCapturedEntry.
+--
+-- MUST bail while auras are secret: the probe wrapper is gated on
+-- AreAurasSecret (12.1 RequiresUnitAuraAccess throws even for plain cached
+-- IDs), so its nil then means "query unavailable", not "aura gone" — probing
+-- anyway would evict every live entry mid-combat. Stale entries reconcile on
+-- the next non-secret probe or full rescan.
 local function EvictDeadCacheEntriesForUnit(unit)
     if type(unit) ~= "string" or unit == "" then return end
     if not (Sources and Sources.QueryAuraDataByAuraInstanceID) then return end
+    if Sources.AreAurasSecret and Sources.AreAurasSecret() then return end
 
     local visited = {}
     local function probe(map)
@@ -678,6 +683,11 @@ local function RescanCapturedAurasForUnit(unit)
         ReleaseCapturedAurasForUnit(unit)
         return
     end
+    -- ForEachAura is index-based (12.1 RequiresUnitAuraAccess) — it throws
+    -- while auras are secret. Bail BEFORE the release below, or the cache is
+    -- emptied with no way to repopulate it; stale entries reconcile on the
+    -- next non-secret rescan instead.
+    if Sources and Sources.AreAurasSecret and Sources.AreAurasSecret() then return end
     ReleaseCapturedAurasForUnit(unit)
     AuraUtil.ForEachAura(unit, "HELPFUL", nil, function(ad)
         CaptureAuraFromPayload(unit, ad, nil, "HELPFUL")

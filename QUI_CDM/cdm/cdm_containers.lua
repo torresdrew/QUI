@@ -3525,6 +3525,10 @@ local function EnsureReanchorGlowOverlay(frame)
     end
     return o
 end
+-- Shared with the pandemic bridge (CDMReanchorPandemic, wired in boot): one
+-- own overlay child per live frame hosts both the proc glow and the pandemic
+-- flash texture.
+ns._CDMEnsureReanchorGlowOverlay = EnsureReanchorGlowOverlay
 
 -- Build (once) + install the ActionButtonSpellAlertManager ShowAlert/HideAlert hook
 -- that suppresses Blizzard's native proc flipbook on re-anchored frames (G6) and

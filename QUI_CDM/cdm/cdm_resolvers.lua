@@ -500,6 +500,17 @@ function CDMResolvers.GetEntryTexture(entry)
         end
         return icon
     end
+    if entry.type == "consumable" then
+        -- Categorized consumable (potion/healthstone): entry.id is a spell
+        -- CATEGORY id, never a spellID — falling through to GetSpellTexture
+        -- would return nil and leave the icon blank. The category icon always
+        -- wins on the native frame (CooldownViewerItemData GetSpellTexture),
+        -- so mirror it from the catalog meta.
+        local Catalog = ns.CDMCatalog
+        local meta = Catalog and Catalog.GetConsumableCategoryMeta
+            and Catalog.GetConsumableCategoryMeta(entry.id)
+        return meta and meta.icon or nil
+    end
     return CDMResolvers.GetSpellTexture(entry.overrideSpellID or entry.id)
 end
 

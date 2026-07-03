@@ -285,10 +285,42 @@ function CDMReanchorBoot.BuildRuntime(env)
         reassertEdge = reassertEdge,
         reassertDesat = reassertDesat,
     })
+    -- Pandemic bridge: Blizzard's own ShowPandemicStateFrame/HidePandemicStateFrame
+    -- per-frame state machine drives QUI's pandemic flash on the shared own-child
+    -- glow overlay (same overlay the proc bridge paints). Settings gate + painter
+    -- live in cdm_effects (ns._OwnedGlows); all deps resolve lazily so load order
+    -- and runtime construction order don't matter (`runtime` is assigned below --
+    -- the closure captures the upvalue, same pattern as queryRealCooldownDurObj).
+    local pandemic = ns.CDMReanchorPandemic and ns.CDMReanchorPandemic.New({
+        securecall = securecallfunction,
+        getEntryForFrame = function(frame)
+            return runtime and runtime.GetEntryForFrame and runtime:GetEntryForFrame(frame) or nil
+        end,
+        ensureOverlay = function(frame)
+            local ensure = ns._CDMEnsureReanchorGlowOverlay
+            return ensure and ensure(frame) or nil
+        end,
+        isPandemicEnabled = function(entry)
+            local OG = ns._OwnedGlows
+            if OG and OG.IsPandemicEnabledForEntry then
+                return OG.IsPandemicEnabledForEntry(entry)
+            end
+            return false
+        end,
+        startPandemic = function(overlay)
+            local OG = ns._OwnedGlows
+            if OG and OG.ApplyPandemicToOverlay then OG.ApplyPandemicToOverlay(overlay) end
+        end,
+        stopPandemic = function(overlay)
+            local OG = ns._OwnedGlows
+            if OG and OG.ClearPandemicFromOverlay then OG.ClearPandemicFromOverlay(overlay) end
+        end,
+    })
     runtime = env.CDMReanchorRuntime.New({
         bridge = bridge,
         wiring = wiring,
         auraPhase = auraPhase,
+        pandemic = pandemic,
         getContainer = env.getContainer,
         getCurated = env.getCurated,
         getSettings = env.getSettings,

@@ -1019,6 +1019,7 @@ local function StyleBuffCancelChild(child, iconSize)
     if child.SetPassThroughButtons then
         pcall(child.SetPassThroughButtons, child, "LeftButton")
     end
+    child._quiCancelStyled = true
 end
 
 local function RefreshBuffCancelChildren(header, iconSize, maxButtons)
@@ -1031,9 +1032,67 @@ local function RefreshBuffCancelChildren(header, iconSize, maxButtons)
     end
 end
 
+-- LATE-CREATED CHILDREN: the secure header builds child buttons lazily as the
+-- live buff count exceeds its all-time max (SecureGroupHeaders configureAuras).
+-- The initialConfigFunction snippet CANNOT style them for tooltip pass-through:
+-- it runs on a restricted frame handle, and handles expose no
+-- SetPropagateMouseMotion/SetPassThroughButtons — those `if self.X` clauses are
+-- silently dead. Without the insecure styling pass a late child blocks mouse
+-- motion at its grid slot, so the forbidden CustomAuraButton underneath never
+-- fires its intrinsic OnEnter → no tooltip (and swallowed left-clicks) for
+-- exactly the transient short buffs that grew the count. The header publishes
+-- each new child as a "childN" attribute (setAttributesWithoutResponse → plain
+-- SetAttribute, so the OnAttributeChanged SCRIPT still fires; only Blizzard's
+-- handler early-returns on _ignore) — an insecure post-hook on that script sees
+-- every creation without registering UNIT_AURA. Styling is deferred one frame
+-- (the attribute lands mid-layout). The setters are protected: in combat, queue
+-- and flush on PLAYER_REGEN_ENABLED (children can't spawn mid-combat anyway —
+-- secure CreateFrame is combat-blocked).
+local pendingChildStyle = false
+
+local function StyleNewCancelChildren()
+    if not buffCancelHeader then return end
+    if InCombatLockdown() then
+        pendingChildStyle = true
+        return
+    end
+    local iconSize = buffCancelHeader._quiChildIconSize or DEFAULT_ICON_SIZE
+    for i = 1, BUFF_MAX_DISPLAY do
+        local child = buffCancelHeader:GetAttribute("child" .. i)
+        if not child then break end
+        if not child._quiCancelStyled then
+            StyleBuffCancelChild(child, iconSize)
+        end
+    end
+end
+
+local childStyleScheduled = false
+local function RunScheduledChildStyle()
+    childStyleScheduled = false
+    StyleNewCancelChildren()
+end
+local function ScheduleChildStyle()
+    if childStyleScheduled then return end
+    childStyleScheduled = true
+    C_Timer.After(0, RunScheduledChildStyle)
+end
+
+-- Attribute names arrive lowercased; "child1".."child40" marks a new secure
+-- child (the "frameref-childN" sibling set doesn't match the pattern).
+local function OnCancelHeaderAttributeChanged(_, name)
+    if type(name) == "string" and name:find("^child%d") then
+        ScheduleChildStyle()
+    end
+end
+
 local function ConfigureBuffCancelHeader(settings, profile, buffMax, perRow, anyBuffs)
     local header = EnsureBuffCancelHeader()
     if not header then return end
+
+    if not header._quiChildWatch then
+        header._quiChildWatch = true
+        header:HookScript("OnAttributeChanged", OnCancelHeaderAttributeChanged)
+    end
 
     if not anyBuffs then
         pcall(header.Hide, header)
@@ -1075,6 +1134,7 @@ local function ConfigureBuffCancelHeader(settings, profile, buffMax, perRow, any
     header:SetAttribute("wrapYOffset", wrapYOffset)
     header:SetAttribute("maxWraps", maxWraps)
     header:SetAttribute("initialConfigFunction", initialConfig)
+    header._quiChildIconSize = iconSize
     header:Show()
     RefreshBuffCancelChildren(header, iconSize, buffMax)
 end
@@ -1554,6 +1614,10 @@ local paRegenFrame = CreateFrame("Frame")
 paRegenFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
 paRegenFrame:SetScript("OnEvent", function()
     FlushPendingContainerWork()
+    if pendingChildStyle then
+        pendingChildStyle = false
+        ScheduleChildStyle()
+    end
 end)
 
 -- Debug instrumentation.

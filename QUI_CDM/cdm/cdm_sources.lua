@@ -14,6 +14,7 @@ ns.CDMSources = CDMSources
 local C_Spell = C_Spell
 local C_Item = C_Item
 local C_UnitAuras = C_UnitAuras
+local C_Secrets = C_Secrets
 local WoW_IsSecretValue = issecretvalue
 
 -- WoW provides `wipe`; the standalone test harness does not. Local fallback so
@@ -35,6 +36,18 @@ local function HasOpaqueValue(value)
     end
     return true
 end
+
+-- RequiresUnitAuraAccess getters throw whenever aura data is GLOBALLY secret
+-- (combat) and execution is tainted — the ID argument being a plain number does
+-- not help; IDs cached before combat still crash the call. Gate every
+-- instance-ID wrapper on this predicate, not just on ID secrecy.
+local _C_ShouldAurasBeSecret = C_Secrets and C_Secrets.ShouldAurasBeSecret
+
+function CDMSources.AreAurasSecret()
+    if not _C_ShouldAurasBeSecret then return false end
+    return _C_ShouldAurasBeSecret() == true
+end
+local AreAurasSecret = CDMSources.AreAurasSecret
 
 -- Direct API references hoisted at load. Wrappers below call these without
 -- pcall because the Blizzard C bindings return nil for invalid input rather
@@ -507,26 +520,31 @@ end
 
 function CDMSources.QueryAuraDuration(unit, auraInstanceID)
     if not unit or not HasOpaqueValue(auraInstanceID) or not _C_GetAuraDuration then return nil end
+    if AreAurasSecret() then return nil end
     return _C_GetAuraDuration(unit, auraInstanceID)
 end
 
 function CDMSources.QueryAuraDataByAuraInstanceID(unit, auraInstanceID)
     if not unit or not HasOpaqueValue(auraInstanceID) or not _C_GetAuraDataByAuraInstanceID then return nil end
+    if AreAurasSecret() then return nil end
     return _C_GetAuraDataByAuraInstanceID(unit, auraInstanceID)
 end
 
 function CDMSources.QueryAuraHasExpirationTime(unit, auraInstanceID)
     if not unit or not HasOpaqueValue(auraInstanceID) or not _C_DoesAuraHaveExpirationTime then return nil end
+    if AreAurasSecret() then return nil end
     return _C_DoesAuraHaveExpirationTime(unit, auraInstanceID)
 end
 
 function CDMSources.QueryAuraFilteredOutByInstanceID(unit, auraInstanceID, filter)
     if not unit or not HasOpaqueValue(auraInstanceID) or not _C_IsAuraFilteredOutByInstanceID then return nil end
+    if AreAurasSecret() then return nil end
     return _C_IsAuraFilteredOutByInstanceID(unit, auraInstanceID, filter)
 end
 
 function CDMSources.QueryAuraApplicationDisplayCount(unit, auraInstanceID, minValue, maxValue)
     if not unit or not HasOpaqueValue(auraInstanceID) or not _C_GetAuraApplicationDisplayCount then return nil end
+    if AreAurasSecret() then return nil end
     return _C_GetAuraApplicationDisplayCount(unit, auraInstanceID, minValue, maxValue)
 end
 

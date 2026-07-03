@@ -453,6 +453,17 @@ function CDMReanchorRuntime:RefreshContainer(containerKey)
                     deps.auraPhase:Reassert(w.liveFrame)
                 end
             end
+            -- Pandemic bridge: hook Blizzard's per-frame pandemic state machine
+            -- (Show/HidePandemicStateFrame) + claim-time reconcile so a frame
+            -- re-pooled to a different entry drops the old spell's glow (pool
+            -- release never fires the Hide hook). trackedBar never reaches this
+            -- loop (data-source-only early return in AssembleEntries).
+            if deps.pandemic then
+                deps.pandemic:Hook(w.liveFrame)
+                if deps.pandemic.OnClaim then
+                    deps.pandemic:OnClaim(w.liveFrame, w.src)
+                end
+            end
         end
     end
     self._reanchoredByKey[containerKey] = reanchored

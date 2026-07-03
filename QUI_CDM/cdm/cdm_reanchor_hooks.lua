@@ -413,3 +413,137 @@ function CDMReanchorProcGlow:Install(manager)
     hooksec(manager, "HideAlert", function(...) me._securecall(onHide, ...) end)
     return true
 end
+
+---------------------------------------------------------------------------
+-- Pandemic glow for re-anchored Blizzard CDM frames
+--
+-- Owned icons drive their pandemic glow from the resolver's cached aura
+-- DurationObject (cdm_effects UpdatePandemicGlow); re-anchored live frames
+-- never enter that path (no _spellEntry/_lastAuraDurObj, not in the glow
+-- spell map). Their signal is Blizzard's OWN pandemic state machine:
+-- CooldownViewerItemMixin:CheckPandemicTimeDisplay calls
+-- ShowPandemicStateFrame/HidePandemicStateFrame on the item frame
+-- (CooldownViewer.lua:620-644), computed from C_UnitAuras
+-- GetRefreshExtendedDuration - GetAuraBaseDuration -- the TRUE per-spell
+-- pandemic window, self-driven from the item's aura refresh (no user alert
+-- config required; gated only on C_CooldownViewer.GetValidAlertTypes).
+--
+-- Post-hook both methods per claimed frame. ShowPandemicStateFrame re-fires
+-- every item OnUpdate tick during pandemic, so the paint is latched per frame
+-- (keyed by entry, so a re-pooled frame repaints for its new spell). Inside
+-- the body the only live-frame write is SetAlpha(0)/Hide on its PandemicIcon
+-- child (Blizzard's native pandemic FX -- suppressed on managed frames the
+-- same way the proc bridge suppresses SpellActivationAlert; unmanaged frames
+-- keep it). The QUI visual is painted on the QUI-OWNED overlay child only.
+-- Every hook body runs under securecall -- required for EVERY hook on a CDM
+-- frame (see the header comment at the top of this file).
+--
+-- DI'd for unit testing: getEntryForFrame, ensureOverlay (own-child factory),
+-- isPandemicEnabled (cdm_effects settings gate), startPandemic/stopPandemic
+-- (cdm_effects overlay painter), hooksecurefunc + securecall.
+local CDMReanchorPandemic = {}
+ns.CDMReanchorPandemic = CDMReanchorPandemic
+
+local PandemicMT = { __index = CDMReanchorPandemic }
+
+function CDMReanchorPandemic.New(deps)
+    deps = deps or {}
+    local self = {
+        _getEntryForFrame  = deps.getEntryForFrame,
+        _ensureOverlay     = deps.ensureOverlay,
+        _isPandemicEnabled = deps.isPandemicEnabled,
+        _startPandemic     = deps.startPandemic,
+        _stopPandemic      = deps.stopPandemic,
+        _hooksecurefunc    = deps.hooksecurefunc or hooksecurefunc,
+        _securecall        = deps.securecall or _securecall,
+        _hooked            = setmetatable({}, { __mode = "k" }),
+        -- frame -> latch key of the entry whose pandemic glow is currently
+        -- painted. Keyed by spellID/id (not entry table identity: curated
+        -- lists can rebuild entry tables across claim passes for the SAME
+        -- spell, and a table-identity latch would stop/repaint on every pass)
+        -- so a frame re-pooled to a different spell drops the stale glow while
+        -- a same-spell re-claim keeps it untouched.
+        _active            = setmetatable({}, { __mode = "k" }),
+    }
+    return setmetatable(self, PandemicMT)
+end
+
+local function PandemicLatchKey(entry)
+    if not entry then return nil end
+    return entry.spellID or entry.id or entry
+end
+
+function CDMReanchorPandemic:_StopFor(frame)
+    self._active[frame] = nil
+    if not (self._ensureOverlay and self._stopPandemic) then return end
+    local overlay = self._ensureOverlay(frame)
+    if overlay then self._stopPandemic(overlay) end
+end
+
+-- The securecall'd ShowPandemicStateFrame work body.
+function CDMReanchorPandemic:_OnShowPandemic(frame)
+    if not frame then return end
+    local entry = self._getEntryForFrame and self._getEntryForFrame(frame) or nil
+    if entry == nil then return end  -- not a managed re-anchored CDM frame: no-op
+    -- Suppress Blizzard's native pandemic FX on managed frames (QUI owns the
+    -- visual, per settings -- owned icons never show the native FX either).
+    -- Raw field read; SetAlpha/Hide on the child region are the only
+    -- live-frame writes here, mirroring the proc bridge's alert suppression.
+    local nativeIcon = frame.PandemicIcon
+    if nativeIcon then
+        if nativeIcon.SetAlpha then nativeIcon:SetAlpha(0) end
+        if nativeIcon.Hide then nativeIcon:Hide() end
+    end
+    local enabled = self._isPandemicEnabled and self._isPandemicEnabled(entry)
+    if not enabled then
+        -- Settings toggled off mid-pandemic: clear a live latch.
+        if self._active[frame] ~= nil then self:_StopFor(frame) end
+        return
+    end
+    if self._active[frame] == PandemicLatchKey(entry) then return end  -- latched: re-fires per tick
+    if not (self._ensureOverlay and self._startPandemic) then return end
+    local overlay = self._ensureOverlay(frame)
+    if overlay then
+        self._startPandemic(overlay)
+        self._active[frame] = PandemicLatchKey(entry)
+    end
+end
+
+-- The securecall'd HidePandemicStateFrame work body. Always safe to clear --
+-- no entry guard, so a frame whose registry entry was dropped mid-pandemic
+-- still tears its glow down.
+function CDMReanchorPandemic:_OnHidePandemic(frame)
+    if not frame then return end
+    if self._active[frame] == nil then return end
+    self:_StopFor(frame)
+end
+
+-- Claim-time reconcile, called from the runtime claim pass alongside
+-- auraPhase:Hook. A frame re-pooled to a different entry never fires
+-- HidePandemicStateFrame for the OLD spell (pool release just Hide()s the
+-- frame), so a stale latch would keep the old glow visible over the new
+-- spell's icon until its next pandemic. Stop it here; the new spell's own
+-- Show hook repaints if it is actually in pandemic. Same-spell re-claims
+-- (rebuilt entry table, same spellID) keep the glow untouched.
+function CDMReanchorPandemic:OnClaim(frame, entry)
+    if not frame then return end
+    local current = self._active[frame]
+    if current ~= nil and current ~= PandemicLatchKey(entry) then
+        self:_StopFor(frame)
+    end
+end
+
+-- Install the per-frame post-hooks (idempotent per frame). The registered
+-- closures do NOTHING but securecall the work bodies.
+function CDMReanchorPandemic:Hook(frame)
+    if not frame or self._hooked[frame] then return end
+    local hooksec = self._hooksecurefunc
+    if not hooksec then return end
+    if not (frame.ShowPandemicStateFrame and frame.HidePandemicStateFrame) then return end
+    self._hooked[frame] = true
+    local me = self
+    local function showWork(f) me:_OnShowPandemic(f) end
+    local function hideWork(f) me:_OnHidePandemic(f) end
+    hooksec(frame, "ShowPandemicStateFrame", function(...) me._securecall(showWork, ...) end)
+    hooksec(frame, "HidePandemicStateFrame", function(...) me._securecall(hideWork, ...) end)
+end

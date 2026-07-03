@@ -54,19 +54,29 @@ local BUILTIN_COOLDOWN_PICKER_CATEGORIES = {
 local PICKER_COOLDOWN_CATEGORIES = { 0, 1, 5, 7 }
 local PICKER_AURA_CATEGORIES = { 2, 3, 6, 8 }
 local ALL_RENDERED_CATEGORIES = { 0, 1, 2, 3, 5, 6, 7, 8 }
--- Blizzard spell-category consumables (mirrors hackSpellCategoryToIconLookup in
--- FrameXML CooldownViewerItemData.lua:377-387). name is English; localized at
--- emit via ns.L. icon/name are composer-list-cell display only -- the runtime
--- render is Blizzard's re-anchored frame.
+-- Blizzard spell-category consumables (mirrors spellCategoryMetadataLookup in
+-- FrameXML CooldownViewerItemData.lua). name is English; localized at emit via
+-- ns.L. icon strings are Blizzard's EXACT values (yes, "Warlock_ Healthstone"
+-- has a space) -- the category icon always wins on the native frame
+-- (GetSpellTexture returns it first), so composer cells + preview icons must
+-- use the same strings to match the runtime render.
 local CONSUMABLE_CATEGORY_META = {
-    [4]    = { name = "Combat Potion", icon = "Interface\\ICONS\\Trade_Alchemy" },
-    [30]   = { name = "Health Potion", icon = "Interface\\ICONS\\INV_Potion_54" },
-    [1711] = { name = "Healthstone",   icon = "Interface\\ICONS\\WarlockHealthstone" },
+    [4]    = { name = "Combat Potion", icon = "Interface/ICONS/INV_POTION_114" },
+    [30]   = { name = "Health Potion", icon = "Interface/ICONS/INV_POTION_54" },
+    [1711] = { name = "Healthstone",   icon = "Interface/ICONS/Warlock_ Healthstone" },
 }
 local BLIZZARD_CDM_ENTRY_SOURCE = "blizzardCDM"
 
 function CDMCatalog.GetCategoryForKind(kind)
     return CATEGORY_FOR_KIND[kind]
+end
+
+-- Consumable spell-category display meta (icon + English name) for
+-- consumable-typed entries (entry.id = spellCategoryID). Shared by the
+-- composer picker cells, entry rows, and the resolvers' entry-texture path so
+-- every surface renders the same icon as Blizzard's native frame.
+function CDMCatalog.GetConsumableCategoryMeta(catID)
+    return CONSUMABLE_CATEGORY_META[catID]
 end
 
 function CDMCatalog.GetKindForCategory(category)

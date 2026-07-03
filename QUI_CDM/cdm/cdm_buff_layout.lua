@@ -67,7 +67,14 @@ local viewerBuffState = Helpers.CreateStateTable()  -- viewer → { anchorCache,
 -- Prevents jitter from floating-point drift
 local abs = math.abs
 
+-- Secret values report their real type() ("string"/"number"/"boolean"), so a
+-- type check alone lets them through — and these readers feed sort comparators,
+-- table keys, and QuerySpellInfo, where a secret throws on first compare.
+-- Reject secrets up front; callers treat the fallback as "unavailable".
+local WoW_IsSecretValue = issecretvalue
+
 local function ReadNumber(value, fallback)
+    if WoW_IsSecretValue and WoW_IsSecretValue(value) then return fallback end
     local valueType = type(value)
     if valueType == "number" then return value end
     if valueType == "string" then return tonumber(value) or fallback end
@@ -75,11 +82,13 @@ local function ReadNumber(value, fallback)
 end
 
 local function ReadString(value, fallback)
+    if WoW_IsSecretValue and WoW_IsSecretValue(value) then return fallback end
     if type(value) == "string" then return value end
     return fallback
 end
 
 local function ReadBoolean(value, fallback)
+    if WoW_IsSecretValue and WoW_IsSecretValue(value) then return fallback end
     if type(value) == "boolean" then return value end
     return fallback
 end
@@ -580,20 +589,20 @@ local function GetTrackedBarSourceViewer()
 end
 
 local function GetTrackedBarName(frame)
-    if not frame or not frame.GetRegions then return nil end
-    for _, region in ipairs({ frame:GetRegions() }) do
-        if region and region.GetObjectType and region:GetObjectType() == "FontString" then
-            local okText, rawText = pcall(region.GetText, region)
-            local text = okText and ReadString(rawText, nil) or nil
-            if type(text) == "string" and text ~= "" then
-                local justify = region.GetJustifyH and region:GetJustifyH()
-                if justify ~= "RIGHT" then
-                    return text
-                end
-            end
-        end
-    end
-    return nil
+    -- Blizzard's bar StatusBar exposes its FontStrings via parentKey
+    -- (CooldownViewer.xml: Name / Duration) — read the Name key directly
+    -- instead of scanning regions and inspecting text to guess which one is
+    -- the name. The result feeds IDENTITY (QuerySpellInfo rescue, sort keys),
+    -- so secret text (combat) is useless here: ReadString rejects it and the
+    -- bar keeps its cooldownID/spellID identity; display names resolve from
+    -- spell data instead.
+    local region = frame and frame.Name
+    if not region or not region.GetText then return nil end
+    local okText, rawText = pcall(region.GetText, region)
+    if not okText then return nil end
+    local text = ReadString(rawText, nil)
+    if text == "" then return nil end
+    return text
 end
 
 local function GetTrackedBarSpellData(frame)
@@ -656,9 +665,13 @@ local function GetTrackedBarIconTexture(frame, spellData)
     local iconContainer = frame.Icon
     local iconTexture = iconContainer and (iconContainer.Icon or iconContainer.icon or iconContainer.texture)
     if iconTexture and iconTexture.GetTexture then
+        -- GetTexture returns a secret number in combat (aura-driven icon).
+        -- The result feeds identity-adjacent consumers and the ~= compares
+        -- below throw on secrets — reject and fall back to the spellID icon.
         local okTex, rawTexture = pcall(iconTexture.GetTexture, iconTexture)
         local texture = okTex and rawTexture or nil
-        if okTex and texture and texture ~= 0 and texture ~= "" then
+        if WoW_IsSecretValue and WoW_IsSecretValue(texture) then texture = nil end
+        if texture and texture ~= 0 and texture ~= "" then
             return texture
         end
     end
@@ -709,6 +722,11 @@ local function GetTrackedBarRuntimeEntries()
                     cooldownID = spellData.cooldownID,
                     layoutIndex = child.layoutIndex or 9999,
                     isActive = IsTrackedBarActive(child),
+                    -- Live Blizzard child ref: the renderer mirrors fill/timer
+                    -- straight off this frame (secret-safe widget passthrough)
+                    -- instead of resolving duration data in Lua. Runtime-only —
+                    -- never persisted, excluded from the fingerprint.
+                    frame = child,
                 }
             end
         end

@@ -513,6 +513,7 @@ local function NormalizeTrackedBarRuntimeEntries(runtimeEntries)
                     _instanceKey = "trackedBar:" .. tostring(instanceID),
                     _trackedBarRuntime = true,
                     _trackedBarActive = entry.isActive == true,
+                    _blzFrame = entry.frame,
                 }
             end
         end
@@ -598,6 +599,7 @@ local function MergeTrackedRuntimeFields(configured, runtime)
     out._instanceKey = runtime._instanceKey
     out._trackedBarRuntime = runtime._trackedBarRuntime == true
     out._trackedBarActive = runtime._trackedBarActive == true
+    out._blzFrame = runtime._blzFrame
     return out
 end
 
@@ -1112,6 +1114,8 @@ local function ReleaseBar(bar)
     bar._active = false
     bar._auraUnit = nil
     bar._auraInstanceID = nil
+    bar._blzChild = nil
+    bar._blzCooldownID = nil
     bar._cSideFill = nil
     bar._preferDurObjFill = nil
     bar._forceTimerDurationRebind = nil
@@ -1232,6 +1236,11 @@ function CDMBars:BuildBarsFromOwned(container, spellList)
                     bar._isTotemInstance = entry._isTotemInstance and true or false
                     bar._totemSlot = entry._totemSlot
                     bar._spellID = entry.overrideSpellID or entry.spellID or entry.id
+                    -- Re-pair with the freshly scanned Blizzard child: pool
+                    -- recycling re-keys children mid-combat, and a stale ref
+                    -- leaves the bar with no fill/timer source.
+                    bar._blzChild = entry._blzFrame or bar._blzChild
+                    bar._blzCooldownID = entry._blzFrame and entry.cooldownID or bar._blzCooldownID
                 end
                 self:UpdateOwnedBarAura(bar)
             end
@@ -1253,6 +1262,13 @@ function CDMBars:BuildBarsFromOwned(container, spellList)
 
         local spellID = entry.overrideSpellID or entry.spellID or entry.id
         bar._spellID = spellID
+
+        -- Pair with the live Blizzard CDM child when the scanner delivered
+        -- one. Paired bars mirror fill/timer straight off the Blizzard frame
+        -- (secret-safe widget passthrough) and never enter the Lua resolver.
+        -- cooldownID is pinned so pool re-keying is detected before mirroring.
+        bar._blzChild = entry._blzFrame
+        bar._blzCooldownID = entry._blzFrame and entry.cooldownID or nil
 
         -- Set initial texture from composer entry / direct C-side APIs.
         -- Totem-instance bars defer to UpdateOwnedBarAura's totemIcon path.
@@ -1572,11 +1588,174 @@ function IsSpellCooldownEntry(entry)
     return entry.kind == "cooldown" or entryType == "cooldown"
 end
 
+---------------------------------------------------------------------------
+-- PAIRED-BAR MIRROR (reference pattern)
+--
+-- Bars whose spell exists in Blizzard's BuffBarCooldownViewer never enter the
+-- Lua resolver: Blizzard's untainted code already drives the hidden native
+-- bar's fill and Duration text from data we cannot read while auras are
+-- secret. Mirror those surfaces through absorb-capable widget setters
+-- (SetMinMaxValues/SetValue/SetText take secret values natively) — no aura
+-- queries, no comparisons, works identically in and out of combat.
+---------------------------------------------------------------------------
+
+-- Re-validate the pairing each use: Blizzard pools these children, and a
+-- re-keyed frame would otherwise mirror the wrong spell until the next
+-- scanner rebuild. cooldownID is plain (catalog key, never secret).
+--
+-- Self-healing (reference pattern): when the cached child no longer carries
+-- our cooldownID (pool recycle mid-combat), re-scan the live viewer children
+-- for the cooldownID instead of going dark until the next scanner rebuild —
+-- an unpaired bar has no combat fill/timer source at all.
+local function FindBlzChildByCooldownID(cooldownID)
+    local viewer = _G.BuffBarCooldownViewer
+    if not viewer or not viewer.GetChildren then return nil end
+    local ok, numChildren = pcall(viewer.GetNumChildren, viewer)
+    if not ok or not numChildren then return nil end
+    for ci = 1, numChildren do
+        local child = select(ci, viewer:GetChildren())
+        if child and child.Bar then
+            local cid = child.cooldownID
+            if not (issecretvalue and issecretvalue(cid)) and cid == cooldownID then
+                return child
+            end
+        end
+    end
+    return nil
+end
+
+local function GetPairedBlzChild(bar)
+    local wantCid = bar._blzCooldownID
+    if not wantCid then return nil end
+    local blz = bar._blzChild
+    if blz then
+        local cid = blz.cooldownID
+        if not (issecretvalue and issecretvalue(cid)) and cid == wantCid then
+            return blz
+        end
+    end
+    local found = FindBlzChildByCooldownID(wantCid)
+    bar._blzChild = found
+    return found
+end
+
+-- Active state from the CooldownViewer item mixin (runtime aura flag,
+-- observed non-secret in taint dumps). Fail OPEN on secret/missing: never
+-- hide a possibly-active bar. IsShown is NOT a substitute — inactive items
+-- stay shown unless the user enables Blizzard's hide-when-inactive option.
+local function ReadPairedBarActive(blz)
+    if blz.IsActive then
+        local ok, active = pcall(blz.IsActive, blz)
+        if ok then
+            if issecretvalue and issecretvalue(active) then return true end
+            return active and true or false
+        end
+        return true
+    end
+    if blz.IsShown then
+        local ok, shown = pcall(blz.IsShown, blz)
+        return ok and shown and true or false
+    end
+    return false
+end
+
+local barFillInterpolation = Enum and Enum.StatusBarInterpolation
+    and Enum.StatusBarInterpolation.ExponentialEaseOut
+
+-- Visual passthrough, reference-faithful: min/max + value + timer text are
+-- forwarded from the live Blizzard bar every frame. Values may be secret —
+-- they flow straight from getter to setter with no Lua inspection. The
+-- first tick after a show SNAPS (no interpolation) so a fresh bar doesn't
+-- animate from a stale value; subsequent ticks ease.
+local function MirrorPairedBarVisuals(bar, blz)
+    local nativeBar = blz.Bar
+    if not nativeBar or not nativeBar.GetValue then return end
+    local sb = bar.StatusBar
+    if sb then
+        sb.SetMinMaxValues(sb, nativeBar:GetMinMaxValues())
+        local smooth = bar._mirrorWasShown and barFillInterpolation
+        if smooth then
+            sb.SetValue(sb, nativeBar:GetValue(), smooth)
+        else
+            sb.SetValue(sb, nativeBar:GetValue())
+        end
+        bar._mirrorWasShown = true
+    end
+    if bar.DurationText then
+        if bar._hideDurationText then
+            bar.DurationText.SetText(bar.DurationText, "")
+        else
+            local durationFS = nativeBar.Duration
+            if durationFS and durationFS.GetText then
+                bar.DurationText.SetText(bar.DurationText, durationFS:GetText())
+            end
+        end
+    end
+end
+
+-- Per-frame mirror ticker (reference pattern: bar fill needs smooth updates,
+-- so paired bars tick at frame rate, not on the 100ms animation loop the
+-- durObj bars use). Self-hides when no paired bar is active.
+local pairedMirrorFrame = CreateFrame("Frame")
+-- Method guards: the headless test harness stubs CreateFrame minimally.
+if pairedMirrorFrame.Hide then pairedMirrorFrame:Hide() end
+local pairedMirrorAccum = 0
+pairedMirrorFrame:SetScript("OnUpdate", function(self, elapsed)
+    pairedMirrorAccum = pairedMirrorAccum + elapsed
+    if pairedMirrorAccum < 0.016 then return end
+    pairedMirrorAccum = 0
+    local anyPaired = false
+    for _, bar in ipairs(barPool) do
+        if bar._isOwnedBar and bar._active and bar:IsShown() then
+            local blz = GetPairedBlzChild(bar)
+            if blz then
+                anyPaired = true
+                MirrorPairedBarVisuals(bar, blz)
+            end
+        end
+    end
+    if not anyPaired then
+        self:Hide()
+    end
+end)
+
+-- State pass for paired bars (runs from UpdateOwnedBars in place of the
+-- resolver). Owns _active only; visuals belong to the mirror ticker.
+local function UpdatePairedBarState(bar, blz)
+    local active = ReadPairedBarActive(blz)
+    bar._active = active
+    bar._hideDurationText = GetBarSpellHideDurationOverride(bar)
+    -- Nothing of ours may sit on top of or fight the mirror: drop any
+    -- leftover durObj binding/fill state and the PermanentFill overlay a
+    -- recycled bar may carry from a previous unpaired configuration.
+    if bar._boundDurObj then DisableBarDurationBinding(bar) end
+    bar._durObj = nil
+    bar._cSideFill = nil
+    bar._preferDurObjFill = nil
+    if bar.PermanentFill then
+        bar.PermanentFill.SetAlpha(bar.PermanentFill, 0)
+    end
+    if not active then
+        bar._mirrorWasShown = nil
+    end
+    StoreBarRuntimeState(bar, active and "aura" or "inactive", active, nil)
+    if active and pairedMirrorFrame.Show then
+        pairedMirrorFrame:Show()
+    end
+end
+
 function CDMBars:UpdateOwnedBarAura(bar)
     if not bar or not bar._spellID then return end
     local spellID = bar._spellID
     local entry = bar._spellEntry
     if not ns.CDMSpellData then return end
+
+    -- Paired bars mirror Blizzard's live bar; no Lua resolver.
+    local blz = GetPairedBlzChild(bar)
+    if blz then
+        UpdatePairedBarState(bar, blz)
+        return
+    end
 
     -- Inventory-backed bars retain their adapter path for item names,
     -- trinket-slot texture updates, and SpellScanner item-aura detection.
@@ -2162,7 +2341,11 @@ barTimerGroup:SetScript("OnLoop", function()
     local anyActive = false
     for _, bar in ipairs(barPool) do
         if bar._isOwnedBar and bar._active and bar:IsShown() then
-            if bar._hideDurationText then
+            if GetPairedBlzChild(bar) then
+                -- Paired bar: visuals are owned by the per-frame mirror
+                -- ticker; this 100ms loop must not touch them.
+                anyActive = true
+            elseif bar._hideDurationText then
                 anyActive = true
                 if bar._boundDurObj then DisableBarDurationBinding(bar) end
                 if bar.DurationText then

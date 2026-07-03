@@ -452,6 +452,14 @@ local function GetEntryIcon(entry)
                 if texID then return texID end
             end
         end
+    elseif etype == "consumable" then
+        -- entry.id is a spell CATEGORY id (combat pot / health pot /
+        -- healthstone) — resolve through the catalog meta, never spell/item
+        -- queries.
+        local Catalog = ns.CDMCatalog
+        local meta = Catalog and Catalog.GetConsumableCategoryMeta
+            and Catalog.GetConsumableCategoryMeta(entry.id)
+        if meta and meta.icon then return meta.icon end
     end
     return "Interface\\Icons\\INV_Misc_QuestionMark"
 end
@@ -487,6 +495,13 @@ local function GetEntryName(entry)
         return string.format(ns.L["Trinket Slot %s"], tostring(entry.id or "?"))
     elseif etype == "macro" then
         return entry.macroName or ns.L["Macro"]
+    elseif etype == "consumable" then
+        local Catalog = ns.CDMCatalog
+        local meta = Catalog and Catalog.GetConsumableCategoryMeta
+            and Catalog.GetConsumableCategoryMeta(entry.id)
+        local L = ns.L
+        return (meta and ((L and L[meta.name]) or meta.name))
+            or ("Category " .. tostring(entry.id or "?"))
     end
     return ns.L["Unknown"]
 end
