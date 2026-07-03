@@ -9,6 +9,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v5.0.0-alpha8 - 2026-07-03
+
+> ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will
+> not load on the 12.0.x live client. Stay on the v4.x beta line for live realms.
+
+### Added
+- Pandemic glow now works on re-anchored Cooldown Manager icons. It follows
+  Blizzard's own per-spell pandemic window, so the flash timing matches the
+  actual refresh window for each aura.
+
+### Changed
+- Tracked buff bars now mirror their fill and timer text directly from
+  Blizzard's live bars. Bars animate smoothly in combat even while aura data
+  is secret, instead of freezing or going blank.
+
+### Fixed
+- fix(cdm): the aura cache no longer wipes itself mid-combat under the 12.1
+  secret-aura rules, which could leave cooldown and buff displays empty until
+  the next out-of-combat refresh.
+- fix(cdm): combat Potion / Health Potion / Healthstone entries now show their
+  proper icons and names in the composer and on rendered icons instead of a
+  blank or question-mark icon.
+- fix(actionbars): buffs that appear after your buff count grows past its
+  previous maximum now show tooltips and accept right-click-to-cancel
+  immediately, instead of blocking the mouse until a /reload.
+
 ## v5.0.0-alpha7 - 2026-07-03
 
 > ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will
