@@ -289,6 +289,10 @@ end
 local function HandleUnitAura(unit, updateInfo)
     if unit ~= "player" or not updateInfo or updateInfo.isFullUpdate then return end
     local added = updateInfo.addedAuras
+    -- 12.1: addedAuras is a SecretValue while auras are restricted (combat); the
+    -- length operator and ipairs over a secret value throw. Bail — item-buff
+    -- matching resumes from the next non-secret UNIT_AURA / post-combat rescan.
+    if ScannerIsSecretValue(added) then return end
     if type(added) ~= "table" or #added == 0 then return end
 
     local now = GetTime()
@@ -423,6 +427,17 @@ end
 -- SCANNING LOGIC
 ---------------------------------------------------------------------------
 
+-- 12.1: GetAuraDataByIndex throws while aura data is secret (combat). Collapse
+-- the 1..40 player-buff scan bound to 0 when secret; the cast stays pending and
+-- is retried after combat (PLAYER_REGEN_ENABLED -> ProcessPendingScanning).
+local C_Secrets = C_Secrets
+local function AuraScanCount()
+    if C_Secrets and C_Secrets.ShouldAurasBeSecret and C_Secrets.ShouldAurasBeSecret() then
+        return 0
+    end
+    return 40
+end
+
 local function ScanSpellFromBuffs(castSpellID, itemID)
     if InCombatLockdown() then
         -- Queue for post-combat scanning
@@ -452,7 +467,7 @@ local function ScanSpellFromBuffs(castSpellID, itemID)
     local now = GetTime()
     local bestMatch = nil
 
-    for i = 1, 40 do
+    for i = 1, AuraScanCount() do
         local aura = C_UnitAuras.GetAuraDataByIndex("player", i, "HELPFUL")
         if not aura then break end
 

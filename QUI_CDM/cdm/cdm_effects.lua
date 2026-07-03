@@ -12,6 +12,14 @@ local Sources = ns.CDMSources
 local Shared = ns.CDMShared
 local Resolvers = ns.CDMResolvers
 
+-- A spellID sourced from a re-anchored Blizzard CDM frame (aura-phase GetSpellID
+-- in combat) or a secret-tracked resolver state can be a secret value. It must
+-- never be boolean-tested, compared, or used as a TABLE KEY: indexing a table
+-- with a secret key hard-errors AND poisons the table into a persistent tainted
+-- carrier that leaks QUI_CDM taint into Blizzard's CDM continuation and the
+-- shared QUI global namespace. Guard before any such op on a spellID.
+local _issecretvalue = issecretvalue or function() return false end
+
 local function IsCDMRuntimeEnabled()
     return not Shared or Shared.IsRuntimeEnabled()
 end
@@ -352,6 +360,10 @@ local procOnUsableGlowMapReady = false
 -- eventFrame for QUI_PerfRegistry).
 
 local function AddGlowMapID(spellID, icon)
+    -- issecretvalue FIRST: `not spellID` boolean-coerces, and the index below
+    -- keys the map -- both illegal on a secret. A secret spellID has no usable
+    -- glow mapping, so drop it (the icon still glows via its non-secret feeds).
+    if _issecretvalue(spellID) then return end
     if not spellID then return end
     local list = spellIdToGlowIcons[spellID]
     if not list then
@@ -880,11 +892,13 @@ end
 -- CHECK OVERLAY STATE: query API + event-based tracking
 ---------------------------------------------------------------------------
 local function IsOverlayQueryActive(spellID)
+    if _issecretvalue(spellID) then return false end
     if not spellID or not IsSpellOverlayed then return false end
     return IsSpellOverlayed(spellID) and true or false
 end
 
 IsOverlayed = function(spellID)
+    if _issecretvalue(spellID) then return false end
     if not spellID then return false end
     -- The SPELL_ACTIVATION_OVERLAY_GLOW_SHOW/HIDE event is Blizzard's
     -- authoritative proc signal (ref-counted into overlayedSpells, cleared on
@@ -1063,6 +1077,7 @@ local _scanGlowVisited = {}
 -- callback captured `visited`, `matched`, and `spellIdToGlowIcons`. State
 -- now lives on module locals; matched is signaled via the return value.
 local function _ProcessGlowIconsForCandidate(spellID, visited)
+    if _issecretvalue(spellID) then return false end
     local icons = spellIdToGlowIcons[spellID]
     if not icons then return false end
     for i = 1, #icons do
@@ -1290,12 +1305,38 @@ local function HandleUnitAuraChanged(_unit, _updateInfo)
 end
 
 ---------------------------------------------------------------------------
+-- RE-ANCHORED-FRAME GLOW CONFIG (Task C / G8)
+-- Re-anchored Blizzard CDM frames are NOT owned IconFactory icons, so the
+-- event-driven owned-icon glow path above never reaches them. The
+-- ActionButtonSpellAlertManager ShowAlert hook (CDMReanchorProcGlow) calls this
+-- to resolve the SAME per-viewer + per-spell glow config an owned icon would, then
+-- paints it via ApplyGlowWithKey on a QUI-OWNED overlay child of the live frame.
+-- Returns a viewerSettings table (glowType/color/...) or nil when the viewer's
+-- glow is disabled or the spell's per-spell override disables glow.
+---------------------------------------------------------------------------
+local function ResolveGlowForEntry(entry)
+    if not entry then return nil end
+    -- entry IS the same curated entry an owned icon carries as _spellEntry, so the
+    -- existing icon-centric resolvers work against a lightweight wrapper.
+    local fakeIcon = { _spellEntry = entry }
+    local viewerType = GetViewerType(fakeIcon)
+    if not viewerType then return nil end
+    local viewerSettings = GetViewerSettings(viewerType)
+    if not viewerSettings then return nil end
+    local spellOvr = GetSpellGlowOverride(fakeIcon)
+    if spellOvr and spellOvr.glowEnabled == false then return nil end
+    return ApplyGlowColorOverride(viewerSettings, spellOvr)
+end
+
+---------------------------------------------------------------------------
 -- EXPORTS
 ---------------------------------------------------------------------------
 -- Store on ns for engine init to wire
 ns._OwnedGlows = {
     StartGlow = StartGlow,
     StopGlow = StopGlow,
+    -- Re-anchored-frame glow config (Task C / G8). Used by CDMReanchorProcGlow.
+    ResolveGlowForEntry = ResolveGlowForEntry,
     RefreshAllGlows = RefreshAllGlows,
     ResyncAllGlows = ResyncAllGlows,
     RebuildGlowSpellMap = RebuildGlowSpellMap,
@@ -1656,6 +1697,24 @@ function ns._CDM_ResolvePreviewSwipe(settings, mode)
         if not r then r, g, b, a = CDM_DEFAULT_R, CDM_DEFAULT_G, CDM_DEFAULT_B, CDM_DEFAULT_A end
     end
     return true, r, g, b, a or 1
+end
+
+-- Resolve ONLY the swipe colour (no show-gating) for a mode, with the same
+-- ResolveColor + default-fallback rules as the runtime path. Used by the
+-- re-anchor swipe owner, which does its own draw/visibility gating but needs the
+-- user's colour for both the aura ("aura") and cooldown ("cooldown") phases.
+-- Returns r, g, b, a.
+function ns._CDM_ResolveModeColor(settings, mode)
+    settings = settings or {}
+    local r, g, b, a
+    if mode == "aura" then
+        r, g, b, a = ResolveColor(settings.overlayColorMode or "default", settings.overlayColor)
+        if not r then r, g, b, a = BLIZZ_BUFF_R, BLIZZ_BUFF_G, BLIZZ_BUFF_B, BLIZZ_BUFF_A end
+    else
+        r, g, b, a = ResolveColor(settings.swipeColorMode or "default", settings.swipeColor)
+        if not r then r, g, b, a = CDM_DEFAULT_R, CDM_DEFAULT_G, CDM_DEFAULT_B, CDM_DEFAULT_A end
+    end
+    return r, g, b, a or 1
 end
 
 ---------------------------------------------------------------------------

@@ -14,6 +14,7 @@ local CreateFrame = CreateFrame
 local InCombatLockdown = InCombatLockdown
 local C_Timer = C_Timer
 local hooksecurefunc = hooksecurefunc
+local _securecall = securecallfunction or function(fn, ...) return fn(...) end
 local table_insert = table.insert
 local string_format = string.format
 
@@ -572,10 +573,10 @@ local function GetTrackedBarSettings()
 end
 
 local function GetTrackedBarSourceViewer()
-    -- Prefer the QUI-owned viewer (BuildBarsFromOwned in cdm_bar_renderer.lua)
-    -- as the canonical source. Fall back to Blizzard's BuffBarCooldownViewer
-    -- only if the owned viewer hasn't been created yet (early load).
-    return GetBuffBarViewer() or _G["BuffBarCooldownViewer"]
+    -- Blizzard's BuffBarCooldownViewer is the data source. The QUI-owned
+    -- viewer is only the render target, and using it as the scanner source
+    -- feeds our own bars back into the model instead of mirroring native CDM.
+    return _G["BuffBarCooldownViewer"] or GetBuffBarViewer()
 end
 
 local function GetTrackedBarName(frame)
@@ -810,6 +811,66 @@ local function IsLayoutSuppressed()
     return layoutSuppressed > 0
 end
 
+local trackedBarReadyFrame
+local trackedBarReadyQueued = false
+local barViewerLayoutHooked = false
+local InstallBarViewerLayoutHook
+
+local function IsCooldownViewerReady()
+    local catalog = ns.CDMCatalog
+    if catalog and catalog.IsCooldownViewerReady then
+        return catalog.IsCooldownViewerReady()
+    end
+
+    local api = _G.C_CooldownViewer
+    if not api then return false end
+    if not api.IsCooldownViewerAvailable then return true end
+    local ok, ready = pcall(api.IsCooldownViewerAvailable)
+    return ok and ready == true
+end
+
+local function QueueTrackedBarLayoutWhenReady()
+    if trackedBarReadyQueued then return end
+    trackedBarReadyQueued = true
+
+    if not CreateFrame then return end
+    if not trackedBarReadyFrame then
+        trackedBarReadyFrame = CreateFrame("Frame")
+    end
+
+    trackedBarReadyFrame:RegisterEvent("COOLDOWN_VIEWER_DATA_LOADED")
+    trackedBarReadyFrame:SetScript("OnEvent", function(self)
+        self:UnregisterEvent("COOLDOWN_VIEWER_DATA_LOADED")
+        self:SetScript("OnEvent", nil)
+        trackedBarReadyQueued = false
+        local ready = IsCooldownViewerReady()
+        if not ready then return end
+        if InstallBarViewerLayoutHook then InstallBarViewerLayoutHook() end
+        if LayoutBuffBars then LayoutBuffBars() end
+    end)
+end
+
+InstallBarViewerLayoutHook = function()
+    if barViewerLayoutHooked then return end
+    if not IsCooldownViewerReady() then
+        QueueTrackedBarLayoutWhenReady()
+        return
+    end
+
+    local blizzBarViewer = _G["BuffBarCooldownViewer"]
+    if blizzBarViewer and blizzBarViewer.Layout then
+        local function onBarViewerLayout()
+            if InCombatLockdown() then return end
+            C_Timer.After(0.1, function()
+                if isBarLayoutRunning then return end
+                LayoutBuffBars()
+            end)
+        end
+        hooksecurefunc(blizzBarViewer, "Layout", function(...) _securecall(onBarViewerLayout, ...) end)
+        barViewerLayoutHooked = true
+    end
+end
+
 ---------------------------------------------------------------------------
 -- ICON FRAME COLLECTION
 ---------------------------------------------------------------------------
@@ -928,10 +989,17 @@ LayoutBuffIcons = function()
 
     -- Empty state: size container to one icon so the anchored edge's
     -- midpoint stays fixed across populated ↔ empty transitions.
+    -- BUT when the re-anchor engine owns the buff surface it positions chrome SHELLS
+    -- (not owned icons), so GetBuffIconFrames() is always empty here -- resizing the
+    -- SHARED container to one icon would stomp the re-anchor's RefreshBuiltin size
+    -- (the container is containers["buff"], read by both paths + the layout-mode mover).
+    -- Leave sizing to the re-anchor; only the legacy owned-icon path resizes.
     if currentCount == 0 then
-        viewer:SetSize(iconWidth, iconHeight)
-        if _G.QUI_SetCDMViewerBounds then
-            _G.QUI_SetCDMViewerBounds(viewer, iconWidth, iconHeight)
+        if not ns._cdmBoot then
+            viewer:SetSize(iconWidth, iconHeight)
+            if _G.QUI_SetCDMViewerBounds then
+                _G.QUI_SetCDMViewerBounds(viewer, iconWidth, iconHeight)
+            end
         end
         isIconLayoutRunning = false
         return
@@ -1061,20 +1129,23 @@ end
 LayoutBuffBars = function()
     local viewer = GetBuffBarViewer()
     if not viewer then return end
-    -- Re-anchor engine: relocate the native Blizzard BuffBar frames (their own
-    -- StatusBar fill/timer kept) into the QUI trackedBar container instead of
-    -- building owned StatusBars from mirror data -- removes bars from the mirror.
-    -- IN-GAME PENDING: bar-specific vertical-stack layout tuning. Custom bars keep
-    -- the cdm_bar_renderer path (this is the built-in trackedBar surface only).
-    if ns._cdmBoot then
-        ns._cdmBoot:RefreshBuiltin("trackedBar")
-        return
-    end
+    -- Tracked bars intentionally use addon-owned StatusBars. Blizzard's
+    -- BuffBarCooldownViewer remains a data source only; the suppressor may
+    -- park the viewer shell offscreen out of combat, but the re-anchor runtime
+    -- never decorates or relocates its live bar child frames.
     if isBarLayoutRunning then return end
 
     isBarLayoutRunning = true
     local settings = GetTrackedBarSettings()
+    if not IsCooldownViewerReady() then
+        QueueTrackedBarLayoutWhenReady()
+        isBarLayoutRunning = false
+        return
+    end
     if not settings.enabled then
+        if ns.CDMBlizzardBuffBarSuppressor then
+            ns.CDMBlizzardBuffBarSuppressor:Apply(settings)
+        end
         NotifyTrackedBarRuntimeChanged()
         isBarLayoutRunning = false
         return
@@ -1110,7 +1181,12 @@ LayoutBuffBars = function()
 
     local CDMBars = ns.CDMBars
     if CDMBars then
-        CDMBars:Refresh(viewer, settings, resolvedBarWidth)
+        local runtimeEntries = GetTrackedBarRuntimeEntries()
+        CDMBars:Refresh(viewer, settings, resolvedBarWidth, "trackedBar", runtimeEntries)
+    end
+
+    if ns.CDMBlizzardBuffBarSuppressor then
+        ns.CDMBlizzardBuffBarSuppressor:Apply(settings)
     end
 
     NotifyTrackedBarRuntimeChanged()
@@ -1272,8 +1348,16 @@ local function Initialize()
 
     -- TAINT SAFETY: Use local variables instead of writing to Blizzard CDM viewer frames.
     local lastAuraIconCount = 0  -- Track visible icon count for change detection
-    iconViewer = GetBuffIconViewer()
-    if iconViewer then
+    -- INSTALL UNCONDITIONALLY. ADDON_LOADED handlers fire in registration (TOC)
+    -- order: this module registers BEFORE cdm_containers, so the provider engine
+    -- is not initialized yet and GetBuffIconViewer() returns nil here on EVERY
+    -- boot. Gating this install on the init-time viewer silently skipped the
+    -- whole repair net for the session -- the only aura-change trigger the
+    -- re-anchor engine has when Blizzard's items are cold-boot stale (their
+    -- OnActiveStateChanged never fires). The coalesce handler and the
+    -- subscriber both re-fetch the viewer per-event, so nothing below depends
+    -- on it existing now.
+    do
         -- Frame-show coalescing: Show() is a no-op if already shown,
         -- so rapid UNIT_AURA events within the same render frame are
         -- automatically batched into a single OnUpdate flush.
@@ -1285,6 +1369,18 @@ local function Initialize()
             if not iv2 or not iv2:IsShown() then return end
             if isIconLayoutRunning then return end
             if IsLayoutSuppressed() then return end
+
+            -- RE-ANCHOR REPAIR NET: under the re-anchor engine the owned-icon
+            -- pool is empty (matched buff entries are direct-anchored native
+            -- Blizzard frames) and LayoutBuffIcons early-returns, so both legacy
+            -- paths below are blind -- one lost OnActiveStateChanged left the
+            -- buff surface stuck until unrelated churn. Route the coalesced
+            -- player-aura change into the hooks' throttled re-claim instead
+            -- (MarkDirty -> 0.05s Flush -> RefreshBuiltin("buff")).
+            if ns._cdmBoot and ns._cdmReanchorHooks then
+                ns._cdmReanchorHooks:MarkDirty("buff")
+                return
+            end
 
             -- COMBAT STABILITY: During combat, only force hash
             -- reset when icon count actually changed (buff gained
@@ -1322,21 +1418,10 @@ local function Initialize()
         end
     end
 
-    -- Hook Blizzard's BuffBarCooldownViewer Layout to detect bar child
-    -- additions/removals and rebuild owned bars accordingly.
-    local blizzBarViewer = _G["BuffBarCooldownViewer"]
-    if blizzBarViewer and blizzBarViewer.Layout then
-        hooksecurefunc(blizzBarViewer, "Layout", function()
-            -- Suppress during combat: UNIT_AURA already handles bar updates,
-            -- and Blizzard's Layout() fires from dimension changes that
-            -- produce secret values, causing continuous resize oscillation.
-            if InCombatLockdown() then return end
-            C_Timer.After(0.1, function()
-                if isBarLayoutRunning then return end
-                LayoutBuffBars()
-            end)
-        end)
-    end
+    -- Hook Blizzard's BuffBarCooldownViewer Layout only after the data provider
+    -- is ready. First-login native-frame hooks before COOLDOWN_VIEWER_DATA_LOADED
+    -- can taint Blizzard's secret aura tables.
+    InstallBarViewerLayoutHook()
     -- Also rebuild bars on UNIT_AURA (tracked buffs can appear/disappear)
     local barAuraCoalesce = CreateFrame("Frame")
     barAuraCoalesce:Hide()

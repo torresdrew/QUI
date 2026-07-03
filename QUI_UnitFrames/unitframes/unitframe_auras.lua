@@ -231,9 +231,16 @@ end
 
 -- Anchor a container OOC with fixed points relative to its unit frame.  The
 -- container is forbidden, so SetPoint/SetSize are NEVER called in combat.
+-- The 1x1 container is pinned corner-to-corner (TOPRIGHT -> frame TOPRIGHT
+-- etc.); the outside vertical flip is carried by the buttons' attachPoint in
+-- the AuraSkin profile, so live geometry == the layout-mode preview geometry
+-- (MapAuraAnchorToFramePoint).  borderOffsetX is the same 1px border
+-- compensation the preview applies per icon.
 local function AnchorContainer(container, frame, anchor)
+    local _, framePoint, borderOffsetX = MapAuraAnchorToFramePoint(anchor)
+    framePoint = framePoint or "TOPLEFT"
     container:ClearAllPoints()
-    container:SetPoint(anchor or "TOPLEFT", frame, "BOTTOMLEFT", 0, -2)
+    container:SetPoint(framePoint, frame, framePoint, borderOffsetX or 0, 0)
 end
 
 -- Create (OOC) the two zone containers for a unit frame and theme/pool them via
@@ -257,6 +264,7 @@ local function EnsureContainers(frame, auraSettings)
         offsetX     = auraSettings.debuffOffsetX or 0,
         offsetY     = auraSettings.debuffOffsetY or 2,
         anchor      = auraSettings.debuffAnchor or "TOPLEFT",
+        attachPoint = (MapAuraAnchorToFramePoint(auraSettings.debuffAnchor or "TOPLEFT")),
         borderSize  = auraSettings.debuffBorderSize or auraSettings.borderSize or 1,
         fontSize    = auraSettings.debuffFontSize or auraSettings.fontSize or 11,
         hideSwipe   = auraSettings.debuffHideSwipe ~= nil and auraSettings.debuffHideSwipe or (auraSettings.hideSwipe or false),
@@ -271,6 +279,7 @@ local function EnsureContainers(frame, auraSettings)
         offsetX     = auraSettings.buffOffsetX or 0,
         offsetY     = auraSettings.buffOffsetY or -2,
         anchor      = auraSettings.buffAnchor or "BOTTOMLEFT",
+        attachPoint = (MapAuraAnchorToFramePoint(auraSettings.buffAnchor or "BOTTOMLEFT")),
         borderSize  = auraSettings.buffBorderSize or auraSettings.borderSize or 1,
         fontSize    = auraSettings.buffFontSize or auraSettings.fontSize or 11,
         hideSwipe   = auraSettings.buffHideSwipe ~= nil and auraSettings.buffHideSwipe or (auraSettings.hideSwipe or false),
@@ -287,8 +296,8 @@ local function EnsureContainers(frame, auraSettings)
     AuraSkin.Attach(frame.debuffContainer, debuffProfile)
     AuraSkin.Attach(frame.buffContainer, buffProfile)
 
-    AnchorContainer(frame.debuffContainer, frame, auraSettings.debuffAnchor)
-    AnchorContainer(frame.buffContainer, frame, auraSettings.buffAnchor)
+    AnchorContainer(frame.debuffContainer, frame, debuffProfile.anchor)
+    AnchorContainer(frame.buffContainer, frame, buffProfile.anchor)
     return true
 end
 

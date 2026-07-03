@@ -22,11 +22,18 @@ local wipe = wipe or function(tbl)
     for key in pairs(tbl) do tbl[key] = nil end
 end
 
+-- 12.1: the instance-ID aura getters below (GetAuraDuration,
+-- GetAuraDataByAuraInstanceID, DoesAuraHaveExpirationTime, GetAuraApplication-
+-- DisplayCount, ...) gained RequiresUnitAuraAccess=true — they THROW when called
+-- while aura data is secret. A secret auraInstanceID (the form UNIT_AURA delivers
+-- in combat) must therefore be REJECTED here rather than passed through: return
+-- false so the Query* guards bail to nil and callers fall back instead of erroring.
 local function HasOpaqueValue(value)
+    if value == nil then return false end
     if WoW_IsSecretValue and WoW_IsSecretValue(value) then
-        return true
+        return false
     end
-    return value ~= nil
+    return true
 end
 
 -- Direct API references hoisted at load. Wrappers below call these without
@@ -302,7 +309,7 @@ local function QueryScannerActive(scanner, spellID, itemID)
 end
 
 -- Reused scratch for the scanned-aura result. Every consumer
--- (cdm_resolvers/cdm_icon_renderer/cdm_bar_renderer/cdm_icon_custom_bar_policy)
+-- (cdm_resolvers/cdm_icon_renderer/cdm_bar_renderer/cdm_icon_policies custom-bar chunk)
 -- reads the fields it needs synchronously and discards the table before the
 -- next QueryScannedItemAuraInfo call, so a single shared table is safe and
 -- removes a fresh 12-field allocation per item/aura probe (CDM_srcAuraData).
@@ -413,7 +420,10 @@ local _C_IsAuraFilteredOutByInstanceID = C_UnitAuras and C_UnitAuras.IsAuraFilte
 local _C_GetAuraApplicationDisplayCount = C_UnitAuras and C_UnitAuras.GetAuraApplicationDisplayCount
 local _C_GetUnitAuraBySpellID = C_UnitAuras and C_UnitAuras.GetUnitAuraBySpellID
 local _C_GetPlayerAuraBySpellID = C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID
-local _C_GetAuraDataBySpellID = C_UnitAuras and C_UnitAuras.GetAuraDataBySpellID
+-- 12.1: C_UnitAuras.GetAuraDataBySpellID was removed on live clients. Fall back to
+-- GetUnitAuraBySpellID so QueryAuraDataBySpellID keeps resolving; a test harness
+-- that injects a GetAuraDataBySpellID mock still exercises it as a distinct family.
+local _C_GetAuraDataBySpellID = C_UnitAuras and (C_UnitAuras.GetAuraDataBySpellID or C_UnitAuras.GetUnitAuraBySpellID)
 local _C_GetCooldownAuraBySpellID = C_UnitAuras and C_UnitAuras.GetCooldownAuraBySpellID
 local _C_GetAuraDataBySpellName = C_UnitAuras and C_UnitAuras.GetAuraDataBySpellName
 local _C_GetUnitAuras = C_UnitAuras and C_UnitAuras.GetUnitAuras
@@ -550,6 +560,9 @@ function CDMSources.QueryPlayerAuraBySpellID(spellID)
     return _C_GetPlayerAuraBySpellID(spellID)
 end
 
+-- 12.1: _C_GetAuraDataBySpellID falls back to GetUnitAuraBySpellID on live clients
+-- (GetAuraDataBySpellID was removed). `filter` is passed through for the mocked
+-- test path and kept as a memo bucket key so buff/debuff lookups stay separate.
 function CDMSources.QueryAuraDataBySpellID(unit, spellID, filter)
     if not unit or not spellID or not _C_GetAuraDataBySpellID then return nil end
     if AuraMemoCacheable(unit, spellID) then

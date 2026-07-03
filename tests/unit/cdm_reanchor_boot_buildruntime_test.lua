@@ -26,8 +26,12 @@ local container = { SetSize = function() end }
 -- curated: one entry resolving (via index) to cooldownID 11
 local curatedEntry = { spellID = 500, _assignedRow = 1 }
 local ownedAdds = {}
-local shell = { SetSize = function() end }   -- the QUI chrome shell for the matched slot
+local releasedIcons = {}
+local releasedKeys = {}
+local additionalList = {}
+local clickSlot = { SetSize = function() end }   -- QUI-owned secure click host for the matched slot
 local shellPositioned = false
+local clickSlotPositioned = false
 local clickOverlayCall
 local shellLifecycle = {}
 
@@ -46,18 +50,47 @@ local env = {
     -- buildLayout stub: echo the wrappers as placements (1 entry here)
     buildLayout = function(settings, icons, opts)
         local p = {}
-        for i = 1, #icons do p[i] = { icon = icons[i], x = i, y = -i } end
+        for i = 1, #icons do
+            p[i] = { icon = icons[i], x = i, y = -i, w = 30, h = 20, rowConfig = { size = 30 } }
+        end
         return { placements = p, metrics = { iconWidth = 40, totalHeight = 40 } }
     end,
     pixelRound = function(v) return v end,
-    acquireIcon = function(c, e) local o = { owned = e }; ownedAdds[#ownedAdds+1] = o; return o end,
-    resolveAdditional = function() return {} end,
-    -- chrome-shell deps: matched curated entries mint a shell, get positioned in the
-    -- container, and the live Blizzard frame is two-point-overlaid onto the shell.
-    mintShell = function() return shell end,
+    -- Owned-icon stubs need the positionOwned surface (GetScale/ClearAllPoints/
+    -- SetPoint/Show) for the additional-entry release block at the end.
+    -- Acquire/release record the containerKey they are handed: realenv uses it
+    -- for Factory pool membership (content refresh walks GetIconPool(key)).
+    acquireIcon = function(c, e, containerKey)
+        local o = {
+            owned = e,
+            acquiredKey = containerKey,
+            GetScale = function() return 1 end,
+            ClearAllPoints = function() end,
+            SetPoint = function() end,
+            Show = function() end,
+        }
+        ownedAdds[#ownedAdds+1] = o
+        return o
+    end,
+    releaseIcon = function(icon, containerKey)
+        releasedIcons[#releasedIcons+1] = icon
+        releasedKeys[#releasedKeys+1] = containerKey
+    end,
+    resolveAdditional = function() return additionalList end,
+    -- Native deps: matched curated entries direct-anchor the live Blizzard frame
+    -- to the container, then position a separate secure click host over the slot.
+    mintShell = function() error("native matched entries must not mint shells") end,
     positionShell = function() shellPositioned = true end,
-    updateClickOverlay = function(shellArg, entryArg, viewerTypeArg)
-        clickOverlayCall = { shell = shellArg, entry = entryArg, viewerType = viewerTypeArg }
+    positionClickSlot = function(containerArg, liveArg, entryArg, keyArg)
+        clickSlotPositioned = true
+        clickSlot.container = containerArg
+        clickSlot.live = liveArg
+        clickSlot.entry = entryArg
+        clickSlot.key = keyArg
+        return clickSlot
+    end,
+    updateClickOverlay = function(hostArg, entryArg, viewerTypeArg)
+        clickOverlayCall = { host = hostArg, entry = entryArg, viewerType = viewerTypeArg }
     end,
     beginShellPass = function(c) shellLifecycle[#shellLifecycle + 1] = { "begin", c } end,
     endShellPass = function(c) shellLifecycle[#shellLifecycle + 1] = { "end", c } end,
@@ -86,24 +119,78 @@ env.CDMReanchorWiring = {
     end,
 }
 
+-- G13: capture the auraPhase deps so we can exercise the reassertEdge closure that
+-- BuildRuntime wires (re-hides the recharge draw-edge when showRechargeEdge is off).
+local capturedAuraDeps
+ns.CDMReanchorAuraPhase = { New = function(deps) capturedAuraDeps = deps; return { Hook = function() end } end }
+local swipeStub = { showRechargeEdge = false, showCooldownSwipe = true }
+ns._OwnedSwipe = { GetSettings = function() return swipeStub end }
+
 local facade = B.BuildRuntime(env)
 assert(type(facade) == "table" and facade.bridge and facade.wiring and facade.runtime, "facade has bridge/wiring/runtime")
 assert(type(facade.RefreshBuiltin) == "function", "facade:RefreshBuiltin exists")
 
 local count = facade:RefreshBuiltin("essential")
 assert(count == 1, "one curated entry assembled (matched)")
--- the matched frame (cd 11) is two-point-overlaid onto its shell; the other (cd 99) sunk (alpha 0)
+-- The matched frame (cd 11) is direct-anchored to the QUI container; the other
+-- (cd 99) is sunk (alpha 0).
 local overlaidMatch, sunkDrop = false, false
-for _, s in ipairs(setpoints) do if s.f == fMatch and s.rel == shell then overlaidMatch = true end end
+for _, s in ipairs(setpoints) do if s.f == fMatch and s.rel == container then overlaidMatch = true end end
 for _, a in ipairs(alphas) do if a.f == fDrop and a.a == 0 then sunkDrop = true end end
-assert(shellPositioned, "matched slot minted + positioned a QUI chrome shell")
-assert(clickOverlayCall and clickOverlayCall.shell == shell and clickOverlayCall.entry == curatedEntry
+assert(not shellPositioned, "matched native slot does not position a QUI chrome shell")
+assert(clickSlotPositioned and clickSlot.live == fMatch and clickSlot.entry == curatedEntry,
+    "matched native slot positions a separate click host")
+assert(clickOverlayCall and clickOverlayCall.host == clickSlot and clickOverlayCall.entry == curatedEntry
     and clickOverlayCall.viewerType == "essential",
-    "matched shell receives secure click overlay setup through boot deps")
+    "matched click host receives secure click overlay setup through boot deps")
 assert(#shellLifecycle == 2 and shellLifecycle[1][1] == "begin" and shellLifecycle[1][2] == container
     and shellLifecycle[2][1] == "end" and shellLifecycle[2][2] == container,
     "boot wires shell generation lifecycle through to runtime")
-assert(overlaidMatch, "curated-matched Blizzard frame two-point-overlaid onto its shell")
+assert(overlaidMatch, "curated-matched Blizzard frame direct-anchored to the container")
 assert(sunkDrop, "non-curated Blizzard frame sunk (alpha 0)")
+
+-- G13: BuildRuntime wires a reassertEdge dep into the auraPhase. It hides the recharge
+-- draw-edge (SetDrawEdge(false)) when the owned-icon showRechargeEdge setting is off,
+-- and leaves Blizzard's edge alone when it is on -- non-secret swipe settings only.
+assert(capturedAuraDeps and type(capturedAuraDeps.reassertEdge) == "function",
+    "G13: auraPhase receives a reassertEdge dep")
+assert(type(capturedAuraDeps.reassertColor) == "function",
+    "auraPhase still receives reassertColor")
+local edgeCalls = {}
+local cdEdge = { SetDrawEdge = function(_, v) edgeCalls[#edgeCalls+1] = v end }
+swipeStub.showRechargeEdge = false
+capturedAuraDeps.reassertEdge({}, cdEdge)
+assert(#edgeCalls == 1 and edgeCalls[1] == false,
+    "G13: reassertEdge hides the edge (SetDrawEdge(false)) when showRechargeEdge is off")
+swipeStub.showRechargeEdge = true
+capturedAuraDeps.reassertEdge({}, cdEdge)
+assert(#edgeCalls == 1, "G13: reassertEdge leaves Blizzard's edge when showRechargeEdge is on")
+
+-- Ghost owned-icon release: BuildRuntime must thread env.releaseIcon into the
+-- runtime's releaseOwned dep so each pass releases the PREVIOUS pass's minted
+-- owned icons (frameless/additional entries) instead of abandoning them Show()n
+-- at stale slots.
+additionalList[1] = { spellID = 900, _assignedRow = 1 }
+local ownedBefore = #ownedAdds
+facade:RefreshBuiltin("essential")
+assert(#ownedAdds == ownedBefore + 1, "additional entry mints an owned icon")
+local firstPassIcon = ownedAdds[#ownedAdds]
+facade:RefreshBuiltin("essential")
+assert(#ownedAdds == ownedBefore + 2, "next pass re-mints the additional entry's icon")
+local sawRelease = false
+for _, r in ipairs(releasedIcons) do
+    if r == firstPassIcon then sawRelease = true end
+end
+assert(sawRelease,
+    "boot threads env.releaseIcon -> releaseOwned: the previous pass's owned icon is released")
+
+-- POOL MEMBERSHIP threading: mintOwned must hand the containerKey through to
+-- env.acquireIcon (realenv registers the icon in Factory pool[key] so the
+-- content-refresh loops pick it up), and the runtime's release must hand the
+-- key back to env.releaseIcon (realenv removes it from the pool).
+assert(firstPassIcon.acquiredKey == "essential",
+    "boot passes the containerKey to acquireIcon for pool membership")
+assert(#releasedKeys > 0 and releasedKeys[#releasedKeys] == "essential",
+    "runtime release passes the containerKey back to releaseIcon")
 
 print("OK: cdm_reanchor_boot_buildruntime_test")

@@ -9,11 +9,11 @@ local fMatch, fDrop, fSecret = { id = 1 }, { id = 9 }, { id = 0 }
 local ownedIcon = { o = 1 }
 local container, viewer, settings = { c = 1 }, { v = 1 }, { s = 1 }
 
-local overlays, sinks, owned, shells = {}, {}, {}, {}
-local shellM = { s = 1 }
+local overlayRects, overlays, sinks, owned, shells, clickSlots = {}, {}, {}, {}, {}, {}
 local bridge = {
     InstallAnchorGuard = function() end,
     Overlay = function(_, f, anchor) overlays[#overlays+1] = { live = f, shell = anchor } end,
+    OverlayRect = function(_, f, rel) overlayRects[#overlayRects+1] = { live = f, rel = rel } end,
     Sink = function(_, f) sinks[#sinks+1] = f end,
 }
 -- wiring stub: BuildFrameMap returns (map, items) with all three frames as items;
@@ -34,14 +34,22 @@ local runtime = R.New({
     getCurated = function() return { eMatched, eFrameless } end,
     getAdditional = function() return {} end,
     mintOwned = function() return ownedIcon end,
-    mintShell = function() return shellM end,
+    mintShell = function() error("matched native entries must not mint shells") end,
     positionOwned = function(icon) owned[#owned+1] = icon end,
     positionShell = function(shell) shells[#shells+1] = shell end,
+    positionClickSlot = function()
+        local slot = {}
+        clickSlots[#clickSlots + 1] = slot
+        return slot
+    end,
+    updateClickOverlay = function() end,
     decorate = function() end,
     buildLayout = function(s, icons, opts)
         -- echo wrappers as placements in order
         local p = {}
-        for i = 1, #icons do p[i] = { icon = icons[i], x = i, y = -i } end
+        for i = 1, #icons do
+            p[i] = { icon = icons[i], x = i, y = -i, w = 30, h = 20, rowConfig = { size = 30 } }
+        end
         return { placements = p, metrics = { iconWidth = 40, totalHeight = 40 } }
     end,
     applySize = function(c, m) sizedWith = { c = c, m = m } end,
@@ -53,9 +61,11 @@ local runtime = R.New({
 local count = runtime:RefreshContainer("essential")
 
 assert(count == 2, "matched + frameless = 2 entries")
-assert(#overlays == 1 and overlays[1].live == fMatch and overlays[1].shell == shellM,
-    "the matched live frame is two-point-overlaid onto its shell")
-assert(#shells == 1 and shells[1] == shellM, "the matched shell is positioned in the container")
+assert(#overlayRects == 1 and overlayRects[1].live == fMatch and overlayRects[1].rel == container,
+    "the matched live frame is direct-anchored to the container")
+assert(#overlays == 0, "the matched live frame is not overlaid onto a shell")
+assert(#shells == 0, "no matched shell is positioned in the container")
+assert(#clickSlots == 1, "native clickable container positions a separate click slot")
 assert(#owned == 1 and owned[1] == ownedIcon, "the frameless entry positioned as an owned icon")
 -- sink: every enumerated item not claimed -> fDrop and fSecret (NOT fMatch)
 assert(#sinks == 2, "two unmatched items sunk")
@@ -104,10 +114,11 @@ do
     local essentialViewer, utilityViewer = { v = "essential" }, { v = "utility" }
     local utilityFrame = { id = "utility-frame" }
     local crossEntry = { name = "cross", source = "blizzardCDM" }
-    local crossOverlays, crossSinks, receivedViewers = {}, {}, nil
+    local crossOverlayRects, crossOverlays, crossSinks, receivedViewers = {}, {}, {}, nil
     local crossBridge = {
         InstallAnchorGuard = function() end,
         Overlay = function(_, f, anchor) crossOverlays[#crossOverlays + 1] = { live = f, shell = anchor } end,
+        OverlayRect = function(_, f, rel) crossOverlayRects[#crossOverlayRects + 1] = { live = f, rel = rel } end,
         Sink = function(_, f) crossSinks[#crossSinks + 1] = f end,
     }
     local crossWiring = {
@@ -133,21 +144,26 @@ do
         getSettings = function() return settings end,
         getCurated = function() return { crossEntry } end,
         getAdditional = function() return {} end,
-        mintShell = function() return shellM end,
+        mintShell = function() error("matched native entries must not mint shells") end,
         buildLayout = function(_, icons)
             local p = {}
-            for i = 1, #icons do p[i] = { icon = icons[i], x = i, y = i } end
+            for i = 1, #icons do
+                p[i] = { icon = icons[i], x = i, y = i, w = 30, h = 20, rowConfig = { size = 30 } }
+            end
             return { placements = p, metrics = {} }
         end,
         positionShell = function() end,
+        positionClickSlot = function() return {} end,
+        updateClickOverlay = function() end,
         decorate = function() end,
     })
 
     crossRuntime:RefreshContainer("essential")
     assert(receivedViewers and receivedViewers[1] == essentialViewer and receivedViewers[2] == utilityViewer,
         "essential refresh must enumerate both cooldown viewers")
-    assert(#crossOverlays == 1 and crossOverlays[1].live == utilityFrame,
+    assert(#crossOverlayRects == 1 and crossOverlayRects[1].live == utilityFrame,
         "QUI Essential must claim the live Blizzard Utility frame")
+    assert(#crossOverlays == 0, "cross-viewer claim must not use a shell overlay")
     assert(#crossSinks == 0, "claimed cross-viewer frame must not be sunk")
 end
 
@@ -160,6 +176,7 @@ do
     local sharedBridge = {
         InstallAnchorGuard = function() end,
         Overlay = function() end,
+        OverlayRect = function() end,
         Sink = function(_, f) sharedSinks[#sharedSinks + 1] = f end,
     }
     local sharedWiring = {
@@ -183,13 +200,17 @@ do
             return {}
         end,
         getAdditional = function() return {} end,
-        mintShell = function() return shellM end,
+        mintShell = function() error("matched native entries must not mint shells") end,
         buildLayout = function(_, icons)
             local p = {}
-            for i = 1, #icons do p[i] = { icon = icons[i], x = i, y = i } end
+            for i = 1, #icons do
+                p[i] = { icon = icons[i], x = i, y = i, w = 30, h = 20, rowConfig = { size = 30 } }
+            end
             return { placements = p, metrics = {} }
         end,
         positionShell = function() end,
+        positionClickSlot = function() return {} end,
+        updateClickOverlay = function() end,
         decorate = function() end,
     })
 
@@ -197,6 +218,74 @@ do
     sharedRuntime:RefreshContainer("utility")
     assert(#sharedSinks == 0,
         "sibling refresh must not sink a Blizzard frame already claimed by another QUI container")
+end
+
+-- BuffIcon uses Blizzard's aura lifecycle frames. In active-only mode it is valid
+-- for the configured buff list to claim zero native frames; those unmatched native
+-- BuffIcon frames must not go through the generic sink path.
+do
+    local buffFrame = { id = "buff-unclaimed" }
+    local buffSinks, hiddenTooltips = {}, {}
+    local buffBridge = {
+        InstallAnchorGuard = function() end,
+        Overlay = function() end,
+        OverlayRect = function() end,
+        Sink = function(_, f) buffSinks[#buffSinks + 1] = f end,
+    }
+    local buffRuntime = R.New({
+        bridge = buffBridge,
+        wiring = {
+            GetViewerForKey = function() return viewer end,
+            GetViewersForKey = function() return { viewer } end,
+            BuildFrameMapForViewers = function() return {}, { buffFrame } end,
+            MatchCuratedToFrames = function() return {}, {}, {} end,
+        },
+        getContainer = function() return container end,
+        getSettings = function() return { iconDisplayMode = "active" } end,
+        getCurated = function() return {} end,
+        getAdditional = function() return {} end,
+        hideLiveTooltip = function(f) hiddenTooltips[#hiddenTooltips + 1] = f end,
+    })
+
+    assert(buffRuntime:RefreshContainer("buff") == 0, "unclaimed active-only buff refresh returns no entries")
+    assert(#buffSinks == 0, "unclaimed BuffIcon native frames must not be sunk")
+    assert(#hiddenTooltips == 1 and hiddenTooltips[1] == buffFrame,
+        "unclaimed BuffIcon frames still tear down QUI-owned tooltip overlays")
+end
+
+-- A BuffIcon frame QUI previously claimed must be released if a later active-only
+-- pass no longer claims it. Otherwise the bridge keeps the old overlay rect and
+-- alpha=1, which leaves expired buffs stuck or overlapped with newly active buffs.
+do
+    local staleFrame = { id = "previously-claimed-buff" }
+    local buffSinks, hiddenTooltips = {}, {}
+    local buffBridge = {
+        InstallAnchorGuard = function() end,
+        Overlay = function() end,
+        OverlayRect = function() end,
+        IsClaimed = function(_, f) return f == staleFrame end,
+        Sink = function(_, f) buffSinks[#buffSinks + 1] = f end,
+    }
+    local buffRuntime = R.New({
+        bridge = buffBridge,
+        wiring = {
+            GetViewerForKey = function() return viewer end,
+            GetViewersForKey = function() return { viewer } end,
+            BuildFrameMapForViewers = function() return {}, { staleFrame } end,
+            MatchCuratedToFrames = function() return {}, {}, {} end,
+        },
+        getContainer = function() return container end,
+        getSettings = function() return { iconDisplayMode = "active" } end,
+        getCurated = function() return {} end,
+        getAdditional = function() return {} end,
+        hideLiveTooltip = function(f) hiddenTooltips[#hiddenTooltips + 1] = f end,
+    })
+
+    assert(buffRuntime:RefreshContainer("buff") == 0, "stale BuffIcon refresh returns no entries")
+    assert(#buffSinks == 1 and buffSinks[1] == staleFrame,
+        "previously claimed BuffIcon frame is sunk when it loses its claim")
+    assert(#hiddenTooltips == 1 and hiddenTooltips[1] == staleFrame,
+        "stale BuffIcon release also tears down the tooltip overlay")
 end
 
 print("OK: cdm_reanchor_runtime_refresh_test")

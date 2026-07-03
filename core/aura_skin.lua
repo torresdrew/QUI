@@ -33,6 +33,11 @@ local function ResolveLayout(profile)
         offsetX   = profile.offsetX or 0,
         offsetY   = profile.offsetY or 0,
         anchor    = profile.anchor or "TOPLEFT",
+        -- Point ON THE BUTTON pinned to the container's anchor corner.  Unit
+        -- frames pass the vertically-flipped corner so the grid renders OUTSIDE
+        -- the frame edge (buffs above a TOP anchor, below a BOTTOM anchor —
+        -- preview parity); omitted → same corner (in-frame strips, buff borders).
+        attachPoint = profile.attachPoint or profile.anchor or "TOPLEFT",
     }
 end
 
@@ -194,7 +199,7 @@ local function layoutButton(button, container, i, L)
     button:SetSize(L.iconSize, L.iconSize)
     local x, y = GridOffset(i, L)
     button:ClearAllPoints()
-    button:SetPoint(L.anchor, container, L.anchor, x, y)
+    button:SetPoint(L.attachPoint, container, L.anchor, x, y)
 end
 
 -- Attach: create / size / position / wire / register / style maxIcons

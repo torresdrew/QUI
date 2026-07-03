@@ -156,7 +156,11 @@ end
 -- Copy delta arrays from updateInfo into the merged accumulator
 local function AppendDeltaField(merged, updateInfo, field)
     local src = updateInfo[field]
-    if src then
+    -- 12.1: UNIT_AURA delta arrays arrive as SecretValue while auras are
+    -- restricted. ipairs over a secret value throws (and would leak secrets
+    -- into the merged accumulator), so skip a secret field — QueueAuraEvent
+    -- promotes the whole event to a full update when the payload is secret.
+    if src and not (issecretvalue and issecretvalue(src)) then
         local dst = merged[field]
         for _, v in ipairs(src) do
             dst[#dst + 1] = v
@@ -168,6 +172,18 @@ local function AccumulateDelta(merged, updateInfo)
     AppendDeltaField(merged, updateInfo, "addedAuras")
     AppendDeltaField(merged, updateInfo, "removedAuraInstanceIDs")
     AppendDeltaField(merged, updateInfo, "updatedAuraInstanceIDs")
+end
+
+-- 12.1: detect a secret UNIT_AURA payload. While auras are restricted the delta
+-- arrays (addedAuras / updated- / removedAuraInstanceIDs) come through as
+-- SecretValue and cannot be merged or iterated. QueueAuraEvent promotes such an
+-- event to a full-update sentinel; downstream consumers gate their own
+-- (now-restricted) rescans on C_Secrets.ShouldAurasBeSecret().
+local function PayloadIsSecret(updateInfo)
+    if not (updateInfo and issecretvalue) then return false end
+    return issecretvalue(updateInfo.addedAuras)
+        or issecretvalue(updateInfo.updatedAuraInstanceIDs)
+        or issecretvalue(updateInfo.removedAuraInstanceIDs)
 end
 
 ---------------------------------------------------------------------------
@@ -220,6 +236,10 @@ local function QueueAuraEvent(unit, updateInfo)
     elseif updateInfo and updateInfo.isFullUpdate then
         pendingUnits[unit] = true
     elseif not updateInfo then
+        pendingUnits[unit] = true
+    elseif PayloadIsSecret(updateInfo) then
+        -- Secret delta (combat, restricted auras): the arrays can't be merged or
+        -- iterated. Promote to a full-update sentinel; consumers gate their scans.
         pendingUnits[unit] = true
     elseif existing then
         -- Multiple deltas for same unit in one frame — merge instead of full scan.

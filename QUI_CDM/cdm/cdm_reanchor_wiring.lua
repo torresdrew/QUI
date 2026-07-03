@@ -24,6 +24,15 @@ function CDMReanchorWiring.New(deps)
     local self = {
         _deps = deps,
         _bridge = deps.bridge,
+        -- Cross-pass identity cache (weak-keyed on the pooled Blizzard frame).
+        -- The frame map is rebuilt from LIVE reads every pass; in combat the
+        -- cooldownID/spellID getters return secrets that resolve to nil, so a
+        -- newly-active frame drops out of every match map and its natively-SHOWN
+        -- icon is left at guard/sink alpha 0. Cache each identity when a read
+        -- comes back CLEAN (out of combat, acquire, OnCooldownIDSet refresh) and
+        -- fall back to it when the live read is secret; a pool re-key overwrites
+        -- the cache on the next clean pass, so staleness self-corrects.
+        _identCache = setmetatable({}, { __mode = "k" }),
     }
     return setmetatable(self, InstanceMT)
 end
@@ -65,6 +74,19 @@ end
 
 local function isSafeNumber(value)
     return type(value) == "number" and not _issecretvalue(value)
+end
+
+-- Read a frame's spell-id accessor (GetAuraSpellID / GetSpellID) defensively.
+-- The method may be absent on some frame types, and in combat the returned id
+-- can be a SECRET value -- guard issecretvalue + type BEFORE the caller uses it
+-- as a table key or in `==` (a raw tbl[secretSpellID] crashes).
+local function readFrameSpellID(frame, method)
+    if not frame then return nil end
+    local fn = frame[method]
+    if type(fn) ~= "function" then return nil end
+    local ok, sid = pcall(fn, frame)
+    if ok and isSafeNumber(sid) then return sid end
+    return nil
 end
 
 local function toBaseSpellID(index, spellID)
@@ -129,18 +151,56 @@ local function newFrameMap()
     map._bySpell = {}
     map._byEquipSlot = {}
     map._bySpellCategory = {}
+    -- Per-frame canonical aura/spell id + insertion-ordered frame list, used by
+    -- the exact consume-once pass to disambiguate linked-variant siblings (Eclipse
+    -- Solar/Lunar, Roll-the-Bones forms) that share cooldownInfo.linkedSpellIDs.
+    map._canonicalByFrame = {}
+    map._canonicalFrames = {}
     return map, items
+end
+
+-- Fetch-or-create the cached identity record for a frame.
+local function identFor(cache, frame)
+    local ident = cache[frame]
+    if not ident then
+        ident = {}
+        cache[frame] = ident
+    end
+    return ident
 end
 
 function CDMReanchorWiring:AddViewerToFrameMap(map, items, viewer)
     if not viewer then return end
     local bridge = self._bridge
     local index = self._deps.index
+    local cache = self._identCache
     local viewerItems = bridge:EnumerateItems(viewer)
     for i = 1, #viewerItems do
         local frame = viewerItems[i]
         items[#items + 1] = frame
+        local cached = cache and cache[frame]
         local cooldownID = bridge:ResolveIdentity(frame)
+        if cooldownID ~= nil then
+            if cache then
+                local ident = identFor(cache, frame)
+                if ident.cooldownID ~= nil and ident.cooldownID ~= cooldownID then
+                    -- Pool recycle re-keyed this frame: the cached spell/canonical
+                    -- ids belong to the PREVIOUS occupant. Consulting them while
+                    -- the live spell reads are combat-secret binds this frame to
+                    -- the OLD entry's slot (stale texture at the wrong position).
+                    -- cooldownID itself reads clean through recycles (plain field,
+                    -- assigned by secure layout), so this wipe is the reliable
+                    -- invalidation point; fresh spell/canonical re-prime on the
+                    -- next clean read under the NEW cooldownID.
+                    ident.spellID = nil
+                    ident.canonical = nil
+                end
+                ident.cooldownID = cooldownID
+            end
+        elseif cached then
+            -- Live read secret (combat): fall back to the cached clean identity.
+            cooldownID = cached.cooldownID
+        end
         if cooldownID ~= nil then
             claimByKey(map, cooldownID, frame)
         end
@@ -148,9 +208,38 @@ function CDMReanchorWiring:AddViewerToFrameMap(map, items, viewer)
             addFrameInfoAliases(map, index, frame, bridge:GetFrameCooldownInfo(frame, cooldownID))
         end
         if frame and frame.GetSpellID then
-            local ok, spellID = pcall(frame.GetSpellID, frame)
-            if ok then
+            local spellID = readFrameSpellID(frame, "GetSpellID")
+            if spellID ~= nil then
+                if cache then
+                    identFor(cache, frame).spellID = spellID
+                end
+            elseif cached then
+                spellID = cached.spellID
+            end
+            if spellID ~= nil then
                 addFrameSpellAlias(map, index, spellID, frame)
+            end
+        end
+        -- Canonical per-frame identity for linked-variant siblings: GetAuraSpellID
+        -- exposes the live aura variant (Eclipse Solar vs Lunar) that the shared
+        -- cooldownInfo.linkedSpellIDs cannot distinguish; prefer it, fall back to
+        -- GetSpellID. Both reads are secret/nil-guarded by readFrameSpellID; when
+        -- both read secret, the cached canonical keeps the frame claimable (the
+        -- variant may be stale mid-combat, but a stale-variant claim beats an
+        -- invisible active buff).
+        if frame and map._canonicalByFrame and map._canonicalByFrame[frame] == nil then
+            local liveCanonical = readFrameSpellID(frame, "GetAuraSpellID")
+                or readFrameSpellID(frame, "GetSpellID")
+            local canonical = liveCanonical
+            if canonical == nil and cached then
+                canonical = cached.canonical
+            end
+            if liveCanonical ~= nil and cache then
+                identFor(cache, frame).canonical = liveCanonical
+            end
+            if canonical ~= nil then
+                map._canonicalByFrame[frame] = canonical
+                map._canonicalFrames[#map._canonicalFrames + 1] = frame
             end
         end
     end
@@ -270,20 +359,80 @@ function CDMReanchorWiring:ResolveEntryFrame(entry, frameMap)
     return nil
 end
 
-function CDMReanchorWiring:MatchCuratedToFrames(curated, frameMap, containerKey)
-    local matched, frameless, claimedFrames = {}, {}, {}
+-- Exact consume-once assignment: pair each curated entry to the first UNCONSUMED
+-- live frame whose OWN canonical id (frame:GetAuraSpellID, captured in the frame
+-- map) equals that entry's distinct spellID/overrideSpellID/id. This runs BEFORE
+-- the cooldownID/linkedSpellIDs first-wins lookup so linked-variant siblings
+-- (Eclipse Solar/Lunar) -- whose entries differ in spellID but share
+-- linkedSpellIDs -- bind to SEPARATE frames instead of collapsing onto one.
+-- Reserved frames are recorded in claimedFrames so the first-wins fallthrough
+-- cannot reuse them; entries with no exact match are simply left unassigned and
+-- fall through unchanged. Item-type entries (slot/trinket/consumable) are skipped
+-- -- their equipSlot/category ids are not spell ids and must not match a canonical.
+function CDMReanchorWiring:AssignExactFrames(curated, frameMap, claimedFrames)
+    local exactFrame = {}
+    local canonicalByFrame = frameMap._canonicalByFrame
+    local canonicalFrames = frameMap._canonicalFrames
+    if type(canonicalByFrame) ~= "table" or type(canonicalFrames) ~= "table"
+        or #canonicalFrames == 0 then
+        return exactFrame
+    end
+
     for i = 1, #curated do
         local entry = curated[i]
-        local cooldownID = self:ResolveEntryCooldownID(entry, containerKey)
-        local frame = (cooldownID ~= nil) and frameMap[cooldownID] or nil
-        if not frame then
-            frame = self:ResolveEntryFrame(entry, frameMap)
+        local etype = entry.type
+        if etype ~= "slot" and etype ~= "trinket" and etype ~= "consumable" then
+            local ids = {}
+            appendID(ids, entry.overrideSpellID)
+            appendID(ids, entry.spellID)
+            appendID(ids, entry.id)
+            for k = 1, #ids do
+                local target = ids[k]
+                -- Exact variant equality only -- do NOT base-normalize, or two
+                -- variant ids could collapse to the same base and re-merge.
+                if isSafeNumber(target) then
+                    for f = 1, #canonicalFrames do
+                        local frame = canonicalFrames[f]
+                        if not claimedFrames[frame] then
+                            local sid = canonicalByFrame[frame]
+                            if isSafeNumber(sid) and sid == target then
+                                exactFrame[entry] = frame
+                                claimedFrames[frame] = true
+                                break
+                            end
+                        end
+                    end
+                end
+                if exactFrame[entry] then break end
+            end
         end
-        if frame and not claimedFrames[frame] then
-            claimedFrames[frame] = true
+    end
+    return exactFrame
+end
+
+function CDMReanchorWiring:MatchCuratedToFrames(curated, frameMap, containerKey)
+    local matched, frameless, claimedFrames = {}, {}, {}
+    -- Exact per-frame pass first (linked-variant disambiguation); reserved frames
+    -- land in claimedFrames so the first-wins path below cannot steal them.
+    local exactFrame = self:AssignExactFrames(curated, frameMap, claimedFrames)
+    for i = 1, #curated do
+        local entry = curated[i]
+        local frame = exactFrame[entry]
+        if frame then
+            -- Reserved exclusively for this entry in the exact pass.
             matched[#matched + 1] = { entry = entry, frame = frame }
         else
-            frameless[#frameless + 1] = entry
+            local cooldownID = self:ResolveEntryCooldownID(entry, containerKey)
+            frame = (cooldownID ~= nil) and frameMap[cooldownID] or nil
+            if not frame then
+                frame = self:ResolveEntryFrame(entry, frameMap)
+            end
+            if frame and not claimedFrames[frame] then
+                claimedFrames[frame] = true
+                matched[#matched + 1] = { entry = entry, frame = frame }
+            else
+                frameless[#frameless + 1] = entry
+            end
         end
     end
     return matched, frameless, claimedFrames

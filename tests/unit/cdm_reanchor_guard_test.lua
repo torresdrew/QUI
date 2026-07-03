@@ -65,4 +65,48 @@ local corrections = 0
 for i = n1 + 1, #setCalls do if setCalls[i].rel == container then corrections = corrections + 1 end end
 assert(corrections == 2, "guard installs at most once per frame (single two-point correction)")
 
+-- Task 2: park is retired -> the anchor guard hides an UNCLAIMED re-anchored frame
+-- in place via SetAlpha(0) (taint-safe), and NEVER writes strata/level on the live frame.
+do
+    local calls = {}
+    local function rec(name) return function(_, ...) calls[#calls + 1] = { name, ... } end end
+    local f2 = {}
+    f2.ClearAllPoints = function() end
+    f2.SetPoint = function(_, ...) calls[#calls + 1] = { "SetPoint", ... } end
+    local raw2 = {
+        ClearAllPoints = function() end,
+        SetPoint = function() end,
+        SetAlpha = function(_, a) calls[#calls + 1] = { "SetAlpha", a } end,
+        SetFrameStrata = rec("SetFrameStrata"),
+        SetFrameLevel = rec("SetFrameLevel"),
+    }
+    local b2 = CDMReanchor.New({ raw = raw2, securecall = function(fn, ...) return fn(...) end, hooksecurefunc = hooksecurefunc })
+    b2:GetData(f2).overlayAnchor = nil   -- explicitly unclaimed (no overlay anchor)
+    b2:InstallAnchorGuard(f2)
+    -- Blizzard re-anchors the unclaimed frame to its own grid:
+    f2:SetPoint("CENTER", {}, "CENTER", 0, 0)
+    local sawAlpha0 = false
+    for _, c in ipairs(calls) do
+        if c[1] == "SetAlpha" and c[2] == 0 then sawAlpha0 = true end
+        assert(c[1] ~= "SetFrameStrata", "guard never SetFrameStrata on an unclaimed frame")
+        assert(c[1] ~= "SetFrameLevel", "guard never SetFrameLevel on an unclaimed frame")
+    end
+    assert(sawAlpha0, "guard SetAlpha(0)s an unclaimed re-anchored frame (park retired)")
+end
+
+-- Task 2: Sink no longer touches SetIgnoreParentAlpha (the lift it used to clear is
+-- gone) -- that dead, forbidden live-frame state write is removed.
+do
+    local sawIPA = false
+    local raw3 = {
+        ClearAllPoints = function() end,
+        SetPoint = function() end,
+        SetAlpha = function() end,
+        SetIgnoreParentAlpha = function() sawIPA = true end,
+    }
+    local b3 = CDMReanchor.New({ raw = raw3, securecall = function(fn, ...) return fn(...) end })
+    b3:Sink({})
+    assert(not sawIPA, "Sink makes no SetIgnoreParentAlpha call on the live frame")
+end
+
 print("OK: cdm_reanchor_guard_test")

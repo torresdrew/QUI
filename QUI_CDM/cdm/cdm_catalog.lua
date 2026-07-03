@@ -172,7 +172,7 @@ local function HasCooldownViewerAPI()
         and api.GetCooldownViewerCooldownInfo
 end
 
-local function IsCooldownViewerReady()
+function CDMCatalog.IsCooldownViewerReady()
     local api = GetCooldownViewerAPI()
     if not api then return false end
     if not api.IsCooldownViewerAvailable then
@@ -186,7 +186,7 @@ local function IsCooldownViewerReady()
 end
 
 function CDMCatalog.GetCategorySet(category, allowUnlearned)
-    if not HasCooldownViewerAPI() or not IsCooldownViewerReady() then return nil end
+    if not HasCooldownViewerAPI() or not CDMCatalog.IsCooldownViewerReady() then return nil end
     local api = GetCooldownViewerAPI()
     local ok, ids = pcall(api.GetCooldownViewerCategorySet, category, allowUnlearned and true or false)
     if ok and type(ids) == "table" then
@@ -196,7 +196,7 @@ function CDMCatalog.GetCategorySet(category, allowUnlearned)
 end
 
 function CDMCatalog.GetTrackedCategorySet(category, allowUnlearned)
-    if not IsCooldownViewerReady() then
+    if not CDMCatalog.IsCooldownViewerReady() then
         return nil, false
     end
 
@@ -204,6 +204,17 @@ function CDMCatalog.GetTrackedCategorySet(category, allowUnlearned)
     if settings and settings.GetDataProvider then
         local okProvider, provider = pcall(settings.GetDataProvider, settings)
         if not okProvider or not provider then
+            return nil, false
+        end
+
+        -- Cold-boot taint gate (see cdm_index BuildOrderedMaps for the full
+        -- story): GetOrderedCooldownIDsForCategory lazily BUILDS the
+        -- provider's shared displayData cache, and building it on QUI's
+        -- stack taints the cooldownInfo/order tables Blizzard's secure item
+        -- mint reads -- every buff item is then born inactive for the
+        -- session. Read the memo fields RAW (never via getters) and report
+        -- not-ready until a secure consumer has built the cache.
+        if provider.displayDataDirty or provider.displayData == nil then
             return nil, false
         end
 
@@ -233,7 +244,7 @@ function CDMCatalog.GetTrackedCategorySet(category, allowUnlearned)
 end
 
 function CDMCatalog.GetCooldownInfo(cooldownID)
-    if not HasCooldownViewerAPI() or not IsCooldownViewerReady() or not cooldownID then return nil end
+    if not HasCooldownViewerAPI() or not CDMCatalog.IsCooldownViewerReady() or not cooldownID then return nil end
     local api = GetCooldownViewerAPI()
     local ok, info = pcall(api.GetCooldownViewerCooldownInfo, cooldownID)
     if ok then

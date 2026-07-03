@@ -72,6 +72,24 @@ assert(not src:find("local function ApplyAuraIconSettings(", 1, true),
 assert(src:find("SuppressContainerForPreview", 1, true),
     "preview must disable the live container while showing fake icons")
 
+-- ANCHOR PARITY: the live container must pin corner-to-corner via the shared
+-- anchor map so live geometry == the layout-mode preview geometry.  The old
+-- code pinned EVERY container's anchor corner to the frame's hardcoded
+-- BOTTOMLEFT, so a TOPRIGHT buff anchor rendered at the frame's bottom-left.
+local anchorFn = src:match("local function AnchorContainer%(.-\nend")
+assert(anchorFn, "AnchorContainer must remain defined")
+assert(anchorFn:find("MapAuraAnchorToFramePoint", 1, true),
+    "AnchorContainer must derive the frame pin from MapAuraAnchorToFramePoint")
+assert(not anchorFn:find('"BOTTOMLEFT"', 1, true),
+    "AnchorContainer must not hardcode the frame's BOTTOMLEFT as relative point")
+
+-- The outside vertical flip is carried by the buttons' attach point: both zone
+-- profiles must hand AuraSkin an attachPoint (flipped corner) so buffs anchored
+-- TOP* sit ABOVE the frame and BOTTOM* sit BELOW it, matching the preview.
+local _, attachAssignments = src:gsub("attachPoint%s*=", "")
+assert(attachAssignments >= 2,
+    "both buff and debuff profiles must set attachPoint (outside flip), found " .. attachAssignments)
+
 -- COMBAT SAFETY: forbidden-object work is deferred to PLAYER_REGEN_ENABLED -----
 assert(src:find("InCombatLockdown", 1, true),
     "container setup must guard on InCombatLockdown()")

@@ -47,6 +47,14 @@ local GetDB = ns.Helpers and ns.Helpers.CreateDBGetter and ns.Helpers.CreateDBGe
 
 local GetPlayerAuraBySpellID = C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID
 local GetUnitAuraBySpellID = C_UnitAuras and C_UnitAuras.GetUnitAuraBySpellID
+-- 12.1: AuraUtil.ForEachAura + GetAuraDataByIndex (index-based) throw while auras
+-- are secret. DirectAuraLookup (GetPlayerAura/GetUnitAuraBySpellID) stays live in
+-- combat for whitelisted raid buffs, so the index-scan fallbacks below are gated
+-- off when auras are secret rather than erroring.
+local C_Secrets = C_Secrets
+local function AurasAreSecret()
+    return C_Secrets and C_Secrets.ShouldAurasBeSecret and C_Secrets.ShouldAurasBeSecret()
+end
 local GetAuraDataByIndex = C_UnitAuras and C_UnitAuras.GetAuraDataByIndex
 
 -- Ally-buff delta scoping (see AllyDeltaIsRelevant below).
@@ -388,7 +396,7 @@ function MRB:UnitHasBuff(unit, spellIDOrTable, spellName)
         end
     end
 
-    if AuraUtil and AuraUtil.ForEachAura then
+    if AuraUtil and AuraUtil.ForEachAura and not AurasAreSecret() then
         local found = false
         AuraUtil.ForEachAura(unit, "HELPFUL", nil, function(auraData)
             local auraSpellID = SafeAuraField(auraData, "spellId")
@@ -404,7 +412,7 @@ function MRB:UnitHasBuff(unit, spellIDOrTable, spellName)
         if found then return true end
     end
 
-    if GetAuraDataByIndex then
+    if GetAuraDataByIndex and not AurasAreSecret() then
         for index = 1, 40 do
             local ok, auraData = pcall(GetAuraDataByIndex, unit, index, "HELPFUL")
             if not ok or not auraData then break end
@@ -442,7 +450,7 @@ function MRB:UnitHasMyBuff(unit, ids)
             end
         end
     end
-    if AuraUtil and AuraUtil.ForEachAura then
+    if AuraUtil and AuraUtil.ForEachAura and not AurasAreSecret() then
         local found = false
         AuraUtil.ForEachAura(unit, "HELPFUL|PLAYER", nil, function(auraData)
             local sid = SafeAuraField(auraData, "spellId")

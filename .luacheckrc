@@ -65,7 +65,7 @@ read_globals = {
     -- Frame creation / UI primitives
     "CreateFrame", "CreateFont", "EnumerateFrames", "UIParent", "WorldFrame", "GameTooltip",
     "QuickKeybindFrame", "ShowUIPanel", "UIFrameFadeOut", "Settings",
-    "CooldownViewerSettings", "EventRegistry", "AssistedCombatManager",
+    "CooldownViewerSettings", "CooldownViewerItemMixin", "CooldownViewerMixin", "EventRegistry", "AssistedCombatManager",
     "STANDARD_TEXT_FONT", "UIErrorsFrame", "UISpecialFrames",
     "MouseIsOver", "StaticPopup_Show", "StopDrag",
     "GENERAL", "MAX_TOTEMS", "NUM_CHAT_WINDOWS", "RAID_CLASS_COLORS",
@@ -103,7 +103,7 @@ read_globals = {
     -- C_* namespace tables (whitelisted whole — methods accessed via dot/colon)
     "C_ActionBar", "C_AddOnProfiler", "C_AddOns", "C_AssistedCombat",
     "C_PartyInfo", "C_Spell", "C_Timer", "C_UnitAuras", "C_TooltipInfo",
-    "C_NamePlate", "C_ItemCallbacks",
+    "C_NamePlate", "C_ItemCallbacks", "C_Secrets",
     "C_ChallengeMode", "C_ClassTalents", "C_Container", "C_CooldownViewer",
     "C_CurveUtil", "C_DurationUtil", "C_Item", "C_ScenarioInfo",
     "C_SpellActivationOverlay",
@@ -120,7 +120,7 @@ read_globals = {
     "tContains", "tInvert", "tDeleteItem", "Mixin", "CreateFromMixins",
     "hooksecurefunc", "issecure", "issecurevariable", "IsSecureCmd",
     "securecallfunction", "tostringall", "issecretvalue", "Clamp",
-    "CopyTable", "debugprofilestop", "geterrorhandler", "time", "tinsert",
+    "CopyTable", "debugprofilestop", "geterrorhandler", "seterrorhandler", "time", "tinsert",
 
     -- debug.upvaluejoin is a Blizzard backport (Lua 5.2+) used by the ActionBars
     -- chunk-env setfenv shim (actionbars_env.lua); allow this one field while

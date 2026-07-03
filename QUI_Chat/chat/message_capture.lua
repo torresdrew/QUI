@@ -524,10 +524,6 @@ local function OnCaptureEvent(_, event, ...)
     -- if it is, we can't know — let the line through rather than risk an op).
     local a16 = select(16, ...)
     if not IsSecret(a16) and a16 then return end
-    -- arg17 (suppressRaidIcons) is not in the filter contract (filters see
-    -- args 1-14) — read it from the original payload.
-    local a17 = select(17, ...)
-
     -- Cross-addon compat: honor ChatFrameUtil.AddMessageEventFilter consumers
     -- (spam blockers etc.). ChatFrame1 is the filter context — filters that
     -- act per-frame behave as they do for the default frame. While suppressed
@@ -536,14 +532,20 @@ local function OnCaptureEvent(_, event, ...)
     -- way the filter chain runs exactly once per message in steady state.
     -- (Blizzard's filter registry skips callbacks on secret payloads via
     -- canaccessvalue — we inherit that protection by calling the same API.)
-    local filtered, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14
+    --
+    -- 12.1 fixed the filter dispatch to pass all 19 event args to filters (it was
+    -- truncated to 14). ProcessMessageEventFilters returns the full filtered set,
+    -- so capture through arg17 and use the FILTERED a17 (suppressRaidIcons) — a
+    -- filter may have edited it. When no filter chain runs, a17 is unpacked from
+    -- the original payload, matching the old select(17, ...) behaviour.
+    local filtered, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, _, _, a17
     local isChatMessage = type(event) == "string" and event:sub(1, 9) == "CHAT_MSG_"
     if isChatMessage and _G.ChatFrameUtil and _G.ChatFrameUtil.ProcessMessageEventFilters and _G.ChatFrame1 then
-        filtered, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14 =
+        filtered, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, _, _, a17 =
             _G.ChatFrameUtil.ProcessMessageEventFilters(_G.ChatFrame1, event, ...)
         if filtered then return end
     else
-        a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14 = ...
+        a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, _, _, a17 = ...
     end
 
     local typeKey = Format.EventToTypeKey(event)

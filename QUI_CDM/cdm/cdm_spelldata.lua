@@ -25,17 +25,31 @@ end
 
 ---------------------------------------------------------------------------
 -- COOLDOWN VIEWER CVAR
--- Forced to 1 unconditionally so Blizzard's CDM data feed runs whether
--- QUI's CDM is enabled (so the CDM engine has Blizzard children to
--- consume) or disabled (so the user can see Blizzard's UI directly).
--- Visual suppression of Blizzard's UI is handled separately, gated on
+-- Forced to 1 so Blizzard's CDM data feed runs whether QUI's CDM is
+-- enabled (so the CDM engine has Blizzard children to consume) or
+-- disabled (so the user can see Blizzard's UI directly). Visual
+-- suppression of Blizzard's UI is handled separately, gated on
 -- QUI_IsCDMMasterEnabled.
--- Deferred to OOC if in combat — SetCVar fires Blizzard's shown-state
--- refresh synchronously, and that path can compare secret charge values
--- while addon execution is tainted by QUI.
+-- No combat deferral: the write is not a protected action, and pre-data the
+-- CVar callback no-ops (IsCooldownViewerAvailable false -> ShouldBeShown
+-- false), so there is no synchronous shown-state cascade to fear in combat.
+-- PRE-DATA-ONLY: the write is forbidden once the CooldownViewer
+-- data feed has loaded. SetCVar fires the CVar callback synchronously in
+-- this (tainted) execution; with data loaded, ShouldBeShown turns true and
+-- the hidden viewers SetShown(true) -> OnShow registers UNIT_AURA and
+-- RefreshLayout re-mints every item frame under QUI taint -> every later
+-- UNIT_AURA dispatch trips the DisallowTaintedAccess aura map
+-- (CooldownViewer.lua:1873/:1702, the cold-login taint). Pre-data the same
+-- write is inert (ShouldBeShown stays false), so the CVar is forced on at
+-- load + VARIABLES_LOADED and any later 0->1 flip is left to Blizzard's
+-- secure shown-state callers.
 ---------------------------------------------------------------------------
 local cooldownViewerCVarFrame = CreateFrame("Frame")
-local pendingCooldownViewerCVarSync = false
+-- Post-data latch lives on the frame, not a new local: this file sits at
+-- the Lua 5.1 200-local main-chunk ceiling.
+cooldownViewerCVarFrame.dataEverLoaded = false
+cooldownViewerCVarFrame:RegisterEvent("VARIABLES_LOADED")
+cooldownViewerCVarFrame:RegisterEvent("COOLDOWN_VIEWER_DATA_LOADED")
 
 local function IsCooldownViewerCVarEnabled()
     if GetCVarBool then
@@ -54,24 +68,32 @@ local function IsCooldownViewerCVarEnabled()
 end
 
 local function SyncCooldownViewerCVarToMasterToggle()
-    if InCombatLockdown and InCombatLockdown() then
-        pendingCooldownViewerCVarSync = true
-        cooldownViewerCVarFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
-        return false
-    end
-
-    pendingCooldownViewerCVarSync = false
-    cooldownViewerCVarFrame:UnregisterEvent("PLAYER_REGEN_ENABLED")
-
     -- QUI CDM enabled → Blizzard CDM data feed must be ON (CVar 1) so the
-    -- CDM engine has Blizzard children to consume. Visuals
-    -- are suppressed separately by HideBlizzardViewers below. When QUI's
-    -- CDM is off, leave Blizzard CDM enabled (CVar 1) so the user can use
-    -- it directly; suppression is reverted by ShowBlizzardViewers.
+    -- CDM engine has Blizzard children to consume. The tracked buff-bar visual
+    -- is suppressed separately by CDMBlizzardBuffBarSuppressor while staying
+    -- alive as a data source. When QUI's CDM is off, leave Blizzard CDM enabled
+    -- (CVar 1) so the user can use it directly.
     local target = 1
     local current = IsCooldownViewerCVarEnabled()
     if current ~= nil and ((target == 0 and current == false) or (target == 1 and current == true)) then
         return true
+    end
+
+    -- Post-data 0->1 writes are forbidden (see header comment): the flip
+    -- would run Blizzard's hidden->shown OnShow pass on this tainted stack.
+    -- Latch from the COOLDOWN_VIEWER_DATA_LOADED event, with the catalog
+    -- readiness probe as a fallback for paths where the event was missed
+    -- (e.g. /reload does not re-fire it).
+    local dataLoaded = cooldownViewerCVarFrame.dataEverLoaded
+    if not dataLoaded then
+        local catalog = ns.CDMCatalog
+        if catalog and catalog.IsCooldownViewerReady and catalog.IsCooldownViewerReady() then
+            cooldownViewerCVarFrame.dataEverLoaded = true
+            dataLoaded = true
+        end
+    end
+    if dataLoaded then
+        return false
     end
 
     if SetCVar then
@@ -82,7 +104,18 @@ local function SyncCooldownViewerCVarToMasterToggle()
 end
 
 cooldownViewerCVarFrame:SetScript("OnEvent", function(self, event)
-    if event == "PLAYER_REGEN_ENABLED" and pendingCooldownViewerCVarSync then
+    if event == "COOLDOWN_VIEWER_DATA_LOADED" then
+        -- Data feed is live: from here on a 0->1 CVar write would flip the
+        -- hidden viewers shown on QUI's stack. Latch and never write again.
+        self.dataEverLoaded = true
+        self:UnregisterEvent("COOLDOWN_VIEWER_DATA_LOADED")
+        return
+    end
+    if event == "VARIABLES_LOADED" then
+        -- Saved CVars are loaded now but the CooldownViewer data feed is not
+        -- (COOLDOWN_VIEWER_DATA_LOADED fires after PEW on a cold login), so
+        -- this is the safe window to correct a saved 0.
+        self:UnregisterEvent("VARIABLES_LOADED")
         SyncCooldownViewerCVarToMasterToggle()
     end
 end)
@@ -708,7 +741,10 @@ local function AuraCaptureFrameOnEvent(self, event, ...)
         NotifyAuraConsumers(unit, updateInfo)
         return
     end
-    if updateInfo.addedAuras then
+    -- 12.1: addedAuras is a SecretValue while auras are restricted (combat);
+    -- ipairs over a secret value throws. Skip capture when secret — spell-based
+    -- CDM queries (QueryUnitAuraBySpellID) still resolve the auras that matter.
+    if updateInfo.addedAuras and not (issecretvalue and issecretvalue(updateInfo.addedAuras)) then
         for _, ad in ipairs(updateInfo.addedAuras) do
             CaptureAuraFromPayload(unit, ad)
         end
@@ -721,6 +757,7 @@ local function AuraCaptureFrameOnEvent(self, event, ...)
     -- ResolveAuraInstanceDurationState). updatedAuraInstanceIDs is still
     -- ignored — duration changes don't affect cache liveness.
     if updateInfo.removedAuraInstanceIDs
+        and not (issecretvalue and issecretvalue(updateInfo.removedAuraInstanceIDs))
         and #updateInfo.removedAuraInstanceIDs > 0 then
         if unit == "target" then
             ReleaseCapturedAurasByInstanceIDsForUnit(unit, updateInfo.removedAuraInstanceIDs)
@@ -742,7 +779,6 @@ RegisterAuraCaptureFrame()
 
 function CDMSpellData:DisableRuntime()
     initialized = false
-    pendingCooldownViewerCVarSync = false
     cooldownViewerCVarFrame:UnregisterAllEvents()
     auraCaptureFrame:UnregisterAllEvents()
     auraCaptureFrame:SetScript("OnEvent", nil)
@@ -2044,13 +2080,6 @@ local function ForceLoadCDM()
 end
 
 ---------------------------------------------------------------------------
--- UPDATE CVar: keep Blizzard's hidden data source available.
----------------------------------------------------------------------------
-local function UpdateCooldownViewerCVar()
-    SyncCooldownViewerCVarToMasterToggle()
-end
-
----------------------------------------------------------------------------
 -- OWNED SPELL LIST: Snapshot + Build from DB
 -- Phase A CDM Overhaul: own spell lists directly instead of mirroring
 ---------------------------------------------------------------------------
@@ -2381,17 +2410,6 @@ local function ResolveOwnedEntry(entry, containerKey, index)
                     resolved.hasCharges = true
                 end
             end
-            -- Debug: log charge resolution at build time
-            if _G.QUI_CDM_CHARGE_DEBUG then
-                local _dbgMaxC = ci and tostring(ci.maxCharges) or "nil"
-                local _dbgCurC = ci and tostring(ci.currentCharges) or "nil"
-                print("|cff34D399[CDM-Charge]|r RESOLVE", resolved.name or "?",
-                    "checkID=", checkID, "entryID=", entry.id,
-                    "overrideSpellID=", resolved.overrideSpellID,
-                    "maxCharges=", _dbgMaxC, "currentCharges=", _dbgCurC,
-                    "hasCharges=", resolved.hasCharges,
-                    "apiReadable=", apiReadable, "containerKey=", containerKey)
-            end
         end
 
     elseif entry.type == "item" then
@@ -2709,9 +2727,6 @@ function CDMSpellData:BuildSpellListFromOwned(containerKey)
         end
     end
 
-    if _G.QUI_CDM_TOTEM_DEBUG then
-        print("|cffFF8800[Totem]|r", "BuildSpellListFromOwned container=", containerKey, "result=", #result)
-    end
     return result
 end
 
@@ -3996,15 +4011,16 @@ function CDMSpellData:GetSpellList(viewerType)
     return list
 end
 
-function CDMSpellData:UpdateCVar()
-    UpdateCooldownViewerCVar()
-end
+-- (UpdateCVar removed: RefreshAll used to re-issue the cooldownViewerEnabled
+-- write on every rebuild; post-data that write performed Blizzard's
+-- hidden->shown viewer flip on QUI's tainted stack. The VARIABLES_LOADED
+-- handler on cooldownViewerCVarFrame is the single write point.)
 
 function CDMSpellData:InvalidateLearnedCache()
     InvalidateLearnedCooldownsCache()
 end
 
--- Aggregate cache stats for /qui cdm_cache status (read by QUI_Debug memaudit probes).
+-- Aggregate cache stats for debug cache status and memaudit probes.
 function CDMSpellData:GetCacheStats()
     local function size(t)
         if type(t) ~= "table" then return 0 end
@@ -4113,7 +4129,8 @@ function CDMSpellData:Initialize()
     end
 
     RegisterAuraCaptureFrame()
-    SyncCooldownViewerCVarToMasterToggle()
+    -- No CVar sync here: the VARIABLES_LOADED handler on
+    -- cooldownViewerCVarFrame is the single authoritative write point.
 
     ForceLoadCDM()
     -- Deferred init: edit-mode callbacks + reconciliation. The legacy scan
@@ -4121,7 +4138,6 @@ function CDMSpellData:Initialize()
     -- strip; owned spell lists come from composer entries on demand.
     C_Timer.After(0.5, function()
         if not IsCDMRuntimeEnabled() then return end
-        UpdateCooldownViewerCVar()
         RegisterEditModeCallbacks()
         initialized = true
         if not InCombatLockdown() then
@@ -4138,6 +4154,13 @@ function CDMSpellData:Initialize()
     -- (SPELL_OVERRIDE_UPDATED) leaves this false: its display is already
     -- maintained live in combat, so the drain rebuilds the map only.
     local _cooldownViewerRebuildNeedsRefresh = false
+    local function RefreshNativeReanchorHooks()
+        local containers = ns.CDMContainers
+        local refreshHooks = containers and containers.RefreshReanchorRuntimeHooks
+        if refreshHooks then
+            refreshHooks(true)
+        end
+    end
     local eventFrame = CreateFrame("Frame")
     runtimeEventFrame = eventFrame
     eventFrame:RegisterEvent("SPELL_UPDATE_COOLDOWN")
@@ -4251,6 +4274,7 @@ function CDMSpellData:Initialize()
             local isOverrideUpdate = event == "COOLDOWN_VIEWER_SPELL_OVERRIDE_UPDATED"
             if not isOverrideUpdate then
                 FireChangeCallback()
+                RefreshNativeReanchorHooks()
             end
             -- Cold-login catalog-staleness fix.
             --
@@ -4288,6 +4312,9 @@ function CDMSpellData:Initialize()
                     -- Catalog data/hotfix events stay unguarded; they genuinely
                     -- changed the catalog and the cold-login binding fix needs it.
                     RunReconcileSequence(isOverrideUpdate)
+                    if not isOverrideUpdate then
+                        RefreshNativeReanchorHooks()
+                    end
                 end
             end)
         elseif event == "PLAYER_REGEN_ENABLED" then
@@ -4298,6 +4325,7 @@ function CDMSpellData:Initialize()
                 RebuildSpellToCooldownID()
                 if needsRefresh then
                     FireChangeCallback()
+                    RefreshNativeReanchorHooks()
                 end
             end
         elseif event == "PLAYER_ENTERING_WORLD" then
@@ -4326,7 +4354,6 @@ function CDMSpellData:Initialize()
                     ForceLoadCDM()
                     C_Timer.After(0.5, function()
                         if not IsCDMRuntimeEnabled() then return end
-                        UpdateCooldownViewerCVar()
                         RegisterEditModeCallbacks()
                         initialized = true
                     end)

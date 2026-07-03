@@ -136,4 +136,14 @@ assert(src:find('CreateFrame("Cooldown", nil, button,', 1, true),
 assert(src:find("AuraTheme.Metrics", 1, true),
     "aura_skin.lua must call AuraTheme.Metrics for layout params")
 
+-- Attach point: layout must honour an optional profile.attachPoint (the point ON
+-- THE BUTTON pinned to the container's anchor corner).  Unit frames pass the
+-- vertically-flipped corner for outside positioning (buffs above a TOP anchor,
+-- below a BOTTOM anchor — preview parity); consumers that omit it keep the
+-- legacy same-corner behaviour.
+assert(src:find("profile.attachPoint", 1, true),
+    "aura_skin.lua ResolveLayout must read profile.attachPoint")
+assert(src:find("L.attachPoint, container, L.anchor", 1, true),
+    "aura_skin.lua layoutButton must pin button attachPoint -> container anchor corner")
+
 print("OK: aura_skin_api_test")

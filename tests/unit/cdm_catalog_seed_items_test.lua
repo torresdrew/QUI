@@ -30,6 +30,10 @@ _G.C_CooldownViewer = {
 _G.CooldownViewerSettings = {
     GetDataProvider = function()
         return {
+            -- memo fields present = cache already built by a secure consumer
+            -- (cold-boot taint gate reads these raw; see cdm_index/cdm_catalog)
+            displayDataDirty = false,
+            displayData = {},
             GetLayoutManager = function() return { IsLoaded = function() return true end } end,
             GetOrderedCooldownIDsForCategory = function(_, category, allow)
                 assert(category == 0, "essential -> category 0")

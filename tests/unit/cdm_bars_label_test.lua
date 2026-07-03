@@ -87,6 +87,93 @@ local bars = assert(ns.CDMBars, "CDMBars table was not exported")
 assert(bars.ApplyNameTextWithStacks == nil, "legacy bar stack label helper should not be exported")
 local applyNameText = assert(bars.ApplyNameTextWithCount, "bar count label helper was not exported")
 
+local normalizeTracked = assert(bars._NormalizeTrackedBarRuntimeEntries,
+    "tracked-bar runtime entry normalizer should be exported for focused tests")
+local nativeEntries = normalizeTracked({
+    {
+        spellID = 48707,
+        baseSpellID = 48707,
+        overrideSpellID = 51052,
+        name = "Anti-Magic Shell",
+        iconTexture = 136120,
+        cooldownID = 70805,
+        layoutIndex = 2,
+        isActive = true,
+    },
+    {
+        spellID = 55233,
+        name = "Vampiric Blood",
+        cooldownID = 55233,
+        layoutIndex = 1,
+    },
+})
+assert(#nativeEntries == 2, "normalizer keeps valid native tracked-bar entries")
+assert(nativeEntries[1].id == 51052, "normalizer uses override spell ID as the runtime identity")
+assert(nativeEntries[1].spellID == 48707, "normalizer preserves the base aura spell ID")
+assert(nativeEntries[1].viewerType == "trackedBar", "normalizer scopes entries to trackedBar")
+assert(nativeEntries[1].kind == "aura" and nativeEntries[1].isAura == true,
+    "tracked-bar native entries remain aura-kind owned bars")
+assert(nativeEntries[1].source == "blizzardCDM", "normalizer records the native CDM source")
+assert(nativeEntries[1].iconTexture == 136120, "normalizer preserves the native icon texture")
+assert(nativeEntries[1]._trackedBarRuntime == true, "normalizer marks native runtime entries")
+assert(nativeEntries[1]._trackedBarActive == true, "normalizer preserves the native active flag")
+assert(nativeEntries[1]._instanceKey == "trackedBar:70805",
+    "normalizer keys entries by native cooldown identity when available")
+assert(normalizeTracked({ { name = "unresolved" } }) == nil,
+    "normalizer ignores entries without a usable spell or cooldown identity")
+
+local buildTracked = assert(bars._BuildTrackedBarSpellList,
+    "tracked-bar ownership merge helper should be exported for focused tests")
+local configuredTracked = {
+    {
+        id = 395296,
+        spellID = 395296,
+        name = "Death's Caress",
+        type = "spell",
+        kind = "aura",
+        viewerType = "trackedBar",
+        source = "owned-config",
+    },
+}
+local filteredTracked = buildTracked({
+    {
+        spellID = 395296,
+        name = "Death's Caress",
+        cooldownID = 91001,
+        layoutIndex = 1,
+        isActive = true,
+    },
+    {
+        spellID = 377440,
+        name = "Anti-Magic Zone",
+        cooldownID = 91002,
+        layoutIndex = 2,
+        isActive = true,
+    },
+}, configuredTracked, true)
+assert(#filteredTracked == 1,
+    "tracked-bar runtime mirror must be filtered through initialized QUI ownership")
+assert(filteredTracked[1].id == 395296,
+    "tracked-bar merge keeps the configured spell identity")
+assert(filteredTracked[1].cooldownID == 91001,
+    "tracked-bar merge enriches the configured spell with the native cooldown identity")
+assert(filteredTracked[1]._trackedBarRuntime == true,
+    "tracked-bar merge keeps matched native runtime metadata")
+assert(filteredTracked[1].source == "owned-config",
+    "tracked-bar merge must not rewrite configured ownership source")
+
+local emptiedTracked = buildTracked({
+    { spellID = 377440, name = "Anti-Magic Zone", cooldownID = 91002 },
+}, {}, true)
+assert(type(emptiedTracked) == "table" and #emptiedTracked == 0,
+    "initialized empty trackedBar ownership must clear bars instead of mirroring Blizzard runtime bars")
+
+local fallbackTracked = buildTracked({
+    { spellID = 377440, name = "Anti-Magic Zone", cooldownID = 91002 },
+}, nil, false)
+assert(#fallbackTracked == 1 and fallbackTracked[1].id == 377440,
+    "uninitialized trackedBar ownership may still use Blizzard runtime entries as first-load fallback")
+
 local calls = {}
 local fontString = {
     SetFormattedText = function(self, formatString, ...)

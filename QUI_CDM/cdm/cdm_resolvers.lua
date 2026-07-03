@@ -1211,6 +1211,10 @@ end
 -- tainted API calls on bare cooldowns.
 local function HasActiveChargeRecharge(spellID, mayHaveCharges)
     if not spellID then return false end
+    -- A secret spellID (aura-phase GetSpellID in combat) cannot key the
+    -- saved cdmChargeSpells table -- indexing a table with a secret key
+    -- hard-errors. No charge determination is possible, so treat as none.
+    if ResolverIsSecretValue(spellID) then return false end
     if InCombatLockdown and InCombatLockdown() and not mayHaveCharges then
         local gdb = QUI and QUI.db and QUI.db.global
         local svCharges = gdb and gdb.cdmChargeSpells
@@ -1438,6 +1442,19 @@ QuerySlotCooldown = function(slotID)
     return _GetInventoryItemCooldown("player", slotID)
 end
 
+-- Re-anchor engine surface: real item-cooldown duration object for a curated
+-- item/trinket/slot entry WITHOUT icon context (native Blizzard frames own the
+-- rendering; the aura-phase-off restyle in cdm_reanchor_boot only needs the
+-- durObj). Reuses the full owned-icon resolution -- slot -> item -> use-spell
+-- fallback, secret-safe numeric gating -- with the icon-cache reuse skipped
+-- (nil icon). Returns nil when no item cooldown is rolling.
+function CDMResolvers.BuildEntryItemDurationObject(entry)
+    local durObj, mode, _, startTime, duration = ResolveItemDurationObjectForIcon(nil, entry)
+    if mode ~= "item-cooldown" then return nil end
+    if durObj then return durObj end
+    return BuildDurationObjectFromStart(startTime, duration)
+end
+
 local _cooldownStateCountScratch = {
     value = nil,
     sinkText = nil,
@@ -1605,7 +1622,7 @@ local function ResolveAuraRuntimeStateForContext(context, entry, sid, entryIsAur
     if not (context and entry and sid) then
         return nil
     end
-    if not entryIsAura and context.useBuffSwipe == false then
+    if not entryIsAura and (context.useBuffSwipe == false or context.skipAuraPhase == true) then
         return nil
     end
 
@@ -1986,7 +2003,8 @@ local function ResolveCooldownStateCore(context)
         end
     end
 
-    if itemID and ResolveItemAuraForContext(state, context, entry, itemID, itemSpellID) then
+    if itemID and not context.skipAuraPhase
+       and ResolveItemAuraForContext(state, context, entry, itemID, itemSpellID) then
         MemAuditProfilerMark("CDM_rsReturnItemAura")
         return FinalizeCooldownStateActivity(state, context, entry, sid, entryIsAura, itemBackedEntry)
     end

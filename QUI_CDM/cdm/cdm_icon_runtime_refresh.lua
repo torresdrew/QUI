@@ -739,7 +739,7 @@ function CDMIconRuntimeRefresh.Create(callbacks)
                         batchStarted = true
                     end
                     -- applyResolvedCooldown (ResolveCooldownState → C_UnitAuras) is intentionally
-                    -- NOT called here. The usable tint is applied by cdm_icon_range_policy.lua via
+                    -- NOT called here. The usable tint is applied by the range policy (cdm_icon_policies.lua) via
                     -- updateIconRangesForUsabilityEvent on the same SPELL_UPDATE_USABLE event;
                     -- cooldown swipe and desaturation are live C-side (durObj-bound). The full
                     -- resolve is redundant on the usability path and was the source of ~300 KB/drain

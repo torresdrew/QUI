@@ -328,12 +328,19 @@ end)
 -- routes go through CooldownViewerSettings:RefreshLayout. Hooking it
 -- closes the gap so the broker invalidates on those mutations the same
 -- as it does for hotfix / override events.
+-- securecall the hook body: RefreshLayout fires mid settings-mutation (drag-drop /
+-- SetCooldownToCategory), inside the same SettingsLayoutManager cascade that calls the
+-- protected SetHiddenGroupBuffs. A bare post-hook leaks this addon's taint into
+-- Blizzard's continuation -> secret-value throw + ADDON_ACTION_BLOCKED. Isolate it.
+local _securecall = securecallfunction or function(fn, ...) return fn(...) end
+local function _OnSettingsRefreshLayout() Notify("refresh_layout") end
+
 local _refreshLayoutHooked = false
 local function InstallRefreshLayoutHook()
     if _refreshLayoutHooked then return end
     if not (CooldownViewerSettings and CooldownViewerSettings.RefreshLayout) then return end
-    local ok = pcall(hooksecurefunc, CooldownViewerSettings, "RefreshLayout", function()
-        Notify("refresh_layout")
+    local ok = pcall(hooksecurefunc, CooldownViewerSettings, "RefreshLayout", function(...)
+        _securecall(_OnSettingsRefreshLayout, ...)
     end)
     if ok then _refreshLayoutHooked = true end
 end
@@ -364,6 +371,31 @@ end)
 local function BuildOrderedMaps()
     if _orderedSpellMap and _orderedMapsVersion == _version then
         return
+    end
+
+    -- Cold-boot taint gate: consume Blizzard's settings data provider only
+    -- AFTER one of its own secure consumers has built the lazy displayData
+    -- cache. Every provider getter routes through CheckBuildDisplayData; if
+    -- QUI is the first caller after COOLDOWN_VIEWER_DATA_LOADED (the viewers
+    -- are still hidden on a cold login, so none of them is listening), QUI
+    -- execution builds the shared cooldownInfo/order tables -- QUI-tainted --
+    -- and the viewer's later secure RefreshData/GetCooldownIDs read poisons
+    -- the whole item mint: aura reads go secret, the DisallowTaintedAccess
+    -- aura map rejects registration, and every buff item is born inactive
+    -- until /reload (a SHOWN viewer rebuilds the cache securely first, which
+    -- is why /reload always healed). Read the memo fields RAW -- never via
+    -- the getters, which build -- and bail WITHOUT latching the version so
+    -- the next call retries once a shown viewer has built the cache.
+    if CooldownViewerSettings and CooldownViewerSettings.GetDataProvider then
+        local provider = CooldownViewerSettings:GetDataProvider()
+        if provider and (provider.displayDataDirty or provider.displayData == nil) then
+            if not _orderedSpellMap then
+                _orderedSpellMap, _orderedEquipSlotMap, _orderedCategoryMap = {}, {}, {}
+                _orderedSpellMapByCategory, _orderedEquipSlotMapByCategory, _orderedCategoryMapByCategory =
+                    {}, {}, {}
+            end
+            return
+        end
     end
 
     local spellMap, equipSlotMap, categoryMap = {}, {}, {}

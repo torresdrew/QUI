@@ -222,6 +222,15 @@ local IsAuraFilteredOut = C_UnitAuras and C_UnitAuras.IsAuraFilteredOutByInstanc
 local GetAuraSlots = C_UnitAuras and C_UnitAuras.GetAuraSlots
 local GetAuraDataBySlot = C_UnitAuras and C_UnitAuras.GetAuraDataBySlot
 
+-- 12.1: the index/slot aura getters above (GetAuraSlots/GetAuraDataBySlot) and
+-- C_UnitAuras.GetUnitAuras all THROW while aura data is secret. ShouldAurasBeSecret
+-- is the global gate — true in combat when auras are restricted — so the full scan
+-- skips (cache freezes) rather than erroring.
+local C_Secrets = C_Secrets
+local function AurasAreSecret()
+    return C_Secrets and C_Secrets.ShouldAurasBeSecret and C_Secrets.ShouldAurasBeSecret()
+end
+
 local function ClassifyDispellable(unit, instID)
     if not instID or IsSecretValue(instID) then return nil end
     if not IsAuraFilteredOut then return nil end
@@ -733,6 +742,14 @@ end
 
 local function ScanUnitAuras(unit)
     local cache = EnsureAuraCache(unit)
+    -- 12.1: GetAuraSlots/GetUnitAuras throw while auras are secret (combat). We
+    -- can't rescan then — keep the previous cache (frozen) instead of erroring.
+    -- The render fan-out still runs: MRB resolves live via DirectAuraLookup
+    -- (GetUnitAura/PlayerAuraBySpellID); the healthTint feeder holds its last
+    -- state until combat ends and a full scan repopulates the cache.
+    if AurasAreSecret() then
+        return cache
+    end
     ResetAuraCache(cache)
 
     if auraStats then auraStats.fullScans = auraStats.fullScans + 1 end

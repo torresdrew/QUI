@@ -3,9 +3,10 @@
 -- luacheck: globals InCombatLockdown GetTime wipe CreateFrame C_Timer
 -- Contract for CDMIcons.NeutralizeBlizzardItemChrome: the re-anchor decorate dep
 -- that makes a native Blizzard CooldownViewer item frame read like a QUI owned
--- icon -- alpha-0 the IconOverlay bevel + OOR shadow (anonymous OVERLAY atlas
--- textures), drop the rounding mask, and crop the icon to the QUI zoom. Never
--- hides/reparents the frame or the icon texture itself.
+-- icon -- alpha-0 the IconOverlay bevel (anonymous OVERLAY atlas texture), drop
+-- the rounding mask, and crop the icon to the QUI zoom. The OOR shadow is kept
+-- (native out-of-range feedback retained; G5 fix). Never hides/reparents the
+-- frame or the icon texture itself.
 
 local function noop() end
 
@@ -89,7 +90,7 @@ do
     Neutralize(frame, { zoom = 0, aspectRatioCrop = 1.0 })
 
     assert(overlay.alpha == 0, "IconOverlay bevel alpha-0'd")
-    assert(oor.alpha == 0, "OOR shadow alpha-0'd")
+    assert(oor.alpha == 1, "OOR shadow kept -- native range feedback retained (G5)")
     assert(iconTex.alpha == 1, "the icon texture itself is NEVER hidden")
     assert(#iconTex.masks == 0, "rounding mask(s) removed -> square icon")
     assert(iconTex.texcoord and iconTex.texcoord[1] == 0.08,

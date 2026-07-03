@@ -119,6 +119,221 @@ scripts.OnShow(viewers.essential)
 scripts.OnHide(viewers.essential)
 assert(#h2refresh == before + 4, "frame and viewer state changes each queue re-claim")
 
+-- Buff active-state changes are fired while Blizzard is still mutating the pooled
+-- item. Match the reference model: re-apply the existing position immediately,
+-- but defer the collect/re-claim through the active-state settle scheduler.
+do
+    local installs = {}
+    local refreshes = {}
+    local genericPending = {}
+    local activePending = {}
+    local reapply = {}
+    local function hook(owner, method, fn)
+        installs[#installs + 1] = { owner = owner, method = method, fn = fn }
+    end
+    local frame = { OnActiveStateChanged = function() end }
+    local pool = {
+        EnumerateActive = function()
+            local yielded = false
+            return function()
+                if yielded then return nil end
+                yielded = true
+                return frame
+            end
+        end,
+    }
+    local viewer = { RefreshLayout = function() end, itemFramePool = pool }
+    local settled = H.New({
+        refresh = function(k) refreshes[#refreshes + 1] = k end,
+        keys = { "buff" },
+        hooksecurefunc = hook,
+        schedule = function(fn) genericPending[#genericPending + 1] = fn end,
+        scheduleActiveState = function(fn) activePending[#activePending + 1] = fn end,
+        reapplyPositions = function(k) reapply[#reapply + 1] = k end,
+    })
+    settled:InstallViewerHooks(function() return viewer end)
+
+    local activeStateHook
+    for _, h in ipairs(installs) do
+        if h.owner == frame and h.method == "OnActiveStateChanged" then
+            activeStateHook = h.fn
+        end
+    end
+    assert(type(activeStateHook) == "function", "active-state settle test installs frame hook")
+
+    activeStateHook(frame)
+    assert(#reapply == 1 and reapply[1] == "buff", "active-state hook re-applies current positions immediately")
+    assert(#refreshes == 0, "active-state hook does not refresh synchronously")
+    assert(#genericPending == 0, "active-state hook bypasses the generic refresh scheduler")
+    assert(#activePending == 1, "active-state hook uses the settled active-state scheduler")
+
+    activePending[1]()
+    assert(#refreshes == 1 and refreshes[1] == "buff",
+        "settled active-state callback re-claims the buff container")
+end
+
+-- Native-show restore: Blizzard can SetShown(true) a previously alpha-0'd
+-- (sunk) BuffIcon frame from its incremental UNIT_AURA path without firing any
+-- Acquire/RefreshLayout/OnCooldownIDSet. Alpha-0 is a one-way door that only a
+-- successful re-claim pass reopens, so the item's OnShow must re-drive the
+-- active-state re-claim; without it a re-shown frame stays invisible at alpha 0.
+do
+    local installs, refreshes, activePending, itemScripts = {}, {}, {}, {}
+    local function hook(owner, method, fn)
+        installs[#installs + 1] = { owner = owner, method = method, fn = fn }
+    end
+    local frame = {
+        OnActiveStateChanged = function() end,
+        HookScript = function(self, name, fn) itemScripts[name] = fn end,
+    }
+    local pool = {
+        EnumerateActive = function()
+            local yielded = false
+            return function()
+                if yielded then return nil end
+                yielded = true
+                return frame
+            end
+        end,
+    }
+    local viewer = { RefreshLayout = function() end, itemFramePool = pool }
+    local restore = H.New({
+        refresh = function(k) refreshes[#refreshes + 1] = k end,
+        keys = { "buff" },
+        hooksecurefunc = hook,
+        scheduleActiveState = function(fn) activePending[#activePending + 1] = fn end,
+    })
+    restore:InstallViewerHooks(function() return viewer end)
+
+    assert(type(itemScripts.OnShow) == "function",
+        "item frames get an OnShow native-show restore hook")
+    itemScripts.OnShow(frame)
+    assert(#refreshes == 0, "item OnShow does not refresh synchronously")
+    assert(#activePending == 1, "item OnShow routes through the active-state settle scheduler")
+    activePending[1]()
+    assert(#refreshes == 1 and refreshes[1] == "buff",
+        "settled item OnShow callback re-claims the buff container")
+end
+
+-- Buff RefreshLayout is latency-sensitive: reference-style buff reanchor runs
+-- immediately on RefreshLayout with a small guard instead of waiting for the
+-- generic delayed dirty flush. This prevents a one-frame overlap at the native
+-- viewer position while buffs pop in/out.
+do
+    local installs = {}
+    local refreshes = {}
+    local pending = {}
+    local function hook(owner, method, fn)
+        installs[#installs + 1] = { owner = owner, method = method, fn = fn }
+    end
+    local viewer = { RefreshLayout = function() end }
+    local immediate = H.New({
+        refresh = function(k) refreshes[#refreshes + 1] = k end,
+        keys = { "buff" },
+        hooksecurefunc = hook,
+        schedule = function(fn) pending[#pending + 1] = fn end,
+        immediateKeys = { buff = true },
+    })
+    immediate:InstallViewerHooks(function() return viewer end)
+
+    local refreshHook
+    for _, h in ipairs(installs) do
+        if h.owner == viewer and h.method == "RefreshLayout" then refreshHook = h.fn end
+    end
+    assert(type(refreshHook) == "function", "immediate buff test installs RefreshLayout hook")
+
+    refreshHook(viewer)
+    assert(#refreshes == 1 and refreshes[1] == "buff",
+        "buff RefreshLayout refreshes immediately")
+    assert(#pending == 0, "buff RefreshLayout bypasses the generic delayed scheduler")
+end
+
+-- Buff pool acquisition is latency-sensitive too. A newly acquired native
+-- BuffIcon item can flash at Blizzard's native position if we wait for the
+-- generic delayed dirty flush. Reference-style hooks re-claim immediately.
+do
+    local installs = {}
+    local refreshes = {}
+    local pending = {}
+    local function hook(owner, method, fn)
+        installs[#installs + 1] = { owner = owner, method = method, fn = fn }
+    end
+    local viewer = { RefreshLayout = function() end, OnAcquireItemFrame = function() end }
+    local immediate = H.New({
+        refresh = function(k) refreshes[#refreshes + 1] = k end,
+        keys = { "buff" },
+        hooksecurefunc = hook,
+        schedule = function(fn) pending[#pending + 1] = fn end,
+        immediateAcquireKeys = { buff = true },
+    })
+    immediate:InstallViewerHooks(function() return viewer end)
+
+    local acquireHook
+    for _, h in ipairs(installs) do
+        if h.owner == viewer and h.method == "OnAcquireItemFrame" then acquireHook = h.fn end
+    end
+    assert(type(acquireHook) == "function", "immediate acquire test installs OnAcquireItemFrame hook")
+
+    acquireHook(viewer, { OnCooldownIDSet = function() end })
+    assert(#refreshes == 1 and refreshes[1] == "buff",
+        "buff OnAcquireItemFrame refreshes immediately")
+    assert(#pending == 0, "buff OnAcquireItemFrame bypasses the generic delayed scheduler")
+end
+
+-- Global CooldownViewer item mixin hooks catch Blizzard item mutations even
+-- before a newly pooled frame has been enumerated or seen by a viewer hook.
+do
+    local installs = {}
+    local refreshes = {}
+    local pending = {}
+    local buffMixin = { OnCooldownIDSet = function() end }
+    local trackedBarMixin = { OnCooldownIDSet = function() end }
+    local function hook(owner, method, fn)
+        installs[#installs + 1] = { owner = owner, method = method, fn = fn }
+    end
+    local globalHooks = H.New({
+        refresh = function(k) refreshes[#refreshes + 1] = k end,
+        keys = { "buff", "trackedBar" },
+        hooksecurefunc = hook,
+        schedule = function(fn) pending[#pending + 1] = fn end,
+        immediateAcquireKeys = { buff = true, trackedBar = true },
+        getMixinForKey = function(key)
+            if key == "buff" then return buffMixin end
+            if key == "trackedBar" then return trackedBarMixin end
+        end,
+    })
+    assert(type(globalHooks.InstallGlobalMixinHooks) == "function",
+        "global mixin hook installer is exported")
+    assert(globalHooks:InstallGlobalMixinHooks() == true,
+        "global mixin hooks install for buff icons and tracked bars")
+
+    local byOwner = {}
+    for _, h in ipairs(installs) do
+        byOwner[h.owner] = h
+    end
+    assert(byOwner[buffMixin] and byOwner[buffMixin].method == "OnCooldownIDSet",
+        "hooks CooldownViewerBuffIconItemMixin.OnCooldownIDSet")
+    assert(byOwner[trackedBarMixin] and byOwner[trackedBarMixin].method == "OnCooldownIDSet",
+        "hooks CooldownViewerBuffBarItemMixin.OnCooldownIDSet")
+
+    byOwner[buffMixin].fn(buffMixin)
+    byOwner[trackedBarMixin].fn(trackedBarMixin)
+    assert(#refreshes == 0,
+        "mixin OnCooldownIDSet hooks do not refresh synchronously")
+    assert(#pending == 1,
+        "global mixin hooks coalesce through the delayed dirty scheduler")
+    pending[1]()
+    local seen = {}
+    for _, key in ipairs(refreshes) do seen[key] = true end
+    assert(#refreshes == 2 and seen.buff and seen.trackedBar,
+        "mixin OnCooldownIDSet hooks re-claim dirty latency-sensitive viewers")
+
+    local before = #installs
+    assert(globalHooks:InstallGlobalMixinHooks() == false,
+        "global mixin hook install is idempotent")
+    assert(#installs == before, "global mixin hooks do not double-install")
+end
+
 -- CDMIndex broker events also dirty all managed viewers.
 local sub
 h2:InstallIndexSubscription({
@@ -130,5 +345,65 @@ assert(sub and sub.name == "reanchor" and type(sub.fn) == "function", "subscribe
 before = #h2refresh
 sub.fn("data_loaded")
 assert(#h2refresh == before + 2, "CDMIndex events dirty all managed containers")
+
+-- Buff acquire blanking is reference-style but must wait until the first
+-- successful reanchor pass. Blanking during first-login cold load can hide the
+-- very first aura before QUI has adopted it; after initial reanchor, blanking
+-- prevents a newly acquired native item from flashing in Blizzard's position.
+do
+    local blanked = {}
+    local initFlag = false
+    local initialDoneByKey = {}
+    local installs = {}
+    local function fakeHook2(owner, method, fn) installs[#installs+1] = { owner=owner, method=method, fn=fn } end
+    local g11 = H.New({
+        refresh = function() end,
+        keys = { "essential", "buff" },
+        hooksecurefunc = fakeHook2,
+        schedule = function(fn) fn() end,  -- immediate flush
+        blank = function(frame) blanked[#blanked+1] = frame end,
+        isInitWindow = function() return initFlag end,
+        isInitialReanchorDone = function(key) return initialDoneByKey[key] == true end,
+        blankKeys = { buff = true },
+    })
+    local buffViewer = { RefreshLayout = function() end, OnAcquireItemFrame = function() end }
+    local essViewer  = { RefreshLayout = function() end, OnAcquireItemFrame = function() end }
+    local vmap = { buff = buffViewer, essential = essViewer }
+    g11:InstallViewerHooks(function(k) return vmap[k] end)
+
+    local function acquireFor(viewer)
+        for _, h in ipairs(installs) do
+            if h.owner == viewer and h.method == "OnAcquireItemFrame" then return h.fn end
+        end
+    end
+    local buffAcquire, essAcquire = acquireFor(buffViewer), acquireFor(essViewer)
+    assert(type(buffAcquire) == "function" and type(essAcquire) == "function",
+        "G11: both viewers expose an OnAcquireItemFrame hook")
+
+    -- past init but before initial reanchor: no blank yet
+    initFlag = false
+    local bf = { OnActiveStateChanged = function() end }
+    buffAcquire(buffViewer, bf)
+    assert(#blanked == 0, "buff acquire does not blank before the first reanchor completes")
+
+    -- after initial reanchor: blank immediately, then re-claim
+    blanked = {}
+    initialDoneByKey.buff = true
+    buffAcquire(buffViewer, bf)
+    assert(#blanked == 1 and blanked[1] == bf,
+        "buff acquire blanks fresh frames after initial reanchor")
+
+    -- during the initial boot window: still no blank, even if a prior reanchor completed
+    blanked = {}
+    initFlag = true
+    buffAcquire(buffViewer, { OnActiveStateChanged = function() end })
+    assert(#blanked == 0, "buff acquire does not blank during the initial boot window")
+
+    -- essential: no blank either
+    blanked = {}
+    initFlag = false
+    essAcquire(essViewer, { OnActiveStateChanged = function() end })
+    assert(#blanked == 0, "essential/utility acquires are not blanked")
+end
 
 print("OK: cdm_reanchor_hooks_test")

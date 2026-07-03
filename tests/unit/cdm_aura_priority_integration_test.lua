@@ -303,4 +303,22 @@ assert(durObj == chargeDur,
     "disabled cooldown-icon aura phase should carry the charge-duration DurationObject "
     .. "(charges take precedence over the spell cooldown per Blizzard CV)")
 
+-- Independent skipAuraPhase gate (regression for the reanchor aura-phase
+-- override): skipAuraPhase=true must skip the aura phase even when
+-- useBuffSwipe is NOT false. Proves the resolver consults skipAuraPhase
+-- directly, not only via the useBuffSwipe coupling.
+local indep = resolvers.ResolveCooldownState({
+    entry = entry(50001),
+    runtimeSpellID = 50001,
+    containerKey = "essential",
+    useBuffSwipe = true,
+    skipAuraPhase = true,
+    showGCDSwipe = true,
+})
+assert(indep and indep.mode == "cooldown",
+    "skipAuraPhase=true must skip aura phase independent of useBuffSwipe (got "
+    .. tostring(indep and indep.mode) .. ")")
+assert(indep.durObj == cooldownDur,
+    "skipAuraPhase gate must carry the cooldown DurationObject")
+
 print("OK: cdm_aura_priority_integration_test")

@@ -1,8 +1,7 @@
 --[[
     QUI HUD Visibility Controllers
     Manages fade-in/fade-out visibility for CDM viewers and unit frames.
-    Independent of CDM engine — reads frames from ns.CDMProvider (or
-    falls back to well-known Blizzard globals).
+    Independent of CDM engine — reads QUI-owned frames from ns.CDMProvider.
 ]]
 
 local ADDON_NAME, ns = ...
@@ -99,14 +98,6 @@ local function InvalidateCDMFrameCache()
     _cdmFramesDirty = true
 end
 
--- Fallback viewer-global names used when CDMProvider can't supply them.
-local DEFAULT_VIEWER_FRAME_NAMES = {
-    essential = "EssentialCooldownViewer",
-    utility   = "UtilityCooldownViewer",
-    buffIcon  = "BuffIconCooldownViewer",
-    buffBar   = "BuffBarCooldownViewer",
-}
-
 -- Get CDM frames (viewers + power bars) — cached to avoid per-frame allocations
 local function IsCustomCDMBarFrame(frame)
     if not frame then return false end
@@ -131,7 +122,10 @@ local function GetCDMFrames()
 
     wipe(_cdmFramesCache)
 
-    -- Use provider when available, fall back to well-known Blizzard globals
+    -- Use QUI-owned provider frames only. Blizzard CooldownViewer globals are
+    -- deliberately excluded here; visibility fading must not touch native CDM
+    -- viewers during cold login because their UNIT_AURA tables disallow tainted
+    -- access.
     if ns.CDMProvider and ns.CDMProvider.GetViewerFrames then
         local frames = ns.CDMProvider:GetViewerFrames()
         if frames then
@@ -139,14 +133,6 @@ local function GetCDMFrames()
                 if not IsCustomCDMBarFrame(frames[i]) then
                     _cdmFramesCache[#_cdmFramesCache + 1] = frames[i]
                 end
-            end
-        end
-    else
-        local frameNames = ns.CDMProvider and ns.CDMProvider.GetViewerFrameNames and ns.CDMProvider:GetViewerFrameNames()
-        frameNames = frameNames or DEFAULT_VIEWER_FRAME_NAMES
-        for _, blizzName in pairs(frameNames) do
-            if _G[blizzName] then
-                _cdmFramesCache[#_cdmFramesCache + 1] = _G[blizzName]
             end
         end
     end
@@ -488,13 +474,6 @@ local function SetupCDMMouseoverDetector()
         viewers = ns.CDMProvider:GetViewerFrames()
     else
         viewers = {}
-        local names = ns.CDMProvider and ns.CDMProvider.GetViewerFrameNames and ns.CDMProvider:GetViewerFrameNames()
-        names = names or DEFAULT_VIEWER_FRAME_NAMES
-        for _, name in pairs(names) do
-            if _G[name] then
-                viewers[#viewers + 1] = _G[name]
-            end
-        end
     end
 
     for _, viewer in ipairs(viewers) do

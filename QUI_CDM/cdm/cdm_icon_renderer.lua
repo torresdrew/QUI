@@ -347,10 +347,6 @@ end
 
 ---------------------------------------------------------------------------
 -- DEBUG: Charge/stack transform debugging.
--- Enable via:  /run QUI_CDM_CHARGE_DEBUG = true
--- Disable via: /run QUI_CDM_CHARGE_DEBUG = false
--- Optionally filter to a specific spell name:
---   /run QUI_CDM_CHARGE_DEBUG = "Holy Bulwark"
 -- Implementation lives in the load-on-demand debug addon. The placeholder
 -- below is rebound by cdm_debug.lua's BindAll() when loaded.
 ---------------------------------------------------------------------------
@@ -762,6 +758,9 @@ local function GetCooldownDesatCurve()
     _cooldownDesatCurve = curve
     return curve
 end
+-- Shared with the re-anchor engine: the aura-phase-off restyle drives the SAME
+-- step curve into the native icon texture (cdm_reanchor_boot reassertDesat).
+ns._CDM_GetCooldownDesatCurve = GetCooldownDesatCurve
 
 local function ApplyCooldownDesaturation(icon, entry, settings, resolvedMode, resolvedSpellID, resolvedDurObj)
     if not icon or not entry or not icon.Icon or not icon.Icon.SetDesaturated then
@@ -2159,7 +2158,8 @@ end
 ---------------------------------------------------------------------------
 local BLIZZ_ICON_CHROME_ATLASES = {
     ["UI-HUD-CoolDownManager-IconOverlay"] = true,
-    ["UI-CooldownManager-OORshadow"] = true,
+    -- OOR shadow intentionally NOT listed: native out-of-range feedback retained
+    -- (G5 fix — re-anchored frames never enter QUI's owned range-tint paths).
 }
 
 local function IsIconChromeTexture(region)
@@ -2251,8 +2251,8 @@ local function ApplyTexCoord(icon, zoom, aspectRatioCrop)
 end
 
 -- Strip the native Blizzard CooldownViewer item chrome off a re-anchored frame so
--- it reads like a QUI owned icon: hide the bevel overlay + out-of-range shadow
--- (anonymous OVERLAY atlas textures), drop the rounding mask, and crop the icon
+-- it reads like a QUI owned icon: hide the bevel overlay (anonymous OVERLAY atlas
+-- texture), drop the rounding mask, and crop the icon
 -- to the QUI zoom (Blizzard ships it uncropped at 0..1). Idempotent -- safe to call
 -- on every refresh; Blizzard re-sets the icon texcoord when it swaps the icon, so
 -- the crop must be re-asserted each pass. BuffBar items nest the icon (frame.Icon
@@ -2268,7 +2268,7 @@ function CDMIcons.NeutralizeBlizzardItemChrome(frame, rowConfig)
         iconTex = iconHost.Icon
     end
 
-    -- Alpha-0 the anonymous chrome atlas overlays (IconOverlay bevel, OOR shadow).
+    -- Alpha-0 the anonymous chrome atlas overlays (IconOverlay bevel only; OOR shadow kept).
     if iconHost.GetRegions then
         local regions = { iconHost:GetRegions() }
         for i = 1, #regions do
@@ -5274,7 +5274,7 @@ else
     SetupDebugInstrumentation() -- standalone test harness: no gate, run eagerly
 end
 
--- Exporters for /qui cdm_cache reset / status.
+-- Exporters for debug cache reset / status.
 function CDMIcons:ClearTextureCycleCache()
     wipe(_textureCycleCache)
 end

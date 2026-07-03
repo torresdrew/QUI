@@ -1175,8 +1175,6 @@ end
 
 ---------------------------------------------------------------------------
 -- ICON-DEBUG HELPERS
--- Cheap text-print helpers for /run QUI_CDM_ICON_DEBUG = "spell name"
--- workflow.
 ---------------------------------------------------------------------------
 function CDMIcons.ShouldDebugSpell(spellID, spellName)
     local dbg = _G.QUI_CDM_ICON_DEBUG
@@ -2321,6 +2319,70 @@ local ok = true; local wrapped = C_StringUtil.WrapString(curText, "  |cff888888\
         resolverInactive))
 end
 
+-- Mint-taint verdict for the native CooldownViewer pipeline. One cold boot
+-- answers: (a) was Blizzard's provider displayData cache built by secure code
+-- or by an addon (issecurevariable names the offender), and (b) were the
+-- BuffIcon items minted clean (cooldownID/cooldownInfo/isActive secure) and
+-- are they active while an aura is live. Raw field reads ONLY -- this dump
+-- must never call provider getters, which would lazily BUILD the cache and
+-- become the very first-toucher poison it exists to detect.
+local function RunCDMDebugMint()
+    local P = "|cff34D399[CDM-Mint]|r"
+
+    local function secinfo(tbl, field)
+        local secure, taint = issecurevariable(tbl, field)
+        if secure then return "|cff34D399secure|r" end
+        return "|cffff5555tainted:" .. tostring(taint or "?") .. "|r"
+    end
+
+    local settings = _G.CooldownViewerSettings
+    local provider = settings and settings.GetDataProvider and settings:GetDataProvider()
+    if not provider then
+        print(P .. " provider: |cffffaa00nil (data not loaded yet)|r")
+    else
+        local built = (not provider.displayDataDirty) and provider.displayData ~= nil
+        print(string.format("%s provider: built=%s dirty=%s displayData=%s displayDataDirty=%s",
+            P, tostring(built), tostring(provider.displayDataDirty),
+            secinfo(provider, "displayData"), secinfo(provider, "displayDataDirty")))
+    end
+
+    local viewers = {
+        { "Essential", _G.EssentialCooldownViewer },
+        { "Utility", _G.UtilityCooldownViewer },
+        { "BuffIcon", _G.BuffIconCooldownViewer },
+        { "BuffBar", _G.BuffBarCooldownViewer },
+    }
+    for _, row in ipairs(viewers) do
+        local label, viewer = row[1], row[2]
+        if viewer then
+            print(string.format("%s %s: shown=%s visibleSetting=%s hideWhenInactive=%s",
+                P, label, tostring(viewer:IsShown()),
+                secinfo(viewer, "visibleSetting"), secinfo(viewer, "hideWhenInactive")))
+        end
+    end
+
+    local buffViewer = _G.BuffIconCooldownViewer
+    local pool = buffViewer and buffViewer.itemFramePool
+    if not (pool and pool.EnumerateActive) then
+        print(P .. " BuffIcon item pool unavailable")
+        return
+    end
+    local items, active = 0, 0
+    for item in pool:EnumerateActive() do
+        items = items + 1
+        local okID, cooldownID = pcall(item.GetCooldownID, item)
+        if not okID or issecretvalue(cooldownID) then cooldownID = "?" end
+        local okActive, isActive = pcall(item.IsActive, item)
+        if not okActive or issecretvalue(isActive) then isActive = "?" end
+        if isActive == true then active = active + 1 end
+        print(string.format(
+            "%s   item %d: cooldownID=%s active=%s shown=%s | cooldownID=%s cooldownInfo=%s isActive=%s",
+            P, items, tostring(cooldownID), tostring(isActive), tostring(item:IsShown()),
+            secinfo(item, "cooldownID"), secinfo(item, "cooldownInfo"), secinfo(item, "isActive")))
+    end
+    print(string.format("%s BuffIcon items=%d active=%d", P, items, active))
+end
+
 -- Dump _specProfiles contents and current spec state.
 local function RunCDMDebugProfiles()
     local P = "|cff34D399[CDM-Profiles]|r"
@@ -2791,7 +2853,6 @@ end
 
 ---------------------------------------------------------------------------
 -- CHARGE DEBUG
--- /run QUI_CDM_CHARGE_DEBUG = true | "spellName"
 -- Throttle keeps tick-based messages to 1/sec per spell+tag.
 ---------------------------------------------------------------------------
 local _chargeDebugThrottle = {}
@@ -2966,7 +3027,6 @@ end
 --
 -- Toggle: /cdmdebug flags taint on; /rl
 -- Filter: /cdmdebug flags taint Sync; /rl
--- Buffer: /run QUI_CDM_TAINT_BUFFER_MAX = 1000; /rl
 --
 -- Instrumented call sites use Taint(label, k1, v1, k2, v2, ...) to emit a
 -- single line describing each field's secrecy status. Secrets are rendered
@@ -3244,13 +3304,90 @@ local function RunCDMDebugSpell(msg)
 end
 
 local function RunCDMDebugCache(msg)
-    local sub = TrimText(msg)
+    local sub = TrimText(msg):lower()
     if sub == "" then sub = "status" end
-    if QUI and QUI.SlashCommandOpen then
-        QUI:SlashCommandOpen("cdm_cache " .. sub)
-    else
-        print("|cffffaa00[CDM-Debug]|r cache command unavailable.")
+
+    local SD = ns.CDMSpellData
+    local IC = ns.CDMIcons
+    local BR = ns.CDMBars
+    if not SD then
+        print("|cffffaa00[CDM-Cache]|r CDM not loaded.")
+        return
     end
+
+    if sub == "status" then
+        local s = SD.GetCacheStats and SD:GetCacheStats() or {}
+        local ic = (IC and IC.GetCacheStats) and IC:GetCacheStats() or {}
+        local br = (BR and BR.GetCacheStats) and BR:GetCacheStats() or {}
+        local fr = ns.GetCDMFrameCacheStats and ns.GetCDMFrameCacheStats() or {}
+        local rt = (ns.CDMRuntimeStore and ns.CDMRuntimeStore.GetStats)
+            and ns.CDMRuntimeStore.GetStats() or {}
+        local combat = InCombatLockdown() and "true" or "false"
+        print(("|cff34D399[CDM-Cache]|r status (combat=%s)"):format(combat))
+        print(("  hud_visibility frames:    dirty=%s size=%d"):format(
+            tostring(fr.dirty), tonumber(fr.size) or 0))
+        print(("  child map (spellID->child): dirty=%s size=%d"):format(
+            tostring(s.childMapDirty), tonumber(s.childMapSize) or 0))
+        print(("  captured aura index:      entries=%d units=%d spellKeys=%d nameKeys=%d"):format(
+            tonumber(s.capturedAuraEntries) or 0,
+            tonumber(s.capturedAuraUnits) or 0,
+            tonumber(s.capturedAuraSpellKeys) or 0,
+            tonumber(s.capturedAuraNameKeys) or 0))
+        print(("  runtime store:            states=%d version=%d"):format(
+            tonumber(rt.states) or 0,
+            tonumber(rt.version) or 0))
+        print(("  learned cooldowns:        dirty=%s size=%d"):format(
+            tostring(s.learnedDirty), tonumber(s.learnedSize) or 0))
+        print(("  tick aura caches:         data=%d dur=%d exp=%d app=%d"):format(
+            tonumber(s.tickAuraData) or 0,
+            tonumber(s.tickAuraDuration) or 0,
+            tonumber(s.tickAuraExpiration) or 0,
+            tonumber(s.tickAuraApplication) or 0))
+        print(("  resolve memos:            icon=%d auraActive=%d"):format(
+            tonumber(s.resolveIconMemo) or 0,
+            tonumber(s.resolveAuraMemo) or 0))
+        print(("  totem slot map:           size=%d"):format(
+            tonumber(s.totemSlotMap) or 0))
+        print(("  texture cycle cache:      size=%d"):format(
+            tonumber(ic.textureCycleCache) or 0))
+        print(("  bar pool:                 active=%d"):format(
+            tonumber(br.activeBars) or 0))
+        print(("  icon update:              barsDirty=%s pending=%s"):format(
+            tostring(ic.barsDirty), tostring(ic.updatePending)))
+        if ic.iconEventProfileTop and #ic.iconEventProfileTop > 0 then
+            print(("  icon events:              window=%.1fs"):format(
+                tonumber(ic.iconEventProfileWindow) or 0))
+            for _, row in ipairs(ic.iconEventProfileTop) do
+                print(("    %-30s %6.2f ms/s  %5.0f/s"):format(
+                    tostring(row.event),
+                    tonumber(row.msPerSec) or 0,
+                    tonumber(row.callsPerSec) or 0))
+            end
+        end
+        print("  run |cFFFFFF00/cdmdebug cache reset|r to wipe and rebuild (OOC only).")
+        return
+    end
+
+    if sub == "reset" then
+        if InCombatLockdown() then
+            print("|cffffaa00[CDM-Cache]|r reset blocked in combat; try again out of combat.")
+            return
+        end
+        if ns.InvalidateCDMFrameCache then ns.InvalidateCDMFrameCache() end
+        if SD.InvalidateLearnedCache then SD:InvalidateLearnedCache() end
+        if SD.ClearChildCaches then SD:ClearChildCaches() end
+        if IC and IC.ClearTextureCycleCache then IC:ClearTextureCycleCache() end
+        if BR and BR.ClearPerBarCaches then BR:ClearPerBarCaches() end
+        if ns.CDMRuntimeStore and ns.CDMRuntimeStore.ClearAll then ns.CDMRuntimeStore.ClearAll() end
+        if SD.CheckAllDormantSpells then SD:CheckAllDormantSpells() end
+        if SD.ReconcileAllContainers then SD:ReconcileAllContainers() end
+        if _G.QUI_OnSpellDataChanged then _G.QUI_OnSpellDataChanged() end
+        if IC and IC.RequestFullUpdate then IC:RequestFullUpdate() end
+        print("|cff34D399[CDM-Cache]|r reset complete; caches wiped and full rebuild scheduled.")
+        return
+    end
+
+    print("|cffffaa00[CDM-Cache]|r usage: /cdmdebug cache [status|reset]")
 end
 
 local function RunCDMDebugProfile(msg)
@@ -3264,6 +3401,99 @@ local function RunCDMDebugProfile(msg)
     end
 end
 
+-- Reanchor BuffIcon pipeline dump. The discriminator for "buff icon stays shown
+-- after the aura ended": native isActive=true while the aura is gone means the
+-- Blizzard ITEM is stale (missed aura-removal dispatch — Blizzard-side); a
+-- SECRET isActive with shown=true means QUI's combat fail-open kept the claim;
+-- a stale lastPass seq/age means no refresh pass ran at all (trigger dead).
+local function RunCDMDebugBuff()
+    local P = "|cff34D399[CDM-Buff]|r"
+    local boot = ns._cdmBoot
+    if not boot or not boot.runtime then
+        print(P .. " reanchor engine not booted (ns._cdmBoot nil) -- legacy owned-icon path active")
+        return
+    end
+    local runtime = boot.runtime
+
+    local function fmtv(v)
+        if DebugIsSecretValue(v) then return "|cffff5555SECRET|r" end
+        return tostring(v)
+    end
+    local function readCall(obj, method)
+        local fn = obj and obj[method]
+        if type(fn) ~= "function" then return nil end
+        local ok, v = pcall(fn, obj)
+        if not ok then return "|cffff5555throw|r" end
+        return fmtv(v)
+    end
+
+    -- 1) Last assemble/refresh pass for the buff container.
+    local diag = runtime.GetLastDiag and runtime:GetLastDiag("buff")
+    if not diag then
+        print(P .. " lastPass: |cffffaa00none (no buff pass has run this session)|r")
+    else
+        local age = (GetTime and diag.at) and string.format("%.1fs", GetTime() - diag.at) or "?"
+        print(string.format("%s lastPass: seq=%s age=%s early=%s mode=%s filterInactive=%s editing=%s auraProbe=%s",
+            P, tostring(diag.seq), age, tostring(diag.earlyReturn), tostring(diag.displayMode),
+            tostring(diag.filterInactive), tostring(diag.editing), tostring(diag.auraProbe)))
+        print(string.format("%s   curated=%s matched=%s frameless=%s nativeClaimed=%s staleNative=%s fallbackLive=%s minted=%s mintFailed=%s planNil=%s positioned=%s",
+            P, tostring(diag.curated), tostring(diag.matched), tostring(diag.frameless),
+            tostring(diag.nativeClaimed), tostring(diag.staleNative), tostring(diag.fallbackLive),
+            tostring(diag.minted), tostring(diag.mintFailed), tostring(diag.planNil),
+            tostring(diag.positioned)))
+    end
+
+    -- 2) Native BuffIcon viewer + per-item state (the Blizzard-truth leg).
+    local viewer = _G.BuffIconCooldownViewer
+    if not viewer then
+        print(P .. " BuffIconCooldownViewer missing")
+    else
+        print(string.format("%s viewer: shown=%s visibleSetting=%s hideWhenInactive=%s",
+            P, readCall(viewer, "IsShown"), fmtv(viewer.visibleSetting), fmtv(viewer.hideWhenInactive)))
+        local pool = viewer.itemFramePool
+        if pool and pool.EnumerateActive then
+            local n = 0
+            for item in pool:EnumerateActive() do
+                n = n + 1
+                local entry = runtime.GetEntryForFrame and runtime:GetEntryForFrame(item)
+                local claimTag = "unclaimed"
+                if entry then
+                    local sid = entry.overrideSpellID or entry.spellID or entry.id
+                    local name = Sources and Sources.QuerySpellName and Sources.QuerySpellName(sid)
+                    claimTag = "CLAIMED:" .. tostring(name or sid)
+                end
+                print(string.format("%s   item %d: cooldownID=%s isActive=%s shown=%s alpha=%s %s",
+                    P, n, readCall(item, "GetCooldownID"), readCall(item, "IsActive"),
+                    readCall(item, "IsShown"), readCall(item, "GetAlpha"), claimTag))
+            end
+            print(string.format("%s BuffIcon items=%d", P, n))
+        else
+            print(P .. " BuffIcon item pool unavailable")
+        end
+    end
+
+    -- 3) Curated buff entries + QUI aura ground truth (the aura-truth leg).
+    local deps = runtime._deps or {}
+    local okCurated, curated = pcall(deps.getCurated or function() end, "buff")
+    if okCurated and type(curated) == "table" then
+        for i = 1, #curated do
+            local e = curated[i]
+            local sid = e.overrideSpellID or e.spellID or e.id
+            local name = Sources and Sources.QuerySpellName and Sources.QuerySpellName(sid)
+            local auraLive = "n/a"
+            if type(deps.entryAuraIsPresent) == "function" then
+                local okA, live = pcall(deps.entryAuraIsPresent, e)
+                auraLive = okA and fmtv(live) or "|cffff5555throw|r"
+            end
+            print(string.format("%s   curated %d: %s (%s) type=%s source=%s auraLive=%s",
+                P, i, tostring(name or "?"), tostring(sid), tostring(e.type),
+                tostring(e.source), auraLive))
+        end
+    else
+        print(P .. " curated list unavailable")
+    end
+end
+
 local function PrintCDMDebugHelp()
     print("|cff34D399[CDM-Debug]|r commands:")
     print("  /cdmdebug status                         -> command help + flag state")
@@ -3272,6 +3502,8 @@ local function PrintCDMDebugHelp()
     print("  /cdmdebug cache [status|reset]            -> cache status/reset")
     print("  /cdmdebug profile [status|clean]          -> CDM profile tools")
     print("  /cdmdebug probe                           -> resolver parity sweep")
+    print("  /cdmdebug mint                            -> native mint/provider taint verdict")
+    print("  /cdmdebug buff                            -> reanchor BuffIcon pipeline dump")
     print("  direct flag shorthand: /cdmdebug icon on, /cdmdebug taint Sync, /cdmdebug off")
     ListDebugFlags()
 end
@@ -3297,6 +3529,10 @@ local function RunCDMDebugCommand(msg)
         RunCDMDebugProfile(rest)
     elseif lower == "probe" then
         RunCDMDebugProbe()
+    elseif lower == "mint" then
+        RunCDMDebugMint()
+    elseif lower == "buff" then
+        RunCDMDebugBuff()
     else
         print("|cffffaa00[CDM-Debug]|r unknown command '" .. tostring(cmd) .. "'. Use /cdmdebug help.")
     end

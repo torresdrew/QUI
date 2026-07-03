@@ -772,6 +772,19 @@ local function ApplyPreferredItemIcons(buttons, settings)
     if settings.consumableOilOH ~= false then apply("oilOH") end
 end
 
+-- 12.1: GetAuraDataByIndex throws while aura data is secret. Player consumable
+-- buffs can't change in combat, so when auras are secret we collapse the 1..40
+-- scan bound to 0 (loop body skipped) and keep the last displayed state instead
+-- of erroring. The bound of a numeric-for is evaluated once at loop entry, so
+-- AuraScanCount() costs a single C call per scan.
+local C_Secrets = C_Secrets
+local function AuraScanCount()
+    if C_Secrets and C_Secrets.ShouldAurasBeSecret and C_Secrets.ShouldAurasBeSecret() then
+        return 0
+    end
+    return 40
+end
+
 local function ScanPlayerBuffs()
     local result = {
         hasFood = false, hasFlask = false, hasRune = false,
@@ -785,7 +798,7 @@ local function ScanPlayerBuffs()
     local checkMHAura = mhConfig and mhConfig.checkType == "playerAura"
     local checkOHAura = ohConfig and ohConfig.checkType == "playerAura"
 
-    for i = 1, 40 do
+    for i = 1, AuraScanCount() do
         local auraData = C_UnitAuras.GetAuraDataByIndex("player", i, "HELPFUL")
         if not auraData then break end
         local spellId = auraData.spellId
@@ -1273,7 +1286,7 @@ local function CheckEnhancementActive(slot, button, hasEnchant, enchantExpiratio
 
     if config and config.checkType == "playerAura" then
         -- Aura-based detection (rogues)
-        for i = 1, 40 do
+        for i = 1, AuraScanCount() do
             local auraData = C_UnitAuras.GetAuraDataByIndex("player", i, "HELPFUL")
             if not auraData then break end
             local ok, match = pcall(function() return config.anyBuffIDs[auraData.spellId] end)
@@ -1412,7 +1425,7 @@ UpdateConsumables = function()
     end
 
     -- Scan player buffs
-    for i = 1, 40 do
+    for i = 1, AuraScanCount() do
         local auraData = C_UnitAuras.GetAuraDataByIndex("player", i, "HELPFUL")
         if not auraData then break end
         local spellId = auraData.spellId

@@ -67,6 +67,10 @@ _G.C_CooldownViewer = {
 _G.CooldownViewerSettings = {
     GetDataProvider = function()
         return {
+            -- memo fields present = cache already built by a secure consumer
+            -- (cold-boot taint gate reads these raw; see cdm_index/cdm_catalog)
+            displayDataDirty = false,
+            displayData = {},
             GetLayoutManager = function()
                 return {}
             end,
@@ -143,6 +147,10 @@ _G.C_CooldownViewer = {
 _G.CooldownViewerSettings = {
     GetDataProvider = function()
         return {
+            -- memo fields present = cache already built by a secure consumer
+            -- (cold-boot taint gate reads these raw; see cdm_index/cdm_catalog)
+            displayDataDirty = false,
+            displayData = {},
             GetOrderedCooldownIDsForCategory = function()
                 error("provider layout is not hydrated yet")
             end,
@@ -170,6 +178,10 @@ end
 _G.CooldownViewerSettings = {
     GetDataProvider = function()
         return {
+            -- memo fields present = cache already built by a secure consumer
+            -- (cold-boot taint gate reads these raw; see cdm_index/cdm_catalog)
+            displayDataDirty = false,
+            displayData = {},
             GetOrderedCooldownIDsForCategory = function(_, category, allowUnlearned)
                 assert(category == 2, "unexpected tracked buff category")
                 assert(allowUnlearned == true, "seed should preserve tracked unlearned aura rows")
@@ -186,6 +198,10 @@ assert(#seeded == 0, "seed should not snapshot raw data before settings layout h
 _G.CooldownViewerSettings = {
     GetDataProvider = function()
         return {
+            -- memo fields present = cache already built by a secure consumer
+            -- (cold-boot taint gate reads these raw; see cdm_index/cdm_catalog)
+            displayDataDirty = false,
+            displayData = {},
             GetLayoutManager = function()
                 return {}
             end,

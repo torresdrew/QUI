@@ -2,7 +2,7 @@
 -- Run: lua tests/unit/cdm_viewer_addon_test.lua
 local ns = {}
 local loadChunk = dofile("tests/helpers/load_cdm_consolidated_chunk.lua")
-loadChunk("QUI_CDM/cdm/cdm_viewer_addon.lua", "cdm_viewer_addon.lua")("QUI", ns)
+loadChunk("QUI_CDM/cdm/cdm_shared.lua", "cdm_viewer_addon.lua")("QUI", ns)
 
 local A = assert(ns.CDMCooldownViewerAddon, "CDMCooldownViewerAddon should be exported")
 

@@ -222,9 +222,13 @@ local function UnitHasPlayerAtonement(unit)
 
     -- Fast path by spell ID, then verify the source so another Disc Priest
     -- does not count toward the player's total.
-    if C_UnitAuras and C_UnitAuras.GetAuraDataBySpellID then
-        local ok, auraData = pcall(C_UnitAuras.GetAuraDataBySpellID, unit, ATONEMENT_SPELL_ID)
-        if ok and auraData and AuraMatchesAtonement(auraData) and AuraBelongsToPlayer(auraData, unit) then
+    -- 12.1: GetAuraDataBySpellID was removed; GetUnitAuraBySpellID is the
+    -- surviving spell-ID getter (does not throw). Guard against a secret result
+    -- before reading its fields.
+    if C_UnitAuras and C_UnitAuras.GetUnitAuraBySpellID then
+        local ok, auraData = pcall(C_UnitAuras.GetUnitAuraBySpellID, unit, ATONEMENT_SPELL_ID)
+        if ok and not (issecretvalue and issecretvalue(auraData)) and auraData
+            and AuraMatchesAtonement(auraData) and AuraBelongsToPlayer(auraData, unit) then
             return true
         end
     end

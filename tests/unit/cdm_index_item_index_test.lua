@@ -51,6 +51,10 @@ local orderedCalls = 0
 _G.CooldownViewerSettings = {
     GetDataProvider = function()
         return {
+            -- memo fields present = cache already built by a secure consumer
+            -- (cold-boot taint gate reads these raw; see cdm_index/cdm_catalog)
+            displayDataDirty = false,
+            displayData = {},
             GetOrderedCooldownIDsForCategory = function(_, category, includeHidden)
                 orderedCalls = orderedCalls + 1
                 assert(includeHidden == true, "ordered item map should include hidden provider rows")

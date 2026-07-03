@@ -483,6 +483,155 @@ end
 
 CDMBars.ApplyNameTextWithCount = ApplyNameTextWithCount
 
+local function NormalizeTrackedBarRuntimeEntries(runtimeEntries)
+    if type(runtimeEntries) ~= "table" or #runtimeEntries == 0 then
+        return nil
+    end
+
+    local spellList = {}
+    for i, entry in ipairs(runtimeEntries) do
+        if type(entry) == "table" then
+            local runtimeSpellID = entry.overrideSpellID or entry.spellID or entry.baseSpellID
+            local baseSpellID = entry.baseSpellID or entry.spellID or runtimeSpellID
+            local id = runtimeSpellID or entry.cooldownID
+            if id then
+                local instanceID = entry.cooldownID or runtimeSpellID or entry.layoutIndex or i
+                spellList[#spellList + 1] = {
+                    id = id,
+                    spellID = baseSpellID,
+                    baseSpellID = baseSpellID,
+                    overrideSpellID = entry.overrideSpellID,
+                    name = entry.name or "",
+                    type = "spell",
+                    kind = "aura",
+                    isAura = true,
+                    viewerType = "trackedBar",
+                    source = "blizzardCDM",
+                    cooldownID = entry.cooldownID,
+                    layoutIndex = entry.layoutIndex or i,
+                    iconTexture = entry.iconTexture,
+                    _instanceKey = "trackedBar:" .. tostring(instanceID),
+                    _trackedBarRuntime = true,
+                    _trackedBarActive = entry.isActive == true,
+                }
+            end
+        end
+    end
+
+    if #spellList == 0 then
+        return nil
+    end
+    return spellList
+end
+
+CDMBars._NormalizeTrackedBarRuntimeEntries = NormalizeTrackedBarRuntimeEntries
+
+local function CopyTrackedEntry(entry)
+    local out = {}
+    if type(entry) ~= "table" then return out end
+    for k, v in pairs(entry) do
+        out[k] = v
+    end
+    return out
+end
+
+local function AddTrackedSpellIdentity(out, value)
+    if value == nil then return end
+    out[tostring(value)] = true
+end
+
+local function BuildTrackedSpellIdentitySet(entry)
+    local out = {}
+    if type(entry) ~= "table" then return out end
+    AddTrackedSpellIdentity(out, entry.id)
+    AddTrackedSpellIdentity(out, entry.spellID)
+    AddTrackedSpellIdentity(out, entry.baseSpellID)
+    AddTrackedSpellIdentity(out, entry.overrideSpellID)
+    AddTrackedSpellIdentity(out, entry.itemID)
+    return out
+end
+
+local function TrackedEntriesMatch(configured, runtime)
+    if type(configured) ~= "table" or type(runtime) ~= "table" then
+        return false
+    end
+
+    local configuredIDs = BuildTrackedSpellIdentitySet(configured)
+    local runtimeIDs = BuildTrackedSpellIdentitySet(runtime)
+    for id in pairs(configuredIDs) do
+        if runtimeIDs[id] then
+            return true
+        end
+    end
+
+    if configured.cooldownID ~= nil and runtime.cooldownID ~= nil then
+        return tostring(configured.cooldownID) == tostring(runtime.cooldownID)
+    end
+    return false
+end
+
+local function FindTrackedRuntimeMatch(configured, runtimeSpellList, usedRuntime)
+    if type(runtimeSpellList) ~= "table" then return nil end
+    for i = 1, #runtimeSpellList do
+        local runtime = runtimeSpellList[i]
+        if not usedRuntime[i] and TrackedEntriesMatch(configured, runtime) then
+            usedRuntime[i] = true
+            return runtime
+        end
+    end
+    return nil
+end
+
+local function MergeTrackedRuntimeFields(configured, runtime)
+    local out = CopyTrackedEntry(configured)
+    if type(runtime) ~= "table" then
+        return out
+    end
+
+    if out.spellID == nil then out.spellID = runtime.spellID end
+    if out.baseSpellID == nil then out.baseSpellID = runtime.baseSpellID end
+    if out.overrideSpellID == nil then out.overrideSpellID = runtime.overrideSpellID end
+    if (out.name == nil or out.name == "") and runtime.name then out.name = runtime.name end
+    if out.iconTexture == nil then out.iconTexture = runtime.iconTexture end
+    out.cooldownID = runtime.cooldownID
+    out.layoutIndex = runtime.layoutIndex
+    out._instanceKey = runtime._instanceKey
+    out._trackedBarRuntime = runtime._trackedBarRuntime == true
+    out._trackedBarActive = runtime._trackedBarActive == true
+    return out
+end
+
+local function BuildTrackedBarSpellList(runtimeEntries, configuredSpellList, configuredOwnedInitialized)
+    local runtimeSpellList = NormalizeTrackedBarRuntimeEntries(runtimeEntries)
+    if not configuredOwnedInitialized then
+        return runtimeSpellList
+    end
+
+    local out = {}
+    local usedRuntime = {}
+    if type(configuredSpellList) ~= "table" then
+        return out
+    end
+
+    for i = 1, #configuredSpellList do
+        local configured = configuredSpellList[i]
+        if type(configured) == "table" then
+            local runtime = FindTrackedRuntimeMatch(configured, runtimeSpellList, usedRuntime)
+            out[#out + 1] = MergeTrackedRuntimeFields(configured, runtime)
+        end
+    end
+    return out
+end
+
+CDMBars._BuildTrackedBarSpellList = BuildTrackedBarSpellList
+
+local function ContainerOwnedListInitialized(containerKey)
+    local shared = ns.CDMShared
+    local getDB = shared and shared.GetContainerDB
+    local db = getDB and getDB(containerKey)
+    return db and db.ownedSpells ~= nil or false
+end
+
 local function ShouldHideAuraDurationText(r)
     if not r or not r.isActive then return false end
     if r.isTotemInstance then return false end
@@ -1108,8 +1257,8 @@ function CDMBars:BuildBarsFromOwned(container, spellList)
         -- Set initial texture from composer entry / direct C-side APIs.
         -- Totem-instance bars defer to UpdateOwnedBarAura's totemIcon path.
         if bar.IconTexture and spellID and not bar._isTotemInstance then
-            local texID
-            if entry.type == "item" or entry.type == "slot" then
+            local texID = entry.iconTexture
+            if not texID and (entry.type == "item" or entry.type == "slot") then
                 if entry.type == "slot" then
                     texID = Sources and Sources.QueryInventoryItemTexture
                         and Sources.QueryInventoryItemTexture("player", entry.id)
@@ -1120,7 +1269,7 @@ function CDMBars:BuildBarsFromOwned(container, spellList)
                     end
                     texID = icon
                 end
-            elseif entry.type == "spell" then
+            elseif not texID and entry.type == "spell" then
                 -- Cooldown bars use overrideSpellID for talent replacements.
                 -- Aura bars keep their configured entry identity.
                 local iconSid
@@ -1936,7 +2085,7 @@ end
 ---------------------------------------------------------------------------
 -- REFRESH: Rebuild + re-layout (called from CDMBuffLayout)
 ---------------------------------------------------------------------------
-function CDMBars:Refresh(container, settings, overrideWidth, containerKey)
+function CDMBars:Refresh(container, settings, overrideWidth, containerKey, runtimeEntries)
     if not container then return end
     if not settings then return end
 
@@ -1949,9 +2098,23 @@ function CDMBars:Refresh(container, settings, overrideWidth, containerKey)
     _lastContainer = container
     _lastSettings = settings
 
-    -- All bars are sourced from the composer's owned-spells snapshot.
-    if ns.CDMSpellData then
-        local spellList = ns.CDMSpellData:GetSpellList(containerKey or "trackedBar")
+    -- Tracked bars use QUI ownership once the composer has initialized the
+    -- trackedBar list. Blizzard's live BuffBarCooldownViewer child list is only
+    -- an enrichment source for matching configured entries (cooldownID/order)
+    -- and a first-load fallback before ownedSpells exists.
+    local spellList
+    if containerKey == "trackedBar" then
+        local configuredOwnedInitialized = ContainerOwnedListInitialized(containerKey)
+        local configuredSpellList
+        if configuredOwnedInitialized and ns.CDMSpellData then
+            configuredSpellList = ns.CDMSpellData:GetSpellList(containerKey)
+        end
+        spellList = BuildTrackedBarSpellList(runtimeEntries, configuredSpellList, configuredOwnedInitialized)
+    end
+    if not spellList and ns.CDMSpellData then
+        spellList = ns.CDMSpellData:GetSpellList(containerKey or "trackedBar")
+    end
+    if spellList then
         self:BuildBarsFromOwned(container, spellList)
     else
         self:ClearPool()

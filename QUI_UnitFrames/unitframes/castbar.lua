@@ -982,22 +982,20 @@ local function IsSpellKnownForTickRule(spellID)
     return false
 end
 
-local function UnitHasAuraBySpellID(unit, auraSpellID, filter)
+local function UnitHasAuraBySpellID(unit, auraSpellID)
     if not unit or not auraSpellID then return false end
 
-    if C_UnitAuras and C_UnitAuras.GetAuraDataBySpellID then
-        local aura = C_UnitAuras.GetAuraDataBySpellID(unit, auraSpellID)
-        if aura then
-            return true
-        end
-    end
-
-    if AuraUtil and AuraUtil.FindAuraBySpellID then
-        local aura = AuraUtil.FindAuraBySpellID(auraSpellID, unit, filter)
-        return aura ~= nil
-    end
-
-    return false
+    -- 12.1: C_UnitAuras.GetAuraDataBySpellID and AuraUtil.FindAuraBySpellID were
+    -- removed. GetUnitAuraBySpellID is the surviving spell-ID getter — it does
+    -- NOT throw (RequiresNonSecretAura, not RequiresUnitAuraAccess) and returns
+    -- the first aura matching the spell, or nil. Guard the result against being a
+    -- secret value before truth-testing it.
+    local getAura = C_UnitAuras and C_UnitAuras.GetUnitAuraBySpellID
+    if not getAura then return false end
+    local ok, aura = pcall(getAura, unit, auraSpellID)
+    if not ok then return false end
+    if issecretvalue and issecretvalue(aura) then return false end
+    return aura ~= nil
 end
 
 local function ResolveRuleBasedTickModel(castbar, castContext)
@@ -1021,7 +1019,7 @@ local function ResolveRuleBasedTickModel(castbar, castContext)
 
     if rule.auraOptions and castContext and castContext.unit then
         for _, option in ipairs(rule.auraOptions) do
-            if option and UnitHasAuraBySpellID(castContext.unit, option.auraSpellID, option.filter) and option.ticks and option.ticks > 1 then
+            if option and UnitHasAuraBySpellID(castContext.unit, option.auraSpellID) and option.ticks and option.ticks > 1 then
                 tickCount = option.ticks
                 break
             end
