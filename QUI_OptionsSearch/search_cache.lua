@@ -37243,7 +37243,7 @@ ns.QUI_SearchCache = {
         },
         {
             ["category"] = "cooldowns",
-            ["description"] = "Let cooldown icons show their linked buff/debuff phase before switching to recharge or cooldown.",
+            ["description"] = "Let cooldown icons show their linked buff/debuff phase before switching to recharge or cooldown. Applies to all cooldown containers (this setting is global).",
             ["featureId"] = "cooldownManagerContainersPage",
             ["label"] = "Show Buff/Debuff Phase on Cooldown Icons",
             ["providerKey"] = "essential",
@@ -37266,7 +37266,7 @@ ns.QUI_SearchCache = {
         },
         {
             ["category"] = "cooldowns",
-            ["description"] = "Let cooldown icons show their linked buff/debuff phase before switching to recharge or cooldown.",
+            ["description"] = "Let cooldown icons show their linked buff/debuff phase before switching to recharge or cooldown. Applies to all cooldown containers (this setting is global).",
             ["featureId"] = "cooldownManagerContainersPage",
             ["label"] = "Show Buff/Debuff Phase on Cooldown Icons",
             ["providerKey"] = "utility",

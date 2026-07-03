@@ -9,6 +9,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v5.0.0-alpha7 - 2026-07-03
+
+> ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will
+> not load on the 12.0.x live client. Stay on the v4.x beta line for live realms.
+
+### Changed
+- **Cooldown Manager rebuilt on the re-anchor engine.** QUI now positions and
+  skins Blizzard's own cooldown icons in place instead of mirroring them into
+  cloned frames. This removes the whole class of "icons hidden in combat",
+  ghost-icon, and cooldown-viewer taint failures the old mirror pipeline had.
+- Tracked buff bars are now rendered as QUI-owned bars; Blizzard's bar viewer
+  acts purely as a data source. Bar skin, ordering, and Edit Mode suppression
+  all come from QUI.
+- Aura scanning migrated to the 12.1 secret-aura rules (aura getters that were
+  removed in 12.1 are replaced, secret combat payloads are skipped safely)
+  across the Cooldown Manager, group frames, cast bars, the consumable check,
+  and the atonement counter.
+- Essential/Utility cooldown icons handle clicks and tooltips through
+  QUI-owned hosts, so hover and click behave consistently on re-anchored icons.
+
+### Fixed
+- fix(cdm): cold login no longer leaves the Cooldown Manager tainted (aura
+  reads going secret / icons refusing to register) until a /reload.
+- fix(cdm): with "Show Buff/Debuff Phase on Cooldown Icons" disabled, icons —
+  including trinkets and consumables — now show their real cooldown swipe and
+  desaturation instead of reading bright "ready" while the cooldown rolls.
+- fix(cdm): buff icons no longer get stuck invisible or stale after combat; a
+  repair net re-claims them whenever Blizzard re-shows or re-uses a frame.
+- fix(cdm): Edit Mode cooldown-viewer visibility settings that conflict with
+  QUI's rendering get a one-time reset (with a reload prompt) instead of
+  silently fighting the addon.
+- fix(unitframes): buff/debuff containers on unit frames now anchor exactly
+  where the layout-mode preview shows them on non-default anchor corners.
+
 ## v5.0.0-alpha6 - 2026-06-29
 
 > ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will
