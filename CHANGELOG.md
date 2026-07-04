@@ -9,6 +9,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v5.0.0-alpha11 - 2026-07-04
+
+> ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will
+> not load on the 12.0.x live client. Stay on the v4.x beta line for live realms.
+
+### Fixed
+- fix(cdm): Cooldown Manager proc highlights no longer flicker. While a spell
+  showed its proc glow, every cooldown, aura, or charge event re-triggered the
+  glow's start animation, so the highlight strobed under a burst of events. The
+  glow is now painted once and left alone until the proc ends or the icon is
+  reused for a different spell.
+
 ## v5.0.0-alpha10 - 2026-07-04
 
 > ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will
