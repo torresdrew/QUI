@@ -9,6 +9,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v5.0.0-alpha9 - 2026-07-04
+
+> ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will
+> not load on the 12.0.x live client. Stay on the v4.x beta line for live realms.
+
+### Fixed
+- fix(cdm): Cooldown Manager icons no longer snap to Blizzard's mid-screen
+  Edit Mode position at the start of combat. The viewer is now glued onto the
+  QUI container, so Blizzard's own layout lands in the right place, and icons
+  that appear mid-combat stay hidden until QUI has positioned them instead of
+  flashing mid-screen.
+- fix(auras): aura frames are no longer created during combat, which the 12.1
+  client forbids and could crash. Buff borders, group frames, and unit frames
+  now update existing icons while in combat and queue brand-new icons for the
+  moment combat ends.
+- fix(groupframes): party and raid members who join mid-fight now show their
+  auras immediately — aura frames are pre-allocated out of combat instead of
+  appearing only after the fight.
+
+### Changed
+- Buff border layout and settings changes now re-lay existing icons
+  immediately, even in combat, instead of waiting for combat to end. The
+  weapon-enchant icons now lead the buff grid.
+
 ## v5.0.0-alpha8 - 2026-07-03
 
 > ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will
