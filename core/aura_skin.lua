@@ -249,3 +249,24 @@ function AuraSkin.Attach(container, profile)
 
     container._quiAttached = true
 end
+
+-- Reflow: re-apply size / position / style to EXISTING buttons only — the
+-- combat-legal subset of Attach. Creating a forbidden AuraButton (CreateFrame +
+-- AddAuraFrame) is combat-restricted on 12.1 (creation in combat crashes the
+-- client), but mutating pre-created buttons (SetPoint / SetSize / fonts /
+-- textures) is allowed in combat, so a layout/config change can re-flow a live
+-- grid without waiting for PLAYER_REGEN_ENABLED. Buttons that don't exist yet
+-- are skipped; the next OOC Attach creates them.
+function AuraSkin.Reflow(container, profile)
+    local buttons = container._quiButtons
+    if not buttons then return end
+    local L = ResolveLayout(profile)
+    container:SetSize(1, 1)
+    for i = 1, L.maxIcons do
+        local button = buttons[i]
+        if button then
+            layoutButton(button, container, i, L)
+            styleButton(button, profile)
+        end
+    end
+end

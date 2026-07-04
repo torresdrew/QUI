@@ -3173,6 +3173,49 @@ function QUI_GF.HeaderChildCreated(_, childName)
     end
 end
 
+-- Pre-allocate every header's MAXIMUM children OOC, then pre-create the aura
+-- containers on each. SecureGroupHeaders create children lazily — including
+-- MID-COMBAT, where the forbidden CustomAuraContainer cannot be created
+-- (crashes the 12.1 client) — so without this a member joining mid-combat
+-- shows no auras until regen. FrameXML configureChildren sizes the pool as
+-- numDisplayed = unitCount - (startingIndex - 1), capped by unitsPerColumn *
+-- maxColumns: a negative startingIndex on a VISIBLE header forces full
+-- allocation synchronously (attribute change → SecureGroupHeader_Update).
+-- The dance runs tainted; the next secure roster update re-stamps the unit
+-- attributes, so restore startingIndex immediately and let Blizzard's event
+-- driver reconcile. Method on QUI_GF: this chunk rides the 200-local limit.
+function QUI_GF:PreallocateAuraContainers()
+    if InCombatLockdown() then return end
+    local GFA = ns.QUI_GroupFrameAuras
+    if not GFA or not GFA.EnsureContainersForFrame then return end
+    local function preallocHeader(header)
+        if not header or not header:IsShown() then return end
+        local upc = header:GetAttribute("unitsPerColumn") or 5
+        local cols = header:GetAttribute("maxColumns") or 1
+        local wanted = math.min(upc * cols, 40)
+        if wanted < 1 then return end
+        if not header:GetAttribute("child" .. wanted) then
+            local saved = header:GetAttribute("startingIndex")
+            header:SetAttribute("startingIndex", -(wanted - 1))
+            header:SetAttribute("startingIndex", saved or 1)
+        end
+        for i = 1, wanted do
+            local child = header:GetAttribute("child" .. i)
+            if not child then break end
+            GFA.EnsureContainersForFrame(child)
+        end
+    end
+    preallocHeader(self.headers.party)
+    preallocHeader(self.headers.raid)
+    preallocHeader(self.headers.self)
+    if self.raidGroupHeaders then
+        for _, header in ipairs(self.raidGroupHeaders) do
+            preallocHeader(header)
+        end
+    end
+    preallocHeader(self.spotlightHeader)
+end
+
 ---------------------------------------------------------------------------
 -- UNIT FRAME MAP: Rebuild unit → list-of-frames lookup
 ---------------------------------------------------------------------------
@@ -5421,6 +5464,11 @@ local function GRU_DeferredWork()
     if GFA and GFA.PruneAuraCache then GFA.PruneAuraCache() end
     UpdateFrameScaling(true)
     QUI_GF:RefreshAllFrames("roster")
+    -- Pre-create header children + containers for the full possible roster
+    -- while OOC (creation is combat-forbidden; mid-combat joins reuse these).
+    if not InCombatLockdown() then
+        QUI_GF:PreallocateAuraContainers()
+    end
     -- Ensure ticker is running (may not have started yet on first roster event)
     StartRangeCheck()
 end
@@ -5757,6 +5805,9 @@ local function OnEvent(self, event, arg1, ...)
             _pending.groupReflow = false
             PositionRaidGroupHeaders()
         end
+        -- Roster may have grown during combat past the allocated children;
+        -- top up children + containers now that creation is legal again.
+        QUI_GF:PreallocateAuraContainers()
         if _pending.registerClicks then
             _pending.registerClicks = false
             -- Catch up on click registration for frames whose OnLoad path

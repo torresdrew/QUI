@@ -1288,9 +1288,12 @@ end
 -- This mirrors the unit-frame cutover (QUI_UnitFrames/.../unitframe_auras.lua):
 --   classification → AddAuraFilter strings, SetUnit(frame.unit), SetEnabled(true).
 --
--- The container is a FORBIDDEN object: create / pool / anchor / filter changes
--- are restricted in combat, so all such work is queued during InCombatLockdown()
--- and replayed on PLAYER_REGEN_ENABLED.
+-- The container is a FORBIDDEN object whose CREATION (+ button pooling) is
+-- combat-restricted — combat creation crashes the 12.1 client — and stays
+-- queued for PLAYER_REGEN_ENABLED. MUTATION of a pre-created container
+-- (anchor / filters / SetUnit / enable) is combat-legal, so the update path
+-- applies that subset live in combat (pcall-guarded) and STILL queues the
+-- full pass so a wrong assumption self-heals at regen.
 --
 -- MRB synthetic icons + the health-bar tint feeder remain on the v46 element
 -- engine (RenderFrameElements above) — only the strips moved here.
@@ -1453,6 +1456,22 @@ local function EnsureStripContainers(frame, buffElems, debuffElems)
     return true
 end
 
+-- Pre-create (OOC) the two zone containers for one header child, even a
+-- unitless padding child (ResolveStripElements keys on frame._isRaid, stamped
+-- at child birth by the decorate bridge — no unit needed). Called by the
+-- header preallocator so a member joining MID-COMBAT lands on a child whose
+-- forbidden containers already exist: creation is combat-forbidden (crashes
+-- the 12.1 client), but SetUnit/filter/enable on a pre-created container is
+-- combat-legal mutation. Cheap re-entry: skips frames that own both
+-- containers (config-time Attach handles profile growth).
+function QUI_GFA.EnsureContainersForFrame(frame)
+    if not frame or InCombatLockdown() then return end
+    if frame.buffContainer and frame.debuffContainer then return end
+    local buffElems, debuffElems = ResolveStripElements(frame)
+    if #buffElems == 0 and #debuffElems == 0 then return end
+    EnsureStripContainers(frame, buffElems, debuffElems)
+end
+
 -- The container's AddAuraFilter eagerly runs C_UnitAuras.GetUnitAuras(unit,
 -- filterString) (Blizzard_CustomAuraContainer ParseAllAuras). Some AuraFilters
 -- tokens are only valid in a specific polarity combo and the C API HARD-ERRORS
@@ -1485,15 +1504,28 @@ end
 
 -- Apply enable/disable + filter + unit config to the live strip containers.
 -- This is the heart of the live strip path: filters + SetEnabled change, the
--- container self-drives the rest. Runs OOC only (callers defer via the queue).
--- (Forward-declared above so the combat-flush closure can reach it.)
-function ApplyStripContainers(frame)
+-- container self-drives the rest. allowCreate=true is the full OOC pass (may
+-- create containers + pool buttons); allowCreate=false is the combat pass —
+-- only combat-legal mutation of PRE-CREATED containers (re-flow, anchor,
+-- unit, filters, enable).
+local function ApplyStripPass(frame, allowCreate)
     if not frame or not frame.unit then return end
     local buffElems, debuffElems = ResolveStripElements(frame)
     local showBuffs = #buffElems > 0
     local showDebuffs = #debuffElems > 0
 
-    if not EnsureStripContainers(frame, buffElems, debuffElems) then return end
+    if allowCreate then
+        if not EnsureStripContainers(frame, buffElems, debuffElems) then return end
+    else
+        if not (frame.buffContainer and frame.debuffContainer) then return end
+        AuraSkin = AuraSkin or (ns.Addon and ns.Addon.AuraSkin) or (_G.QUI and _G.QUI.AuraSkin)
+        if AuraSkin and AuraSkin.Reflow then
+            AuraSkin.Reflow(frame.debuffContainer, ZoneProfile(debuffElems, true))
+            AuraSkin.Reflow(frame.buffContainer, ZoneProfile(buffElems, false))
+        end
+        AnchorZoneContainer(frame.debuffContainer, frame, debuffElems, true)
+        AnchorZoneContainer(frame.buffContainer, frame, buffElems, false)
+    end
 
     -- Per-zone icon cap: maxFrameCount caps how many auras the container shows
     -- (it never assigns past the Nth registered button). Match each zone's pooled
@@ -1528,6 +1560,12 @@ function ApplyStripContainers(frame)
         bc:Hide()
     end
 end
+
+-- Full OOC pass (the forward-declared name + the QUI_GFA export; also what the
+-- combat-flush closure replays at PLAYER_REGEN_ENABLED).
+function ApplyStripContainers(frame)
+    ApplyStripPass(frame, true)
+end
 QUI_GFA.ApplyStripContainers = ApplyStripContainers
 
 -- Public entry: (re)apply the strip container config for one frame, deferring to
@@ -1536,6 +1574,10 @@ QUI_GFA.ApplyStripContainers = ApplyStripContainers
 local function UpdateStripContainers(frame)
     if not frame or not frame.unit then return end
     if InCombatLockdown() then
+        -- Mutation of pre-created containers is 12.1-PTR-legal (SetUnit /
+        -- filters / enable / anchor); pcall-guard and STILL queue the full
+        -- pass (creation + reconcile) for regen.
+        pcall(ApplyStripPass, frame, false)
         QueueContainerCombatWork(frame)
         return
     end
@@ -1549,6 +1591,17 @@ local function DisableStripContainers(frame)
     if not frame then return end
     if not frame.buffContainer and not frame.debuffContainer then return end
     if InCombatLockdown() then
+        -- SetEnabled/Hide on a pre-created container is combat-legal mutation:
+        -- hide the cleared unit's strips NOW instead of showing stale auras
+        -- for the rest of the fight; the queued pass reconciles at regen.
+        if frame.debuffContainer then
+            pcall(frame.debuffContainer.SetEnabled, frame.debuffContainer, false)
+            pcall(frame.debuffContainer.Hide, frame.debuffContainer)
+        end
+        if frame.buffContainer then
+            pcall(frame.buffContainer.SetEnabled, frame.buffContainer, false)
+            pcall(frame.buffContainer.Hide, frame.buffContainer)
+        end
         QueueContainerCombatWork(frame)
         return
     end

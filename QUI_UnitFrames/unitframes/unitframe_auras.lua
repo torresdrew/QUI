@@ -180,9 +180,12 @@ end
 
 local AuraSkin = (ns.Addon and ns.Addon.AuraSkin) or (_G.QUI and _G.QUI.AuraSkin)
 
--- Combat-deferral queue.  The container is a forbidden object: create / pool /
--- anchor / filter changes are restricted in combat, so any such work attempted
--- during InCombatLockdown() is queued and replayed on PLAYER_REGEN_ENABLED.
+-- Combat-deferral queue.  The container is a forbidden object whose CREATION
+-- (+ button pooling) is combat-restricted — combat creation crashes the 12.1
+-- client — and stays queued for PLAYER_REGEN_ENABLED.  MUTATION of a
+-- pre-created container (anchor / filters / SetUnit / enable) is combat-legal,
+-- so UpdateAuras applies that subset live in combat (pcall-guarded) and STILL
+-- queues the full pass so a wrong assumption self-heals at regen.
 local pendingCombatWork = {}        -- [frame] = true  (re-apply config OOC)
 local combatDeferFrame
 
@@ -243,18 +246,11 @@ local function AnchorContainer(container, frame, anchor)
     container:SetPoint(framePoint, frame, framePoint, borderOffsetX or 0, 0)
 end
 
--- Create (OOC) the two zone containers for a unit frame and theme/pool them via
--- AuraSkin.  Idempotent — re-attaches/re-themes if maxIcons grew.
-local function EnsureContainers(frame, auraSettings)
-    -- Re-resolve defensively in case core/aura_skin.lua loaded after this file's
-    -- top-level chunk captured the (then-nil) upvalue.
-    AuraSkin = AuraSkin or (ns.Addon and ns.Addon.AuraSkin) or (_G.QUI and _G.QUI.AuraSkin)
-    if not AuraSkin or not CreateFrame then return false end
-
-    -- Full grid profiles built from the per-zone aura settings.  Key names match
-    -- exactly what the layout-mode preview path reads (ShowAuraPreviewForFrame),
-    -- so live container layout == preview layout.  (debuff iconSize is the shared
-    -- `iconSize`; buff iconSize is `buffIconSize` — mirrors the schema sliders.)
+-- Full grid profiles built from the per-zone aura settings.  Key names match
+-- exactly what the layout-mode preview path reads (ShowAuraPreviewForFrame),
+-- so live container layout == preview layout.  (debuff iconSize is the shared
+-- `iconSize`; buff iconSize is `buffIconSize` — mirrors the schema sliders.)
+local function BuildZoneProfiles(auraSettings)
     local debuffProfile = {
         maxIcons    = auraSettings.debuffMaxIcons or 16,
         iconSize    = auraSettings.iconSize or 22,
@@ -285,6 +281,18 @@ local function EnsureContainers(frame, auraSettings)
         hideSwipe   = auraSettings.buffHideSwipe ~= nil and auraSettings.buffHideSwipe or (auraSettings.hideSwipe or false),
         reverseSwipe = auraSettings.buffReverseSwipe ~= nil and auraSettings.buffReverseSwipe or (auraSettings.reverseSwipe or false),
     }
+    return debuffProfile, buffProfile
+end
+
+-- Create (OOC) the two zone containers for a unit frame and theme/pool them via
+-- AuraSkin.  Idempotent — re-attaches/re-themes if maxIcons grew.
+local function EnsureContainers(frame, auraSettings)
+    -- Re-resolve defensively in case core/aura_skin.lua loaded after this file's
+    -- top-level chunk captured the (then-nil) upvalue.
+    AuraSkin = AuraSkin or (ns.Addon and ns.Addon.AuraSkin) or (_G.QUI and _G.QUI.AuraSkin)
+    if not AuraSkin or not CreateFrame then return false end
+
+    local debuffProfile, buffProfile = BuildZoneProfiles(auraSettings)
 
     if not frame.debuffContainer then
         frame.debuffContainer = CreateFrame("AuraContainer", nil, frame, "CustomAuraContainerTemplate")
@@ -296,6 +304,22 @@ local function EnsureContainers(frame, auraSettings)
     AuraSkin.Attach(frame.debuffContainer, debuffProfile)
     AuraSkin.Attach(frame.buffContainer, buffProfile)
 
+    AnchorContainer(frame.debuffContainer, frame, debuffProfile.anchor)
+    AnchorContainer(frame.buffContainer, frame, buffProfile.anchor)
+    return true
+end
+
+-- Combat-legal re-flow of EXISTING containers: re-lay + re-style the pooled
+-- buttons (AuraSkin.Reflow — no creation) and re-pin the container corners.
+-- No-op when the containers don't exist yet (creation is OOC-only; the queued
+-- full pass builds them at regen).
+local function ReflowContainers(frame, auraSettings)
+    if not (frame.debuffContainer and frame.buffContainer) then return false end
+    AuraSkin = AuraSkin or (ns.Addon and ns.Addon.AuraSkin) or (_G.QUI and _G.QUI.AuraSkin)
+    if not (AuraSkin and AuraSkin.Reflow) then return false end
+    local debuffProfile, buffProfile = BuildZoneProfiles(auraSettings)
+    AuraSkin.Reflow(frame.debuffContainer, debuffProfile)
+    AuraSkin.Reflow(frame.buffContainer, buffProfile)
     AnchorContainer(frame.debuffContainer, frame, debuffProfile.anchor)
     AnchorContainer(frame.buffContainer, frame, buffProfile.anchor)
     return true
@@ -330,14 +354,21 @@ end
 
 -- Apply enable/disable + filter + unit config to the live containers.  This is
 -- the heart of the live path: filters and SetEnabled change, the container
--- self-drives the rest.  Runs OOC only (callers defer via QueueCombatWork).
-local function ApplyContainerConfig(frame)
+-- self-drives the rest.  allowCreate=true is the full OOC pass (may create
+-- containers + pool buttons); allowCreate=false is the combat pass — only
+-- combat-legal mutation of PRE-CREATED containers (re-flow, anchor, unit,
+-- filters, enable).
+local function ApplyContainerConfigPass(frame, allowCreate)
     if not frame or not frame.unit then return end
     local unitKey = frame.unitKey or frame.unit
     local settings = GetUnitSettings(unitKey)
     local auraSettings = settings and settings.auras or {}
 
-    if not EnsureContainers(frame, auraSettings) then return end
+    if allowCreate then
+        if not EnsureContainers(frame, auraSettings) then return end
+    else
+        if not ReflowContainers(frame, auraSettings) then return end
+    end
 
     local showBuffs = auraSettings.showBuffs == true
     local showDebuffs = auraSettings.showDebuffs == true
@@ -385,15 +416,24 @@ local function ApplyContainerConfig(frame)
         bc:Hide()
     end
 end
+
+-- Full OOC pass (the name FlushPendingCombatWork replays at regen).
+local function ApplyContainerConfig(frame)
+    ApplyContainerConfigPass(frame, true)
+end
 QUI_UF.ApplyContainerConfig = ApplyContainerConfig
 
 -- Public entry (callers in unitframes.lua depend on the name).  The live
 -- container self-drives UNIT_AURA, so this is no longer a per-frame render
--- loop; it (re)applies enable/disable + filter config, deferring to OOC if the
--- forbidden container can't be touched right now.
+-- loop; it (re)applies enable/disable + filter config.  OOC: full pass.  In
+-- combat: apply the combat-legal mutation subset immediately AND still queue
+-- the full pass (creation + reconcile) for PLAYER_REGEN_ENABLED.
 local function UpdateAuras(frame)
     if not frame or not frame.unit then return end
     if InCombatLockdown() then
+        -- Mutation of pre-created containers is 12.1-PTR-legal; pcall-guard and
+        -- STILL queue the full pass (creation + reconcile) for regen.
+        pcall(ApplyContainerConfigPass, frame, false)
         QueueCombatWork(frame)
         return
     end
@@ -408,6 +448,10 @@ local function SuppressContainerForPreview(frame, isDebuff)
     local container = isDebuff and frame.debuffContainer or frame.buffContainer
     if not container then return end
     if InCombatLockdown() then
+        -- SetEnabled/Hide on a pre-created container is combat-legal mutation;
+        -- pcall-guard and still queue the reconcile pass for regen.
+        pcall(container.SetEnabled, container, false)
+        pcall(container.Hide, container)
         QueueCombatWork(frame)
         return
     end

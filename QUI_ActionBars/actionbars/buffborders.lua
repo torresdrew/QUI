@@ -4,9 +4,13 @@
 -- two named anchor frames (QUI_BuffIconContainer and QUI_DebuffIconContainer)
 -- on UIParent; each owns its own forbidden AuraContainer
 -- ("CustomAuraContainerTemplate") that QUI.AuraSkin pools CustomAuraButtons onto.
--- The container self-drives UNIT_AURA and renders aura DATA C-side (secret-safe);
--- QUI only changes filters + enable/unit OOC (the container is a forbidden object,
--- so create/anchor/filter changes are combat-deferred to PLAYER_REGEN_ENABLED).
+-- The container self-drives UNIT_AURA and renders aura DATA C-side (secret-safe).
+-- CREATION of the forbidden container/buttons is combat-restricted (combat
+-- creation crashes the 12.1 client) and stays deferred to PLAYER_REGEN_ENABLED;
+-- MUTATION of pre-created objects (anchor/size/filters/enable) is combat-legal,
+-- so config changes apply live in combat and the full pass still replays at
+-- regen (secure cancel-header attributes + private-aura registration are
+-- OOC-only).
 --
 -- Right-click cancel of own buffs is a separate secure hit layer:
 -- CustomAuraButton has no OnClick path in 12.1, so QUI overlays a
@@ -275,6 +279,12 @@ end
 -- Weapon enchant cached total duration per slot
 local enchantCachedDuration = {}
 
+-- Live temp-enchant count (strip slots actually occupied). Enchants are item
+-- info (GetWeaponEnchantInfo) — Lua-visible, unlike the secret live aura count
+-- — so the strip LEADS the buff row and the secure grid is anchored this many
+-- cells further along the grow direction (see AnchorAuraContainer).
+local liveEnchantCount = 0
+
 -- The QUI named anchor frames (created in Init) are the published, movable
 -- frames the anchoring system resolves by global name and positions. Each owns
 -- its own forbidden AuraContainer (._auraContainer) for one aura type.
@@ -541,29 +551,25 @@ local function UpdateTempEnchants()
 
     local show = settings.enableBuffs and not settings.hideBuffFrame
     if not show then
+        liveEnchantCount = 0
         tempEnchantFrame:Hide()
         return
     end
 
     local list = ReadTempEnchants()
     local n = #list
+    liveEnchantCount = n
 
     local profile = BuildZoneProfile(settings, true)
     local iconSize, spacing = profile.iconSize, profile.spacing
     local growLeft = settings.buffGrowLeft
-    local growUp = settings.buffGrowUp
-    -- Strip sits below (or above, if growUp) the buff grid, aligned to the same
-    -- horizontal grow corner.
-    local point, relPoint, xDir
-    if growLeft then
-        point = "TOPRIGHT"; relPoint = growUp and "TOPRIGHT" or "BOTTOMRIGHT"; xDir = -1
-    else
-        point = "TOPLEFT"; relPoint = growUp and "TOPLEFT" or "BOTTOMLEFT"; xDir = 1
-    end
-    local yDir = growUp and 1 or -1
+    -- The strip LEADS the buff row (default-UI parity): enchants render at the
+    -- grid origin corner; AnchorAuraContainer shifts the secure grid past them.
+    local point = profile.anchor
+    local xDir = growLeft and -1 or 1
 
     tempEnchantFrame:ClearAllPoints()
-    tempEnchantFrame:SetPoint(point, buffContainer, relPoint, 0, yDir * spacing)
+    tempEnchantFrame:SetPoint(point, buffContainer, point, 0, 0)
 
     for i = 1, TEMP_ENCHANT_MAX do
         local b = EnsureTempEnchantButton(tempEnchantFrame, i)
@@ -982,8 +988,19 @@ end
 local function AnchorAuraContainer(container, parent, profile)
     -- The grid lays out FROM the profile.anchor corner of the container, so pin
     -- the container's anchor corner to the parent anchor frame's matching corner.
+    -- BUFF zone: the temp-enchant strip (Lua-knowable count) leads the row, so
+    -- the secure grid starts liveEnchantCount cells along the grow direction —
+    -- the one direction dynamic packing can work while the aura count is secret.
+    -- The WHOLE container shifts (rows 2+ indent too): the secure cancel header
+    -- can only lay a uniform grid, and a ragged first-row indent would misalign
+    -- the cancel hit-layer with the display buttons.
+    local xOff = 0
+    if parent == buffContainer and liveEnchantCount > 0 then
+        local xDir = (profile.grow == "LEFT") and -1 or 1
+        xOff = xDir * liveEnchantCount * (profile.iconSize + profile.spacing)
+    end
     container:ClearAllPoints()
-    container:SetPoint(profile.anchor, parent, profile.anchor, 0, 0)
+    container:SetPoint(profile.anchor, parent, profile.anchor, xOff, 0)
 end
 
 local function EnsureZoneContainer(anchorFrame, profile)
@@ -1000,6 +1017,39 @@ local function EnsureZoneContainer(anchorFrame, profile)
     return container
 end
 
+-- Configure one zone's AuraContainer: buttons, anchor, unit, filters, enable.
+-- allowCreate gates the OOC-only creation path (frame creation of the
+-- forbidden container + AuraSkin button pooling, via EnsureZoneContainer).
+-- With allowCreate false (in combat) only PRE-CREATED objects are mutated:
+-- AuraSkin.Reflow re-flows the existing button pool (creation-free) and the
+-- filter/unit/enable/anchor writes below are combat-legal on a live container.
+local function ConfigureZoneAuraContainer(anchorFrame, profile, active, filter, maxCount, allowCreate)
+    local container = anchorFrame._auraContainer
+    if allowCreate then
+        container = EnsureZoneContainer(anchorFrame, profile)
+    elseif container then
+        AuraSkin = AuraSkin or (ns.Addon and ns.Addon.AuraSkin) or (_G.QUI and _G.QUI.AuraSkin)
+        if AuraSkin and AuraSkin.Reflow then
+            AuraSkin.Reflow(container, profile)
+        end
+        AnchorAuraContainer(container, anchorFrame, profile)
+    end
+    if not container then return nil end
+
+    -- SetUnit BEFORE the filters so AddAuraFilter's eager C-side aura read has a unit.
+    container:SetUnit("player")
+    container:ClearAuraFilters()
+    if active then
+        container:AddAuraFilter(filter, { maxFrameCount = maxCount })
+        container:SetEnabled(true)
+        container:Show()
+    else
+        container:SetEnabled(false)
+        container:Hide()
+    end
+    return container
+end
+
 local function EnsureBuffCancelHeader()
     if buffCancelHeader or not buffContainer then return buffCancelHeader end
 
@@ -1013,6 +1063,10 @@ local function StyleBuffCancelChild(child, iconSize)
     if not child then return end
     pcall(child.SetSize, child, iconSize, iconSize)
     pcall(child.SetAlpha, child, 0)
+    -- Children are born mouse-DISABLED (initialConfigFunction snippet) so an
+    -- unstyled child can never block tooltips or swallow clicks; only this
+    -- insecure pass (OOC-only) arms the cancel hit layer.
+    pcall(child.EnableMouse, child, true)
     if child.SetPropagateMouseMotion then
         pcall(child.SetPropagateMouseMotion, child, true)
     end
@@ -1034,20 +1088,24 @@ end
 
 -- LATE-CREATED CHILDREN: the secure header builds child buttons lazily as the
 -- live buff count exceeds its all-time max (SecureGroupHeaders configureAuras).
--- The initialConfigFunction snippet CANNOT style them for tooltip pass-through:
--- it runs on a restricted frame handle, and handles expose no
--- SetPropagateMouseMotion/SetPassThroughButtons — those `if self.X` clauses are
--- silently dead. Without the insecure styling pass a late child blocks mouse
--- motion at its grid slot, so the forbidden CustomAuraButton underneath never
--- fires its intrinsic OnEnter → no tooltip (and swallowed left-clicks) for
--- exactly the transient short buffs that grew the count. The header publishes
--- each new child as a "childN" attribute (setAttributesWithoutResponse → plain
--- SetAttribute, so the OnAttributeChanged SCRIPT still fires; only Blizzard's
--- handler early-returns on _ignore) — an insecure post-hook on that script sees
--- every creation without registering UNIT_AURA. Styling is deferred one frame
--- (the attribute lands mid-layout). The setters are protected: in combat, queue
--- and flush on PLAYER_REGEN_ENABLED (children can't spawn mid-combat anyway —
--- secure CreateFrame is combat-blocked).
+-- That CAN happen mid-combat: SecureAuraHeader_Update runs in Blizzard's secure
+-- UNIT_AURA/OnShow context, where protected-template CreateFrame + SetPoint are
+-- legal in combat. The initialConfigFunction snippet CANNOT style new children
+-- for tooltip pass-through: it runs on a restricted frame handle, and handles
+-- expose no SetPropagateMouseMotion/SetPassThroughButtons — those `if self.X`
+-- clauses are silently dead. Handles DO expose EnableMouse, so the snippet
+-- births every child mouse-DISABLED: an unstyled child is transparent (tooltips
+-- + clicks reach the forbidden CustomAuraButton underneath) instead of a
+-- blocker. The header publishes each new child as a "childN" attribute
+-- (setAttributesWithoutResponse → plain SetAttribute, so the OnAttributeChanged
+-- SCRIPT still fires; only Blizzard's handler early-returns on _ignore) — an
+-- insecure post-hook on that script sees every creation without registering
+-- UNIT_AURA. Styling is deferred one frame (the attribute lands mid-layout).
+-- All three setters are protected (SimpleScriptRegionAPIDocumentation:
+-- IsProtectedFunction + HasRestrictions): in combat, queue and flush on
+-- PLAYER_REGEN_ENABLED — until then the child stays mouse-off, costing only its
+-- cancel hit area (moot in combat: the visibility driver below hides the whole
+-- overlay).
 local pendingChildStyle = false
 
 local function StyleNewCancelChildren()
@@ -1085,6 +1143,32 @@ local function OnCancelHeaderAttributeChanged(_, name)
     end
 end
 
+-- COMBAT VISIBILITY: the overlay is hidden for the whole of combat by a SECURE
+-- state driver. The display container assigns auras to its buttons in
+-- AuraUtil.DefaultAuraCompare priority order (own-cast first, then
+-- isPriorityAura, then canApplyAura, then auraInstanceID); SecureAuraHeader can
+-- only sort INDEX/NAME/TIME (+separateOwn). Priority procs — a combat
+-- phenomenon — reorder the display but not the header, and the divergence
+-- cannot be reconciled insecurely in combat (aura data is secret), so a
+-- combat-visible overlay right-clicks the WRONG aura. Hiding it makes every
+-- buff hover/left-click work in combat (nothing sits over the forbidden
+-- buttons) at the cost of in-combat right-click cancel. Hide/Show comes from
+-- Blizzard's SecureStateDriverManager (secure), so the combat-end re-show runs
+-- SecureAuraHeader_OnShow → a clean secure update (positions, indexes, any
+-- missing children). The driver must be UNregistered whenever QUI manually
+-- hides the header (disabled/preview) or the next state flip would re-show it.
+local function SetCancelHeaderCombatDriver(header, enabled)
+    if enabled then
+        if not header._quiVisDriver then
+            header._quiVisDriver = true
+            RegisterStateDriver(header, "visibility", "[combat] hide; show")
+        end
+    elseif header._quiVisDriver then
+        header._quiVisDriver = nil
+        UnregisterStateDriver(header, "visibility")
+    end
+end
+
 local function ConfigureBuffCancelHeader(settings, profile, buffMax, perRow, anyBuffs)
     local header = EnsureBuffCancelHeader()
     if not header then return end
@@ -1095,6 +1179,7 @@ local function ConfigureBuffCancelHeader(settings, profile, buffMax, perRow, any
     end
 
     if not anyBuffs then
+        SetCancelHeaderCombatDriver(header, false)
         pcall(header.Hide, header)
         return
     end
@@ -1109,11 +1194,17 @@ local function ConfigureBuffCancelHeader(settings, profile, buffMax, perRow, any
     local maxWraps = math.ceil(buffMax / perRow)
     local filter = BuildAuraFilter(settings, true)
     local initialConfig = string.format(
-        'self:SetWidth(%.3f); self:SetHeight(%.3f); self:SetAlpha(0); if self.SetPropagateMouseMotion then self:SetPropagateMouseMotion(true); end; if self.SetPassThroughButtons then self:SetPassThroughButtons("LeftButton"); end;',
+        'self:EnableMouse(false); self:SetWidth(%.3f); self:SetHeight(%.3f); self:SetAlpha(0); if self.SetPropagateMouseMotion then self:SetPropagateMouseMotion(true); end; if self.SetPassThroughButtons then self:SetPassThroughButtons("LeftButton"); end;',
         iconSize, iconSize)
 
+    -- Same enchant lead-in offset as AnchorAuraContainer: the cancel hit-layer
+    -- must track the shifted display grid or right-click cancels the wrong aura.
+    local enchantXOff = 0
+    if liveEnchantCount > 0 then
+        enchantXOff = (growLeft and -1 or 1) * liveEnchantCount * step
+    end
     header:ClearAllPoints()
-    header:SetPoint(profile.anchor, buffContainer, profile.anchor, 0, 0)
+    header:SetPoint(profile.anchor, buffContainer, profile.anchor, enchantXOff, 0)
     header:SetSize(1, 1)
     if header.SetFrameLevel and buffContainer.GetFrameLevel then
         pcall(header.SetFrameLevel, header, (buffContainer:GetFrameLevel() or 0) + 40)
@@ -1135,19 +1226,27 @@ local function ConfigureBuffCancelHeader(settings, profile, buffMax, perRow, any
     header:SetAttribute("maxWraps", maxWraps)
     header:SetAttribute("initialConfigFunction", initialConfig)
     header._quiChildIconSize = iconSize
+    SetCancelHeaderCombatDriver(header, true)
     header:Show()
     RefreshBuffCancelChildren(header, iconSize, buffMax)
 end
 
--- Heart of the live path: (re)create containers, apply filters + unit + enable.
--- OOC only (callers defer via QueueContainerWork). Re-assigned to the forward
--- declaration above.
-ApplyContainerConfig = function()
+-- Heart of the live path, shared by both passes. allowCreate=true is the full
+-- OOC pass: may create the forbidden containers, pool buttons, rewrite the
+-- secure cancel header's attributes, and re-register private-aura anchors.
+-- allowCreate=false is the combat pass: only combat-legal mutation of
+-- pre-created objects (anchor-frame sizing, container anchor/filters/enable,
+-- alpha fades, the insecure temp-enchant strip, private-aura slot layout).
+local function ApplyConfigPass(allowCreate)
     if not buffContainer or not debuffContainer then return end
     if previewActive then return end
 
     local settings = GetSettings()
     if not settings then return end
+
+    -- Temp enchants FIRST: the strip's live count feeds the buff zone's anchor
+    -- offset and natural width below.
+    UpdateTempEnchants()
 
     local buffProfile = BuildZoneProfile(settings, true)
     local debuffProfile = BuildZoneProfile(settings, false)
@@ -1157,6 +1256,11 @@ ApplyContainerConfig = function()
     if buffPerRow < 1 then buffPerRow = 1 end
 
     local bw, bh = GridExtent(buffProfile)
+    if liveEnchantCount > 0 then
+        -- The enchant lead-in shifts the grid origin; the natural (mover /
+        -- anchoring) extent must cover strip + shifted grid.
+        bw = bw + liveEnchantCount * (buffProfile.iconSize + buffProfile.spacing)
+    end
     buffContainer._naturalW, buffContainer._naturalH = bw, bh
     buffContainer:SetSize(bw, bh)
 
@@ -1167,40 +1271,23 @@ ApplyContainerConfig = function()
     local anyBuffs   = settings.enableBuffs   and not settings.hideBuffFrame
     local anyDebuffs = settings.enableDebuffs and not settings.hideDebuffFrame
 
-    local buffAuraContainer = EnsureZoneContainer(buffContainer, buffProfile)
-    if buffAuraContainer then
-        -- SetUnit BEFORE the filters so AddAuraFilter's eager C-side aura read has a unit.
-        buffAuraContainer:SetUnit("player")
-        buffAuraContainer:ClearAuraFilters()
-        if anyBuffs then
-            buffAuraContainer:AddAuraFilter(BuildAuraFilter(settings, true), { maxFrameCount = buffMax })
-        end
-        if anyBuffs then
-            buffAuraContainer:SetEnabled(true)
-            buffAuraContainer:Show()
-        else
-            buffAuraContainer:SetEnabled(false)
-            buffAuraContainer:Hide()
-        end
+    if allowCreate then
+        ConfigureZoneAuraContainer(buffContainer, buffProfile, anyBuffs,
+            BuildAuraFilter(settings, true), buffMax, true)
+        ConfigureZoneAuraContainer(debuffContainer, debuffProfile, anyDebuffs,
+            BuildAuraFilter(settings, false), debuffMax, true)
+        ConfigureBuffCancelHeader(settings, buffProfile, buffMax, buffPerRow, anyBuffs)
+    else
+        -- In-combat mutation of a pre-created container is 12.1-PTR-legal
+        -- (anchor/size/filter/enable). pcall-guard the first live deployments:
+        -- on any restriction error the queued full pass still reconciles at
+        -- PLAYER_REGEN_ENABLED. The secure cancel header is NOT touched here
+        -- (SetAttribute is combat-blocked; the header is combat-hidden anyway).
+        pcall(ConfigureZoneAuraContainer, buffContainer, buffProfile, anyBuffs,
+            BuildAuraFilter(settings, true), buffMax, false)
+        pcall(ConfigureZoneAuraContainer, debuffContainer, debuffProfile, anyDebuffs,
+            BuildAuraFilter(settings, false), debuffMax, false)
     end
-
-    local debuffAuraContainer = EnsureZoneContainer(debuffContainer, debuffProfile)
-    if debuffAuraContainer then
-        debuffAuraContainer:SetUnit("player")
-        debuffAuraContainer:ClearAuraFilters()
-        if anyDebuffs then
-            debuffAuraContainer:AddAuraFilter(BuildAuraFilter(settings, false), { maxFrameCount = debuffMax })
-        end
-        if anyDebuffs then
-            debuffAuraContainer:SetEnabled(true)
-            debuffAuraContainer:Show()
-        else
-            debuffAuraContainer:SetEnabled(false)
-            debuffAuraContainer:Hide()
-        end
-    end
-
-    ConfigureBuffCancelHeader(settings, buffProfile, buffMax, buffPerRow, anyBuffs)
 
     -- Fade support (SetAlpha is unprotected on the named anchor frames).
     if anyBuffs then
@@ -1216,19 +1303,47 @@ ApplyContainerConfig = function()
 
     if buffBorderStats then buffBorderStats.containerConfigs = buffBorderStats.containerConfigs + 1 end
 
-    UpdateTempEnchants()
-    SetupPrivateAuras()
+    if allowCreate then
+        SetupPrivateAuras()
+    end
     LayoutPrivateAuraSlots()
 end
 
--- Public re-config: defers the forbidden-object work to OOC if in combat.
+-- Full OOC pass (re-assigned to the forward declaration above; also what
+-- FlushPendingContainerWork replays at PLAYER_REGEN_ENABLED).
+ApplyContainerConfig = function()
+    ApplyConfigPass(true)
+end
+
+-- Combat-legal mutation pass on pre-created objects.
+local function ApplyMutableConfig()
+    ApplyConfigPass(false)
+end
+
+-- Public re-config. OOC: run the full pass. In combat: apply the combat-legal
+-- mutation subset immediately (live feedback on pre-created containers) AND
+-- queue the full pass — creation, secure cancel-header attributes, and
+-- private-aura registration can only run at PLAYER_REGEN_ENABLED.
 local function ApplyOrDefer()
     if previewActive then return end
     if InCombatLockdown() then
+        ApplyMutableConfig()
         QueueContainerWork()
         return
     end
     ApplyContainerConfig()
+end
+
+-- Event entry point for enchant changes: refresh the strip, and when the live
+-- count CHANGED the buff grid origin moved — re-run the config pass (in combat
+-- that is the mutable pass now + the queued full pass at regen; the cancel
+-- header is combat-hidden, so its shift waiting for regen is invisible).
+local function RefreshTempEnchants()
+    local before = liveEnchantCount
+    UpdateTempEnchants()
+    if liveEnchantCount ~= before then
+        ApplyOrDefer()
+    end
 end
 
 ---------------------------------------------------------------------------
@@ -1351,6 +1466,11 @@ local function ShowPreview()
             pcall(debuffContainer._auraContainer.Hide, debuffContainer._auraContainer)
         end
         if buffCancelHeader then
+            -- Drop the combat-visibility driver first: a registered driver
+            -- re-Shows the header on the next state flip, defeating the manual
+            -- Hide. HidePreview → ApplyOrDefer → ConfigureBuffCancelHeader
+            -- re-registers it.
+            SetCancelHeaderCombatDriver(buffCancelHeader, false)
             pcall(buffCancelHeader.Hide, buffCancelHeader)
         end
     end
@@ -1579,7 +1699,7 @@ Init = function()
         if previewActive then return end
         if event == "WEAPON_ENCHANT_CHANGED" then
             wipe(enchantCachedDuration)
-            UpdateTempEnchants()
+            RefreshTempEnchants()
         end
     end)
 
@@ -1602,7 +1722,7 @@ enchantEventFrame:RegisterEvent("UNIT_INVENTORY_CHANGED")
 enchantEventFrame:SetScript("OnEvent", function(self, event, unit)
     if unit == "player" then
         wipe(enchantCachedDuration)
-        UpdateTempEnchants()
+        RefreshTempEnchants()
     end
 end)
 
