@@ -44,17 +44,31 @@ function CDMReanchorHooks.CreateActiveStateScheduler(createFrame)
     createFrame = createFrame or CreateFrame
     local driver
     local pending = {}
+    -- ticks = frames since the LAST enqueue (the 2-frame settle: Blizzard is
+    -- still mutating the item mid-show). age = frames since this cycle armed:
+    -- a combat-start burst re-enqueues every frame, and a settle counter alone
+    -- never fires under that churn -- unclaimed frames sat visible at the
+    -- native viewer position for the whole storm. The age deadline bounds the
+    -- wait; under sustained churn the flush cadence becomes one per deadline.
     local ticks = 0
+    local age = 0
+    local armed = false
     return function(fn)
         pending[#pending + 1] = fn
         ticks = 0
+        if not armed then
+            armed = true
+            age = 0
+        end
         if not driver then
             driver = createFrame("Frame")
             driver:Hide()
             driver:SetScript("OnUpdate", function(self)
                 ticks = ticks + 1
-                if ticks < 2 then return end
+                age = age + 1
+                if ticks < 2 and age < 8 then return end
                 self:Hide()
+                armed = false
                 local fns = pending
                 pending = {}
                 for i = 1, #fns do
@@ -90,6 +104,16 @@ function CDMReanchorHooks.New(deps)
         _blankKeys = deps.blankKeys or {},
         _immediateRefreshLayoutKeys = deps.immediateRefreshLayoutKeys or deps.immediateKeys or {},
         _immediateAcquireKeys = deps.immediateAcquireKeys or {},
+        -- Blanking a frame the bridge still CLAIMS adds an alpha-0/alpha-1
+        -- flicker per pool churn (its SetPoint guard re-pins it anyway).
+        _isClaimed = deps.isClaimed,
+        -- Early anchor-guard install (combat-start snap fix): frames Blizzard
+        -- acquires mid-combat had no guard until first claimed, so they
+        -- rendered at the native viewer's mid-screen position until the next
+        -- re-claim pass. Opted-in keys get the guard at every acquire
+        -- (post-initial-reanchor; the bridge dedupes installs per frame).
+        _installGuard = deps.installGuard,
+        _installGuardKeys = deps.installGuardKeys or {},
     }
     return setmetatable(self, InstanceMT)
 end
@@ -101,7 +125,21 @@ function CDMReanchorHooks:MaybeBlankOnAcquire(key, frame)
     if not self._blankKeys[key] then return end
     if self._isInitWindow and self._isInitWindow(key, frame) then return end
     if self._isInitialReanchorDone and self._isInitialReanchorDone(key, frame) ~= true then return end
+    if self._isClaimed and self._isClaimed(frame) then return end
     self._blank(frame, key)
+end
+
+-- Early anchor-guard install for opted-in keys. Retried on EVERY acquire (not
+-- once per frame) so a frame first seen before the initial reanchor pass still
+-- picks the guard up later; InstallAnchorGuard itself is idempotent per frame.
+-- Gated on isInitialReanchorDone so cold-login frames are not alpha-0'd by the
+-- guard's unclaimed branch before QUI's first pass has adopted them.
+function CDMReanchorHooks:MaybeInstallAnchorGuard(key, frame)
+    local install = self._installGuard
+    if not (install and frame) then return end
+    if not self._installGuardKeys[key] then return end
+    if self._isInitialReanchorDone and self._isInitialReanchorDone(key, frame) ~= true then return end
+    install(frame, key)
 end
 
 function CDMReanchorHooks:MarkDirty(key)
@@ -219,7 +257,10 @@ function CDMReanchorHooks:InstallGlobalMixinHooks()
 end
 
 function CDMReanchorHooks:_InstallFrameHooks(frame, key)
-    if not frame or self._hookedFrames[frame] then return end
+    if not frame then return end
+    -- Before the once-per-frame gate: the guard install retries per acquire.
+    self:MaybeInstallAnchorGuard(key, frame)
+    if self._hookedFrames[frame] then return end
     local hooksec = self._deps.hooksecurefunc or hooksecurefunc
     if not hooksec then return end
 
@@ -304,6 +345,78 @@ function CDMReanchorHooks:InstallViewerHooks(getViewer)
                 self:_InstallFrameHooks(frame, key)
             end)
         end
+    end
+end
+
+-- Viewer glue (combat-start snap fix, reference-addon recipe): pin the Blizzard
+-- viewer's rect onto the QUI container (viewer TOPLEFT/BOTTOMRIGHT -> container
+-- corners) and re-assert whenever anything else re-anchors the viewer. The
+-- viewers sit at their native mid-screen Edit-Mode position at alpha-1, so any
+-- item frame Blizzard lays out before QUI claims it renders mid-screen; with
+-- the glue, Blizzard's own grid layout lands ON the QUI container instead --
+-- the mid-screen landing spot stops existing. canWrite gates every write (the
+-- viewer is an Edit-Mode-managed frame: anchor writes are combat-restricted);
+-- a glue missed in combat is recovered via ReassertViewerGlue on
+-- PLAYER_REGEN_ENABLED. Buff is NOT glued: cdm_buff_layout owns that viewer's
+-- anchoring and the glue would fight it.
+function CDMReanchorHooks:_GlueViewer(entry)
+    local viewer = entry.viewer
+    local getContainer = self._glueGetContainer
+    local canWrite = self._glueCanWrite
+    local container = getContainer and getContainer(entry.key) or nil
+    if not (viewer and container) then return false end
+    if canWrite and not canWrite() then return false end
+    viewer:ClearAllPoints()
+    viewer:SetPoint("TOPLEFT", container, "TOPLEFT", 0, 0)
+    viewer:SetPoint("BOTTOMRIGHT", container, "BOTTOMRIGHT", 0, 0)
+    return true
+end
+
+function CDMReanchorHooks:InstallViewerGlue(getViewer, getContainer, glueKeys, canWrite)
+    local hooksec = self._deps.hooksecurefunc or hooksecurefunc
+    if not (hooksec and getViewer and getContainer) then return end
+    self._glueGetContainer = getContainer
+    self._glueCanWrite = canWrite
+    self._gluedViewers = self._gluedViewers or setmetatable({}, { __mode = "k" })
+    self._glueEntries = self._glueEntries or {}
+    glueKeys = glueKeys or {}
+    for i = 1, #self._keys do
+        local key = self._keys[i]
+        local viewer = glueKeys[key] and getViewer(key) or nil
+        if viewer and not self._gluedViewers[viewer] then
+            self._gluedViewers[viewer] = true
+            local entry = { viewer = viewer, key = key, applied = false }
+            self._glueEntries[#self._glueEntries + 1] = entry
+            local hooks = self
+            -- Loop guard: QUI's own glue passes the container as relativeTo,
+            -- so a container-relative SetPoint is our own call -> ignore.
+            local function reglue(_, _point, relativeTo)
+                local container = hooks._glueGetContainer
+                    and hooks._glueGetContainer(entry.key) or nil
+                if not container or relativeTo == container then return end
+                entry.applied = hooks:_GlueViewer(entry)
+            end
+            hooksec(viewer, "SetPoint", function(...) _securecall(reglue, ...) end)
+            entry.applied = self:_GlueViewer(entry)
+        end
+    end
+    -- Retry entries whose initial glue missed (container not created yet at
+    -- hook-install time, or a combat-locked /reload install) -- this method
+    -- re-runs on the RefreshReanchorRuntimeHooks retry paths, so a peaceful
+    -- login recovers here instead of waiting for the first combat end.
+    for i = 1, #self._glueEntries do
+        local entry = self._glueEntries[i]
+        if not entry.applied then
+            entry.applied = self:_GlueViewer(entry)
+        end
+    end
+end
+
+function CDMReanchorHooks:ReassertViewerGlue()
+    local entries = self._glueEntries
+    if not entries then return end
+    for i = 1, #entries do
+        entries[i].applied = self:_GlueViewer(entries[i])
     end
 end
 

@@ -3584,6 +3584,24 @@ function ownedEngine:RefreshReanchorRuntimeHooks(markDirty)
     local hk = ns._cdmReanchorHooks
     if hk then
         hk:InstallViewerHooks(getViewer)
+        -- Glue the Essential/Utility viewer rects onto the QUI containers
+        -- (combat-start snap fix): the viewers sit at their native mid-screen
+        -- Edit-Mode position at alpha-1, so any item frame Blizzard lays out
+        -- before QUI claims it rendered mid-screen. Glued, Blizzard's own grid
+        -- layout lands on the QUI container instead. Buff is excluded --
+        -- cdm_buff_layout owns that viewer's anchoring. Viewer anchor writes
+        -- are combat-restricted; a glue missed in combat is recovered on
+        -- PLAYER_REGEN_ENABLED (ReassertViewerGlue).
+        if hk.InstallViewerGlue then
+            hk:InstallViewerGlue(getViewer,
+                function(key)
+                    return CDMContainers_API and CDMContainers_API:GetContainer(key) or nil
+                end,
+                { essential = true, utility = true },
+                function()
+                    return (not InCombatLockdown()) or ns._inInitSafeWindow == true
+                end)
+        end
         if hk.InstallGlobalMixinHooks and hk:InstallGlobalMixinHooks() then
             touched = true
         end
@@ -3691,7 +3709,30 @@ function ownedEngine:BootstrapReanchorRuntime()
                 immediateRefreshLayoutKeys = { buff = true },
                 immediateAcquireKeys = { buff = true },
                 blank = BlankReanchoredNativeItemFrame,
-                blankKeys = { buff = true },
+                -- Essential/utility opted in (combat-start snap fix): a frame
+                -- Blizzard acquires mid-combat is parked alpha-0 at acquire
+                -- instead of rendering at the native viewer position until the
+                -- coalesced re-claim pass. isClaimed skips frames the bridge
+                -- still claims -- their anchor guard re-pins them, and
+                -- blanking them would flicker every pool churn.
+                blankKeys = { buff = true, essential = true, utility = true },
+                isClaimed = function(frame)
+                    local bridge = boot.bridge
+                    return (bridge and bridge.IsClaimed and bridge:IsClaimed(frame)) or false
+                end,
+                -- Early anchor-guard install: essential/utility unclaimed
+                -- natives are force-sunk every pass anyway (fail-invisible
+                -- policy); the guard just enforces the same policy the moment
+                -- Blizzard's layout touches a not-yet-claimed frame. Buff is
+                -- excluded -- its unclaimed natives are intentionally visible
+                -- (skipNativeSink).
+                installGuard = function(frame)
+                    local bridge = boot.bridge
+                    if bridge and bridge.InstallAnchorGuard then
+                        bridge:InstallAnchorGuard(frame)
+                    end
+                end,
+                installGuardKeys = { essential = true, utility = true },
                 isInitWindow = function() return ns._inInitSafeWindow == true end,
                 isInitialReanchorDone = IsInitialReanchorDone,
             })
@@ -4270,6 +4311,13 @@ function ownedEngine:Initialize()
                 end
             end
         elseif event == "PLAYER_REGEN_ENABLED" then
+            -- Recover a viewer glue missed in combat (viewer anchor writes are
+            -- combat-restricted). Before the spec-tracking early-return: the
+            -- glue is independent of loadout state.
+            if ns._cdmReanchorHooks and ns._cdmReanchorHooks.ReassertViewerGlue then
+                ns._cdmReanchorHooks:ReassertViewerGlue()
+            end
+
             local readyNow = specTrackingReady
             if not specTrackingReady then
                 readyNow = InitSpecTracking()

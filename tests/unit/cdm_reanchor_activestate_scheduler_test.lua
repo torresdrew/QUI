@@ -89,6 +89,29 @@ do
         "trackedBar instance stays responsive after a shared-window flip")
 end
 
+-- Starvation deadline: the settle counter resets on every enqueue, so a
+-- combat-start burst that re-enqueues every frame (OnActiveStateChanged /
+-- frame-OnShow churn while every utility cooldown activates) kept the flush
+-- from EVER firing -- unclaimed frames sat visible at the native viewer
+-- position for the whole churn. A hard age deadline must bound the wait.
+do
+    local sched = H.CreateActiveStateScheduler(fakeCreateFrame)
+    local ran = 0
+    sched(function() ran = ran + 1 end)
+    for _ = 1, 12 do
+        tick(1)
+        sched(function() end) -- churn: one new enqueue per frame, forever
+    end
+    assert(ran >= 1,
+        "continuous per-frame enqueue churn must not starve the flush (hard deadline)")
+
+    -- and the scheduler still settles normally after the storm
+    local settled = false
+    sched(function() settled = true end)
+    tick(2)
+    assert(settled, "scheduler recovers to normal 2-tick settle after a deadline flush")
+end
+
 -- cdm_containers must wire the shared factory instead of a local single-slot closure.
 do
     local f = assert(io.open("QUI_CDM/cdm/cdm_containers.lua", "rb"))
