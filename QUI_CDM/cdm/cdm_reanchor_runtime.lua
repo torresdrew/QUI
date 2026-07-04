@@ -430,7 +430,22 @@ function CDMReanchorRuntime:RefreshContainer(containerKey)
         frameMap, items = wiring:BuildFrameMap(viewers[1])
     end
     items = items or {}
-    local entries, claimedFrames = self:AssembleEntries(containerKey, frameMap, settings)
+    -- Disabled tracker: claim NOTHING for this key, but keep the pass alive so the
+    -- native sink loop below alpha-0s every enumerated frame no other container
+    -- claims. LayoutContainer gates on enabled==false for the QUI-container side;
+    -- without this mirror gate the reanchor pass still assembled the disabled
+    -- tracker's curated entries and pinned live Blizzard frames alpha-1 onto its
+    -- hidden container (parked near screen center) — visible mid-screen icons on
+    -- every churn pass until another container re-claimed them (Towelliee repro:
+    -- utility disabled, its category spells curated into essential; wings press
+    -- flashed the utility set at the disabled container's rect).
+    local entries, claimedFrames
+    if settings.enabled == false then
+        self:_NextDiag(containerKey, { earlyReturn = "disabled" })
+        entries, claimedFrames = {}, {}
+    else
+        entries, claimedFrames = self:AssembleEntries(containerKey, frameMap, settings)
+    end
 
     -- Rebuild the per-frame feature registry for this container: which live Blizzard
     -- frames are overlaid here, and the curated entry each was matched for. Keybind /
