@@ -162,4 +162,106 @@ do
     assert(#rec.startGlow == 0, "G8: no glow when resolveGlow returns nil")
 end
 
+-- ── Latch: repeated ShowAlert fires must not restart the glow ─────────────────
+-- Blizzard's CooldownViewerCooldownItemMixin:RefreshData() calls
+-- RefreshOverlayGlow() -> ActionButtonSpellAlertManager:ShowAlert on EVERY
+-- cooldown/aura/charge refresh while the proc is overlayed. The manager dedups
+-- internally (currentAlertType unchanged = no-op) but hooksecurefunc fires on
+-- every public call, and the glow applier (ApplyLibCustomGlow) is Stop->Start,
+-- so an unlatched hook replays the glow start anim per refresh = proc flicker.
+do
+    local inst, rec = buildInstance({ getEntryForFrame = function(f) return f._entry end })
+    inst:Install({ ShowAlert = function() end, HideAlert = function() end })
+    local frame, alert = makeLiveFrame()
+    frame._entry = { spellID = 100, viewerType = "essential" }
+
+    fireHook(rec, "ShowAlert", {}, frame)
+    assert(#rec.startGlow == 1, "first ShowAlert paints the glow")
+
+    -- Refresh storm mid-proc: same frame, same entry, N more ShowAlert fires.
+    alert.alpha, alert.shown = 1, true  -- pretend Blizzard re-showed the native alert
+    fireHook(rec, "ShowAlert", {}, frame)
+    fireHook(rec, "ShowAlert", {}, frame)
+    assert(#rec.startGlow == 1, "latched: refresh-storm ShowAlert fires do not restart the glow")
+    assert(alert.alpha == 0 and alert.shown == false,
+        "G6: native alert suppression re-applied on every fire")
+
+    -- Curated rebuild: NEW entry table, SAME spell -> still latched (key on
+    -- spellID, not entry-table identity; curated lists rebuild across passes).
+    frame._entry = { spellID = 100, viewerType = "essential" }
+    fireHook(rec, "ShowAlert", {}, frame)
+    assert(#rec.startGlow == 1, "rebuilt same-spell entry table stays latched")
+
+    -- HideAlert clears the latch; the next proc paints again.
+    fireHook(rec, "HideAlert", {}, frame)
+    assert(#rec.stopGlow == 1, "HideAlert stops the glow")
+    fireHook(rec, "ShowAlert", {}, frame)
+    assert(#rec.startGlow == 2, "after HideAlert, next ShowAlert paints fresh")
+end
+
+-- ── Latch re-key: same frame re-fired for a DIFFERENT spell restarts ──────────
+do
+    local inst, rec = buildInstance({ getEntryForFrame = function(f) return f._entry end })
+    inst:Install({ ShowAlert = function() end, HideAlert = function() end })
+    local frame = makeLiveFrame()
+    frame._entry = { spellID = 1, viewerType = "essential" }
+    fireHook(rec, "ShowAlert", {}, frame)
+    assert(#rec.startGlow == 1, "painted for spell 1")
+
+    frame._entry = { spellID = 2, viewerType = "essential" }
+    fireHook(rec, "ShowAlert", {}, frame)
+    assert(#rec.stopGlow == 1, "different spell on the same frame stops the stale glow")
+    assert(#rec.startGlow == 2, "then paints for the new spell")
+end
+
+-- ── Glow disabled mid-proc: latched glow torn down on the next fire ───────────
+do
+    local enabled = true
+    local inst, rec = buildInstance({
+        getEntryForFrame = function(f) return f._entry end,
+        resolveGlow = function() return enabled and { glowType = "Pixel Glow" } or nil end,
+    })
+    inst:Install({ ShowAlert = function() end, HideAlert = function() end })
+    local frame = makeLiveFrame()
+    frame._entry = { spellID = 9, viewerType = "essential" }
+    fireHook(rec, "ShowAlert", {}, frame)
+    assert(#rec.startGlow == 1, "painted while enabled")
+
+    enabled = false
+    fireHook(rec, "ShowAlert", {}, frame)
+    assert(#rec.stopGlow == 1, "disabled mid-proc: next ShowAlert fire stops the live glow")
+    fireHook(rec, "ShowAlert", {}, frame)
+    assert(#rec.stopGlow == 1, "stop latched too: further fires no-op")
+end
+
+-- ── OnClaim reconcile: re-pooled frame drops the old spell's glow ─────────────
+-- Pool release just Hide()s the frame (HideAlert never fires for the old spell),
+-- so a stale latched glow would re-show with the re-pooled frame. Mirrors
+-- CDMReanchorPandemic:OnClaim.
+do
+    local entryA = { spellID = 1, viewerType = "essential" }
+    local entryB = { spellID = 2, viewerType = "essential" }
+    local inst, rec = buildInstance({ getEntryForFrame = function(f) return f._entry end })
+    inst:Install({ ShowAlert = function() end, HideAlert = function() end })
+    local frame = makeLiveFrame()
+    frame._entry = entryA
+    fireHook(rec, "ShowAlert", {}, frame)
+    assert(#rec.startGlow == 1, "painted for entry A")
+
+    inst:OnClaim(frame, entryA)
+    assert(#rec.stopGlow == 0, "OnClaim with the same entry keeps the glow")
+
+    inst:OnClaim(frame, { spellID = 1, viewerType = "essential" })
+    assert(#rec.stopGlow == 0, "OnClaim with a rebuilt same-spell entry keeps the glow")
+
+    inst:OnClaim(frame, entryB)
+    assert(#rec.stopGlow == 1, "OnClaim with a different entry stops the stale glow")
+
+    inst:OnClaim(frame, entryB)
+    assert(#rec.stopGlow == 1, "OnClaim on an un-latched frame is a no-op")
+
+    inst:OnClaim(nil, entryB)
+    assert(#rec.stopGlow == 1, "OnClaim(nil): no-op")
+end
+
 print("OK: cdm_reanchor_procglow_test")

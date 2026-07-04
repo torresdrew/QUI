@@ -479,6 +479,18 @@ function CDMReanchorRuntime:RefreshContainer(containerKey)
                     deps.pandemic:OnClaim(w.liveFrame, w.src)
                 end
             end
+            -- Proc-glow bridge: same re-pool reconcile as pandemic. The glow is
+            -- driven by the ActionButtonSpellAlertManager ShowAlert/HideAlert hook
+            -- (CDMReanchorProcGlow), latched per frame; a frame re-pooled to a new
+            -- entry never fires HideAlert for the old spell, so drop the stale
+            -- latched glow here. Resolved lazily -- the instance is built only once
+            -- the alert manager global exists.
+            if deps.getProcGlow then
+                local pg = deps.getProcGlow()
+                if pg and pg.OnClaim then
+                    pg:OnClaim(w.liveFrame, w.src)
+                end
+            end
         end
     end
     self._reanchoredByKey[containerKey] = reanchored

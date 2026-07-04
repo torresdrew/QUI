@@ -321,6 +321,15 @@ function CDMReanchorBoot.BuildRuntime(env)
         wiring = wiring,
         auraPhase = auraPhase,
         pandemic = pandemic,
+        -- Proc-glow bridge OnClaim reconcile. The instance is built lazily in
+        -- cdm_containers (InstallReanchorProcGlowHooks, gated on the
+        -- ActionButtonSpellAlertManager global existing), so resolve it per claim
+        -- instead of capturing it here -- it may not exist when the runtime is
+        -- constructed. A re-pooled frame never fires HideAlert for its old spell,
+        -- so the claim pass must drop the stale proc glow (same as pandemic).
+        getProcGlow = function()
+            return ns._cdmReanchorProcGlow
+        end,
         getContainer = env.getContainer,
         getCurated = env.getCurated,
         getSettings = env.getSettings,

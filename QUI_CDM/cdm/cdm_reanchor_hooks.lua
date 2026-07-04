@@ -475,9 +475,31 @@ function CDMReanchorProcGlow.New(deps)
         _stopGlow         = deps.stopGlow,
         _hooksecurefunc   = deps.hooksecurefunc or hooksecurefunc,
         _securecall       = deps.securecall or _securecall,
+        -- frame -> latch key of the entry whose proc glow is currently painted.
+        -- Blizzard re-fires ShowAlert on EVERY RefreshData while overlayed (per
+        -- cooldown/aura/charge event); the manager dedups internally but the
+        -- hooksecurefunc still fires, and the glow applier is Stop->Start, so an
+        -- unlatched hook replays the start anim per refresh = the proc flicker
+        -- Drew reported. Latch keyed by spellID/id (not entry-table identity:
+        -- curated lists rebuild entry tables across claim passes for the SAME
+        -- spell) so a same-spell re-fire is a no-op while a re-pooled frame's
+        -- different spell repaints. Mirrors CDMReanchorPandemic._active.
+        _active           = setmetatable({}, { __mode = "k" }),
         _installed        = false,
     }
     return setmetatable(self, ProcGlowMT)
+end
+
+local function ProcGlowLatchKey(entry)
+    if not entry then return nil end
+    return entry.spellID or entry.id or entry
+end
+
+function CDMReanchorProcGlow:_StopFor(frame)
+    self._active[frame] = nil
+    if not (self._ensureOverlay and self._stopGlow) then return end
+    local overlay = self._ensureOverlay(frame)
+    if overlay then self._stopGlow(overlay) end
 end
 
 -- The securecall'd ShowAlert work body. frame is the Blizzard CDM item frame.
@@ -486,7 +508,10 @@ function CDMReanchorProcGlow:_OnShowAlert(frame)
     local entry = self._getEntryForFrame and self._getEntryForFrame(frame) or nil
     if entry == nil then return end  -- not a managed re-anchored CDM frame: no-op
     -- G6: suppress Blizzard's native proc flipbook on the live frame. SetAlpha/Hide
-    -- on the SpellActivationAlert region are the only live-frame writes here.
+    -- on the SpellActivationAlert region are the only live-frame writes here. This
+    -- runs UNCONDITIONALLY on every fire (idempotent, cheap) -- Blizzard re-shows
+    -- the native alert on each RefreshData, so the suppression must re-assert even
+    -- when the glow itself is latched.
     local alert = frame.SpellActivationAlert
     if alert then
         if alert.SetAlpha then alert:SetAlpha(0) end
@@ -495,9 +520,23 @@ function CDMReanchorProcGlow:_OnShowAlert(frame)
     -- G8: paint QUI's configured glow on a QUI-OWNED overlay child of the live frame.
     if not (self._ensureOverlay and self._resolveGlow and self._startGlow) then return end
     local viewerSettings = self._resolveGlow(entry)
-    if not viewerSettings then return end   -- viewer/per-spell glow disabled
+    if not viewerSettings then
+        -- Glow disabled (viewer/per-spell). Tear down a live latch so toggling
+        -- off mid-proc clears the painted glow; otherwise no-op.
+        if self._active[frame] ~= nil then self:_StopFor(frame) end
+        return
+    end
+    local key = ProcGlowLatchKey(entry)
+    if self._active[frame] == key then return end  -- latched: refresh-storm re-fire
+    -- Frame re-fired for a DIFFERENT spell (re-pool without an intervening Hide):
+    -- stop the stale glow before repainting so the applier's Stop->Start is the
+    -- only restart, and the latch tracks the new spell.
+    if self._active[frame] ~= nil then self:_StopFor(frame) end
     local overlay = self._ensureOverlay(frame)
-    if overlay then self._startGlow(overlay, viewerSettings) end
+    if overlay then
+        self._startGlow(overlay, viewerSettings)
+        self._active[frame] = key
+    end
 end
 
 -- The securecall'd HideAlert work body. Stop the QUI glow on the own overlay.
@@ -505,9 +544,22 @@ function CDMReanchorProcGlow:_OnHideAlert(frame)
     if not frame then return end
     local entry = self._getEntryForFrame and self._getEntryForFrame(frame) or nil
     if entry == nil then return end
-    if not (self._ensureOverlay and self._stopGlow) then return end
-    local overlay = self._ensureOverlay(frame)
-    if overlay then self._stopGlow(overlay) end
+    if self._active[frame] == nil then return end
+    self:_StopFor(frame)
+end
+
+-- Claim-time reconcile, called from the runtime claim pass alongside the pandemic
+-- bridge's OnClaim. A frame re-pooled to a different entry never fires HideAlert
+-- for the OLD spell (pool release just Hide()s the frame), so a stale latch would
+-- keep the old glow painted over the new spell until its next proc. Stop it here;
+-- the new spell's own ShowAlert repaints if it is actually overlayed. Same-spell
+-- re-claims (rebuilt entry table, same spellID) keep the glow untouched.
+function CDMReanchorProcGlow:OnClaim(frame, entry)
+    if not frame then return end
+    local current = self._active[frame]
+    if current ~= nil and current ~= ProcGlowLatchKey(entry) then
+        self:_StopFor(frame)
+    end
 end
 
 -- Install the ShowAlert/HideAlert hooks on the manager (idempotent; once globally).
