@@ -9,6 +9,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v5.0.0-alpha10 - 2026-07-04
+
+> ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will
+> not load on the 12.0.x live client. Stay on the v4.x beta line for live realms.
+
+### Fixed
+- fix(cdm): a disabled Cooldown Manager tracker no longer flashes its icons in
+  the middle of the screen. With a tracker disabled (e.g. Utility) and its
+  spells curated into another tracker, every cooldown update briefly pinned
+  the disabled tracker's icons at its hidden container's position. Disabled
+  trackers now claim no icons at all, and icons they held before being
+  disabled are released on the next update.
+
 ## v5.0.0-alpha9 - 2026-07-04
 
 > ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will
