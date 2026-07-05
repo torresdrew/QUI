@@ -3005,6 +3005,11 @@ local function RenderAurasSection(sectionHost, ctx)
         optionsAPI.BuildSettingRow(card.frame, ns.L["Editing Spec"], specDropdown)
     )
 
+    local debuffBorderCheckbox = gui:CreateFormCheckbox(card.frame, nil, "debuffBorderByType", auras, refresh, {
+        description = ns.L["Color debuff icon borders by dispel type (Magic, Curse, Poison, Disease, Bleed). Reuses your Dispel Overlay colors. Works in combat."],
+    })
+    card.AddRow(optionsAPI.BuildSettingRow(card.frame, ns.L["Debuff Border by Type"], debuffBorderCheckbox))
+
     -- Per-spec override toggle: only meaningful for a specific spec. ON creates a
     -- spec bucket (DeepCopy of All Specs to start); OFF deletes it (inherit).
     if isSpecBucket then

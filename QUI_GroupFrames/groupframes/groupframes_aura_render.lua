@@ -380,6 +380,26 @@ local function CreateIconFrame(parent)
     glossTex:SetAllPoints(frame)
     frame._quiGloss = glossTex
 
+    -- Debuff-type border edges (sub-project B): 4 white 1px OVERLAY textures,
+    -- tinted per-aura via SetVertexColor from the secret dispel-type color.
+    -- 1px matches the ApplyPixelBackdrop skin border above. Hidden until driven.
+    local function MakeTypeEdge()
+        local t = frame:CreateTexture(nil, "OVERLAY")
+        t:SetColorTexture(1, 1, 1, 1)
+        t:Hide()
+        return t
+    end
+    local tb = { top = MakeTypeEdge(), bottom = MakeTypeEdge(), left = MakeTypeEdge(), right = MakeTypeEdge() }
+    tb.top:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, 0)
+    tb.top:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 0, 0); tb.top:SetHeight(1)
+    tb.bottom:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 0, 0)
+    tb.bottom:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", 0, 0); tb.bottom:SetHeight(1)
+    tb.left:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, 0)
+    tb.left:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 0, 0); tb.left:SetWidth(1)
+    tb.right:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 0, 0)
+    tb.right:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", 0, 0); tb.right:SetWidth(1)
+    frame._quiTypeBorder = tb
+
     frame:Hide()
     return frame
 end
@@ -709,10 +729,53 @@ local function GetElementState(frame, element)
     return st
 end
 
+-- >>> QUI_TEST_EXTRACT AuraBorderHelpers (sentinels used by
+-- tests/unit/groupframes_aura_border_apply_test.lua; do not remove)
+-- Debuff-type icon border (sub-project B). The secret dispel-type color comes
+-- from C_UnitAuras.GetAuraDispelTypeColor (a curve remaps the secret enum C-side)
+-- and is applied via SetVertexColor -- the only secret-safe border path
+-- (SetBackdropBorderColor cannot take a secret). ShowTypeBorder tints the 4
+-- edges and suppresses the skin backdrop border with plain zeros.
+local function ShowTypeBorder(icon, color)
+    local tb = icon._quiTypeBorder
+    if not tb then return end
+    local r, g, b, a = color:GetRGBA()
+    tb.top:SetVertexColor(r, g, b, a)
+    tb.bottom:SetVertexColor(r, g, b, a)
+    tb.left:SetVertexColor(r, g, b, a)
+    tb.right:SetVertexColor(r, g, b, a)
+    tb.top:Show(); tb.bottom:Show(); tb.left:Show(); tb.right:Show()
+    if icon.SetBackdropBorderColor then icon:SetBackdropBorderColor(0, 0, 0, 0) end
+end
+
+local function HideTypeBorder(icon)
+    local tb = icon._quiTypeBorder
+    if not tb then return end
+    tb.top:Hide(); tb.bottom:Hide(); tb.left:Hide(); tb.right:Hide()
+end
+
+-- Returns true when it applied the debuff-type border (and suppressed the skin
+-- border); false when the caller should apply the normal skin border. Gated on:
+-- feature curve present, element is a debuff surface (non-secret element.auraType),
+-- not externally skinned, a valid aura instance, and the API present.
+local function ApplyDebuffTypeBorder(icon, unit, element, auraData, borderCurve)
+    if not borderCurve then return false end
+    if not (element and element.auraType == "HARMFUL") then return false end
+    if icon._quiBridged then return false end  -- external skin owns the border
+    if not (C_UnitAuras and C_UnitAuras.GetAuraDispelTypeColor) then return false end
+    local instID = auraData and auraData.auraInstanceID
+    if not instID then return false end
+    local ok, color = pcall(C_UnitAuras.GetAuraDispelTypeColor, unit, instID, borderCurve)
+    if not ok or not color then return false end
+    ShowTypeBorder(icon, color)
+    return true
+end
+-- <<< QUI_TEST_EXTRACT AuraBorderHelpers
+
 ---------------------------------------------------------------------------
 -- ICON DATA WRITE (shared by strip + single icon)
 ---------------------------------------------------------------------------
-local function ApplyIconData(icon, unit, element, auraData, cfgGen, br, bg, bb, ba)
+local function ApplyIconData(icon, unit, element, auraData, cfgGen, br, bg, bb, ba, borderCurve)
     if icon.solidColor then icon.solidColor:Hide() end
     -- Stash the live aura instance so the runtime fast path (pure stack/
     -- duration updates) can reseat this icon's swipe without a full rebuild.
@@ -765,7 +828,10 @@ local function ApplyIconData(icon, unit, element, auraData, cfgGen, br, bg, bb, 
     end
 
     icon:SetAlpha(1)
-    icon:SetBackdropBorderColor(br, bg, bb, ba)
+    if not ApplyDebuffTypeBorder(icon, unit, element, auraData, borderCurve) then
+        HideTypeBorder(icon)
+        icon:SetBackdropBorderColor(br, bg, bb, ba)
+    end
 end
 
 ---------------------------------------------------------------------------
@@ -877,6 +943,7 @@ function R.RenderIcon(self, frame, element, matches)
     -- and the config generation gates the per-element setters inside ApplyIconData.
     local br, bg, bb, ba = GetSkinBorderColor()
     local cfgGen = (ns.QUI_GroupFrameAuras and ns.QUI_GroupFrameAuras._configGeneration) or 0
+    local borderCurve = ns.QUI_GroupFrameAuraBorderCurve and ns.QUI_GroupFrameAuraBorderCurve(frame._isRaid)
 
     for idx = 1, count do
         local icon = state.icons[idx]
@@ -898,7 +965,7 @@ function R.RenderIcon(self, frame, element, matches)
             icon:SetPoint(iconAnchor, frame, anchor, offX + slotX, offY + slotY)
         end
 
-        ApplyIconData(icon, frame.unit, element, ordered[idx], cfgGen, br, bg, bb, ba)
+        ApplyIconData(icon, frame.unit, element, ordered[idx], cfgGen, br, bg, bb, ba, borderCurve)
         icon:Show()
     end
 
@@ -968,7 +1035,11 @@ function R.RenderSquare(self, frame, element, matches)
     end
     icon:SetAlpha(1)
     local br, bg, bb, ba = GetSkinBorderColor()
-    icon:SetBackdropBorderColor(br, bg, bb, ba)
+    local borderCurve = ns.QUI_GroupFrameAuraBorderCurve and ns.QUI_GroupFrameAuraBorderCurve(frame._isRaid)
+    if not ApplyDebuffTypeBorder(icon, frame.unit, element, auraData, borderCurve) then
+        HideTypeBorder(icon)
+        icon:SetBackdropBorderColor(br, bg, bb, ba)
+    end
     icon:Show()
 end
 

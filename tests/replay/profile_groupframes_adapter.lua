@@ -102,6 +102,10 @@ local function stubWoWGlobals(opts)
             t.Show           = function() end
             t.Hide           = function() end
             t.GetTexture     = function() return nil end
+            t.SetPoint       = function() end
+            t.SetHeight      = function() end
+            t.SetWidth       = function() end
+            t.SetVertexColor = function() end
             return t
         end
         return f
