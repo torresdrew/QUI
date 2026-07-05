@@ -3119,6 +3119,7 @@ local defaults = {
                 range = { enabled = true, outOfRangeAlpha = 0.4 },
                 auras = {
                     enabled = true,
+                    debuffBorderByType = false,
                     -- NOTE: the default filter strips are NOT shipped here. An
                     -- AceDB array default (elements["*"] = {debuffs, buffs}) had
                     -- copyDefaults re-fill deleted array indices on every reload,
@@ -3294,6 +3295,7 @@ local defaults = {
                 range = { enabled = true, outOfRangeAlpha = 0.4 },
                 auras = {
                     enabled = true,
+                    debuffBorderByType = false,
                     -- NOTE: the default filter strips are NOT shipped here. An
                     -- AceDB array default (elements["*"] = {debuffs, buffs}) had
                     -- copyDefaults re-fill deleted array indices on every reload,

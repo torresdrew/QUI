@@ -618,6 +618,43 @@ InvalidateDispelColors = function()
     _dispel.cachedColors = nil
 end
 
+-- >>> QUI_TEST_EXTRACT GetAuraBorderColorCurve (sentinel used by
+-- tests/unit/groupframes_aura_border_curve_test.lua; do not remove)
+-- Debuff-type aura border color curve (sub-project B). Returns the curve ONLY
+-- when the feature is enabled for this context and C_CurveUtil is available;
+-- nil otherwise (renderer falls back to the skin border). Mirrors
+-- GetDispelColorCurve but maps None(0) -> the skin border color (so untyped
+-- debuffs fall back to skin inside the curve, secret-safe) at full alpha.
+-- Cached in _dispel.auraBorderCurve; invalidated alongside _dispel.colorCurve in
+-- RefreshSettings (covers dispel-color AND skin-color changes). Defined as a
+-- ns table-field (NOT a new top-level local) to stay under Lua 5.1's 200-local
+-- chunk ceiling.
+ns.QUI_GroupFrameAuraBorderCurve = function(isRaid)
+    local vdb = GetVisualDB(isRaid)
+    local auras = vdb and vdb.auras
+    if not auras or auras.debuffBorderByType ~= true then return nil end
+    if _dispel.auraBorderCurve then return _dispel.auraBorderCurve end
+    if not C_CurveUtil or not C_CurveUtil.CreateColorCurve then return nil end
+    local colors = GetDispelColors()
+    local sr, sg, sb, sa = 0, 0, 0, 1
+    if ns.Helpers and ns.Helpers.GetSkinBorderColor then
+        sr, sg, sb, sa = ns.Helpers.GetSkinBorderColor()
+    end
+    local curve = C_CurveUtil.CreateColorCurve()
+    curve:SetType(Enum.LuaCurveType.Step)
+    curve:AddPoint(0, CreateColor(sr, sg, sb, sa))  -- None -> skin border
+    for _, enumVal in ipairs(_dispel.allEnums) do
+        local typeName = _dispel.enumNames[enumVal]
+        local c = typeName and colors[typeName]
+        if c then
+            curve:AddPoint(enumVal, CreateColor(c[1], c[2], c[3], 1))
+        end
+    end
+    _dispel.auraBorderCurve = curve
+    return curve
+end
+-- <<< QUI_TEST_EXTRACT GetAuraBorderColorCurve
+
 local function GetRangeSettings(isRaid)
     local vdb = GetVisualDB(isRaid)
     return vdb and vdb.range
@@ -6094,6 +6131,7 @@ function QUI_GF:RefreshSettings()
     InvalidateCache()
     RefreshCachedEnabled()
     _dispel.colorCurve = nil  -- Rebuild with new opacity on next use
+    _dispel.auraBorderCurve = nil  -- Rebuild on dispel-color OR skin-color change
 
     if not self.initialized then
         return
