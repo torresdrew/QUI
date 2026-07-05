@@ -400,6 +400,19 @@ local function CreateIconFrame(parent)
     tb.right:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", 0, 0); tb.right:SetWidth(1)
     frame._quiTypeBorder = tb
 
+    -- Linear cooldown swipe bar (sub-project D): a StatusBar filled by the aura
+    -- duration object via SetTimerDuration. Dark translucent overlay (the linear
+    -- equivalent of the radial shade). Frame level kept at the icon's level so the
+    -- Cooldown's countdown number (a higher-level child) draws above the fill.
+    -- Shown only for horizontal/vertical swipeStyle; hidden for radial.
+    local swipeBar = CreateFrame("StatusBar", nil, frame)
+    swipeBar:SetAllPoints(frame)
+    swipeBar:SetStatusBarTexture("Interface\\Buttons\\WHITE8x8")
+    swipeBar:SetStatusBarColor(0, 0, 0, 0.6)
+    swipeBar:SetFrameLevel(frame:GetFrameLevel())
+    swipeBar:Hide()
+    frame._swipeBar = swipeBar
+
     frame:Hide()
     return frame
 end
@@ -775,6 +788,42 @@ end
 ---------------------------------------------------------------------------
 -- ICON DATA WRITE (shared by strip + single icon)
 ---------------------------------------------------------------------------
+-- >>> QUI_TEST_EXTRACT ApplyLinearSwipe (sentinels used by
+-- tests/unit/groupframes_linear_swipe_test.lua; do not remove)
+-- Linear cooldown swipe (sub-project D). Drives the icon's StatusBar from the
+-- aura's duration object -- secret-safe: C_UnitAuras.GetAuraDuration and
+-- StatusBar:SetTimerDuration are both AllowedWhenUntainted, so no Lua reads the
+-- secret expiration. RemainingTime drains the bar as the cooldown elapses (matches
+-- the radial shrink); reverseSwipe flips to ElapsedTime. Returns true when the
+-- linear bar is shown; radial style / missing instance / missing API hide it (the
+-- radial cd swipe is used instead, driven separately).
+local function ApplyLinearSwipe(sb, unit, element, auraData)
+    if not sb then return false end
+    local style = (element and element.swipeStyle) or "radial"
+    if style ~= "horizontal" and style ~= "vertical" then
+        sb:Hide()
+        return false
+    end
+    local instID = auraData and auraData.auraInstanceID
+    if not (instID and C_UnitAuras and C_UnitAuras.GetAuraDuration and sb.SetTimerDuration) then
+        sb:Hide()
+        return false
+    end
+    local ok, durObj = pcall(C_UnitAuras.GetAuraDuration, unit, instID)
+    if not ok or not durObj then
+        sb:Hide()
+        return false
+    end
+    sb:SetOrientation(style == "vertical" and "VERTICAL" or "HORIZONTAL")
+    -- 0 = Immediate interpolation; direction 1 = RemainingTime, 0 = ElapsedTime.
+    sb:SetTimerDuration(durObj, 0, (element.reverseSwipe and 0) or 1)
+    local p = sb:GetParent()
+    if p and sb.SetFrameLevel and p.GetFrameLevel then sb:SetFrameLevel(p:GetFrameLevel()) end
+    sb:Show()
+    return true
+end
+-- <<< QUI_TEST_EXTRACT ApplyLinearSwipe
+
 local function ApplyIconData(icon, unit, element, auraData, cfgGen, br, bg, bb, ba, borderCurve)
     if icon.solidColor then icon.solidColor:Hide() end
     -- Stash the live aura instance so the runtime fast path (pure stack/
@@ -797,8 +846,9 @@ local function ApplyIconData(icon, unit, element, auraData, cfgGen, br, bg, bb, 
             icon._cfgElement = element
             icon._cfgGen = cfgGen
             local showText = element.showDurationText == true
+            local swipeStyle = element.swipeStyle or "radial"
             if cd.SetDrawSwipe then
-                pcall(cd.SetDrawSwipe, cd, element.hideSwipe ~= true)
+                pcall(cd.SetDrawSwipe, cd, swipeStyle == "radial" and element.hideSwipe ~= true)
             end
             if cd.SetReverse then
                 pcall(cd.SetReverse, cd, element.reverseSwipe == true)
@@ -822,8 +872,10 @@ local function ApplyIconData(icon, unit, element, auraData, cfgGen, br, bg, bb, 
                 H.ApplyCooldownFromAura(cd, unit, auraData.auraInstanceID, expTime, dur,
                     nil, auraData.timeMod)
             end
+            ApplyLinearSwipe(icon._swipeBar, unit, element, auraData)
         else
             cd:Clear()
+            if icon._swipeBar then icon._swipeBar:Hide() end
         end
     end
 
@@ -1029,6 +1081,7 @@ function R.RenderSquare(self, frame, element, matches)
         icon.cooldown:Hide()
         icon.cooldown:Clear()
     end
+    if icon._swipeBar then icon._swipeBar:Hide() end
     if icon.solidColor then
         icon.solidColor:SetColorTexture(color[1] or 0.5, color[2] or 0.5, color[3] or 0.5, color[4] or 1)
         icon.solidColor:Show()
@@ -1206,6 +1259,7 @@ end
 -- any visible element icon whose aura instance updated, without rebuilding the
 -- element list. Zero allocation; mirrors the old per-panel icon swipe refresh.
 -- `frames` is the unitFrameMap list for `unit`.
+-- >>> QUI_TEST_EXTRACT RefreshUpdatedIcons
 function R.RefreshUpdatedIcons(self, frames, nFrames, unit, updatedAuraInstanceIDs)
     if not frames or not updatedAuraInstanceIDs or #updatedAuraInstanceIDs == 0 then
         return false
@@ -1229,10 +1283,19 @@ function R.RefreshUpdatedIcons(self, frames, nFrames, unit, updatedAuraInstanceI
                                 if updatedAuraInstanceIDs[j] == instID then hit = true; break end
                             end
                             if hit then
+                                local dObj = GetDuration(unit, instID)
                                 local cd = icon.cooldown
-                                if cd and cd.SetCooldownFromDurationObject then
-                                    local dObj = GetDuration(unit, instID)
-                                    if dObj then pcall(cd.SetCooldownFromDurationObject, cd, dObj, true) end
+                                if cd and cd.SetCooldownFromDurationObject and dObj then
+                                    pcall(cd.SetCooldownFromDurationObject, cd, dObj, true)
+                                end
+                                -- Linear swipe (sub-project D): SetTimerDuration is a snapshot,
+                                -- so reseat it on a duration delta too (mirrors the radial cd
+                                -- reseat above and the detached-bar reseat in RefreshUpdatedBars).
+                                -- Only shown for linear-mode icons; _cfgElement carries reverseSwipe.
+                                local sb = icon._swipeBar
+                                if sb and sb:IsShown() and sb.SetTimerDuration and dObj then
+                                    local el = icon._cfgElement
+                                    pcall(sb.SetTimerDuration, sb, dObj, 0, (el and el.reverseSwipe and 0) or 1)
                                 end
                             end
                         end
@@ -1243,6 +1306,7 @@ function R.RefreshUpdatedIcons(self, frames, nFrames, unit, updatedAuraInstanceI
     end
     return true
 end
+-- <<< QUI_TEST_EXTRACT RefreshUpdatedIcons
 
 ---------------------------------------------------------------------------
 -- RENDERER: HEALTH TINT (adapted from indicators.lua:229-332, 1109-1176)
