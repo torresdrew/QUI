@@ -35,6 +35,7 @@ local defaults = {
             defaultBgOpacity = 1.0,
             applyGlobalFontToBlizzard = true,  -- Apply font to Blizzard UI elements
             overrideSCTFont = false,  -- Override scrolling combat text font with QUI font
+            disableScrollingCombatText = false,  -- Force Blizzard floating/scrolling combat text off (enableFloatingCombatText CVar)
             autoInsertKey = true,  -- Auto-insert keystone in M+ UI
             skinKeystoneFrame = true,  -- Skin keystone insertion window
             skinGameMenu = true,  -- Skin ESC menu (opt-in)

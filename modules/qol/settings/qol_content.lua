@@ -379,6 +379,17 @@ local function BuildCombatText(L, db)
         { description = ns.L["Color of the '-Combat' text shown when leaving combat."] })
     s.AddRow(row(s.frame, ns.L["+Combat Text Color"], enterColorW), row(s.frame, ns.L["-Combat Text Color"], leaveColorW))
     L.closeSection(s)
+
+    if db.general then
+        L.headerAt(ns.L["Blizzard Combat Text"])
+        L.intro(ns.L["Controls Blizzard's own floating combat text — the scrolling damage and healing numbers over units. Separate from QUI's +Combat indicator above."])
+        local s2 = L.sectionAt()
+        local disableSCTW = GUI:CreateFormCheckbox(s2.frame, nil, "disableScrollingCombatText", db.general, function()
+            if QUICore and QUICore.RefreshScrollingCombatText then QUICore.RefreshScrollingCombatText() end
+        end, { description = ns.L["Turn off Blizzard's floating/scrolling combat text. QUI re-applies this on login. Does not affect QUI's +Combat indicator."] })
+        s2.AddRow(row(s2.frame, ns.L["Disable Scrolling Combat Text"], disableSCTW))
+        L.closeSection(s2)
+    end
 end
 
 local function BuildAutomation(L, generalDB)
