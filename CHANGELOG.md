@@ -9,6 +9,44 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v5.0.0-alpha12 - 2026-07-05
+
+> ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will
+> not load on the 12.0.x live client. Stay on the v4.x beta line for live realms.
+
+### Added
+- feat(groupframes): party target frames — an optional companion frame for each
+  party member showing the name and health of that member's current target.
+  Party only, off by default.
+- feat(groupframes): the absorb, heal-absorb, and heal-prediction overlays gain
+  per-bar controls — bar texture, draw order, fill direction, and an optional
+  leading-edge spark with outline.
+- feat(groupframes): detached mini-bar mode for those same overlays — each can
+  leave the health bar and render as a standalone mini-bar with its own width,
+  height, anchor, and offset. Off by default (overlay stays the default).
+- feat(groupframes): debuff icon borders can be colored by dispel type
+  (Magic / Curse / Poison / Disease / Bleed). Off by default.
+- feat(groupframes): linear (horizontal or vertical) cooldown swipe option for
+  aura icons as an alternative to the default radial swipe; the countdown
+  number is kept either way.
+- feat(groupframes): party frames can expose their unit frames to an external
+  cooldown-tracker provider (party frames only, no raid frames).
+- feat(qol): merchant grid extender — widen the vendor Items tab into a grid
+  (2–4 columns × 5–8 rows) so a multi-page vendor collapses onto one page. Off
+  by default; a 2×5 grid matches the vanilla layout.
+- feat(qol): a toggle to force Blizzard's floating/scrolling combat text off.
+  Off by default.
+- feat(damagemeter): a Dark/Light theme preset dropdown for the native meter's
+  appearance colors.
+
+### Fixed
+- fix(inspect): inspecting a player no longer blanks the open inspect pane's
+  item levels and gear tooltips a moment later. A queued tooltip inspect
+  request is now suppressed once the Inspect window opens.
+- fix(bags): right-clicking a bag item to deposit into a selected bank or
+  warband tab now merges into an existing partial stack of the same item
+  instead of always dropping the whole stack into the first empty slot.
+
 ## v5.0.0-alpha11 - 2026-07-04
 
 > ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will
