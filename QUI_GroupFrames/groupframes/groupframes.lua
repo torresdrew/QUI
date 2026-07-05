@@ -741,8 +741,25 @@ local function ApplyOverlayBar(bar, settings, healthBar, isVertical, opts)
 
     -- Geometry + fill origin
     local reverse = false
+    local resolvedVertical = isVertical
     bar:ClearAllPoints()
-    if opts.anchorToHealth then
+    if settings.mode == "detached" then
+        -- Detached mini-bar: own size, anchored to the unit frame (options-only).
+        local frame = opts.frame or healthBar:GetParent()
+        local w = settings.width or 60
+        local h = settings.height or 8
+        resolvedVertical = h > w
+        bar:SetSize(w, h)
+        local anchor = settings.anchor or "BOTTOM"
+        bar:SetPoint(anchor, frame, anchor, settings.offsetX or 0, settings.offsetY or 0)
+        if opts.fillOrigin then
+            reverse = (settings.fillFrom or "reverse") ~= "default"
+        else
+            reverse = true
+        end
+        bar:SetReverseFill(reverse)
+        bar:SetOrientation(resolvedVertical and "VERTICAL" or "HORIZONTAL")
+    elseif opts.anchorToHealth then
         local healthTex = healthBar:GetStatusBarTexture()
         if isVertical then
             bar:SetPoint("BOTTOMLEFT", healthTex, "TOPLEFT", 0, 0)
@@ -778,7 +795,7 @@ local function ApplyOverlayBar(bar, settings, healthBar, isVertical, opts)
         spark:SetVertexColor(sc and sc[1] or 1, sc and sc[2] or 1, sc and sc[3] or 1, 1)
         local fillTex = bar:GetStatusBarTexture()
         spark:ClearAllPoints()
-        if isVertical then
+        if resolvedVertical then
             spark:SetPoint("LEFT", fillTex, "LEFT", 0, 0)
             spark:SetPoint("RIGHT", fillTex, "RIGHT", 0, 0)
             spark:SetHeight(1)
@@ -2701,7 +2718,7 @@ local function DecorateGroupFrame(frame)
     healPredictionBar:SetMinMaxValues(0, 1)
     healPredictionBar:SetValue(0)
     ApplyOverlayBar(healPredictionBar, vdb and vdb.healPrediction, healthBar, isVertical,
-        { drawOrderDefault = 1, anchorToHealth = true })
+        { drawOrderDefault = 1, anchorToHealth = true, frame = frame })
     healPredictionBar:Hide()
 
     local absorbBar = frame.absorbBar or CreateFrame("StatusBar", nil, healthBar)
@@ -2709,7 +2726,7 @@ local function DecorateGroupFrame(frame)
     absorbBar:SetMinMaxValues(0, 1)
     absorbBar:SetValue(0)
     ApplyOverlayBar(absorbBar, vdb and vdb.absorbs, healthBar, isVertical,
-        { drawOrderDefault = 2, fillOrigin = true })
+        { drawOrderDefault = 2, fillOrigin = true, frame = frame })
     absorbBar:Hide()
 
     local healAbsorbBar = frame.healAbsorbBar or CreateFrame("StatusBar", nil, healthBar)
@@ -2717,7 +2734,7 @@ local function DecorateGroupFrame(frame)
     healAbsorbBar:SetMinMaxValues(0, 1)
     healAbsorbBar:SetValue(0)
     ApplyOverlayBar(healAbsorbBar, vdb and vdb.healAbsorbs, healthBar, isVertical,
-        { drawOrderDefault = 3, fillOrigin = true })
+        { drawOrderDefault = 3, fillOrigin = true, frame = frame })
     healAbsorbBar:Hide()
 
     -- Power bar
