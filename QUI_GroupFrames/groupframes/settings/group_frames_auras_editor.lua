@@ -84,6 +84,12 @@ local HEALTH_TINT_ANIMATION_OPTIONS = {
     { value = "instant", text = ns.L["Instant"] },
 }
 
+local SWIPE_STYLE_OPTIONS = {
+    { value = "radial", text = ns.L["Radial"] },
+    { value = "horizontal", text = ns.L["Horizontal"] },
+    { value = "vertical", text = ns.L["Vertical"] },
+}
+
 local MISSING_RAID_BUFF_OPTIONS = {
     { key = "intellect", label = ns.L["Arcane Intellect (Mage)"] },
     { key = "stamina", label = ns.L["Power Word: Fortitude (Priest)"] },
@@ -269,6 +275,9 @@ local function AddDurationTextWidgets(ctx, element)
     }))
     row(ns.L["Reverse Swipe"], GUI:CreateFormCheckbox(ctx.detailArea, nil, "reverseSwipe", element, onChange, {
         description = ns.L["Reverse the swipe direction so the shaded portion grows instead of shrinks as time passes."],
+    }))
+    row(ns.L["Swipe Style"], GUI:CreateFormDropdown(ctx.detailArea, nil, SWIPE_STYLE_OPTIONS, "swipeStyle", element, onChange, {
+        description = ns.L["Radial or linear (horizontal/vertical) cooldown animation over aura icons."],
     }))
     row(ns.L["Show Duration Text"], GUI:CreateFormCheckbox(ctx.detailArea, nil, "showDurationText", element, onChange, {
         description = ns.L["Show the remaining-time countdown text on each icon."],
