@@ -2740,6 +2740,11 @@ return {
           xOffset = 0,
           yOffset = -120
         },
+        merchantGrid = {
+          columns = 2,
+          enabled = false,
+          rows = 5
+        },
         minimap = {
           autoZoom = false,
           borderColor = {

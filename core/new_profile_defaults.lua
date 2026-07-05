@@ -5094,6 +5094,11 @@ ns.NewProfileSeed = {
         },
         spacing = 4,
     },
+    merchantGrid = {
+        columns = 2,
+        enabled = false,
+        rows = 5,
+    },
     minimap = {
         autoZoom = false,
         borderColor = {
