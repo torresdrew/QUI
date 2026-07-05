@@ -12,6 +12,7 @@ bootstrap.lua
 # == modules/groupframes/groupframes.xml ==
 groupframes\group_frames_icon_layout.lua
 groupframes\groupframes.lua
+groupframes\groupframes_cdprovider.lua
 groupframes\groupframes_party_targets.lua
 groupframes\groupframes_targeted_spells.lua
 groupframes\groupframes_missing_raid_buffs.lua
