@@ -4044,6 +4044,7 @@ return {
               texture = "Quazii v5"
             },
             auras = {
+              debuffBorderByType = false,
               enabled = true
             },
             castbar = {
@@ -4411,6 +4412,7 @@ return {
               texture = "Quazii v5"
             },
             auras = {
+              debuffBorderByType = false,
               enabled = true
             },
             castbar = {
