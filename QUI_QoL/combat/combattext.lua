@@ -14,6 +14,8 @@ local CreateFrame = CreateFrame
 local UIParent = UIParent
 local GetTime = GetTime
 local C_Timer = C_Timer
+local SetCVar = SetCVar
+local InCombatLockdown = InCombatLockdown
 
 ---------------------------------------------------------------------------
 -- State tracking for fade animation
@@ -228,6 +230,40 @@ local function OnCombatEnd()
 end
 
 ---------------------------------------------------------------------------
+-- Blizzard scrolling (floating) combat text master toggle.
+-- Mirrors the `enableFloatingCombatText` CVar, which live-loads/unloads the
+-- Blizzard_CombatText addon (no /reload). We own the DISABLE only: at login we
+-- assert OFF just when the user opted in, so a default (unchecked) profile never
+-- overrides someone who turned floating combat text off through Blizzard's own
+-- menu. An explicit options toggle drives both directions.
+---------------------------------------------------------------------------
+local _sctApplyPending = false
+local _sctApplyPendingFromOnChange = false
+
+local function WantsScrollingCombatTextDisabled()
+    return QUICore and QUICore.db and QUICore.db.profile
+        and QUICore.db.profile.general
+        and QUICore.db.profile.general.disableScrollingCombatText == true
+end
+
+local function ApplyScrollingCombatText(fromOnChange)
+    -- Flipping this CVar toggles addon loading; unsafe mid-combat, so defer.
+    if InCombatLockdown() then
+        _sctApplyPending = true
+        _sctApplyPendingFromOnChange = fromOnChange
+        return
+    end
+    _sctApplyPending = false
+
+    if WantsScrollingCombatTextDisabled() then
+        SetCVar("enableFloatingCombatText", "0")
+    elseif fromOnChange then
+        -- Restore only on an explicit un-check; never write "1" at login.
+        SetCVar("enableFloatingCombatText", "1")
+    end
+end
+
+---------------------------------------------------------------------------
 -- Initialize
 ---------------------------------------------------------------------------
 local eventFrame = CreateFrame("Frame")
@@ -238,6 +274,9 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         OnCombatStart()
     elseif event == "PLAYER_REGEN_ENABLED" then
         OnCombatEnd()
+        if _sctApplyPending then
+            ApplyScrollingCombatText(_sctApplyPendingFromOnChange)
+        end
     end
 end)
 
@@ -247,12 +286,23 @@ end)
 -- petwarning.lua / tooltip_provider.lua). Nil only in the headless test harness.
 if ns.WhenLoggedIn then
     ns.WhenLoggedIn(CreateTextFrame)
+    ns.WhenLoggedIn(function() ApplyScrollingCombatText(false) end)
 end
 
 ---------------------------------------------------------------------------
 -- Global refresh function for GUI
 ---------------------------------------------------------------------------
 _G.QUI_RefreshCombatText = RefreshCombatText
+
+-- Cross-addon refresh hook for the options panel (QUI_Options). We hang it on
+-- the shared core object (QUICore == ns.Addon, set in core/main.lua) instead of
+-- a new _G.QUI_* global, per the global-assignment ratchet. Mirrors the
+-- established QUICore.<Module>:Refresh() pattern used elsewhere in options.
+if QUICore then
+    QUICore.RefreshScrollingCombatText = function()
+        ApplyScrollingCombatText(true)
+    end
+end
 
 ---------------------------------------------------------------------------
 -- Global preview function for options panel
