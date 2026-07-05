@@ -4027,8 +4027,23 @@ return {
                 [3] = 1,
                 [4] = 1
               },
+              drawOrder = 2,
               enabled = true,
+              fillFrom = "reverse",
               opacity = 0.69999999999999996,
+              outline = false,
+              outlineColor = {
+                [1] = 0,
+                [2] = 0,
+                [3] = 0,
+                [4] = 1
+              },
+              spark = false,
+              sparkColor = {
+                [1] = 1,
+                [2] = 1,
+                [3] = 1
+              },
               texture = "Quazii v5"
             },
             auras = {
@@ -4087,8 +4102,24 @@ return {
                 [2] = 0.10000000000000001,
                 [3] = 0.10000000000000001
               },
+              drawOrder = 3,
               enabled = true,
-              opacity = 0.59999999999999998
+              fillFrom = "reverse",
+              opacity = 0.59999999999999998,
+              outline = false,
+              outlineColor = {
+                [1] = 0,
+                [2] = 0,
+                [3] = 0,
+                [4] = 1
+              },
+              spark = false,
+              sparkColor = {
+                [1] = 1,
+                [2] = 1,
+                [3] = 1
+              },
+              texture = "Quazii v5"
             },
             healPrediction = {
               color = {
@@ -4096,8 +4127,23 @@ return {
                 [2] = 1,
                 [3] = 0.20000000000000001
               },
+              drawOrder = 1,
               enabled = true,
-              opacity = 0.5
+              opacity = 0.5,
+              outline = false,
+              outlineColor = {
+                [1] = 0,
+                [2] = 0,
+                [3] = 0,
+                [4] = 1
+              },
+              spark = false,
+              sparkColor = {
+                [1] = 1,
+                [2] = 1,
+                [3] = 1
+              },
+              texture = "Quazii v5"
             },
             healer = {
               cleanseGlow = {
@@ -4348,8 +4394,23 @@ return {
                 [3] = 1,
                 [4] = 1
               },
+              drawOrder = 2,
               enabled = true,
+              fillFrom = "reverse",
               opacity = 0.69999999999999996,
+              outline = false,
+              outlineColor = {
+                [1] = 0,
+                [2] = 0,
+                [3] = 0,
+                [4] = 1
+              },
+              spark = false,
+              sparkColor = {
+                [1] = 1,
+                [2] = 1,
+                [3] = 1
+              },
               texture = "Quazii v5"
             },
             auras = {
@@ -4425,8 +4486,24 @@ return {
                 [2] = 0.10000000000000001,
                 [3] = 0.10000000000000001
               },
+              drawOrder = 3,
               enabled = true,
-              opacity = 0.59999999999999998
+              fillFrom = "reverse",
+              opacity = 0.59999999999999998,
+              outline = false,
+              outlineColor = {
+                [1] = 0,
+                [2] = 0,
+                [3] = 0,
+                [4] = 1
+              },
+              spark = false,
+              sparkColor = {
+                [1] = 1,
+                [2] = 1,
+                [3] = 1
+              },
+              texture = "Quazii v5"
             },
             healPrediction = {
               color = {
@@ -4434,8 +4511,23 @@ return {
                 [2] = 1,
                 [3] = 0.20000000000000001
               },
+              drawOrder = 1,
               enabled = true,
-              opacity = 0.5
+              opacity = 0.5,
+              outline = false,
+              outlineColor = {
+                [1] = 0,
+                [2] = 0,
+                [3] = 0,
+                [4] = 1
+              },
+              spark = false,
+              sparkColor = {
+                [1] = 1,
+                [2] = 1,
+                [3] = 1
+              },
+              texture = "Quazii v5"
             },
             healer = {
               cleanseGlow = {
