@@ -1451,6 +1451,10 @@ local function RenderHealthSection(sectionHost, ctx)
         { value = "reverse", text = ns.L["From End"] },
         { value = "default", text = ns.L["From Start"] },
     }
+    local BAR_MODE_OPTIONS = {
+        { value = "overlay", text = ns.L["Overlay"] },
+        { value = "detached", text = ns.L["Detached"] },
+    }
     -- Shared overlay-bar controls appended to each of the absorb / heal-absorb /
     -- heal-prediction cards so all three stay identical. ctlOpts.fillOrigin adds
     -- the Fill From row (absorb + heal-absorb; heal-prediction is edge-anchored).
@@ -1494,6 +1498,54 @@ local function RenderHealthSection(sectionHost, ctx)
             optionsAPI.BuildSettingRow(card.frame, ns.L["Outline"], outlineCheck),
             optionsAPI.BuildSettingRow(card.frame, ns.L["Outline Color"], outlineColor)
         )
+
+        -- Detached mini-bar mode + geometry (sub-project C). Size/anchor/offset rows dim
+        -- while the bar is in overlay mode. Cells + closure are per-call (one per card).
+        local widthCell, heightCell, anchorCell, offsetXCell, offsetYCell
+        local function UpdateDetachedRows()
+            local a = (tbl.mode == "detached") and 1.0 or 0.4
+            if widthCell then widthCell:SetAlpha(a) end
+            if heightCell then heightCell:SetAlpha(a) end
+            if anchorCell then anchorCell:SetAlpha(a) end
+            if offsetXCell then offsetXCell:SetAlpha(a) end
+            if offsetYCell then offsetYCell:SetAlpha(a) end
+        end
+
+        local modeDrop = gui:CreateFormDropdown(card.frame, nil, BAR_MODE_OPTIONS, "mode", tbl, function()
+            refresh()
+            UpdateDetachedRows()
+        end, {
+            description = ns.L["Overlay draws on the health bar; Detached is a separate mini-bar with its own size and position."],
+        })
+        card.AddRow(optionsAPI.BuildSettingRow(card.frame, ns.L["Bar Mode"], modeDrop))
+
+        local widthSlider = gui:CreateFormSlider(card.frame, nil, 10, 200, 1, "width", tbl, refresh, { deferOnDrag = true }, {
+            description = ns.L["Detached mini-bar width in pixels."],
+        })
+        widthCell = optionsAPI.BuildSettingRow(card.frame, ns.L["Bar Width"], widthSlider)
+        local heightSlider = gui:CreateFormSlider(card.frame, nil, 2, 40, 1, "height", tbl, refresh, { deferOnDrag = true }, {
+            description = ns.L["Detached mini-bar height in pixels."],
+        })
+        heightCell = optionsAPI.BuildSettingRow(card.frame, ns.L["Bar Height"], heightSlider)
+        card.AddRow(widthCell, heightCell)
+
+        local anchorDrop = gui:CreateFormDropdown(card.frame, nil, NINE_POINT_OPTIONS, "anchor", tbl, refresh, {
+            description = ns.L["Anchor point of the detached mini-bar on the unit frame."],
+        })
+        anchorCell = optionsAPI.BuildSettingRow(card.frame, ns.L["Bar Anchor"], anchorDrop)
+        card.AddRow(anchorCell)
+
+        local offXSlider = gui:CreateFormSlider(card.frame, nil, -100, 100, 1, "offsetX", tbl, refresh, { deferOnDrag = true }, {
+            description = ns.L["Horizontal offset of the detached mini-bar."],
+        })
+        offsetXCell = optionsAPI.BuildSettingRow(card.frame, ns.L["Offset X"], offXSlider)
+        local offYSlider = gui:CreateFormSlider(card.frame, nil, -100, 100, 1, "offsetY", tbl, refresh, { deferOnDrag = true }, {
+            description = ns.L["Vertical offset of the detached mini-bar."],
+        })
+        offsetYCell = optionsAPI.BuildSettingRow(card.frame, ns.L["Offset Y"], offYSlider)
+        card.AddRow(offsetXCell, offsetYCell)
+
+        UpdateDetachedRows()
     end
 
     builder.Header(ns.L["Health Bar"])

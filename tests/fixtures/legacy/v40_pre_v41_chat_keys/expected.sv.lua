@@ -4019,6 +4019,7 @@ return {
           iconSkin = "Default",
           party = {
             absorbs = {
+              anchor = "BOTTOM",
               color = {
                 [1] = 1,
                 [2] = 1,
@@ -4028,6 +4029,10 @@ return {
               drawOrder = 2,
               enabled = true,
               fillFrom = "reverse",
+              height = 8,
+              mode = "overlay",
+              offsetX = 0,
+              offsetY = 0,
               opacity = 0.69999999999999996,
               outline = false,
               outlineColor = {
@@ -4042,7 +4047,8 @@ return {
                 [2] = 1,
                 [3] = 1
               },
-              texture = "Quazii v5"
+              texture = "Quazii v5",
+              width = 60
             },
             auras = {
               debuffBorderByType = false,
@@ -4096,6 +4102,7 @@ return {
               useClassColor = true
             },
             healAbsorbs = {
+              anchor = "BOTTOM",
               color = {
                 [1] = 0.5,
                 [2] = 0.10000000000000001,
@@ -4104,6 +4111,10 @@ return {
               drawOrder = 3,
               enabled = true,
               fillFrom = "reverse",
+              height = 8,
+              mode = "overlay",
+              offsetX = 0,
+              offsetY = 0,
               opacity = 0.59999999999999998,
               outline = false,
               outlineColor = {
@@ -4118,9 +4129,11 @@ return {
                 [2] = 1,
                 [3] = 1
               },
-              texture = "Quazii v5"
+              texture = "Quazii v5",
+              width = 60
             },
             healPrediction = {
+              anchor = "BOTTOM",
               color = {
                 [1] = 0.20000000000000001,
                 [2] = 1,
@@ -4128,6 +4141,10 @@ return {
               },
               drawOrder = 1,
               enabled = true,
+              height = 8,
+              mode = "overlay",
+              offsetX = 0,
+              offsetY = 0,
               opacity = 0.5,
               outline = false,
               outlineColor = {
@@ -4142,7 +4159,8 @@ return {
                 [2] = 1,
                 [3] = 1
               },
-              texture = "Quazii v5"
+              texture = "Quazii v5",
+              width = 60
             },
             healer = {
               cleanseGlow = {
@@ -4387,6 +4405,7 @@ return {
           },
           raid = {
             absorbs = {
+              anchor = "BOTTOM",
               color = {
                 [1] = 1,
                 [2] = 1,
@@ -4396,6 +4415,10 @@ return {
               drawOrder = 2,
               enabled = true,
               fillFrom = "reverse",
+              height = 8,
+              mode = "overlay",
+              offsetX = 0,
+              offsetY = 0,
               opacity = 0.69999999999999996,
               outline = false,
               outlineColor = {
@@ -4410,7 +4433,8 @@ return {
                 [2] = 1,
                 [3] = 1
               },
-              texture = "Quazii v5"
+              texture = "Quazii v5",
+              width = 60
             },
             auras = {
               debuffBorderByType = false,
@@ -4481,6 +4505,7 @@ return {
               showGroupNumber = false
             },
             healAbsorbs = {
+              anchor = "BOTTOM",
               color = {
                 [1] = 0.5,
                 [2] = 0.10000000000000001,
@@ -4489,6 +4514,10 @@ return {
               drawOrder = 3,
               enabled = true,
               fillFrom = "reverse",
+              height = 8,
+              mode = "overlay",
+              offsetX = 0,
+              offsetY = 0,
               opacity = 0.59999999999999998,
               outline = false,
               outlineColor = {
@@ -4503,9 +4532,11 @@ return {
                 [2] = 1,
                 [3] = 1
               },
-              texture = "Quazii v5"
+              texture = "Quazii v5",
+              width = 60
             },
             healPrediction = {
+              anchor = "BOTTOM",
               color = {
                 [1] = 0.20000000000000001,
                 [2] = 1,
@@ -4513,6 +4544,10 @@ return {
               },
               drawOrder = 1,
               enabled = true,
+              height = 8,
+              mode = "overlay",
+              offsetX = 0,
+              offsetY = 0,
               opacity = 0.5,
               outline = false,
               outlineColor = {
@@ -4527,7 +4562,8 @@ return {
                 [2] = 1,
                 [3] = 1
               },
-              texture = "Quazii v5"
+              texture = "Quazii v5",
+              width = 60
             },
             healer = {
               cleanseGlow = {
