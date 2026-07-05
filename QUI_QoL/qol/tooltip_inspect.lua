@@ -477,6 +477,16 @@ ProcessQueuedRequest = function()
         if InCombatLockdown() then return end
         if not IsTooltipPlayerItemLevelEnabled() then return end
 
+        -- The user may have opened InspectFrame during the REQUEST_DELAY window.
+        -- AbandonForUserInspect clears queuedRequest, but a C_Timer.After closure
+        -- cannot be cancelled, so re-check here (QueueInspect makes the same check
+        -- at queue time). Firing NotifyInspect now would either redirect the
+        -- server off the unit the user is inspecting or flood a duplicate request
+        -- (the server drops inspect data when flooded), blanking the open inspect
+        -- pane's item levels and gear tooltips a few seconds after it opened.
+        local inspectFrame = GetInspectFrame()
+        if inspectFrame and inspectFrame:IsShown() then return end
+
         if not SafeCanInspect(unit) then
             return
         end
