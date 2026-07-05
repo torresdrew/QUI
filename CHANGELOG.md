@@ -12,6 +12,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v4.0.6-beta1 - 2026-07-05
+
+Beta channel rebased onto the v4.0.5 release base. Localization is re-enabled on beta.
+
+### Added
+- Localization re-enabled on the beta channel — 10 languages (deDE, esES, esMX, frFR, itIT, koKR, ptBR, ruRU, zhCN, zhTW). Stable ships English-only; beta runs fully localized.
+
 ## v4.0.5 - 2026-07-06
 
 ### Added
