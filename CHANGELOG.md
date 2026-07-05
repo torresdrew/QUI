@@ -11,6 +11,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v4.0.5-beta11 - 2026-07-05
+
+### Added
+- Group Frames: the absorb, heal-absorb, and heal-prediction overlay bars can now be detached from the health bar and shown as separate mini-bars, each with its own width, height, anchor, and offset. Default stays attached; opt-in per bar, per context. Texture, color, opacity, fill direction, spark, and outline all continue to apply when detached.
+
+### Fixed
+- Cooldown Manager: free-cast override procs whose base spell has no cooldown of its own no longer drop off the cooldown bar.
+
 ## v4.0.5-beta10 - 2026-07-05
 
 ### Added
