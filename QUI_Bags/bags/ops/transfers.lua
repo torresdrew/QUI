@@ -363,6 +363,38 @@ function Transfers.ResolveItemRightClickRoute(state)
     return nil
 end
 
+--- Where should a right-click deposit into a SPECIFIC bank tab land? Restores
+--- native stacking that the plain first-empty-slot placement broke: if the
+--- tab already holds a partial stack of the same item WITH ROOM, return nil so
+--- the caller deposits via C_Container.UseContainerItem — the server merges
+--- into the partial stack (and handles overflow) exactly like the stock bag→
+--- bank deposit. Only when nothing is mergeable does it return the first empty
+--- slot for a targeted cursor placement into THIS tab; a full tab with no
+--- mergeable partial also returns nil (the caller falls back to the server's
+--- default placement).
+---
+--- size: C_Container.GetContainerNumSlots(tabID). occupantAt(slot) →
+--- { itemID, stackCount, isLocked } | nil (empty), for slot = 1..size (feed it
+--- C_Container.GetContainerItemInfo(tabID, slot)). sourceItemID: the item being
+--- deposited. maxStack: its C_Item.GetItemMaxStackSizeByID (nil when the item
+--- isn't cached → a same-item slot is treated as mergeable so the server can
+--- stack it). A locked occupant is mid-move and never a merge target.
+--- → slot number (targeted empty placement) | nil (deposit natively).
+function Transfers.ResolveDepositTargetSlot(size, occupantAt, sourceItemID, maxStack)
+    local firstEmpty = nil
+    for s = 1, (size or 0) do
+        local occ = occupantAt(s)
+        if not occ then
+            if not firstEmpty then firstEmpty = s end
+        elseif occ.itemID == sourceItemID and not occ.isLocked
+            and (maxStack == nil or (maxStack > 1 and occ.stackCount < maxStack)) then
+            -- a same-item partial stack has room → let the server merge
+            return nil
+        end
+    end
+    return firstEmpty
+end
+
 --- Send a snapshot list of cells ({ bag, slot, itemID }) to dest (from
 --- ResolveSendDestination). Same machinery as DepositAllToWarband: the
 --- shared ops gate, the paced queue, per-tick occupant re-validation.

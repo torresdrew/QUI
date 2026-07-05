@@ -553,5 +553,72 @@ do
         "bank tab outranks auction on (pathological) overlap")
 end
 
+---------------------------------------------------------------------------
+-- Section: targeted-deposit slot resolution (pure) — restores native
+-- stacking. A right-click deposit into a SPECIFIC bank tab must merge into
+-- an existing partial stack of the same item (→ nil, caller deposits via
+-- UseContainerItem so the server stacks + handles overflow) instead of
+-- always burning a fresh empty slot. Only when no mergeable partial exists
+-- does it return the first empty slot for a targeted cursor placement; a
+-- full tab with no mergeable partial → nil (server default placement).
+---------------------------------------------------------------------------
+do
+    local R = Transfers.ResolveDepositTargetSlot
+    assert(type(R) == "function", "ResolveDepositTargetSlot required")
+
+    -- helper: build an occupantAt(slot) closure from a {slot=occupant} map
+    local function occ(map)
+        return function(s) return map[s] end
+    end
+
+    -- Empty tab → first empty slot (targeted placement into THIS tab).
+    assert(R(5, occ({}), 42, 200) == 1,
+        "empty tab → first empty slot")
+
+    -- Partial stack of the SAME item with room (5 < 200) → nil (merge natively),
+    -- even though slot 1 is empty. Stacking must win over a wasted slot.
+    assert(R(5, occ({ [2] = { itemID = 42, stackCount = 5, isLocked = false } }),
+        42, 200) == nil,
+        "same-item partial stack with room → deposit natively (merge)")
+
+    -- Same item but the stack is FULL (200 == maxStack) → no room → first empty.
+    assert(R(5, occ({ [2] = { itemID = 42, stackCount = 200, isLocked = false } }),
+        42, 200) == 1,
+        "full same-item stack → no merge, use first empty slot")
+
+    -- Different item occupies slot 1; same-item partial in slot 3 → merge (nil).
+    assert(R(5, occ({
+        [1] = { itemID = 99, stackCount = 1, isLocked = false },
+        [3] = { itemID = 42, stackCount = 10, isLocked = false },
+    }), 42, 200) == nil,
+        "mergeable partial anywhere in the tab → deposit natively")
+
+    -- Non-stackable item (maxStack 1): never merge onto another copy; take the
+    -- first empty slot for a targeted placement.
+    assert(R(5, occ({ [1] = { itemID = 42, stackCount = 1, isLocked = false } }),
+        42, 1) == 2,
+        "maxStack 1 (non-stackable) → never merge, first empty slot")
+
+    -- A LOCKED same-item partial is mid-move; do not treat it as mergeable.
+    -- Only a locked copy present + an empty slot → targeted placement.
+    assert(R(3, occ({ [1] = { itemID = 42, stackCount = 5, isLocked = true } }),
+        42, 200) == 2,
+        "locked same-item slot is not a merge target; use empty slot")
+
+    -- maxStack unknown (uncached item → nil): a same-item slot is treated as
+    -- mergeable so the server can stack it correctly.
+    assert(R(3, occ({ [1] = { itemID = 42, stackCount = 5, isLocked = false } }),
+        42, nil) == nil,
+        "unknown maxStack + same-item slot → deposit natively")
+
+    -- Full tab, no mergeable partial (all a different item) → nil (server
+    -- default placement; the caller's UseContainerItem fallback).
+    assert(R(2, occ({
+        [1] = { itemID = 99, stackCount = 1, isLocked = false },
+        [2] = { itemID = 98, stackCount = 1, isLocked = false },
+    }), 42, 200) == nil,
+        "full tab, nothing mergeable → nil (server default placement)")
+end
+
 _G.print = realPrint
 print("OK: bags_transfers_test")
