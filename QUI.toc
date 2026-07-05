@@ -243,6 +243,7 @@ modules\qol\reticle.lua
 modules\qol\skyriding.lua
 modules\qol\xptracker.lua
 modules\qol\focuscastalert.lua
+modules\qol\merchant_grid.lua
 modules\dungeon\keystone.lua
 modules\dungeon\mplus_timer.lua
 modules\dungeon\mplus_progress.lua

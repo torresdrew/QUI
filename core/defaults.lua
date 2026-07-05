@@ -3344,6 +3344,13 @@ local defaults = {
             leaveCombatColor = {1, 0.98, 0.2, 1},      -- -Combat text color (#FFFA33 yellow)
         },
 
+        -- Merchant Grid Extender (widens the vendor Items tab into a grid)
+        merchantGrid = {
+            enabled = false,   -- off by default; 2x5 == vanilla when first enabled
+            columns = 2,       -- 2-4
+            rows = 5,          -- 5-8
+        },
+
         -- Battle Res Counter (displays brez charges and timer)
         brzCounter = {
             enabled = true,

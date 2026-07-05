@@ -1301,7 +1301,7 @@ local PROFILE_IMPORT_CATEGORIES = {
         label = "QoL / Automation",
         description = "Automation helpers, popup blocker, consumables, and utility toggles.",
         recommended = true,
-        topLevelKeys = { "qol", "uiHider", "configPanelWidth", "configPanelAlpha", "configPanelScale", "optionsPanelCollapsibleStates" },
+        topLevelKeys = { "qol", "uiHider", "configPanelWidth", "configPanelAlpha", "configPanelScale", "optionsPanelCollapsibleStates", "merchantGrid" },
         generalKeys = PROFILE_QOL_GENERAL_KEYS,
     },
     {

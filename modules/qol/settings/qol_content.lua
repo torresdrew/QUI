@@ -832,6 +832,34 @@ local function BuildReloadBehavior(L, db)
     L.closeSection(s)
 end
 
+local function BuildMerchantGrid(L, db)
+    local mDB = db and db.merchantGrid
+    if not mDB then return end
+
+    -- Live re-apply on change. Reaches the runtime module via the QUI table
+    -- (no _G.QUI_* global — see the ratchet note in merchant_grid.lua).
+    local function RefreshMerchantGrid()
+        if QUI and QUI.MerchantGrid and QUI.MerchantGrid.Refresh then
+            QUI.MerchantGrid.Refresh()
+        end
+    end
+
+    L.headerAt(ns.L["Merchant Grid"])
+    L.intro(ns.L["Show more vendor items at once by widening the merchant window into a Columns x Rows grid. At 2 columns x 5 rows it is identical to the default vendor. Vendors with more items than the grid holds still page normally. Reopen the vendor after changing these."])
+
+    local s = L.sectionAt()
+    local enableW = GUI:CreateFormCheckbox(s.frame, nil, "enabled", mDB, RefreshMerchantGrid,
+        { description = ns.L["Enable the enlarged vendor item grid."] })
+    s.AddRow(row(s.frame, ns.L["Enable Merchant Grid"], enableW))
+
+    local colsW = GUI:CreateFormSlider(s.frame, nil, 2, 4, 1, "columns", mDB, RefreshMerchantGrid,
+        { description = ns.L["Number of item columns per page (2-4)."] })
+    local rowsW = GUI:CreateFormSlider(s.frame, nil, 5, 8, 1, "rows", mDB, RefreshMerchantGrid,
+        { description = ns.L["Number of item rows per page (5-8)."] })
+    s.AddRow(row(s.frame, ns.L["Columns"], colsW), row(s.frame, ns.L["Rows"], rowsW))
+    L.closeSection(s)
+end
+
 ---------------------------------------------------------------------------
 -- DISPATCH
 ---------------------------------------------------------------------------
@@ -850,12 +878,14 @@ local SECTION_BUILDERS = {
     targetDistance   = function(L, db) BuildTargetDistance(L, db) end,
     quiPanel         = function(L, db) BuildQuiPanel(L, db) end,
     reloadBehavior   = function(L, db) BuildReloadBehavior(L, db) end,
+    merchantGrid     = function(L, db) BuildMerchantGrid(L, db) end,
 }
 
 local SECTION_ORDER = {
     "settingsPanel", "uiScale", "defaultFonts", "fpsPreset", "combatText",
     "automation", "popupBlocker", "quickSalvage", "consumables",
     "consumableMacros", "targetDistance", "quiPanel", "reloadBehavior",
+    "merchantGrid",
 }
 
 local function BuildGeneralTab(tabContent, searchContext, selectedSectionKey)
@@ -897,6 +927,7 @@ local generalSectionFeatures = {
     { id = "targetDistance",    category = "qol",        nav = { tileId = "qol", subPageIndex = 7 }, sectionKey = "targetDistance",   sectionTitle = "Target Distance Bracket Display",  searchContext = { tabIndex = 17, tabName = "Quality of Life", subTabIndex = 7, subTabName = "Distance" } },
     { id = "quiPanel",          category = "qol",        nav = { tileId = "qol", subPageIndex = 8 }, sectionKey = "quiPanel",         sectionTitle = "QUI Panel Settings",               searchContext = { tabIndex = 17, tabName = "Quality of Life", subTabIndex = 8, subTabName = "Panel" } },
     { id = "reloadBehavior",    category = "qol",        nav = { tileId = "qol", subPageIndex = 9 }, sectionKey = "reloadBehavior",   sectionTitle = "Reload Behavior",                  searchContext = { tabIndex = 17, tabName = "Quality of Life", subTabIndex = 9, subTabName = "Reload" } },
+    { id = "merchantGrid",      category = "qol",        nav = { tileId = "qol", subPageIndex = 10 }, sectionKey = "merchantGrid",     sectionTitle = "Merchant Grid",                    searchContext = { tabIndex = 17, tabName = "Quality of Life", subTabIndex = 10, subTabName = "Merchant" } },
     { id = "uiScale",           category = "appearance", nav = { tileId = "appearance", subPageIndex = 1 }, sectionKey = "uiScale",   sectionTitle = "UI Scale",                         searchContext = { tabIndex = 10, tabName = "Appearance",      subTabIndex = 3, subTabName = "UI Scale" } },
     { id = "defaultFonts",      category = "appearance", nav = { tileId = "appearance", subPageIndex = 2 }, sectionKey = "defaultFonts", sectionTitle = "Default Font Settings",         searchContext = { tabIndex = 10, tabName = "Appearance",      subTabIndex = 4, subTabName = "Fonts" } },
 }
