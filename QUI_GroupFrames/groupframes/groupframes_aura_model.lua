@@ -44,6 +44,7 @@ function Model.NewFilterStripElement(auraType)
         growDirection = (auraType == "HARMFUL") and "LEFT" or "RIGHT",
         spacing = 2, iconSize = 14, maxIcons = 3, iconsPerRow = 0,
         hideSwipe = false, reverseSwipe = false,
+        swipeStyle = "radial",
         showDurationText = true, durationFontSize = 9,
         showDurationColor = true, showExpiringPulse = true,
         filterMode = "off", onlyMine = false, hidePermanent = false, dedupeDefensives = true,
@@ -60,6 +61,7 @@ function Model.NewTrackedElement(spells, displayType)
         anchor = "TOPLEFT", offsetX = 0, offsetY = 0,
         growDirection = "RIGHT", spacing = 2, iconSize = 16, iconsPerRow = 0,
         hideSwipe = false, reverseSwipe = false,
+        swipeStyle = "radial",
         showDurationText = false, durationFontSize = 9,
         color = { 1, 1, 1 },
         -- Seed a visible bar config up front: the bar displayType otherwise
@@ -80,6 +82,7 @@ function Model.NewMissingRaidBuffElement()
         anchor = "CENTER", offsetX = 0, offsetY = 0,
         growDirection = "RIGHT", spacing = 2, iconSize = 16, maxIcons = 1, iconsPerRow = 0,
         hideSwipe = true, reverseSwipe = false,
+        swipeStyle = "radial",
         showDurationText = false, durationFontSize = 9,
     }
 end
@@ -118,6 +121,7 @@ function Model.DefaultStripBucket()
             anchor = "BOTTOMRIGHT", growDirection = "LEFT", spacing = 2,
             offsetX = -2, offsetY = -18, iconSize = 16, maxIcons = 3,
             hideSwipe = false, reverseSwipe = false,
+            swipeStyle = "radial",
             showDurationText = true, durationFontSize = 9,
             durationAnchor = "BOTTOM", durationOffsetX = 0, durationOffsetY = -6,
             durationColor = { 1, 1, 1, 1 }, durationUseTimeColor = true,
@@ -131,6 +135,7 @@ function Model.DefaultStripBucket()
             anchor = "TOPLEFT", growDirection = "RIGHT", spacing = 2,
             offsetX = 2, offsetY = 16, iconSize = 14, maxIcons = 0,
             hideSwipe = false, reverseSwipe = false,
+            swipeStyle = "radial",
             showDurationText = true, durationFontSize = 9,
             durationAnchor = "BOTTOM", durationOffsetX = 0, durationOffsetY = -6,
             durationColor = { 1, 1, 1, 1 }, durationUseTimeColor = true,
