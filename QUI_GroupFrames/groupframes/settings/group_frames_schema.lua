@@ -1442,6 +1442,60 @@ local function RenderHealthSection(sectionHost, ctx)
         RefreshGroupFrames(groupFrames.contextMode)
     end
 
+    local DRAW_ORDER_LIST = {
+        { value = 1, text = ns.L["Back"] },
+        { value = 2, text = ns.L["Middle"] },
+        { value = 3, text = ns.L["Front"] },
+    }
+    local FILL_FROM_LIST = {
+        { value = "reverse", text = ns.L["From End"] },
+        { value = "default", text = ns.L["From Start"] },
+    }
+    -- Shared overlay-bar controls appended to each of the absorb / heal-absorb /
+    -- heal-prediction cards so all three stay identical. ctlOpts.fillOrigin adds
+    -- the Fill From row (absorb + heal-absorb; heal-prediction is edge-anchored).
+    local function AddOverlayControls(card, tbl, ctlOpts)
+        ctlOpts = ctlOpts or {}
+        local textureDrop = gui:CreateFormDropdown(card.frame, nil, optionsAPI.GetTextureList(), "texture", tbl, refresh, {
+            description = ns.L["Texture used for this overlay bar."],
+        })
+        card.AddRow(optionsAPI.BuildSettingRow(card.frame, ns.L["Texture"], textureDrop))
+
+        local orderDrop = gui:CreateFormDropdown(card.frame, nil, DRAW_ORDER_LIST, "drawOrder", tbl, refresh, {
+            description = ns.L["Which overlay draws on top when absorb, heal-absorb and heal-prediction overlap. Front draws above the others."],
+        })
+        card.AddRow(optionsAPI.BuildSettingRow(card.frame, ns.L["Draw Order"], orderDrop))
+
+        if ctlOpts.fillOrigin then
+            local fillDrop = gui:CreateFormDropdown(card.frame, nil, FILL_FROM_LIST, "fillFrom", tbl, refresh, {
+                description = ns.L["Which edge the overlay fills from."],
+            })
+            card.AddRow(optionsAPI.BuildSettingRow(card.frame, ns.L["Fill From"], fillDrop))
+        end
+
+        local sparkCheck = gui:CreateFormCheckbox(card.frame, nil, "spark", tbl, refresh, {
+            description = ns.L["Show a bright line at the leading edge of the overlay."],
+        })
+        local sparkColor = gui:CreateFormColorPicker(card.frame, nil, "sparkColor", tbl, refresh, nil, {
+            description = ns.L["Color of the leading-edge spark line."],
+        })
+        card.AddRow(
+            optionsAPI.BuildSettingRow(card.frame, ns.L["Edge Spark"], sparkCheck),
+            optionsAPI.BuildSettingRow(card.frame, ns.L["Spark Color"], sparkColor)
+        )
+
+        local outlineCheck = gui:CreateFormCheckbox(card.frame, nil, "outline", tbl, refresh, {
+            description = ns.L["Draw a pixel border around the overlay bar."],
+        })
+        local outlineColor = gui:CreateFormColorPicker(card.frame, nil, "outlineColor", tbl, refresh, nil, {
+            description = ns.L["Color of the overlay bar outline."],
+        })
+        card.AddRow(
+            optionsAPI.BuildSettingRow(card.frame, ns.L["Outline"], outlineCheck),
+            optionsAPI.BuildSettingRow(card.frame, ns.L["Outline Color"], outlineColor)
+        )
+    end
+
     builder.Header(ns.L["Health Bar"])
     local barCard = builder.Card()
     local textureDropdown = gui:CreateFormDropdown(barCard.frame, nil, optionsAPI.GetTextureList(), "texture", general, refresh, {
@@ -1553,11 +1607,6 @@ local function RenderHealthSection(sectionHost, ctx)
         absorbClassRow
     )
 
-    local absorbTextureDropdown = gui:CreateFormDropdown(absorbCard.frame, nil, optionsAPI.GetTextureList(), "texture", absorbs, refresh, {
-        description = ns.L["Texture used for the absorb shield overlay bar."],
-    })
-    absorbCard.AddRow(optionsAPI.BuildSettingRow(absorbCard.frame, ns.L["Absorb Texture"], absorbTextureDropdown))
-
     local absorbColorPicker = gui:CreateFormColorPicker(absorbCard.frame, nil, "color", absorbs, refresh, nil, {
         description = ns.L["Tint used for the absorb overlay when Use Class Color is off."],
     })
@@ -1568,6 +1617,7 @@ local function RenderHealthSection(sectionHost, ctx)
     absorbOpacityRow = optionsAPI.BuildSettingRow(absorbCard.frame, ns.L["Absorb Opacity"], absorbOpacitySlider)
     absorbCard.AddRow(absorbColorRow, absorbOpacityRow)
     UpdateAbsorbRows()
+    AddOverlayControls(absorbCard, absorbs, { fillOrigin = true })
     builder.CloseCard(absorbCard)
 
     builder.Spacer(6)
@@ -1601,6 +1651,7 @@ local function RenderHealthSection(sectionHost, ctx)
     healAbsorbOpacityRow = optionsAPI.BuildSettingRow(healAbsorbCard.frame, ns.L["Heal Absorb Opacity"], healAbsorbOpacitySlider)
     healAbsorbCard.AddRow(healAbsorbOpacityRow)
     UpdateHealAbsorbRows()
+    AddOverlayControls(healAbsorbCard, healAbsorbs, { fillOrigin = true })
     builder.CloseCard(healAbsorbCard)
 
     builder.Spacer(6)
@@ -1643,6 +1694,7 @@ local function RenderHealthSection(sectionHost, ctx)
     healPredictionOpacityRow = optionsAPI.BuildSettingRow(healPredictionCard.frame, ns.L["Heal Prediction Opacity"], healPredictionOpacitySlider)
     healPredictionCard.AddRow(healPredictionColorRow, healPredictionOpacityRow)
     UpdateHealPredictionRows()
+    AddOverlayControls(healPredictionCard, healPrediction, { fillOrigin = false })
     builder.CloseCard(healPredictionCard)
 
     return builder.Height()
