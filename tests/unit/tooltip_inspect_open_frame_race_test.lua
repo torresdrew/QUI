@@ -116,7 +116,7 @@ local ns = {
         end,
     },
 }
-assert(loadfile("QUI_QoL/qol/tooltip_inspect.lua"))("QUI_QoL", ns)
+assert(loadfile("modules/qol/tooltip_inspect.lua"))("QUI_QoL", ns)
 local TooltipInspect = assert(ns.TooltipInspect, "module must export ns.TooltipInspect")
 
 ------------------------------------------------------------------------------
