@@ -99,10 +99,12 @@ local function SendSelection()
 end
 
 --- Targeted deposit: right-click while a live bank session shows a SPECIFIC
---- tab routes the item into that tab (first free slot, plain cursor moves)
+--- tab routes the item into that tab (an empty slot, plain cursor moves)
 --- instead of the server's default first-available placement. Falls back to
---- the stock UseContainerItem deposit when the tab is full or the item
---- isn't warband-allowed.
+--- the stock UseContainerItem deposit — which auto-stacks — when the tab
+--- already holds a mergeable partial stack of the same item, when the tab is
+--- full, or when the item isn't warband-allowed. (Targeting an empty slot
+--- unconditionally would skip the existing stack and burn a fresh slot.)
 local function DepositToSelectedTab(btn)
     local tabID, bankType = Bags.BankWindow.GetSelectedLiveTab()
     if not tabID then return end
@@ -116,14 +118,14 @@ local function DepositToSelectedTab(btn)
             return
         end
     end
-    local target = nil
+    -- Resolve the landing slot: nil = a same-item partial stack exists (or the
+    -- tab is full), so deposit natively and let the server merge into the
+    -- stack + handle overflow — exactly the stock bag→bank behavior.
     local size = C_Container.GetContainerNumSlots(tabID) or 0
-    for s = 1, size do
-        if not C_Container.GetContainerItemInfo(tabID, s) then
-            target = s
-            break
-        end
-    end
+    local maxStack = C_Item.GetItemMaxStackSizeByID(info.itemID)
+    local target = Bags.Transfers.ResolveDepositTargetSlot(size,
+        function(s) return C_Container.GetContainerItemInfo(tabID, s) end,
+        info.itemID, maxStack)
     if not target then
         C_Container.UseContainerItem(bagID, slot, nil, bankType)
         return
