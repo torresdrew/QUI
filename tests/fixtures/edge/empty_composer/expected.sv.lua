@@ -2424,6 +2424,7 @@ return {
           defaultHealthOpacity = 1,
           defaultOpacity = 1,
           defaultUseClassColor = true,
+          disableScrollingCombatText = false,
           fastAutoLoot = true,
           focusCastAlert = {
             anchorTo = "screen",

@@ -438,6 +438,7 @@ local PROFILE_THEME_GENERAL_KEYS = {
 local PROFILE_QOL_GENERAL_KEYS = {
     "uiScale",
     "allowReloadInCombat",
+    "disableScrollingCombatText",
     "showOptionTooltips",
     "autoInsertKey",
     "consumableMacros",
