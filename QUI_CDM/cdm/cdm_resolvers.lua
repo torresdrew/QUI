@@ -2088,16 +2088,25 @@ local function DeriveMirrorPayloadMode(m, sid, suppressAura)
     -- curve in cdm_icon_renderer.lua, so a cosmetic isOnGCD wobble here only
     -- affects which swipe shows, never the dark/bright state the user sees.
     local baseOnGCD = cdInfo and cdInfo.isOnGCD
-    local overrideMode, overrideAura, overrideCooldownSid =
-        ResolveActiveOverrideChildCooldownLane(m, sid)
-    if overrideMode then
-        return overrideMode, overrideAura, overrideCooldownSid
-    end
     -- A real (non-GCD) cooldown on the base always wins -- EXCEPT when this is a
     -- transient proc override that is available while its base recharges, where
     -- the "cooldown" we just read is the base's shared slot and Blizzard shows
     -- the proc ready. Show ready (inactive) so the proc surfaces + glows.
     if cdActive and baseOnGCD ~= true then
+        -- An active override child whose OWN spell owns a cooldown lane (Shadow
+        -- Priest Void Volley over Voidform) must follow that lane, not the base's
+        -- major cooldown. Resolve it HERE -- gated on the base carrying a real
+        -- (non-GCD) cooldown, the only state where the base would otherwise paint
+        -- over the override. Override children WITHOUT a real base cooldown
+        -- (Brewmaster Empty Barrel brew procs: free-cast override, base idle or
+        -- on a charge recharge) must fall through to the override / charge-
+        -- recharge / gcd / casting chain below that surfaced them before 4.0.4 --
+        -- NOT collapse to inactive and drop off the bar.
+        local overrideMode, overrideAura, overrideCooldownSid =
+            ResolveActiveOverrideChildCooldownLane(m, sid)
+        if overrideMode then
+            return overrideMode, overrideAura, overrideCooldownSid
+        end
         if IsTransientProcOverrideReady(m, sid) then
             return "inactive", nil, nil
         end
