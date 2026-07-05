@@ -39,6 +39,7 @@ qol\reticle.lua
 qol\skyriding.lua
 qol\xptracker.lua
 qol\focuscastalert.lua
+qol\merchant_grid.lua
 # == modules/dungeon/dungeon.xml ==
 dungeon\keystone.lua
 dungeon\mplus_timer.lua
