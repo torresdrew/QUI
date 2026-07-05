@@ -123,3 +123,25 @@ ApplyOverlayBar(obar, { outline = false }, newHealth(10), false,
 assert(obar._quiOutline.top.shown == false, "outline hidden when disabled")
 
 print("PASS: groupframes_overlay_bar outline")
+
+-- Detached mode: SetSize + SetPoint(anchor, frame, anchor, offX, offY); orientation from h>w.
+local dbar = newBar()
+if not dbar.SetSize then function dbar:SetSize(w, h) self.size = { w, h } end end
+local frameSentinel = { __isFrame = true }
+ApplyOverlayBar(dbar, { mode = "detached", width = 50, height = 6, anchor = "TOP", offsetX = 3, offsetY = -4 },
+    newHealth(10), false, { fillOrigin = true, drawOrderDefault = 2, frame = frameSentinel })
+assert(dbar.size and dbar.size[1] == 50 and dbar.size[2] == 6, "detached: SetSize(width,height)")
+local dp
+for _, p in ipairs(dbar.points) do if p[2] == frameSentinel then dp = p end end
+assert(dp, "detached: SetPoint anchored to opts.frame")
+assert(dp[1] == "TOP" and dp[3] == "TOP" and dp[4] == 3 and dp[5] == -4, "detached: anchor + offsets")
+assert(dbar.orient == "HORIZONTAL", "detached wide bar: horizontal (w>h)")
+
+-- Detached TALL bar (h>w) -> vertical orientation
+local tbar = newBar()
+if not tbar.SetSize then function tbar:SetSize(w, h) self.size = { w, h } end end
+ApplyOverlayBar(tbar, { mode = "detached", width = 6, height = 40, anchor = "LEFT" },
+    newHealth(10), false, { fillOrigin = true, drawOrderDefault = 2, frame = frameSentinel })
+assert(tbar.orient == "VERTICAL", "detached tall bar: vertical (h>w)")
+
+print("PASS: groupframes_overlay_bar detached")

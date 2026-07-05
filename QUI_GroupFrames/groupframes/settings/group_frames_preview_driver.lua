@@ -688,8 +688,14 @@ local function ApplyHealthOverlays(f, member, absorbs, healAbsorbs, healPredicti
         elseif healPrediction.color then local c = healPrediction.color; r, g, b = c[1] or r, c[2] or g, c[3] or b end
         hp:SetColorTexture(r, g, b, tonumber(healPrediction.opacity) or 0.5)
         hp:ClearAllPoints()
-        hp:SetPoint("TOPLEFT", f.healthBar, "TOPLEFT", 0, 0)
-        hp:SetPoint("BOTTOMRIGHT", f.healthBar, "BOTTOMLEFT", (f.healthBar:GetWidth() or 100) * 0.2, 0)
+        if healPrediction.mode == "detached" then
+            hp:SetSize(tonumber(healPrediction.width) or 60, tonumber(healPrediction.height) or 8)
+            local a = healPrediction.anchor or "BOTTOM"
+            hp:SetPoint(a, f, a, tonumber(healPrediction.offsetX) or 0, tonumber(healPrediction.offsetY) or 0)
+        else
+            hp:SetPoint("TOPLEFT", f.healthBar, "TOPLEFT", 0, 0)
+            hp:SetPoint("BOTTOMRIGHT", f.healthBar, "BOTTOMLEFT", (f.healthBar:GetWidth() or 100) * 0.2, 0)
+        end
         hp:Show()
     else
         hp:Hide()
@@ -702,8 +708,14 @@ local function ApplyHealthOverlays(f, member, absorbs, healAbsorbs, healPredicti
         elseif absorbs.color then local c = absorbs.color; r, g, b = c[1] or r, c[2] or g, c[3] or b end
         ab:SetColorTexture(r, g, b, tonumber(absorbs.opacity) or 0.3)
         ab:ClearAllPoints()
-        ab:SetPoint("TOPRIGHT", f.healthBar, "TOPRIGHT", 0, 0)
-        ab:SetPoint("BOTTOMLEFT", f.healthBar, "BOTTOMRIGHT", -(f.healthBar:GetWidth() or 100) * 0.25, 0)
+        if absorbs.mode == "detached" then
+            ab:SetSize(tonumber(absorbs.width) or 60, tonumber(absorbs.height) or 8)
+            local a = absorbs.anchor or "BOTTOM"
+            ab:SetPoint(a, f, a, tonumber(absorbs.offsetX) or 0, tonumber(absorbs.offsetY) or 0)
+        else
+            ab:SetPoint("TOPRIGHT", f.healthBar, "TOPRIGHT", 0, 0)
+            ab:SetPoint("BOTTOMLEFT", f.healthBar, "BOTTOMRIGHT", -(f.healthBar:GetWidth() or 100) * 0.25, 0)
+        end
         ab:Show()
     else
         ab:Hide()
@@ -715,8 +727,14 @@ local function ApplyHealthOverlays(f, member, absorbs, healAbsorbs, healPredicti
         if healAbsorbs.color then local c = healAbsorbs.color; r, g, b = c[1] or r, c[2] or g, c[3] or b end
         ha:SetColorTexture(r, g, b, tonumber(healAbsorbs.opacity) or 0.6)
         ha:ClearAllPoints()
-        ha:SetPoint("TOPRIGHT", f.healthBar, "TOPRIGHT", 0, 0)
-        ha:SetPoint("BOTTOMLEFT", f.healthBar, "BOTTOMRIGHT", -(f.healthBar:GetWidth() or 100) * 0.15, 0)
+        if healAbsorbs.mode == "detached" then
+            ha:SetSize(tonumber(healAbsorbs.width) or 60, tonumber(healAbsorbs.height) or 8)
+            local a = healAbsorbs.anchor or "BOTTOM"
+            ha:SetPoint(a, f, a, tonumber(healAbsorbs.offsetX) or 0, tonumber(healAbsorbs.offsetY) or 0)
+        else
+            ha:SetPoint("TOPRIGHT", f.healthBar, "TOPRIGHT", 0, 0)
+            ha:SetPoint("BOTTOMLEFT", f.healthBar, "BOTTOMRIGHT", -(f.healthBar:GetWidth() or 100) * 0.15, 0)
+        end
         ha:Show()
     else
         ha:Hide()

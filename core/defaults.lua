@@ -3077,18 +3077,21 @@ local defaults = {
                     drawOrder = 2, fillFrom = "reverse",
                     spark = false, sparkColor = { 1, 1, 1 },
                     outline = false, outlineColor = { 0, 0, 0, 1 },
+                    mode = "overlay", width = 60, height = 8, anchor = "BOTTOM", offsetX = 0, offsetY = 0,
                 },
                 healAbsorbs = {
                     enabled = true, texture = "Quazii v5", color = { 0.5, 0.1, 0.1 }, opacity = 0.6,
                     drawOrder = 3, fillFrom = "reverse",
                     spark = false, sparkColor = { 1, 1, 1 },
                     outline = false, outlineColor = { 0, 0, 0, 1 },
+                    mode = "overlay", width = 60, height = 8, anchor = "BOTTOM", offsetX = 0, offsetY = 0,
                 },
                 healPrediction = {
                     enabled = true, texture = "Quazii v5", color = { 0.2, 1, 0.2 }, opacity = 0.5,
                     drawOrder = 1,
                     spark = false, sparkColor = { 1, 1, 1 },
                     outline = false, outlineColor = { 0, 0, 0, 1 },
+                    mode = "overlay", width = 60, height = 8, anchor = "BOTTOM", offsetX = 0, offsetY = 0,
                 },
                 indicators = {
                     showRoleIcon = true, roleIconSize = 12, roleIconAnchor = "TOPLEFT", roleIconOffsetX = 2, roleIconOffsetY = -2,
@@ -3253,18 +3256,21 @@ local defaults = {
                     drawOrder = 2, fillFrom = "reverse",
                     spark = false, sparkColor = { 1, 1, 1 },
                     outline = false, outlineColor = { 0, 0, 0, 1 },
+                    mode = "overlay", width = 60, height = 8, anchor = "BOTTOM", offsetX = 0, offsetY = 0,
                 },
                 healAbsorbs = {
                     enabled = true, texture = "Quazii v5", color = { 0.5, 0.1, 0.1 }, opacity = 0.6,
                     drawOrder = 3, fillFrom = "reverse",
                     spark = false, sparkColor = { 1, 1, 1 },
                     outline = false, outlineColor = { 0, 0, 0, 1 },
+                    mode = "overlay", width = 60, height = 8, anchor = "BOTTOM", offsetX = 0, offsetY = 0,
                 },
                 healPrediction = {
                     enabled = true, texture = "Quazii v5", color = { 0.2, 1, 0.2 }, opacity = 0.5,
                     drawOrder = 1,
                     spark = false, sparkColor = { 1, 1, 1 },
                     outline = false, outlineColor = { 0, 0, 0, 1 },
+                    mode = "overlay", width = 60, height = 8, anchor = "BOTTOM", offsetX = 0, offsetY = 0,
                 },
                 indicators = {
                     showRoleIcon = true, roleIconSize = 12, roleIconAnchor = "TOPLEFT", roleIconOffsetX = 2, roleIconOffsetY = -2,
