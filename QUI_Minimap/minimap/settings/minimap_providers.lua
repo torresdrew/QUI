@@ -246,6 +246,53 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         s6.AddRow(row(s6.frame, ns.L["Y Offset"], gvYW))
         layout.closeSection(s6)
 
+        -- TRACKING BUTTON
+        if not mm.trackingConfig then
+            mm.trackingConfig = { anchor = "TOPLEFT", offsetX = 0, offsetY = 0 }
+        end
+        if not mm.trackingConfig.anchor then mm.trackingConfig.anchor = "TOPLEFT" end
+        if mm.trackingConfig.offsetX == nil then mm.trackingConfig.offsetX = 0 end
+        if mm.trackingConfig.offsetY == nil then mm.trackingConfig.offsetY = 0 end
+        local tracking = mm.trackingConfig
+
+        layout.headerAt(ns.L["Tracking Button"])
+        local sTrack = layout.sectionAt()
+        local tkAnchorW = GUI:CreateFormDropdown(sTrack.frame, nil, vaultAnchorOptions, "anchor", tracking, Refresh,
+            { description = ns.L["Which point of the minimap the tracking/eye button anchors to. Top Left keeps the default placement next to the difficulty indicator."] })
+        local tkXW = GUI:CreateFormSlider(sTrack.frame, nil, -150, 150, 1, "offsetX", tracking, Refresh,
+            { description = ns.L["Horizontal pixel offset for the tracking button from its anchor."] })
+        sTrack.AddRow(row(sTrack.frame, ns.L["Anchor"], tkAnchorW), row(sTrack.frame, ns.L["Horizontal Offset"], tkXW))
+
+        local tkYW = GUI:CreateFormSlider(sTrack.frame, nil, -150, 150, 1, "offsetY", tracking, Refresh,
+            { description = ns.L["Vertical pixel offset for the tracking button from its anchor."] })
+        sTrack.AddRow(row(sTrack.frame, ns.L["Vertical Offset"], tkYW))
+        layout.closeSection(sTrack)
+
+        -- MAIL BUTTON (position of QUI's new-mail icon; seeded lazily like tracking)
+        if not mm.mailConfig then
+            mm.mailConfig = { anchor = "BOTTOMLEFT", offsetX = 2, offsetY = 2, scale = 1 }
+        end
+        if not mm.mailConfig.anchor then mm.mailConfig.anchor = "BOTTOMLEFT" end
+        if mm.mailConfig.offsetX == nil then mm.mailConfig.offsetX = 2 end
+        if mm.mailConfig.offsetY == nil then mm.mailConfig.offsetY = 2 end
+        if mm.mailConfig.scale == nil then mm.mailConfig.scale = 1 end
+        local mailCfg = mm.mailConfig
+
+        layout.headerAt(ns.L["Mail Button"])
+        local sMail = layout.sectionAt()
+        local mailAnchorW = GUI:CreateFormDropdown(sMail.frame, nil, vaultAnchorOptions, "anchor", mailCfg, Refresh,
+            { description = ns.L["Which point of the minimap the new-mail icon anchors to."] })
+        local mailScaleW = GUI:CreateFormSlider(sMail.frame, nil, 0.5, 2.0, 0.1, "scale", mailCfg, Refresh,
+            { description = ns.L["Scale multiplier applied to the new-mail icon."] })
+        sMail.AddRow(row(sMail.frame, ns.L["Anchor"], mailAnchorW), row(sMail.frame, ns.L["Icon Scale"], mailScaleW))
+
+        local mailXW = GUI:CreateFormSlider(sMail.frame, nil, -150, 150, 1, "offsetX", mailCfg, Refresh,
+            { description = ns.L["Horizontal pixel offset for the new-mail icon from its anchor."] })
+        local mailYW = GUI:CreateFormSlider(sMail.frame, nil, -150, 150, 1, "offsetY", mailCfg, Refresh,
+            { description = ns.L["Vertical pixel offset for the new-mail icon from its anchor."] })
+        sMail.AddRow(row(sMail.frame, ns.L["X Offset"], mailXW), row(sMail.frame, ns.L["Y Offset"], mailYW))
+        layout.closeSection(sMail)
+
         -- BUTTON DRAWER
         if not mm.buttonDrawer then
             mm.buttonDrawer = {
@@ -340,7 +387,9 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
 
         local bdSpaceW = GUI:CreateFormSlider(s7.frame, nil, 0, 20, 1, "buttonSpacing", drawer, Refresh,
             { description = ns.L["Pixel gap between buttons inside the drawer."] })
-        s7.AddRow(row(s7.frame, ns.L["Button Spacing"], bdSpaceW))
+        local bdTipW = GUI:CreateFormCheckbox(s7.frame, nil, "showTooltip", drawer, Refresh,
+            { description = ns.L["Show the info tooltip when you hover the drawer toggle button."] })
+        s7.AddRow(row(s7.frame, ns.L["Button Spacing"], bdSpaceW), row(s7.frame, ns.L["Show Drawer Tooltip"], bdTipW))
         layout.closeSection(s7)
 
         -- DRAWER APPEARANCE

@@ -145,6 +145,11 @@ local function SkinFlightMap()
         if frame.BorderFrame.InsetBorderTop then frame.BorderFrame.InsetBorderTop:Hide() end
     end
 
+    -- BorderFrame is frameStrata="HIGH" setAllPoints="true", so the skinned
+    -- full-frame backdrop sits above the map canvas. Raise ScrollContainer /
+    -- overlays to HIGH (same as WorldMap) so the taxi map renders above it.
+    RaiseMapCanvas(frame)
+
     SkinBase.MarkSkinned(frame)
 end
 
@@ -154,6 +159,7 @@ local function RefreshFlightMap()
     if frame.BorderFrame then
         ApplyBorderBackdrop(SkinBase.GetBackdrop(frame.BorderFrame))
     end
+    RaiseMapCanvas(frame)
 end
 if ns.Registry then
     ns.Registry:Register("skinFlightMap", {

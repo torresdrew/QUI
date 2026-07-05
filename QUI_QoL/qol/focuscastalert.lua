@@ -19,6 +19,8 @@ local DEFAULT_SETTINGS = {
     fontOutline = "OUTLINE",
     textColor = {1, 0.2, 0.2, 1},
     useClassColor = false,
+    soundEnabled = false,
+    sound = "None", -- LSM sound key; "None" = silent
 }
 
 local FALLBACK_FONT_PATH = "Fonts\\FRIZQT__.TTF"
@@ -243,6 +245,32 @@ local function IsEventUnitFocus(event, unit)
     return unit == "focus"
 end
 
+-- Play the configured interrupt sound once per cast. Plain true still means the
+-- cast is known non-interruptible; plain false and secret values are treated as
+-- alert candidates because the visual path resolves secret interruptibility via
+-- SetAlphaFromBoolean outside Lua. Best-effort: a restricted non-interruptible
+-- cast can still produce sound, matching the option copy's conservative promise.
+local function MaybePlayInterruptSound()
+    if state.soundPlayed then return end
+    local settings = GetSettings()
+    if not settings or not settings.enabled or not settings.soundEnabled then return end
+    local soundName = settings.sound
+    if not soundName or soundName == "None" or soundName == "" then return end
+
+    local raw = state.rawNotInterruptible
+    local rawIsSecret = IsSecretValue(raw)
+    if raw == nil then return end
+    if not rawIsSecret and raw ~= false then return end
+
+    if not IsInterruptReady() then return end
+    local LSM = ns.LSM
+    local path = LSM and LSM:Fetch("sound", soundName)
+    if path and type(path) == "string" then
+        PlaySoundFile(path, "Master")
+        state.soundPlayed = true
+    end
+end
+
 local function HandleEventState(event, unit, spellID)
     if not IsEventUnitFocus(event, unit) then
         return
@@ -250,12 +278,14 @@ local function HandleEventState(event, unit, spellID)
 
     if event == "PLAYER_FOCUS_CHANGED" then
         state.rawNotInterruptible = nil
+        state.soundPlayed = nil
         CaptureNotInterruptibleFlag()
         return
     end
 
     if event == "UNIT_SPELLCAST_START" or event == "UNIT_SPELLCAST_CHANNEL_START" then
         state.rawNotInterruptible = nil
+        state.soundPlayed = nil
         CaptureNotInterruptibleFlag()
         return
     end
@@ -267,6 +297,7 @@ local function HandleEventState(event, unit, spellID)
 
     if event == "UNIT_SPELLCAST_INTERRUPTIBLE" then
         state.rawNotInterruptible = false
+        MaybePlayInterruptSound()
         return
     end
 
@@ -278,6 +309,7 @@ local function HandleEventState(event, unit, spellID)
     if event == "UNIT_SPELLCAST_STOP" or event == "UNIT_SPELLCAST_CHANNEL_STOP"
         or event == "UNIT_SPELLCAST_INTERRUPTED" or event == "UNIT_SPELLCAST_FAILED" then
         state.rawNotInterruptible = nil
+        state.soundPlayed = nil
         return
     end
 
@@ -511,6 +543,9 @@ local function UpdateAlert()
     ApplyAlertText(settings.text)
     state.frame:Show()
     ApplyInterruptAlpha()
+    -- Drive the audio cue off the same interruptibility signal that gates the
+    -- visual alpha. Self-gated + latched, so polling it each ticker tick is safe.
+    MaybePlayInterruptSound()
 end
 
 -- Start or stop the cooldown poll ticker. The ticker only needs to run

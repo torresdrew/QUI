@@ -63,6 +63,51 @@ local function GetFontList()
     return list
 end
 
+-- ===========================================================================
+-- Theme presets — one-click Dark / Light shortcut for the Colors section.
+-- A preset is a bundle of the same appearance keys the manual pickers write;
+-- selecting one stamps the bundle into the GLOBAL appearance table and repaints
+-- live. Nothing reads these back at render time, so there is no "preset vs
+-- picker wins" resolution layer — the pickers simply show the stamped values.
+-- ===========================================================================
+local THEME_PRESETS = {
+    dark = {
+        colors = {
+            bg       = { 0.05, 0.05, 0.06, 1 },
+            rowName  = { 0.92, 0.92, 0.92, 1 },
+            rowValue = { 0.75, 0.75, 0.78, 1 },
+        },
+        windowBgAlpha     = 0.90,
+        showRowBackground = true,
+    },
+    light = {
+        colors = {
+            bg       = { 0.90, 0.90, 0.92, 1 },
+            rowName  = { 0.08, 0.08, 0.10, 1 },
+            rowValue = { 0.25, 0.25, 0.28, 1 },
+        },
+        windowBgAlpha     = 0.95,
+        showRowBackground = false,
+    },
+}
+
+-- Stamp a preset bundle into `app` (the global appearance table). Color arrays
+-- are COPIED, never shared by reference, so a later manual picker edit mutates
+-- the profile's copy and not the THEME_PRESETS constant.
+local function ApplyThemePreset(app, name)
+    local preset = THEME_PRESETS[name]
+    if not (preset and app) then return end
+    app.colors = app.colors or {}
+    for key, rgba in pairs(preset.colors) do
+        local c = {}
+        for i = 1, #rgba do c[i] = rgba[i] end
+        app.colors[key] = c
+    end
+    app.windowBgAlpha     = preset.windowBgAlpha
+    app.showRowBackground = preset.showRowBackground
+    app.themePreset       = name
+end
+
 local function DB()
     local q = _G.QUI
     if q and q.db and q.db.profile and q.db.profile.damageMeter then
@@ -460,8 +505,13 @@ BuildNativeDamageMeterTab = function(tabContent)
         return GUI:CreateFormSlider(p, nil, 0.1, 1.0, 0.05, "barFillAlpha", bt, ApplyNative,
             { description = ns.L["Opacity of the bar fill (0.1-1.0)."] })
     end)
+    local winBgW = override(sBars.frame, "windowBgAlpha", function(p, bt)
+        return GUI:CreateFormSlider(p, nil, 0, 1, 0.05, "windowBgAlpha", bt, ApplyNative,
+            { description = ns.L["Opacity of the window background, independent of the bars (0-1)."] })
+    end)
     pending = placeOverrideRow(sBars, ns.L["Bar Texture"], texW, pending)
     pending = placeOverrideRow(sBars, ns.L["Bar Fill Alpha"], fillW, pending)
+    pending = placeOverrideRow(sBars, ns.L["Window Background Opacity"], winBgW, pending)
 
     local rowBgW = override(sBars.frame, "showRowBackground", function(p, bt)
         return GUI:CreateFormCheckbox(p, nil, "showRowBackground", bt, ApplyNative,
@@ -471,12 +521,17 @@ BuildNativeDamageMeterTab = function(tabContent)
         return GUI:CreateFormCheckbox(p, nil, "useClassColor", bt, ApplyNative,
             { description = ns.L["Color bars by class instead of accent/custom."] })
     end)
+    local classNamesW = override(sBars.frame, "useClassColorNames", function(p, bt)
+        return GUI:CreateFormCheckbox(p, nil, "useClassColorNames", bt, ApplyNative,
+            { description = ns.L["Color each row's player name by class instead of the Row Name color."] })
+    end)
     local accentW = override(sBars.frame, "barColorAccent", function(p, bt)
         return GUI:CreateFormCheckbox(p, nil, "barColorAccent", bt, ApplyNative,
             { description = ns.L["When class color is off, use QUI accent color. Otherwise the custom Bar Color below is used."] })
     end)
     pending = placeOverrideRow(sBars, ns.L["Show Row Background"], rowBgW, pending)
     pending = placeOverrideRow(sBars, ns.L["Use Class Color"], classW, pending)
+    pending = placeOverrideRow(sBars, ns.L["Class Color Names"], classNamesW, pending)
     pending = placeOverrideRow(sBars, ns.L["Use Accent (class off)"], accentW, pending)
 
     local colorW = override(sBars.frame, "barColor", function(p, bt)
@@ -558,6 +613,25 @@ BuildNativeDamageMeterTab = function(tabContent)
     ---------------------------------------------------------------------------
     L.headerAt(ns.L["Appearance: Colors"])
     local sCol = L.sectionAt()
+
+    -- One-click theme preset (Global mode only). Stamps a cohesive Dark/Light
+    -- color bundle into `app`, then repaints live. Per-window mode omits this —
+    -- those users keep tuning individual color overrides below.
+    if editingWindowID == 0 then
+        local presetOptions = {
+            { value = "dark",  text = ns.L["Dark"]  },
+            { value = "light", text = ns.L["Light"] },
+        }
+        local presetState = { preset = app.themePreset }
+        local presetW = GUI:CreateFormDropdown(sCol.frame, nil, presetOptions, "preset", presetState,
+            function()
+                ApplyThemePreset(app, presetState.preset)
+                ApplyNative()
+                RebuildPage()
+            end,
+            { description = ns.L["One-click Dark or Light color theme. Overwrites the Window Background, Row Name, and Row Value colors below."] })
+        sCol.AddRow(row(sCol.frame, ns.L["Theme Preset"], presetW))
+    end
 
     local function nestedColor(parent, leafKey, desc)
         return BuildNestedOverrideWidget(parent, app, "colors", leafKey, ApplyNative,

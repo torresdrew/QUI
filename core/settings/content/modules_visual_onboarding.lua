@@ -216,6 +216,11 @@ local VISUAL_MODULES = {
         combatLocked = true,
     },
     {
+        key = "lustTimer", group = ns.L["QoL"], label = ns.L["Lust Timer"],
+        caption = ns.L["Bar + countdown for an active Bloodlust/Heroism-family buff on you."],
+        combatLocked = true,
+    },
+    {
         key = "brezCounter", group = ns.L["Instance"], label = ns.L["Brez Counter"],
         caption = ns.L["Shows remaining battle-resurrection charges for the group."],
         combatLocked = true,
@@ -324,6 +329,12 @@ local VISUAL_MODULES = {
     {
         key = "totemBar", group = ns.L["Action Bars"], label = ns.L["Totem Bar"],
         caption = ns.L["Shaman totem call buttons and active totem display."],
+        combatLocked = true,
+        hidden = HiddenFromFeatureToggles,
+    },
+    {
+        key = "raidMarkersBar", group = ns.L["Action Bars"], label = ns.L["Raid Markers Bar"],
+        caption = ns.L["Buttons that place raid target markers on your target."],
         combatLocked = true,
         hidden = HiddenFromFeatureToggles,
     },

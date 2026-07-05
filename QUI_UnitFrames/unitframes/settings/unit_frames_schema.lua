@@ -1443,6 +1443,11 @@ local function RenderBarsHealthColorsSection(sectionHost, ctx)
         )
     end
 
+    local bgClassCheckbox = gui:CreateFormCheckbox(card.frame, nil, "useClassColorBg", unit.unitDB, RefreshUnitFrames, {
+        description = ns.L["Tint the background behind the health bar with the unit's class color (players only). Keeps the Background Opacity."],
+    })
+    card.AddRow(optionsAPI.BuildSettingRow(card.frame, ns.L["Class Color Background"], bgClassCheckbox))
+
     builder.CloseCard(card)
     return builder.Height()
 end
@@ -2396,7 +2401,7 @@ local function RenderTextTargetOfTargetSection(sectionHost, ctx)
     local optionsAPI = GetOptionsAPI()
     local unitKey = ctx and ctx.options and ctx.options.unitKey or nil
     local unit = ResolveUnitDB(unitKey)
-    if not gui or not optionsAPI or not unit or unitKey ~= "target" then
+    if not gui or not optionsAPI or not unit or (unitKey ~= "target" and unitKey ~= "boss") then
         return nil
     end
 
@@ -2578,7 +2583,7 @@ local function RenderTextPowerSection(sectionHost, ctx)
     local anchorDropdown = gui:CreateFormDropdown(card.frame, nil, optionsAPI.NINE_POINT_ANCHOR_OPTIONS, "powerTextAnchor", unit.unitDB, RefreshUnitFrames, {
         description = ns.L["Where on the frame the power text is anchored. X/Y Offset below nudges it from this anchor point."],
     })
-    local xOffsetSlider = gui:CreateFormSlider(card.frame, nil, -100, 100, 1, "powerTextOffsetX", unit.unitDB, RefreshUnitFrames, { deferOnDrag = true }, {
+    local xOffsetSlider = gui:CreateFormSlider(card.frame, nil, -500, 500, 1, "powerTextOffsetX", unit.unitDB, RefreshUnitFrames, { deferOnDrag = true }, {
         description = ns.L["Horizontal pixel offset for the power text from its anchor. Positive moves right, negative moves left."],
     })
     card.AddRow(
@@ -2935,7 +2940,7 @@ local function BuildTextTabFeature(unitKey)
     end
 
     local sections = { "name", "level" }
-    if unitKey == "target" then
+    if unitKey == "target" or unitKey == "boss" then
         sections[#sections + 1] = "targetOfTarget"
     end
     sections[#sections + 1] = "health"
@@ -3283,7 +3288,7 @@ local function RenderIndicatorsCombatSection(sectionHost, ctx)
     local optionsAPI = GetOptionsAPI()
     local unitKey = ctx and ctx.options and ctx.options.unitKey or nil
     local unit = ResolveUnitDB(unitKey)
-    if not gui or not optionsAPI or not unit or unitKey ~= "player" then
+    if not gui or not optionsAPI or not unit or (unitKey ~= "player" and unitKey ~= "target") then
         return nil
     end
 
@@ -3304,9 +3309,9 @@ local function RenderIndicatorsCombatSection(sectionHost, ctx)
         y = ns.L["Combat Y Offset"],
         sizeMin = 8,
         sizeMax = 32,
-        descEnable = ns.L["Show the combat icon on the player frame while you're in combat."],
+        descEnable = ns.L["Show the combat icon on this frame while the unit is in combat."],
         descSize = ns.L["Pixel size of the combat icon."],
-        descAnchor = ns.L["Where on the player frame the combat icon is anchored."],
+        descAnchor = ns.L["Where on the frame the combat icon is anchored."],
         descX = ns.L["Horizontal pixel offset for the combat icon from its anchor."],
         descY = ns.L["Vertical pixel offset for the combat icon from its anchor."],
     }, "offsetX", "offsetY")

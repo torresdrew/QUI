@@ -1365,10 +1365,11 @@ local function UpdateIndicators(frame)
         end
     end
 
-    -- Combat indicator
+    -- Combat indicator (player or target; UnitAffectingCombat returns a plain
+    -- bool so the target's combat state is safe to test directly)
     if frame.combatIndicator then
         local combat = indSettings.combat
-        if combat and combat.enabled and UnitAffectingCombat("player") then
+        if combat and combat.enabled and UnitAffectingCombat(frame.unit or "player") then
             frame.combatIndicator:Show()
         else
             frame.combatIndicator:Hide()
@@ -1632,9 +1633,14 @@ local function UpdateName(frame)
         name = TruncateName(name, maxLen)
     end
 
-    -- Inline Target of Target for target frame only
-    if frame.unitKey == "target" and settings.showInlineToT then
-        local totUnit = "targettarget"
+    -- Inline Target of Target — target frame + boss frames (the boss's own target).
+    -- Boss-ToT refreshes on the boss frame's existing UpdateFrame cadence (health
+    -- ticks etc.), so it stays current in combat without dedicated UNIT_TARGET
+    -- wiring. Names/colors are secret-safe (GetUnitClassColor returns plain numbers,
+    -- TruncateName C-side-formats secret names, UnitName feeds SetText which accepts
+    -- secrets) so an ally boss-target in restricted combat never errors.
+    if (frame.unitKey == "target" or frame.unitKey == "boss") and settings.showInlineToT then
+        local totUnit = (frame.unitKey == "boss") and (frame.unit .. "target") or "targettarget"
         if UnitExists(totUnit) then
             local totName = UnitName(totUnit) or ""
             local totCharLimit = settings.totNameCharLimit
@@ -1790,7 +1796,7 @@ QUI_UF._GetUnitSettings = GetUnitSettings
 QUI_UF._GetGeneralSettings = GetGeneralSettings
 QUI_UF._UpdateFrame = UpdateFrame
 
-local UpdateBossRangeAlpha
+local UpdateBossRangeAlpha, SeedBossFrameRangeAlpha
 
 ---------------------------------------------------------------------------
 -- CREATE: Boss Frame (special handling for boss1-boss5)
@@ -1847,7 +1853,7 @@ local function CreateBossFrame(unit, frameKey, bossIndex)
         local bossKey = "boss" .. bossIndex
         if QUI_UF.previewMode[bossKey] then return end
         UpdateFrame(self)
-        UpdateBossRangeAlpha()
+        SeedBossFrameRangeAlpha(self)
     end)
 
     -- Background
@@ -2120,6 +2126,11 @@ local function CreateBossFrame(unit, frameKey, bossIndex)
             if eventUnit == self.unit then
                 UpdateLevelText(self)
             end
+        elseif event == "UNIT_TARGET" then
+            local eventUnit = ...
+            if eventUnit == self.unit then
+                UpdateName(self)
+            end
         elseif event == "RAID_TARGET_UPDATE" then
             UpdateTargetMarker(self)
         elseif event == "UNIT_CLASSIFICATION_CHANGED" then
@@ -2140,6 +2151,7 @@ local function CreateBossFrame(unit, frameKey, bossIndex)
     frame:RegisterUnitEvent("UNIT_MAXPOWER", unit)
     frame:RegisterUnitEvent("UNIT_NAME_UPDATE", unit)
     frame:RegisterUnitEvent("UNIT_LEVEL", unit)
+    frame:RegisterUnitEvent("UNIT_TARGET", unit)
     frame:RegisterEvent("RAID_TARGET_UPDATE")  -- Target marker (skull, cross, etc.)
 
     -- Classification icon events (boss frames) - only register if feature enabled
@@ -2223,129 +2235,16 @@ end
 ---------------------------------------------------------------------------
 -- Boss Range Alpha
 ---------------------------------------------------------------------------
-local BOSS_RANGE_CHECK_INTERVAL = 0.2
-local BOSS_RANGE_CHANGE_CONFIRMATIONS = 2
-
-local BOSS_RANGE_SPELLS = {
-    specFriendly = {
-        [102] = 8936, [103] = 8936, [104] = 8936, [105] = 774, -- Druid
-        [1467] = 360995, [1468] = 360995, [1473] = 360995,    -- Evoker
-        [62] = 1459, [63] = 1459, [64] = 1459,                -- Mage
-        [268] = 116670, [269] = 116670, [270] = 116670,       -- Monk
-        [65] = 19750, [66] = 19750, [70] = 19750,             -- Paladin
-        [256] = 17, [257] = 2061, [258] = 17,                 -- Priest
-        [259] = 57934, [260] = 57934, [261] = 57934,          -- Rogue
-        [262] = 8004, [263] = 8004, [264] = 8004,             -- Shaman
-        [265] = 5697, [266] = 5697, [267] = 5697,             -- Warlock
-    },
-    specHostile = {
-        [250] = 47541, [251] = 47541, [252] = 47541,          -- Death Knight: Death Coil
-        [577] = 185123, [581] = 185123,                       -- Demon Hunter: Throw Glaive
-        [102] = 8921, [103] = 8921, [104] = 8921, [105] = 8921, -- Druid: Moonfire
-        [1467] = 361469, [1468] = 361469, [1473] = 361469,    -- Evoker: Living Flame
-        [253] = 193455, [254] = 19434, [255] = 259491,        -- Hunter
-        [62] = 30451, [63] = 133, [64] = 116,                 -- Mage
-        [268] = 115546, [269] = 115546, [270] = 115546,       -- Monk: Provoke
-        [65] = 62124, [66] = 62124, [70] = 62124,             -- Paladin: Hand of Reckoning
-        [256] = 585, [257] = 585, [258] = 585,                -- Priest: Smite
-        [259] = 36554, [260] = 185763, [261] = 36554,         -- Rogue
-        [262] = 188196, [263] = 188196, [264] = 188196,       -- Shaman: Lightning Bolt
-        [265] = 686, [266] = 686, [267] = 29722,              -- Warlock
-        [71] = 355, [72] = 355, [73] = 355,                   -- Warrior: Taunt
-    },
-    classFriendly = {
-        PRIEST = { 2061, 17 },
-        PALADIN = { 19750 },
-        DRUID = { 8936, 774 },
-        SHAMAN = { 8004 },
-        MONK = { 116670 },
-        EVOKER = { 361469, 360995 },
-        MAGE = { 1459 },
-        WARLOCK = { 5697 },
-        ROGUE = { 57934 },
-    },
-    classHostile = {
-        DEATHKNIGHT = 47541,
-        DEMONHUNTER = 185123,
-        DRUID = 8921,
-        EVOKER = 361469,
-        HUNTER = 75,
-        MAGE = 116,
-        MONK = 115546,
-        PALADIN = 62124,
-        PRIEST = 585,
-        ROGUE = 36554,
-        SHAMAN = 188196,
-        WARLOCK = 686,
-        WARRIOR = 355,
-    },
-}
-
+-- Event-driven range dimming. UNIT_IN_RANGE_UPDATE fires when the player
+-- crosses a range boundary to a given unit (hostile bosses included); its
+-- isInRange payload is a SECRET boolean in combat. It is never compared in Lua:
+-- it is handed straight to a secret-safe sink (SetAlpha fed by
+-- C_CurveUtil.EvaluateColorValueFromBoolean, both AllowedWhenTainted). Because
+-- the event is edge-triggered by the engine there is no polling ticker, and so
+-- no per-tick alpha churn / range flicker.
 local bossRange = {
-    playerClass = nil,
-    friendlySpell = nil,
-    hostileSpell = nil,
-    ticker = nil,
     eventFrame = nil,
-    cache = {},
-    pending = {},
-    pendingCount = {},
 }
-
-local function ClearBossRangeState(unit)
-    if unit then
-        bossRange.cache[unit] = nil
-        bossRange.pending[unit] = nil
-        bossRange.pendingCount[unit] = nil
-        return
-    end
-
-    for key in pairs(bossRange.cache) do bossRange.cache[key] = nil end
-    for key in pairs(bossRange.pending) do bossRange.pending[key] = nil end
-    for key in pairs(bossRange.pendingCount) do bossRange.pendingCount[key] = nil end
-end
-
-local function ResolveBossRangeSpell()
-    local previousFriendlySpell = bossRange.friendlySpell
-    local previousSpell = bossRange.hostileSpell
-    bossRange.playerClass = select(2, UnitClass("player"))
-    local resolvedFriendlySpell = nil
-    local resolvedSpell = nil
-
-    local specIndex = GetSpecialization and GetSpecialization()
-    local specID = specIndex and GetSpecializationInfo and GetSpecializationInfo(specIndex)
-
-    local friendlySpecSpell = specID and BOSS_RANGE_SPELLS.specFriendly[specID]
-    if friendlySpecSpell and IsPlayerSpell and IsPlayerSpell(friendlySpecSpell) then
-        resolvedFriendlySpell = friendlySpecSpell
-    else
-        local candidates = bossRange.playerClass and BOSS_RANGE_SPELLS.classFriendly[bossRange.playerClass]
-        if candidates and IsPlayerSpell then
-            for _, spellID in ipairs(candidates) do
-                if IsPlayerSpell(spellID) then
-                    resolvedFriendlySpell = spellID
-                    break
-                end
-            end
-        end
-    end
-
-    local specSpell = specID and BOSS_RANGE_SPELLS.specHostile[specID]
-    if specSpell and IsPlayerSpell and IsPlayerSpell(specSpell) then
-        resolvedSpell = specSpell
-    else
-        local classSpell = bossRange.playerClass and BOSS_RANGE_SPELLS.classHostile[bossRange.playerClass]
-        if classSpell and IsPlayerSpell and IsPlayerSpell(classSpell) then
-            resolvedSpell = classSpell
-        end
-    end
-
-    bossRange.friendlySpell = resolvedFriendlySpell
-    bossRange.hostileSpell = resolvedSpell
-    if previousFriendlySpell ~= bossRange.friendlySpell or previousSpell ~= bossRange.hostileSpell then
-        ClearBossRangeState()
-    end
-end
 
 local function GetBossRangeSettings()
     local settings = GetUnitSettings("boss")
@@ -2372,17 +2271,20 @@ end
 local function ApplyBossRangeAlpha(frame, inRange, outAlpha)
     if not frame then return end
 
-    if frame.SetAlphaFromBoolean then
+    -- inRange may be a SECRET boolean in combat. EvaluateColorValueFromBoolean
+    -- resolves it inside C and returns an alpha that SetAlpha accepts under
+    -- taint (Enum.SecretAspect.Alpha). SetAlphaFromBoolean is an equivalent
+    -- fallback when the curve helper is unavailable.
+    if C_CurveUtil and C_CurveUtil.EvaluateColorValueFromBoolean then
+        frame:SetAlpha(C_CurveUtil.EvaluateColorValueFromBoolean(inRange, 1, outAlpha))
+    elseif frame.SetAlphaFromBoolean then
         frame:SetAlphaFromBoolean(inRange, 1, outAlpha)
     else
-        frame:SetAlpha(inRange and 1 or outAlpha)
+        frame:SetAlpha(1)
     end
 end
 
 local function ResetBossRangeAlpha()
-    ClearBossRangeState()
-    if not ShouldApplyBossRangeAlpha() then return end
-
     for i = 1, 5 do
         local frame = QUI_UF.frames and QUI_UF.frames["boss" .. i]
         if frame then
@@ -2391,118 +2293,18 @@ local function ResetBossRangeAlpha()
     end
 end
 
-local function IsFriendlyBossUnit(unit)
-    if UnitCanAssist then
-        local canAssist = UnitCanAssist("player", unit)
-        if IsSecretValue(canAssist) then canAssist = false end
-        if canAssist then return true end
-    end
-
-    if UnitIsFriend then
-        local isFriend = UnitIsFriend("player", unit)
-        if IsSecretValue(isFriend) then isFriend = false end
-        if isFriend then return true end
-    end
-
-    return false
-end
-
-local function CheckBossUnitRange(unit)
-    if not unit or not UnitExists(unit) then return true end
-    local isDead = UnitIsDeadOrGhost(unit)
-    if IsSecretValue(isDead) then isDead = false end
-    if isDead then return true end
-
-    if UnitCanAttack("player", unit) then
-        if bossRange.hostileSpell and C_Spell and C_Spell.IsSpellInRange then
-            local inRange = C_Spell.IsSpellInRange(bossRange.hostileSpell, unit)
-            if IsSecretValue(inRange) then
-                return inRange
-            end
-            if inRange ~= nil then
-                return inRange
-            end
-        end
-
-        if not InCombatLockdown() and CheckInteractDistance then
-            local ok, inRange = pcall(CheckInteractDistance, unit, 4)
-            if ok and inRange ~= nil then
-                return inRange and true or false
-            end
-        end
-
-        return nil
-    end
-
-    if IsFriendlyBossUnit(unit) then
-        if bossRange.friendlySpell and C_Spell and C_Spell.IsSpellInRange then
-            local inRange = C_Spell.IsSpellInRange(bossRange.friendlySpell, unit)
-            if IsSecretValue(inRange) then
-                return inRange
-            end
-            if inRange ~= nil then
-                return inRange
-            end
-        end
-
-        return nil
-    end
-
-    if UnitInRange then
-        local inRange, checkedRange = UnitInRange(unit)
-        if IsSecretValue(inRange) then return inRange end
-        if IsSecretValue(checkedRange) then return nil end
-        if checkedRange == false then return nil end
-        if inRange ~= nil then return inRange end
-    end
-
-    return nil
-end
-
-local function ApplyStableBossRangeAlpha(frame, unit, inRange, outAlpha)
-    if not frame or not unit then return end
-
-    if IsSecretValue(inRange) then
-        ClearBossRangeState(unit)
-        ApplyBossRangeAlpha(frame, inRange, outAlpha)
+-- Seed a single boss frame when it spawns (OnShow). No synchronous hostile
+-- range query is reliable in combat, so the frame starts fully visible;
+-- UNIT_IN_RANGE_UPDATE dims it on the next range-boundary crossing.
+SeedBossFrameRangeAlpha = function(frame)
+    if not frame then return end
+    local range = GetBossRangeSettings()
+    if not range or range.enabled == false then
+        frame:SetAlpha(1)
         return
     end
-
-    if inRange == nil then
-        bossRange.pending[unit] = nil
-        bossRange.pendingCount[unit] = nil
-        return
-    end
-
-    local cached = bossRange.cache[unit]
-    if cached == nil then
-        bossRange.cache[unit] = inRange
-        bossRange.pending[unit] = nil
-        bossRange.pendingCount[unit] = nil
-        ApplyBossRangeAlpha(frame, inRange, outAlpha)
-        return
-    end
-
-    if cached == inRange then
-        bossRange.pending[unit] = nil
-        bossRange.pendingCount[unit] = nil
-        return
-    end
-
-    if bossRange.pending[unit] == inRange then
-        local count = (bossRange.pendingCount[unit] or 1) + 1
-        bossRange.pendingCount[unit] = count
-        if count >= BOSS_RANGE_CHANGE_CONFIRMATIONS then
-            bossRange.cache[unit] = inRange
-            bossRange.pending[unit] = nil
-            bossRange.pendingCount[unit] = nil
-            ApplyBossRangeAlpha(frame, inRange, outAlpha)
-        end
-        return
-    end
-
-    bossRange.pending[unit] = inRange
-    bossRange.pendingCount[unit] = 1
+    if not ShouldApplyBossRangeAlpha() then return end
+    frame:SetAlpha(1)
 end
 
 UpdateBossRangeAlpha = function()
@@ -2512,28 +2314,13 @@ UpdateBossRangeAlpha = function()
         return
     end
 
-    if not bossRange.hostileSpell and not bossRange.friendlySpell then
-        ResolveBossRangeSpell()
-    end
+    if not ShouldApplyBossRangeAlpha() then return end
 
-    if not ShouldApplyBossRangeAlpha() then
-        return
-    end
-
-    if not bossRange.hostileSpell and not bossRange.friendlySpell then
-        ResetBossRangeAlpha()
-        return
-    end
-
-    local outAlpha = range.outOfRangeAlpha or 0.4
+    -- Re-baseline every boss frame to full alpha; UNIT_IN_RANGE_UPDATE dims any
+    -- that are out of range on the next boundary crossing.
     for i = 1, 5 do
         local frame = QUI_UF.frames and QUI_UF.frames["boss" .. i]
-        if frame and frame.unit and UnitExists(frame.unit) then
-            ApplyStableBossRangeAlpha(frame, frame.unit, CheckBossUnitRange(frame.unit), outAlpha)
-        elseif frame then
-            if frame.unit then ClearBossRangeState(frame.unit) end
-            frame:SetAlpha(1)
-        end
+        if frame then frame:SetAlpha(1) end
     end
 end
 
@@ -2541,24 +2328,26 @@ local function EnsureBossRangeEventFrame()
     if bossRange.eventFrame then return end
 
     local eventFrame = CreateFrame("Frame")
+    -- Unit-filtered: the engine only delivers boss1-5 range traffic, so no
+    -- global UNIT_IN_RANGE_UPDATE flood ever reaches Lua.
+    eventFrame:RegisterUnitEvent("UNIT_IN_RANGE_UPDATE", "boss1", "boss2", "boss3", "boss4", "boss5")
     eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
-    eventFrame:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
-    eventFrame:RegisterEvent("SPELLS_CHANGED")
-    eventFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
     eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
-    eventFrame:RegisterEvent("UNIT_IN_RANGE_UPDATE")
-    eventFrame:SetScript("OnEvent", function(_, event, unit)
-        if event == "PLAYER_SPECIALIZATION_CHANGED" or event == "SPELLS_CHANGED" then
-            ResolveBossRangeSpell()
-        elseif event == "PLAYER_ENTERING_WORLD"
-            or event == "PLAYER_REGEN_DISABLED"
-            or event == "PLAYER_REGEN_ENABLED" then
-            ClearBossRangeState()
-        elseif event == "UNIT_IN_RANGE_UPDATE" and (type(unit) ~= "string" or not unit:match("^boss%d+$")) then
-            return
+    eventFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
+    eventFrame:SetScript("OnEvent", function(_, event, unit, isInRange)
+        if event == "UNIT_IN_RANGE_UPDATE" then
+            local range = GetBossRangeSettings()
+            if not range or range.enabled == false then return end
+            if not ShouldApplyBossRangeAlpha() then return end
+            local frame = QUI_UF.frames and QUI_UF.frames[unit]
+            if frame and frame.unit and UnitExists(frame.unit) then
+                ApplyBossRangeAlpha(frame, isInRange, range.outOfRangeAlpha or 0.4)
+            end
+        else
+            -- Zone-in / combat transitions: re-baseline to full alpha; the
+            -- engine re-emits UNIT_IN_RANGE_UPDATE to dim out-of-range bosses.
+            UpdateBossRangeAlpha()
         end
-
-        UpdateBossRangeAlpha()
     end)
     bossRange.eventFrame = eventFrame
 end
@@ -2570,21 +2359,11 @@ local function StartBossRangeCheck()
         return
     end
 
-    ResolveBossRangeSpell()
     EnsureBossRangeEventFrame()
-
-    if not bossRange.ticker then
-        bossRange.ticker = C_Timer.NewTicker(BOSS_RANGE_CHECK_INTERVAL, UpdateBossRangeAlpha)
-    end
-
     UpdateBossRangeAlpha()
 end
 
 local function StopBossRangeCheck()
-    if bossRange.ticker then
-        bossRange.ticker:Cancel()
-        bossRange.ticker = nil
-    end
     ResetBossRangeAlpha()
 end
 
@@ -2671,6 +2450,12 @@ local function CreateUnitFrame(unit, unitKey)
     local bgColor = { skinBgR, skinBgG, skinBgB, 0.9 }
     if general and general.darkMode then
         bgColor = general.darkModeBgColor or { 0.25, 0.25, 0.25, 1 }
+    end
+    -- Class-colored backdrop (player units only; class is safe to read). Keeps
+    -- the configured alpha so it composites the same over the health fill.
+    if settings and settings.useClassColorBg and UnitIsPlayer(unit) then
+        local cr, cg, cb = GetUnitClassColor(unit)
+        if cr then bgColor = { cr, cg, cb, bgColor[4] or 1 } end
     end
 
     -- Pixel-perfect border size
@@ -3054,6 +2839,13 @@ local function CreateUnitFrame(unit, unitKey)
         frame:RegisterEvent("UPDATE_SHAPESHIFT_FORM") -- Stance/form text
     end
 
+    -- Combat indicator for the target frame: the target's combat flag can flip
+    -- without a target change, so watch UNIT_FLAGS. UnitAffectingCombat returns
+    -- a plain bool, so reading the target's combat state in Lua is safe.
+    if unitKey == "target" then
+        frame:RegisterUnitEvent("UNIT_FLAGS", unit)
+    end
+
     frame:SetScript("OnEvent", function(self, event, arg1)
         if event == "PLAYER_ENTERING_WORLD" then
             -- Skip refresh if HUD visibility has this frame hidden — the
@@ -3114,6 +2906,11 @@ local function CreateUnitFrame(unit, unitKey)
                or event == "PLAYER_REGEN_DISABLED" or event == "PLAYER_REGEN_ENABLED" then
             -- Indicator events (player only)
             if self.unitKey == "player" then
+                UpdateIndicators(self)
+            end
+        elseif event == "UNIT_FLAGS" then
+            -- Target combat indicator: refresh when the target's flags change.
+            if self.unitKey == "target" then
                 UpdateIndicators(self)
             end
         elseif event == "UPDATE_SHAPESHIFT_FORM" then
@@ -3965,6 +3762,11 @@ function QUI_UF:RefreshFrame(unitKey)
         bgColor = general and general.defaultBgColor or { skinBgR, skinBgG, skinBgB, 0.9 }
         healthOpacity = general and general.defaultHealthOpacity or general and general.defaultOpacity or 1.0
         bgOpacity = general and general.defaultBgOpacity or general and general.defaultOpacity or 1.0
+    end
+    -- Class-colored backdrop (player units only; class is safe to read).
+    if settings and settings.useClassColorBg and frame.unit and UnitIsPlayer(frame.unit) then
+        local cr, cg, cb = GetUnitClassColor(frame.unit)
+        if cr then bgColor = { cr, cg, cb, bgColor[4] or 1 } end
     end
     local bgAlpha = (bgColor[4] or 1) * bgOpacity
 

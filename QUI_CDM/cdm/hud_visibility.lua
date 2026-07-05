@@ -345,6 +345,34 @@ UpdateCDMVisibility = function()
     local shouldShow = ShouldCDMBeVisible()
     local vis = GetCDMVisibilitySettings()
 
+    -- Curve-driven "Show when health below 100%". Player HP is a secret value;
+    -- route the secret HP fraction through the step curve and pipe its return
+    -- straight into each CDM frame's alpha (it never enters Lua), mirroring the
+    -- unitframe path. Below full -> alpha 1; exactly 1.0 -> the fade rule wins.
+    local hpCurve = ((not shouldShow) and vis and vis.showWhenHealthBelow100
+        and UnitHealthPercent) and GetDamagedAlphaCurve() or nil
+    if hpCurve then
+        local damagedAlpha = UnitHealthPercent("player", true, hpCurve)
+        -- Stop any in-flight fade so it doesn't overwrite the curve alpha.
+        if CDMVisibility.fadeFrame then
+            CDMVisibility.fadeFrame:SetScript("OnUpdate", nil)
+        end
+        CDMVisibility.isFading = false
+        CDMVisibility.fadeTargets = nil
+        local frames = GetCDMFrames()
+        for i = #frames, 1, -1 do
+            local frame = frames[i]
+            if frame and frame.SetAlpha and (not frame.IsForbidden or not frame:IsForbidden()) then
+                pcall(frame.SetAlpha, frame, damagedAlpha)
+            end
+        end
+        if QUICore then
+            if QUICore.UpdatePowerBar then QUICore:UpdatePowerBar() end
+            if QUICore.UpdateSecondaryPowerBar then QUICore:UpdateSecondaryPowerBar() end
+        end
+        return
+    end
+
     if shouldShow then
         StartCDMFade(1)
     else
@@ -1112,6 +1140,20 @@ local function ShouldActionBarsBeVisible()
     return false
 end
 
+-- Exposed on the shared namespace for the action bar module (QUI_ActionBars)
+-- so its per-bar fade system can yield to this global location-hide decision.
+-- Without it, per-bar alwaysShow / force-show refreshes race the global fade
+-- and flicker the bars while skyriding (the override-bar swap fires action-bar
+-- events that re-run the per-bar fade setup, which pulls alpha back to 1).
+-- Returns true when the action bars should currently be hidden by the global
+-- visibility rules. Edit/Layout mode never hides — both keep all bars visible.
+ns.ShouldHideActionBarsForVisibility = function()
+    if Helpers.IsEditModeActive() or Helpers.IsLayoutModeActive() then
+        return false
+    end
+    return not ShouldActionBarsBeVisible()
+end
+
 local function OnActionBarsFadeUpdate(self)
     local targetAlpha = ReadNumber(ActionBarsVisibility.fadeTargetAlpha, 1)
     local vis = GetActionBarsVisibilitySettings()
@@ -1543,6 +1585,9 @@ visibilityEventFrame:RegisterEvent("GROUP_LEFT")
 visibilityEventFrame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
 visibilityEventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 visibilityEventFrame:RegisterEvent("PLAYER_MOUNT_DISPLAY_CHANGED")
+visibilityEventFrame:RegisterEvent("PLAYER_STARTED_MOVING")
+visibilityEventFrame:RegisterEvent("PLAYER_STOPPED_MOVING")
+visibilityEventFrame:RegisterEvent("PLAYER_IMPULSE_APPLIED")
 visibilityEventFrame:RegisterEvent("UNIT_ENTERED_VEHICLE")
 visibilityEventFrame:RegisterEvent("UNIT_EXITED_VEHICLE")
 visibilityEventFrame:RegisterEvent("UPDATE_OVERRIDE_ACTIONBAR")

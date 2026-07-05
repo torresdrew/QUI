@@ -618,6 +618,43 @@ InvalidateDispelColors = function()
     _dispel.cachedColors = nil
 end
 
+-- >>> QUI_TEST_EXTRACT GetAuraBorderColorCurve (sentinel used by
+-- tests/unit/groupframes_aura_border_curve_test.lua; do not remove)
+-- Debuff-type aura border color curve (sub-project B). Returns the curve ONLY
+-- when the feature is enabled for this context and C_CurveUtil is available;
+-- nil otherwise (renderer falls back to the skin border). Mirrors
+-- GetDispelColorCurve but maps None(0) -> the skin border color (so untyped
+-- debuffs fall back to skin inside the curve, secret-safe) at full alpha.
+-- Cached in _dispel.auraBorderCurve; invalidated alongside _dispel.colorCurve in
+-- RefreshSettings (covers dispel-color AND skin-color changes). Defined as a
+-- ns table-field (NOT a new top-level local) to stay under Lua 5.1's 200-local
+-- chunk ceiling.
+ns.QUI_GroupFrameAuraBorderCurve = function(isRaid)
+    local vdb = GetVisualDB(isRaid)
+    local auras = vdb and vdb.auras
+    if not auras or auras.debuffBorderByType ~= true then return nil end
+    if _dispel.auraBorderCurve then return _dispel.auraBorderCurve end
+    if not C_CurveUtil or not C_CurveUtil.CreateColorCurve then return nil end
+    local colors = GetDispelColors()
+    local sr, sg, sb, sa = 0, 0, 0, 1
+    if ns.Helpers and ns.Helpers.GetSkinBorderColor then
+        sr, sg, sb, sa = ns.Helpers.GetSkinBorderColor()
+    end
+    local curve = C_CurveUtil.CreateColorCurve()
+    curve:SetType(Enum.LuaCurveType.Step)
+    curve:AddPoint(0, CreateColor(sr, sg, sb, sa))  -- None -> skin border
+    for _, enumVal in ipairs(_dispel.allEnums) do
+        local typeName = _dispel.enumNames[enumVal]
+        local c = typeName and colors[typeName]
+        if c then
+            curve:AddPoint(enumVal, CreateColor(c[1], c[2], c[3], 1))
+        end
+    end
+    _dispel.auraBorderCurve = curve
+    return curve
+end
+-- <<< QUI_TEST_EXTRACT GetAuraBorderColorCurve
+
 local function GetRangeSettings(isRaid)
     local vdb = GetVisualDB(isRaid)
     return vdb and vdb.range
@@ -677,6 +714,139 @@ local function ApplyStatusBarTexture(statusBar, textureName)
         if tex.SetVertTile then tex:SetVertTile(false) end
     end
 end
+
+-- >>> QUI_TEST_EXTRACT ApplyOverlayBar (sentinel used by
+-- tests/unit/groupframes_overlay_bar_test.lua; do not remove)
+-- Shared config + geometry for the three health-bar overlay StatusBars
+-- (absorb, heal-absorb, heal-prediction). Idempotent: called from
+-- DecorateGroupFrame at build and on every options refresh (RefreshSettings
+-- clears _quiDecorated and re-decorates). Per-event Update* paths push only
+-- SetValue/SetMinMaxValues/SetStatusBarColor; everything that changes on
+-- config/layout lives here.
+--   opts.drawOrderDefault : frame-level offset above healthBar when settings.drawOrder unset
+--   opts.fillOrigin       : honor settings.fillFrom (absorb / heal-absorb)
+--   opts.anchorToHealth   : pin to the health fill edge and grow outward (heal-pred)
+local function ApplyOverlayBar(bar, settings, healthBar, isVertical, opts)
+    if not bar or not healthBar then return end
+    settings = settings or {}
+    opts = opts or {}
+
+    -- Texture (config-driven; replaces the old hardcoded Shield-Fill build path)
+    ApplyStatusBarTexture(bar, settings.texture)
+
+    -- Draw order among the overlays (never exposes raw strata)
+    local order = settings.drawOrder or opts.drawOrderDefault or 1
+    bar:SetFrameLevel(healthBar:GetFrameLevel() + order)
+    bar:SetFrameStrata(healthBar:GetFrameStrata())
+
+    -- Geometry + fill origin
+    local reverse = false
+    local resolvedVertical = isVertical
+    bar:ClearAllPoints()
+    if settings.mode == "detached" then
+        -- Detached mini-bar: own size, anchored to the unit frame (options-only).
+        local frame = opts.frame or healthBar:GetParent()
+        local w = settings.width or 60
+        local h = settings.height or 8
+        resolvedVertical = h > w
+        bar:SetSize(w, h)
+        local anchor = settings.anchor or "BOTTOM"
+        bar:SetPoint(anchor, frame, anchor, settings.offsetX or 0, settings.offsetY or 0)
+        if opts.fillOrigin then
+            reverse = (settings.fillFrom or "reverse") ~= "default"
+        else
+            reverse = true
+        end
+        bar:SetReverseFill(reverse)
+        bar:SetOrientation(resolvedVertical and "VERTICAL" or "HORIZONTAL")
+    elseif opts.anchorToHealth then
+        local healthTex = healthBar:GetStatusBarTexture()
+        if isVertical then
+            bar:SetPoint("BOTTOMLEFT", healthTex, "TOPLEFT", 0, 0)
+            bar:SetPoint("TOPRIGHT", healthBar, "TOPRIGHT", 0, 0)
+            bar:SetOrientation("VERTICAL")
+        else
+            bar:SetPoint("TOPLEFT", healthTex, "TOPRIGHT", 0, 0)
+            bar:SetPoint("BOTTOMRIGHT", healthBar, "BOTTOMRIGHT", 0, 0)
+            bar:SetOrientation("HORIZONTAL")
+        end
+    else
+        bar:SetAllPoints(healthBar)
+        if opts.fillOrigin then
+            reverse = (settings.fillFrom or "reverse") ~= "default"
+        else
+            reverse = true
+        end
+        bar:SetReverseFill(reverse)
+        bar:SetOrientation(isVertical and "VERTICAL" or "HORIZONTAL")
+    end
+
+    -- Spark: 1px overlay pinned to the fill texture's leading edge. Position
+    -- tracks the (possibly secret) bar value through the anchor with NO Lua
+    -- arithmetic; never read GetValue/GetMinMaxValues.
+    if settings.spark then
+        local spark = bar._quiSpark
+        if not spark then
+            spark = bar:CreateTexture(nil, "OVERLAY")
+            spark:SetColorTexture(1, 1, 1, 1)
+            bar._quiSpark = spark
+        end
+        local sc = settings.sparkColor
+        spark:SetVertexColor(sc and sc[1] or 1, sc and sc[2] or 1, sc and sc[3] or 1, 1)
+        local fillTex = bar:GetStatusBarTexture()
+        spark:ClearAllPoints()
+        if resolvedVertical then
+            spark:SetPoint("LEFT", fillTex, "LEFT", 0, 0)
+            spark:SetPoint("RIGHT", fillTex, "RIGHT", 0, 0)
+            spark:SetHeight(1)
+            local edge = reverse and "BOTTOM" or "TOP"
+            spark:SetPoint(edge, fillTex, edge, 0, 0)
+        else
+            spark:SetPoint("TOP", fillTex, "TOP", 0, 0)
+            spark:SetPoint("BOTTOM", fillTex, "BOTTOM", 0, 0)
+            spark:SetWidth(1)
+            local edge = reverse and "LEFT" or "RIGHT"
+            spark:SetPoint(edge, fillTex, edge, 0, 0)
+        end
+        spark:Show()
+    elseif bar._quiSpark then
+        bar._quiSpark:Hide()
+    end
+
+    -- Outline: 4 static overlay edges framing the full bar. Config color
+    -- (non-secret) so plain textures are fine -- no SetVertexColor-secret concern.
+    if settings.outline then
+        local o = bar._quiOutline
+        if not o then
+            o = {
+                top    = bar:CreateTexture(nil, "OVERLAY"),
+                bottom = bar:CreateTexture(nil, "OVERLAY"),
+                left   = bar:CreateTexture(nil, "OVERLAY"),
+                right  = bar:CreateTexture(nil, "OVERLAY"),
+            }
+            bar._quiOutline = o
+        end
+        local oc = settings.outlineColor or { 0, 0, 0, 1 }
+        local r, g, b, a = oc[1] or 0, oc[2] or 0, oc[3] or 0, oc[4] or 1
+        o.top:ClearAllPoints(); o.top:SetColorTexture(r, g, b, a)
+        o.top:SetPoint("TOPLEFT", bar, "TOPLEFT", 0, 0)
+        o.top:SetPoint("TOPRIGHT", bar, "TOPRIGHT", 0, 0); o.top:SetHeight(1)
+        o.bottom:ClearAllPoints(); o.bottom:SetColorTexture(r, g, b, a)
+        o.bottom:SetPoint("BOTTOMLEFT", bar, "BOTTOMLEFT", 0, 0)
+        o.bottom:SetPoint("BOTTOMRIGHT", bar, "BOTTOMRIGHT", 0, 0); o.bottom:SetHeight(1)
+        o.left:ClearAllPoints(); o.left:SetColorTexture(r, g, b, a)
+        o.left:SetPoint("TOPLEFT", bar, "TOPLEFT", 0, 0)
+        o.left:SetPoint("BOTTOMLEFT", bar, "BOTTOMLEFT", 0, 0); o.left:SetWidth(1)
+        o.right:ClearAllPoints(); o.right:SetColorTexture(r, g, b, a)
+        o.right:SetPoint("TOPRIGHT", bar, "TOPRIGHT", 0, 0)
+        o.right:SetPoint("BOTTOMRIGHT", bar, "BOTTOMRIGHT", 0, 0); o.right:SetWidth(1)
+        o.top:Show(); o.bottom:Show(); o.left:Show(); o.right:Show()
+    elseif bar._quiOutline then
+        local o = bar._quiOutline
+        o.top:Hide(); o.bottom:Hide(); o.left:Hide(); o.right:Hide()
+    end
+end
+-- <<< QUI_TEST_EXTRACT ApplyOverlayBar
 
 local function InvalidateCache()
     wipe(_fontCache)
@@ -1205,50 +1375,55 @@ local function UpdateName(frame)
     if not frame or not frame.unit or not frame.nameText then return end
     local unit = frame.unit
 
-    if not UnitExists(unit) then
-        frame.nameText:SetText("")
-        return
-    end
-
     local isRaid = frame._isRaid
     local nameSettings = GetNameSettings(isRaid)
     if nameSettings and nameSettings.showName == false then
+        -- Config-driven hide is the only path that intentionally blanks the name.
         frame.nameText:SetText("")
         return
     end
 
-    local name = UnitName(unit)
-    if name then
-        -- UnitName is SecretWhenUnitIdentityRestricted: in restricted combat it
-        -- returns a secret string, and a bare `#name > maxLen` length pre-check
-        -- throws on a secret, aborting UpdateName and leaving the name blanked for
-        -- the rest of combat. TruncateUTF8 is secret-safe (it format-truncates a
-        -- secret and no-ops when the value is already short), so call it directly
-        -- without a Lua-side length compare; SetText is a secret-safe sink.
-        local maxLen = nameSettings and nameSettings.maxNameLength or 10
-        if maxLen > 0 and Helpers.TruncateUTF8 then
-            name = Helpers.TruncateUTF8(name, maxLen)
-        elseif maxLen > 0 and not (issecretvalue and issecretvalue(name)) and #name > maxLen then
-            name = name:sub(1, maxLen)
-        end
-        frame.nameText:SetText(name)
+    -- NON-DESTRUCTIVE on transient invalid reads. A shown frame can momentarily
+    -- report !UnitExists (or a nil UnitName) during a pull / phase / instance
+    -- transition. The only events that re-assert names are UNIT_NAME_UPDATE for
+    -- this exact unit and GROUP_ROSTER_UPDATE -> RefreshAllFrames; in a stable
+    -- raid roster neither need fire again for the rest of the fight, so blanking
+    -- here would leave the name empty until /reload. Keep the last good name:
+    -- empty slots are hidden by the secure header (stale text is never visible),
+    -- and a genuine player swap re-runs UpdateName via the unit-attribute
+    -- Level-3 path, which sets the correct new name.
+    if not UnitExists(unit) then return end
 
-        -- Color
-        if nameSettings and nameSettings.nameTextUseClassColor then
-            local _, class = UnitClass(unit)
-            if class then
-                local cc = RAID_CLASS_COLORS[class]
-                if cc then
-                    frame.nameText:SetTextColor(cc.r, cc.g, cc.b, 1)
-                    return
-                end
+    local name = UnitName(unit)
+    if not name then return end
+
+    -- UnitName is SecretWhenUnitIdentityRestricted: in restricted combat it
+    -- returns a secret string, and a bare `#name > maxLen` length pre-check
+    -- throws on a secret, aborting UpdateName and leaving the name blanked for
+    -- the rest of combat. TruncateUTF8 is secret-safe (it format-truncates a
+    -- secret and no-ops when the value is already short), so call it directly
+    -- without a Lua-side length compare; SetText is a secret-safe sink.
+    local maxLen = nameSettings and nameSettings.maxNameLength or 10
+    if maxLen > 0 and Helpers.TruncateUTF8 then
+        name = Helpers.TruncateUTF8(name, maxLen)
+    elseif maxLen > 0 and not (issecretvalue and issecretvalue(name)) and #name > maxLen then
+        name = name:sub(1, maxLen)
+    end
+    frame.nameText:SetText(name)
+
+    -- Color
+    if nameSettings and nameSettings.nameTextUseClassColor then
+        local _, class = UnitClass(unit)
+        if class then
+            local cc = RAID_CLASS_COLORS[class]
+            if cc then
+                frame.nameText:SetTextColor(cc.r, cc.g, cc.b, 1)
+                return
             end
         end
-        local tc = nameSettings and nameSettings.nameTextColor or COLORS.WHITE
-        frame.nameText:SetTextColor(tc[1], tc[2], tc[3], tc[4] or 1)
-    else
-        frame.nameText:SetText("")
     end
+    local tc = nameSettings and nameSettings.nameTextColor or COLORS.WHITE
+    frame.nameText:SetTextColor(tc[1], tc[2], tc[3], tc[4] or 1)
 end
 
 ---------------------------------------------------------------------------
@@ -1290,17 +1465,6 @@ local function UpdateAbsorbs(frame, _unit, _maxHP)
         frame.absorbBar:SetValue(0)
         frame.absorbBar:Hide()
         return
-    end
-
-    -- Geometry is set up at frame creation (SetFrameLevel, SetAllPoints,
-    -- SetReverseFill, SetOrientation).  Only redo when orientation changes.
-    if frame._absorbVertical ~= frame._isVerticalFill then
-        frame.absorbBar:SetFrameLevel(frame.healthBar:GetFrameLevel() + 2)
-        frame.absorbBar:ClearAllPoints()
-        frame.absorbBar:SetAllPoints(frame.healthBar)
-        frame.absorbBar:SetReverseFill(true)
-        frame.absorbBar:SetOrientation(frame._isVerticalFill and "VERTICAL" or "HORIZONTAL")
-        frame._absorbVertical = frame._isVerticalFill
     end
 
     -- C-side SetMinMaxValues/SetValue handle secret values natively.
@@ -1367,16 +1531,6 @@ local function UpdateHealAbsorb(frame, _unit, _maxHP)
         return
     end
 
-    -- Redo geometry if orientation changed
-    if frame._healAbsorbVertical ~= frame._isVerticalFill then
-        frame.healAbsorbBar:SetFrameLevel(frame.healthBar:GetFrameLevel() + 3)
-        frame.healAbsorbBar:ClearAllPoints()
-        frame.healAbsorbBar:SetAllPoints(frame.healthBar)
-        frame.healAbsorbBar:SetReverseFill(true)
-        frame.healAbsorbBar:SetOrientation(frame._isVerticalFill and "VERTICAL" or "HORIZONTAL")
-        frame._healAbsorbVertical = frame._isVerticalFill
-    end
-
     -- C-side SetMinMaxValues handles secret values natively — no Lua comparison.
     frame.healAbsorbBar:SetMinMaxValues(0, maxHP)
     frame.healAbsorbBar:SetValue(healAbsorbAmount)
@@ -1440,22 +1594,6 @@ local function UpdateHealPrediction(frame, _unit, _maxHP)
     if not incomingHeals then
         frame.healPredictionBar:Hide()
         return
-    end
-
-    -- Anchor from health fill edge.  Only redo geometry when orientation changes.
-    if frame._healPredVertical ~= frame._isVerticalFill then
-        local healthTexture = frame.healthBar:GetStatusBarTexture()
-        frame.healPredictionBar:ClearAllPoints()
-        if frame._isVerticalFill then
-            frame.healPredictionBar:SetPoint("BOTTOMLEFT", healthTexture, "TOPLEFT", 0, 0)
-            frame.healPredictionBar:SetPoint("TOPRIGHT", frame.healthBar, "TOPRIGHT", 0, 0)
-            frame.healPredictionBar:SetOrientation("VERTICAL")
-        else
-            frame.healPredictionBar:SetPoint("TOPLEFT", healthTexture, "TOPRIGHT", 0, 0)
-            frame.healPredictionBar:SetPoint("BOTTOMRIGHT", frame.healthBar, "BOTTOMRIGHT", 0, 0)
-            frame.healPredictionBar:SetOrientation("HORIZONTAL")
-        end
-        frame._healPredVertical = frame._isVerticalFill
     end
 
     -- C-side SetMinMaxValues handles secret values natively — no Lua comparison.
@@ -1881,14 +2019,24 @@ local function UpdateDispelOverlay(frame)
     if not frame or not frame.unit or not frame.dispelOverlay then return end
     local isRaid = frame._isRaid
     local healerSettings = GetHealerSettings(isRaid)
-    if not healerSettings or not healerSettings.dispelOverlay or healerSettings.dispelOverlay.enabled == false then
+    local dispelCfg = healerSettings and healerSettings.dispelOverlay
+    local glowCfg = healerSettings and healerSettings.cleanseGlow
+    -- Border defaults to ON when the key is absent (legacy behavior); glow is
+    -- strictly opt-in. Both consume the SAME playerDispellable probe below, so a
+    -- user can run glow-only, border-only, or both off (fast early-out).
+    local borderOn = dispelCfg ~= nil and dispelCfg.enabled ~= false
+    local glowOn = glowCfg ~= nil and glowCfg.enabled == true
+    local glowFrame = frame.cleanseGlow
+    if not borderOn and not glowOn then
         frame.dispelOverlay:Hide()
+        if glowFrame then glowFrame:Hide() end
         return
     end
 
     local _, isDeadOrGhost = GetUnitLifeState(frame.unit)
     if not UnitExists(frame.unit) or isDeadOrGhost then
         frame.dispelOverlay:Hide()
+        if glowFrame then glowFrame:Hide() end
         return
     end
 
@@ -1963,6 +2111,27 @@ local function UpdateDispelOverlay(frame)
     end
 
     if not hasDispellable then
+        overlay:Hide()
+        if glowFrame then glowFrame:Hide() end
+        return
+    end
+
+    -- Cleanse-ready glow: same non-secret playerDispellable membership, an
+    -- independent flat-color layer. Resolve it HERE (before the border color
+    -- paths, which early-return on success). Flat configured color only — no
+    -- secret dispel-type curve is forwarded, so this stays secret-safe.
+    if glowFrame then
+        if glowOn then
+            local gc = glowCfg and glowCfg.color
+            glowFrame.tex:SetVertexColor((gc and gc[1]) or 0.1, (gc and gc[2]) or 1.0, (gc and gc[3]) or 0.1, (gc and gc[4]) or 1.0)
+            glowFrame:Show()
+        else
+            glowFrame:Hide()
+        end
+    end
+
+    -- Glow can run standalone; if the border is disabled, stop here (glow shown).
+    if not borderOn then
         overlay:Hide()
         return
     end
@@ -2539,63 +2708,34 @@ local function DecorateGroupFrame(frame)
         frame.healthBg = nil
     end
 
-    -- Heal prediction bar (overlays health bar, peeks out beyond health fill)
+    -- Heal-bar overlays (absorb / heal-absorb / heal-prediction). Texture,
+    -- draw order, fill origin, spark and outline are all owned by the shared
+    -- ApplyOverlayBar; the per-event Update* paths only push value/color.
     local vdb = GetVisualDB(isRaid)
-    local predSettings = vdb and vdb.healPrediction
+
     local healPredictionBar = frame.healPredictionBar or CreateFrame("StatusBar", nil, healthBar)
-    ApplyStatusBarTexture(healPredictionBar)
-    healPredictionBar:SetFrameLevel(healthBar:GetFrameLevel() + 1)
-    healPredictionBar:ClearAllPoints()
-    healPredictionBar:SetAllPoints(healthBar)
+    frame.healPredictionBar = healPredictionBar
     healPredictionBar:SetMinMaxValues(0, 1)
     healPredictionBar:SetValue(0)
-    local pc = predSettings and predSettings.color or _state.defaultColors.healPrediction
-    local pa = predSettings and predSettings.opacity or 0.5
-    healPredictionBar:SetStatusBarColor(pc[1] or 0.2, pc[2] or 1, pc[3] or 0.2, pa)
+    ApplyOverlayBar(healPredictionBar, vdb and vdb.healPrediction, healthBar, isVertical,
+        { drawOrderDefault = 1, anchorToHealth = true, frame = frame })
     healPredictionBar:Hide()
-    frame.healPredictionBar = healPredictionBar
 
-    -- Absorb bar (overlays health bar, reverse-fills from right)
-    local absorbSettings = vdb and vdb.absorbs
-    local absorbBar = frame.absorbBar
-    if not absorbBar then
-        absorbBar = CreateFrame("StatusBar", nil, healthBar)
-    end
-    absorbBar:SetStatusBarTexture("Interface\\RaidFrame\\Shield-Fill")
-    local ac = absorbSettings and absorbSettings.color or COLORS.WHITE
-    local aa = absorbSettings and absorbSettings.opacity or 0.3
-    absorbBar:SetStatusBarColor(ac[1], ac[2], ac[3], aa)
-    absorbBar:SetFrameLevel(healthBar:GetFrameLevel() + 2)
-    absorbBar:SetFrameStrata(healthBar:GetFrameStrata())
-    absorbBar:ClearAllPoints()
-    absorbBar:SetAllPoints(healthBar)
-    absorbBar:SetReverseFill(true)
-    absorbBar:SetOrientation(isVertical and "VERTICAL" or "HORIZONTAL")
+    local absorbBar = frame.absorbBar or CreateFrame("StatusBar", nil, healthBar)
+    frame.absorbBar = absorbBar
     absorbBar:SetMinMaxValues(0, 1)
     absorbBar:SetValue(0)
+    ApplyOverlayBar(absorbBar, vdb and vdb.absorbs, healthBar, isVertical,
+        { drawOrderDefault = 2, fillOrigin = true, frame = frame })
     absorbBar:Hide()
-    frame.absorbBar = absorbBar
 
-    -- Heal absorb bar (overlays health bar — shows heal absorb debuffs like Necrotic Wound)
-    local healAbsorbSettings = vdb and vdb.healAbsorbs
-    local healAbsorbBar = frame.healAbsorbBar
-    if not healAbsorbBar then
-        healAbsorbBar = CreateFrame("StatusBar", nil, healthBar)
-    end
-    healAbsorbBar:SetStatusBarTexture("Interface\\RaidFrame\\Shield-Fill")
-    local hac = healAbsorbSettings and healAbsorbSettings.color or _state.defaultColors.healAbsorb
-    local haa = healAbsorbSettings and healAbsorbSettings.opacity or 0.6
-    healAbsorbBar:SetStatusBarColor(hac[1], hac[2], hac[3], haa)
-    healAbsorbBar:SetFrameLevel(healthBar:GetFrameLevel() + 3)
-    healAbsorbBar:SetFrameStrata(healthBar:GetFrameStrata())
-    healAbsorbBar:ClearAllPoints()
-    healAbsorbBar:SetAllPoints(healthBar)
-    healAbsorbBar:SetReverseFill(true)
-    healAbsorbBar:SetOrientation(isVertical and "VERTICAL" or "HORIZONTAL")
+    local healAbsorbBar = frame.healAbsorbBar or CreateFrame("StatusBar", nil, healthBar)
+    frame.healAbsorbBar = healAbsorbBar
     healAbsorbBar:SetMinMaxValues(0, 1)
     healAbsorbBar:SetValue(0)
+    ApplyOverlayBar(healAbsorbBar, vdb and vdb.healAbsorbs, healthBar, isVertical,
+        { drawOrderDefault = 3, fillOrigin = true, frame = frame })
     healAbsorbBar:Hide()
-    frame.healAbsorbBar = healAbsorbBar
 
     -- Power bar
     if showPower then
@@ -2909,6 +3049,25 @@ local function DecorateGroupFrame(frame)
     dispelOverlay:Hide()
     frame.dispelOverlay = dispelOverlay
 
+    -- Cleanse-ready glow: an additive halo (distinct from the dispel border tint)
+    -- shown when the player can dispel a debuff here. Driven by UpdateDispelOverlay
+    -- off the same non-secret playerDispellable probe; insecure texture, taint-safe.
+    local cleanseGlow = frame.cleanseGlow or CreateFrame("Frame", nil, frame)
+    cleanseGlow:ClearAllPoints()
+    cleanseGlow:SetPoint("TOPLEFT", frame, "TOPLEFT", -4, 4)
+    cleanseGlow:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", 4, -4)
+    cleanseGlow:SetFrameLevel(frame:GetFrameLevel() + 7)
+    local glowTex = cleanseGlow.tex
+    if not glowTex then
+        glowTex = cleanseGlow:CreateTexture(nil, "OVERLAY")
+        glowTex:SetTexture("Interface\\Buttons\\UI-ActionButton-Border")
+        glowTex:SetBlendMode("ADD")
+        cleanseGlow.tex = glowTex
+    end
+    glowTex:SetAllPoints(cleanseGlow)
+    cleanseGlow:Hide()
+    frame.cleanseGlow = cleanseGlow
+
     -- Defensive indicator icons are allocated lazily by UpdateDefensiveIndicator
     -- so profiles with the feature disabled do not pay for 5 cooldown frames
     -- on every group member.
@@ -3152,13 +3311,63 @@ local function EnsureAnchorFrame(key)
 end
 
 local function GetAnchorPosition(key, db)
+    local x, y
     if key == "raid" and db and db.unifiedPosition == false then
         local pos = db.raidPosition
-        return pos and pos.offsetX or -400, pos and pos.offsetY or 0
+        x, y = pos and pos.offsetX or -400, pos and pos.offsetY or 0
+    else
+        local pos = db and db.position
+        x, y = pos and pos.offsetX or -400, pos and pos.offsetY or 0
     end
 
-    local pos = db and db.position
-    return pos and pos.offsetX or -400, pos and pos.offsetY or 0
+    -- Per-raid-size delta: shift the raid root for small/medium/large raids when
+    -- enabled. Raid key only; GetGroupMode() returns party/small/medium/large and
+    -- "party" has no offset entry, so non-raid contexts (incl. layout preview) keep
+    -- the base. Insecure root reposition; runs on the combat-deferred anchor path.
+    if key == "raid" then
+        local offX, offY = QUI_GF:GetRaidSizeOffset(db)
+        x = x + offX
+        y = y + offY
+    end
+
+    return x, y
+end
+
+function QUI_GF:GetRaidSizeOffset(db)
+    if db and db.raidPerSizePositions and db.raidSizeOffsets then
+        local off = db.raidSizeOffsets[GetGroupMode()]
+        if off then
+            return off.offsetX or 0, off.offsetY or 0
+        end
+    end
+    return 0, 0
+end
+
+function QUI_GF:ApplyRaidAnchorWithSizeOffset(db)
+    if not (_G.QUI_HasFrameAnchor and _G.QUI_HasFrameAnchor("raidFrames")) then
+        return false
+    end
+
+    local anchoring = ns.QUI_Anchoring
+    local faDB = QUICore and QUICore.db and QUICore.db.profile and QUICore.db.profile.frameAnchoring
+    local settings = faDB and faDB.raidFrames
+    if not (anchoring and anchoring.ApplyFrameAnchor and settings) then
+        if _G.QUI_ApplyFrameAnchor then _G.QUI_ApplyFrameAnchor("raidFrames") end
+        return true
+    end
+
+    local offX, offY = self:GetRaidSizeOffset(db)
+    if offX == 0 and offY == 0 then
+        anchoring:ApplyFrameAnchor("raidFrames", settings)
+        return true
+    end
+
+    local effective = {}
+    for k, v in pairs(settings) do effective[k] = v end
+    effective.offsetX = (effective.offsetX or 0) + offX
+    effective.offsetY = (effective.offsetY or 0) + offY
+    anchoring:ApplyFrameAnchor("raidFrames", effective)
+    return true
 end
 
 -- Compute a fallback size for an anchor root when no headers are visible
@@ -3407,8 +3616,7 @@ local function UpdateAnchorFrames()
             elseif partyRoot:GetNumPoints() == 0 then
                 partyRoot:SetPoint("CENTER", UIParent, "CENTER", partyX, partyY)
             end
-            if hasAnchor and hasAnchor("raidFrames") and applyAnchor then
-                applyAnchor("raidFrames")
+            if QUI_GF:ApplyRaidAnchorWithSizeOffset(db) then
             elseif raidRoot:GetNumPoints() == 0 then
                 raidRoot:SetPoint("CENTER", UIParent, "CENTER", raidX, raidY)
             end
@@ -3431,8 +3639,7 @@ local function UpdateAnchorFrames()
     elseif partyRoot:GetNumPoints() == 0 then
         partyRoot:SetPoint("CENTER", UIParent, "CENTER", partyX, partyY)
     end
-    if hasAnchor and hasAnchor("raidFrames") and applyAnchor then
-        applyAnchor("raidFrames")
+    if QUI_GF:ApplyRaidAnchorWithSizeOffset(db) then
     elseif raidRoot:GetNumPoints() == 0 then
         raidRoot:SetPoint("CENTER", UIParent, "CENTER", raidX, raidY)
     end
@@ -3522,6 +3729,16 @@ local function ConfigurePartyHeader(header)
         local sortMethod = layout.sortMethod or "INDEX"
         header:SetAttribute("sortMethod", sortMethod)
     end
+
+    -- Hide DPS-role frames: the party header sets NO groupFilter, so the secure
+    -- header's roleFilter-only branch (non-strict) keeps only units whose role is
+    -- in the list. "TANK,HEALER" hides DAMAGER/NONE. (Raid CANNOT use this: its
+    -- groupFilter is load-bearing for group layout, and roleFilter then OR-matches
+    -- every unit by subgroup — see SecureGroupHeaders.lua:411-442 — so raid hide-DPS
+    -- is intentionally party-only.) Routed through the combat-deferred config path;
+    -- the change-guard avoids a redundant protected re-layout. A DPS player who
+    -- enables this hides their OWN frame too (role-based, expected).
+    _state.SetHeaderAttributeIfChanged(header, "roleFilter", layout.hideDPS and "TANK,HEALER" or nil)
 
     -- Frame size via initial config
     header:SetAttribute("_initialAttributeNames", "unit-width,unit-height")
@@ -3732,6 +3949,69 @@ local function ConfigureRaidGroupHeaders()
 end
 
 ---------------------------------------------------------------------------
+-- MULTI-HEADER: Per-group "Group N" header label
+---------------------------------------------------------------------------
+-- One insecure FontString host per raid group header (the block origin). Rides
+-- the secure header so no combat reposition is needed; text is static per group.
+-- Visibility gates on raid + groupBy==GROUP + showGroupNumber. Defined on _state
+-- (table field) to stay under the Lua 5.1 200-local-per-chunk cap.
+function _state.UpdateRaidGroupLabel(header, g, layout)
+    if not header then return end
+    local vdb = GetVisualDB(true)
+    local s = vdb and vdb.groupNumber
+    local groupedByGroup = ((layout and layout.groupBy) or "GROUP") == "GROUP"
+    local show = s and s.showGroupNumber == true and groupedByGroup and header:IsShown()
+
+    local lbl = header._quiGroupLabel
+    if not show then
+        if lbl then lbl:Hide() end
+        return
+    end
+
+    if not lbl then
+        -- Out of combat only (PositionRaidGroupHeaders early-returns in combat).
+        -- Insecure child on the secure header; we never call protected methods on
+        -- the header from here, so no taint.
+        lbl = CreateFrame("Frame", nil, header)
+        lbl:SetAllPoints(header)
+        lbl.text = lbl:CreateFontString(nil, "OVERLAY")
+        header._quiGroupLabel = lbl
+    end
+    -- Sit above the member buttons (child frames outrank the header's own regions).
+    lbl:SetFrameLevel(header:GetFrameLevel() + 10)
+
+    local size = tonumber(s.groupNumberFontSize) or 12
+    ns.Helpers.ApplyFontWithFallback(lbl.text, GetFontPath(true), size, GetFontOutline(true))
+    lbl.text:SetText(((ns.L and ns.L["Group"]) or "Group") .. " " .. g)
+    local c = s.groupNumberTextColor or COLORS.WHITE
+    lbl.text:SetTextColor(c[1] or 1, c[2] or 1, c[3] or 1, c[4] or 1)
+    lbl.text:SetWordWrap(false)
+
+    -- Place the label OUTSIDE the block on the chosen side: a TOP anchor pins the
+    -- label's BOTTOM to the block's TOP (label sits above), not its TOP to the TOP
+    -- (which buries it inside the first unit). CENTER stays inside-centered.
+    local anchor = s.groupNumberAnchor or "TOPRIGHT"
+    local selfPoint, blockPoint = anchor, anchor
+    if anchor == "CENTER" then
+        selfPoint, blockPoint = "CENTER", "CENTER"
+    elseif anchor:find("TOP") then
+        selfPoint = (anchor:gsub("TOP", "BOTTOM"))
+    elseif anchor:find("BOTTOM") then
+        selfPoint = (anchor:gsub("BOTTOM", "TOP"))
+    elseif anchor == "LEFT" then
+        selfPoint = "RIGHT"
+    elseif anchor == "RIGHT" then
+        selfPoint = "LEFT"
+    end
+    lbl.text:ClearAllPoints()
+    lbl.text:SetPoint(selfPoint, lbl, blockPoint,
+        tonumber(s.groupNumberOffsetX) or 0, tonumber(s.groupNumberOffsetY) or 0)
+
+    lbl:Show()
+    lbl.text:Show()
+end
+
+---------------------------------------------------------------------------
 -- MULTI-HEADER: Position per-group headers with group spacing
 ---------------------------------------------------------------------------
 local function PositionRaidGroupHeaders()
@@ -3756,7 +4036,7 @@ local function PositionRaidGroupHeaders()
     local raidRoot = QUI_GF.anchorFrames.raid
     local prevHeader = nil
 
-    for _, header in ipairs(QUI_GF.raidGroupHeaders) do
+    for g, header in ipairs(QUI_GF.raidGroupHeaders) do
         if header and header:IsShown() then
             header:ClearAllPoints()
 
@@ -3826,6 +4106,18 @@ local function PositionRaidGroupHeaders()
 
             prevHeader = header
         end
+        _state.UpdateRaidGroupLabel(header, g, layout)
+    end
+end
+
+-- Re-resolve every raid group label after a settings change. Out-of-combat only;
+-- in combat the _pending.groupReflow path re-runs PositionRaidGroupHeaders.
+function _state.RefreshAllRaidGroupLabels()
+    if InCombatLockdown() then return end
+    if not QUI_GF.raidGroupHeaders then return end
+    local layout = GetLayoutSettings(true)
+    for g, header in ipairs(QUI_GF.raidGroupHeaders) do
+        _state.UpdateRaidGroupLabel(header, g, layout)
     end
 end
 
@@ -5165,15 +5457,6 @@ local function StartRangeCheck()
     _state.rangeCheckTicker = C_Timer.NewTicker(interval, DoRangeCheck)
 end
 
-local function StopRangeCheck()
-    if _state.rangeCheckTicker then
-        _state.rangeCheckTicker:Cancel()
-        _state.rangeCheckTicker = nil
-    end
-    wipe(_range.cache)
-    wipe(_range.cacheTime)
-end
-
 ---------------------------------------------------------------------------
 -- GROUP_ROSTER_UPDATE: Hoisted deferred callback (avoids closure allocation)
 -- Called 0.2s after the coalesced GRU fires, giving secure headers time to
@@ -5207,6 +5490,10 @@ local function GRU_DeferredWork()
     QUI_GF:RefreshAllFrames("roster")
     -- Ensure ticker is running (may not have started yet on first roster event)
     StartRangeCheck()
+    -- Re-anchor party target companions to the rebuilt unit→frame map (the
+    -- frame showing partyN may now be a different object after a re-sort).
+    local PartyTargets = ns.QUI_GroupFramePartyTargets
+    if PartyTargets then PartyTargets:Reanchor(QUI_GF) end
 end
 
 -- Coalescing OnUpdate: fires once on the render frame AFTER the GRU burst.
@@ -5861,6 +6148,7 @@ function QUI_GF:RefreshSettings()
     InvalidateCache()
     RefreshCachedEnabled()
     _dispel.colorCurve = nil  -- Rebuild with new opacity on next use
+    _dispel.auraBorderCurve = nil  -- Rebuild on dispel-color OR skin-color change
 
     if not self.initialized then
         return
@@ -5906,6 +6194,17 @@ function QUI_GF:RefreshSettings()
             local raidPos = db.raidPosition
             local raidOffX = raidPos and raidPos.offsetX or -400
             local raidOffY = raidPos and raidPos.offsetY or 0
+            -- Apply the per-raid-size delta here too (mirrors GetAnchorPosition) so
+            -- this direct-set is consistent with the authoritative UpdateAnchorFrames
+            -- pass that runs later in RefreshSettings, rather than relying on override
+            -- ordering. Keeps the raidPosition base (no unifiedPosition divergence).
+            if db.raidPerSizePositions and db.raidSizeOffsets then
+                local szOff = db.raidSizeOffsets[GetGroupMode()]
+                if szOff then
+                    raidOffX = raidOffX + (szOff.offsetX or 0)
+                    raidOffY = raidOffY + (szOff.offsetY or 0)
+                end
+            end
             raidRoot:SetPoint("CENTER", UIParent, "CENTER", raidOffX, raidOffY)
         end
     end
@@ -5983,6 +6282,17 @@ function QUI_GF:RefreshSettings()
     if not InCombatLockdown() then
         self:RefreshAllFrames()
     end
+
+    -- Re-resolve per-group "Group N" labels for visual-only changes (color/anchor/
+    -- offset/toggle) that don't otherwise re-run the header layout pass. Self-guards
+    -- combat.
+    _state.RefreshAllRaidGroupLabels()
+
+    -- Configure party target companion frames (party-only; self-gates on its
+    -- own enable flag and defers its own secure work in combat). Reaches here
+    -- only out of combat — the in-combat path returned at _pending.refreshSettings.
+    local PartyTargets = ns.QUI_GroupFramePartyTargets
+    if PartyTargets then PartyTargets:Configure(self) end
 end
 
 ---------------------------------------------------------------------------
@@ -6069,7 +6379,20 @@ end
 function QUI_GF:Disable()
     _state.cachedModuleEnabled = false
     UnregisterEvents()
-    StopRangeCheck()
+    -- (inlined former StopRangeCheck: sole call site, freed a top-level local
+    -- slot — see QUI_TEST_EXTRACT ApplyOverlayBar note in task-2-report.md)
+    if _state.rangeCheckTicker then
+        _state.rangeCheckTicker:Cancel()
+        _state.rangeCheckTicker = nil
+    end
+    wipe(_range.cache)
+    wipe(_range.cacheTime)
+
+    -- Party target companions are unit-watched independently of the headers;
+    -- tear them down so they don't linger when the module is disabled. Teardown
+    -- self-guards combat (stops its ticker now, finishes the hide post-combat).
+    local PartyTargets = ns.QUI_GroupFramePartyTargets
+    if PartyTargets then PartyTargets:Teardown() end
 
     if InCombatLockdown() then return end
 

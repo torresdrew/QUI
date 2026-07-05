@@ -200,12 +200,12 @@ local function loadModule(initialSpecReady, clickCast)
     return eventFrame, child, partyHeader
 end
 
--- Keyboard keys are PUBLISHED to the global caster (QUI_ClickCastCaster) as cast
--- macros; the per-frame OnEnter wrap binds them on hover. This reports how many
--- keys are published (resolved + applied), i.e. ready to bind.
+-- Keyboard keys are PUBLISHED to the binding header's unified key list;
+-- the per-frame proxy holds the cast macros. This reports how many keys are
+-- published (resolved + applied), i.e. ready to bind.
 local function casterKeyCount()
-    local c = _G.QUI_ClickCastCaster
-    return (c and c:GetAttribute("cc-keycount")) or 0
+    local h = _G.QUI_ClickCastHeader
+    return (h and h:GetAttribute("clickcast-keycount")) or 0
 end
 
 -- Run a frame's secure wrap pre-body (self = frame, owner = header) -- the
@@ -241,29 +241,31 @@ local function hover(frame)
 end
 
 -- Assert key "F" hovercasts: the registered frame's OnEnter wrap binds it to the
--- caster (with an @mouseover macro) on hover, and it releases off-frame so the
--- action bar's own keybind fires (including over nameplates / world units).
+-- per-frame proxy (via the header's SetBindingClick) on hover, and releases
+-- off-frame so the action bar's own keybind fires.
 local function assertCasterBindsF(child)
-    local c = assert(_G.QUI_ClickCastCaster, "caster button was never created")
-    local mt = c:GetAttribute("macrotext-keyf")
-    assert(mt and mt:find("@mouseover", 1, true), "caster macro for F missing @mouseover cast")
+    local h = assert(_G.QUI_ClickCastHeader, "binding header was never created")
+    local proxyName = child:GetAttribute("clickcast-proxyname")
+    assert(proxyName, "registered frame missing clickcast-proxyname")
+    local proxy = assert(_G[proxyName], "proxy not found in _G")
+    local mt = proxy:GetAttribute("macrotext-keyf")
+    assert(mt and mt:find("@mouseover", 1, true), "proxy macro for F missing @mouseover cast")
     assert(child and child.secureWraps["OnEnter"],
         "registered frame missing the secure OnEnter wrap that binds keyboard click-cast")
-    -- Hover the registered frame: the OnEnter wrap binds F to the caster.
+    -- Hover the registered frame: the OnEnter wrap binds F to the proxy via the header.
     child.underMouse = true
     runWrap(child, "OnEnter")
-    local b = c.overrideBindings and c.overrideBindings.F
-    assert(b and b.button == "keyf", "OnEnter did not bind F to the caster -- click-cast dead")
+    local b = h.overrideBindings and h.overrideBindings.F
+    assert(b and b.button == "keyf", "OnEnter did not bind F via header -- click-cast dead")
     -- A churning mouseover token (dangling false edge) while the cursor is still
-    -- over the frame keeps the key (guarded geometry release -- the
-    -- [@mouseover,exists] driver is mouseover-blind, so a churn must not strand it).
+    -- over the frame keeps the key (guarded geometry release).
     runDangling()
-    assert(c.overrideBindings and c.overrideBindings.F,
+    assert(h.overrideBindings and h.overrideBindings.F,
         "a false edge while still over the frame must keep F (no stranding)")
     -- Only a real cursor-off release frees the key so the action bar keybind fires.
     child.underMouse = false
     runDangling()
-    assert(not (c.overrideBindings and c.overrideBindings.F),
+    assert(not (h.overrideBindings and h.overrideBindings.F),
         "a false edge with the cursor off the frame must release F so the action bar keybind fires")
     child.underMouse = nil
 end
@@ -403,22 +405,26 @@ do
     eventFrame.scripts.OnEvent(eventFrame, "PLAYER_ENTERING_WORLD")
     drain(100)
 
-    assertCasterBindsF(child)  -- binds F on hover, releases it off-frame
+    assertCasterBindsF(child)  -- binds F on hover via header, releases off-frame
 
-    local mt = _G.QUI_ClickCastCaster:GetAttribute("macrotext-keyf")
-    assert(mt:find("@mouseover", 1, true), "caster macro should be an @mouseover cast")
+    -- The proxy holds the @mouseover cast macro for F; no /click chaining.
+    local proxyName = child:GetAttribute("clickcast-proxyname")
+    local proxy = assert(_G[proxyName], "proxy must be in _G for scenario 6")
+    local mt = proxy:GetAttribute("macrotext-keyf")
+    assert(mt:find("@mouseover", 1, true), "proxy macro should be an @mouseover cast")
     assert(not mt:find("/click", 1, true),
         "must not chain /click into the bar (nested protected action, combat-unsafe)")
 
-    -- Hover binds F; leaving the frame (OnLeave) must release it so the action
-    -- bar's own keybind for F is what fires off-frame.
+    -- Hover binds F via header; leaving the frame (OnLeave) must release it so
+    -- the action bar's own keybind for F fires off-frame.
+    local h = assert(_G.QUI_ClickCastHeader, "header must exist for scenario 6")
     child.underMouse = true
     runWrap(child, "OnEnter")
     child.underMouse = false
     runWrap(child, "OnLeave")
-    assert(not (_G.QUI_ClickCastCaster.overrideBindings or {}).F,
-        "off the frame the caster must leave F free for the action bar keybind")
-    print("OK: caster hovercasts on hover, releases off-frame so the action bar keybind fires")
+    assert(not (h.overrideBindings or {}).F,
+        "off the frame the header must leave F free for the action bar keybind")
+    print("OK: proxy hovercasts on hover, releases off-frame so the action bar keybind fires")
 end
 
 print("OK: groupframes_clickcast_slow_cold_login_test")

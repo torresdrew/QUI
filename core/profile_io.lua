@@ -438,6 +438,7 @@ local PROFILE_THEME_GENERAL_KEYS = {
 local PROFILE_QOL_GENERAL_KEYS = {
     "uiScale",
     "allowReloadInCombat",
+    "disableScrollingCombatText",
     "showOptionTooltips",
     "autoInsertKey",
     "consumableMacros",
@@ -538,10 +539,12 @@ local PROFILE_SKINNING_GENERAL_KEYS = {
     "objectiveTrackerTextColor",
     "skinInstanceFrames",
     "skinAuctionHouse",
+    "showAuctionHouseGold",
     "skinCraftingOrders",
     "skinProfessions",
     "skinBgColor",
     "skinAlerts",
+    "controlAlertAnchors",
     "skinCharacterFrame",
     "skinInspectFrame",
     "skinUseClassColor",
@@ -616,6 +619,8 @@ local PROFILE_LAYOUT_PATHS = {
     "brzCounter.yOffset",
     "combatTimer.xOffset",
     "combatTimer.yOffset",
+    "lustTimer.xOffset",
+    "lustTimer.yOffset",
     "xpTracker.offsetX",
     "xpTracker.offsetY",
     "xpTracker.locked",
@@ -624,6 +629,9 @@ local PROFILE_LAYOUT_PATHS = {
     "totemBar.offsetX",
     "totemBar.offsetY",
     "totemBar.locked",
+    "raidMarkersBar.offsetX",
+    "raidMarkersBar.offsetY",
+    "raidMarkersBar.locked",
 }
 
 local PROFILE_THEME_PRESERVE_PATHS = {
@@ -1200,6 +1208,12 @@ local PROFILE_IMPORT_CATEGORIES = {
                 description = "Blizzard TotemFrame bar settings (totems, guardians, etc., per class).",
                 topLevelKeys = { "totemBar" },
             },
+            {
+                id = "actionBarsRaidMarkersBar",
+                label = "Raid Markers Bar",
+                description = "Secure bar of buttons that place raid target markers on the target.",
+                topLevelKeys = { "raidMarkersBar" },
+            },
         },
     },
     {
@@ -1260,6 +1274,7 @@ local PROFILE_IMPORT_CATEGORIES = {
             "brzCounter",
             "atonementCounter",
             "combatTimer",
+            "lustTimer",
             "xpTracker",
             "totemBar",
             "preyTracker",
@@ -1287,7 +1302,7 @@ local PROFILE_IMPORT_CATEGORIES = {
         label = "QoL / Automation",
         description = "Automation helpers, popup blocker, consumables, and utility toggles.",
         recommended = true,
-        topLevelKeys = { "uiHider", "configPanelWidth", "configPanelAlpha", "configPanelScale", "optionsPanelCollapsibleStates" },
+        topLevelKeys = { "uiHider", "configPanelWidth", "configPanelAlpha", "configPanelScale", "optionsPanelCollapsibleStates", "merchantGrid" },
         generalKeys = PROFILE_QOL_GENERAL_KEYS,
     },
     {

@@ -341,9 +341,17 @@ local function CreateMockFrame(parent, fakeUnitToken)
     f.powerBar:SetMinMaxValues(0, 100)
     f.powerBar:SetValue(80)
 
-    f.nameText   = f:CreateFontString(nil, "OVERLAY")
-    f.levelText  = f:CreateFontString(nil, "OVERLAY")
-    f.healthText = f.healthBar:CreateFontString(nil, "OVERLAY")
+    -- Text overlay sits ABOVE the child bars (mirrors the live builder's _textFrame
+    -- at healthBar+3, see groupframes.lua:2717-2719). Fontstrings parented to the
+    -- button render on the button's OVERLAY layer, which is BENEATH the child health
+    -- bar (button level +1) -- so name/level/group-number were buried under the bar.
+    f._textFrame = CreateFrame("Frame", nil, f)
+    f._textFrame:SetAllPoints(f)
+    f._textFrame:SetFrameLevel(f.healthBar:GetFrameLevel() + 3)
+
+    f.nameText        = f._textFrame:CreateFontString(nil, "OVERLAY")
+    f.levelText       = f._textFrame:CreateFontString(nil, "OVERLAY")
+    f.healthText      = f.healthBar:CreateFontString(nil, "OVERLAY")
 
     -- Indicator host: a sub-frame above the aura sub-frames so corner indicators
     -- (role/leader/readyCheck/targetMarker/phase/res/summon) are never buried by
@@ -680,8 +688,14 @@ local function ApplyHealthOverlays(f, member, absorbs, healAbsorbs, healPredicti
         elseif healPrediction.color then local c = healPrediction.color; r, g, b = c[1] or r, c[2] or g, c[3] or b end
         hp:SetColorTexture(r, g, b, tonumber(healPrediction.opacity) or 0.5)
         hp:ClearAllPoints()
-        hp:SetPoint("TOPLEFT", f.healthBar, "TOPLEFT", 0, 0)
-        hp:SetPoint("BOTTOMRIGHT", f.healthBar, "BOTTOMLEFT", (f.healthBar:GetWidth() or 100) * 0.2, 0)
+        if healPrediction.mode == "detached" then
+            hp:SetSize(tonumber(healPrediction.width) or 60, tonumber(healPrediction.height) or 8)
+            local a = healPrediction.anchor or "BOTTOM"
+            hp:SetPoint(a, f, a, tonumber(healPrediction.offsetX) or 0, tonumber(healPrediction.offsetY) or 0)
+        else
+            hp:SetPoint("TOPLEFT", f.healthBar, "TOPLEFT", 0, 0)
+            hp:SetPoint("BOTTOMRIGHT", f.healthBar, "BOTTOMLEFT", (f.healthBar:GetWidth() or 100) * 0.2, 0)
+        end
         hp:Show()
     else
         hp:Hide()
@@ -694,8 +708,14 @@ local function ApplyHealthOverlays(f, member, absorbs, healAbsorbs, healPredicti
         elseif absorbs.color then local c = absorbs.color; r, g, b = c[1] or r, c[2] or g, c[3] or b end
         ab:SetColorTexture(r, g, b, tonumber(absorbs.opacity) or 0.3)
         ab:ClearAllPoints()
-        ab:SetPoint("TOPRIGHT", f.healthBar, "TOPRIGHT", 0, 0)
-        ab:SetPoint("BOTTOMLEFT", f.healthBar, "BOTTOMRIGHT", -(f.healthBar:GetWidth() or 100) * 0.25, 0)
+        if absorbs.mode == "detached" then
+            ab:SetSize(tonumber(absorbs.width) or 60, tonumber(absorbs.height) or 8)
+            local a = absorbs.anchor or "BOTTOM"
+            ab:SetPoint(a, f, a, tonumber(absorbs.offsetX) or 0, tonumber(absorbs.offsetY) or 0)
+        else
+            ab:SetPoint("TOPRIGHT", f.healthBar, "TOPRIGHT", 0, 0)
+            ab:SetPoint("BOTTOMLEFT", f.healthBar, "BOTTOMRIGHT", -(f.healthBar:GetWidth() or 100) * 0.25, 0)
+        end
         ab:Show()
     else
         ab:Hide()
@@ -707,8 +727,14 @@ local function ApplyHealthOverlays(f, member, absorbs, healAbsorbs, healPredicti
         if healAbsorbs.color then local c = healAbsorbs.color; r, g, b = c[1] or r, c[2] or g, c[3] or b end
         ha:SetColorTexture(r, g, b, tonumber(healAbsorbs.opacity) or 0.6)
         ha:ClearAllPoints()
-        ha:SetPoint("TOPRIGHT", f.healthBar, "TOPRIGHT", 0, 0)
-        ha:SetPoint("BOTTOMLEFT", f.healthBar, "BOTTOMRIGHT", -(f.healthBar:GetWidth() or 100) * 0.15, 0)
+        if healAbsorbs.mode == "detached" then
+            ha:SetSize(tonumber(healAbsorbs.width) or 60, tonumber(healAbsorbs.height) or 8)
+            local a = healAbsorbs.anchor or "BOTTOM"
+            ha:SetPoint(a, f, a, tonumber(healAbsorbs.offsetX) or 0, tonumber(healAbsorbs.offsetY) or 0)
+        else
+            ha:SetPoint("TOPRIGHT", f.healthBar, "TOPRIGHT", 0, 0)
+            ha:SetPoint("BOTTOMLEFT", f.healthBar, "BOTTOMRIGHT", -(f.healthBar:GetWidth() or 100) * 0.15, 0)
+        end
         ha:Show()
     else
         ha:Hide()
@@ -1335,6 +1361,82 @@ function Driver._RenderSpotlight(root, vdb, gfdb, now, gridRight)
     end
 end
 
+-- One "Group N" label per raid subgroup block in the preview, anchored to the
+-- block's first frame (block origin). Mirrors the live per-group header. Gated to
+-- raid + groupBy==GROUP + showGroupNumber; pooled/hidden otherwise. Labels live on
+-- a high-level overlay host so they sit above the member frames (a fontstring on
+-- root would be buried under the child frames -- same lesson as the _textFrame fix).
+function Driver._RenderGroupLabels(vdb, layout, count)
+    state.groupLabelPool = state.groupLabelPool or {}
+    local pool = state.groupLabelPool
+    local s = vdb and vdb.groupNumber
+    local isRaid = (state.contextMode == "raid")
+    local grouped = ((layout and layout.groupBy) or "GROUP") == "GROUP"
+    local show = isRaid and grouped and s and s.showGroupNumber == true
+
+    if not show then
+        for i = 1, #pool do if pool[i] then pool[i]:Hide() end end
+        return
+    end
+
+    local host = state.groupLabelHost
+    if not host then
+        host = CreateFrame("Frame", nil, state.root)
+        host:SetAllPoints(state.root)
+        state.groupLabelHost = host
+    end
+    host:SetFrameLevel((state.root:GetFrameLevel() or 0) + 100)
+    host:Show()
+
+    local perGroup = 5
+    local font = FontPath(vdb.general or {})
+    local size = tonumber(s.groupNumberFontSize) or 12
+    local offX = tonumber(s.groupNumberOffsetX) or 0
+    local offY = tonumber(s.groupNumberOffsetY) or 0
+    local c = s.groupNumberTextColor or { 1, 1, 1, 1 }
+
+    -- Place the label OUTSIDE the block on the chosen side (TOP anchor => label's
+    -- BOTTOM pinned to the block's TOP, so it sits above the group, not inside the
+    -- first unit). Mirrors the live UpdateRaidGroupLabel mapping. CENTER stays inside.
+    local anchor = s.groupNumberAnchor or "TOPRIGHT"
+    local selfPoint, blockPoint = anchor, anchor
+    if anchor == "CENTER" then
+        selfPoint, blockPoint = "CENTER", "CENTER"
+    elseif anchor:find("TOP") then
+        selfPoint = (anchor:gsub("TOP", "BOTTOM"))
+    elseif anchor:find("BOTTOM") then
+        selfPoint = (anchor:gsub("BOTTOM", "TOP"))
+    elseif anchor == "LEFT" then
+        selfPoint = "RIGHT"
+    elseif anchor == "RIGHT" then
+        selfPoint = "LEFT"
+    end
+
+    local groups = math.ceil(count / perGroup)
+    for gi = 1, groups do
+        local originFrame = state.frames[(gi - 1) * perGroup + 1]
+        local lbl = pool[gi]
+        if originFrame then
+            if not lbl then
+                lbl = host:CreateFontString(nil, "OVERLAY")
+                pool[gi] = lbl
+            end
+            CJKFont(lbl, font, size, "OUTLINE")
+            lbl:SetText(((ns.L and ns.L["Group"]) or "Group") .. " " .. gi)
+            lbl:SetTextColor(c[1] or 1, c[2] or 1, c[3] or 1, c[4] or 1)
+            lbl:SetWordWrap(false)
+            lbl:ClearAllPoints()
+            lbl:SetPoint(selfPoint, originFrame, blockPoint, offX, offY)
+            lbl:Show()
+        elseif lbl then
+            lbl:Hide()
+        end
+    end
+    for gi = groups + 1, #pool do
+        if pool[gi] then pool[gi]:Hide() end
+    end
+end
+
 -- LIFECYCLE ----------------------------------------------------------------
 function Driver.Refresh(contextMode)
     if not state.host then return end
@@ -1401,6 +1503,9 @@ function Driver.Refresh(contextMode)
             RenderFrameAuras(f, (state.filter and state.filter.auras == false) and nil or vdb.auras, now)
         end
     end
+
+    Driver._RenderGroupLabels(vdb, layout, count)
+
     -- Hide pooled frames beyond the current count (e.g. raid 25 -> party 5).
     for i = count + 1, #state.framePool do
         local f = state.framePool[i]

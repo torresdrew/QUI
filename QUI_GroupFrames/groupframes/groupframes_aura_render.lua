@@ -380,6 +380,39 @@ local function CreateIconFrame(parent)
     glossTex:SetAllPoints(frame)
     frame._quiGloss = glossTex
 
+    -- Debuff-type border edges (sub-project B): 4 white 1px OVERLAY textures,
+    -- tinted per-aura via SetVertexColor from the secret dispel-type color.
+    -- 1px matches the ApplyPixelBackdrop skin border above. Hidden until driven.
+    local function MakeTypeEdge()
+        local t = frame:CreateTexture(nil, "OVERLAY")
+        t:SetColorTexture(1, 1, 1, 1)
+        t:Hide()
+        return t
+    end
+    local tb = { top = MakeTypeEdge(), bottom = MakeTypeEdge(), left = MakeTypeEdge(), right = MakeTypeEdge() }
+    tb.top:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, 0)
+    tb.top:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 0, 0); tb.top:SetHeight(1)
+    tb.bottom:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 0, 0)
+    tb.bottom:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", 0, 0); tb.bottom:SetHeight(1)
+    tb.left:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, 0)
+    tb.left:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 0, 0); tb.left:SetWidth(1)
+    tb.right:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 0, 0)
+    tb.right:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", 0, 0); tb.right:SetWidth(1)
+    frame._quiTypeBorder = tb
+
+    -- Linear cooldown swipe bar (sub-project D): a StatusBar filled by the aura
+    -- duration object via SetTimerDuration. Dark translucent overlay (the linear
+    -- equivalent of the radial shade). Frame level kept at the icon's level so the
+    -- Cooldown's countdown number (a higher-level child) draws above the fill.
+    -- Shown only for horizontal/vertical swipeStyle; hidden for radial.
+    local swipeBar = CreateFrame("StatusBar", nil, frame)
+    swipeBar:SetAllPoints(frame)
+    swipeBar:SetStatusBarTexture("Interface\\Buttons\\WHITE8x8")
+    swipeBar:SetStatusBarColor(0, 0, 0, 0.6)
+    swipeBar:SetFrameLevel(frame:GetFrameLevel())
+    swipeBar:Hide()
+    frame._swipeBar = swipeBar
+
     frame:Hide()
     return frame
 end
@@ -709,10 +742,89 @@ local function GetElementState(frame, element)
     return st
 end
 
+-- >>> QUI_TEST_EXTRACT AuraBorderHelpers (sentinels used by
+-- tests/unit/groupframes_aura_border_apply_test.lua; do not remove)
+-- Debuff-type icon border (sub-project B). The secret dispel-type color comes
+-- from C_UnitAuras.GetAuraDispelTypeColor (a curve remaps the secret enum C-side)
+-- and is applied via SetVertexColor -- the only secret-safe border path
+-- (SetBackdropBorderColor cannot take a secret). ShowTypeBorder tints the 4
+-- edges and suppresses the skin backdrop border with plain zeros.
+local function ShowTypeBorder(icon, color)
+    local tb = icon._quiTypeBorder
+    if not tb then return end
+    local r, g, b, a = color:GetRGBA()
+    tb.top:SetVertexColor(r, g, b, a)
+    tb.bottom:SetVertexColor(r, g, b, a)
+    tb.left:SetVertexColor(r, g, b, a)
+    tb.right:SetVertexColor(r, g, b, a)
+    tb.top:Show(); tb.bottom:Show(); tb.left:Show(); tb.right:Show()
+    if icon.SetBackdropBorderColor then icon:SetBackdropBorderColor(0, 0, 0, 0) end
+end
+
+local function HideTypeBorder(icon)
+    local tb = icon._quiTypeBorder
+    if not tb then return end
+    tb.top:Hide(); tb.bottom:Hide(); tb.left:Hide(); tb.right:Hide()
+end
+
+-- Returns true when it applied the debuff-type border (and suppressed the skin
+-- border); false when the caller should apply the normal skin border. Gated on:
+-- feature curve present, element is a debuff surface (non-secret element.auraType),
+-- not externally skinned, a valid aura instance, and the API present.
+local function ApplyDebuffTypeBorder(icon, unit, element, auraData, borderCurve)
+    if not borderCurve then return false end
+    if not (element and element.auraType == "HARMFUL") then return false end
+    if icon._quiBridged then return false end  -- external skin owns the border
+    if not (C_UnitAuras and C_UnitAuras.GetAuraDispelTypeColor) then return false end
+    local instID = auraData and auraData.auraInstanceID
+    if not instID then return false end
+    local ok, color = pcall(C_UnitAuras.GetAuraDispelTypeColor, unit, instID, borderCurve)
+    if not ok or not color then return false end
+    ShowTypeBorder(icon, color)
+    return true
+end
+-- <<< QUI_TEST_EXTRACT AuraBorderHelpers
+
 ---------------------------------------------------------------------------
 -- ICON DATA WRITE (shared by strip + single icon)
 ---------------------------------------------------------------------------
-local function ApplyIconData(icon, unit, element, auraData, cfgGen, br, bg, bb, ba)
+-- >>> QUI_TEST_EXTRACT ApplyLinearSwipe (sentinels used by
+-- tests/unit/groupframes_linear_swipe_test.lua; do not remove)
+-- Linear cooldown swipe (sub-project D). Drives the icon's StatusBar from the
+-- aura's duration object -- secret-safe: C_UnitAuras.GetAuraDuration and
+-- StatusBar:SetTimerDuration are both AllowedWhenUntainted, so no Lua reads the
+-- secret expiration. RemainingTime drains the bar as the cooldown elapses (matches
+-- the radial shrink); reverseSwipe flips to ElapsedTime. Returns true when the
+-- linear bar is shown; radial style / missing instance / missing API hide it (the
+-- radial cd swipe is used instead, driven separately).
+local function ApplyLinearSwipe(sb, unit, element, auraData)
+    if not sb then return false end
+    local style = (element and element.swipeStyle) or "radial"
+    if style ~= "horizontal" and style ~= "vertical" then
+        sb:Hide()
+        return false
+    end
+    local instID = auraData and auraData.auraInstanceID
+    if not (instID and C_UnitAuras and C_UnitAuras.GetAuraDuration and sb.SetTimerDuration) then
+        sb:Hide()
+        return false
+    end
+    local ok, durObj = pcall(C_UnitAuras.GetAuraDuration, unit, instID)
+    if not ok or not durObj then
+        sb:Hide()
+        return false
+    end
+    sb:SetOrientation(style == "vertical" and "VERTICAL" or "HORIZONTAL")
+    -- 0 = Immediate interpolation; direction 1 = RemainingTime, 0 = ElapsedTime.
+    sb:SetTimerDuration(durObj, 0, (element.reverseSwipe and 0) or 1)
+    local p = sb:GetParent()
+    if p and sb.SetFrameLevel and p.GetFrameLevel then sb:SetFrameLevel(p:GetFrameLevel()) end
+    sb:Show()
+    return true
+end
+-- <<< QUI_TEST_EXTRACT ApplyLinearSwipe
+
+local function ApplyIconData(icon, unit, element, auraData, cfgGen, br, bg, bb, ba, borderCurve)
     if icon.solidColor then icon.solidColor:Hide() end
     -- Stash the live aura instance so the runtime fast path (pure stack/
     -- duration updates) can reseat this icon's swipe without a full rebuild.
@@ -734,8 +846,9 @@ local function ApplyIconData(icon, unit, element, auraData, cfgGen, br, bg, bb, 
             icon._cfgElement = element
             icon._cfgGen = cfgGen
             local showText = element.showDurationText == true
+            local swipeStyle = element.swipeStyle or "radial"
             if cd.SetDrawSwipe then
-                pcall(cd.SetDrawSwipe, cd, element.hideSwipe ~= true)
+                pcall(cd.SetDrawSwipe, cd, swipeStyle == "radial" and element.hideSwipe ~= true)
             end
             if cd.SetReverse then
                 pcall(cd.SetReverse, cd, element.reverseSwipe == true)
@@ -759,13 +872,18 @@ local function ApplyIconData(icon, unit, element, auraData, cfgGen, br, bg, bb, 
                 H.ApplyCooldownFromAura(cd, unit, auraData.auraInstanceID, expTime, dur,
                     nil, auraData.timeMod)
             end
+            ApplyLinearSwipe(icon._swipeBar, unit, element, auraData)
         else
             cd:Clear()
+            if icon._swipeBar then icon._swipeBar:Hide() end
         end
     end
 
     icon:SetAlpha(1)
-    icon:SetBackdropBorderColor(br, bg, bb, ba)
+    if not ApplyDebuffTypeBorder(icon, unit, element, auraData, borderCurve) then
+        HideTypeBorder(icon)
+        icon:SetBackdropBorderColor(br, bg, bb, ba)
+    end
 end
 
 ---------------------------------------------------------------------------
@@ -837,6 +955,17 @@ function R.RenderIcon(self, frame, element, matches)
         offY = offY + bottomPad
     end
 
+    local perRow = SafeToNumber(element.iconsPerRow, 0)
+    if perRow < 0 then perRow = 0 end
+    -- Rows stack away from the anchored frame edge: a BOTTOM-anchored strip
+    -- grows its extra rows upward, a RIGHT-anchored vertical strip leftward.
+    local rowDir
+    if growDir == "UP" or growDir == "DOWN" then
+        rowDir = (type(anchor) == "string" and anchor:find("RIGHT")) and "LEFT" or "RIGHT"
+    else
+        rowDir = (type(anchor) == "string" and anchor:find("BOTTOM")) and "UP" or "DOWN"
+    end
+
     local IL = IconLayout()
     local iconAnchor = (IL and IL.GetIconAnchorForGrow and IL.GetIconAnchorForGrow(anchor, growDir))
         or anchor
@@ -851,6 +980,7 @@ function R.RenderIcon(self, frame, element, matches)
         or state._offX ~= offX
         or state._offY ~= offY
         or state._bottomPad ~= bottomPad
+        or state._perRow ~= perRow
     state._count = count
     state._iconSize = iconSize
     state._growDir = growDir
@@ -859,11 +989,13 @@ function R.RenderIcon(self, frame, element, matches)
     state._offX = offX
     state._offY = offY
     state._bottomPad = bottomPad
+    state._perRow = perRow
 
     -- Hoisted once per render: the skin border color is identical for every icon,
     -- and the config generation gates the per-element setters inside ApplyIconData.
     local br, bg, bb, ba = GetSkinBorderColor()
     local cfgGen = (ns.QUI_GroupFrameAuras and ns.QUI_GroupFrameAuras._configGeneration) or 0
+    local borderCurve = ns.QUI_GroupFrameAuraBorderCurve and ns.QUI_GroupFrameAuraBorderCurve(frame._isRaid)
 
     for idx = 1, count do
         local icon = state.icons[idx]
@@ -878,14 +1010,14 @@ function R.RenderIcon(self, frame, element, matches)
             icon:ClearAllPoints()
             local slotX, slotY = 0, 0
             if IL and IL.CalculateSlotOffset then
-                slotX, slotY = IL.CalculateSlotOffset(idx, iconSize, spacing, growDir, count)
+                slotX, slotY = IL.CalculateSlotOffset(idx, iconSize, spacing, growDir, count, perRow, rowDir)
             else
                 slotX = (idx - 1) * (iconSize + spacing)
             end
             icon:SetPoint(iconAnchor, frame, anchor, offX + slotX, offY + slotY)
         end
 
-        ApplyIconData(icon, frame.unit, element, ordered[idx], cfgGen, br, bg, bb, ba)
+        ApplyIconData(icon, frame.unit, element, ordered[idx], cfgGen, br, bg, bb, ba, borderCurve)
         icon:Show()
     end
 
@@ -949,13 +1081,18 @@ function R.RenderSquare(self, frame, element, matches)
         icon.cooldown:Hide()
         icon.cooldown:Clear()
     end
+    if icon._swipeBar then icon._swipeBar:Hide() end
     if icon.solidColor then
         icon.solidColor:SetColorTexture(color[1] or 0.5, color[2] or 0.5, color[3] or 0.5, color[4] or 1)
         icon.solidColor:Show()
     end
     icon:SetAlpha(1)
     local br, bg, bb, ba = GetSkinBorderColor()
-    icon:SetBackdropBorderColor(br, bg, bb, ba)
+    local borderCurve = ns.QUI_GroupFrameAuraBorderCurve and ns.QUI_GroupFrameAuraBorderCurve(frame._isRaid)
+    if not ApplyDebuffTypeBorder(icon, frame.unit, element, auraData, borderCurve) then
+        HideTypeBorder(icon)
+        icon:SetBackdropBorderColor(br, bg, bb, ba)
+    end
     icon:Show()
 end
 
@@ -1122,6 +1259,7 @@ end
 -- any visible element icon whose aura instance updated, without rebuilding the
 -- element list. Zero allocation; mirrors the old per-panel icon swipe refresh.
 -- `frames` is the unitFrameMap list for `unit`.
+-- >>> QUI_TEST_EXTRACT RefreshUpdatedIcons
 function R.RefreshUpdatedIcons(self, frames, nFrames, unit, updatedAuraInstanceIDs)
     if not frames or not updatedAuraInstanceIDs or #updatedAuraInstanceIDs == 0 then
         return false
@@ -1145,10 +1283,19 @@ function R.RefreshUpdatedIcons(self, frames, nFrames, unit, updatedAuraInstanceI
                                 if updatedAuraInstanceIDs[j] == instID then hit = true; break end
                             end
                             if hit then
+                                local dObj = GetDuration(unit, instID)
                                 local cd = icon.cooldown
-                                if cd and cd.SetCooldownFromDurationObject then
-                                    local dObj = GetDuration(unit, instID)
-                                    if dObj then pcall(cd.SetCooldownFromDurationObject, cd, dObj, true) end
+                                if cd and cd.SetCooldownFromDurationObject and dObj then
+                                    pcall(cd.SetCooldownFromDurationObject, cd, dObj, true)
+                                end
+                                -- Linear swipe (sub-project D): SetTimerDuration is a snapshot,
+                                -- so reseat it on a duration delta too (mirrors the radial cd
+                                -- reseat above and the detached-bar reseat in RefreshUpdatedBars).
+                                -- Only shown for linear-mode icons; _cfgElement carries reverseSwipe.
+                                local sb = icon._swipeBar
+                                if sb and sb:IsShown() and sb.SetTimerDuration and dObj then
+                                    local el = icon._cfgElement
+                                    pcall(sb.SetTimerDuration, sb, dObj, 0, (el and el.reverseSwipe and 0) or 1)
                                 end
                             end
                         end
@@ -1159,6 +1306,7 @@ function R.RefreshUpdatedIcons(self, frames, nFrames, unit, updatedAuraInstanceI
     end
     return true
 end
+-- <<< QUI_TEST_EXTRACT RefreshUpdatedIcons
 
 ---------------------------------------------------------------------------
 -- RENDERER: HEALTH TINT (adapted from indicators.lua:229-332, 1109-1176)

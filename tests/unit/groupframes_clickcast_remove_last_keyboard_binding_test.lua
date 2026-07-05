@@ -170,36 +170,46 @@ end
 GFCC:Initialize()
 GFCC:RegisterAllFrames()
 
-local caster = assert(_G.QUI_ClickCastCaster, "caster button should exist for keyboard binding")
+-- Keyboard keys published to the header's unified key list; cast macros on the proxy.
+local header = assert(_G.QUI_ClickCastHeader, "binding header should exist for keyboard binding")
+local proxyName = child:GetAttribute("clickcast-proxyname")
+assert(proxyName, "registered frame must have clickcast-proxyname")
+local proxy = assert(_G[proxyName], "proxy must be in _G")
 
--- Precondition: U is published to the caster and arms on hover.
-assert((caster:GetAttribute("cc-keycount") or 0) == 1, "precondition: U should be the one published keyboard key")
-assert(caster:GetAttribute("cc-key1") == "U", "precondition: cc-key1 should be U")
-assert(caster:GetAttribute("macrotext-keyu"), "precondition: caster should hold U's cast macro")
+-- Precondition: U is published to the header and the proxy holds the cast macro.
+assert((header:GetAttribute("clickcast-keycount") or 0) == 1,
+    "precondition: U should be the one published keyboard key on the header")
+assert(header:GetAttribute("clickcast-key1") == "U", "precondition: clickcast-key1 should be U")
+assert(proxy:GetAttribute("macrotext-keyu"), "precondition: proxy should hold U's cast macro")
 RunWrap(child, "OnEnter")
-assert(caster.overrideBindings.U and caster.overrideBindings.U.button == "keyu",
-    "precondition: hovering should arm U on the caster")
+assert(header.overrideBindings.U and header.overrideBindings.U.button == "keyu",
+    "precondition: hovering should arm U on the header (bound to proxy)")
 
 -- Remove U (the only keyboard key). A mouse binding remains configured.
 assert(GFCC:RemoveBinding(1))
 
--- THE FIX: the caster's stale keyboard state for U must be gone -- not protected
--- by the "any binding configured" guard.
-assert((caster:GetAttribute("cc-keycount") or 0) == 0,
-    "BUG: removing the last keyboard key left a stale cc-keycount on the caster")
-assert(caster:GetAttribute("cc-key1") == nil,
-    "BUG: stale cc-key1 (U) survived removal of the last keyboard key")
-assert(caster:GetAttribute("macrotext-keyu") == nil,
-    "BUG: stale U cast macro survived removal -- key fires a dead action instead of its normal binding")
+-- Re-fetch proxy after removal (same proxy, cleared state).
+proxyName = child:GetAttribute("clickcast-proxyname")
+proxy = proxyName and _G[proxyName]
+
+-- THE FIX: stale keyboard state must be gone from both header and proxy.
+assert((header:GetAttribute("clickcast-keycount") or 0) == 0,
+    "BUG: removing the last keyboard key left a stale clickcast-keycount on the header")
+assert(header:GetAttribute("clickcast-key1") == nil,
+    "BUG: stale clickcast-key1 (U) survived removal of the last keyboard key")
+assert(not proxy or proxy:GetAttribute("macrotext-keyu") == nil,
+    "BUG: stale U cast macro survived removal on proxy -- key fires a dead action instead of its normal binding")
 
 -- And hovering must NOT re-arm U, so the key falls through to its normal binding.
 RunWrap(child, "OnEnter")
-assert(not caster.overrideBindings.U,
-    "BUG: U re-armed on the caster after removal -- normal binding stays shadowed until /reload")
+assert(not header.overrideBindings.U,
+    "BUG: U re-armed on header after removal -- normal binding stays shadowed until /reload")
 
--- The remaining mouse binding must still be live on the frame (the guard change
+-- The remaining mouse binding must still be live on the proxy (the guard change
 -- must not break the mouse path).
-assert(child:GetAttribute("type1") == "macro" and (child:GetAttribute("macrotext1") or ""):find("Regrowth", 1, true),
-    "the remaining mouse binding should still be applied to the frame")
+local activeProxy = child:GetAttribute("clickcast-proxyname") and _G[child:GetAttribute("clickcast-proxyname")]
+assert(activeProxy and activeProxy:GetAttribute("type1") == "macro"
+    and (activeProxy:GetAttribute("macrotext1") or ""):find("Regrowth", 1, true),
+    "the remaining mouse binding should still be on the proxy after last keyboard key removal")
 
 print("OK: groupframes_clickcast_remove_last_keyboard_binding_test")

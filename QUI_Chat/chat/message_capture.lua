@@ -263,7 +263,10 @@ end
 SYSTEM_EVENTS.UPDATE_CHAT_WINDOWS = function() MaybePullGMOTD() end
 SYSTEM_EVENTS.CHANNEL_UI_UPDATE = function() MaybePullGMOTD() end
 SYSTEM_EVENTS.CHANNEL_LEFT = function() MaybePullGMOTD() end
-SYSTEM_EVENTS.GUILD_ROSTER_UPDATE = function() MaybePullGMOTD() end
+SYSTEM_EVENTS.GUILD_ROSTER_UPDATE = function()
+    if Format.SeedKnownClasses then Format.SeedKnownClasses(true) end
+    MaybePullGMOTD()
+end
 SYSTEM_EVENTS.PLAYER_GUILD_UPDATE = function() MaybePullGMOTD() end
 
 local function FlushPendingMotd()
@@ -419,10 +422,21 @@ end
 -- capture frame owns its event wiring (format stays frame-free).
 SYSTEM_EVENTS.PLAYER_ENTERING_WORLD = function()
     if Format.RefreshLanguages then Format.RefreshLanguages() end
+    -- Warm the name->class cache from the player + roster so the FIRST party/raid
+    -- line rendered after a zone-in (incl. entering a dungeon straight into a
+    -- pull) is class-colored even though its GUID is already secret in combat.
+    if Format.SeedKnownClasses then Format.SeedKnownClasses() end
     -- /reload keeps guild data cached, so the MOTD is readable right here even
     -- if no GUILD_ROSTER_UPDATE re-fires; on a cold login GetMOTD is still empty
     -- this early and the roster-update pull above catches it. seenMotd dedupes.
     MaybePullGMOTD()
+end
+
+-- Roster change: re-warm the name->class cache. UnitClass's classFilename is
+-- non-secret, so this stays correct even when the update fires mid-combat (a
+-- member joining during a pull) -- keeping their chat lines class-colored.
+SYSTEM_EVENTS.GROUP_ROSTER_UPDATE = function()
+    if Format.SeedKnownClasses then Format.SeedKnownClasses(false) end
 end
 
 SYSTEM_EVENTS.ALTERNATIVE_DEFAULT_LANGUAGE_CHANGED = function()
@@ -534,35 +548,8 @@ local function OnCaptureEvent(_, event, ...)
 
     local typeKey = Format.EventToTypeKey(event)
 
-    -- Probed payload for MessageFormat: every field except text/rawSender/rawGuid
-    -- is nil unless proven non-secret AND well-typed. chName is the registry's
-    -- canonical display name (community identifiers resolved) so filters and
-    -- rendering agree on one spelling.
-    local p = {
-        text = a1,
-        rawSender = a2,
-        sender = (not IsSecret(a2)) and type(a2) == "string" and a2 ~= "" and a2 or nil,
-        language = (not IsSecret(a3)) and type(a3) == "string" and a3 or nil,
-        channelFull = (not IsSecret(a4)) and type(a4) == "string" and a4 or nil,
-        target = (not IsSecret(a5)) and type(a5) == "string" and a5 or nil,
-        flags = (not IsSecret(a6)) and type(a6) == "string" and a6 or nil,
-        zoneID = (not IsSecret(a7)) and type(a7) == "number" and a7 or nil,
-        chNum = (not IsSecret(a8)) and type(a8) == "number" and a8 or nil,
-        chBase = (not IsSecret(a9)) and type(a9) == "string" and a9 ~= "" and a9 or nil,
-        lineID = (not IsSecret(a11)) and type(a11) == "number" and a11 or nil,
-        guid = (not IsSecret(a12)) and type(a12) == "string" and a12 ~= "" and a12 or nil,
-        rawGuid = a12,
-        bnID = (not IsSecret(a13)) and type(a13) == "number" and a13 or nil,
-        suppressIcons = (not IsSecret(a17)) and a17 and true or nil,
-    }
-    if p.chBase then
-        p.chName = Registry and Registry.ResolveName
-            and Registry.ResolveName(p.chNum, p.chBase) or p.chBase
-    end
-    if Format.DecorateSender then
-        p.decorated = Format.DecorateSender(event, a1, a2, a3, a4, a5, a6, a7,
-            a8, a9, a10, a11, a12, a13, a14)
-    end
+    local line, p, secretBody = Format.BuildEventLineFromArgs(event, a1, a2, a3, a4, a5, a6, a7,
+        a8, a9, a10, a11, a12, a13, a14, nil, nil, a17)
 
     MaybeAutoAddChannel(event, p)
 
@@ -610,21 +597,12 @@ local function OnCaptureEvent(_, event, ...)
     local whisperPopoutOnly = IsWhisperPopoutOnly(typeKey, convKey)
 
     -- SECRET-FIRST: no operator may touch a1 before this check.
-    if IsSecret(a1) then
-        -- BN friend-status toasts put the toast TYPE token in arg1
-        -- (FRIEND_ONLINE/FRIEND_OFFLINE/...), which Blizzard renders by indexing
-        -- BN_INLINE_TOAST_<token>. Under ChatMessagingLockdown the token is
-        -- secret: it can neither index that globalstring (concat throws) nor be
-        -- shown as-is (a secret token paints the raw word "FRIEND_ONLINE"). Drop
-        -- it, exactly as the reference client discards secret friend-status
-        -- toasts. Classifies by EVENT NAME (typeKey) only -- never compares the
-        -- secret value. Broadcasts carry real message text in arg1, so they fall
-        -- through to the verbatim secret path below and are NOT dropped.
-        if typeKey == "BN_INLINE_TOAST_ALERT" then return end
-        local m = a1
-        if Format.WrapSecretEventLine then
-            m = Format.WrapSecretEventLine(event, p) or a1
-        end
+    if secretBody then
+        -- BuildEventLineFromArgs owns the secret-body formatting rules, including
+        -- dropping secret friend-status toast keys and preserving real secret
+        -- message bodies opaquely.
+        if not line then return end
+        local m = line
         -- Timestamp secret lines too: AddTimestamp's secret path wraps via
         -- C_StringUtil.WrapString (secret-safe) and passes through unchanged
         -- when that API is unavailable. No Lua operator touches the payload.
@@ -636,9 +614,6 @@ local function OnCaptureEvent(_, event, ...)
             whisperPopoutOnly = whisperPopoutOnly, t = Now() })
         return
     end
-    if type(a1) ~= "string" or a1 == "" then return end
-
-    local line = Format.BuildEventLine(event, p)
     if not line then return end
     -- Redundant-text collapse (loot/xp/honor compaction) — pure transform,
     -- gated inside the module on its own setting.

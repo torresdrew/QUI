@@ -211,7 +211,83 @@ local SELF_BUFFS = {
         anyBuffIDs = { [3408] = true, [5761] = true, [381637] = true },
         castPriority = { 3408, 5761, 381637 },  -- Crippling, Numbing, Atrophic
     },
+    -- Druid (Feral): remind to shift back to a combat form when knocked to caster
+    -- or travel form. acceptableFormGlobals resolved via _G at eval time (client
+    -- form-ID globals). castPriority = Cat Form gives the reminder its icon +
+    -- suggested cast. Spec-gated so Balance/Resto (who fight in caster form) never
+    -- see it. Acceptable set is BOTH melee forms — only caster/travel fires it.
+    {
+        name = "Combat Form",
+        stat = "Self-Buff",
+        providerClass = "DRUID",
+        providerSpecIDs = { [103] = true },   -- Feral
+        selfBuff = true,
+        checkType = "shapeshiftForm",
+        acceptableFormGlobals = { "DRUID_CAT_FORM", "DRUID_BEAR_FORM" },
+        castPriority = { 768 },               -- Cat Form
+    },
+    -- Druid (Guardian): same check, suggested cast defaults to Bear Form.
+    {
+        name = "Combat Form",
+        stat = "Self-Buff",
+        providerClass = "DRUID",
+        providerSpecIDs = { [104] = true },   -- Guardian
+        selfBuff = true,
+        checkType = "shapeshiftForm",
+        acceptableFormGlobals = { "DRUID_BEAR_FORM", "DRUID_CAT_FORM" },
+        castPriority = { 5487 },              -- Bear Form
+    },
+    -- Priest (Shadow): Shadowform is an always-on combat state — remind when it
+    -- drops. PRIEST_SHADOWFORM is the named client form-ID constant (Constants.lua);
+    -- only Shadow (258) maintains it. castPriority lists modern + legacy Shadowform
+    -- so ResolveSelfBuffCast picks whichever the client knows (wrong/unknown id just
+    -- skips the entry — fail-safe, no false reminder).
+    {
+        name = "Shadowform",
+        stat = "Self-Buff",
+        providerClass = "PRIEST",
+        providerSpecIDs = { [258] = true },   -- Shadow
+        selfBuff = true,
+        checkType = "shapeshiftForm",
+        acceptableFormGlobals = { "PRIEST_SHADOWFORM" },
+        castPriority = { 232698, 15473 },     -- Shadowform (modern, legacy)
+    },
 }
+
+-- Ally-maintenance buffs: single-target buffs the player keeps on an ally
+-- (not raid-wide, not self). "Missing" = no eligible ally carries MY copy.
+-- providerSpecIDs: gate to the exact healing spec (not class-wide).
+-- key/label: used by the engine's GetBuffName / GetSyntheticAura internals.
+local ALLY_BUFFS = {
+    {
+        key = "beacon",
+        name = "Beacon",
+        label = "Beacon",
+        providerClass = "PALADIN",
+        providerSpecIDs = { [65] = true },          -- Holy
+        ids = { 53563, 156910, 156322, 1244893 },   -- Beacon of Light/Faith, Eternal Flame, of the Savior
+        iconSpellID = 53563,
+    },
+    {
+        key = "earthShield",
+        name = "Earth Shield",
+        label = "Earth Shield",
+        providerClass = "SHAMAN",
+        providerSpecIDs = { [264] = true },          -- Restoration
+        ids = { 974, 383648 },
+        iconSpellID = 974,
+    },
+    {
+        key = "sourceOfMagic",
+        name = "Source of Magic",
+        label = "Source of Magic",
+        providerClass = "EVOKER",
+        providerSpecIDs = { [1473] = true },         -- Augmentation
+        ids = { 369459 },
+        iconSpellID = 369459,
+    },
+}
+ns.QUI_AllyBuffs = ALLY_BUFFS
 
 -- Get spell icon dynamically (handles expansion differences)
 local function GetBuffIcon(spellId)
@@ -537,6 +613,22 @@ local function PlayerHasSelfBuff(entry)
             return OffhandEnchantSatisfied(entry, hasOH, ohID, 6, 2)
         end
         return hasMH and entry.anyEnchantIDs[mhID] or false
+    elseif entry.checkType == "shapeshiftForm" then
+        -- Non-secret: GetShapeshiftFormID is readable in combat (Blizzard's own
+        -- NPE UI branches on it). acceptableFormGlobals holds the NAMES of client
+        -- form-ID globals (DRUID_CAT_FORM, …), resolved via _G at eval time so a
+        -- nil-at-load can't crash the table literal or trip luacheck. "Satisfied"
+        -- = the player is currently in one of the acceptable combat forms; else
+        -- the reminder fires (e.g. knocked to caster/travel form). Missing API or
+        -- no form list = assume satisfied (never false-alarm).
+        if not entry.acceptableFormGlobals or not GetShapeshiftFormID then return true end
+        local form = GetShapeshiftFormID()
+        if form == nil then return true end
+        for _, gname in ipairs(entry.acceptableFormGlobals) do
+            local fid = _G[gname]
+            if fid and form == fid then return true end
+        end
+        return false
     end
     return true  -- Unknown check type = assume satisfied
 end
@@ -643,12 +735,42 @@ local function GetRelevantBuffs()
                 end
             end
         end
+
+        -- Ally-maintenance buffs: remind the provider spec when no ally carries their copy.
+        -- Reuses MissingRaidBuffs engine methods to avoid logic duplication.
+        if ns.QUI_AllyBuffs and MissingRaidBuffs then
+            for _, buff in ipairs(ns.QUI_AllyBuffs) do
+                if MissingRaidBuffs:PlayerIsProviderSpec(buff)
+                    and MissingRaidBuffs._spellKnownProbe(buff)
+                    and not MissingRaidBuffs:AnyEligibleAllyHasMyBuff(buff.ids)
+                then
+                    table_insert(result, {
+                        name = buff.label or buff.name,
+                        stat = "Ally Buff",
+                        spellId = buff.iconSpellID or buff.ids[1],
+                        providerClass = buff.providerClass,
+                        isAllyBuff = true,
+                    })
+                end
+            end
+        end
     end
 
     -- Self-buffs: bypass group/instance filters (they matter solo)
     if settings.showSelfBuffs ~= false then
+        -- Resolve the active spec ID once for providerSpecIDs-gated entries (the
+        -- shapeshift-form reminders must not fire for casters). C_SpecializationInfo
+        -- is the 12.0 namespace; the return is non-secret. Nil (API missing / no
+        -- spec yet) → spec-gated entries are skipped, never mis-shown.
+        local playerSpecID
+        local CSI = C_SpecializationInfo
+        local specIdx = CSI and CSI.GetSpecialization and CSI.GetSpecialization()
+        if specIdx and CSI.GetSpecializationInfo then
+            playerSpecID = CSI.GetSpecializationInfo(specIdx)
+        end
         for _, selfBuff in ipairs(SELF_BUFFS) do
-            if selfBuff.providerClass == playerClass then
+            if selfBuff.providerClass == playerClass
+                and (not selfBuff.providerSpecIDs or (playerSpecID and selfBuff.providerSpecIDs[playerSpecID])) then
                 local spellName, resolvedSpellId = ResolveSelfBuffCast(selfBuff)
                 if spellName then
                     selfBuff._resolvedSpellName = spellName
@@ -664,6 +786,8 @@ local function GetRelevantBuffs()
 
     return result
 end
+-- Test seam: allows unit tests to call the scan directly without invoking UpdateDisplay.
+QUI_RaidBuffs._getRelevantBuffs = GetRelevantBuffs
 
 ---------------------------------------------------------------------------
 -- UI CREATION
@@ -1277,6 +1401,10 @@ local function OnEvent(self, event, ...)
     elseif event == "PLAYER_DEAD" or event == "PLAYER_UNGHOST" then
         -- Player death/resurrect
         ThrottledUpdate()
+    elseif event == "UPDATE_SHAPESHIFT_FORM" then
+        -- Shifting in/out of a combat form flips the shapeshift-form self-buff
+        -- reminder. Refresh immediately — cheap, player-only, fires rarely.
+        UpdateDisplay()
     end
 end
 
@@ -1294,6 +1422,7 @@ eventFrame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
 -- — which is the only time this display is visible anyway).
 eventFrame:RegisterEvent("PLAYER_DEAD")
 eventFrame:RegisterEvent("PLAYER_UNGHOST")
+eventFrame:RegisterEvent("UPDATE_SHAPESHIFT_FORM")
 eventFrame:SetScript("OnEvent", OnEvent)
 
 local function SetupDebugInstrumentation()
@@ -1323,6 +1452,11 @@ for _, selfBuff in ipairs(SELF_BUFFS) do
     if selfBuff.anyBuffIDs then
         for id in pairs(selfBuff.anyBuffIDs) do trackedSpellIDs[id] = true end
     end
+end
+-- Ally-buff IDs (Beacon variants, Earth Shield): wake the standalone panel
+-- when these change on a group member (C2 parity for the non-group-frame surface).
+for _, allyBuff in ipairs(ALLY_BUFFS) do
+    for _, id in ipairs(allyBuff.ids) do trackedSpellIDs[id] = true end
 end
 
 -- Per-unit set of auraInstanceIDs currently held that map to a tracked buff.

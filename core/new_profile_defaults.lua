@@ -4567,6 +4567,7 @@ ns.NewProfileSeed = {
         defaultHealthOpacity = 1,
         defaultOpacity = 1,
         defaultUseClassColor = true,
+        disableScrollingCombatText = false,
         fastAutoLoot = true,
         focusCastAlert = {
             anchorTo = "screen",
@@ -5093,6 +5094,11 @@ ns.NewProfileSeed = {
             y = 261.11111694739941,
         },
         spacing = 4,
+    },
+    merchantGrid = {
+        columns = 2,
+        enabled = false,
+        rows = 5,
     },
     minimap = {
         autoZoom = false,

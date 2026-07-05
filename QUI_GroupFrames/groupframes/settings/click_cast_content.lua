@@ -401,10 +401,24 @@ local function BuildClickCastGeneral(L, cc, refreshClickCast, state)
         { description = ns.L["Maintain a separate list of click-cast bindings for each specialization. Bindings you add swap automatically when you change spec."] })
     local perLoadoutW = GUI:CreateFormCheckbox(s.frame, nil, "perLoadout", cc, refreshClickCast,
         { description = ns.L["Also split bindings per talent loadout within each spec, so each saved loadout can have its own click-cast layout. Requires Per-Spec Bindings."] })
-    local smartResW = GUI:CreateFormCheckbox(s.frame, nil, "smartRes", cc, RefreshGF,
+    -- smartRes is baked into the left-click macro at setup, so toggling it must
+    -- re-resolve/re-apply (RefreshBindings) rather than just refresh GF visuals.
+    local smartResW = GUI:CreateFormCheckbox(s.frame, nil, "smartRes", cc, refreshClickCast,
         { description = ns.L["When hovering a dead unit, any spell binding is temporarily replaced by your class's resurrection spell if you know one. Restores the original spell when the unit is alive."] })
     local tooltipW = GUI:CreateFormCheckbox(s.frame, nil, "showTooltip", cc, RefreshGF,
         { description = ns.L["Append a summary of your current click-cast bindings to the unit tooltip whenever you hover a group frame, so you can see at a glance which click does what."] })
+
+    local CLICK_DIRECTION_OPTIONS = {
+        { value = "down", text = ns.L["On Key Down"] },
+        { value = "up",   text = ns.L["On Key Up"] },
+        { value = "both", text = ns.L["On Both"] },
+    }
+    -- Changing direction must re-apply RegisterForClicks on all source frames
+    -- (the direction is written at SetupFrameClickCast time), so route through
+    -- refreshClickCast which calls RefreshBindings.
+    local clickDirDrop = GUI:CreateFormDropdown(s.frame, nil, CLICK_DIRECTION_OPTIONS,
+        "clickDirection", cc, refreshClickCast,
+        { description = ns.L["When spells fire: On Key Down casts as soon as you press the button (lower latency), On Key Up casts when you release, On Both fires on press and again on release."] })
 
     local perLoadoutCell = row(s.frame, ns.L["Per-Loadout Bindings"], perLoadoutW)
     pairCells(s, {
@@ -413,6 +427,7 @@ local function BuildClickCastGeneral(L, cc, refreshClickCast, state)
         perLoadoutCell,
         row(s.frame, ns.L["Smart Resurrection"], smartResW),
         row(s.frame, ns.L["Show Binding Tooltip on Hover"], tooltipW),
+        row(s.frame, ns.L["Click Direction"], clickDirDrop),
     })
     L.closeSection(s)
 
@@ -857,11 +872,12 @@ local function BuildClickCastBindings(L, content, cc, refreshClickCast, state)
         dropLabel:SetTextColor(C.textMuted[1], C.textMuted[2], C.textMuted[3], 1)
     end
 
-    local addState = { bindingType = "mouse", button = "LeftButton", key = nil, modifiers = "", actionType = "spell", spellName = "", macroText = "" }
+    local addState = { bindingType = "mouse", button = "LeftButton", key = nil, modifiers = "", actionType = "spell", spellName = "", macroText = "", targetFilter = "any" }
     local spellInput, macroInput, actionDrop
     local spellInputContainer, macroInputContainer
     local mouseButtonContainer, keyCaptureContainer
     local triggerCell
+    local targetFilterRow  -- forward ref; set after formCard rows built
 
     local function HandleCursorDrop()
         local cursorType, id1, id2, _, id4 = GetCursorInfo()
@@ -1027,6 +1043,7 @@ local function BuildClickCastBindings(L, content, cc, refreshClickCast, state)
         addState.actionType = val
         if spellInputContainer then spellInputContainer:SetShown(val == "spell") end
         if macroInputContainer then macroInputContainer:SetShown(val == "macro") end
+        if targetFilterRow then targetFilterRow:SetShown(val == "spell" or val == "macro") end
     end, { description = ns.L["What this binding does: cast a spell or macro, change target/focus/assist, open the unit menu, or send a ping. Spell and Macro reveal an input below for the spell name or macro body."] })
 
     triggerCell = row(formCard.frame, ns.L["Mouse Button"], buttonDrop)
@@ -1034,6 +1051,19 @@ local function BuildClickCastBindings(L, content, cc, refreshClickCast, state)
     keyCaptureContainer:SetAllPoints(buttonDrop)
     formCard.AddRow(row(formCard.frame, ns.L["Binding Type"], bindingTypeDrop), triggerCell)
     formCard.AddRow(row(formCard.frame, ns.L["Modifier"], modDrop), row(formCard.frame, ns.L["Action Type"], actionDrop))
+
+    local TARGET_FILTER_OPTIONS = {
+        { value = "any",    text = ns.L["Any"] },
+        { value = "friend", text = ns.L["Friendly only"] },
+        { value = "enemy",  text = ns.L["Enemy only"] },
+    }
+    local targetFilterDrop = GUI:CreateFormDropdown(formCard.frame, nil, TARGET_FILTER_OPTIONS, "targetFilter", addState, function(val)
+        addState.targetFilter = val
+    end, { description = ns.L["Target Filter"] })
+    targetFilterRow = row(formCard.frame, ns.L["Target Filter"], targetFilterDrop)
+    targetFilterRow:SetShown(addState.actionType == "spell" or addState.actionType == "macro")
+    formCard.AddRow(targetFilterRow)
+
     formCard.Finalize()
     ay = ay - formCard.frame:GetHeight() - 8
 
@@ -1570,11 +1600,20 @@ local function BuildClickCastBindings(L, content, cc, refreshClickCast, state)
         else
             newBinding.spell = actionType
         end
+        if actionType == "spell" or actionType == "macro" then
+            if addState.targetFilter == "friend" then
+                newBinding.friend = true
+            elseif addState.targetFilter == "enemy" then
+                newBinding.enemy = true
+            end
+        end
         local ok, err = GFCC:AddBinding(newBinding)
         if not ok then print("|cFFFF5555[QUI]|r " .. (err or ns.L["Failed to add binding."])) return end
         addState.spellName = ""
         addState.macroText = ""
         addState.key = nil
+        addState.targetFilter = "any"
+        if targetFilterDrop and targetFilterDrop.SetValue then targetFilterDrop.SetValue("any", true) end
         spellInput:SetText("")
         macroInput:SetText("")
         keyCaptureBtn:SetText(ns.L["Click to bind a key"])
@@ -1650,6 +1689,11 @@ local function BuildClickCastBindings(L, content, cc, refreshClickCast, state)
                 if actionType == "macro" then displayName = ns.L["Macro"]
                 elseif actionType == "menu" then displayName = ns.L["Unit Menu"]
                 elseif PING_DISPLAY_NAMES[actionType] then displayName = PING_DISPLAY_NAMES[actionType] end
+                if binding.friend then
+                    displayName = displayName .. " " .. ns.L["(friendly)"]
+                elseif binding.enemy then
+                    displayName = displayName .. " " .. ns.L["(enemy)"]
+                end
                 spellText:SetText(displayName)
                 spellText:SetTextColor(C.textMuted[1], C.textMuted[2], C.textMuted[3], 1)
                 local removeBtn = CreateClickCastButton(row, "X", 22, 22, function() GFCC:RemoveBinding(i) RefreshBindingList() end)

@@ -1935,6 +1935,40 @@ local function PlayerIsCastingMirrorSpell(m, sid)
     return false
 end
 
+-- Live display spell for icon art / runtime identity. QueryOverrideSpell
+-- (C_Spell.GetOverrideSpell) is authoritative when it flips away from the
+-- registered base (Hammer of Light 427453 over Wake of Ashes 255937). Some proc
+-- overrides only surface on the Blizzard CDM child: childIsActive=true with
+-- overrideSpellID / overrideTooltipSpellID set while GetOverrideSpell stays on
+-- the base (Brewmaster Empty Barrel on Keg Smash 121253 is the reference case).
+function CDMResolvers.ResolveLiveDisplaySpellID(baseSpellID, mirrorState)
+    if not IsUsableMirrorID(baseSpellID) then return nil end
+
+    local registeredBase = (mirrorState and IsUsableMirrorID(mirrorState.spellID))
+        and mirrorState.spellID
+        or baseSpellID
+    local apiOverride = QueryOverrideSpell(baseSpellID)
+    local sid = (IsUsableMirrorID(apiOverride) and apiOverride ~= registeredBase)
+        and apiOverride
+        or baseSpellID
+
+    if not mirrorState or SafeBoolean(mirrorState.childIsActive) ~= true then
+        return sid
+    end
+
+    local tooltipSid = mirrorState.overrideTooltipSpellID
+    if IsUsableMirrorID(tooltipSid) and tooltipSid ~= registeredBase then
+        return tooltipSid
+    end
+
+    local mirrorOverride = mirrorState.overrideSpellID
+    if IsUsableMirrorID(mirrorOverride) and mirrorOverride ~= registeredBase then
+        return mirrorOverride
+    end
+
+    return sid
+end
+
 -- A transient PROC override (e.g. Hammer of Light 427453 overriding Wake of
 -- Ashes 255937 on a Light's Guidance proc) makes the override the AVAILABLE
 -- spell while the base keeps recharging on its own lane. C_Spell.GetSpellCooldown
@@ -1950,14 +1984,6 @@ end
 --   * the base is itself on a REAL (non-GCD) recharge -> the override's reported
 --     cooldown really is the base's shared slot. (Augmentation Breath of Eons'
 --     base reports isOnGCD=true, so it fails this and keeps its handling.)
--- Called only from the base real-cooldown branch, so `sid` is the registered
--- base and is already known to be on a real (non-GCD) recharge. This is a
--- transient proc when an override is currently ACTIVE (m.overrideSpellID, set by
--- Blizzard when the proc replaces the base on the bar) and the base is still
--- INDEPENDENTLY known. Talent conversions (Berserk 50334 -> Incarnation 102558)
--- never reach here -- their base reports isActive=false. m.overrideSpellID /
--- m.spellID are sanitized mirror fields; QueryIsSpellKnownOrPlayerSpell is a
--- non-secret IsSpellKnown/IsPlayerSpell probe.
 local function IsTransientProcOverrideReady(m, sid)
     if not (m and sid) then return false end
     -- Read the override from the LIVE spell-override map (C_Spell.GetOverrideSpell
@@ -2062,16 +2088,25 @@ local function DeriveMirrorPayloadMode(m, sid, suppressAura)
     -- curve in cdm_icon_renderer.lua, so a cosmetic isOnGCD wobble here only
     -- affects which swipe shows, never the dark/bright state the user sees.
     local baseOnGCD = cdInfo and cdInfo.isOnGCD
-    local overrideMode, overrideAura, overrideCooldownSid =
-        ResolveActiveOverrideChildCooldownLane(m, sid)
-    if overrideMode then
-        return overrideMode, overrideAura, overrideCooldownSid
-    end
     -- A real (non-GCD) cooldown on the base always wins -- EXCEPT when this is a
     -- transient proc override that is available while its base recharges, where
     -- the "cooldown" we just read is the base's shared slot and Blizzard shows
     -- the proc ready. Show ready (inactive) so the proc surfaces + glows.
     if cdActive and baseOnGCD ~= true then
+        -- An active override child whose OWN spell owns a cooldown lane (Shadow
+        -- Priest Void Volley over Voidform) must follow that lane, not the base's
+        -- major cooldown. Resolve it HERE -- gated on the base carrying a real
+        -- (non-GCD) cooldown, the only state where the base would otherwise paint
+        -- over the override. Override children WITHOUT a real base cooldown
+        -- (Brewmaster Empty Barrel brew procs: free-cast override, base idle or
+        -- on a charge recharge) must fall through to the override / charge-
+        -- recharge / gcd / casting chain below that surfaced them before 4.0.4 --
+        -- NOT collapse to inactive and drop off the bar.
+        local overrideMode, overrideAura, overrideCooldownSid =
+            ResolveActiveOverrideChildCooldownLane(m, sid)
+        if overrideMode then
+            return overrideMode, overrideAura, overrideCooldownSid
+        end
         if IsTransientProcOverrideReady(m, sid) then
             return "inactive", nil, nil
         end
@@ -2324,7 +2359,8 @@ local function BuildMirrorRenderPayload(
     payload.sourceID = sourceKey
     payload.cooldownID = sourceCooldownID
     payload.category = NormalizeMirrorCategory(m.viewerCategory) or fallbackCategory
-    payload.spellID = sourceSpellID
+    payload.spellID = CDMResolvers.ResolveLiveDisplaySpellID(
+        m.spellID or fallbackSpellID, m) or sourceSpellID
     payload.auraInstanceID = auraInstanceID
     payload.durObj = payloadDurObj
     payload.durationStateUnknown = durationStateUnknown
@@ -2682,6 +2718,7 @@ local _cooldownStateScratch = {
     auraInstanceID = nil,
     auraUnit = nil,
     auraData = nil,
+    absorbPoints = nil,
     resolvedAuraSpellID = nil,
     hasExpirationTime = nil,
     hideDurationText = nil,
@@ -2735,6 +2772,7 @@ local function WipeCooldownState()
     s.auraInstanceID = nil
     s.auraUnit = nil
     s.auraData = nil
+    s.absorbPoints = nil
     s.resolvedAuraSpellID = nil
     s.hasExpirationTime = nil
     s.hideDurationText = nil
@@ -2802,6 +2840,19 @@ local function CopyCountFactsToState(state, count, mirrorBacked)
     state.countMirrorBacked = mirrorBacked == true and count ~= nil or nil
 end
 
+-- Absorb/shield amount points for the opt-in buff-icon AbsorbText feature.
+-- Returns only a plain (non-secret) points table reference, or nil. The
+-- amount (points[1]) may still be secret — that is fine, it is only ever
+-- passed through AbbreviateNumbers→SetText, never compared/formatted. A
+-- fully-secret points field is dropped so downstream indexing stays safe.
+local function ExtractAbsorbPoints(auraData)
+    local pts = auraData and auraData.points
+    if pts ~= nil and not (issecretvalue and issecretvalue(pts)) then
+        return pts
+    end
+    return nil
+end
+
 local function CopyAuraFactsToState(state, aura)
     if not aura then return end
     local auraActive = aura.isActive == true
@@ -2811,6 +2862,10 @@ local function CopyAuraFactsToState(state, aura)
     state.auraInstanceID = aura.auraInstanceID
     state.auraUnit = aura.auraUnit
     state.auraData = aura.auraData
+    -- Forward the absorb points captured by the spelldata resolver. Unlike
+    -- aura.auraData (nilled in combat), absorbPoints survives lockdown so the
+    -- shield amount stays renderable while a defensive is active.
+    state.absorbPoints = aura.absorbPoints
     state.resolvedAuraSpellID = aura.resolvedAuraSpellID or state.spellID
     state.hasExpirationTime = aura.hasExpirationTime
     state.hideDurationText = aura.hideDurationText
@@ -2972,6 +3027,9 @@ local function ApplyMirrorPayloadToCooldownState(state, payload)
     state.auraInstanceID = payload.auraInstanceID
     state.auraUnit = payload.auraUnit
     state.auraData = payload.auraData
+    -- Blizzard-mirror payloads keep auraData across combat, so derive the
+    -- absorb points straight from it for the opt-in buff-icon AbsorbText.
+    state.absorbPoints = ExtractAbsorbPoints(payload.auraData)
     state.resolvedAuraSpellID = payload.spellID
     state.hasExpirationTime = payload.hasExpirationTime
     state.hideDurationText = payload.hideDurationText
@@ -3293,7 +3351,9 @@ local function ResolveCooldownStateCore(context)
         or context.runtimeSpellID
         or entry.overrideSpellID or entry.spellID or entry.id
     if sid and not entryIsAura then
-        sid = QueryOverrideSpell(sid) or sid
+        local baseSid = entry.spellID or entry.id or sid
+        sid = CDMResolvers.ResolveLiveDisplaySpellID(baseSid, context.cachedMirrorState)
+            or sid
     end
     state.spellID = sid
     MemAuditProfilerMark("CDM_rsIdentity")

@@ -31,6 +31,7 @@ qol\tooltip_provider.lua
 qol\tooltip_inspect.lua
 qol\tooltip.lua
 qol\combattimer.lua
+qol\lusttimer.lua
 qol\actiontracker.lua
 qol\crosshair.lua
 qol\rangecheck.lua
@@ -38,6 +39,7 @@ qol\reticle.lua
 qol\skyriding.lua
 qol\xptracker.lua
 qol\focuscastalert.lua
+qol\merchant_grid.lua
 # == modules/dungeon/dungeon.xml ==
 dungeon\keystone.lua
 dungeon\mplus_timer.lua

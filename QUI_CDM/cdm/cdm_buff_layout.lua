@@ -858,6 +858,8 @@ local function ApplyIconStyle(icon, settings)
         stackTextColor = settings.stackTextColor or {1, 1, 1, 1},
         stackAnchor = settings.stackAnchor or "BOTTOM",
         opacity = settings.opacity or 1.0,
+        -- Opt-in shield/absorb amount at the bottom edge (buff icons only).
+        showAbsorbAmount = settings.showAbsorbAmount or false,
     }
     if ns.CDMIcons and ns.CDMIcons.OnIconRowConfigApplied then
         ns.CDMIcons.OnIconRowConfigApplied(icon, rowConfig)

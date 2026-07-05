@@ -488,6 +488,7 @@ return {
             columns = 12,
             contextFading = true,
             cornerFontSize = 11,
+            cornerIconSize = 12,
             corners = {
               bl1 = "equipment_set",
               bl2 = "none",
@@ -715,6 +716,7 @@ return {
           showInGroup = false,
           showInInstance = false,
           showOnMouseover = false,
+          showWhenHealthBelow100 = false,
           showWhenTargetExists = false
         },
         character = {
@@ -1019,6 +1021,7 @@ return {
         cooldownSwipe = {
           migratedToV2 = true,
           showActionSwipe = true,
+          showBuffEdge = true,
           showBuffIconSwipe = true,
           showBuffSwipe = false,
           showCooldownIconAuraPhase = true,
@@ -1264,7 +1267,9 @@ return {
                 showRowBackground = true,
                 showSecondaryValue = true,
                 textures = {},
-                useClassColor = true
+                useClassColor = true,
+                useClassColorNames = false,
+                windowBgAlpha = 0.84999999999999998
               },
               perWindow = {}
             },
@@ -2057,6 +2062,20 @@ return {
             sizeStable = true,
             widthAdjust = 0
           },
+          raidMarkersBar = {
+            autoHeight = false,
+            autoWidth = false,
+            heightAdjust = 0,
+            hideWithParent = false,
+            keepInPlace = true,
+            offsetX = 0,
+            offsetY = 240,
+            parent = "screen",
+            point = "CENTER",
+            relative = "BOTTOM",
+            sizeStable = true,
+            widthAdjust = 0
+          },
           rangeCheck = {
             autoHeight = false,
             autoWidth = false,
@@ -2371,6 +2390,7 @@ return {
           consumablePersistent = false,
           consumableRune = true,
           consumableScale = 1,
+          controlAlertAnchors = false,
           craftingOrderExpansionFilter = true,
           darkMode = false,
           darkModeBgColor = {
@@ -2404,6 +2424,7 @@ return {
           defaultHealthOpacity = 1,
           defaultOpacity = 1,
           defaultUseClassColor = true,
+          disableScrollingCombatText = false,
           fastAutoLoot = true,
           focusCastAlert = {
             anchorTo = "screen",
@@ -2413,6 +2434,8 @@ return {
             fontSize = 26,
             offsetX = 0,
             offsetY = -120,
+            sound = "None",
+            soundEnabled = false,
             text = "Focus is casting. Kick!",
             textColor = {
               [1] = 1,
@@ -2519,6 +2542,7 @@ return {
           },
           readyCheckBorderColorSource = "inherit",
           sellJunk = true,
+          showAuctionHouseGold = true,
           showOptionTooltips = true,
           skinAlerts = true,
           skinAuctionHouse = true,
@@ -2593,6 +2617,7 @@ return {
           playerFrame = 4,
           playerIndicators = 6,
           primaryPowerBar = 7,
+          raidMarkersBar = 5,
           secondaryPowerBar = 6,
           targetCastbar = 5,
           targetFrame = 4,
@@ -2675,6 +2700,52 @@ return {
           },
           spacing = 4
         },
+        lustTimer = {
+          backdropColor = {
+            [1] = 0,
+            [2] = 0,
+            [3] = 0,
+            [4] = 0.59999999999999998
+          },
+          barColor = {
+            [1] = 0.59999999999999998,
+            [2] = 0.20000000000000001,
+            [3] = 0.20000000000000001,
+            [4] = 1
+          },
+          barTexture = "Solid",
+          borderColor = {
+            [1] = 0,
+            [2] = 0,
+            [3] = 0,
+            [4] = 1
+          },
+          borderColorSource = "inherit",
+          borderSize = 1,
+          borderTexture = "None",
+          enabled = false,
+          font = "Quazii",
+          fontSize = 13,
+          height = 22,
+          hideBorder = false,
+          showBackdrop = true,
+          showLabel = true,
+          textColor = {
+            [1] = 1,
+            [2] = 1,
+            [3] = 1,
+            [4] = 1
+          },
+          useCustomFont = false,
+          width = 160,
+          xOffset = 0,
+          yOffset = -120
+        },
+        merchantGrid = {
+          columns = 2,
+          enabled = false,
+          rows = 5
+        },
         minimap = {
           autoZoom = false,
           borderColor = {
@@ -2715,6 +2786,7 @@ return {
             offsetY = 0,
             openOnMouseover = true,
             padding = 6,
+            showTooltip = true,
             toggleOffsetX = 0,
             toggleOffsetY = 0
           },
@@ -2797,6 +2869,11 @@ return {
           showZoneText = true,
           showZoomButtons = true,
           size = 226,
+          trackingConfig = {
+            anchor = "TOPLEFT",
+            offsetX = 0,
+            offsetY = 0
+          },
           zoneTextConfig = {
             align = "CENTER",
             allCaps = false,
@@ -2927,6 +3004,7 @@ return {
             durationOffsetY = 0,
             durationSize = 12,
             enabled = true,
+            growOnApply = false,
             growthDirection = "CENTERED_HORIZONTAL",
             hideDurationText = false,
             iconDisplayMode = "active",
@@ -2934,6 +3012,7 @@ return {
             padding = 0,
             removedSpells = {},
             shape = "square",
+            showAbsorbAmount = false,
             spellOverrides = {},
             stackAnchor = "BOTTOM",
             stackOffsetX = 0,
@@ -2967,6 +3046,7 @@ return {
               durationOffsetY = 0,
               durationSize = 12,
               enabled = true,
+              growOnApply = false,
               growthDirection = "CENTERED_HORIZONTAL",
               hideDurationText = false,
               iconDisplayMode = "active",
@@ -2975,6 +3055,7 @@ return {
               padding = 0,
               removedSpells = {},
               shape = "square",
+              showAbsorbAmount = false,
               spellOverrides = {},
               stackAnchor = "BOTTOM",
               stackOffsetX = 0,
@@ -3938,16 +4019,39 @@ return {
           iconSkin = "Default",
           party = {
             absorbs = {
+              anchor = "BOTTOM",
               color = {
                 [1] = 1,
                 [2] = 1,
                 [3] = 1,
                 [4] = 1
               },
+              drawOrder = 2,
               enabled = true,
-              opacity = 0.69999999999999996
+              fillFrom = "reverse",
+              height = 8,
+              mode = "overlay",
+              offsetX = 0,
+              offsetY = 0,
+              opacity = 0.69999999999999996,
+              outline = false,
+              outlineColor = {
+                [1] = 0,
+                [2] = 0,
+                [3] = 0,
+                [4] = 1
+              },
+              spark = false,
+              sparkColor = {
+                [1] = 1,
+                [2] = 1,
+                [3] = 1
+              },
+              texture = "Quazii v5",
+              width = 60
             },
             auras = {
+              debuffBorderByType = false,
               enabled = true
             },
             castbar = {
@@ -3998,24 +4102,76 @@ return {
               useClassColor = true
             },
             healAbsorbs = {
+              anchor = "BOTTOM",
               color = {
                 [1] = 0.5,
                 [2] = 0.10000000000000001,
                 [3] = 0.10000000000000001
               },
+              drawOrder = 3,
               enabled = true,
-              opacity = 0.59999999999999998
+              fillFrom = "reverse",
+              height = 8,
+              mode = "overlay",
+              offsetX = 0,
+              offsetY = 0,
+              opacity = 0.59999999999999998,
+              outline = false,
+              outlineColor = {
+                [1] = 0,
+                [2] = 0,
+                [3] = 0,
+                [4] = 1
+              },
+              spark = false,
+              sparkColor = {
+                [1] = 1,
+                [2] = 1,
+                [3] = 1
+              },
+              texture = "Quazii v5",
+              width = 60
             },
             healPrediction = {
+              anchor = "BOTTOM",
               color = {
                 [1] = 0.20000000000000001,
                 [2] = 1,
                 [3] = 0.20000000000000001
               },
+              drawOrder = 1,
               enabled = true,
-              opacity = 0.5
+              height = 8,
+              mode = "overlay",
+              offsetX = 0,
+              offsetY = 0,
+              opacity = 0.5,
+              outline = false,
+              outlineColor = {
+                [1] = 0,
+                [2] = 0,
+                [3] = 0,
+                [4] = 1
+              },
+              spark = false,
+              sparkColor = {
+                [1] = 1,
+                [2] = 1,
+                [3] = 1
+              },
+              texture = "Quazii v5",
+              width = 60
             },
             healer = {
+              cleanseGlow = {
+                color = {
+                  [1] = 0.10000000000000001,
+                  [2] = 1,
+                  [3] = 0.10000000000000001,
+                  [4] = 1
+                },
+                enabled = false
+              },
               defensiveIndicator = {
                 durationTextSize = 12,
                 enabled = false,
@@ -4140,6 +4296,7 @@ return {
             layout = {
               groupBy = "GROUP",
               growDirection = "DOWN",
+              hideDPS = false,
               showPlayer = true,
               showSolo = false,
               sortByRole = true,
@@ -4221,6 +4378,14 @@ return {
               enabled = true,
               outOfRangeAlpha = 0.40000000000000002
             },
+            targetFrames = {
+              anchorGap = 2,
+              anchorTo = "BOTTOM",
+              enabled = false,
+              height = 22,
+              showName = true,
+              width = 120
+            },
             targetedSpells = {
               enabled = true,
               growDirection = "CENTER",
@@ -4240,16 +4405,39 @@ return {
           },
           raid = {
             absorbs = {
+              anchor = "BOTTOM",
               color = {
                 [1] = 1,
                 [2] = 1,
                 [3] = 1,
                 [4] = 1
               },
+              drawOrder = 2,
               enabled = true,
-              opacity = 0.69999999999999996
+              fillFrom = "reverse",
+              height = 8,
+              mode = "overlay",
+              offsetX = 0,
+              offsetY = 0,
+              opacity = 0.69999999999999996,
+              outline = false,
+              outlineColor = {
+                [1] = 0,
+                [2] = 0,
+                [3] = 0,
+                [4] = 1
+              },
+              spark = false,
+              sparkColor = {
+                [1] = 1,
+                [2] = 1,
+                [3] = 1
+              },
+              texture = "Quazii v5",
+              width = 60
             },
             auras = {
+              debuffBorderByType = false,
               enabled = true
             },
             castbar = {
@@ -4303,25 +4491,90 @@ return {
               texture = "Quazii v5",
               useClassColor = true
             },
+            groupNumber = {
+              groupNumberAnchor = "TOPRIGHT",
+              groupNumberFontSize = 12,
+              groupNumberOffsetX = 0,
+              groupNumberOffsetY = 0,
+              groupNumberTextColor = {
+                [1] = 1,
+                [2] = 1,
+                [3] = 1,
+                [4] = 1
+              },
+              showGroupNumber = false
+            },
             healAbsorbs = {
+              anchor = "BOTTOM",
               color = {
                 [1] = 0.5,
                 [2] = 0.10000000000000001,
                 [3] = 0.10000000000000001
               },
+              drawOrder = 3,
               enabled = true,
-              opacity = 0.59999999999999998
+              fillFrom = "reverse",
+              height = 8,
+              mode = "overlay",
+              offsetX = 0,
+              offsetY = 0,
+              opacity = 0.59999999999999998,
+              outline = false,
+              outlineColor = {
+                [1] = 0,
+                [2] = 0,
+                [3] = 0,
+                [4] = 1
+              },
+              spark = false,
+              sparkColor = {
+                [1] = 1,
+                [2] = 1,
+                [3] = 1
+              },
+              texture = "Quazii v5",
+              width = 60
             },
             healPrediction = {
+              anchor = "BOTTOM",
               color = {
                 [1] = 0.20000000000000001,
                 [2] = 1,
                 [3] = 0.20000000000000001
               },
+              drawOrder = 1,
               enabled = true,
-              opacity = 0.5
+              height = 8,
+              mode = "overlay",
+              offsetX = 0,
+              offsetY = 0,
+              opacity = 0.5,
+              outline = false,
+              outlineColor = {
+                [1] = 0,
+                [2] = 0,
+                [3] = 0,
+                [4] = 1
+              },
+              spark = false,
+              sparkColor = {
+                [1] = 1,
+                [2] = 1,
+                [3] = 1
+              },
+              texture = "Quazii v5",
+              width = 60
             },
             healer = {
+              cleanseGlow = {
+                color = {
+                  [1] = 0.10000000000000001,
+                  [2] = 1,
+                  [3] = 0.10000000000000001,
+                  [4] = 1
+                },
+                enabled = false
+              },
               defensiveIndicator = {
                 durationTextSize = 12,
                 enabled = false,
@@ -4553,11 +4806,26 @@ return {
               spacing = 2
             }
           },
+          raidPerSizePositions = false,
           raidPosition = {
             offsetX = -400,
             offsetY = 0
           },
           raidSelfFirst = false,
+          raidSizeOffsets = {
+            large = {
+              offsetX = 0,
+              offsetY = 0
+            },
+            medium = {
+              offsetX = 0,
+              offsetY = 0
+            },
+            small = {
+              offsetX = 0,
+              offsetY = 0
+            }
+          },
           testMode = {
             partyCount = 5,
             raidCount = 25
@@ -4692,6 +4960,7 @@ return {
               outOfRangeAlpha = 0.40000000000000002
             },
             showHealth = true,
+            showInlineToT = false,
             showLevel = false,
             showName = true,
             showPowerBar = true,
@@ -4714,6 +4983,16 @@ return {
               yOffset = 8
             },
             texture = "Quazii v5",
+            totDividerColor = {
+              [1] = 1,
+              [2] = 1,
+              [3] = 1,
+              [4] = 1
+            },
+            totDividerUseClassColor = false,
+            totNameCharLimit = 0,
+            totSeparator = " >> ",
+            totUseClassColor = true,
             useClassColor = true,
             useHostilityColor = true,
             width = 162,
@@ -5458,6 +5737,7 @@ return {
             },
             texture = "Quazii v5",
             useClassColor = true,
+            useClassColorBg = false,
             width = 240
           },
           target = {
@@ -5698,6 +5978,15 @@ return {
             height = 40,
             hideHealthPercentSymbol = false,
             hidePowerPercentSymbol = false,
+            indicators = {
+              combat = {
+                anchor = "TOPRIGHT",
+                enabled = false,
+                offsetX = -2,
+                offsetY = 2,
+                size = 16
+              }
+            },
             invertHealthDirection = false,
             leaderIcon = {
               anchor = "TOPLEFT",
@@ -5981,6 +6270,17 @@ return {
           providerMode = false,
           showOnlyInGroup = true,
           showSelfBuffs = true
+        },
+        raidMarkersBar = {
+          borderSize = 2,
+          enabled = false,
+          growDirection = "RIGHT",
+          iconSize = 36,
+          locked = false,
+          offsetX = 0,
+          offsetY = -200,
+          spacing = 4,
+          zoom = 0
         },
         rangeCheck = {
           combatOnly = false,
@@ -6277,10 +6577,13 @@ return {
             white = 245
           },
           showBorder = true,
+          showItemMaxStackSize = false,
+          showMountCollected = true,
           showPlayerItemLevel = true,
           showPlayerMount = true,
           showPlayerMythicRating = true,
           showSpellIDs = true,
+          showTargetedBy = true,
           showTooltipTarget = true,
           skinTooltips = true,
           visibility = {
@@ -6354,6 +6657,7 @@ return {
           hideTimeManager = true,
           hideWorldMapBlackout = true,
           hideXPAtMaxLevel = false,
+          keepTrackerInDelvesScenarios = false,
           muteTalkingHead = false
         },
         unitframesVisibility = {

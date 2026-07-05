@@ -160,8 +160,13 @@ local GFCC = assert(ns.QUI_GroupFrameClickCast)
 GFCC:Initialize()
 GFCC:RegisterAllFrames()
 
-local caster = assert(_G.QUI_ClickCastCaster, "caster button should exist for keyboard binding")
 local header = assert(_G.QUI_ClickCastHeader, "binding header should exist")
+local proxyName = child:GetAttribute("clickcast-proxyname")
+assert(proxyName, "registered frame should have clickcast-proxyname")
+local proxy = assert(_G[proxyName], "proxy should be in _G")
+-- Proxy contract: the keyboard key's cast macro lives on the per-frame proxy.
+assert(proxy:GetAttribute("macrotext-keyf"),
+    "key F cast macro should be written to the frame's proxy")
 local loader = loadstring or load
 
 -- Run a frame's secure wrap pre-body (self = frame, owner = wrap header). The
@@ -197,7 +202,7 @@ assert(header:GetAttribute("_onattributechanged"),
 -- OnEnter on any registered frame, so nothing binds: the key stays on the
 -- action bar by construction (no driver can arm it off-frame).
 ---------------------------------------------------------------------------
-assert(not caster.overrideBindings.F,
+assert(not header.overrideBindings.F,
     "BUG: a key was bound with nothing hovered -- only an OnEnter over a registered frame may bind")
 print("OK: nameplate/world mouseover cannot bind keyboard click-cast (no wrap, no bind)")
 
@@ -206,9 +211,9 @@ print("OK: nameplate/world mouseover cannot bind keyboard click-cast (no wrap, n
 ---------------------------------------------------------------------------
 child.underMouse = true
 runWrap(child, "OnEnter")
-local b = caster.overrideBindings.F
+local b = header.overrideBindings.F
 assert(b and b.button == "keyf",
-    "BUG: hovering a registered frame must bind the click-cast key to the caster")
+    "BUG: hovering a registered frame must bind the click-cast key to the header")
 print("OK: registered-frame OnEnter binds keyboard click-cast")
 
 ---------------------------------------------------------------------------
@@ -218,7 +223,7 @@ print("OK: registered-frame OnEnter binds keyboard click-cast")
 -- keeps the binding -- this is what un-strands the key.
 ---------------------------------------------------------------------------
 runDangling()                  -- child.underMouse still true (cursor inside)
-assert(caster.overrideBindings.F and caster.overrideBindings.F.button == "keyf",
+assert(header.overrideBindings.F and header.overrideBindings.F.button == "keyf",
     "BUG: a false-edge while the cursor is still over the frame must keep the key (no stranding)")
 print("OK: dangling net keeps the key while the cursor is still over the frame")
 
@@ -228,7 +233,7 @@ print("OK: dangling net keeps the key while the cursor is still over the frame")
 ---------------------------------------------------------------------------
 child.underMouse = false
 runDangling()
-assert(not caster.overrideBindings.F,
+assert(not header.overrideBindings.F,
     "false edge with the cursor off the frame must release the key so the action bar keybind fires")
 print("OK: dangling net releases the key once the cursor has left the frame")
 
@@ -239,10 +244,10 @@ print("OK: dangling net releases the key once the cursor has left the frame")
 ---------------------------------------------------------------------------
 child.underMouse = true
 runWrap(child, "OnEnter")
-assert(caster.overrideBindings.F, "precondition: re-hovering rebinds the key")
+assert(header.overrideBindings.F, "precondition: re-hovering rebinds the key")
 child.visible = false
 runDangling()
-assert(not caster.overrideBindings.F,
+assert(not header.overrideBindings.F,
     "BUG: a hidden frame must release the key even with the cursor rect still inside")
 child.visible = nil
 print("OK: dangling net releases the key when the frame is hidden")
@@ -251,10 +256,10 @@ print("OK: dangling net releases the key when the frame is hidden")
 -- Scenario 5: direct nameplate->frame transition. No driver re-fires between
 -- units, so the frame's secure OnEnter wrap is the sole mechanism that binds.
 ---------------------------------------------------------------------------
-assert(not caster.overrideBindings.F, "precondition: key unbound after Scenario 4")
+assert(not header.overrideBindings.F, "precondition: key unbound after Scenario 4")
 child.underMouse = true
 runWrap(child, "OnEnter")         -- cursor slides onto the frame
-assert(caster.overrideBindings.F and caster.overrideBindings.F.button == "keyf",
+assert(header.overrideBindings.F and header.overrideBindings.F.button == "keyf",
     "BUG: direct unit->frame transition must bind via the secure OnEnter wrap")
 print("OK: secure OnEnter wrap binds instantly on direct unit->frame transitions")
 
@@ -264,7 +269,7 @@ print("OK: secure OnEnter wrap binds instantly on direct unit->frame transitions
 ---------------------------------------------------------------------------
 child.underMouse = false
 runWrap(child, "OnLeave")
-assert(not caster.overrideBindings.F,
+assert(not header.overrideBindings.F,
     "BUG: direct frame->unit transition must release the keys via the secure OnLeave wrap")
 print("OK: secure OnLeave wrap releases instantly on direct frame->unit transitions")
 

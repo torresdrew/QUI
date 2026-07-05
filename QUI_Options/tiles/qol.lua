@@ -50,6 +50,7 @@ function V2.Register(frame)
             SubPage("targetDistance",   ns.L["Distance"],    "targetDistance",   7,  ns.L["Distance"]),
             SubPage("quiPanel",         ns.L["Panel"],       "quiPanel",         8,  ns.L["Panel"]),
             SubPage("reloadBehavior",   ns.L["Reload"],      "reloadBehavior",   9,  ns.L["Reload"]),
+            SubPage("merchantGrid",     ns.L["Merchant"],    "merchantGrid",     10, ns.L["Merchant"]),
         },
     })
 end

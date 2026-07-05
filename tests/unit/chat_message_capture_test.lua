@@ -223,6 +223,15 @@ assert(loadfile("QUI_Chat/chat/message_capture.lua"))("QUI", ns)
 local Capture = ns.QUI.Chat.MessageCapture
 local Store = ns.QUI.Chat.MessageStore
 
+assert(type(ns.QUI.Chat.MessageFormat.BuildEventLineFromArgs) == "function",
+    "message capture must use the formatter raw-args entrypoint")
+local rawFormatCalls = 0
+local realBuildEventLineFromArgs = ns.QUI.Chat.MessageFormat.BuildEventLineFromArgs
+ns.QUI.Chat.MessageFormat.BuildEventLineFromArgs = function(...)
+    rawFormatCalls = rawFormatCalls + 1
+    return realBuildEventLineFromArgs(...)
+end
+
 -- Keyword-alert recording stub: capture consults it at event time (not load).
 local kaCalls = 0
 ns.QUI.Chat.KeywordAlert = { ProcessForCapture = function(m, author) kaCalls = kaCalls + 1; return m end }
@@ -274,6 +283,25 @@ assert(hookCount == 1, "repeat Setup does not stack hooks")
 
 local fire = function(event, ...) captureFrame._onEvent(captureFrame, event, ...) end
 
+-- Guild roster updates also warm the formatter's name->class cache so guild chat
+-- senders who are not group units still class-color when the first visible line
+-- arrives during chat messaging lockdown.
+do
+    local prevSeed = ns.QUI.Chat.MessageFormat.SeedKnownClasses
+    local prevIsInGuild = _G.IsInGuild
+    local seedCalls = 0
+    ns.QUI.Chat.MessageFormat.SeedKnownClasses = function(includeGuild)
+        assert(includeGuild == true, "GUILD_ROSTER_UPDATE must include guild cache warm")
+        seedCalls = seedCalls + 1
+    end
+    _G.IsInGuild = function() return false end
+    Store.Clear()
+    fire("GUILD_ROSTER_UPDATE")
+    assert(seedCalls == 1, "GUILD_ROSTER_UPDATE warms known class cache, got " .. seedCalls)
+    ns.QUI.Chat.MessageFormat.SeedKnownClasses = prevSeed
+    _G.IsInGuild = prevIsInGuild
+end
+
 -- Plain capture: formatted line + event color + metadata
 fire("CHAT_MSG_SAY", "hello", "Bob")
 assert(Store.Size() == 1, "captured 1")
@@ -283,6 +311,7 @@ assert(e1.e == "CHAT_MSG_SAY" and e1.k == "SAY" and e1.t == 1234, "metadata")
 assert(e1.r == 1 and e1.g == 1 and e1.b == 1, "event color")
 assert(kaCalls >= 1, "capture consults keyword highlighter")
 assert(e1.gid == nil or e1.gid == false, "no guid arg -> no gid")
+assert(rawFormatCalls == 1, "capture formats via raw-args formatter, got " .. rawFormatCalls)
 
 -- URL decoration runs at capture (settings.urls.enabled)
 fire("CHAT_MSG_SAY", "see URLX now", "Bob")

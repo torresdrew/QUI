@@ -55,7 +55,7 @@ function V2.Register(frame)
                 name = ns.L["Combat"],
                 sectionNav = true,
                 featureIds = {
-                    "combatTimer", "brezCounter", "atonementCounter",
+                    "combatTimer", "lustTimer", "brezCounter", "atonementCounter",
                     "rotationAssistIcon", "focusCastAlert", "petWarning",
                     "readyCheck", "mplusTimer", "mplusProgress", "actionTracker",
                 },
