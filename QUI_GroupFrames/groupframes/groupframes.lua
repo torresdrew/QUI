@@ -678,6 +678,122 @@ local function ApplyStatusBarTexture(statusBar, textureName)
     end
 end
 
+-- >>> QUI_TEST_EXTRACT ApplyOverlayBar (sentinel used by
+-- tests/unit/groupframes_overlay_bar_test.lua; do not remove)
+-- Shared config + geometry for the three health-bar overlay StatusBars
+-- (absorb, heal-absorb, heal-prediction). Idempotent: called from
+-- DecorateGroupFrame at build and on every options refresh (RefreshSettings
+-- clears _quiDecorated and re-decorates). Per-event Update* paths push only
+-- SetValue/SetMinMaxValues/SetStatusBarColor; everything that changes on
+-- config/layout lives here.
+--   opts.drawOrderDefault : frame-level offset above healthBar when settings.drawOrder unset
+--   opts.fillOrigin       : honor settings.fillFrom (absorb / heal-absorb)
+--   opts.anchorToHealth   : pin to the health fill edge and grow outward (heal-pred)
+local function ApplyOverlayBar(bar, settings, healthBar, isVertical, opts)
+    if not bar or not healthBar then return end
+    settings = settings or {}
+    opts = opts or {}
+
+    -- Texture (config-driven; replaces the old hardcoded Shield-Fill build path)
+    ApplyStatusBarTexture(bar, settings.texture)
+
+    -- Draw order among the overlays (never exposes raw strata)
+    local order = settings.drawOrder or opts.drawOrderDefault or 1
+    bar:SetFrameLevel(healthBar:GetFrameLevel() + order)
+    bar:SetFrameStrata(healthBar:GetFrameStrata())
+
+    -- Geometry + fill origin
+    local reverse = false
+    bar:ClearAllPoints()
+    if opts.anchorToHealth then
+        local healthTex = healthBar:GetStatusBarTexture()
+        if isVertical then
+            bar:SetPoint("BOTTOMLEFT", healthTex, "TOPLEFT", 0, 0)
+            bar:SetPoint("TOPRIGHT", healthBar, "TOPRIGHT", 0, 0)
+            bar:SetOrientation("VERTICAL")
+        else
+            bar:SetPoint("TOPLEFT", healthTex, "TOPRIGHT", 0, 0)
+            bar:SetPoint("BOTTOMRIGHT", healthBar, "BOTTOMRIGHT", 0, 0)
+            bar:SetOrientation("HORIZONTAL")
+        end
+    else
+        bar:SetAllPoints(healthBar)
+        if opts.fillOrigin then
+            reverse = (settings.fillFrom or "reverse") ~= "default"
+        else
+            reverse = true
+        end
+        bar:SetReverseFill(reverse)
+        bar:SetOrientation(isVertical and "VERTICAL" or "HORIZONTAL")
+    end
+
+    -- Spark: 1px overlay pinned to the fill texture's leading edge. Position
+    -- tracks the (possibly secret) bar value through the anchor with NO Lua
+    -- arithmetic; never read GetValue/GetMinMaxValues.
+    if settings.spark then
+        local spark = bar._quiSpark
+        if not spark then
+            spark = bar:CreateTexture(nil, "OVERLAY")
+            spark:SetColorTexture(1, 1, 1, 1)
+            bar._quiSpark = spark
+        end
+        local sc = settings.sparkColor
+        spark:SetVertexColor(sc and sc[1] or 1, sc and sc[2] or 1, sc and sc[3] or 1, 1)
+        local fillTex = bar:GetStatusBarTexture()
+        spark:ClearAllPoints()
+        if isVertical then
+            spark:SetPoint("LEFT", fillTex, "LEFT", 0, 0)
+            spark:SetPoint("RIGHT", fillTex, "RIGHT", 0, 0)
+            spark:SetHeight(1)
+            local edge = reverse and "BOTTOM" or "TOP"
+            spark:SetPoint(edge, fillTex, edge, 0, 0)
+        else
+            spark:SetPoint("TOP", fillTex, "TOP", 0, 0)
+            spark:SetPoint("BOTTOM", fillTex, "BOTTOM", 0, 0)
+            spark:SetWidth(1)
+            local edge = reverse and "LEFT" or "RIGHT"
+            spark:SetPoint(edge, fillTex, edge, 0, 0)
+        end
+        spark:Show()
+    elseif bar._quiSpark then
+        bar._quiSpark:Hide()
+    end
+
+    -- Outline: 4 static overlay edges framing the full bar. Config color
+    -- (non-secret) so plain textures are fine -- no SetVertexColor-secret concern.
+    if settings.outline then
+        local o = bar._quiOutline
+        if not o then
+            o = {
+                top    = bar:CreateTexture(nil, "OVERLAY"),
+                bottom = bar:CreateTexture(nil, "OVERLAY"),
+                left   = bar:CreateTexture(nil, "OVERLAY"),
+                right  = bar:CreateTexture(nil, "OVERLAY"),
+            }
+            bar._quiOutline = o
+        end
+        local oc = settings.outlineColor or { 0, 0, 0, 1 }
+        local r, g, b, a = oc[1] or 0, oc[2] or 0, oc[3] or 0, oc[4] or 1
+        o.top:ClearAllPoints(); o.top:SetColorTexture(r, g, b, a)
+        o.top:SetPoint("TOPLEFT", bar, "TOPLEFT", 0, 0)
+        o.top:SetPoint("TOPRIGHT", bar, "TOPRIGHT", 0, 0); o.top:SetHeight(1)
+        o.bottom:ClearAllPoints(); o.bottom:SetColorTexture(r, g, b, a)
+        o.bottom:SetPoint("BOTTOMLEFT", bar, "BOTTOMLEFT", 0, 0)
+        o.bottom:SetPoint("BOTTOMRIGHT", bar, "BOTTOMRIGHT", 0, 0); o.bottom:SetHeight(1)
+        o.left:ClearAllPoints(); o.left:SetColorTexture(r, g, b, a)
+        o.left:SetPoint("TOPLEFT", bar, "TOPLEFT", 0, 0)
+        o.left:SetPoint("BOTTOMLEFT", bar, "BOTTOMLEFT", 0, 0); o.left:SetWidth(1)
+        o.right:ClearAllPoints(); o.right:SetColorTexture(r, g, b, a)
+        o.right:SetPoint("TOPRIGHT", bar, "TOPRIGHT", 0, 0)
+        o.right:SetPoint("BOTTOMRIGHT", bar, "BOTTOMRIGHT", 0, 0); o.right:SetWidth(1)
+        o.top:Show(); o.bottom:Show(); o.left:Show(); o.right:Show()
+    elseif bar._quiOutline then
+        local o = bar._quiOutline
+        o.top:Hide(); o.bottom:Hide(); o.left:Hide(); o.right:Hide()
+    end
+end
+-- <<< QUI_TEST_EXTRACT ApplyOverlayBar
+
 local function InvalidateCache()
     wipe(_fontCache)
     _state.cachedVDB_party = nil
@@ -1297,24 +1413,6 @@ local function UpdateAbsorbs(frame, _unit, _maxHP)
         return
     end
 
-    -- Absorb bar texture (composer-driven; cached so we only re-skin on change).
-    local absorbTexName = vdb.absorbs.texture or "Quazii v5"
-    if frame._absorbTexName ~= absorbTexName then
-        frame.absorbBar:SetStatusBarTexture(GetTexturePath(absorbTexName))
-        frame._absorbTexName = absorbTexName
-    end
-
-    -- Geometry is set up at frame creation (SetFrameLevel, SetAllPoints,
-    -- SetReverseFill, SetOrientation).  Only redo when orientation changes.
-    if frame._absorbVertical ~= frame._isVerticalFill then
-        frame.absorbBar:SetFrameLevel(frame.healthBar:GetFrameLevel() + 2)
-        frame.absorbBar:ClearAllPoints()
-        frame.absorbBar:SetAllPoints(frame.healthBar)
-        frame.absorbBar:SetReverseFill(true)
-        frame.absorbBar:SetOrientation(frame._isVerticalFill and "VERTICAL" or "HORIZONTAL")
-        frame._absorbVertical = frame._isVerticalFill
-    end
-
     -- C-side SetMinMaxValues/SetValue handle secret values natively.
     -- Always call — maxHP may be a secret value (combat), so Lua-side ~= is forbidden.
     frame.absorbBar:SetMinMaxValues(0, maxHP)
@@ -1377,16 +1475,6 @@ local function UpdateHealAbsorb(frame, _unit, _maxHP)
         frame.healAbsorbBar:SetValue(0)
         frame.healAbsorbBar:Hide()
         return
-    end
-
-    -- Redo geometry if orientation changed
-    if frame._healAbsorbVertical ~= frame._isVerticalFill then
-        frame.healAbsorbBar:SetFrameLevel(frame.healthBar:GetFrameLevel() + 3)
-        frame.healAbsorbBar:ClearAllPoints()
-        frame.healAbsorbBar:SetAllPoints(frame.healthBar)
-        frame.healAbsorbBar:SetReverseFill(true)
-        frame.healAbsorbBar:SetOrientation(frame._isVerticalFill and "VERTICAL" or "HORIZONTAL")
-        frame._healAbsorbVertical = frame._isVerticalFill
     end
 
     -- C-side SetMinMaxValues handles secret values natively — no Lua comparison.
@@ -1452,22 +1540,6 @@ local function UpdateHealPrediction(frame, _unit, _maxHP)
     if not incomingHeals then
         frame.healPredictionBar:Hide()
         return
-    end
-
-    -- Anchor from health fill edge.  Only redo geometry when orientation changes.
-    if frame._healPredVertical ~= frame._isVerticalFill then
-        local healthTexture = frame.healthBar:GetStatusBarTexture()
-        frame.healPredictionBar:ClearAllPoints()
-        if frame._isVerticalFill then
-            frame.healPredictionBar:SetPoint("BOTTOMLEFT", healthTexture, "TOPLEFT", 0, 0)
-            frame.healPredictionBar:SetPoint("TOPRIGHT", frame.healthBar, "TOPRIGHT", 0, 0)
-            frame.healPredictionBar:SetOrientation("VERTICAL")
-        else
-            frame.healPredictionBar:SetPoint("TOPLEFT", healthTexture, "TOPRIGHT", 0, 0)
-            frame.healPredictionBar:SetPoint("BOTTOMRIGHT", frame.healthBar, "BOTTOMRIGHT", 0, 0)
-            frame.healPredictionBar:SetOrientation("HORIZONTAL")
-        end
-        frame._healPredVertical = frame._isVerticalFill
     end
 
     -- C-side SetMinMaxValues handles secret values natively — no Lua comparison.
@@ -2582,63 +2654,34 @@ local function DecorateGroupFrame(frame)
         frame.healthBg = nil
     end
 
-    -- Heal prediction bar (overlays health bar, peeks out beyond health fill)
+    -- Heal-bar overlays (absorb / heal-absorb / heal-prediction). Texture,
+    -- draw order, fill origin, spark and outline are all owned by the shared
+    -- ApplyOverlayBar; the per-event Update* paths only push value/color.
     local vdb = GetVisualDB(isRaid)
-    local predSettings = vdb and vdb.healPrediction
+
     local healPredictionBar = frame.healPredictionBar or CreateFrame("StatusBar", nil, healthBar)
-    ApplyStatusBarTexture(healPredictionBar)
-    healPredictionBar:SetFrameLevel(healthBar:GetFrameLevel() + 1)
-    healPredictionBar:ClearAllPoints()
-    healPredictionBar:SetAllPoints(healthBar)
+    frame.healPredictionBar = healPredictionBar
     healPredictionBar:SetMinMaxValues(0, 1)
     healPredictionBar:SetValue(0)
-    local pc = predSettings and predSettings.color or _state.defaultColors.healPrediction
-    local pa = predSettings and predSettings.opacity or 0.5
-    healPredictionBar:SetStatusBarColor(pc[1] or 0.2, pc[2] or 1, pc[3] or 0.2, pa)
+    ApplyOverlayBar(healPredictionBar, vdb and vdb.healPrediction, healthBar, isVertical,
+        { drawOrderDefault = 1, anchorToHealth = true })
     healPredictionBar:Hide()
-    frame.healPredictionBar = healPredictionBar
 
-    -- Absorb bar (overlays health bar, reverse-fills from right)
-    local absorbSettings = vdb and vdb.absorbs
-    local absorbBar = frame.absorbBar
-    if not absorbBar then
-        absorbBar = CreateFrame("StatusBar", nil, healthBar)
-    end
-    absorbBar:SetStatusBarTexture("Interface\\RaidFrame\\Shield-Fill")
-    local ac = absorbSettings and absorbSettings.color or COLORS.WHITE
-    local aa = absorbSettings and absorbSettings.opacity or 0.3
-    absorbBar:SetStatusBarColor(ac[1], ac[2], ac[3], aa)
-    absorbBar:SetFrameLevel(healthBar:GetFrameLevel() + 2)
-    absorbBar:SetFrameStrata(healthBar:GetFrameStrata())
-    absorbBar:ClearAllPoints()
-    absorbBar:SetAllPoints(healthBar)
-    absorbBar:SetReverseFill(true)
-    absorbBar:SetOrientation(isVertical and "VERTICAL" or "HORIZONTAL")
+    local absorbBar = frame.absorbBar or CreateFrame("StatusBar", nil, healthBar)
+    frame.absorbBar = absorbBar
     absorbBar:SetMinMaxValues(0, 1)
     absorbBar:SetValue(0)
+    ApplyOverlayBar(absorbBar, vdb and vdb.absorbs, healthBar, isVertical,
+        { drawOrderDefault = 2, fillOrigin = true })
     absorbBar:Hide()
-    frame.absorbBar = absorbBar
 
-    -- Heal absorb bar (overlays health bar — shows heal absorb debuffs like Necrotic Wound)
-    local healAbsorbSettings = vdb and vdb.healAbsorbs
-    local healAbsorbBar = frame.healAbsorbBar
-    if not healAbsorbBar then
-        healAbsorbBar = CreateFrame("StatusBar", nil, healthBar)
-    end
-    healAbsorbBar:SetStatusBarTexture("Interface\\RaidFrame\\Shield-Fill")
-    local hac = healAbsorbSettings and healAbsorbSettings.color or _state.defaultColors.healAbsorb
-    local haa = healAbsorbSettings and healAbsorbSettings.opacity or 0.6
-    healAbsorbBar:SetStatusBarColor(hac[1], hac[2], hac[3], haa)
-    healAbsorbBar:SetFrameLevel(healthBar:GetFrameLevel() + 3)
-    healAbsorbBar:SetFrameStrata(healthBar:GetFrameStrata())
-    healAbsorbBar:ClearAllPoints()
-    healAbsorbBar:SetAllPoints(healthBar)
-    healAbsorbBar:SetReverseFill(true)
-    healAbsorbBar:SetOrientation(isVertical and "VERTICAL" or "HORIZONTAL")
+    local healAbsorbBar = frame.healAbsorbBar or CreateFrame("StatusBar", nil, healthBar)
+    frame.healAbsorbBar = healAbsorbBar
     healAbsorbBar:SetMinMaxValues(0, 1)
     healAbsorbBar:SetValue(0)
+    ApplyOverlayBar(healAbsorbBar, vdb and vdb.healAbsorbs, healthBar, isVertical,
+        { drawOrderDefault = 3, fillOrigin = true })
     healAbsorbBar:Hide()
-    frame.healAbsorbBar = healAbsorbBar
 
     -- Power bar
     if showPower then
@@ -5360,15 +5403,6 @@ local function StartRangeCheck()
     _state.rangeCheckTicker = C_Timer.NewTicker(interval, DoRangeCheck)
 end
 
-local function StopRangeCheck()
-    if _state.rangeCheckTicker then
-        _state.rangeCheckTicker:Cancel()
-        _state.rangeCheckTicker = nil
-    end
-    wipe(_range.cache)
-    wipe(_range.cacheTime)
-end
-
 ---------------------------------------------------------------------------
 -- GROUP_ROSTER_UPDATE: Hoisted deferred callback (avoids closure allocation)
 -- Called 0.2s after the coalesced GRU fires, giving secure headers time to
@@ -6290,7 +6324,14 @@ end
 function QUI_GF:Disable()
     _state.cachedModuleEnabled = false
     UnregisterEvents()
-    StopRangeCheck()
+    -- (inlined former StopRangeCheck: sole call site, freed a top-level local
+    -- slot — see QUI_TEST_EXTRACT ApplyOverlayBar note in task-2-report.md)
+    if _state.rangeCheckTicker then
+        _state.rangeCheckTicker:Cancel()
+        _state.rangeCheckTicker = nil
+    end
+    wipe(_range.cache)
+    wipe(_range.cacheTime)
 
     -- Party target companions are unit-watched independently of the headers;
     -- tear them down so they don't linger when the module is disabled. Teardown
