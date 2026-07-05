@@ -11,6 +11,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v4.0.5-beta12 - 2026-07-05
+
+### Added
+- Group Frames: aura icons can now use a linear (horizontal or vertical) cooldown swipe instead of the radial sweep — pick a Swipe Style per aura element. In linear mode a status bar fills over the icon as the cooldown elapses, the countdown number is kept, and Reverse Swipe still applies. Radial stays the default; existing setups are unchanged.
+
+### Fixed
+- Inspect: opening the Inspect frame right after hovering a teammate no longer blanks the open pane's item levels and gear tooltips a few seconds later. A stray queued tooltip-inspect request that fired after the frame opened was redirecting the server off the inspected unit.
+- Bags: right-clicking a bag item to deposit into a selected bank or Warband tab now merges into an existing partial stack of the same item instead of always burning a fresh empty slot.
+
 ## v4.0.5-beta11 - 2026-07-05
 
 ### Added
