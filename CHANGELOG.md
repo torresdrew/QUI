@@ -11,6 +11,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v4.0.5-beta10 - 2026-07-05
+
+### Added
+- Quality of Life: Merchant grid extender — grow the vendor Items tab into a Columns × Rows grid (2–4 columns × 5–8 rows), collapsing multiple vendor pages onto one page. Off by default; the 2×5 default matches the standard vendor layout.
+- Quality of Life: new "Blizzard Combat Text" toggle to disable Blizzard's floating/scrolling combat text (QoL > Combat Text). Off by default and applies immediately with no reload.
+- Group Frames: color debuff icon borders by dispel type (Magic, Curse, Poison, Disease, Bleed), working in combat, reusing the Dispel Overlay palette. Opt-in per context, off by default.
+- Group Frames: per-bar overlay controls for the absorb, heal-absorb, and heal-prediction bars — texture, draw order, fill origin, and an optional leading-edge spark and outline.
+- Group Frames: party frames can now host per-member cooldown icons from compatible external cooldown-tracker addons via a provider API (party only).
+- Damage Meter: one-click Dark/Light theme preset for the native meter's Appearance colors (Global mode) — stamps a cohesive color set and repaints the meter live.
+
 ## v4.0.5-beta9 - 2026-06-29
 
 ### Added
