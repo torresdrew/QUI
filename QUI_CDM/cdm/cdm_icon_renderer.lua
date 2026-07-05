@@ -1532,7 +1532,9 @@ ApplyResolvedCooldown = function(icon, preResolvedState)
     if sid and not entryIsAura then
         local baseSid = entry.spellID or entry.id or sid
         local mirrorState = mirrorPayload and mirrorPayload.state
-        sid = Resolvers.ResolveLiveDisplaySpellID(baseSid, mirrorState) or sid
+        if Resolvers.ResolveLiveDisplaySpellID then
+            sid = Resolvers.ResolveLiveDisplaySpellID(baseSid, mirrorState) or sid
+        end
     end
     if mirrorBackedDuration == true then
         ApplyMirrorPayloadToIcon(icon, entry, sid or resolvedSpellID, mirrorPayload)
@@ -3126,8 +3128,10 @@ function _resolverRuntimePolicy.SyncBlizzMirrorIconState(icon)
         local baseSid = entry.spellID or entry.id or runtimeSid
         local mirrorState = GetCachedMirrorStateForIcon(icon)
             or RefreshCachedMirrorStateForIcon(icon)
-        runtimeSid = Resolvers.ResolveLiveDisplaySpellID(baseSid, mirrorState)
-            or runtimeSid
+        if Resolvers.ResolveLiveDisplaySpellID then
+            runtimeSid = Resolvers.ResolveLiveDisplaySpellID(baseSid, mirrorState)
+                or runtimeSid
+        end
     end
     icon._runtimeSpellID = runtimeSid
     local debugBlizz
@@ -3444,8 +3448,10 @@ local function UpdateIconCooldownOwned(icon)
             mirrorState = GetCachedMirrorStateForIcon(icon)
                 or RefreshCachedMirrorStateForIcon(icon)
         end
-        _runtimeSid = Resolvers.ResolveLiveDisplaySpellID(baseSid, mirrorState)
-            or _runtimeSid
+        if Resolvers.ResolveLiveDisplaySpellID then
+            _runtimeSid = Resolvers.ResolveLiveDisplaySpellID(baseSid, mirrorState)
+                or _runtimeSid
+        end
     end
     icon._runtimeSpellID = _runtimeSid
 
