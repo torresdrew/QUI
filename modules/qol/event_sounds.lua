@@ -29,6 +29,22 @@ local EVENT_TO_KEY = {
     RESURRECT_REQUEST   = "resurrect",
 }
 
+-- Whisper is the only event that overlaps the QUI Chat per-channel new-message
+-- sound. When chat takeover is active AND configured to play a whisper sound,
+-- chat owns whisper (its path is richer: self-suppress + secret-aware) and we
+-- defer to avoid a double ping. Chat exposes _G.QUI.Chat.Sounds.WillPlayForEvent
+-- for exactly this query; if chat is disabled/unloaded or won't play (None,
+-- combat lockdown) it returns false and we fall back to playing here.
+local WHISPER_EVENTS = {
+    CHAT_MSG_WHISPER    = true,
+    CHAT_MSG_BN_WHISPER = true,
+}
+
+local function ChatOwnsWhisper(event)
+    local CS = _G.QUI and _G.QUI.Chat and _G.QUI.Chat.Sounds
+    return CS and CS.WillPlayForEvent and CS.WillPlayForEvent(event) or false
+end
+
 -- Mail alert is a special case: UPDATE_PENDING_MAIL fires on state changes AND
 -- at login, so we only play on a false->true transition, and only once a login
 -- baseline is established (mailReady) — otherwise existing mail pings on login.
@@ -63,6 +79,8 @@ frame:SetScript("OnEvent", function(_, event)
     local settings = GetSettings()
     local cfg = settings and settings.eventSounds
     if not cfg or not cfg.enabled then return end
+    -- Defer whisper to the QUI Chat sound when chat owns it (avoid double ping).
+    if WHISPER_EVENTS[event] and ChatOwnsWhisper(event) then return end
     local key = EVENT_TO_KEY[event]
     if key then
         PlayEventSound(cfg[key])

@@ -96,23 +96,32 @@ local function FindConfiguredSoundEntry(event, entries)
     return nil
 end
 
--- Core: the store subscriber passes the already-resolved senderGUID
--- (entry.gid) so this never needs to unpack event payloads.
-local function TryPlayForEvent(event, senderGUID)
-    if IsChatMessagingLockedDown() then
-        return
-    end
+-- Resolve the entry chat WOULD play for this event right now, or nil.
+-- Mirrors the TryPlayForEvent gating but excludes sender self-suppression
+-- (the caller has no sender at query time). A "None" sound resolves to nil
+-- so callers can treat it uniformly as "chat will not play".
+local function ResolvePlayableEntry(event)
+    if IsChatMessagingLockedDown() then return nil end
 
     local settings = I.GetSettings()
     if not (I.IsChatEnabled and I.IsChatEnabled(settings))
         or not settings.newMessageSound or not settings.newMessageSound.enabled then
-        return
+        return nil
     end
 
     local entries = settings.newMessageSound.entries
-    if not entries or #entries == 0 then return end
+    if not entries or #entries == 0 then return nil end
 
     local entry = FindConfiguredSoundEntry(event, entries)
+    if not entry then return nil end
+    if (entry.sound or "None") == "None" then return nil end
+    return entry
+end
+
+-- Core: the store subscriber passes the already-resolved senderGUID
+-- (entry.gid) so this never needs to unpack event payloads.
+local function TryPlayForEvent(event, senderGUID)
+    local entry = ResolvePlayableEntry(event)
     if not entry then return end
 
     -- Self-message check: if we have a readable senderGUID, compare to the
@@ -124,6 +133,14 @@ local function TryPlayForEvent(event, senderGUID)
     end
 
     PlayConfiguredMessageSound(entry)
+end
+
+-- Public predicate: true when chat is currently configured to play a sound
+-- for this event. QUI_QoL event_sounds queries this to defer its whisper
+-- alert to chat when chat owns it. Cannot account for sender self-
+-- suppression (no sender known here) — see ResolvePlayableEntry.
+function Sounds.WillPlayForEvent(event)
+    return ResolvePlayableEntry(event) ~= nil
 end
 
 local storeSubscribed = false
