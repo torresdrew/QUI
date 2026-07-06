@@ -12,6 +12,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v4.0.6-beta2 - 2026-07-06
+
+### Added
+- feat(qol): audio output device lock — re-asserts your chosen audio output device whenever the OS device list changes (plugging/unplugging headphones, etc.)
+- feat(qol): event sound alerts — play a chosen sound on an incoming whisper, ready check, LFG proposal, or resurrection offer (per event, off by default)
+- feat(qol): extended ignore list — a name list beyond the default cap that mutes public chat and auto-declines party invites and duels from those names
+- feat(qol): class-color the names in the friends list (regular and Battle.net friends playing WoW)
+- feat(qol): no-target combat warning — opt-in banner shown while you are in combat with no attackable target selected
+- feat(qol): show NPC ID in unit tooltips
+- feat(qol): option to close bags when inserting a keystone
+
 ## v4.0.6-beta1 - 2026-07-05
 
 Beta channel rebased onto the v4.0.5 release base. Localization is re-enabled on beta.
