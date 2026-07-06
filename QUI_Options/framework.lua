@@ -6871,28 +6871,38 @@ end
 function GUI:RenderSubPageTabs(tile, contentArea, subPages, onSelect, headerFrame)
     if not subPages or #subPages == 0 then return end
 
+    -- A single sub-page needs no tab strip: its lone tab just repeats the
+    -- tile's own header title (e.g. "Bags" under the "Bags" header). Skip the
+    -- visible bar and anchor the body straight under the header, reclaiming
+    -- the row. The select() closure below still runs so tile._subPageSelect
+    -- works for search jump-to-setting.
+    local single = #subPages == 1
+
     -- Tab bar — anchor to header bottom when provided so a taller header
     -- (with subtitle) shifts the tabs down instead of overlapping. Bar is
     -- header-aligned (matches gameplay/cooldown_manager etc.) so chips
     -- visually line up under the header text. Body underneath extends past
     -- the bar to full contentArea width so page content and the optional
     -- section-nav chip strip span properly — see body anchors below.
-    local bar = CreateFrame("Frame", nil, contentArea)
-    if headerFrame then
-        bar:SetPoint("TOPLEFT", headerFrame, "BOTTOMLEFT", 0, -8)
-        bar:SetPoint("TOPRIGHT", headerFrame, "BOTTOMRIGHT", 0, -8)
-    else
-        bar:SetPoint("TOPLEFT", contentArea, "TOPLEFT", 18, -70)
-        bar:SetPoint("TOPRIGHT", contentArea, "TOPRIGHT", -18, -70)
-    end
-    bar:SetHeight(28)
+    local bar
+    if not single then
+        bar = CreateFrame("Frame", nil, contentArea)
+        if headerFrame then
+            bar:SetPoint("TOPLEFT", headerFrame, "BOTTOMLEFT", 0, -8)
+            bar:SetPoint("TOPRIGHT", headerFrame, "BOTTOMRIGHT", 0, -8)
+        else
+            bar:SetPoint("TOPLEFT", contentArea, "TOPLEFT", 18, -70)
+            bar:SetPoint("TOPRIGHT", contentArea, "TOPRIGHT", -18, -70)
+        end
+        bar:SetHeight(28)
 
-    -- Underline beneath the bar
-    local underline = bar:CreateTexture(nil, "OVERLAY")
-    underline:SetPoint("BOTTOMLEFT", 0, 0)
-    underline:SetPoint("BOTTOMRIGHT", 0, 0)
-    underline:SetHeight(1)
-    underline:SetColorTexture(C.border[1], C.border[2], C.border[3], C.border[4])
+        -- Underline beneath the bar
+        local underline = bar:CreateTexture(nil, "OVERLAY")
+        underline:SetPoint("BOTTOMLEFT", 0, 0)
+        underline:SetPoint("BOTTOMRIGHT", 0, 0)
+        underline:SetHeight(1)
+        underline:SetColorTexture(C.border[1], C.border[2], C.border[3], C.border[4])
+    end
 
     -- Tab body below. Reserve 32px at the bottom when the tile has a
     -- related-settings footer so sub-page content doesn't sit under it.
@@ -6903,7 +6913,17 @@ function GUI:RenderSubPageTabs(tile, contentArea, subPages, onSelect, headerFram
     -- ends up 18px short on the left versus the direct path.
     local body = CreateFrame("Frame", nil, contentArea)
     local footerReserve = tile and tile.config and tile.config.relatedSettings and 32 or 0
-    body:SetPoint("TOPLEFT", bar, "BOTTOMLEFT", -18, -8)
+    if single then
+        -- Mirror the direct (no-subPages) container anchor so single-subpage
+        -- tiles line up identically to feature tiles that use featureId=.
+        if headerFrame then
+            body:SetPoint("TOPLEFT", headerFrame, "BOTTOMLEFT", -18, -10)
+        else
+            body:SetPoint("TOPLEFT", contentArea, "TOPLEFT", 0, -70)
+        end
+    else
+        body:SetPoint("TOPLEFT", bar, "BOTTOMLEFT", -18, -8)
+    end
     body:SetPoint("BOTTOMRIGHT", contentArea, "BOTTOMRIGHT", 0, footerReserve)
 
     local tabs = {}
@@ -7063,55 +7083,59 @@ function GUI:RenderSubPageTabs(tile, contentArea, subPages, onSelect, headerFram
     local TAB_GAP_X = 16
     local TAB_GAP_Y = 4
 
-    for i, sp in ipairs(subPages) do
-        local btn = CreateFrame("Button", nil, bar)
-        btn:SetHeight(ROW_HEIGHT)
+    -- Skip the whole tab-button strip for single-subpage tiles; there is no
+    -- bar to parent buttons to and nothing to switch between.
+    if not single then
+        for i, sp in ipairs(subPages) do
+            local btn = CreateFrame("Button", nil, bar)
+            btn:SetHeight(ROW_HEIGHT)
 
-        btn.label = btn:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-        btn.label:SetText(sp.name)
-        btn.label:SetPoint("CENTER", 0, 0)
-        local f, _, fl = btn.label:GetFont()
-        ns.Helpers.ApplyFontWithFallback(btn.label, f or (ns.UIKit and ns.UIKit.ResolveFontPath and ns.UIKit.ResolveFontPath(GUI:GetFontPath())) or f, 11, fl or "")
+            btn.label = btn:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+            btn.label:SetText(sp.name)
+            btn.label:SetPoint("CENTER", 0, 0)
+            local f, _, fl = btn.label:GetFont()
+            ns.Helpers.ApplyFontWithFallback(btn.label, f or (ns.UIKit and ns.UIKit.ResolveFontPath and ns.UIKit.ResolveFontPath(GUI:GetFontPath())) or f, 11, fl or "")
 
-        local labelW = btn.label:GetStringWidth() + 24
-        btn:SetWidth(labelW)
+            local labelW = btn.label:GetStringWidth() + 24
+            btn:SetWidth(labelW)
 
-        btn.activeBar = btn:CreateTexture(nil, "OVERLAY")
-        btn.activeBar:SetPoint("BOTTOMLEFT", 4, 0)
-        btn.activeBar:SetPoint("BOTTOMRIGHT", -4, 0)
-        btn.activeBar:SetHeight(2)
-        btn.activeBar:SetColorTexture(C.accent[1], C.accent[2], C.accent[3], 1)
-        btn.activeBar:Hide()
+            btn.activeBar = btn:CreateTexture(nil, "OVERLAY")
+            btn.activeBar:SetPoint("BOTTOMLEFT", 4, 0)
+            btn.activeBar:SetPoint("BOTTOMRIGHT", -4, 0)
+            btn.activeBar:SetHeight(2)
+            btn.activeBar:SetColorTexture(C.accent[1], C.accent[2], C.accent[3], 1)
+            btn.activeBar:Hide()
 
-        btn:SetScript("OnClick", function() RunSubPageTabClick(i) end)
+            btn:SetScript("OnClick", function() RunSubPageTabClick(i) end)
 
-        tabs[i] = btn
-    end
-
-    -- Flow tabs onto multiple rows when the bar is too narrow to hold them
-    -- all on one line. Re-runs on OnSizeChanged so resizing the settings
-    -- window (or populating during layout) reflows correctly.
-    local function LayoutTabs()
-        local barWidth = bar:GetWidth()
-        if not barWidth or barWidth <= 0 then return end
-
-        local x, y = 0, 0
-        local rows = 1
-        for _, btn in ipairs(tabs) do
-            local w = btn:GetWidth()
-            if x > 0 and (x + w) > barWidth then
-                x = 0
-                y = y - (ROW_HEIGHT + TAB_GAP_Y)
-                rows = rows + 1
-            end
-            btn:ClearAllPoints()
-            btn:SetPoint("TOPLEFT", bar, "TOPLEFT", x, y)
-            x = x + w + TAB_GAP_X
+            tabs[i] = btn
         end
-        bar:SetHeight(rows * ROW_HEIGHT + math.max(rows - 1, 0) * TAB_GAP_Y)
+
+        -- Flow tabs onto multiple rows when the bar is too narrow to hold them
+        -- all on one line. Re-runs on OnSizeChanged so resizing the settings
+        -- window (or populating during layout) reflows correctly.
+        local function LayoutTabs()
+            local barWidth = bar:GetWidth()
+            if not barWidth or barWidth <= 0 then return end
+
+            local x, y = 0, 0
+            local rows = 1
+            for _, btn in ipairs(tabs) do
+                local w = btn:GetWidth()
+                if x > 0 and (x + w) > barWidth then
+                    x = 0
+                    y = y - (ROW_HEIGHT + TAB_GAP_Y)
+                    rows = rows + 1
+                end
+                btn:ClearAllPoints()
+                btn:SetPoint("TOPLEFT", bar, "TOPLEFT", x, y)
+                x = x + w + TAB_GAP_X
+            end
+            bar:SetHeight(rows * ROW_HEIGHT + math.max(rows - 1, 0) * TAB_GAP_Y)
+        end
+        bar:SetScript("OnSizeChanged", LayoutTabs)
+        LayoutTabs()
     end
-    bar:SetScript("OnSizeChanged", LayoutTabs)
-    LayoutTabs()
 
     tile._subPageSelect = select
     -- Auto-select first sub-page
