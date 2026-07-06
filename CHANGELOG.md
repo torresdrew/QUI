@@ -9,6 +9,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v5.0.0-alpha13 - 2026-07-05
+
+> ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will
+> not load on the 12.0.x live client. Stay on the v4.x beta line for live realms.
+
+### Fixed
+- fix(cdm): the cooldown viewer HUD now re-evaluates its visibility rules the
+  instant you start or stop moving, so movement-dependent conditions (skyriding,
+  flying, mounted) update promptly instead of lagging until the next event.
+
+
 ## v5.0.0-alpha12 - 2026-07-05
 
 > ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will
