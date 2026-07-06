@@ -787,6 +787,14 @@ local function IsGuildMemberByName(name)
 end
 
 local function OnPartyInvite(inviterName)
+    -- Extended ignore takes precedence over auto-accept: silently decline
+    -- invites from names on the extended-ignore list.
+    if ns.ShouldAutoDeclineFrom and ns.ShouldAutoDeclineFrom(inviterName) then
+        DeclineGroup()
+        StaticPopup_Hide("PARTY_INVITE")
+        return
+    end
+
     local settings = GetSettings()
     if not settings then return end
 
@@ -810,6 +818,75 @@ local function OnPartyInvite(inviterName)
         AcceptGroup()
         StaticPopup_Hide("PARTY_INVITE")
     end
+end
+
+---------------------------------------------------------------------------
+-- DUEL / PET BATTLE: AUTO DECLINE
+---------------------------------------------------------------------------
+
+-- Decline verbs verified vs FrameXML StaticPopupDialogs OnCancel handlers:
+--   DUEL_REQUESTED            -> CancelDuel()
+--   PET_BATTLE_PVP_DUEL_...   -> C_PetBattles.CancelPVPDuel()
+-- Both are insecure calls (fired from StaticPopup OnCancel), so no taint risk.
+-- Deferred one frame so Blizzard's UIParent handler has run StaticPopup_Show
+-- first; otherwise a show-after-decline race leaves a stale popup on screen.
+local function OnDuelRequested(challengerName)
+    local ignored = ns.ShouldAutoDeclineFrom and ns.ShouldAutoDeclineFrom(challengerName)
+    local settings = GetSettings()
+    if not ignored and (not settings or not settings.autoDeclineDuel) then return end
+    C_Timer.After(0, function()
+        CancelDuel()
+        StaticPopup_Hide("DUEL_REQUESTED")
+    end)
+end
+
+local function OnPetBattleDuelRequested()
+    local settings = GetSettings()
+    if not settings or not settings.autoDeclinePetBattle then return end
+    C_Timer.After(0, function()
+        if C_PetBattles and C_PetBattles.CancelPVPDuel then
+            C_PetBattles.CancelPVPDuel()
+        end
+        StaticPopup_Hide("PET_BATTLE_PVP_DUEL_REQUESTED")
+    end)
+end
+
+---------------------------------------------------------------------------
+-- AUTO RELEASE SPIRIT
+---------------------------------------------------------------------------
+
+-- RepopMe() verified vs PlayerScriptDocumentation (no restriction flags) and is
+-- the release call used by StaticPopupDialogs["DEATH"].OnAccept.
+-- <<< QUI_TEST_EXTRACT release_scope
+-- Pure scope decision. Deliberately NEVER returns true for dungeon/raid/arena
+-- (instanceType "party"/"raid"/"arena"), where a combat resurrection (brez)
+-- matters; only battlegrounds ("pvp") and, when opted in, the open world.
+local function ShouldAutoReleaseInScope(mode, inInstance, instanceType)
+    if not mode or mode == "off" then return false end
+    if instanceType == "pvp" then return true end        -- battlegrounds
+    if not inInstance then return mode == "pvpworld" end  -- open world only when opted in
+    return false                                          -- dungeon/raid/arena: never
+end
+-- <<< QUI_TEST_EXTRACT release_scope
+
+local function OnPlayerDead()
+    local settings = GetSettings()
+    local mode = settings and settings.autoRelease
+    if not mode or mode == "off" then return end
+    if UnitIsGhost("player") then return end        -- already released
+
+    local inInstance, instanceType = IsInInstance()
+    if not ShouldAutoReleaseInScope(mode, inInstance, instanceType) then return end
+
+    -- Brief delay so a fast self-res (soulstone/ankh/cheat death) can register;
+    -- re-check we are still a releasable corpse before releasing.
+    C_Timer.After(1.5, function()
+        local s = GetSettings()
+        if not s or s.autoRelease == "off" then return end
+        if UnitIsDead("player") and not UnitIsGhost("player") then
+            RepopMe()
+        end
+    end)
 end
 
 ---------------------------------------------------------------------------
@@ -1239,6 +1316,9 @@ end
 qolFrame:RegisterEvent("MERCHANT_SHOW")
 qolFrame:RegisterEvent("LFG_ROLE_CHECK_SHOW")
 qolFrame:RegisterEvent("PARTY_INVITE_REQUEST")
+qolFrame:RegisterEvent("DUEL_REQUESTED")
+qolFrame:RegisterEvent("PET_BATTLE_PVP_DUEL_REQUESTED")
+qolFrame:RegisterEvent("PLAYER_DEAD")
 qolFrame:RegisterEvent("QUEST_DETAIL")
 qolFrame:RegisterEvent("QUEST_COMPLETE")
 qolFrame:RegisterEvent("GOSSIP_SHOW")
@@ -1259,6 +1339,12 @@ qolFrame:SetScript("OnEvent", function(self, event, ...)
         OnRoleCheckShow()
     elseif event == "PARTY_INVITE_REQUEST" then
         OnPartyInvite(...)
+    elseif event == "DUEL_REQUESTED" then
+        OnDuelRequested(...)
+    elseif event == "PET_BATTLE_PVP_DUEL_REQUESTED" then
+        OnPetBattleDuelRequested()
+    elseif event == "PLAYER_DEAD" then
+        OnPlayerDead()
     elseif event == "QUEST_DETAIL" then
         OnQuestDetail()
     elseif event == "QUEST_COMPLETE" then

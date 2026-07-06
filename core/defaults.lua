@@ -37,6 +37,7 @@ local defaults = {
             overrideSCTFont = false,  -- Override scrolling combat text font with QUI font
             disableScrollingCombatText = false,  -- Force Blizzard floating/scrolling combat text off (enableFloatingCombatText CVar)
             autoInsertKey = true,  -- Auto-insert keystone in M+ UI
+            closeBagsOnKeystoneInsert = false,  -- Close bags after auto-inserting the keystone (opt-in)
             skinKeystoneFrame = true,  -- Skin keystone insertion window
             skinGameMenu = true,  -- Skin ESC menu (opt-in)
             skinContextMenus = true,  -- Skin context/dropdown menus
@@ -109,6 +110,10 @@ local defaults = {
             autoDeleteConfirm = true,  -- Auto-fill DELETE confirmation text
             auctionHouseExpansionFilter = true,  -- Auto-enable current expansion filter in AH
             craftingOrderExpansionFilter = true,  -- Auto-enable current expansion filter in Crafting Orders
+            autoDeclineDuel = false,  -- Auto-decline incoming duel requests (opt-in)
+            autoDeclinePetBattle = false,  -- Auto-decline incoming pet battle duel requests (opt-in)
+            autoRelease = "off",  -- Auto-release spirit: "off"/"pvp" (battlegrounds)/"pvpworld" (+ open world). Never in dungeons/raids.
+            audioOutputDevice = "",  -- Lock game audio output to this device NAME (re-forced on device change). "" = off.
             -- Popup & Toast Blocker (granular, all OFF by default)
             popupBlocker = {
                 enabled = false,
@@ -129,6 +134,31 @@ local defaults = {
             petCombatWarning = true,    -- Show combat warning in instances when pet missing/passive
             petWarningOffsetX = 0,      -- Warning frame X offset from center
             petWarningOffsetY = -200,   -- Warning frame Y offset from center
+            -- No-Target Combat Warning (opt-in; flashes when in combat with no attackable target)
+            noTargetWarning = {
+                enabled = false,
+                offsetX = 0,
+                offsetY = -160,
+                fontSize = 20,
+            },
+            -- Friends List decor: class-color the names in the WoW friends list
+            friendsClassColor = true,
+            -- Extended Ignore: suppress chat + auto-decline from a name list beyond Blizzard's cap
+            extendedIgnore = {
+                enabled = false,
+                suppressChat = true,
+                autoDecline = true,
+                names = "",
+            },
+            -- Event Sound Alerts: play a chosen sound on selected events ("None" = off)
+            eventSounds = {
+                enabled = false,
+                whisper = "None",
+                readyCheck = "None",
+                lfgProposal = "None",
+                resurrect = "None",
+                mail = "None",
+            },
             -- Focus Cast Alert (warn when hostile focus is casting and interrupt is ready)
             focusCastAlert = {
                 enabled = true,
@@ -1668,6 +1698,7 @@ local defaults = {
             showMountCollected = true,         -- Append collected check/x to the mount line
             showTargetedBy = true,             -- List group/raid members targeting the unit (out of combat)
             showPlayerMythicRating = true,     -- Show M+ rating on player tooltip
+            showNpcID = false,                 -- Append the NPC ID to creature/NPC tooltips (opt-in)
         },
 
         -- QUI Action Bars - Button Skinning and Fade System

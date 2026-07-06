@@ -441,6 +441,10 @@ local function BuildAutomation(L, generalDB)
         { description = ns.L["Automatically place your Mythic+ keystone into the font of power when you open the keystone window."] })
     s.AddRow(row(s.frame, ns.L["Hold Shift to Pause Quest/Gossip Automation"], pauseW), row(s.frame, ns.L["Auto Insert M+ Keys"], keyW))
 
+    local closeBagsKeyW = GUI:CreateFormCheckbox(s.frame, nil, "closeBagsOnKeystoneInsert", generalDB, nil,
+        { description = ns.L["Close your bags after the keystone is auto-inserted. Requires Auto Insert M+ Keys."] })
+    s.AddRow(row(s.frame, ns.L["Close Bags After Inserting Key"], closeBagsKeyW))
+
     local logMW = GUI:CreateFormCheckbox(s.frame, nil, "autoCombatLog", generalDB, function()
         if _G.QUI_RefreshAutoCombatLogging then _G.QUI_RefreshAutoCombatLogging() end
     end, { description = ns.L["Turn on combat logging automatically when a Mythic+ run starts, and off when it ends."] })
@@ -460,6 +464,28 @@ local function BuildAutomation(L, generalDB)
     local coW = GUI:CreateFormCheckbox(s.frame, nil, "craftingOrderExpansionFilter", generalDB, nil,
         { description = ns.L["Automatically toggle the current expansion filter when you open the Crafting Orders window."] })
     s.AddRow(row(s.frame, ns.L["Auto-Enable AH Expansion Filter"], ahW), row(s.frame, ns.L["Auto-Enable Crafting Orders Filter"], coW))
+
+    local duelW = GUI:CreateFormCheckbox(s.frame, nil, "autoDeclineDuel", generalDB, nil,
+        { description = ns.L["Automatically decline incoming duel requests so the popup never interrupts you."] })
+    local petDuelW = GUI:CreateFormCheckbox(s.frame, nil, "autoDeclinePetBattle", generalDB, nil,
+        { description = ns.L["Automatically decline incoming pet battle duel requests so the popup never interrupts you."] })
+    s.AddRow(row(s.frame, ns.L["Auto-Decline Duels"], duelW), row(s.frame, ns.L["Auto-Decline Pet Battle Duels"], petDuelW))
+
+    local releaseOptions = {
+        { value = "off", text = ns.L["Off"] },
+        { value = "pvp", text = ns.L["Battlegrounds"] },
+        { value = "pvpworld", text = ns.L["Battlegrounds & Open World"] },
+    }
+    local releaseW = GUI:CreateFormDropdown(s.frame, nil, releaseOptions, "autoRelease", generalDB, nil,
+        { description = ns.L["Automatically release your spirit after you die. Never triggers in dungeons or raids, where a battle resurrection matters."] })
+    s.AddRow(row(s.frame, ns.L["Auto Release Spirit"], releaseW))
+
+    local audioOptions = (ns.GetAudioDeviceOptions and ns.GetAudioDeviceOptions())
+        or { { value = "", text = ns.L["Off (don't lock)"] } }
+    local audioW = GUI:CreateFormDropdown(s.frame, nil, audioOptions, "audioOutputDevice", generalDB, function()
+        if ns.ApplyPreferredAudioDevice then ns.ApplyPreferredAudioDevice() end
+    end, { description = ns.L["Lock the game's audio output to a specific device. When your system switches devices (e.g. plugging in headphones), QUI forces it back. Off leaves Blizzard's default behavior."] })
+    s.AddRow(row(s.frame, ns.L["Lock Audio Output Device"], audioW))
     L.closeSection(s)
 end
 
@@ -871,6 +897,89 @@ local function BuildMerchantGrid(L, db)
     L.closeSection(s)
 end
 
+local function BuildFriendsList(L, db)
+    local generalDB = db and db.general
+    if not generalDB then return end
+
+    -- Live re-apply on change via ns.* (no _G.QUI_* global — ratchet).
+    local function Refresh()
+        if ns.RefreshFriendsDecor then ns.RefreshFriendsDecor() end
+    end
+
+    L.headerAt(ns.L["Friends List"])
+    L.intro(ns.L["Cosmetic tweaks for the Blizzard friends list."])
+
+    local s = L.sectionAt()
+    local classColorW = GUI:CreateFormCheckbox(s.frame, nil, "friendsClassColor", generalDB, Refresh,
+        { description = ns.L["Color the names in the WoW friends list by class. Applies to regular friends and Battle.net friends currently playing WoW."] })
+    s.AddRow(row(s.frame, ns.L["Class-Color Names"], classColorW))
+    L.closeSection(s)
+end
+
+local function BuildExtendedIgnore(L, db)
+    local generalDB = db and db.general
+    if not generalDB then return end
+    if type(generalDB.extendedIgnore) ~= "table" then generalDB.extendedIgnore = {} end
+    local cfg = generalDB.extendedIgnore
+
+    local function Refresh()
+        if ns.RefreshExtendedIgnore then ns.RefreshExtendedIgnore() end
+    end
+
+    L.headerAt(ns.L["Extended Ignore"])
+    L.intro(ns.L["Suppress chat and auto-decline party invites, duels, and trades from a list of names, beyond Blizzard's ignore limit. Enter names separated by commas or new lines; realm suffixes are optional."])
+
+    local s = L.sectionAt()
+    local enableW = GUI:CreateFormCheckbox(s.frame, nil, "enabled", cfg, Refresh,
+        { description = ns.L["Enable the extended ignore list."] })
+    s.AddRow(row(s.frame, ns.L["Enable Extended Ignore"], enableW))
+
+    local suppressW = GUI:CreateFormCheckbox(s.frame, nil, "suppressChat", cfg, Refresh,
+        { description = ns.L["Hide public chat (say, yell, emotes, channels, whispers) from names on the list."] })
+    local declineW = GUI:CreateFormCheckbox(s.frame, nil, "autoDecline", cfg, Refresh,
+        { description = ns.L["Automatically decline party invites, duel requests, and trades from names on the list."] })
+    s.AddRow(row(s.frame, ns.L["Suppress Their Chat"], suppressW), row(s.frame, ns.L["Auto-Decline Their Invites"], declineW))
+
+    local namesW = GUI:CreateFormEditBox(s.frame, nil, "names", cfg, Refresh,
+        { maxLetters = 1000, live = true },
+        { description = ns.L["Character names to ignore, separated by commas or new lines. Realm names are optional (matching uses the character name only)."] })
+    s.AddRow(row(s.frame, ns.L["Ignored Names"], namesW))
+    L.closeSection(s)
+end
+
+local function BuildEventSounds(L, db)
+    local generalDB = db and db.general
+    if not generalDB then return end
+    if type(generalDB.eventSounds) ~= "table" then generalDB.eventSounds = {} end
+    local cfg = generalDB.eventSounds
+
+    L.headerAt(ns.L["Event Sounds"])
+    L.intro(ns.L["Play a sound when one of these events fires. Set an event to None to leave it silent. Requires Event Sounds to be enabled."])
+
+    local s = L.sectionAt()
+    local enableW = GUI:CreateFormCheckbox(s.frame, nil, "enabled", cfg, nil,
+        { description = ns.L["Master toggle for event sound alerts."] })
+    s.AddRow(row(s.frame, ns.L["Enable Event Sounds"], enableW))
+
+    local soundList = Shared.GetSoundList()
+    local whisperW = GUI:CreateFormDropdown(s.frame, nil, soundList, "whisper", cfg, nil,
+        { description = ns.L["Sound played when you receive a whisper."] })
+    local readyW = GUI:CreateFormDropdown(s.frame, nil, soundList, "readyCheck", cfg, nil,
+        { description = ns.L["Sound played when a ready check starts."] })
+    s.AddRow(row(s.frame, ns.L["Whisper"], whisperW), row(s.frame, ns.L["Ready Check"], readyW))
+
+    local lfgW = GUI:CreateFormDropdown(s.frame, nil, soundList, "lfgProposal", cfg, nil,
+        { description = ns.L["Sound played when a dungeon or raid group is found (LFG proposal)."] })
+    local rezW = GUI:CreateFormDropdown(s.frame, nil, soundList, "resurrect", cfg, nil,
+        { description = ns.L["Sound played when another player offers you a resurrection."] })
+    s.AddRow(row(s.frame, ns.L["Group Found"], lfgW), row(s.frame, ns.L["Resurrection Offer"], rezW))
+
+    local mailW = GUI:CreateFormDropdown(s.frame, nil, soundList, "mail", cfg, nil,
+        { description = ns.L["Sound played when you receive new mail (only when new mail arrives, not on login)."] })
+    s.AddRow(row(s.frame, ns.L["New Mail"], mailW))
+    L.closeSection(s)
+end
+
 ---------------------------------------------------------------------------
 -- DISPATCH
 ---------------------------------------------------------------------------
@@ -890,6 +999,9 @@ local SECTION_BUILDERS = {
     quiPanel         = function(L, db) BuildQuiPanel(L, db) end,
     reloadBehavior   = function(L, db) BuildReloadBehavior(L, db) end,
     merchantGrid     = function(L, db) BuildMerchantGrid(L, db) end,
+    friendsList      = function(L, db) BuildFriendsList(L, db) end,
+    extendedIgnore   = function(L, db) BuildExtendedIgnore(L, db) end,
+    eventSounds      = function(L, db) BuildEventSounds(L, db) end,
 }
 
 local SECTION_ORDER = {
@@ -897,6 +1009,9 @@ local SECTION_ORDER = {
     "automation", "popupBlocker", "quickSalvage", "consumables",
     "consumableMacros", "targetDistance", "quiPanel", "reloadBehavior",
     "merchantGrid",
+    "friendsList",
+    "extendedIgnore",
+    "eventSounds",
 }
 
 local function BuildGeneralTab(tabContent, searchContext, selectedSectionKey)
@@ -939,6 +1054,9 @@ local generalSectionFeatures = {
     { id = "quiPanel",          category = "qol",        nav = { tileId = "qol", subPageIndex = 8 }, sectionKey = "quiPanel",         sectionTitle = "QUI Panel Settings",               searchContext = { tabIndex = 17, tabName = "Quality of Life", subTabIndex = 8, subTabName = "Panel" } },
     { id = "reloadBehavior",    category = "qol",        nav = { tileId = "qol", subPageIndex = 9 }, sectionKey = "reloadBehavior",   sectionTitle = "Reload Behavior",                  searchContext = { tabIndex = 17, tabName = "Quality of Life", subTabIndex = 9, subTabName = "Reload" } },
     { id = "merchantGrid",      category = "qol",        nav = { tileId = "qol", subPageIndex = 10 }, sectionKey = "merchantGrid",     sectionTitle = "Merchant Grid",                    searchContext = { tabIndex = 17, tabName = "Quality of Life", subTabIndex = 10, subTabName = "Merchant" } },
+    { id = "friendsList",       category = "qol",        nav = { tileId = "qol", subPageIndex = 11 }, sectionKey = "friendsList",      sectionTitle = "Friends List",                     searchContext = { tabIndex = 17, tabName = "Quality of Life", subTabIndex = 11, subTabName = "Friends List" } },
+    { id = "extendedIgnore",    category = "qol",        nav = { tileId = "qol", subPageIndex = 12 }, sectionKey = "extendedIgnore",   sectionTitle = "Extended Ignore",                  searchContext = { tabIndex = 17, tabName = "Quality of Life", subTabIndex = 12, subTabName = "Extended Ignore" } },
+    { id = "eventSounds",       category = "qol",        nav = { tileId = "qol", subPageIndex = 13 }, sectionKey = "eventSounds",      sectionTitle = "Event Sounds",                     searchContext = { tabIndex = 17, tabName = "Quality of Life", subTabIndex = 13, subTabName = "Event Sounds" } },
     { id = "uiScale",           category = "appearance", nav = { tileId = "appearance", subPageIndex = 1 }, sectionKey = "uiScale",   sectionTitle = "UI Scale",                         searchContext = { tabIndex = 10, tabName = "Appearance",      subTabIndex = 3, subTabName = "UI Scale" } },
     { id = "defaultFonts",      category = "appearance", nav = { tileId = "appearance", subPageIndex = 2 }, sectionKey = "defaultFonts", sectionTitle = "Default Font Settings",         searchContext = { tabIndex = 10, tabName = "Appearance",      subTabIndex = 4, subTabName = "Fonts" } },
 }

@@ -94,6 +94,7 @@ tiles\help_content.lua
 ..\QUI_InfoBar\infobar\settings\infobar_features.lua
 ..\QUI_InfoBar\infobar\settings\infobar_content.lua
 ..\QUI_QoL\qol\settings\pet_warning.lua
+..\QUI_QoL\qol\settings\no_target_warning.lua
 ..\QUI_QoL\qol\settings\consumables.lua
 ..\QUI_QoL\qol\settings\combat_timer.lua
 ..\QUI_QoL\qol\settings\lust_timer.lua

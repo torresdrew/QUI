@@ -56,7 +56,7 @@ function V2.Register(frame)
                 sectionNav = true,
                 featureIds = {
                     "combatTimer", "lustTimer", "brezCounter", "atonementCounter",
-                    "rotationAssistIcon", "focusCastAlert", "petWarning",
+                    "rotationAssistIcon", "focusCastAlert", "petWarning", "noTargetWarning",
                     "readyCheck", "mplusTimer", "mplusProgress", "actionTracker",
                 },
                 navRoutes = { { tabIndex = 2, subTabIndex = 13 } },

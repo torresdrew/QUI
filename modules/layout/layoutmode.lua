@@ -3909,6 +3909,14 @@ do
                 previewOff = function() if _G.QUI_TogglePetWarningPreview then _G.QUI_TogglePetWarningPreview(false) end end,
             },
             {
+                key = "noTargetWarning", label = ns.L["No Target Warning"], group = ns.L["QoL"], order = 8.5,
+                frame = "QUI_NoTargetWarningFrame",
+                dbGetter = function() return GeneralSubDB("noTargetWarning") end,
+                enabledField = "enabled",
+                previewOn  = function() if ns.ToggleNoTargetWarningPreview then ns.ToggleNoTargetWarningPreview(true) end end,
+                previewOff = function() if ns.ToggleNoTargetWarningPreview then ns.ToggleNoTargetWarningPreview(false) end end,
+            },
+            {
                 key = "preyTracker", label = ns.L["Prey Tracker"], group = ns.L["QoL"], order = 9,
                 frame = "QUI_PreyTracker",
                 dbKey = "preyTracker", enabledField = "enabled",

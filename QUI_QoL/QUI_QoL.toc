@@ -26,6 +26,7 @@ qol\blizzard_mover.lua
 qol\blizzard_mover_frames.lua
 qol\quicksalvage.lua
 qol\petwarning.lua
+qol\notargetwarning.lua
 qol\consumablecheck.lua
 qol\tooltip_provider.lua
 qol\tooltip_inspect.lua
@@ -40,6 +41,10 @@ qol\skyriding.lua
 qol\xptracker.lua
 qol\focuscastalert.lua
 qol\merchant_grid.lua
+qol\friends_decor.lua
+qol\audio_device.lua
+qol\extended_ignore.lua
+qol\event_sounds.lua
 # == modules/dungeon/dungeon.xml ==
 dungeon\keystone.lua
 dungeon\mplus_timer.lua

@@ -39,6 +39,11 @@ local function InsertKeystone()
     C_Container.PickupContainerItem(bag, slot)
     if C_Cursor.GetCursorItem() then
         C_ChallengeMode.SlotKeystone()
+        -- QUI's bag takeover hooks CloseAllBags (bags/takeover.lua), so this
+        -- closes the QUI bag window as well as the default bags.
+        if settings.closeBagsOnKeystoneInsert then
+            CloseAllBags()
+        end
     end
 end
 
