@@ -542,6 +542,38 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
     end })
 
     ---------------------------------------------------------------------------
+    -- NO-TARGET WARNING
+    ---------------------------------------------------------------------------
+    RegisterSharedOnly("noTargetWarning", { build = function(content, key, _width)
+        local db = U.GetProfileDB()
+        local general = db and db.general
+        if not general or not general.noTargetWarning then return 80 end
+        local cfg = general.noTargetWarning
+        local L = MakeLayout(content)
+        local function Refresh() if ns.RefreshNoTargetWarning then ns.RefreshNoTargetWarning() end end
+
+        L.headerAt(ns.L["General"])
+        local s0 = L.sectionAt()
+        local enabledW = GUI:CreateFormCheckbox(s0.frame, nil, "enabled", cfg, Refresh,
+            { description = ns.L["Flash a warning while you are in combat with no attackable target selected. Useful for damage rotations where an empty target means no damage."] })
+        local sizeW = GUI:CreateFormSlider(s0.frame, nil, 8, 72, 1, "fontSize", cfg, Refresh,
+            { description = ns.L["Font size of the no-target warning text."] })
+        s0.AddRow(row(s0.frame, ns.L["Enabled"], enabledW), row(s0.frame, ns.L["Font Size"], sizeW))
+        L.closeSection(s0)
+
+        L.headerAt(ns.L["Offsets"])
+        local s1 = L.sectionAt()
+        local xW = GUI:CreateFormSlider(s1.frame, nil, -500, 500, 10, "offsetX", cfg, Refresh,
+            { description = ns.L["Horizontal pixel offset for the no-target warning from its anchor. Positive moves right, negative moves left."] })
+        local yW = GUI:CreateFormSlider(s1.frame, nil, -500, 500, 10, "offsetY", cfg, Refresh,
+            { description = ns.L["Vertical pixel offset for the no-target warning from its anchor. Positive moves up, negative moves down."] })
+        s1.AddRow(row(s1.frame, ns.L["Horizontal Offset"], xW), row(s1.frame, ns.L["Vertical Offset"], yW))
+        L.closeSection(s1)
+
+        return FinishProviderPage(L, content, key, "noTargetWarning")
+    end })
+
+    ---------------------------------------------------------------------------
     -- ACTION TRACKER
     ---------------------------------------------------------------------------
     RegisterSharedOnly("actionTracker", { build = function(content, key, _width)
@@ -1097,6 +1129,10 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         local showMythicW = GUI:CreateFormCheckbox(s2.frame, nil, "showPlayerMythicRating", tooltip, RefreshTooltips,
             { description = ns.L["Show the player's Mythic+ rating on player tooltips."] })
         s2.AddRow(row(s2.frame, ns.L["Show Mount Collected Status"], showMountCollectedW), row(s2.frame, ns.L["Show M+ Rating"], showMythicW))
+
+        local showNpcIDW = GUI:CreateFormCheckbox(s2.frame, nil, "showNpcID", tooltip, RefreshTooltips,
+            { description = ns.L["Append the NPC ID to creature and NPC tooltips. Useful for macros, scripting, and bug reports."] })
+        s2.AddRow(row(s2.frame, ns.L["Show NPC ID"], showNpcIDW))
 
         local hideGuildW = GUI:CreateFormToggle(s2.frame, nil, "hideGuildName", tooltip, RefreshTooltips,
             { description = ns.L["Strip the guild name line from player tooltips."] })

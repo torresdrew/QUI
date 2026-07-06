@@ -1648,6 +1648,20 @@ local function GetPlayerMythicRating(unit)
     return nil
 end
 
+-- NPC ID lives in field 6 of a Creature/Vehicle/Pet GUID
+-- ("Creature-0-server-instance-zone-<npcID>-spawn"). Player GUIDs have no
+-- NPC ID, so this returns nil for them.
+-- <<< QUI_TEST_EXTRACT npc_id
+local function NpcIDFromGUID(guid)
+    if type(guid) ~= "string" then return nil end
+    local unitType, _, _, _, _, npcID = strsplit("-", guid)
+    if (unitType == "Creature" or unitType == "Vehicle" or unitType == "Pet") and npcID then
+        return tonumber(npcID)
+    end
+    return nil
+end
+-- <<< QUI_TEST_EXTRACT npc_id
+
 local function AddUnitTooltipInfoToTooltip(tooltip, unit, settings)
     if not tooltip or not unit or not settings then return false end
     if InCombatLockdown() then return false end
@@ -1676,6 +1690,16 @@ local function AddUnitTooltipInfoToTooltip(tooltip, unit, settings)
             AddTooltipInfoLine(tooltip, ns.L["M+ Rating"], string.format("%.1f", rating), 0.7, 0.82, 1, r or 1, g or 1, b or 1)
             state.ratingAdded = true
             TooltipDebugCount("qol.ratingAdded")
+            changed = true
+        end
+    end
+
+    if IsSettingEnabled(settings, "showNpcID", false) and not state.npcIDResolved then
+        state.npcIDResolved = true
+        local npcID = NpcIDFromGUID(guid)
+        if npcID then
+            EnsureTooltipInfoSpacer(tooltip, state)
+            AddTooltipInfoLine(tooltip, ns.L["NPC ID"], tostring(npcID), 0.7, 0.82, 1, 0.8, 0.8, 0.8)
             changed = true
         end
     end
