@@ -231,6 +231,7 @@ modules\qol\blizzard_mover.lua
 modules\qol\blizzard_mover_frames.lua
 modules\qol\quicksalvage.lua
 modules\qol\petwarning.lua
+modules\qol\notargetwarning.lua
 modules\qol\consumablecheck.lua
 modules\qol\tooltip_provider.lua
 modules\qol\tooltip_inspect.lua
@@ -245,6 +246,10 @@ modules\qol\skyriding.lua
 modules\qol\xptracker.lua
 modules\qol\focuscastalert.lua
 modules\qol\merchant_grid.lua
+modules\qol\friends_decor.lua
+modules\qol\audio_device.lua
+modules\qol\extended_ignore.lua
+modules\qol\event_sounds.lua
 modules\dungeon\keystone.lua
 modules\dungeon\mplus_timer.lua
 modules\dungeon\mplus_progress.lua
