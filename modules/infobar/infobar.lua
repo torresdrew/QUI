@@ -436,13 +436,24 @@ local function ApplyVisibilityRules()
     if fadeTicker then fadeTicker:Cancel(); fadeTicker = nil end
     if db.mouseoverFade then
         local rest = (db.fadeRestOpacity or 0) / 100
+        -- Polling is deliberate: slot providers SetScript their own
+        -- OnEnter/OnLeave after attach (wiping creation-time hooks) and
+        -- micromenu/travel add child buttons that swallow enter/leave, so
+        -- IsMouseOver rect-testing is the only reliable hover signal.
+        -- `settledAt` collapses the steady-state tick (~99% of the time)
+        -- to one IsMouseOver call and a compare; the alpha work only runs
+        -- while the hover state and alpha disagree.
+        local settledAt = nil
         fadeTicker = C_Timer.NewTicker(0.1, function()
             local target = bar:IsMouseOver() and 1 or rest
+            if settledAt == target then return end
             local cur = bar:GetAlpha()
             if math.abs(cur - target) < 0.02 then
                 if cur ~= target then bar:SetAlpha(target) end
+                settledAt = target
             else
                 bar:SetAlpha(cur + (target - cur) * 0.35)
+                settledAt = nil
             end
         end)
     else
