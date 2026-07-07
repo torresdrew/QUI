@@ -2772,6 +2772,39 @@ function GUI:CreateFormSlider(parent, label, min, max, step, dbKey, dbTable, onC
     RegisterWidgetInstance(container, dbTable, dbKey)
     MaybeBindPinnedWidget(container, "slider", label, dbKey, dbTable, slider, registryInfo)
 
+    -- Debounce for non-deferred sliders while dragging: onChange handlers
+    -- routinely trigger full module refreshes (_G.QUI_Refresh*), and a fast
+    -- drag emits dozens of value steps per second. Leading + trailing at
+    -- DRAG_CHANGE_INTERVAL keeps live feedback (~10 refreshes/sec) while the
+    -- DB write, edit box, and track fill still update on every step.
+    local DRAG_CHANGE_INTERVAL = 0.1
+    local lastDragChangeAt = 0
+    local pendingDragValue = nil
+
+    local function FireDragChange(value)
+        lastDragChangeAt = GetTime()
+        pendingDragValue = nil
+        if onChange then onChange(value) end
+        MaybeAutoNotifyProviderSync(container)
+    end
+
+    local function QueueDragChange(value)
+        if GetTime() - lastDragChangeAt >= DRAG_CHANGE_INTERVAL then
+            FireDragChange(value)
+            return
+        end
+        local timerArmed = pendingDragValue ~= nil
+        pendingDragValue = value
+        if not timerArmed then
+            C_Timer.After(DRAG_CHANGE_INTERVAL, function()
+                -- OnMouseUp flushes on release; only fire if still dragging.
+                if isDragging and pendingDragValue ~= nil then
+                    FireDragChange(pendingDragValue)
+                end
+            end)
+        end
+    end
+
     slider:SetScript("OnValueChanged", function(self, value, userInput)
         -- Ignore user input if slider is disabled
         if userInput and container.isEnabled == false then return end
@@ -2787,6 +2820,10 @@ function GUI:CreateFormSlider(parent, label, min, max, step, dbKey, dbTable, onC
                 if onDragPreview then onDragPreview(value) end
                 return
             end
+            if isDragging then
+                QueueDragChange(value)
+                return
+            end
             if onChange then onChange(value) end
             MaybeAutoNotifyProviderSync(container)
         end
@@ -2800,6 +2837,10 @@ function GUI:CreateFormSlider(parent, label, min, max, step, dbKey, dbTable, onC
             MaybeAutoNotifyProviderSync(container)
         end
         isDragging = false
+        -- Flush a debounced drag step so the final value always applies.
+        if pendingDragValue ~= nil then
+            FireDragChange(slider:GetValue())
+        end
     end)
 
     editBox:SetScript("OnEnterPressed", function(self)
