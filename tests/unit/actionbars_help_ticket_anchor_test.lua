@@ -17,6 +17,8 @@ end
 
 local layoutSource = readFile("QUI_ActionBars/actionbars/actionbars_layout.lua")
 local builderSource = readFile("QUI_ActionBars/actionbars/actionbars_builder.lua")
+local defaultsSource = readFile("core/defaults.lua")
+local perBarSource = readFile("QUI_ActionBars/actionbars/actionbars_per_bar_builders.lua")
 
 local function blockBetween(source, startText, endText)
     local startPos = assert(source:find(startText, 1, true), "missing block start: " .. startText)
@@ -74,5 +76,27 @@ assert(
 assert(
     hookBlock:find("C_Timer.After(0", 1, true),
     "UpdateHelpTicketButtonAnchor posthook must defer out of Edit Mode's secure anchor pass")
+
+-- User-facing positioning options (per-bar page → Micro Menu → Ticket Icon)
+assert(
+    anchorFn:find("barDB.ticketIcon", 1, true)
+        and anchorFn:find('mode == "above"', 1, true)
+        and anchorFn:find('mode == "below"', 1, true)
+        and anchorFn:find("offX", 1, true)
+        and anchorFn:find("offY", 1, true),
+    "ticket icon re-anchor must honor the ticketIcon position/offset settings")
+
+assert(
+    defaultsSource:find('ticketIcon = { position = "auto", offsetX = 0, offsetY = 0 }', 1, true),
+    "microbar defaults must seed the ticketIcon settings table")
+
+local ticketOptionsBlock = blockBetween(perBarSource,
+    'if dbKey == "microbar" then\n                barDB.ticketIcon',
+    "-- SECTION: Visual")
+assert(
+    ticketOptionsBlock:find('"position", ticketDB', 1, true)
+        and ticketOptionsBlock:find('"offsetX", ticketDB', 1, true)
+        and ticketOptionsBlock:find('"offsetY", ticketDB', 1, true),
+    "per-bar Micro Menu page must expose ticket icon position and offset controls")
 
 print("OK: actionbars_help_ticket_anchor_test")

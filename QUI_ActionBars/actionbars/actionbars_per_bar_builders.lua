@@ -456,6 +456,33 @@ do
                 end, sections, relayout)
             end
 
+            -- SECTION: Ticket Icon (micro menu only) — Blizzard's
+            -- open-support-ticket icon rides the reclaimed micro bar
+            -- (AnchorHelpTicketButton in actionbars_layout.lua).
+            if dbKey == "microbar" then
+                barDB.ticketIcon = barDB.ticketIcon or {}
+                local ticketDB = barDB.ticketIcon
+                local ticketPositionOptions = {
+                    {value = "auto",  text = ns.L["Auto (Screen-Aware)"]},
+                    {value = "above", text = ns.L["Above Bar"]},
+                    {value = "below", text = ns.L["Below Bar"]},
+                }
+                CreateCollapsible(content, ns.L["Ticket Icon"], 3 * FORM_ROW + 8, function(body)
+                    local sy = -4
+                    sy = P(GUI:CreateFormDropdown(body, ns.L["Position"],
+                        ticketPositionOptions, "position", ticketDB, RefreshActionBars,
+                        { description = ns.L["Where Blizzard's open-support-ticket icon sits relative to the micro menu. Auto flips it to whichever side faces screen center so it stays on-screen."] }), body, sy)
+
+                    sy = P(GUI:CreateFormSlider(body, ns.L["Offset X"],
+                        -200, 200, 1, "offsetX", ticketDB, RefreshActionBars, DEFER,
+                        { description = ns.L["Horizontal fine-tune for the ticket icon, in pixels."] }), body, sy)
+
+                    P(GUI:CreateFormSlider(body, ns.L["Offset Y"],
+                        -200, 200, 1, "offsetY", ticketDB, RefreshActionBars, DEFER,
+                        { description = ns.L["Vertical fine-tune for the ticket icon, in pixels."] }), body, sy)
+                end, sections, relayout)
+            end
+
             -- SECTION: Visual (action bars only — micro/bag buttons are not skinned)
             if SKINNABLE_BAR_KEYS[dbKey] then
             CreateCollapsible(content, ns.L["Visual"], 7 * FORM_ROW + 8, function(body)

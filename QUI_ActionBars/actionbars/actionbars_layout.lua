@@ -145,25 +145,40 @@ AnchorHelpTicketButton = function()
     local charBtn = _G.CharacterMicroButton
     if not (ticketBtn and charBtn) then return end
 
-    -- GetCenter can return secret values in combat — reuse the last
-    -- out-of-combat side decision (default: icon above the bar).
-    local anchorAbove = ActionBarsOwned._helpTicketAnchorAbove
-    if not InCombatLockdown() then
-        local _, cy = charBtn:GetCenter()
-        local screenH = UIParent:GetHeight()
-        if cy and screenH and screenH > 0 then
-            local relScale = charBtn:GetEffectiveScale() / UIParent:GetEffectiveScale()
-            anchorAbove = (cy * relScale) < (screenH / 2)
-            ActionBarsOwned._helpTicketAnchorAbove = anchorAbove
+    local barDB = GetBarSettings("microbar")
+    local iconDB = barDB and barDB.ticketIcon
+    local mode = (iconDB and iconDB.position) or "auto"
+    local offX = (iconDB and iconDB.offsetX) or 0
+    local offY = (iconDB and iconDB.offsetY) or 0
+
+    local anchorAbove
+    if mode == "above" then
+        anchorAbove = true
+    elseif mode == "below" then
+        anchorAbove = false
+    else
+        -- Auto: keep the icon on-screen by flipping to whichever side
+        -- faces screen center. GetCenter can return secret values in
+        -- combat — reuse the last out-of-combat side decision (default:
+        -- icon above the bar).
+        anchorAbove = ActionBarsOwned._helpTicketAnchorAbove
+        if not InCombatLockdown() then
+            local _, cy = charBtn:GetCenter()
+            local screenH = UIParent:GetHeight()
+            if cy and screenH and screenH > 0 then
+                local relScale = charBtn:GetEffectiveScale() / UIParent:GetEffectiveScale()
+                anchorAbove = (cy * relScale) < (screenH / 2)
+                ActionBarsOwned._helpTicketAnchorAbove = anchorAbove
+            end
         end
+        if anchorAbove == nil then anchorAbove = true end
     end
-    if anchorAbove == nil then anchorAbove = true end
 
     -- 21 = half the icon's 35px height + a 4px gap from the bar edge.
     if anchorAbove then
-        ticketBtn:SetPoint("CENTER", charBtn, "TOP", 0, 21)
+        ticketBtn:SetPoint("CENTER", charBtn, "TOP", offX, 21 + offY)
     else
-        ticketBtn:SetPoint("CENTER", charBtn, "BOTTOM", 0, -21)
+        ticketBtn:SetPoint("CENTER", charBtn, "BOTTOM", offX, -21 + offY)
     end
 end
 
