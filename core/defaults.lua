@@ -1948,6 +1948,9 @@ local defaults = {
                     enabled = true, fadeEnabled = nil, fadeOutAlpha = nil, alwaysShow = false,
                     ownedPosition = nil,
                     clickthrough = false,
+                    -- Blizzard's open-support-ticket icon rides the micro bar
+                    -- (see AnchorHelpTicketButton). position: "auto"|"above"|"below"
+                    ticketIcon = { position = "auto", offsetX = 0, offsetY = 0 },
                     ownedLayout = {
                         orientation = "horizontal", columns = 12, iconCount = 12,
                         buttonSize = 32, buttonHeight = 40, buttonSpacing = -8,

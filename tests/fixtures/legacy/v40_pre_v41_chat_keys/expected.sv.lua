@@ -214,6 +214,11 @@ return {
                 growUp = false,
                 iconCount = 12,
                 orientation = "horizontal"
+              },
+              ticketIcon = {
+                offsetX = 0,
+                offsetY = 0,
+                position = "auto"
               }
             },
             pet = {
