@@ -44,7 +44,7 @@ assertContains(
 
 assertContains(
     "QUI_Debug/bootstrap.lua",
-    'local mainNS = QUI and QUI._ns',
+    'local mainNS = type(QUI) == "table" and QUI._ns',
     "debug companion must proxy into the main QUI namespace")
 
 assertContains(
