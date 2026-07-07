@@ -1955,6 +1955,12 @@ local function SetupTooltipHook()
         local settings = Provider:GetSettings()
         if not settings or not settings.enabled then return end
 
+        -- TIP-05: user tooltip scale (1 = Blizzard default). Applied here so
+        -- every default-anchored tooltip picks it up before it is positioned.
+        local userScale = tonumber(settings.scale) or 1
+        if userScale <= 0 then userScale = 1 end
+        pcall(tooltip.SetScale, tooltip, userScale)
+
         InvalidatePendingSetUnit()
 
         -- Visibility/context checks call methods on Blizzard frames (GetName,
@@ -2019,10 +2025,12 @@ local function SetupTooltipHook()
         return false
     end
 
-    -- Scan tooltip left-lines 2..5; on the first non-secret line where
-    -- matches(text) is true, blank + hide it. Mirrors the realm/guild loops.
-    local function HideTooltipLineMatching(tooltip, matches)
-        for i = 2, 5 do
+    -- Scan tooltip left-lines 2..maxLine (default 5); on the first non-secret
+    -- line where matches(text) is true, blank + hide it. Mirrors the
+    -- realm/guild loops. Faction/PvP lines sit lower on player tooltips, so
+    -- those callers pass a larger maxLine.
+    local function HideTooltipLineMatching(tooltip, matches, maxLine)
+        for i = 2, maxLine or 5 do
             local line = tooltip.GetLeftLine and tooltip:GetLeftLine(i)
                 or _G["GameTooltipTextLeft" .. i]
             if line then
@@ -2038,13 +2046,43 @@ local function SetupTooltipHook()
         end
     end
 
+    -- TIP-01: connected-realm lookup. C_AutoComplete.GetAutoCompleteRealms()
+    -- (AutoCompleteDocumentation: returns table<string>, the player's
+    -- connected-realm group). Built lazily once; realm names normalized on
+    -- both sides (spaces/hyphens/apostrophes stripped, case-folded) since
+    -- UnitName realm strings and autocomplete realm strings differ in form.
+    local connectedRealmSet
+    local function NormalizeRealmName(name)
+        return (name:gsub("[%s%-']", "")):lower()
+    end
+    local function IsConnectedRealm(realm)
+        if not connectedRealmSet then
+            connectedRealmSet = {}
+            if C_AutoComplete and C_AutoComplete.GetAutoCompleteRealms then
+                local okRealms, realms = pcall(C_AutoComplete.GetAutoCompleteRealms)
+                if okRealms and type(realms) == "table" then
+                    for _, r in ipairs(realms) do
+                        if type(r) == "string" then
+                            connectedRealmSet[NormalizeRealmName(r)] = true
+                        end
+                    end
+                end
+            end
+        end
+        return connectedRealmSet[NormalizeRealmName(realm)] == true
+    end
+
     local function HandleUnitNamePost(tooltip, settings, unit)
         TooltipDebugCount("qol.unitNamePost")
 
         local hideServer = settings.hideServerName
         local hideTitle = settings.hidePlayerTitle
         local hideGuild = settings.hideGuildName
-        if not hideServer and not hideTitle and not hideGuild then return end
+        local hideFaction = settings.hideFactionText
+        local hidePvp = settings.hidePvpText
+        local showConnected = settings.showConnectedRealm
+        if not hideServer and not hideTitle and not hideGuild
+            and not hideFaction and not hidePvp and not showConnected then return end
 
         if hideTitle then
             local nameLine = tooltip.GetLeftLine and tooltip:GetLeftLine(1) or GameTooltipTextLeft1
@@ -2075,6 +2113,88 @@ local function SetupTooltipHook()
                 HideTooltipLineMatching(tooltip, function(lt)
                     return lt == guildName or lt == bracketed
                 end)
+            end
+        end
+
+        -- TIP-05: hide the faction ("Alliance"/"Horde"/"Neutral") and "PvP"
+        -- lines. Exact-match against the Blizzard global strings (legacy
+        -- globals, absent from the FrameXML dump here but shipped since
+        -- vanilla and matched the same way by current tooltip addons);
+        -- existence-guarded so a renamed global degrades to a no-op.
+        if hideFaction then
+            HideTooltipLineMatching(tooltip, function(lt)
+                return (FACTION_ALLIANCE and lt == FACTION_ALLIANCE)
+                    or (FACTION_HORDE and lt == FACTION_HORDE)
+                    or (FACTION_NEUTRAL and lt == FACTION_NEUTRAL)
+            end, 8)
+        end
+        if hidePvp then
+            HideTooltipLineMatching(tooltip, function(lt)
+                return (PVP_ENABLED and lt == PVP_ENABLED) or (PVP and lt == PVP)
+            end, 8)
+        end
+
+        -- TIP-01: append a connected-realm marker to the realm line (the line
+        -- Blizzard adds for cross-realm players). Skipped when the realm line
+        -- is being hidden.
+        if showConnected and not hideServer then
+            local okRealm, _, unitRealm = pcall(UnitName, unit)
+            if okRealm and unitRealm and unitRealm ~= "" and not Helpers.IsSecretValue(unitRealm)
+                and IsConnectedRealm(unitRealm) then
+                for i = 2, 5 do
+                    local line = tooltip.GetLeftLine and tooltip:GetLeftLine(i)
+                        or _G["GameTooltipTextLeft" .. i]
+                    if line then
+                        local okLT, lt = pcall(line.GetText, line)
+                        if okLT and lt and not Helpers.IsSecretValue(lt) and lt == unitRealm then
+                            pcall(line.SetText, line, lt .. " |cff80ff80(" .. ns.L["Connected"] .. ")|r")
+                            break
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    -- TIP-03: decorate the guild line (the <GuildName> line on guilded player
+    -- tooltips): optionally append the unit's guild rank and recolor own-guild
+    -- vs other-guild. GetGuildInfo's 2nd return is the rank name (FrameXML
+    -- 4-return usage); UnitIsInMyGuild verified in UnitDocumentation
+    -- (AllowedWhenUntainted). Skipped entirely when the guild line is hidden.
+    local GUILD_COLOR_MINE  = { r = 0.25, g = 1.0,  b = 0.25 }
+    local GUILD_COLOR_OTHER = { r = 0.0,  g = 0.75, b = 1.0 }
+    local function HandleUnitGuildPost(tooltip, settings, unit)
+        if settings.hideGuildName then return end
+        local wantRank = settings.showGuildRank
+        local wantColor = settings.colorGuildNames
+        if not wantRank and not wantColor then return end
+
+        local okGuild, guildName, guildRankName = pcall(GetGuildInfo, unit)
+        if not okGuild or not guildName or guildName == "" or Helpers.IsSecretValue(guildName) then return end
+
+        local bracketed = "<" .. guildName .. ">"
+        for i = 2, 5 do
+            local line = tooltip.GetLeftLine and tooltip:GetLeftLine(i)
+                or _G["GameTooltipTextLeft" .. i]
+            if line then
+                local okLT, lt = pcall(line.GetText, line)
+                if okLT and lt and not Helpers.IsSecretValue(lt)
+                    and (lt == guildName or lt == bracketed) then
+                    if wantRank and guildRankName and guildRankName ~= ""
+                        and not Helpers.IsSecretValue(guildRankName) then
+                        pcall(line.SetText, line, lt .. " (" .. guildRankName .. ")")
+                    end
+                    if wantColor then
+                        local mine = false
+                        local okMine, isMine = pcall(UnitIsInMyGuild, unit)
+                        if okMine and isMine and not Helpers.IsSecretValue(isMine) then
+                            mine = true
+                        end
+                        local c = mine and GUILD_COLOR_MINE or GUILD_COLOR_OTHER
+                        pcall(line.SetTextColor, line, c.r, c.g, c.b)
+                    end
+                    break
+                end
             end
         end
     end
@@ -2123,6 +2243,24 @@ local function SetupTooltipHook()
                 pcall(GameTooltipStatusBar.SetShown, GameTooltipStatusBar, false)
                 pcall(GameTooltipStatusBar.SetAlpha, GameTooltipStatusBar, 0)
             end
+            -- TIP-05: modern tooltips can attach the bar to the tooltip itself
+            -- (tooltip.StatusBar) or acquire from a pool (tooltip.StatusBarPool);
+            -- cover both, existence-guarded.
+            local attachedBar = tooltip and tooltip.StatusBar
+            if attachedBar and not (attachedBar.IsForbidden and attachedBar:IsForbidden()) then
+                pcall(attachedBar.SetShown, attachedBar, false)
+                pcall(attachedBar.SetAlpha, attachedBar, 0)
+            end
+            local pool = tooltip and tooltip.StatusBarPool
+            if pool and pool.EnumerateActive then
+                local okIter, iter, state = pcall(pool.EnumerateActive, pool)
+                if okIter and type(iter) == "function" then
+                    for pooledBar in iter, state do
+                        pcall(pooledBar.SetShown, pooledBar, false)
+                        pcall(pooledBar.SetAlpha, pooledBar, 0)
+                    end
+                end
+            end
         end
     end
 
@@ -2154,6 +2292,7 @@ local function SetupTooltipHook()
         TooltipDebugCount("qol.unitPlayer")
 
         RunTrackedUnitStep("qol.unitNamePost", HandleUnitNamePost, tooltip, settings, unit)
+        RunTrackedUnitStep("qol.unitGuildPost", HandleUnitGuildPost, tooltip, settings, unit)
         RunTrackedUnitStep("qol.unitClassPost", HandleUnitClassPost, tooltip, settings, unit)
         RunTrackedUnitStep("qol.unitExtrasPost", HandleUnitExtrasPost, tooltip, settings, unit)
     end)

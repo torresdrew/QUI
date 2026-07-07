@@ -760,6 +760,7 @@ return {
           secondaryStatFormat = "both",
           showDurability = false,
           showEnchants = true,
+          showGemSummary = false,
           showGems = true,
           showInspectEnchants = true,
           showInspectGems = true,
@@ -2363,6 +2364,9 @@ return {
           autoAcceptQuest = true,
           autoCombatLog = false,
           autoCombatLogRaid = false,
+          autoConfirmHighCost = false,
+          autoConfirmSocketReplace = false,
+          autoConfirmTokenPurchase = false,
           autoDeclineDuel = false,
           autoDeclinePetBattle = false,
           autoDeleteConfirm = true,
@@ -2372,6 +2376,7 @@ return {
           autoRoleAccept = true,
           autoSelectGossip = true,
           autoTurnInQuest = true,
+          autoUnwrapCollections = false,
           closeBagsOnKeystoneInsert = false,
           consumableAnchorMode = true,
           consumableCheckEnabled = true,
@@ -2404,6 +2409,20 @@ return {
           consumableScale = 1,
           controlAlertAnchors = false,
           craftingOrderExpansionFilter = true,
+          cursorTrail = {
+            combatOnly = true,
+            customColor = {
+              [1] = 1,
+              [2] = 1,
+              [3] = 1,
+              [4] = 1
+            },
+            density = "medium",
+            duration = 0.40000000000000002,
+            enabled = false,
+            size = 16,
+            useClassColor = true
+          },
           darkMode = false,
           darkModeBgColor = {
             [1] = 0.59199999999999997,
@@ -2440,6 +2459,8 @@ return {
           eventSounds = {
             enabled = false,
             lfgProposal = "None",
+            lootRollWon = "None",
+            lootUpgrade = "None",
             mail = "None",
             readyCheck = "None",
             resurrect = "None",
@@ -2508,11 +2529,20 @@ return {
             [4] = 1
           },
           keyTrackerWidth = 170,
+          lootToastFilter = {
+            enabled = false,
+            keepMounts = true,
+            keepPets = true,
+            keepUpgrades = true,
+            minKeepIlvl = 0,
+            minQuality = 0
+          },
           masterColorCastbarText = false,
           masterColorHealthText = false,
           masterColorNameText = false,
           masterColorPowerText = false,
           masterColorToTText = false,
+          merchantKnownPetMark = false,
           mplusTeleportEnabled = true,
           noTargetWarning = {
             enabled = false,
@@ -2608,6 +2638,9 @@ return {
           skinStaticPopups = true,
           skinStatusTrackingBars = true,
           skinUseClassColor = true,
+          soundMute = {
+            enabled = false
+          },
           statusTrackingBarsBarColor = {
             [1] = 0.20000000000000001,
             [2] = 0.5,
@@ -6592,6 +6625,7 @@ return {
           borderColorSource = "inherit",
           borderThickness = 1,
           classColorName = true,
+          colorGuildNames = false,
           colorPlayerItemLevel = true,
           combatKey = "NONE",
           cursorAnchor = "BOTTOMLEFT",
@@ -6601,10 +6635,12 @@ return {
           engine = "default",
           fontSize = 12,
           hideDelay = 0,
+          hideFactionText = false,
           hideGuildName = false,
           hideHealthBar = true,
           hideInCombat = false,
           hidePlayerTitle = false,
+          hidePvpText = false,
           hideServerName = false,
           itemLevelBrackets = {
             blue = 265,
@@ -6613,7 +6649,10 @@ return {
             purple = 275,
             white = 245
           },
+          scale = 1,
           showBorder = true,
+          showConnectedRealm = false,
+          showGuildRank = false,
           showItemMaxStackSize = false,
           showMountCollected = true,
           showNpcID = false,

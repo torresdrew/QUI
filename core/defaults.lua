@@ -114,6 +114,31 @@ local defaults = {
             autoDeclinePetBattle = false,  -- Auto-decline incoming pet battle duel requests (opt-in)
             autoRelease = "off",  -- Auto-release spirit: "off"/"pvp" (battlegrounds)/"pvpworld" (+ open world). Never in dungeons/raids.
             audioOutputDevice = "",  -- Lock game audio output to this device NAME (re-forced on device change). "" = off.
+            autoUnwrapCollections = false,  -- Auto-clear new mount/pet/toy fanfare + collections alert (opt-in)
+            autoConfirmSocketReplace = false,  -- Auto-confirm the gem socket replacement popup (opt-in)
+            autoConfirmTokenPurchase = false,  -- Auto-confirm token/currency purchase popups (opt-in)
+            autoConfirmHighCost = false,  -- Auto-confirm the expensive-item purchase popup (opt-in)
+            merchantKnownPetMark = false,  -- Green check on merchant pet items already collected (opt-in)
+            -- Cursor Trail: fading afterimage dots behind the mouse cursor
+            cursorTrail = {
+                enabled = false,
+                combatOnly = true,
+                useClassColor = true,
+                customColor = { 1, 1, 1, 1 },
+                density = "medium",   -- "low" | "medium" | "high" (dot spacing)
+                size = 16,            -- dot size in pixels
+                duration = 0.4,       -- seconds for each dot to fade out
+            },
+            -- Loot Toast Curation: hide loot-won toasts below minQuality (0 = off);
+            -- keep-overrides always win. Uncached items/currency fail open.
+            lootToastFilter = {
+                enabled = false,
+                minQuality = 0,     -- hide item toasts BELOW this ItemQuality (0 = show all)
+                keepMounts = true,
+                keepPets = true,
+                keepUpgrades = true,
+                minKeepIlvl = 0,    -- equippables at/above this ilvl always kept (0 = off)
+            },
             -- Popup & Toast Blocker (granular, all OFF by default)
             popupBlocker = {
                 enabled = false,
@@ -158,6 +183,13 @@ local defaults = {
                 lfgProposal = "None",
                 resurrect = "None",
                 mail = "None",
+                lootRollWon = "None",
+                lootUpgrade = "None",
+            },
+            -- Sound Mute (opt-in): mute selected game sounds by fileDataID; entry keys
+            -- from QUI_QoL/qol/sound_mute_catalog.lua are added lazily as toggled.
+            soundMute = {
+                enabled = false,
             },
             -- Focus Cast Alert (warn when hostile focus is casting and interrupt is ready)
             focusCastAlert = {
@@ -525,6 +557,7 @@ local defaults = {
             showItemLevel = true,           -- Show item level & track (line 2)
             showEnchants = true,            -- Show enchant status (line 3)
             showGems = true,                -- Show gem indicators
+            showGemSummary = false,         -- Gems section (per-color counts + empty sockets) in the stats panel
             showDurability = false,         -- Show durability bars
             inspectEnabled = true,
             showModelBackground = true,     -- Show background behind model
@@ -1699,6 +1732,12 @@ local defaults = {
             showTargetedBy = true,             -- List group/raid members targeting the unit (out of combat)
             showPlayerMythicRating = true,     -- Show M+ rating on player tooltip
             showNpcID = false,                 -- Append the NPC ID to creature/NPC tooltips (opt-in)
+            scale = 1,                         -- Tooltip scale multiplier (1 = Blizzard default)
+            hideFactionText = false,           -- Hide the Alliance/Horde/Neutral faction line (opt-in)
+            hidePvpText = false,               -- Hide the PvP flag line (opt-in)
+            showConnectedRealm = false,        -- Mark cross-realm players from connected realms (opt-in)
+            showGuildRank = false,             -- Append guild rank to the guild line (opt-in)
+            colorGuildNames = false,           -- Recolor the guild line (own guild vs other guilds) (opt-in)
         },
 
         -- QUI Action Bars - Button Skinning and Fade System

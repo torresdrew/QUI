@@ -396,6 +396,15 @@ function ItemButtons.DressGuildLive(button, tab, slot, entry, searchResult)
     button:SetAlpha(searchResult == false and SEARCH_DIM or 1)
 end
 
+--- True when any of the eight corner-widget slots selects the given widget id
+--- (used to skip computing live facts nobody renders).
+local function WantsCornerWidget(appearance, id)
+    local c = appearance and appearance.corners
+    if not c then return false end
+    return c.tl1 == id or c.tl2 == id or c.tr1 == id or c.tr2 == id
+        or c.bl1 == id or c.bl2 == id or c.br1 == id or c.br2 == id
+end
+
 --- Dress a live button from a cache slot entry (nil entry = empty slot).
 --- searchResult: true (match) | false (dim) | nil (no active search).
 --- newGuid: glow-eligible item GUID | nil (bag window live mode passes
@@ -411,9 +420,12 @@ function ItemButtons.Dress(button, entry, searchResult, newGuid)
         CooldownFrame_Set(button.Cooldown, start, duration, enable)
         -- Lock state is live (not cached): query at dress time.
         local live = C_Container.GetContainerItemInfo(button:GetBagID(), button:GetID())
+        -- isJunk is computed regardless of the dim toggle so the junk-coin
+        -- corner widget can preview auto-sell even with dimming off; the
+        -- desaturate below stays gated on appearance.greyJunk.
         local junkCfg = GetSettings().behavior.junk
-        local isJunk = (junkCfg and junkCfg.dim and Bags.Junk and live
-            and Bags.Junk.IsJunk(live, button:GetBagID(), junkCfg.exclusions))
+        local isJunk = (Bags.Junk and live
+            and Bags.Junk.IsJunk(live, button:GetBagID(), junkCfg and junkCfg.exclusions))
             and true or false
         SetItemButtonDesaturated(button, (live and live.isLocked)
             or (appearance and appearance.greyJunk and isJunk) or false)
@@ -435,6 +447,26 @@ function ItemButtons.Dress(button, entry, searchResult, newGuid)
         ItemButtons.SetUnusableTint(button,
             appearance and appearance.markUnusable
             and ItemButtons.IsUnusable(button:GetBagID(), button:GetID(), entry.link))
+        -- Upgrade-track corner badge (live fact, per-instance accurate — the
+        -- itemID-keyed GetExtended cache can't tell two copies at different
+        -- upgrade levels apart). Only computed when a corner selects it.
+        -- Doc (ItemDocumentation): C_Item.GetItemUpgradeInfo(itemInfo) →
+        -- ItemUpgradeInfo{currentLevel, maxLevel, trackString (Nilable)},
+        -- Nilable return (nil for non-upgradable items).
+        local upgradeTrack
+        if WantsCornerWidget(appearance, "upgrade_track")
+            and entry.link and C_Item and C_Item.GetItemUpgradeInfo then
+            local okU, u = pcall(C_Item.GetItemUpgradeInfo, entry.link)
+            if okU and u and u.trackString and u.trackString ~= ""
+                and u.currentLevel and u.maxLevel then
+                -- first UTF-8 char of the localized track name + progression
+                local abbrev = u.trackString:match("^[%z\1-\127\194-\244][\128-\191]*") or ""
+                upgradeTrack = {
+                    text = abbrev .. u.currentLevel .. "/" .. u.maxLevel,
+                    r = 1, g = 1, b = 1,
+                }
+            end
+        end
         if Bags.CornerWidgets then
             Bags.CornerWidgets.Apply(button, {
                 entry = entry,
@@ -443,6 +475,7 @@ function ItemButtons.Dress(button, entry, searchResult, newGuid)
                 inSet = inSet and true or false,
                 qualityColorText = appearance and appearance.qualityColorText or false,
                 craftQualityAtlas = CraftQualityAtlas(entry),
+                upgradeTrack = upgradeTrack,
             }, appearance)
         end
     else

@@ -1100,7 +1100,9 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
 
         local maxStackW = GUI:CreateFormCheckbox(s2.frame, nil, "showItemMaxStackSize", tooltip, RefreshTooltips,
             { description = ns.L["Append the maximum stack size to stackable item tooltips."] })
-        s2.AddRow(row(s2.frame, ns.L["Show Item Max Stack Size"], maxStackW))
+        local scaleW = GUI:CreateFormSlider(s2.frame, nil, 0.5, 2, 0.05, "scale", tooltip, RefreshTooltips,
+            { precision = 2, description = ns.L["Scale multiplier for the whole tooltip. 1 is the Blizzard default size."] })
+        s2.AddRow(row(s2.frame, ns.L["Show Item Max Stack Size"], maxStackW), row(s2.frame, ns.L["Tooltip Scale"], scaleW))
 
         local classColorNameW = GUI:CreateFormCheckbox(s2.frame, nil, "classColorName", tooltip, RefreshTooltips,
             { description = ns.L["Color player names in tooltips by their class."] })
@@ -1113,6 +1115,16 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         local hideTitleW = GUI:CreateFormCheckbox(s2.frame, nil, "hidePlayerTitle", tooltip, RefreshTooltips,
             { description = ns.L["Hide character titles on player tooltips."] })
         s2.AddRow(row(s2.frame, ns.L["Hide Server Name"], hideServerW), row(s2.frame, ns.L["Hide Player Titles"], hideTitleW))
+
+        local hideFactionW = GUI:CreateFormCheckbox(s2.frame, nil, "hideFactionText", tooltip, RefreshTooltips,
+            { description = ns.L["Hide the Alliance/Horde/Neutral faction line on unit tooltips."] })
+        local hidePvpW = GUI:CreateFormCheckbox(s2.frame, nil, "hidePvpText", tooltip, RefreshTooltips,
+            { description = ns.L["Hide the PvP flag line on player tooltips."] })
+        s2.AddRow(row(s2.frame, ns.L["Hide Faction Line"], hideFactionW), row(s2.frame, ns.L["Hide PvP Line"], hidePvpW))
+
+        local connectedW = GUI:CreateFormCheckbox(s2.frame, nil, "showConnectedRealm", tooltip, RefreshTooltips,
+            { description = ns.L["Mark cross-realm players whose realm is connected to yours with a green (Connected) tag on the realm line."] })
+        s2.AddRow(row(s2.frame, ns.L["Show Connected-Realm Tag"], connectedW))
 
         local showTargetW = GUI:CreateFormCheckbox(s2.frame, nil, "showTooltipTarget", tooltip, RefreshTooltips,
             { description = ns.L["Show the unit's current target on its tooltip. Updates live as the target changes."] })
@@ -1137,6 +1149,12 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         local hideGuildW = GUI:CreateFormToggle(s2.frame, nil, "hideGuildName", tooltip, RefreshTooltips,
             { description = ns.L["Strip the guild name line from player tooltips."] })
         s2.AddRow(row(s2.frame, ns.L["Hide Guild Name"], hideGuildW))
+
+        local guildRankW = GUI:CreateFormCheckbox(s2.frame, nil, "showGuildRank", tooltip, RefreshTooltips,
+            { description = ns.L["Append the player's guild rank to the guild line. Has no effect while Hide Guild Name is on."] })
+        local guildColorW = GUI:CreateFormCheckbox(s2.frame, nil, "colorGuildNames", tooltip, RefreshTooltips,
+            { description = ns.L["Recolor the guild line: green for your own guild, blue for other guilds. Has no effect while Hide Guild Name is on."] })
+        s2.AddRow(row(s2.frame, ns.L["Show Guild Rank"], guildRankW), row(s2.frame, ns.L["Color Guild Names"], guildColorW))
         L.closeSection(s2)
 
         -- PLAYER ITEM LEVEL
