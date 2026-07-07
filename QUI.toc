@@ -248,6 +248,12 @@ modules\qol\xptracker.lua
 modules\qol\focuscastalert.lua
 modules\qol\merchant_grid.lua
 modules\qol\merchant_pets.lua
+modules\qol\ej_lootspecs.lua
+modules\qol\communities_privacy.lua
+modules\qol\gem_picker.lua
+modules\qol\mail_contacts.lua
+modules\qol\vendor_rules.lua
+modules\qol\trade_mail_log.lua
 modules\qol\friends_decor.lua
 modules\qol\audio_device.lua
 modules\qol\extended_ignore.lua

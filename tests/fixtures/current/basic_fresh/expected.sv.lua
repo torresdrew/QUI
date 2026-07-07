@@ -2378,6 +2378,7 @@ return {
           autoTurnInQuest = true,
           autoUnwrapCollections = false,
           closeBagsOnKeystoneInsert = false,
+          communitiesPrivacy = false,
           consumableAnchorMode = true,
           consumableCheckEnabled = true,
           consumableExpirationThreshold = 300,
@@ -2456,6 +2457,7 @@ return {
           defaultOpacity = 1,
           defaultUseClassColor = true,
           disableScrollingCombatText = false,
+          ejLootSpecIcons = false,
           eventSounds = {
             enabled = false,
             lfgProposal = "None",
@@ -2497,6 +2499,7 @@ return {
           friendsClassColor = true,
           gameMenuDim = true,
           gameMenuFontSize = 12,
+          gemSocketPicker = false,
           hideObjectiveTrackerBorder = true,
           hostilityColorFriendly = {
             [1] = 0.20000000000000001,
@@ -2537,6 +2540,8 @@ return {
             minKeepIlvl = 0,
             minQuality = 0
           },
+          mailContactsPanel = false,
+          mailRememberRecipient = false,
           masterColorCastbarText = false,
           masterColorHealthText = false,
           masterColorNameText = false,
@@ -2667,7 +2672,21 @@ return {
           statusTrackingBarsShowBarText = true,
           statusTrackingBarsShowBorder = true,
           texture = "Quazii v5",
-          uiScale = 0.64000000000000001
+          tradeMailLog = {
+            enabled = false,
+            logReceivedMail = true,
+            logSentMail = true,
+            logTrades = true
+          },
+          uiScale = 0.64000000000000001,
+          vendorRules = {
+            enabled = false,
+            forceSell = "",
+            maxIlvl = 0,
+            maxQuality = 1,
+            neverSell = "",
+            previewOnly = true
+          }
         },
         hudLayering = {
           bossFrames = 4,
