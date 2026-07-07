@@ -4007,29 +4007,53 @@ local function HookSelectionAlpha(viewer, viewerName)
     end)
 end
 
-local function DisableViewerChildrenMouse(viewer)
-    if not viewer or not viewer.GetChildren then return end
-    local n = select('#', viewer:GetChildren())
-    for i = 1, n do
-        local child = select(i, viewer:GetChildren())
-        if child then
-            if child.EnableMouse then child.EnableMouse(child, false) end
-            if child.SetMouseClickEnabled then child.SetMouseClickEnabled(child, false) end
-            if child.SetMouseMotionEnabled then child.SetMouseMotionEnabled(child, false) end
+-- do-block keeps the cache and vararg helper off the main chunk's local
+-- budget (this file sits at the 200-local ceiling).
+local SetViewerChildrenMouse
+do
+    -- Last child count seen per viewer; weak keys so dropped viewers don't leak.
+    local childCount = setmetatable({}, { __mode = "k" })
+
+    -- Receives viewer:GetChildren() as varargs so GetChildren is invoked
+    -- once per pass instead of once per child.
+    local function applyChildren(enabled, ...)
+        for i = 1, select('#', ...) do
+            local child = (select(i, ...))
+            if child then
+                if child.EnableMouse then child.EnableMouse(child, enabled) end
+                if child.SetMouseClickEnabled then child.SetMouseClickEnabled(child, enabled) end
+                if child.SetMouseMotionEnabled then child.SetMouseMotionEnabled(child, enabled) end
+            end
         end
+    end
+
+    SetViewerChildrenMouse = function(viewer, enabled)
+        if not viewer or not viewer.GetChildren then return end
+        if enabled then
+            -- Clear the cache so a later re-suppress runs a full pass.
+            childCount[viewer] = nil
+            applyChildren(true, viewer:GetChildren())
+            return
+        end
+        -- Skip the pass entirely while the child count is stable; one C call
+        -- instead of a full child sweep per enforcer tick.
+        local n = viewer.GetNumChildren and viewer:GetNumChildren() or nil
+        if n and childCount[viewer] == n then return end
+        childCount[viewer] = n
+        applyChildren(false, viewer:GetChildren())
     end
 end
 
 local function AlphaEnforcerOnUpdate(self, dt)
+    _alphaEnforcerElapsed = _alphaEnforcerElapsed + dt
+    if _alphaEnforcerElapsed < 0.1 then return end
+    _alphaEnforcerElapsed = 0
+
     if not IsCDMMasterEnabled() then
         self:SetScript("OnUpdate", nil)
         if UnsuppressViewers then UnsuppressViewers() end
         return
     end
-
-    _alphaEnforcerElapsed = _alphaEnforcerElapsed + dt
-    if _alphaEnforcerElapsed < 0.1 then return end
-    _alphaEnforcerElapsed = 0
 
     for catNum = 0, 3 do
         local viewer = _G[CATEGORY_GLOBALS[catNum]]
@@ -4043,7 +4067,7 @@ local function AlphaEnforcerOnUpdate(self, dt)
             end
             -- Blizzard creates children dynamically when cooldowns fire;
             -- catch any new ones that escaped our initial pass.
-            DisableViewerChildrenMouse(viewer)
+            SetViewerChildrenMouse(viewer, false)
         end
     end
 end
@@ -4070,7 +4094,7 @@ local function SuppressViewers()
             if viewer.EnableMouse then viewer.EnableMouse(viewer, false) end
             if viewer.SetMouseClickEnabled then viewer.SetMouseClickEnabled(viewer, false) end
             if viewer.SetMouseMotionEnabled then viewer.SetMouseMotionEnabled(viewer, false) end
-            DisableViewerChildrenMouse(viewer)
+            SetViewerChildrenMouse(viewer, false)
             HookViewerAlpha(viewer, viewerName)
             -- .Selection is the Edit Mode overlay (IgnoreParentAlpha-flagged,
             -- so parent alpha=0 doesn't hide it). Hide + hook independently.
@@ -4105,15 +4129,7 @@ UnsuppressViewers = function()
             end
 
             -- Restore mouse on existing children too so tooltips work.
-            local n = select('#', viewer:GetChildren())
-            for i = 1, n do
-                local child = select(i, viewer:GetChildren())
-                if child then
-                    if child.EnableMouse then child.EnableMouse(child, true) end
-                    if child.SetMouseClickEnabled then child.SetMouseClickEnabled(child, true) end
-                    if child.SetMouseMotionEnabled then child.SetMouseMotionEnabled(child, true) end
-                end
-            end
+            SetViewerChildrenMouse(viewer, true)
         end
     end
 end
