@@ -253,20 +253,68 @@ function QUICore:OnInitialize()
 
 end
 
+-- M+ guard helper: a challenge timer is running OR we're inside an M+
+-- dungeon (GetActiveChallengeMapID is non-nil even before the timer starts,
+-- covering the keystone activation phase, where protected state can't be
+-- reliably detected by InCombatLockdown()).
+local function IsInChallengeModeContext()
+    if not C_ChallengeMode then return false end
+    if C_ChallengeMode.IsChallengeModeActive and C_ChallengeMode.IsChallengeModeActive() then
+        return true
+    end
+    return (C_ChallengeMode.GetActiveChallengeMapID and C_ChallengeMode.GetActiveChallengeMapID() ~= nil) or false
+end
+
+-- Profile changes that arrive inside a Mythic+ context are PARKED, not
+-- dropped: AceDB has already switched the profile underneath us, so
+-- skipping the refresh entirely leaves the UI rendering the old profile
+-- until a manual /reload. The watcher replays the newest parked change
+-- once we're out of the challenge context and out of combat — the same
+-- park-and-drain shape as the loader's regen resume (core/addon_loader.lua).
+-- Multiple switches during one key coalesce to the last; if that lands
+-- back on the already-applied profile, the no-actual-change skip in
+-- OnProfileChanged makes the replay a no-op.
+function QUICore:_ParkProfileChangeDuringChallenge(event, profileKey)
+    local alreadyParked = self._parkedProfileChange ~= nil
+    self._parkedProfileChange = { event = event, profileKey = profileKey }
+
+    if not self._challengeParkWatcher then
+        local watcher = CreateFrame("Frame")
+        self._challengeParkWatcher = watcher
+        watcher:SetScript("OnEvent", function()
+            local parked = QUICore._parkedProfileChange
+            if not parked then
+                watcher:UnregisterAllEvents()
+                return
+            end
+            if IsInChallengeModeContext() or InCombatLockdown() then return end
+            QUICore._parkedProfileChange = nil
+            watcher:UnregisterAllEvents()
+            QUICore:OnProfileChanged(parked.event, QUICore.db, parked.profileKey)
+        end)
+    end
+    local watcher = self._challengeParkWatcher
+    watcher:RegisterEvent("PLAYER_ENTERING_WORLD")
+    watcher:RegisterEvent("CHALLENGE_MODE_COMPLETED")
+    watcher:RegisterEvent("CHALLENGE_MODE_RESET")
+    watcher:RegisterEvent("PLAYER_REGEN_ENABLED")
+
+    if not alreadyParked then
+        print("|cFF34D399QUI:|r Profile change deferred — it will be applied when you leave the Mythic+ dungeon.")
+    end
+end
+
 function QUICore:OnProfileChanged(event, db, profileKey)
 
     -- AGGRESSIVE M+ PROTECTION: If we're in a challenge mode dungeon, defer EVERYTHING
     -- WoW's protected state during M+ transitions can't be reliably detected by InCombatLockdown()
     -- and pcall doesn't suppress ADDON_ACTION_BLOCKED (fires before Lua error propagates)
-    -- Check multiple conditions: active M+ OR in an M+ dungeon (covers keystone activation phase)
-    local inChallengeMode = false
-    if C_ChallengeMode then
-        -- IsChallengeModeActive = timer is running
-        -- GetActiveChallengeMapID returns non-nil if in an M+ dungeon (even before timer starts)
-        inChallengeMode = (C_ChallengeMode.IsChallengeModeActive and C_ChallengeMode.IsChallengeModeActive())
-            or (C_ChallengeMode.GetActiveChallengeMapID and C_ChallengeMode.GetActiveChallengeMapID() ~= nil)
+    if IsInChallengeModeContext() then
+        -- The DB has already switched; park the refresh for replay at key
+        -- end instead of silently leaving a stale-profiled UI.
+        self:_ParkProfileChangeDuringChallenge(event, profileKey)
+        return
     end
-    if inChallengeMode then return end
 
     -- Normalize callback payloads that don't pass the active destination profile.
     local currentProfile = self.db:GetCurrentProfile()
