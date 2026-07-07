@@ -25,6 +25,8 @@ cdm\cdm_aura_catalog.lua
 cdm\cdm_aura_runtime.lua
 cdm\cdm_spelldata.lua
 cdm\cdm_blizz_mirror.lua
+cdm\cdm_blizz_mirror_suppression.lua
+cdm\cdm_blizz_mirror_debug.lua
 cdm\cdm_icon_factory.lua
 cdm\cdm_icon_stack_text.lua
 cdm\cdm_icon_stack_policy.lua
