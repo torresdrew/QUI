@@ -182,6 +182,24 @@ do
                     { description = ns.L["Direction the raid markers bar grows."] }), body, sy)
             end, sections, relayout)
 
+            -- Leader toolbar rows. The nested worldMarkers/leaderStrip tables
+            -- are guaranteed by the AceDB defaults tree (core/defaults.lua).
+            CreateCollapsible(content, ns.L["Leader Tools"], 4 * FORM_ROW + 8, function(body)
+                local sy = -4
+                sy = P(GUI:CreateFormCheckbox(body, ns.L["World Markers"],
+                    "enabled", markersDB.worldMarkers, RefreshRaidMarkersBar,
+                    { description = ns.L["Second row of buttons that place world markers (flares) on the ground. Left-click places or moves a flare, right-click clears it."] }), body, sy)
+                sy = P(GUI:CreateFormCheckbox(body, ns.L["Leader Actions"],
+                    "enabled", markersDB.leaderStrip, RefreshRaidMarkersBar,
+                    { description = ns.L["Row of buttons for ready check, role poll, and pull countdown."] }), body, sy)
+                sy = P(GUI:CreateFormCheckbox(body, ns.L["Show Only As Leader"],
+                    "autoShowForLeader", markersDB, RefreshRaidMarkersBar,
+                    { description = ns.L["Only show the world marker and leader action rows while you are group lead or raid assist."] }), body, sy)
+                P(GUI:CreateFormSlider(body, ns.L["Pull Countdown Seconds"],
+                    3, 30, 1, "pullSeconds", markersDB.leaderStrip, nil, { deferOnDrag = true },
+                    { description = ns.L["Countdown length used by the pull button."] }), body, sy)
+            end, sections, relayout)
+
             U.BuildPositionCollapsible(content, "raidMarkersBar", nil, sections, relayout)
 
             relayout()

@@ -371,6 +371,16 @@ function QUI:SlashCommandOpen(input)
             print("|cff60A5FAQUI:|r " .. ns.L["Setup wizard unavailable: "] .. tostring(reason or ns.L["unknown error"]))
         end
         return
+    elseif input and input == "readycheck" then
+        if C_PartyInfo and C_PartyInfo.DoReadyCheck then
+            C_PartyInfo.DoReadyCheck()
+        end
+        return
+    elseif input and input == "rolepoll" then
+        if InitiateRolePoll then
+            InitiateRolePoll()
+        end
+        return
     elseif input and input == "cdm" then
         if _G.QUI_OpenCDMComposer then
             _G.QUI_OpenCDMComposer()

@@ -4093,6 +4093,11 @@ local defaults = {
             spacing = 4,
             borderSize = 2,
             zoom = 0,
+            -- Leader toolbar rows (world markers + ready/roles/pull strip);
+            -- autoShowForLeader gates both rows to group lead / raid assist.
+            worldMarkers = { enabled = true },
+            leaderStrip = { enabled = true, pullSeconds = 10 },
+            autoShowForLeader = true,
         },
 
         -- DandersFrames Integration: Anchor DF containers to QUI elements

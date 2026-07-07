@@ -6582,14 +6582,22 @@ return {
           showSelfBuffs = true
         },
         raidMarkersBar = {
+          autoShowForLeader = true,
           borderSize = 2,
           enabled = false,
           growDirection = "RIGHT",
           iconSize = 36,
+          leaderStrip = {
+            enabled = true,
+            pullSeconds = 10
+          },
           locked = false,
           offsetX = 0,
           offsetY = -200,
           spacing = 4,
+          worldMarkers = {
+            enabled = true
+          },
           zoom = 0
         },
         rangeCheck = {

@@ -328,7 +328,7 @@ local VISUAL_MODULES = {
     },
     {
         key = "raidMarkersBar", group = ns.L["Action Bars"], label = ns.L["Raid Markers Bar"],
-        caption = ns.L["Buttons that place raid target markers on your target."],
+        caption = ns.L["Buttons for raid target markers, world markers (flares), and leader actions like ready checks and pull timers."],
         combatLocked = true,
         hidden = HiddenFromFeatureToggles,
     },

@@ -32,7 +32,7 @@ QUI_HelpContent.SlashCommands = {
     {command = "/qui debug",    description = ns.L["Toggle debug mode — enables verbose logging for one session"]},
     {command = "/qui layout",   description = ns.L["Open Layout Mode — drag to reposition all QUI frames"]},
     {command = "/qui editmode", description = ns.L["Alias for /qui layout (backward compatibility)"]},
-    {command = "/pull <sec>",   description = ns.L["Start a pull timer countdown (requires BigWigs or DBM)"]},
+    {command = "/pull <sec>",   description = ns.L["Start a native pull countdown (no other addons required)"]},
 }
 
 ---------------------------------------------------------------------------

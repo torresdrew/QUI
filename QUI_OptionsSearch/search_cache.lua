@@ -3645,7 +3645,7 @@ ns.QUI_SearchCache = {
             ["featureId"] = "raidMarkersBar",
             ["keywords"] = {
                 "Raid Markers Bar",
-                "Buttons that place raid target markers on your target.",
+                "Buttons for raid target markers, world markers (flares), and leader actions like ready checks and pull timers.",
                 "Action Bars",
                 "module",
             },
