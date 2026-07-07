@@ -745,14 +745,35 @@ local function ProcessActionButton(button)
     end
 end
 
--- Build the list of action buttons ONCE (expensive _G iteration)
-local function BuildActionButtonCache()
-    if actionButtonsCached then return end
+-- Widget probe for the _G sweep. Module-level so the sweep doesn't allocate
+-- a closure per candidate table.
+local function LooksLikeActionButton(frame)
+    local objType = frame:GetObjectType()
+    if not objType then return false end
 
-    wipe(cachedActionButtons)
+    -- Check for common action button indicators
+    if frame.action or (frame.GetAction and type(frame.GetAction) == "function") then
+        return true
+    end
 
-    -- Method 1: Scan by iterating all global frames that look like action buttons
-    -- This catches most action bar addons
+    return false
+end
+
+-- Method 1 results survive cache invalidation: the full pairs(_G) sweep is
+-- expensive (easily 100k+ entries with addons loaded) and the nonstandard
+-- buttons it discovers exist for the rest of the session, so it runs once
+-- instead of after every loading screen. The named-prefix scans in
+-- BuildActionButtonCache still rerun on every rebuild and pick up
+-- late-created standard/compat buttons.
+local globalSweepButtons = {}
+local globalSweepDone = false
+
+local function RunGlobalActionButtonSweep()
+    if globalSweepDone then return end
+    globalSweepDone = true
+
+    -- Scan by iterating all global frames that look like action buttons.
+    -- This catches most action bar addons.
     for globalName, frame in pairs(_G) do
         if type(globalName) == "string" and type(frame) == "table" then
             -- Fast-path: skip forbidden tables without pcall overhead (12.0.x+)
@@ -763,23 +784,26 @@ local function BuildActionButtonCache()
             else
                 -- pcall the widget check — some addons expose GetObjectType via
                 -- metatables on non-widget objects, which errors when called
-                local ok, isActionButton = pcall(function()
-                    local objType = frame:GetObjectType()
-                    if not objType then return false end
-
-                    -- Check for common action button indicators
-                    if frame.action or (frame.GetAction and type(frame.GetAction) == "function") then
-                        return true
-                    end
-
-                    return false
-                end)
+                local ok, isActionButton = pcall(LooksLikeActionButton, frame)
 
                 if ok and isActionButton then
-                    table.insert(cachedActionButtons, frame)
+                    table.insert(globalSweepButtons, frame)
                 end
             end
         end
+    end
+end
+
+-- Build the list of action buttons (cheap except the one-time _G sweep)
+local function BuildActionButtonCache()
+    if actionButtonsCached then return end
+
+    wipe(cachedActionButtons)
+
+    -- Method 1: one-per-session _G sweep, replayed from its saved results
+    RunGlobalActionButtonSweep()
+    for _, btn in ipairs(globalSweepButtons) do
+        table.insert(cachedActionButtons, btn)
     end
 
     -- Method 2: Explicitly scan known button patterns as backup
