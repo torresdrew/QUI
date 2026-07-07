@@ -43,6 +43,12 @@ qol\xptracker.lua
 qol\focuscastalert.lua
 qol\merchant_grid.lua
 qol\merchant_pets.lua
+qol\ej_lootspecs.lua
+qol\communities_privacy.lua
+qol\gem_picker.lua
+qol\mail_contacts.lua
+qol\vendor_rules.lua
+qol\trade_mail_log.lua
 qol\friends_decor.lua
 qol\audio_device.lua
 qol\extended_ignore.lua

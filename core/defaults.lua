@@ -119,6 +119,28 @@ local defaults = {
             autoConfirmTokenPurchase = false,  -- Auto-confirm token/currency purchase popups (opt-in)
             autoConfirmHighCost = false,  -- Auto-confirm the expensive-item purchase popup (opt-in)
             merchantKnownPetMark = false,  -- Green check on merchant pet items already collected (opt-in)
+            ejLootSpecIcons = false,  -- Spec-eligibility icons on Encounter Journal loot rows (opt-in)
+            communitiesPrivacy = false,  -- Hide Communities chat/roster behind a click-to-reveal cover (opt-in)
+            gemSocketPicker = false,  -- Bag-gem picker panel under the item socketing window (opt-in)
+            mailContactsPanel = false,  -- Contacts side panel on the send-mail tab (opt-in)
+            mailRememberRecipient = false,  -- Keep the recipient filled after sending (opt-in)
+            -- Trade & Mail Log: account-wide history (QUIDB.global.tradeMailLog); /quilog views it
+            tradeMailLog = {
+                enabled = false,
+                logTrades = true,
+                logSentMail = true,
+                logReceivedMail = true,
+            },
+            -- Vendor Sell Rules: rule-based auto-sell for equippable gear.
+            -- previewOnly stays true until the user explicitly disables it.
+            vendorRules = {
+                enabled = false,
+                previewOnly = true,
+                maxQuality = 1,   -- sell gear at/below this quality (1 = Common)
+                maxIlvl = 0,      -- 0 = off; gear below this ilvl is sellable
+                forceSell = "",   -- itemIDs always sold (still protection-gated)
+                neverSell = "",   -- itemIDs never sold
+            },
             -- Cursor Trail: fading afterimage dots behind the mouse cursor
             cursorTrail = {
                 enabled = false,
@@ -4803,6 +4825,10 @@ local defaults = {
             _updatedAt = 0,
             entries = {},
         },
+        -- Mail contacts (account-wide address book): ["Name-Realm"] =
+        -- { name, realm, class, lastUsed }. Auto-seeded from known alts +
+        -- every recipient you mail; empty default so removals stick.
+        mailContacts = {},
         -- Spell Scanner: cross-character spell/item duration mappings
         spellScanner = {
             spells = {},   -- [castSpellID] = { buffSpellID, duration, icon, name, scannedAt }

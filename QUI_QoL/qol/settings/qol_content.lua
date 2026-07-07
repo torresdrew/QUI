@@ -499,6 +499,36 @@ local function BuildAutomation(L, generalDB)
     local highCostW = GUI:CreateFormCheckbox(s.frame, nil, "autoConfirmHighCost", generalDB, nil,
         { description = ns.L["Skip the confirmation popup when buying expensive items from vendors."] })
     s.AddRow(row(s.frame, ns.L["Auto-Confirm Currency Purchases"], tokenW), row(s.frame, ns.L["Auto-Confirm Expensive Purchases"], highCostW))
+
+    local ejSpecW = GUI:CreateFormCheckbox(s.frame, nil, "ejLootSpecIcons", generalDB, function()
+        if ns.RefreshEJLootSpecIcons then ns.RefreshEJLootSpecIcons() end
+    end, { description = ns.L["Show spec icons on Encounter Journal loot rows for items only some specializations can get. Items usable by everyone stay unmarked."] })
+    local gemPickerW = GUI:CreateFormCheckbox(s.frame, nil, "gemSocketPicker", generalDB, function()
+        if ns.RefreshGemPicker then ns.RefreshGemPicker() end
+    end, { description = ns.L["Show a panel of the gems in your bags under the item socketing window; click one to pick it up ready to socket."] })
+    s.AddRow(row(s.frame, ns.L["Journal Loot Spec Icons"], ejSpecW), row(s.frame, ns.L["Gem Socket Picker"], gemPickerW))
+
+    local mailPanelW = GUI:CreateFormCheckbox(s.frame, nil, "mailContactsPanel", generalDB, function()
+        if ns.RefreshMailContacts then ns.RefreshMailContacts() end
+    end, { description = ns.L["Show an account-wide contacts panel next to the send-mail tab: your alts plus everyone you've mailed. Click a name to fill the recipient."] })
+    local mailRememberW = GUI:CreateFormCheckbox(s.frame, nil, "mailRememberRecipient", generalDB, nil,
+        { description = ns.L["After sending a mail, keep the recipient name filled in for the next one."] })
+    s.AddRow(row(s.frame, ns.L["Mail Contacts Panel"], mailPanelW), row(s.frame, ns.L["Remember Mail Recipient"], mailRememberW))
+
+    -- TRADE & MAIL LOG
+    if type(generalDB.tradeMailLog) ~= "table" then generalDB.tradeMailLog = {} end
+    local tml = generalDB.tradeMailLog
+    local tmlEnableW = GUI:CreateFormCheckbox(s.frame, nil, "enabled", tml, nil,
+        { description = ns.L["Keep an account-wide log of trades and mail (partner, gold, COD, attached items). View it with /quilog — item links stay clickable in chat."] })
+    local tmlTradesW = GUI:CreateFormCheckbox(s.frame, nil, "logTrades", tml, nil,
+        { description = ns.L["Log player trades (both sides' items and gold, completed or cancelled)."] })
+    s.AddRow(row(s.frame, ns.L["Trade & Mail Log"], tmlEnableW), row(s.frame, ns.L["Log Trades"], tmlTradesW))
+
+    local tmlSentW = GUI:CreateFormCheckbox(s.frame, nil, "logSentMail", tml, nil,
+        { description = ns.L["Log mail you send (recipient, subject, gold, COD, attachments)."] })
+    local tmlRecvW = GUI:CreateFormCheckbox(s.frame, nil, "logReceivedMail", tml, nil,
+        { description = ns.L["Log mail you open in your inbox (sender, subject, gold, COD, attachments)."] })
+    s.AddRow(row(s.frame, ns.L["Log Sent Mail"], tmlSentW), row(s.frame, ns.L["Log Received Mail"], tmlRecvW))
     L.closeSection(s)
 end
 
@@ -950,6 +980,42 @@ local function BuildMerchantGrid(L, db)
         s.AddRow(row(s.frame, ns.L["Mark Collected Pets"], petMarkW))
     end
     L.closeSection(s)
+
+    -- VENDOR SELL RULES
+    if generalDB then
+        if type(generalDB.vendorRules) ~= "table" then generalDB.vendorRules = {} end
+        local vr = generalDB.vendorRules
+
+        L.headerAt(ns.L["Vendor Sell Rules"])
+        L.intro(ns.L["Rule-based auto-sell for equippable gear at merchants. Hard protections always apply: equipment-set items, gear still on an upgrade track, unbound tradeable gear, and never-sell items are never sold; at most 12 items per visit. Preview mode only prints what would be sold — turn it off once you trust your rules."])
+
+        local sv = L.sectionAt()
+        local vrEnableW = GUI:CreateFormCheckbox(sv.frame, nil, "enabled", vr, nil,
+            { description = ns.L["Master toggle for vendor sell rules."] })
+        local vrPreviewW = GUI:CreateFormCheckbox(sv.frame, nil, "previewOnly", vr, nil,
+            { description = ns.L["Print what the rules would sell instead of selling. Strongly recommended until you've checked the output at a vendor."] })
+        sv.AddRow(row(sv.frame, ns.L["Enable Vendor Rules"], vrEnableW), row(sv.frame, ns.L["Preview Mode (no selling)"], vrPreviewW))
+
+        local qualityOptions = {
+            { value = 1, text = ns.L["Common (white) and below"] },
+            { value = 2, text = ns.L["Uncommon (green) and below"] },
+            { value = 3, text = ns.L["Rare (blue) and below"] },
+        }
+        local vrQualityW = GUI:CreateFormDropdown(sv.frame, nil, qualityOptions, "maxQuality", vr, nil,
+            { description = ns.L["Equippable weapons and armor at or below this quality are sellable (grey junk is handled by the junk seller)."] })
+        local vrIlvlW = GUI:CreateFormSlider(sv.frame, nil, 0, 800, 5, "maxIlvl", vr, nil,
+            { description = ns.L["Only sell gear BELOW this item level. 0 disables the item-level rule (quality alone decides)."] })
+        sv.AddRow(row(sv.frame, ns.L["Max Sell Quality"], vrQualityW), row(sv.frame, ns.L["Only Below Item Level"], vrIlvlW))
+
+        local vrForceW = GUI:CreateFormEditBox(sv.frame, nil, "forceSell", vr, nil,
+            { maxLetters = 500, live = true },
+            { description = ns.L["Item IDs to always sell (comma or space separated). Protections still apply."] })
+        local vrNeverW = GUI:CreateFormEditBox(sv.frame, nil, "neverSell", vr, nil,
+            { maxLetters = 500, live = true },
+            { description = ns.L["Item IDs to never sell, on top of the built-in protections."] })
+        sv.AddRow(row(sv.frame, ns.L["Force-Sell Item IDs"], vrForceW), row(sv.frame, ns.L["Never-Sell Item IDs"], vrNeverW))
+        L.closeSection(sv)
+    end
 end
 
 local function BuildFriendsList(L, db)
@@ -967,7 +1033,10 @@ local function BuildFriendsList(L, db)
     local s = L.sectionAt()
     local classColorW = GUI:CreateFormCheckbox(s.frame, nil, "friendsClassColor", generalDB, Refresh,
         { description = ns.L["Color the names in the WoW friends list by class. Applies to regular friends and Battle.net friends currently playing WoW."] })
-    s.AddRow(row(s.frame, ns.L["Class-Color Names"], classColorW))
+    local privacyW = GUI:CreateFormCheckbox(s.frame, nil, "communitiesPrivacy", generalDB, function()
+        if ns.RefreshCommunitiesPrivacy then ns.RefreshCommunitiesPrivacy() end
+    end, { description = ns.L["Stream safety: cover the Communities/guild chat and member list until you click the eye button to reveal them. Hides again every time the window reopens."] })
+    s.AddRow(row(s.frame, ns.L["Class-Color Names"], classColorW), row(s.frame, ns.L["Communities Privacy Cover"], privacyW))
     L.closeSection(s)
 end
 
