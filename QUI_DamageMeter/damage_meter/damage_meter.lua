@@ -277,23 +277,28 @@ Data._eventFrame:SetScript("OnEvent", function(_, event, arg1, _arg2)
     end
 end)
 
--- Throttled ticker. Reads cadence from settings each tick so live slider
--- adjustments take effect immediately. Cadence is per-mode: combat vs
--- idle. T6 will fill the body of Data:Refresh; T5 only establishes the
--- ticker contract.
+-- Throttled ticker. Cadence is per-mode (combat vs idle) and cached: the
+-- settings walk runs when a tick fires and on ticker wake — not on every
+-- render frame while the ticker is awake — so live slider adjustments
+-- still take effect within one interval. T6 will fill the body of
+-- Data:Refresh; T5 only establishes the ticker contract.
 Data._tickAccum = 0
+Data._cadenceCombat = 0.5
+Data._cadenceIdle = 2.0
+
+function Data:RefreshCadence()
+    local s = GetSettings()
+    self._cadenceCombat = (s and s.refreshRateCombat) or 0.5
+    self._cadenceIdle   = (s and s.refreshRateIdle)   or 2.0
+end
+
 Data._ticker = CreateFrame("Frame")
 Data._ticker:SetScript("OnUpdate", function(_, elapsed)
     Data._tickAccum = Data._tickAccum + elapsed
-    local s = GetSettings()
-    local cadence = 0.5
-    if s then
-        cadence = Data._inCombat
-            and (s.refreshRateCombat or 0.5)
-            or  (s.refreshRateIdle   or 2.0)
-    end
+    local cadence = Data._inCombat and Data._cadenceCombat or Data._cadenceIdle
     if Data._tickAccum < cadence then return end
     Data._tickAccum = 0
+    Data:RefreshCadence()
     Data:Refresh()
     -- Park when idle: out of combat with no pending work. A hidden frame fires
     -- no OnUpdate, so this drops the per-frame tick cost entirely while nothing
@@ -311,6 +316,7 @@ function Data:WakeTicker()
     local ticker = self._ticker
     if ticker and not ticker:IsShown() then
         self._tickAccum = 0
+        self:RefreshCadence()
         ticker:Show()
     end
 end
