@@ -695,6 +695,29 @@ function BuildBar(barKey)
                 hooksecurefunc(MicroMenu, "Layout", ReclaimMicroButtons)
             end
 
+            -- Blizzard's MicroMenu:Layout() ends by re-anchoring
+            -- HelpOpenWebTicketButton to its own edge button; with the
+            -- buttons reclaimed GetEdgeButton() returns nil and the icon
+            -- lands at screen center. Fix it right after Blizzard moves it
+            -- — SetPoint on the ticket button is not combat-protected, so
+            -- this also covers re-layouts while ReclaimMicroButtons has
+            -- deferred the full layout to combat end. Deferred one frame:
+            -- this hook can fire inside Edit Mode's secure anchor pass
+            -- (secureexecuterange on zone-in), where addon SetPoint calls
+            -- risk "anchor family connection" blocks.
+            if MicroMenu and MicroMenu.UpdateHelpTicketButtonAnchor then
+                local ticketAnchorPending = false
+                hooksecurefunc(MicroMenu, "UpdateHelpTicketButtonAnchor", function()
+                    if not ActionBarsOwned.initialized then return end
+                    if ticketAnchorPending then return end
+                    ticketAnchorPending = true
+                    C_Timer.After(0, function()
+                        ticketAnchorPending = false
+                        AnchorHelpTicketButton()
+                    end)
+                end)
+            end
+
             -- Hook UpdateMicroButtons — fires on many events (talent changes,
             -- guild updates, store state, etc.) and repositions buttons
             if UpdateMicroButtons then
