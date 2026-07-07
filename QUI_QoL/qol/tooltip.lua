@@ -441,6 +441,25 @@ local gtCursorSafetyElapsed = CURSOR_SAFETY_CHECK_INTERVAL
 -- its dispatch tables, causing ADDON_ACTION_BLOCKED when the world map's
 -- secure context (secureexecuterange) uses GameTooltip for map pins.
 local gtCursorWatcher
+-- Last cursor position seen by the watcher; lets it skip the anchor math
+-- on frames where the cursor hasn't moved.
+local gtCursorLastX, gtCursorLastY
+
+-- Single transition point for cursor-follow state. The GameTooltip watcher
+-- frame is hidden (no OnUpdate fires) whenever follow is inactive, so a
+-- session that used cursor-anchoring once doesn't pay for the watcher on
+-- every frame forever after.
+local function SetCursorFollowActive(tooltip, active)
+    cursorFollowActive[tooltip] = active or nil
+    if tooltip == GameTooltip and gtCursorWatcher then
+        if active then
+            gtCursorLastX, gtCursorLastY = nil, nil
+            gtCursorWatcher:Show()
+        else
+            gtCursorWatcher:Hide()
+        end
+    end
+end
 
 -- World quest / map tooltips can register a widget container on GameTooltip.
 -- Re-anchoring or re-showing the tooltip from addon code while that container
@@ -546,11 +565,16 @@ local function EnsureCursorFollowHooks(tooltip)
         -- Use a separate watcher frame for GameTooltip to avoid taint
         if not gtCursorWatcher then
             gtCursorWatcher = CreateFrame("Frame")
-            gtCursorWatcher:SetScript("OnUpdate", function(_, elapsed)
+            gtCursorWatcher:Hide()  -- parked until cursor follow activates
+            gtCursorWatcher:SetScript("OnUpdate", function(self, elapsed)
                 TooltipDebugCount("qol.cursorFrame")
-                if not cursorFollowActive[GameTooltip] then return end
+                if not cursorFollowActive[GameTooltip] then
+                    -- Self-heal: the flag was cleared without the helper.
+                    self:Hide()
+                    return
+                end
                 if not GameTooltip:IsShown() then
-                    cursorFollowActive[GameTooltip] = nil
+                    SetCursorFollowActive(GameTooltip, false)
                     return
                 end
                 gtCursorSafetyElapsed = gtCursorSafetyElapsed + (elapsed or 0)
@@ -558,19 +582,24 @@ local function EnsureCursorFollowHooks(tooltip)
                     TooltipDebugCount("qol.cursorSafety")
                     gtCursorSafetyElapsed = 0
                     if HasActiveMoneyFrame(GameTooltip) then
-                        cursorFollowActive[GameTooltip] = nil
+                        SetCursorFollowActive(GameTooltip, false)
                         return
                     end
                     if HasActiveWidgetContainer(GameTooltip) then
-                        cursorFollowActive[GameTooltip] = nil
+                        SetCursorFollowActive(GameTooltip, false)
                         return
                     end
                 end
                 local settings = Provider:GetSettings()
                 if not settings or not settings.enabled or not settings.anchorToCursor then
-                    cursorFollowActive[GameTooltip] = nil
+                    SetCursorFollowActive(GameTooltip, false)
                     return
                 end
+                -- Reposition only when the cursor actually moved (same gate
+                -- the reticle uses); skips the anchor math on still frames.
+                local cx, cy = GetCursorPosition()
+                if cx == gtCursorLastX and cy == gtCursorLastY then return end
+                gtCursorLastX, gtCursorLastY = cx, cy
                 TooltipDebugCount("qol.cursorPosition")
                 Provider:PositionTooltipAtCursor(GameTooltip, settings)
             end)
@@ -606,7 +635,7 @@ local function AnchorTooltipToCursor(tooltip, parent, settings)
     if tooltip == GameTooltip then
         gtCursorSafetyElapsed = CURSOR_SAFETY_CHECK_INTERVAL
     end
-    cursorFollowActive[tooltip] = true
+    SetCursorFollowActive(tooltip, true)
     Provider:PositionTooltipAtCursor(tooltip, settings or Provider:GetSettings())
     return true
 end
@@ -1870,10 +1899,10 @@ local function SetupTooltipHook()
             if tooltip == GameTooltip then
                 gtCursorSafetyElapsed = CURSOR_SAFETY_CHECK_INTERVAL
             end
-            cursorFollowActive[tooltip] = true
+            SetCursorFollowActive(tooltip, true)
             Provider:PositionTooltipAtCursor(tooltip, settings)
         else
-            cursorFollowActive[tooltip] = nil
+            SetCursorFollowActive(tooltip, false)
             Provider:PositionTooltipAtAnchor(tooltip, settings)
         end
     end)
