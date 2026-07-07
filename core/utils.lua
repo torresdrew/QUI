@@ -70,6 +70,78 @@ function Helpers.SafeValue(value, fallback)
     return value
 end
 
+--- Detect a live Blizzard UI widget container under a tooltip.
+-- World quest/map tooltips register widget sets on GameTooltip. Touching the
+-- tooltip from addon code while that container is registered, dirty, or backed
+-- by secret geometry can taint Blizzard's later LayoutFrame cleanup.
+function Helpers.HasTaintedWidgetContainer(tooltip)
+    if not tooltip or not tooltip.GetChildren then return false end
+
+    local okChildren, children = pcall(function()
+        return { tooltip:GetChildren() }
+    end)
+    if not okChildren or not children then
+        return false
+    end
+
+    for i = 1, #children do
+        local child = children[i]
+        if child then
+            local ok, isWidgetContainer, widgetSetID, shownWidgetCount, numWidgetsShowing, dirty, numPoints = pcall(function()
+                local isWidget = child.RegisterForWidgetSet
+                    or child.widgetType
+                    or child.widgetSetID ~= nil
+                    or child.shownWidgetCount ~= nil
+                    or child.numWidgetsShowing ~= nil
+
+                local points
+                if child.GetNumPoints then
+                    points = child:GetNumPoints()
+                end
+
+                return isWidget, child.widgetSetID, child.shownWidgetCount, child.numWidgetsShowing, child.dirty, points
+            end)
+
+            if not ok then
+                return true
+            end
+
+            if isWidgetContainer then
+                if Helpers.IsSecretValue(widgetSetID)
+                    or Helpers.IsSecretValue(shownWidgetCount)
+                    or Helpers.IsSecretValue(numWidgetsShowing)
+                    or Helpers.IsSecretValue(dirty)
+                    or Helpers.IsSecretValue(numPoints) then
+                    return true
+                end
+
+                if widgetSetID ~= nil or dirty == true then
+                    return true
+                end
+
+                local shownCount = tonumber(shownWidgetCount)
+                if shownCount and shownCount > 0 then
+                    return true
+                end
+
+                local showingCount = tonumber(numWidgetsShowing)
+                if showingCount and showingCount > 0 then
+                    return true
+                end
+
+                if child.IsShown then
+                    local okShown, shown = pcall(child.IsShown, child)
+                    if not okShown or shown then
+                        return true
+                    end
+                end
+            end
+        end
+    end
+
+    return false
+end
+
 ---------------------------------------------------------------------------
 -- EDIT MODE SYSTEM FRAME GEOMETRY (taint-safe)
 -- EditModeSystemMixin:OnSystemLoad swaps a system frame's SetPoint/

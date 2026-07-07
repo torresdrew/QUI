@@ -292,6 +292,7 @@ local hookedTooltips = Helpers.CreateStateTable() -- tooltip → true
 local hookedNineSlices = Helpers.CreateStateTable() -- NineSlice → true
 local suppressNSHook = false                      -- suppress NineSlice hook during intentional re-show
 local StyleGameTooltip                            -- forward decl; defined after the shopping-sync helpers
+local HasActiveWidgetContainer                    -- forward decl; defined before RefreshTooltipLayout
 
 ---------------------------------------------------------------------------
 -- NineSlice Management
@@ -559,6 +560,10 @@ local function StyleTooltip(tooltip)
     if IsInternalEmbeddedItemTooltipFrame(tooltip) then return end
     if tooltip.IsForbidden and tooltip:IsForbidden() then return end
     if not IsEnabled() then return end
+    if tooltip == GameTooltip and HasActiveWidgetContainer and HasActiveWidgetContainer(tooltip) then
+        FallbackToNineSlice(tooltip)
+        return
+    end
 
     TooltipDebugCount("skin.style")
     local dbg, dbgStart, dbgHeap = TooltipDebugBegin()
@@ -642,7 +647,14 @@ local function HasActiveMoneyFrame(tooltip)
     return false
 end
 
-local function HasActiveWidgetContainer(tooltip)
+HasActiveWidgetContainer = function(tooltip)
+    if Helpers.HasTaintedWidgetContainer then
+        TooltipDebugCount("skin.widgetScan")
+        local active = Helpers.HasTaintedWidgetContainer(tooltip)
+        if active then TooltipDebugCount("skin.widgetHit") end
+        return active
+    end
+
     if not tooltip or not tooltip.GetChildren or not tooltip.GetNumChildren then return false end
     TooltipDebugCount("skin.widgetScan")
 
@@ -719,9 +731,15 @@ local function OnTooltipShow(tooltip)
     if IsInternalEmbeddedItemTooltipFrame(tooltip) then return end
     -- MoneyFrame children can taint tooltip width arithmetic on some Blizzard
     -- GameTooltip update paths, so keep the conservative show-existing-chrome path.
-    if tooltip == GameTooltip and HasActiveMoneyFrame(tooltip) then
-        pcall(ShowExistingChrome, tooltip)
-        return
+    if tooltip == GameTooltip then
+        if HasActiveWidgetContainer(tooltip) then
+            FallbackToNineSlice(tooltip)
+            return
+        end
+        if HasActiveMoneyFrame(tooltip) then
+            pcall(ShowExistingChrome, tooltip)
+            return
+        end
     end
     if InCombatLockdown() then
         CombatRefreshTooltip(tooltip)
@@ -816,8 +834,12 @@ local function _FlushPendingFonts()
     for tt in pairs(_pendingFontSet) do
         _pendingFontSet[tt] = nil
         if tt.IsShown and tt:IsShown() and not InCombatLockdown() then
-            pcall(ApplyFontSize, tt)
-            RefreshTooltipLayout(tt)
+            if tt == GameTooltip and HasActiveWidgetContainer and HasActiveWidgetContainer(tt) then
+                TooltipDebugCount("skin.fontWidgetSkipped")
+            else
+                pcall(ApplyFontSize, tt)
+                RefreshTooltipLayout(tt)
+            end
         end
     end
 end
@@ -1285,8 +1307,12 @@ local function RefreshAllFonts()
     for _, name in ipairs(tooltipsToSkin) do
         local tooltip = _G[name]
         if tooltip and not IsInternalEmbeddedItemTooltipFrame(tooltip) then
-            ApplyFontSize(tooltip)
-            RefreshTooltipLayout(tooltip)
+            if tooltip == GameTooltip and HasActiveWidgetContainer and HasActiveWidgetContainer(tooltip) then
+                FallbackToNineSlice(tooltip)
+            else
+                ApplyFontSize(tooltip)
+                RefreshTooltipLayout(tooltip)
+            end
         end
     end
 end
@@ -1338,6 +1364,15 @@ StyleGameTooltip = function(tooltip)
         return
     end
 
+    -- AreaPOI/world quest tooltips register UI widget sets on GameTooltip and
+    -- Blizzard lays that widget container out again during Hide/Unregister.
+    -- Keep the whole cycle Blizzard-owned so LayoutFrame never sees addon-
+    -- tainted geometry or point counts on cleanup.
+    if HasActiveWidgetContainer(tooltip) then
+        FallbackToNineSlice(tooltip)
+        return
+    end
+
     -- Reused-chrome fast path: already shown with NineSlice hidden. Chrome is
     -- SetAllPoints so it already tracks the (re-sized) tooltip — nothing to redo.
     if IsChromeStable(tooltip) then
@@ -1346,7 +1381,7 @@ StyleGameTooltip = function(tooltip)
     end
 
     -- Full chrome (combat-aware; re-checks MoneyFrame, falls back to NineSlice
-    -- when dimensions are secret, e.g. widget/POI tooltips). Chrome is pure
+    -- when dimensions are secret). Chrome is pure
     -- SetAllPoints — no manual extent measuring; the 12.0.7 tooltip sizes itself.
     OnTooltipShow(tooltip)
 
