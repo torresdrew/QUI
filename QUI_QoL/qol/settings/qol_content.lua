@@ -400,7 +400,7 @@ local function BuildAutomation(L, generalDB)
 
     local s = L.sectionAt()
     local sellW = GUI:CreateFormCheckbox(s.frame, nil, "sellJunk", generalDB, nil,
-        { description = ns.L["Automatically sell grey-quality junk items in your bags when you open a merchant window."] })
+        { description = ns.L["Automatically sell grey-quality junk items in your bags when you open a merchant window. Honors the Bags module's junk exclusion list and per-bag exclude-from-junk-sell flags, so the bag window's junk coin previews exactly what will be sold."] })
     local repairOptions = {
         { value = "off", text = ns.L["Off"] },
         { value = "personal", text = ns.L["Personal Gold"] },
@@ -486,6 +486,19 @@ local function BuildAutomation(L, generalDB)
         if ns.ApplyPreferredAudioDevice then ns.ApplyPreferredAudioDevice() end
     end, { description = ns.L["Lock the game's audio output to a specific device. When your system switches devices (e.g. plugging in headphones), QUI forces it back. Off leaves Blizzard's default behavior."] })
     s.AddRow(row(s.frame, ns.L["Lock Audio Output Device"], audioW))
+
+    local unwrapW = GUI:CreateFormCheckbox(s.frame, nil, "autoUnwrapCollections", generalDB, function()
+        if ns.RefreshCollectionFanfare then ns.RefreshCollectionFanfare() end
+    end, { description = ns.L["Automatically unwrap newly collected mounts, pets, and toys — clears the present-box fanfare in the Collections journal and dismisses the unopened-items alert."] })
+    local socketW = GUI:CreateFormCheckbox(s.frame, nil, "autoConfirmSocketReplace", generalDB, nil,
+        { description = ns.L["Skip the confirmation popup when replacing a gem that is already socketed."] })
+    s.AddRow(row(s.frame, ns.L["Auto-Unwrap New Collectibles"], unwrapW), row(s.frame, ns.L["Auto-Confirm Gem Replacement"], socketW))
+
+    local tokenW = GUI:CreateFormCheckbox(s.frame, nil, "autoConfirmTokenPurchase", generalDB, nil,
+        { description = ns.L["Skip the confirmation popup when buying items that cost tokens or currencies."] })
+    local highCostW = GUI:CreateFormCheckbox(s.frame, nil, "autoConfirmHighCost", generalDB, nil,
+        { description = ns.L["Skip the confirmation popup when buying expensive items from vendors."] })
+    s.AddRow(row(s.frame, ns.L["Auto-Confirm Currency Purchases"], tokenW), row(s.frame, ns.L["Auto-Confirm Expensive Purchases"], highCostW))
     L.closeSection(s)
 end
 
@@ -565,6 +578,40 @@ local function BuildPopupBlocker(L, generalDB)
     L.closeSection(togglesSection)
 
     UpdatePopupToggleState()
+
+    -- LOOT TOAST CURATION (own enable, independent of the blocker master)
+    if type(generalDB.lootToastFilter) ~= "table" then generalDB.lootToastFilter = {} end
+    local lootCfg = generalDB.lootToastFilter
+
+    L.headerAt(ns.L["Loot Toast Curation"])
+    L.intro(ns.L["Hide loot-won toasts below a chosen quality. Mounts, pets, upgraded drops, and high item-level gear can always be kept. Items the game hasn't cached yet still show their toast."])
+
+    local sLoot = L.sectionAt()
+    local lootEnableW = GUI:CreateFormCheckbox(sLoot.frame, nil, "enabled", lootCfg, nil,
+        { description = ns.L["Master toggle for loot toast curation."] })
+    local qualityOptions = {
+        { value = 0, text = ns.L["Show All"] },
+        { value = 2, text = ns.L["Uncommon (hide Poor/Common)"] },
+        { value = 3, text = ns.L["Rare (hide below Rare)"] },
+        { value = 4, text = ns.L["Epic (hide below Epic)"] },
+        { value = 5, text = ns.L["Legendary (hide below Legendary)"] },
+    }
+    local minQualW = GUI:CreateFormDropdown(sLoot.frame, nil, qualityOptions, "minQuality", lootCfg, nil,
+        { description = ns.L["Only loot toasts at or above this quality are shown; lower-quality toasts are hidden (unless kept by the overrides below)."] })
+    sLoot.AddRow(row(sLoot.frame, ns.L["Enable Loot Toast Curation"], lootEnableW), row(sLoot.frame, ns.L["Minimum Toast Quality"], minQualW))
+
+    local keepMountsW = GUI:CreateFormCheckbox(sLoot.frame, nil, "keepMounts", lootCfg, nil,
+        { description = ns.L["Always show toasts for mount-teaching items regardless of quality."] })
+    local keepPetsW = GUI:CreateFormCheckbox(sLoot.frame, nil, "keepPets", lootCfg, nil,
+        { description = ns.L["Always show toasts for battle pet items regardless of quality."] })
+    sLoot.AddRow(row(sLoot.frame, ns.L["Always Keep Mounts"], keepMountsW), row(sLoot.frame, ns.L["Always Keep Pets"], keepPetsW))
+
+    local keepUpgradesW = GUI:CreateFormCheckbox(sLoot.frame, nil, "keepUpgrades", lootCfg, nil,
+        { description = ns.L["Always show toasts for drops the game flags as upgraded (warforged-style rolls)."] })
+    local minIlvlW = GUI:CreateFormSlider(sLoot.frame, nil, 0, 800, 5, "minKeepIlvl", lootCfg, nil,
+        { description = ns.L["Equippable items at or above this item level always show their toast. 0 disables the override."] })
+    sLoot.AddRow(row(sLoot.frame, ns.L["Always Keep Upgraded Drops"], keepUpgradesW), row(sLoot.frame, ns.L["Always Keep Item Level ≥"], minIlvlW))
+    L.closeSection(sLoot)
 end
 
 local function BuildQuickSalvage(L, db)
@@ -894,6 +941,14 @@ local function BuildMerchantGrid(L, db)
     local rowsW = GUI:CreateFormSlider(s.frame, nil, 5, 8, 1, "rows", mDB, RefreshMerchantGrid,
         { description = ns.L["Number of item rows per page (5-8)."] })
     s.AddRow(row(s.frame, ns.L["Columns"], colsW), row(s.frame, ns.L["Rows"], rowsW))
+
+    local generalDB = db and db.general
+    if generalDB then
+        local petMarkW = GUI:CreateFormCheckbox(s.frame, nil, "merchantKnownPetMark", generalDB, function()
+            if ns.RefreshMerchantPetMarks then ns.RefreshMerchantPetMarks() end
+        end, { description = ns.L["Show a green check on merchant items that teach a battle pet you have already collected."] })
+        s.AddRow(row(s.frame, ns.L["Mark Collected Pets"], petMarkW))
+    end
     L.closeSection(s)
 end
 
@@ -976,8 +1031,70 @@ local function BuildEventSounds(L, db)
 
     local mailW = GUI:CreateFormDropdown(s.frame, nil, soundList, "mail", cfg, nil,
         { description = ns.L["Sound played when you receive new mail (only when new mail arrives, not on login)."] })
-    s.AddRow(row(s.frame, ns.L["New Mail"], mailW))
+    local lootWonW = GUI:CreateFormDropdown(s.frame, nil, soundList, "lootRollWon", cfg, nil,
+        { description = ns.L["Sound played when a loot roll is won. Bursts are throttled to one sound every couple of seconds."] })
+    s.AddRow(row(s.frame, ns.L["New Mail"], mailW), row(s.frame, ns.L["Loot Roll Won"], lootWonW))
+
+    local lootUpW = GUI:CreateFormDropdown(s.frame, nil, soundList, "lootUpgrade", cfg, nil,
+        { description = ns.L["Sound played when an item you loot upgrades into a higher quality."] })
+    s.AddRow(row(s.frame, ns.L["Loot Upgrade"], lootUpW))
     L.closeSection(s)
+end
+
+local function BuildSoundMute(L, generalDB)
+    if not generalDB then return end
+    if type(generalDB.soundMute) ~= "table" then generalDB.soundMute = {} end
+    local soundDB = generalDB.soundMute
+
+    L.headerAt(ns.L["Sound Mute"])
+    L.intro(ns.L["Permanently silence selected game sounds — annoying mounts, repeated boss and NPC voice lines, interface pings, and more. Muting applies at login and takes effect immediately when toggled."])
+
+    local function Refresh()
+        if ns.RefreshSoundMute then ns.RefreshSoundMute() end
+    end
+
+    local entryWidgets = {}
+    local function UpdateEntryState()
+        local enabled = soundDB.enabled == true
+        for _, w in ipairs(entryWidgets) do
+            if w and w.SetEnabled then w:SetEnabled(enabled) end
+        end
+    end
+
+    local enableSection = L.sectionAt()
+    local enableW = GUI:CreateFormCheckbox(enableSection.frame, nil, "enabled", soundDB, function()
+        UpdateEntryState()
+        Refresh()
+    end, { description = ns.L["Master toggle for Sound Mute. The categories below are only muted while this is on."] })
+    enableSection.AddRow(row(enableSection.frame, ns.L["Enable Sound Mute"], enableW))
+    L.closeSection(enableSection)
+
+    local catalog = ns.SoundMuteCatalog
+    if not catalog or not catalog.categories then
+        UpdateEntryState()
+        return
+    end
+
+    for _, category in ipairs(catalog.categories) do
+        L.headerAt(category.label)
+        local section = L.sectionAt()
+        local pending = nil
+        for _, entry in ipairs(category.entries) do
+            local w = GUI:CreateFormCheckbox(section.frame, nil, entry.key, soundDB, Refresh)
+            table.insert(entryWidgets, w)
+            local cell = row(section.frame, entry.label, w)
+            if pending then
+                section.AddRow(pending, cell)
+                pending = nil
+            else
+                pending = cell
+            end
+        end
+        if pending then section.AddRow(pending) end
+        L.closeSection(section)
+    end
+
+    UpdateEntryState()
 end
 
 ---------------------------------------------------------------------------
@@ -1002,6 +1119,7 @@ local SECTION_BUILDERS = {
     friendsList      = function(L, db) BuildFriendsList(L, db) end,
     extendedIgnore   = function(L, db) BuildExtendedIgnore(L, db) end,
     eventSounds      = function(L, db) BuildEventSounds(L, db) end,
+    soundMute        = function(L, db) BuildSoundMute(L, db and db.general) end,
 }
 
 local SECTION_ORDER = {
@@ -1012,6 +1130,7 @@ local SECTION_ORDER = {
     "friendsList",
     "extendedIgnore",
     "eventSounds",
+    "soundMute",
 }
 
 local function BuildGeneralTab(tabContent, searchContext, selectedSectionKey)
@@ -1057,6 +1176,7 @@ local generalSectionFeatures = {
     { id = "friendsList",       category = "qol",        nav = { tileId = "qol", subPageIndex = 11 }, sectionKey = "friendsList",      sectionTitle = "Friends List",                     searchContext = { tabIndex = 17, tabName = "Quality of Life", subTabIndex = 11, subTabName = "Friends List" } },
     { id = "extendedIgnore",    category = "qol",        nav = { tileId = "qol", subPageIndex = 12 }, sectionKey = "extendedIgnore",   sectionTitle = "Extended Ignore",                  searchContext = { tabIndex = 17, tabName = "Quality of Life", subTabIndex = 12, subTabName = "Extended Ignore" } },
     { id = "eventSounds",       category = "qol",        nav = { tileId = "qol", subPageIndex = 13 }, sectionKey = "eventSounds",      sectionTitle = "Event Sounds",                     searchContext = { tabIndex = 17, tabName = "Quality of Life", subTabIndex = 13, subTabName = "Event Sounds" } },
+    { id = "soundMute",         category = "qol",        nav = { tileId = "qol", subPageIndex = 14 }, sectionKey = "soundMute",        sectionTitle = "Sound Mute",                       searchContext = { tabIndex = 17, tabName = "Quality of Life", subTabIndex = 14, subTabName = "Sound Mute" } },
     { id = "uiScale",           category = "appearance", nav = { tileId = "appearance", subPageIndex = 1 }, sectionKey = "uiScale",   sectionTitle = "UI Scale",                         searchContext = { tabIndex = 10, tabName = "Appearance",      subTabIndex = 3, subTabName = "UI Scale" } },
     { id = "defaultFonts",      category = "appearance", nav = { tileId = "appearance", subPageIndex = 2 }, sectionKey = "defaultFonts", sectionTitle = "Default Font Settings",         searchContext = { tabIndex = 10, tabName = "Appearance",      subTabIndex = 4, subTabName = "Fonts" } },
 }

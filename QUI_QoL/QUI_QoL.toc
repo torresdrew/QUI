@@ -35,16 +35,21 @@ qol\combattimer.lua
 qol\lusttimer.lua
 qol\actiontracker.lua
 qol\crosshair.lua
+qol\cursortrail.lua
 qol\rangecheck.lua
 qol\reticle.lua
 qol\skyriding.lua
 qol\xptracker.lua
 qol\focuscastalert.lua
 qol\merchant_grid.lua
+qol\merchant_pets.lua
 qol\friends_decor.lua
 qol\audio_device.lua
 qol\extended_ignore.lua
 qol\event_sounds.lua
+qol\sound_mute_catalog.lua
+qol\sound_mute.lua
+qol\collection_fanfare.lua
 # == modules/dungeon/dungeon.xml ==
 dungeon\keystone.lua
 dungeon\mplus_timer.lua

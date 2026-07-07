@@ -122,6 +122,45 @@ local function BuildCrosshairTab(tabContent)
         L.placeCustom(note, 24)
     end
 
+    -- ========== CURSOR TRAIL ==========
+    if db.general then
+        if type(db.general.cursorTrail) ~= "table" then db.general.cursorTrail = {} end
+        local ct = db.general.cursorTrail
+        local function RefreshTrail()
+            if ns.RefreshCursorTrail then ns.RefreshCursorTrail() end
+        end
+
+        L.headerAt(ns.L["Cursor Trail"])
+        local sCT = L.sectionAt()
+        local trailEnableW = GUI:CreateFormCheckbox(sCT.frame, nil, "enabled", ct, RefreshTrail,
+            { description = ns.L["Draw fading afterimage dots behind the mouse cursor so it's easy to track during hectic fights."] })
+        local trailCombatW = GUI:CreateFormCheckbox(sCT.frame, nil, "combatOnly", ct, RefreshTrail,
+            { description = ns.L["Only show the trail while you are in combat."] })
+        sCT.AddRow(row(sCT.frame, ns.L["Enable Cursor Trail"], trailEnableW), row(sCT.frame, ns.L["Combat Only"], trailCombatW))
+
+        local trailClassColorW = GUI:CreateFormCheckbox(sCT.frame, nil, "useClassColor", ct, RefreshTrail,
+            { description = ns.L["Color the trail with your class color instead of the custom color."] })
+        local trailColorW = GUI:CreateFormColorPicker(sCT.frame, nil, "customColor", ct, RefreshTrail, nil,
+            { description = ns.L["Custom trail color (used when class color is off)."] })
+        sCT.AddRow(row(sCT.frame, ns.L["Use Class Color"], trailClassColorW), row(sCT.frame, ns.L["Trail Color"], trailColorW))
+
+        local densityOptions = {
+            { value = "low", text = ns.L["Low"] },
+            { value = "medium", text = ns.L["Medium"] },
+            { value = "high", text = ns.L["High"] },
+        }
+        local trailDensityW = GUI:CreateFormDropdown(sCT.frame, nil, densityOptions, "density", ct, RefreshTrail,
+            { description = ns.L["How closely the trail dots follow each other."] })
+        local trailSizeW = GUI:CreateFormSlider(sCT.frame, nil, 8, 32, 1, "size", ct, RefreshTrail,
+            { description = ns.L["Size of each trail dot in pixels."] })
+        sCT.AddRow(row(sCT.frame, ns.L["Trail Density"], trailDensityW), row(sCT.frame, ns.L["Dot Size"], trailSizeW))
+
+        local trailDurationW = GUI:CreateFormSlider(sCT.frame, nil, 0.1, 1.5, 0.05, "duration", ct, RefreshTrail,
+            { precision = 2, description = ns.L["Seconds each dot takes to fade out completely."] })
+        sCT.AddRow(row(sCT.frame, ns.L["Fade Duration"], trailDurationW))
+        L.closeSection(sCT)
+    end
+
     -- ========== QUI CROSSHAIR ==========
     if db.crosshair then
         local ch = db.crosshair

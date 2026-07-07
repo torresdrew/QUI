@@ -27,7 +27,18 @@ local EVENT_TO_KEY = {
     READY_CHECK         = "readyCheck",
     LFG_PROPOSAL_SHOW   = "lfgProposal",
     RESURRECT_REQUEST   = "resurrect",
+    -- Loot pair (LootDocumentation): roll won + upgrade toast. Throttled below —
+    -- multi-drop bursts fire these back-to-back.
+    LOOT_ITEM_ROLL_WON      = "lootRollWon",
+    SHOW_LOOT_TOAST_UPGRADE = "lootUpgrade",
 }
+
+local LOOT_EVENTS = {
+    LOOT_ITEM_ROLL_WON      = true,
+    SHOW_LOOT_TOAST_UPGRADE = true,
+}
+local LOOT_SOUND_THROTTLE = 2 -- seconds between loot-event sounds
+local lastLootSoundAt = 0
 
 -- Whisper is the only event that overlaps the QUI Chat per-channel new-message
 -- sound. When chat takeover is active AND configured to play a whisper sound,
@@ -60,6 +71,8 @@ frame:RegisterEvent("READY_CHECK")
 frame:RegisterEvent("LFG_PROPOSAL_SHOW")
 frame:RegisterEvent("RESURRECT_REQUEST")
 frame:RegisterEvent("UPDATE_PENDING_MAIL")
+frame:RegisterEvent("LOOT_ITEM_ROLL_WON")
+frame:RegisterEvent("SHOW_LOOT_TOAST_UPGRADE")
 
 frame:SetScript("OnEvent", function(_, event)
     if event == "UPDATE_PENDING_MAIL" then
@@ -81,6 +94,12 @@ frame:SetScript("OnEvent", function(_, event)
     if not cfg or not cfg.enabled then return end
     -- Defer whisper to the QUI Chat sound when chat owns it (avoid double ping).
     if WHISPER_EVENTS[event] and ChatOwnsWhisper(event) then return end
+    -- Loot events arrive in bursts; one sound per throttle window.
+    if LOOT_EVENTS[event] then
+        local now = GetTime()
+        if now - lastLootSoundAt < LOOT_SOUND_THROTTLE then return end
+        lastLootSoundAt = now
+    end
     local key = EVENT_TO_KEY[event]
     if key then
         PlayEventSound(cfg[key])

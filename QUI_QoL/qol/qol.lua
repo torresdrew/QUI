@@ -150,10 +150,70 @@ local function HookAlertSystem(globalSystemName, toggleKey)
     hookedAlertSystems[system] = true
 end
 
+---------------------------------------------------------------------------
+-- LOOT TOAST CURATION
+-- Hides loot-won toasts below a chosen quality, with keep-overrides for
+-- mounts, pets, upgraded drops, and an item-level floor. Same post-hook +
+-- deferred-hide pattern as the alert-system blocks above (no unregistering
+-- of Blizzard's alert events). setUpFunction args match 12.x FrameXML
+-- LootWonAlertFrame_SetUp(self, originalLink, originalQuantity, rollType,
+-- roll, specID, isCurrency, showFactionBG, lootSource, lessAwesome,
+-- isUpgraded, ...). Doc-verified: C_Item.GetItemInfo (MayReturnNothing;
+-- quality 3rd / equipLoc 9th / classID 12th / subclassID 13th returns);
+-- item enums Miscellaneous=15 (Mount=5, CompanionPet=2), Battlepet=17.
+-- Uncached items and currency toasts fail OPEN (toast shows).
+---------------------------------------------------------------------------
+
+local function ShouldHideLootToast(itemLink, isCurrency, isUpgraded)
+    local settings = GetSettings()
+    local cfg = settings and settings.lootToastFilter
+    if not cfg or not cfg.enabled then return false end
+    if isCurrency or not itemLink then return false end
+
+    local minQuality = tonumber(cfg.minQuality) or 0
+    if minQuality <= 0 then return false end
+
+    local okInfo, _, _, quality, _, _, _, _, _, equipLoc, _, _, classID, subclassID =
+        pcall(C_Item.GetItemInfo, itemLink)
+    if not okInfo or type(quality) ~= "number" then return false end
+    if quality >= minQuality then return false end
+
+    if cfg.keepMounts ~= false and classID == 15 and subclassID == 5 then return false end
+    if cfg.keepPets ~= false and (classID == 17 or (classID == 15 and subclassID == 2)) then return false end
+    if cfg.keepUpgrades ~= false and isUpgraded then return false end
+
+    local minKeepIlvl = tonumber(cfg.minKeepIlvl) or 0
+    if minKeepIlvl > 0 and equipLoc and equipLoc ~= ""
+        and C_Item.GetDetailedItemLevelInfo then
+        local okIlvl, ilvl = pcall(C_Item.GetDetailedItemLevelInfo, itemLink)
+        if okIlvl and type(ilvl) == "number" and ilvl >= minKeepIlvl then return false end
+    end
+
+    return true
+end
+
+local lootAlertHooked = false
+local function HookLootAlertSystem()
+    if lootAlertHooked then return end
+    local system = _G.LootAlertSystem
+    if not system or type(system.setUpFunction) ~= "function" then return end
+    -- TAINT SAFETY: defer the hide out of the alert system's execution context.
+    hooksecurefunc(system, "setUpFunction",
+        function(frame, itemLink, _, _, _, _, isCurrency, _, _, _, isUpgraded)
+            C_Timer.After(0, function()
+                if ShouldHideLootToast(itemLink, isCurrency, isUpgraded) then
+                    HideAlertFrame(frame)
+                end
+            end)
+        end)
+    lootAlertHooked = true
+end
+
 local function HookPopupAlertSystems()
     for globalSystemName, toggleKey in pairs(alertSystemToggleMap) do
         HookAlertSystem(globalSystemName, toggleKey)
     end
+    HookLootAlertSystem()
 end
 
 local function HideEventToasts()
@@ -707,13 +767,34 @@ local function OnMerchantShow()
     local settings = GetSettings()
     if not settings then return end
 
-    -- Sell gray items
+    -- Sell gray items. Unified with the bag module's junk predicate
+    -- (Bags.Junk.IsJunk: Poor quality + skips worthless items, the user's
+    -- junk-exclusion list, and Blizzard's per-bag exclude-junk-sell flags)
+    -- so the bag window's junk-coin preview matches what auto-sell actually
+    -- sells. Falls back to the plain grey-quality rule when the Bags module
+    -- isn't loaded. Bags 0-5 (5 = reagent bag, same range as the bag
+    -- window's Sell Junk button).
     if settings.sellJunk then
-        for bag = 0, 4 do
+        local Junk = ns.Bags and ns.Bags.Junk
+        local exclusions
+        if Junk then
+            local bagsDB = Helpers.CreateDBGetter("bags")()
+            local junkCfg = bagsDB and bagsDB.behavior and bagsDB.behavior.junk
+            exclusions = junkCfg and junkCfg.exclusions
+        end
+        for bag = 0, 5 do
             for slot = 1, C_Container.GetContainerNumSlots(bag) do
                 local info = C_Container.GetContainerItemInfo(bag, slot)
-                if info and info.quality == Enum.ItemQuality.Poor then
-                    C_Container.UseContainerItem(bag, slot)
+                if info then
+                    local sell
+                    if Junk then
+                        sell = Junk.IsJunk(info, bag, exclusions)
+                    else
+                        sell = info.quality == Enum.ItemQuality.Poor
+                    end
+                    if sell then
+                        C_Container.UseContainerItem(bag, slot)
+                    end
                 end
             end
         end
@@ -1208,11 +1289,44 @@ local deletePopups = {
     ["DELETE_QUEST_ITEM"] = true,
 }
 
+-- Auto-confirmable popups -> settings key. Each OnAccept verified insecure-callable
+-- against 12.x GameDialogDefs.lua: CONFIRM_ACCEPT_SOCKETS -> C_ItemSocketInfo.AcceptSockets()
+-- (plain function, no protection flags); token/high-cost -> BuyMerchantItem (merchant API,
+-- insecure-callable). Clicking button1 from the deferred timer below runs OnAccept
+-- insecurely, which is legal for all three (unlike DeleteCursorItem above).
+local autoConfirmPopups = {
+    ["CONFIRM_ACCEPT_SOCKETS"]      = "autoConfirmSocketReplace",
+    ["CONFIRM_PURCHASE_TOKEN_ITEM"] = "autoConfirmTokenPurchase",
+    ["CONFIRM_HIGH_COST_ITEM"]      = "autoConfirmHighCost",
+}
+
+local function AutoConfirmPopup(which)
+    for i = 1, GetMaxStaticPopupDialogs() do
+        local frame = _G["StaticPopup" .. i]
+        if frame and frame.which == which and frame:IsShown() then
+            local button = frame.button1 or _G["StaticPopup" .. i .. "Button1"]
+            if button and button:IsEnabled() then
+                button:Click()
+            end
+            break
+        end
+    end
+end
+
 -- TAINT SAFETY: Defer to break taint chain from secure context.
 hooksecurefunc("StaticPopup_Show", function(which)
     C_Timer.After(0, function()
         if ShouldBlockStaticPopup(which) then
             HideStaticPopupByWhich(which)
+            return
+        end
+
+        local confirmKey = autoConfirmPopups[which]
+        if confirmKey then
+            local settings = GetSettings()
+            if settings and settings[confirmKey] then
+                AutoConfirmPopup(which)
+            end
             return
         end
 

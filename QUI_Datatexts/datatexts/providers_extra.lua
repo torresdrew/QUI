@@ -568,3 +568,102 @@ Datatexts:Register("omniumfolio", {
         frame:SetScript("OnEvent", nil)
     end,
 })
+
+---=================================================================================
+--- CATALYST CHARGES DATATEXT
+---=================================================================================
+
+-- Season -> catalyst-charge currency ID. The charge count is a plain currency
+-- quantity; the currency ID rotates each season and is not exposed by any API,
+-- so it must be mapped from C_MythicPlus.GetCurrentSeason() (doc-verified:
+-- returns seasonID number; -1 until map info arrives — RequestMapInfo below).
+-- Extend this table each season.
+local CATALYST_CURRENCY_BY_SEASON = {
+    [15] = 3269,
+    [17] = 3378,
+    [18] = 3465,
+}
+
+Datatexts:Register("catalyst", {
+    displayName = ns.L["Catalyst Charges"],
+    category = ns.L["Character"],
+    description = "Displays remaining catalyst charges",
+
+    OnEnable = function(slotFrame, settings)
+        local frame = CreateFrame("Frame", nil, slotFrame)
+        frame:SetAllPoints()
+
+        local text = EnsureText(slotFrame)
+
+        local catalystID -- resolved lazily; season info can lag login
+
+        local function ResolveCurrencyID()
+            if catalystID then return catalystID end
+            if not (C_MythicPlus and C_MythicPlus.GetCurrentSeason) then return nil end
+            local season = C_MythicPlus.GetCurrentSeason()
+            if not season or season == -1 then
+                -- Season unknown yet: ask the server; CURRENCY_DISPLAY_UPDATE /
+                -- PLAYER_ENTERING_WORLD re-runs Update, which retries this.
+                if C_MythicPlus.RequestMapInfo then C_MythicPlus.RequestMapInfo() end
+                return nil
+            end
+            catalystID = CATALYST_CURRENCY_BY_SEASON[season]
+            return catalystID
+        end
+
+        local function GetInfo()
+            local id = ResolveCurrencyID()
+            if not id or not (C_CurrencyInfo and C_CurrencyInfo.GetCurrencyInfo) then return nil end
+            -- Doc: GetCurrencyInfo MayReturnNothing — nil-guard.
+            return C_CurrencyInfo.GetCurrencyInfo(id)
+        end
+
+        local function Update()
+            local info = GetInfo()
+            local label = GetLabel(ns.L["Catalyst: "], ns.L["Cat: "], slotFrame.shortLabel, slotFrame.noLabel)
+            local r, g, b = GetValueColor()
+            if info and info.quantity then
+                text:SetFormattedText(label .. "|cff%02x%02x%02x%d|r", r, g, b, info.quantity)
+            else
+                text:SetFormattedText(label .. "|cff%02x%02x%02x—|r", r, g, b)
+            end
+            MarkWidthDirty(slotFrame)
+        end
+
+        frame.Update = Update
+
+        frame:RegisterEvent("CURRENCY_DISPLAY_UPDATE")
+        frame:RegisterEvent("PLAYER_ENTERING_WORLD")
+        frame:SetScript("OnEvent", Update)
+
+        slotFrame:EnableMouse(true)
+        slotFrame:SetScript("OnEnter", function(self)
+            local info = GetInfo()
+            GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
+            GameTooltip:ClearLines()
+            GameTooltip:AddLine(ns.L["Catalyst Charges"], 1, 1, 1)
+            if info then
+                GameTooltip:AddLine(" ")
+                local vr, vg, vb = GetValueColor()
+                local value = tostring(info.quantity or 0)
+                if info.maxQuantity and info.maxQuantity > 0 then
+                    value = value .. " / " .. info.maxQuantity
+                end
+                GameTooltip:AddDoubleLine(info.name or ns.L["Charges"], value,
+                    0.8, 0.8, 0.8, vr / 255, vg / 255, vb / 255)
+            else
+                GameTooltip:AddLine(ns.L["No catalyst currency for the current season (or season data not loaded yet)."], 0.8, 0.8, 0.8, true)
+            end
+            GameTooltip:Show()
+        end)
+        slotFrame:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
+        Update()
+        return frame
+    end,
+
+    OnDisable = function(frame)
+        frame:UnregisterAllEvents()
+        frame:SetScript("OnEvent", nil)
+    end,
+})
