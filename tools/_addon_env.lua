@@ -227,6 +227,7 @@ local function LoadCore()
     -- Load order matches QUI.toc: utils first, then defaults, then
     -- migration / compat / io machinery.
     LoadAddonFile("core/utils.lua",          "QUI", SHARED_NS)
+    LoadAddonFile("core/ns_export_guard.lua", "QUI", SHARED_NS)
     LoadAddonFile("core/new_profile_defaults.lua", "QUI", SHARED_NS)
     LoadAddonFile("core/border_registry.lua", "QUI", SHARED_NS)
     LoadAddonFile("core/defaults.lua",       "QUI", SHARED_NS)
