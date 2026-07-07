@@ -44,7 +44,8 @@ local function TextColor(ctx)
 end
 
 --- ctx = { entry, details, isJunk, inSet, qualityColorText,
----         craftQualityAtlas (tier badge atlas, dress-path supplied) }
+---         craftQualityAtlas (tier badge atlas, dress-path supplied),
+---         upgradeTrack (badge payload, dress-path supplied) }
 --- Resolver returns { text, r, g, b } | { atlas } | nil (inapplicable).
 CornerWidgets.Resolvers = {
     crafting_quality = function(ctx)
@@ -52,6 +53,13 @@ CornerWidgets.Resolvers = {
         -- the dress path resolves the atlas via C_TradeSkillUI (live fact —
         -- the pure core only consumes it)
         if ctx.craftQualityAtlas then return { atlas = ctx.craftQualityAtlas } end
+    end,
+    upgrade_track = function(ctx)
+        -- gear upgrade-track badge (e.g. "V4/8" = Veteran 4/8); the dress
+        -- path resolves it via C_Item.GetItemUpgradeInfo (live fact — the
+        -- pure core only consumes it)
+        local u = ctx.upgradeTrack
+        if u then return { text = u.text, r = u.r, g = u.g, b = u.b } end
     end,
     quantity = function(ctx)
         local c = ctx.entry and ctx.entry.count

@@ -150,10 +150,70 @@ local function HookAlertSystem(globalSystemName, toggleKey)
     hookedAlertSystems[system] = true
 end
 
+---------------------------------------------------------------------------
+-- LOOT TOAST CURATION
+-- Hides loot-won toasts below a chosen quality, with keep-overrides for
+-- mounts, pets, upgraded drops, and an item-level floor. Same post-hook +
+-- deferred-hide pattern as the alert-system blocks above (no unregistering
+-- of Blizzard's alert events). setUpFunction args match 12.x FrameXML
+-- LootWonAlertFrame_SetUp(self, originalLink, originalQuantity, rollType,
+-- roll, specID, isCurrency, showFactionBG, lootSource, lessAwesome,
+-- isUpgraded, ...). Doc-verified: C_Item.GetItemInfo (MayReturnNothing;
+-- quality 3rd / equipLoc 9th / classID 12th / subclassID 13th returns);
+-- item enums Miscellaneous=15 (Mount=5, CompanionPet=2), Battlepet=17.
+-- Uncached items and currency toasts fail OPEN (toast shows).
+---------------------------------------------------------------------------
+
+local function ShouldHideLootToast(itemLink, isCurrency, isUpgraded)
+    local settings = GetSettings()
+    local cfg = settings and settings.lootToastFilter
+    if not cfg or not cfg.enabled then return false end
+    if isCurrency or not itemLink then return false end
+
+    local minQuality = tonumber(cfg.minQuality) or 0
+    if minQuality <= 0 then return false end
+
+    local okInfo, _, _, quality, _, _, _, _, _, equipLoc, _, _, classID, subclassID =
+        pcall(C_Item.GetItemInfo, itemLink)
+    if not okInfo or type(quality) ~= "number" then return false end
+    if quality >= minQuality then return false end
+
+    if cfg.keepMounts ~= false and classID == 15 and subclassID == 5 then return false end
+    if cfg.keepPets ~= false and (classID == 17 or (classID == 15 and subclassID == 2)) then return false end
+    if cfg.keepUpgrades ~= false and isUpgraded then return false end
+
+    local minKeepIlvl = tonumber(cfg.minKeepIlvl) or 0
+    if minKeepIlvl > 0 and equipLoc and equipLoc ~= ""
+        and C_Item.GetDetailedItemLevelInfo then
+        local okIlvl, ilvl = pcall(C_Item.GetDetailedItemLevelInfo, itemLink)
+        if okIlvl and type(ilvl) == "number" and ilvl >= minKeepIlvl then return false end
+    end
+
+    return true
+end
+
+local lootAlertHooked = false
+local function HookLootAlertSystem()
+    if lootAlertHooked then return end
+    local system = _G.LootAlertSystem
+    if not system or type(system.setUpFunction) ~= "function" then return end
+    -- TAINT SAFETY: defer the hide out of the alert system's execution context.
+    hooksecurefunc(system, "setUpFunction",
+        function(frame, itemLink, _, _, _, _, isCurrency, _, _, _, isUpgraded)
+            C_Timer.After(0, function()
+                if ShouldHideLootToast(itemLink, isCurrency, isUpgraded) then
+                    HideAlertFrame(frame)
+                end
+            end)
+        end)
+    lootAlertHooked = true
+end
+
 local function HookPopupAlertSystems()
     for globalSystemName, toggleKey in pairs(alertSystemToggleMap) do
         HookAlertSystem(globalSystemName, toggleKey)
     end
+    HookLootAlertSystem()
 end
 
 local function HideEventToasts()
@@ -707,13 +767,34 @@ local function OnMerchantShow()
     local settings = GetSettings()
     if not settings then return end
 
-    -- Sell gray items
+    -- Sell gray items. Unified with the bag module's junk predicate
+    -- (Bags.Junk.IsJunk: Poor quality + skips worthless items, the user's
+    -- junk-exclusion list, and Blizzard's per-bag exclude-junk-sell flags)
+    -- so the bag window's junk-coin preview matches what auto-sell actually
+    -- sells. Falls back to the plain grey-quality rule when the Bags module
+    -- isn't loaded. Bags 0-5 (5 = reagent bag, same range as the bag
+    -- window's Sell Junk button).
     if settings.sellJunk then
-        for bag = 0, 4 do
+        local Junk = ns.Bags and ns.Bags.Junk
+        local exclusions
+        if Junk then
+            local bagsDB = Helpers.CreateDBGetter("bags")()
+            local junkCfg = bagsDB and bagsDB.behavior and bagsDB.behavior.junk
+            exclusions = junkCfg and junkCfg.exclusions
+        end
+        for bag = 0, 5 do
             for slot = 1, C_Container.GetContainerNumSlots(bag) do
                 local info = C_Container.GetContainerItemInfo(bag, slot)
-                if info and info.quality == Enum.ItemQuality.Poor then
-                    C_Container.UseContainerItem(bag, slot)
+                if info then
+                    local sell
+                    if Junk then
+                        sell = Junk.IsJunk(info, bag, exclusions)
+                    else
+                        sell = info.quality == Enum.ItemQuality.Poor
+                    end
+                    if sell then
+                        C_Container.UseContainerItem(bag, slot)
+                    end
                 end
             end
         end
@@ -787,6 +868,14 @@ local function IsGuildMemberByName(name)
 end
 
 local function OnPartyInvite(inviterName)
+    -- Extended ignore takes precedence over auto-accept: silently decline
+    -- invites from names on the extended-ignore list.
+    if ns.ShouldAutoDeclineFrom and ns.ShouldAutoDeclineFrom(inviterName) then
+        DeclineGroup()
+        StaticPopup_Hide("PARTY_INVITE")
+        return
+    end
+
     local settings = GetSettings()
     if not settings then return end
 
@@ -810,6 +899,75 @@ local function OnPartyInvite(inviterName)
         AcceptGroup()
         StaticPopup_Hide("PARTY_INVITE")
     end
+end
+
+---------------------------------------------------------------------------
+-- DUEL / PET BATTLE: AUTO DECLINE
+---------------------------------------------------------------------------
+
+-- Decline verbs verified vs FrameXML StaticPopupDialogs OnCancel handlers:
+--   DUEL_REQUESTED            -> CancelDuel()
+--   PET_BATTLE_PVP_DUEL_...   -> C_PetBattles.CancelPVPDuel()
+-- Both are insecure calls (fired from StaticPopup OnCancel), so no taint risk.
+-- Deferred one frame so Blizzard's UIParent handler has run StaticPopup_Show
+-- first; otherwise a show-after-decline race leaves a stale popup on screen.
+local function OnDuelRequested(challengerName)
+    local ignored = ns.ShouldAutoDeclineFrom and ns.ShouldAutoDeclineFrom(challengerName)
+    local settings = GetSettings()
+    if not ignored and (not settings or not settings.autoDeclineDuel) then return end
+    C_Timer.After(0, function()
+        CancelDuel()
+        StaticPopup_Hide("DUEL_REQUESTED")
+    end)
+end
+
+local function OnPetBattleDuelRequested()
+    local settings = GetSettings()
+    if not settings or not settings.autoDeclinePetBattle then return end
+    C_Timer.After(0, function()
+        if C_PetBattles and C_PetBattles.CancelPVPDuel then
+            C_PetBattles.CancelPVPDuel()
+        end
+        StaticPopup_Hide("PET_BATTLE_PVP_DUEL_REQUESTED")
+    end)
+end
+
+---------------------------------------------------------------------------
+-- AUTO RELEASE SPIRIT
+---------------------------------------------------------------------------
+
+-- RepopMe() verified vs PlayerScriptDocumentation (no restriction flags) and is
+-- the release call used by StaticPopupDialogs["DEATH"].OnAccept.
+-- <<< QUI_TEST_EXTRACT release_scope
+-- Pure scope decision. Deliberately NEVER returns true for dungeon/raid/arena
+-- (instanceType "party"/"raid"/"arena"), where a combat resurrection (brez)
+-- matters; only battlegrounds ("pvp") and, when opted in, the open world.
+local function ShouldAutoReleaseInScope(mode, inInstance, instanceType)
+    if not mode or mode == "off" then return false end
+    if instanceType == "pvp" then return true end        -- battlegrounds
+    if not inInstance then return mode == "pvpworld" end  -- open world only when opted in
+    return false                                          -- dungeon/raid/arena: never
+end
+-- <<< QUI_TEST_EXTRACT release_scope
+
+local function OnPlayerDead()
+    local settings = GetSettings()
+    local mode = settings and settings.autoRelease
+    if not mode or mode == "off" then return end
+    if UnitIsGhost("player") then return end        -- already released
+
+    local inInstance, instanceType = IsInInstance()
+    if not ShouldAutoReleaseInScope(mode, inInstance, instanceType) then return end
+
+    -- Brief delay so a fast self-res (soulstone/ankh/cheat death) can register;
+    -- re-check we are still a releasable corpse before releasing.
+    C_Timer.After(1.5, function()
+        local s = GetSettings()
+        if not s or s.autoRelease == "off" then return end
+        if UnitIsDead("player") and not UnitIsGhost("player") then
+            RepopMe()
+        end
+    end)
 end
 
 ---------------------------------------------------------------------------
@@ -1131,11 +1289,44 @@ local deletePopups = {
     ["DELETE_QUEST_ITEM"] = true,
 }
 
+-- Auto-confirmable popups -> settings key. Each OnAccept verified insecure-callable
+-- against 12.x GameDialogDefs.lua: CONFIRM_ACCEPT_SOCKETS -> C_ItemSocketInfo.AcceptSockets()
+-- (plain function, no protection flags); token/high-cost -> BuyMerchantItem (merchant API,
+-- insecure-callable). Clicking button1 from the deferred timer below runs OnAccept
+-- insecurely, which is legal for all three (unlike DeleteCursorItem above).
+local autoConfirmPopups = {
+    ["CONFIRM_ACCEPT_SOCKETS"]      = "autoConfirmSocketReplace",
+    ["CONFIRM_PURCHASE_TOKEN_ITEM"] = "autoConfirmTokenPurchase",
+    ["CONFIRM_HIGH_COST_ITEM"]      = "autoConfirmHighCost",
+}
+
+local function AutoConfirmPopup(which)
+    for i = 1, GetMaxStaticPopupDialogs() do
+        local frame = _G["StaticPopup" .. i]
+        if frame and frame.which == which and frame:IsShown() then
+            local button = frame.button1 or _G["StaticPopup" .. i .. "Button1"]
+            if button and button:IsEnabled() then
+                button:Click()
+            end
+            break
+        end
+    end
+end
+
 -- TAINT SAFETY: Defer to break taint chain from secure context.
 hooksecurefunc("StaticPopup_Show", function(which)
     C_Timer.After(0, function()
         if ShouldBlockStaticPopup(which) then
             HideStaticPopupByWhich(which)
+            return
+        end
+
+        local confirmKey = autoConfirmPopups[which]
+        if confirmKey then
+            local settings = GetSettings()
+            if settings and settings[confirmKey] then
+                AutoConfirmPopup(which)
+            end
             return
         end
 
@@ -1239,6 +1430,9 @@ end
 qolFrame:RegisterEvent("MERCHANT_SHOW")
 qolFrame:RegisterEvent("LFG_ROLE_CHECK_SHOW")
 qolFrame:RegisterEvent("PARTY_INVITE_REQUEST")
+qolFrame:RegisterEvent("DUEL_REQUESTED")
+qolFrame:RegisterEvent("PET_BATTLE_PVP_DUEL_REQUESTED")
+qolFrame:RegisterEvent("PLAYER_DEAD")
 qolFrame:RegisterEvent("QUEST_DETAIL")
 qolFrame:RegisterEvent("QUEST_COMPLETE")
 qolFrame:RegisterEvent("GOSSIP_SHOW")
@@ -1259,6 +1453,12 @@ qolFrame:SetScript("OnEvent", function(self, event, ...)
         OnRoleCheckShow()
     elseif event == "PARTY_INVITE_REQUEST" then
         OnPartyInvite(...)
+    elseif event == "DUEL_REQUESTED" then
+        OnDuelRequested(...)
+    elseif event == "PET_BATTLE_PVP_DUEL_REQUESTED" then
+        OnPetBattleDuelRequested()
+    elseif event == "PLAYER_DEAD" then
+        OnPlayerDead()
     elseif event == "QUEST_DETAIL" then
         OnQuestDetail()
     elseif event == "QUEST_COMPLETE" then

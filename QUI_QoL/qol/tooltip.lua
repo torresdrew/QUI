@@ -441,12 +441,38 @@ local gtCursorSafetyElapsed = CURSOR_SAFETY_CHECK_INTERVAL
 -- its dispatch tables, causing ADDON_ACTION_BLOCKED when the world map's
 -- secure context (secureexecuterange) uses GameTooltip for map pins.
 local gtCursorWatcher
+-- Last cursor position seen by the watcher; lets it skip the anchor math
+-- on frames where the cursor hasn't moved.
+local gtCursorLastX, gtCursorLastY
+
+-- Single transition point for cursor-follow state. The GameTooltip watcher
+-- frame is hidden (no OnUpdate fires) whenever follow is inactive, so a
+-- session that used cursor-anchoring once doesn't pay for the watcher on
+-- every frame forever after.
+local function SetCursorFollowActive(tooltip, active)
+    cursorFollowActive[tooltip] = active or nil
+    if tooltip == GameTooltip and gtCursorWatcher then
+        if active then
+            gtCursorLastX, gtCursorLastY = nil, nil
+            gtCursorWatcher:Show()
+        else
+            gtCursorWatcher:Hide()
+        end
+    end
+end
 
 -- World quest / map tooltips can register a widget container on GameTooltip.
 -- Re-anchoring or re-showing the tooltip from addon code while that container
 -- is active can re-enter Blizzard's secure widget layout and trigger
 -- LayoutFrame secret-value comparison errors.
 local function HasActiveWidgetContainer(tooltip)
+    if Helpers.HasTaintedWidgetContainer then
+        TooltipDebugCount("qol.widgetScan")
+        local active = Helpers.HasTaintedWidgetContainer(tooltip)
+        if active then TooltipDebugCount("qol.widgetHit") end
+        return active
+    end
+
     if not tooltip or not tooltip.GetChildren or not tooltip.GetNumChildren then return false end
     TooltipDebugCount("qol.widgetScan")
 
@@ -546,11 +572,16 @@ local function EnsureCursorFollowHooks(tooltip)
         -- Use a separate watcher frame for GameTooltip to avoid taint
         if not gtCursorWatcher then
             gtCursorWatcher = CreateFrame("Frame")
-            gtCursorWatcher:SetScript("OnUpdate", function(_, elapsed)
+            gtCursorWatcher:Hide()  -- parked until cursor follow activates
+            gtCursorWatcher:SetScript("OnUpdate", function(self, elapsed)
                 TooltipDebugCount("qol.cursorFrame")
-                if not cursorFollowActive[GameTooltip] then return end
+                if not cursorFollowActive[GameTooltip] then
+                    -- Self-heal: the flag was cleared without the helper.
+                    self:Hide()
+                    return
+                end
                 if not GameTooltip:IsShown() then
-                    cursorFollowActive[GameTooltip] = nil
+                    SetCursorFollowActive(GameTooltip, false)
                     return
                 end
                 gtCursorSafetyElapsed = gtCursorSafetyElapsed + (elapsed or 0)
@@ -558,19 +589,24 @@ local function EnsureCursorFollowHooks(tooltip)
                     TooltipDebugCount("qol.cursorSafety")
                     gtCursorSafetyElapsed = 0
                     if HasActiveMoneyFrame(GameTooltip) then
-                        cursorFollowActive[GameTooltip] = nil
+                        SetCursorFollowActive(GameTooltip, false)
                         return
                     end
                     if HasActiveWidgetContainer(GameTooltip) then
-                        cursorFollowActive[GameTooltip] = nil
+                        SetCursorFollowActive(GameTooltip, false)
                         return
                     end
                 end
                 local settings = Provider:GetSettings()
                 if not settings or not settings.enabled or not settings.anchorToCursor then
-                    cursorFollowActive[GameTooltip] = nil
+                    SetCursorFollowActive(GameTooltip, false)
                     return
                 end
+                -- Reposition only when the cursor actually moved (same gate
+                -- the reticle uses); skips the anchor math on still frames.
+                local cx, cy = GetCursorPosition()
+                if cx == gtCursorLastX and cy == gtCursorLastY then return end
+                gtCursorLastX, gtCursorLastY = cx, cy
                 TooltipDebugCount("qol.cursorPosition")
                 Provider:PositionTooltipAtCursor(GameTooltip, settings)
             end)
@@ -601,12 +637,13 @@ local function AnchorTooltipToCursor(tooltip, parent, settings)
     if not tooltip then return false end
     if tooltip.IsForbidden and tooltip:IsForbidden() then return false end
     if tooltip == GameTooltip and HasActiveMoneyFrame(tooltip) then return false end
+    if tooltip == GameTooltip and HasActiveWidgetContainer(tooltip) then return false end
     EnsureCursorFollowHooks(tooltip)
     tooltip:SetOwner(parent or UIParent, "ANCHOR_NONE")
     if tooltip == GameTooltip then
         gtCursorSafetyElapsed = CURSOR_SAFETY_CHECK_INTERVAL
     end
-    cursorFollowActive[tooltip] = true
+    SetCursorFollowActive(tooltip, true)
     Provider:PositionTooltipAtCursor(tooltip, settings or Provider:GetSettings())
     return true
 end
@@ -1611,6 +1648,20 @@ local function GetPlayerMythicRating(unit)
     return nil
 end
 
+-- NPC ID lives in field 6 of a Creature/Vehicle/Pet GUID
+-- ("Creature-0-server-instance-zone-<npcID>-spawn"). Player GUIDs have no
+-- NPC ID, so this returns nil for them.
+-- <<< QUI_TEST_EXTRACT npc_id
+local function NpcIDFromGUID(guid)
+    if type(guid) ~= "string" then return nil end
+    local unitType, _, _, _, _, npcID = strsplit("-", guid)
+    if (unitType == "Creature" or unitType == "Vehicle" or unitType == "Pet") and npcID then
+        return tonumber(npcID)
+    end
+    return nil
+end
+-- <<< QUI_TEST_EXTRACT npc_id
+
 local function AddUnitTooltipInfoToTooltip(tooltip, unit, settings)
     if not tooltip or not unit or not settings then return false end
     if InCombatLockdown() then return false end
@@ -1639,6 +1690,16 @@ local function AddUnitTooltipInfoToTooltip(tooltip, unit, settings)
             AddTooltipInfoLine(tooltip, ns.L["M+ Rating"], string.format("%.1f", rating), 0.7, 0.82, 1, r or 1, g or 1, b or 1)
             state.ratingAdded = true
             TooltipDebugCount("qol.ratingAdded")
+            changed = true
+        end
+    end
+
+    if IsSettingEnabled(settings, "showNpcID", false) and not state.npcIDResolved then
+        state.npcIDResolved = true
+        local npcID = NpcIDFromGUID(guid)
+        if npcID then
+            EnsureTooltipInfoSpacer(tooltip, state)
+            AddTooltipInfoLine(tooltip, ns.L["NPC ID"], tostring(npcID), 0.7, 0.82, 1, 0.8, 0.8, 0.8)
             changed = true
         end
     end
@@ -1846,6 +1907,12 @@ local function SetupTooltipHook()
         local settings = Provider:GetSettings()
         if not settings or not settings.enabled then return end
 
+        -- TIP-05: user tooltip scale (1 = Blizzard default). Applied here so
+        -- every default-anchored tooltip picks it up before it is positioned.
+        local userScale = tonumber(settings.scale) or 1
+        if userScale <= 0 then userScale = 1 end
+        pcall(tooltip.SetScale, tooltip, userScale)
+
         InvalidatePendingSetUnit()
 
         -- Visibility/context checks call methods on Blizzard frames (GetName,
@@ -1862,6 +1929,11 @@ local function SetupTooltipHook()
             end
         end
 
+        if tooltip == GameTooltip and HasActiveWidgetContainer(tooltip) then
+            SetCursorFollowActive(tooltip, false)
+            return
+        end
+
         -- Reposition immediately — ClearAllPoints/SetPoint are C-side and
         -- handle combat safely. Do NOT call SetOwner here; Blizzard already
         -- set it and re-calling mid-build disrupts the tooltip chain.
@@ -1870,10 +1942,10 @@ local function SetupTooltipHook()
             if tooltip == GameTooltip then
                 gtCursorSafetyElapsed = CURSOR_SAFETY_CHECK_INTERVAL
             end
-            cursorFollowActive[tooltip] = true
+            SetCursorFollowActive(tooltip, true)
             Provider:PositionTooltipAtCursor(tooltip, settings)
         else
-            cursorFollowActive[tooltip] = nil
+            SetCursorFollowActive(tooltip, false)
             Provider:PositionTooltipAtAnchor(tooltip, settings)
         end
     end)
@@ -1905,10 +1977,12 @@ local function SetupTooltipHook()
         return false
     end
 
-    -- Scan tooltip left-lines 2..5; on the first non-secret line where
-    -- matches(text) is true, blank + hide it. Mirrors the realm/guild loops.
-    local function HideTooltipLineMatching(tooltip, matches)
-        for i = 2, 5 do
+    -- Scan tooltip left-lines 2..maxLine (default 5); on the first non-secret
+    -- line where matches(text) is true, blank + hide it. Mirrors the
+    -- realm/guild loops. Faction/PvP lines sit lower on player tooltips, so
+    -- those callers pass a larger maxLine.
+    local function HideTooltipLineMatching(tooltip, matches, maxLine)
+        for i = 2, maxLine or 5 do
             local line = tooltip.GetLeftLine and tooltip:GetLeftLine(i)
                 or _G["GameTooltipTextLeft" .. i]
             if line then
@@ -1924,13 +1998,43 @@ local function SetupTooltipHook()
         end
     end
 
+    -- TIP-01: connected-realm lookup. C_AutoComplete.GetAutoCompleteRealms()
+    -- (AutoCompleteDocumentation: returns table<string>, the player's
+    -- connected-realm group). Built lazily once; realm names normalized on
+    -- both sides (spaces/hyphens/apostrophes stripped, case-folded) since
+    -- UnitName realm strings and autocomplete realm strings differ in form.
+    local connectedRealmSet
+    local function NormalizeRealmName(name)
+        return (name:gsub("[%s%-']", "")):lower()
+    end
+    local function IsConnectedRealm(realm)
+        if not connectedRealmSet then
+            connectedRealmSet = {}
+            if C_AutoComplete and C_AutoComplete.GetAutoCompleteRealms then
+                local okRealms, realms = pcall(C_AutoComplete.GetAutoCompleteRealms)
+                if okRealms and type(realms) == "table" then
+                    for _, r in ipairs(realms) do
+                        if type(r) == "string" then
+                            connectedRealmSet[NormalizeRealmName(r)] = true
+                        end
+                    end
+                end
+            end
+        end
+        return connectedRealmSet[NormalizeRealmName(realm)] == true
+    end
+
     local function HandleUnitNamePost(tooltip, settings, unit)
         TooltipDebugCount("qol.unitNamePost")
 
         local hideServer = settings.hideServerName
         local hideTitle = settings.hidePlayerTitle
         local hideGuild = settings.hideGuildName
-        if not hideServer and not hideTitle and not hideGuild then return end
+        local hideFaction = settings.hideFactionText
+        local hidePvp = settings.hidePvpText
+        local showConnected = settings.showConnectedRealm
+        if not hideServer and not hideTitle and not hideGuild
+            and not hideFaction and not hidePvp and not showConnected then return end
 
         if hideTitle then
             local nameLine = tooltip.GetLeftLine and tooltip:GetLeftLine(1) or GameTooltipTextLeft1
@@ -1961,6 +2065,88 @@ local function SetupTooltipHook()
                 HideTooltipLineMatching(tooltip, function(lt)
                     return lt == guildName or lt == bracketed
                 end)
+            end
+        end
+
+        -- TIP-05: hide the faction ("Alliance"/"Horde"/"Neutral") and "PvP"
+        -- lines. Exact-match against the Blizzard global strings (legacy
+        -- globals, absent from the FrameXML dump here but shipped since
+        -- vanilla and matched the same way by current tooltip addons);
+        -- existence-guarded so a renamed global degrades to a no-op.
+        if hideFaction then
+            HideTooltipLineMatching(tooltip, function(lt)
+                return (FACTION_ALLIANCE and lt == FACTION_ALLIANCE)
+                    or (FACTION_HORDE and lt == FACTION_HORDE)
+                    or (FACTION_NEUTRAL and lt == FACTION_NEUTRAL)
+            end, 8)
+        end
+        if hidePvp then
+            HideTooltipLineMatching(tooltip, function(lt)
+                return (PVP_ENABLED and lt == PVP_ENABLED) or (PVP and lt == PVP)
+            end, 8)
+        end
+
+        -- TIP-01: append a connected-realm marker to the realm line (the line
+        -- Blizzard adds for cross-realm players). Skipped when the realm line
+        -- is being hidden.
+        if showConnected and not hideServer then
+            local okRealm, _, unitRealm = pcall(UnitName, unit)
+            if okRealm and unitRealm and unitRealm ~= "" and not Helpers.IsSecretValue(unitRealm)
+                and IsConnectedRealm(unitRealm) then
+                for i = 2, 5 do
+                    local line = tooltip.GetLeftLine and tooltip:GetLeftLine(i)
+                        or _G["GameTooltipTextLeft" .. i]
+                    if line then
+                        local okLT, lt = pcall(line.GetText, line)
+                        if okLT and lt and not Helpers.IsSecretValue(lt) and lt == unitRealm then
+                            pcall(line.SetText, line, lt .. " |cff80ff80(" .. ns.L["Connected"] .. ")|r")
+                            break
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    -- TIP-03: decorate the guild line (the <GuildName> line on guilded player
+    -- tooltips): optionally append the unit's guild rank and recolor own-guild
+    -- vs other-guild. GetGuildInfo's 2nd return is the rank name (FrameXML
+    -- 4-return usage); UnitIsInMyGuild verified in UnitDocumentation
+    -- (AllowedWhenUntainted). Skipped entirely when the guild line is hidden.
+    local GUILD_COLOR_MINE  = { r = 0.25, g = 1.0,  b = 0.25 }
+    local GUILD_COLOR_OTHER = { r = 0.0,  g = 0.75, b = 1.0 }
+    local function HandleUnitGuildPost(tooltip, settings, unit)
+        if settings.hideGuildName then return end
+        local wantRank = settings.showGuildRank
+        local wantColor = settings.colorGuildNames
+        if not wantRank and not wantColor then return end
+
+        local okGuild, guildName, guildRankName = pcall(GetGuildInfo, unit)
+        if not okGuild or not guildName or guildName == "" or Helpers.IsSecretValue(guildName) then return end
+
+        local bracketed = "<" .. guildName .. ">"
+        for i = 2, 5 do
+            local line = tooltip.GetLeftLine and tooltip:GetLeftLine(i)
+                or _G["GameTooltipTextLeft" .. i]
+            if line then
+                local okLT, lt = pcall(line.GetText, line)
+                if okLT and lt and not Helpers.IsSecretValue(lt)
+                    and (lt == guildName or lt == bracketed) then
+                    if wantRank and guildRankName and guildRankName ~= ""
+                        and not Helpers.IsSecretValue(guildRankName) then
+                        pcall(line.SetText, line, lt .. " (" .. guildRankName .. ")")
+                    end
+                    if wantColor then
+                        local mine = false
+                        local okMine, isMine = pcall(UnitIsInMyGuild, unit)
+                        if okMine and isMine and not Helpers.IsSecretValue(isMine) then
+                            mine = true
+                        end
+                        local c = mine and GUILD_COLOR_MINE or GUILD_COLOR_OTHER
+                        pcall(line.SetTextColor, line, c.r, c.g, c.b)
+                    end
+                    break
+                end
             end
         end
     end
@@ -2009,6 +2195,24 @@ local function SetupTooltipHook()
                 pcall(GameTooltipStatusBar.SetShown, GameTooltipStatusBar, false)
                 pcall(GameTooltipStatusBar.SetAlpha, GameTooltipStatusBar, 0)
             end
+            -- TIP-05: modern tooltips can attach the bar to the tooltip itself
+            -- (tooltip.StatusBar) or acquire from a pool (tooltip.StatusBarPool);
+            -- cover both, existence-guarded.
+            local attachedBar = tooltip and tooltip.StatusBar
+            if attachedBar and not (attachedBar.IsForbidden and attachedBar:IsForbidden()) then
+                pcall(attachedBar.SetShown, attachedBar, false)
+                pcall(attachedBar.SetAlpha, attachedBar, 0)
+            end
+            local pool = tooltip and tooltip.StatusBarPool
+            if pool and pool.EnumerateActive then
+                local okIter, iter, state = pcall(pool.EnumerateActive, pool)
+                if okIter and type(iter) == "function" then
+                    for pooledBar in iter, state do
+                        pcall(pooledBar.SetShown, pooledBar, false)
+                        pcall(pooledBar.SetAlpha, pooledBar, 0)
+                    end
+                end
+            end
         end
     end
 
@@ -2040,6 +2244,7 @@ local function SetupTooltipHook()
         TooltipDebugCount("qol.unitPlayer")
 
         RunTrackedUnitStep("qol.unitNamePost", HandleUnitNamePost, tooltip, settings, unit)
+        RunTrackedUnitStep("qol.unitGuildPost", HandleUnitGuildPost, tooltip, settings, unit)
         RunTrackedUnitStep("qol.unitClassPost", HandleUnitClassPost, tooltip, settings, unit)
         RunTrackedUnitStep("qol.unitExtrasPost", HandleUnitExtrasPost, tooltip, settings, unit)
     end)
@@ -2060,28 +2265,31 @@ local function SetupTooltipHook()
     -- by this interval plus the mouse-focus cache TTL.
     local TOOLTIP_VISIBILITY_CHECK_INTERVAL = 0.05
     gtSpellIDWatcher:SetScript("OnUpdate", function(_, elapsed)
-        local shown = GameTooltip:IsShown()
-        if shown then
-            TooltipDebugCount("qol.visibilityFrame")
-        end
-        if shown and not gtSpellIDWasShown then
-            gtVisibilityElapsed = TOOLTIP_VISIBILITY_CHECK_INTERVAL
-            gtTooltipHadUnit = false
-            ResetTooltipHideFade()
-        end
-        if gtSpellIDWasShown and not shown then
+        -- IsShown polling, show/hide edge detection, and the visibility
+        -- evaluation all run at the check interval, not per frame — the idle
+        -- path is one accumulate-and-compare. Perceived hide latency was
+        -- already bounded by this interval.
+        gtVisibilityElapsed = gtVisibilityElapsed + (elapsed or 0)
+        if gtVisibilityElapsed >= TOOLTIP_VISIBILITY_CHECK_INTERVAL then
             gtVisibilityElapsed = 0
-            gtTooltipHadUnit = false
-            ResetTooltipHideFade()
-            InvalidatePendingSetUnit()
-            tooltipSpellIDAdded[GameTooltip] = nil
-            tooltipMaxStackAdded[GameTooltip] = nil
-            tooltipPlayerItemLevelGUID[GameTooltip] = nil
-            tooltipUnitInfoState[GameTooltip] = nil
-        elseif shown then
-            gtVisibilityElapsed = gtVisibilityElapsed + (elapsed or 0)
-            if gtVisibilityElapsed >= TOOLTIP_VISIBILITY_CHECK_INTERVAL then
-                gtVisibilityElapsed = 0
+
+            local shown = GameTooltip:IsShown()
+            if shown then
+                TooltipDebugCount("qol.visibilityFrame")
+            end
+            if shown and not gtSpellIDWasShown then
+                gtTooltipHadUnit = false
+                ResetTooltipHideFade()
+            end
+            if gtSpellIDWasShown and not shown then
+                gtTooltipHadUnit = false
+                ResetTooltipHideFade()
+                InvalidatePendingSetUnit()
+                tooltipSpellIDAdded[GameTooltip] = nil
+                tooltipMaxStackAdded[GameTooltip] = nil
+                tooltipPlayerItemLevelGUID[GameTooltip] = nil
+                tooltipUnitInfoState[GameTooltip] = nil
+            elseif shown then
                 TooltipDebugCount("qol.visibilityCheck")
                 -- Latch the "had a unit this cycle" flag before evaluating
                 -- visibility, so ShouldKeepTooltipVisible can distinguish a
@@ -2109,21 +2317,25 @@ local function SetupTooltipHook()
                     end
                 end
             end
+            gtSpellIDWasShown = shown
+        end
 
-            if tooltipHideFadeState.active then
-                tooltipHideFadeState.elapsed = tooltipHideFadeState.elapsed + (elapsed or 0)
-                local duration = tooltipHideFadeState.duration
-                local progress = (duration > 0) and (tooltipHideFadeState.elapsed / duration) or 1
-                if progress >= 1 then
-                    ResetTooltipHideFade()
-                    GameTooltip:Hide()
-                else
-                    local nextAlpha = math.max(0, tooltipHideFadeState.startAlpha * (1 - progress))
-                    pcall(GameTooltip.SetAlpha, GameTooltip, nextAlpha)
-                end
+        -- The hide-fade alpha animation is the only per-frame work, and it
+        -- only runs while a fade is active, so the fade renders smoothly. It
+        -- sits after the evaluation so a fade started this tick also begins
+        -- progressing this tick.
+        if tooltipHideFadeState.active then
+            tooltipHideFadeState.elapsed = tooltipHideFadeState.elapsed + (elapsed or 0)
+            local duration = tooltipHideFadeState.duration
+            local progress = (duration > 0) and (tooltipHideFadeState.elapsed / duration) or 1
+            if progress >= 1 then
+                ResetTooltipHideFade()
+                GameTooltip:Hide()
+            else
+                local nextAlpha = math.max(0, tooltipHideFadeState.startAlpha * (1 - progress))
+                pcall(GameTooltip.SetAlpha, GameTooltip, nextAlpha)
             end
         end
-        gtSpellIDWasShown = shown
     end)
 
     local idOwnerSkipPrefixes = {

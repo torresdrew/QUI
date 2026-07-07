@@ -37,6 +37,7 @@ local defaults = {
             overrideSCTFont = false,  -- Override scrolling combat text font with QUI font
             disableScrollingCombatText = false,  -- Force Blizzard floating/scrolling combat text off (enableFloatingCombatText CVar)
             autoInsertKey = true,  -- Auto-insert keystone in M+ UI
+            closeBagsOnKeystoneInsert = false,  -- Close bags after auto-inserting the keystone (opt-in)
             skinKeystoneFrame = true,  -- Skin keystone insertion window
             skinGameMenu = true,  -- Skin ESC menu (opt-in)
             skinContextMenus = true,  -- Skin context/dropdown menus
@@ -109,6 +110,35 @@ local defaults = {
             autoDeleteConfirm = true,  -- Auto-fill DELETE confirmation text
             auctionHouseExpansionFilter = true,  -- Auto-enable current expansion filter in AH
             craftingOrderExpansionFilter = true,  -- Auto-enable current expansion filter in Crafting Orders
+            autoDeclineDuel = false,  -- Auto-decline incoming duel requests (opt-in)
+            autoDeclinePetBattle = false,  -- Auto-decline incoming pet battle duel requests (opt-in)
+            autoRelease = "off",  -- Auto-release spirit: "off"/"pvp" (battlegrounds)/"pvpworld" (+ open world). Never in dungeons/raids.
+            audioOutputDevice = "",  -- Lock game audio output to this device NAME (re-forced on device change). "" = off.
+            autoUnwrapCollections = false,  -- Auto-clear new mount/pet/toy fanfare + collections alert (opt-in)
+            autoConfirmSocketReplace = false,  -- Auto-confirm the gem socket replacement popup (opt-in)
+            autoConfirmTokenPurchase = false,  -- Auto-confirm token/currency purchase popups (opt-in)
+            autoConfirmHighCost = false,  -- Auto-confirm the expensive-item purchase popup (opt-in)
+            merchantKnownPetMark = false,  -- Green check on merchant pet items already collected (opt-in)
+            -- Cursor Trail: fading afterimage dots behind the mouse cursor
+            cursorTrail = {
+                enabled = false,
+                combatOnly = true,
+                useClassColor = true,
+                customColor = { 1, 1, 1, 1 },
+                density = "medium",   -- "low" | "medium" | "high" (dot spacing)
+                size = 16,            -- dot size in pixels
+                duration = 0.4,       -- seconds for each dot to fade out
+            },
+            -- Loot Toast Curation: hide loot-won toasts below minQuality (0 = off);
+            -- keep-overrides always win. Uncached items/currency fail open.
+            lootToastFilter = {
+                enabled = false,
+                minQuality = 0,     -- hide item toasts BELOW this ItemQuality (0 = show all)
+                keepMounts = true,
+                keepPets = true,
+                keepUpgrades = true,
+                minKeepIlvl = 0,    -- equippables at/above this ilvl always kept (0 = off)
+            },
             -- Popup & Toast Blocker (granular, all OFF by default)
             popupBlocker = {
                 enabled = false,
@@ -129,6 +159,38 @@ local defaults = {
             petCombatWarning = true,    -- Show combat warning in instances when pet missing/passive
             petWarningOffsetX = 0,      -- Warning frame X offset from center
             petWarningOffsetY = -200,   -- Warning frame Y offset from center
+            -- No-Target Combat Warning (opt-in; flashes when in combat with no attackable target)
+            noTargetWarning = {
+                enabled = false,
+                offsetX = 0,
+                offsetY = -160,
+                fontSize = 20,
+            },
+            -- Friends List decor: class-color the names in the WoW friends list
+            friendsClassColor = true,
+            -- Extended Ignore: suppress chat + auto-decline from a name list beyond Blizzard's cap
+            extendedIgnore = {
+                enabled = false,
+                suppressChat = true,
+                autoDecline = true,
+                names = "",
+            },
+            -- Event Sound Alerts: play a chosen sound on selected events ("None" = off)
+            eventSounds = {
+                enabled = false,
+                whisper = "None",
+                readyCheck = "None",
+                lfgProposal = "None",
+                resurrect = "None",
+                mail = "None",
+                lootRollWon = "None",
+                lootUpgrade = "None",
+            },
+            -- Sound Mute (opt-in): mute selected game sounds by fileDataID; entry keys
+            -- from QUI_QoL/qol/sound_mute_catalog.lua are added lazily as toggled.
+            soundMute = {
+                enabled = false,
+            },
             -- Focus Cast Alert (warn when hostile focus is casting and interrupt is ready)
             focusCastAlert = {
                 enabled = true,
@@ -495,6 +557,7 @@ local defaults = {
             showItemLevel = true,           -- Show item level & track (line 2)
             showEnchants = true,            -- Show enchant status (line 3)
             showGems = true,                -- Show gem indicators
+            showGemSummary = false,         -- Gems section (per-color counts + empty sockets) in the stats panel
             showDurability = false,         -- Show durability bars
             inspectEnabled = true,
             showModelBackground = true,     -- Show background behind model
@@ -1668,6 +1731,13 @@ local defaults = {
             showMountCollected = true,         -- Append collected check/x to the mount line
             showTargetedBy = true,             -- List group/raid members targeting the unit (out of combat)
             showPlayerMythicRating = true,     -- Show M+ rating on player tooltip
+            showNpcID = false,                 -- Append the NPC ID to creature/NPC tooltips (opt-in)
+            scale = 1,                         -- Tooltip scale multiplier (1 = Blizzard default)
+            hideFactionText = false,           -- Hide the Alliance/Horde/Neutral faction line (opt-in)
+            hidePvpText = false,               -- Hide the PvP flag line (opt-in)
+            showConnectedRealm = false,        -- Mark cross-realm players from connected realms (opt-in)
+            showGuildRank = false,             -- Append guild rank to the guild line (opt-in)
+            colorGuildNames = false,           -- Recolor the guild line (own guild vs other guilds) (opt-in)
         },
 
         -- QUI Action Bars - Button Skinning and Fade System
@@ -1948,6 +2018,9 @@ local defaults = {
                     enabled = true, fadeEnabled = nil, fadeOutAlpha = nil, alwaysShow = false,
                     ownedPosition = nil,
                     clickthrough = false,
+                    -- Blizzard's open-support-ticket icon rides the micro bar
+                    -- (see AnchorHelpTicketButton). position: "auto"|"above"|"below"
+                    ticketIcon = { position = "auto", offsetX = 0, offsetY = 0 },
                     ownedLayout = {
                         orientation = "horizontal", columns = 12, iconCount = 12,
                         buttonSize = 32, buttonHeight = 40, buttonSpacing = -8,

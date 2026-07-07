@@ -2121,6 +2121,12 @@ local ACTION_BAR_ORIENTATION_OPTIONS = {
     { value = "vertical", text = "Vertical" },
 }
 
+local ACTION_BAR_TICKET_POSITION_OPTIONS = {
+    { value = "auto", text = "Auto (Screen-Aware)" },
+    { value = "above", text = "Above Bar" },
+    { value = "below", text = "Below Bar" },
+}
+
 local ACTION_BAR_FLYOUT_OPTIONS = {
     { value = "AUTO", text = "Auto" },
     { value = "UP", text = "Up" },
@@ -2153,7 +2159,7 @@ local ACTION_BAR_PER_BAR_CAPTURE_BARS = {
     { key = "bar8", label = ns.L["Bar 8"], dbKey = "bar8", layout = true, skinnable = true, flyout = true, toggleable = true },
     { key = "stanceBar", label = ns.L["Stance Bar"], dbKey = "stance", layout = true, skinnable = true },
     { key = "petBar", label = ns.L["Pet Bar"], dbKey = "pet", layout = true, skinnable = true },
-    { key = "microMenu", label = ns.L["Micro Menu"], dbKey = "microbar", layout = true, clickthrough = true },
+    { key = "microMenu", label = ns.L["Micro Menu"], dbKey = "microbar", layout = true, clickthrough = true, ticketIcon = true },
     { key = "bagBar", label = ns.L["Bag Bar"], dbKey = "bags", layout = true, clickthrough = true },
 }
 
@@ -2198,6 +2204,12 @@ local function capture_action_bar_per_bar_settings()
         end
         if bar.clickthrough then
             capture_action_bar_per_bar_setting(bar, ns.L["Bar"], ns.L["Clickthrough"], "toggle", bar_path, "clickthrough")
+        end
+        if bar.ticketIcon then
+            local ticket_path = bar_path .. ".ticketIcon"
+            capture_action_bar_per_bar_setting(bar, ns.L["Ticket Icon"], ns.L["Position"], "dropdown", ticket_path, "position", { options = ACTION_BAR_TICKET_POSITION_OPTIONS })
+            capture_action_bar_per_bar_setting(bar, ns.L["Ticket Icon"], ns.L["Offset X"], "slider", ticket_path, "offsetX", { min = -200, max = 200, step = 1 })
+            capture_action_bar_per_bar_setting(bar, ns.L["Ticket Icon"], ns.L["Offset Y"], "slider", ticket_path, "offsetY", { min = -200, max = 200, step = 1 })
         end
 
         if bar.layout then

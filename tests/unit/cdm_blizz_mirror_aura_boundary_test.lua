@@ -237,6 +237,9 @@ local ns = {
 }
 
 assert(loadfile("QUI_CDM/cdm/cdm_blizz_mirror.lua"))("QUI", ns)
+-- Suppression satellite loads right after the parent (TOC order); the
+-- boundary events below route through SyncSuppressionToMaster.
+assert(loadfile("QUI_CDM/cdm/cdm_blizz_mirror_suppression.lua"))("QUI", ns)
 assert(type(eventScript) == "function", "mirror event script should be installed")
 assert(registeredUnitEvents.UNIT_AURA ~= true,
     "mirror should consume UNIT_AURA from cdm_spelldata instead of registering its own raw UNIT_AURA handler")

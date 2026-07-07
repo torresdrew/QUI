@@ -312,6 +312,7 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             { value = "binding", text = ns.L["Binding (BoE/BoA)"] },
             { value = "expansion", text = ns.L["Expansion"] },
             { value = "crafting_quality", text = ns.L["Crafting Quality (R1-R5)"] },
+            { value = "upgrade_track", text = ns.L["Upgrade Track"] },
         }
         local function cornerDD(key, desc)
             return GUI:CreateFormDropdown(sc.frame, nil, CORNER_OPTS, key, bags.appearance.corners, Refresh,
@@ -429,7 +430,7 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             if exclusionDropdown.SetOptions then exclusionDropdown.SetOptions(BuildExclusionOptions(behavior.junk)) end
             if exclusionDropdown.SetValue then exclusionDropdown.SetValue("", true) end
             Refresh()
-        end, { description = ns.L["Items excluded from junk dimming and the Sell Junk button. Selecting one removes the exclusion."] })
+        end, { description = ns.L["Items excluded from junk dimming, the Sell Junk button, and vendor auto-sell. Selecting one removes the exclusion."] })
         s4.AddRow(row(s4.frame, ns.L["Remove Exclusion"], exclusionDropdown))
 
         -- Add-by-ID cell (the currency-bar idiom below): validate via
@@ -466,7 +467,7 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
 
         L.closeSection(s4)
         PlaceNote(L, content,
-            ns.L["Exclusions protect specific items from junk dimming and the Sell Junk button. Add by item ID above; remove via the dropdown."],
+            ns.L["Exclusions protect specific items from junk dimming, the Sell Junk button, and vendor auto-sell. Add by item ID above; remove via the dropdown."],
             26)
 
         -- CURRENCY BAR

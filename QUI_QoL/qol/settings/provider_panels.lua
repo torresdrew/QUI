@@ -542,6 +542,38 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
     end })
 
     ---------------------------------------------------------------------------
+    -- NO-TARGET WARNING
+    ---------------------------------------------------------------------------
+    RegisterSharedOnly("noTargetWarning", { build = function(content, key, _width)
+        local db = U.GetProfileDB()
+        local general = db and db.general
+        if not general or not general.noTargetWarning then return 80 end
+        local cfg = general.noTargetWarning
+        local L = MakeLayout(content)
+        local function Refresh() if ns.RefreshNoTargetWarning then ns.RefreshNoTargetWarning() end end
+
+        L.headerAt(ns.L["General"])
+        local s0 = L.sectionAt()
+        local enabledW = GUI:CreateFormCheckbox(s0.frame, nil, "enabled", cfg, Refresh,
+            { description = ns.L["Flash a warning while you are in combat with no attackable target selected. Useful for damage rotations where an empty target means no damage."] })
+        local sizeW = GUI:CreateFormSlider(s0.frame, nil, 8, 72, 1, "fontSize", cfg, Refresh,
+            { description = ns.L["Font size of the no-target warning text."] })
+        s0.AddRow(row(s0.frame, ns.L["Enabled"], enabledW), row(s0.frame, ns.L["Font Size"], sizeW))
+        L.closeSection(s0)
+
+        L.headerAt(ns.L["Offsets"])
+        local s1 = L.sectionAt()
+        local xW = GUI:CreateFormSlider(s1.frame, nil, -500, 500, 10, "offsetX", cfg, Refresh,
+            { description = ns.L["Horizontal pixel offset for the no-target warning from its anchor. Positive moves right, negative moves left."] })
+        local yW = GUI:CreateFormSlider(s1.frame, nil, -500, 500, 10, "offsetY", cfg, Refresh,
+            { description = ns.L["Vertical pixel offset for the no-target warning from its anchor. Positive moves up, negative moves down."] })
+        s1.AddRow(row(s1.frame, ns.L["Horizontal Offset"], xW), row(s1.frame, ns.L["Vertical Offset"], yW))
+        L.closeSection(s1)
+
+        return FinishProviderPage(L, content, key, "noTargetWarning")
+    end })
+
+    ---------------------------------------------------------------------------
     -- ACTION TRACKER
     ---------------------------------------------------------------------------
     RegisterSharedOnly("actionTracker", { build = function(content, key, _width)
@@ -1068,7 +1100,9 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
 
         local maxStackW = GUI:CreateFormCheckbox(s2.frame, nil, "showItemMaxStackSize", tooltip, RefreshTooltips,
             { description = ns.L["Append the maximum stack size to stackable item tooltips."] })
-        s2.AddRow(row(s2.frame, ns.L["Show Item Max Stack Size"], maxStackW))
+        local scaleW = GUI:CreateFormSlider(s2.frame, nil, 0.5, 2, 0.05, "scale", tooltip, RefreshTooltips,
+            { precision = 2, description = ns.L["Scale multiplier for the whole tooltip. 1 is the Blizzard default size."] })
+        s2.AddRow(row(s2.frame, ns.L["Show Item Max Stack Size"], maxStackW), row(s2.frame, ns.L["Tooltip Scale"], scaleW))
 
         local classColorNameW = GUI:CreateFormCheckbox(s2.frame, nil, "classColorName", tooltip, RefreshTooltips,
             { description = ns.L["Color player names in tooltips by their class."] })
@@ -1081,6 +1115,16 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         local hideTitleW = GUI:CreateFormCheckbox(s2.frame, nil, "hidePlayerTitle", tooltip, RefreshTooltips,
             { description = ns.L["Hide character titles on player tooltips."] })
         s2.AddRow(row(s2.frame, ns.L["Hide Server Name"], hideServerW), row(s2.frame, ns.L["Hide Player Titles"], hideTitleW))
+
+        local hideFactionW = GUI:CreateFormCheckbox(s2.frame, nil, "hideFactionText", tooltip, RefreshTooltips,
+            { description = ns.L["Hide the Alliance/Horde/Neutral faction line on unit tooltips."] })
+        local hidePvpW = GUI:CreateFormCheckbox(s2.frame, nil, "hidePvpText", tooltip, RefreshTooltips,
+            { description = ns.L["Hide the PvP flag line on player tooltips."] })
+        s2.AddRow(row(s2.frame, ns.L["Hide Faction Line"], hideFactionW), row(s2.frame, ns.L["Hide PvP Line"], hidePvpW))
+
+        local connectedW = GUI:CreateFormCheckbox(s2.frame, nil, "showConnectedRealm", tooltip, RefreshTooltips,
+            { description = ns.L["Mark cross-realm players whose realm is connected to yours with a green (Connected) tag on the realm line."] })
+        s2.AddRow(row(s2.frame, ns.L["Show Connected-Realm Tag"], connectedW))
 
         local showTargetW = GUI:CreateFormCheckbox(s2.frame, nil, "showTooltipTarget", tooltip, RefreshTooltips,
             { description = ns.L["Show the unit's current target on its tooltip. Updates live as the target changes."] })
@@ -1098,9 +1142,19 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             { description = ns.L["Show the player's Mythic+ rating on player tooltips."] })
         s2.AddRow(row(s2.frame, ns.L["Show Mount Collected Status"], showMountCollectedW), row(s2.frame, ns.L["Show M+ Rating"], showMythicW))
 
+        local showNpcIDW = GUI:CreateFormCheckbox(s2.frame, nil, "showNpcID", tooltip, RefreshTooltips,
+            { description = ns.L["Append the NPC ID to creature and NPC tooltips. Useful for macros, scripting, and bug reports."] })
+        s2.AddRow(row(s2.frame, ns.L["Show NPC ID"], showNpcIDW))
+
         local hideGuildW = GUI:CreateFormToggle(s2.frame, nil, "hideGuildName", tooltip, RefreshTooltips,
             { description = ns.L["Strip the guild name line from player tooltips."] })
         s2.AddRow(row(s2.frame, ns.L["Hide Guild Name"], hideGuildW))
+
+        local guildRankW = GUI:CreateFormCheckbox(s2.frame, nil, "showGuildRank", tooltip, RefreshTooltips,
+            { description = ns.L["Append the player's guild rank to the guild line. Has no effect while Hide Guild Name is on."] })
+        local guildColorW = GUI:CreateFormCheckbox(s2.frame, nil, "colorGuildNames", tooltip, RefreshTooltips,
+            { description = ns.L["Recolor the guild line: green for your own guild, blue for other guilds. Has no effect while Hide Guild Name is on."] })
+        s2.AddRow(row(s2.frame, ns.L["Show Guild Rank"], guildRankW), row(s2.frame, ns.L["Color Guild Names"], guildColorW))
         L.closeSection(s2)
 
         -- PLAYER ITEM LEVEL

@@ -86,6 +86,7 @@ core\locale\locale.lua
 # == core/core.xml ==
 core\debug_gate.lua
 core\utils.lua
+core\ns_export_guard.lua
 core\infobar_shared.lua
 core\settings_layout_shared.lua
 core\new_profile_defaults.lua

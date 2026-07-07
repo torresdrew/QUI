@@ -125,6 +125,63 @@ do
     end
 end
 
+-- Blizzard anchors HelpOpenWebTicketButton (the round icon shown while a
+-- support ticket is open) to the edge button of its own MicroMenu via
+-- GetEdgeButton(). With the micro buttons reclaimed into QUI's container
+-- that returns nil, and Blizzard's SetPoint("CENTER", nil, ...) drops the
+-- icon at screen center. Re-anchor it to the character micro button (its
+-- parent), above or below the bar depending on which half of the screen
+-- the bar sits in — mirroring Blizzard's keep-it-on-screen intent.
+--
+-- The button must keep exactly ONE anchor point, on CENTER: Blizzard's
+-- UpdateHelpTicketButtonAnchor replaces the CENTER point in place. Any
+-- other point (or ClearAllPoints + TOP/BOTTOM) makes Blizzard's secure
+-- SetPoint ADD a second point, bridging QUI's anchor family with the
+-- screen family — Edit Mode's secure layout pass blocks that with
+-- "SetPoint would result in anchor family connection" warnings on zone-in.
+AnchorHelpTicketButton = function()
+    if ActionBarsOwned._microOwnedByUI then return end
+    local ticketBtn = _G.HelpOpenWebTicketButton
+    local charBtn = _G.CharacterMicroButton
+    if not (ticketBtn and charBtn) then return end
+
+    local barDB = GetBarSettings("microbar")
+    local iconDB = barDB and barDB.ticketIcon
+    local mode = (iconDB and iconDB.position) or "auto"
+    local offX = (iconDB and iconDB.offsetX) or 0
+    local offY = (iconDB and iconDB.offsetY) or 0
+
+    local anchorAbove
+    if mode == "above" then
+        anchorAbove = true
+    elseif mode == "below" then
+        anchorAbove = false
+    else
+        -- Auto: keep the icon on-screen by flipping to whichever side
+        -- faces screen center. GetCenter can return secret values in
+        -- combat — reuse the last out-of-combat side decision (default:
+        -- icon above the bar).
+        anchorAbove = ActionBarsOwned._helpTicketAnchorAbove
+        if not InCombatLockdown() then
+            local _, cy = charBtn:GetCenter()
+            local screenH = UIParent:GetHeight()
+            if cy and screenH and screenH > 0 then
+                local relScale = charBtn:GetEffectiveScale() / UIParent:GetEffectiveScale()
+                anchorAbove = (cy * relScale) < (screenH / 2)
+                ActionBarsOwned._helpTicketAnchorAbove = anchorAbove
+            end
+        end
+        if anchorAbove == nil then anchorAbove = true end
+    end
+
+    -- 21 = half the icon's 35px height + a 4px gap from the bar edge.
+    if anchorAbove then
+        ticketBtn:SetPoint("CENTER", charBtn, "TOP", offX, 21 + offY)
+    else
+        ticketBtn:SetPoint("CENTER", charBtn, "BOTTOM", offX, -21 + offY)
+    end
+end
+
 LayoutNativeButtons = function(barKey)
     local container = ActionBarsOwned.containers[barKey]
     local buttons = ActionBarsOwned.nativeButtons[barKey]
@@ -308,6 +365,7 @@ LayoutNativeButtons = function(barKey)
                 helpBtn:Show()
             end
         end
+        AnchorHelpTicketButton()
     end
 
     -- Suppress Blizzard's dirty flag so its Layout() doesn't override our

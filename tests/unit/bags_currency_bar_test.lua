@@ -36,7 +36,11 @@ end
 local function MakeFrame()
     local f = { _shown = true }
     function f:SetPoint() end
+    function f:ClearAllPoints() end
     function f:SetHeight() end
+    function f:SetWidth() end
+    function f:EnableMouse() end
+    function f:SetScript() end
     function f:Show() self._shown = true end
     function f:Hide() self._shown = false end
     function f:CreateTexture() return MakeTexture() end

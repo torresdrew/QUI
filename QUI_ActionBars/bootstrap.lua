@@ -20,6 +20,10 @@ end
 setmetatable(ns, {
     __index = mainNS,
     __newindex = function(_, key, value)
+        -- Collision guard (core/ns_export_guard.lua): flags a suite
+        -- overwriting another suite's export instead of silently winning.
+        local track = mainNS._TrackSuiteNsExport
+        if track then track(ADDON_NAME, key, value) end
         mainNS[key] = value
     end,
 })

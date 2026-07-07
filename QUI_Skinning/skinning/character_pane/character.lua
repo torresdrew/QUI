@@ -252,6 +252,7 @@ local defaultSettings = {
     showItemLevel = true,
     showEnchants = true,
     showGems = true,
+    showGemSummary = false,
     showDurability = false,
     inspectEnabled = true,
     showModelBackground = true,
@@ -3323,6 +3324,60 @@ local function UpdateStatsPanel(panel, unit)
         end
     end
 
+        -- GEMS (socket summary): filled-gem counts per color across all
+        -- equipped gear + an empty-socket tally. Reuses the per-slot
+        -- GetGemInfo enumeration (secret-guarded, tooltip-scan backed);
+        -- colors from GEM_COLORS. Opt-in via showGemSummary.
+        if settings.showGemSummary then
+            y = y - 5
+            _, headerHeight = CreateSectionHeader(scrollChild, ns.L["Gems"], y)
+            y = y - headerHeight
+
+            local colorCounts, colorOrder = {}, {}
+            local emptyCount = 0
+            for _, slot in ipairs(EQUIPMENT_SLOTS) do
+                local gems = GetGemInfo(unit, slot.id)
+                for _, gem in ipairs(gems) do
+                    if gem.filled then
+                        local key = gem.type or "Prismatic"
+                        if not colorCounts[key] then
+                            colorCounts[key] = 0
+                            colorOrder[#colorOrder + 1] = key
+                        end
+                        colorCounts[key] = colorCounts[key] + 1
+                    else
+                        emptyCount = emptyCount + 1
+                    end
+                end
+            end
+            table.sort(colorOrder)
+
+            if #colorOrder == 0 and emptyCount == 0 then
+                local row = CreateStatRow(scrollChild, y)
+                row.label:SetText(ns.L["No sockets"])
+                row.value:SetText("")
+                y = y - ROW_HEIGHT
+            else
+                for _, key in ipairs(colorOrder) do
+                    local row = CreateStatRow(scrollChild, y)
+                    row.label:SetText(key)
+                    local gc = GEM_COLORS[key]
+                    if gc then
+                        row.label:SetTextColor(gc[1], gc[2], gc[3], gc[4] or 1)
+                    end
+                    row.value:SetText(colorCounts[key])
+                    y = y - ROW_HEIGHT
+                end
+                if emptyCount > 0 then
+                    local row = CreateStatRow(scrollChild, y)
+                    row.label:SetText(ns.L["Empty Sockets"])
+                    row.label:SetTextColor(1, 0.35, 0.35, 1)
+                    row.value:SetText(emptyCount)
+                    y = y - ROW_HEIGHT
+                end
+            end
+        end
+
         FinalizeStatsPanelLayout(panel, scrollChild, y)
     end)  -- End pcall
 
@@ -4271,6 +4326,10 @@ local function HookCharacterFrame()
         local showGems = GUI:CreateFormCheckbox(scrollChild, ns.L["Show Gem Indicators"], "showGems", charDB, RefreshAll,
             { description = ns.L["Show colored gem dots indicating how many gem slots the item has and whether each is filled."] })
         y = PlaceRow(showGems, y)
+
+        local showGemSummary = GUI:CreateFormCheckbox(scrollChild, ns.L["Show Gem Summary in Stats"], "showGemSummary", charDB, RefreshAll,
+            { description = ns.L["Add a Gems section to the stats panel with socketed-gem counts per color and an empty-socket tally."] })
+        y = PlaceRow(showGemSummary, y)
 
         local showDura = GUI:CreateFormCheckbox(scrollChild, ns.L["Show Durability Bars"], "showDurability", charDB, RefreshAll,
             { description = ns.L["Show a small durability bar on each slot overlay that has durability damage."] })
