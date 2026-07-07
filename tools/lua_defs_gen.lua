@@ -50,7 +50,11 @@ end
 local function buildSignature(fn)
     local lines = {}
     if type(fn.Documentation) == "table" and fn.Documentation[1] then
-        lines[#lines + 1] = "--- " .. table.concat(fn.Documentation, " ")
+        -- Doc text can contain raw control chars (some strings literally
+        -- describe LF/CR/TAB); a bare newline would split the "--- " comment
+        -- across lines and produce invalid Lua. Collapse all control chars.
+        local doc = table.concat(fn.Documentation, " "):gsub("%c", " ")
+        lines[#lines + 1] = "--- " .. doc
     end
     local params = {}
     if type(fn.Arguments) == "table" then
