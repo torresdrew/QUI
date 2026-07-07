@@ -16,7 +16,6 @@ local C_Timer = C_Timer
 local hooksecurefunc = hooksecurefunc
 local _securecall = securecallfunction or function(fn, ...) return fn(...) end
 local table_insert = table.insert
-local string_format = string.format
 
 ---------------------------------------------------------------------------
 -- CDM Buff Layout
@@ -1215,25 +1214,47 @@ end
 -- Icons: Hash-based detection for count/settings changes
 ---------------------------------------------------------------------------
 
-local lastIconHash = ""
+-- Last-seen icon count + settings, compared field-by-field so the poll
+-- doesn't allocate a hash string per tick. count = -1 is the invalidation
+-- sentinel: it can never match a real count, forcing the next check to
+-- see a change.
+local lastIconState = { count = -1 }
 
--- Build hash of icon count + settings to detect actual changes
-local function BuildIconHash(count, settings)
-    return string_format("%d_%d_%d_%.2f_%d_%s_%s_%s_%d_%s_%s_%d_%d",
-        count,
-        settings.iconSize or 42,
-        settings.padding or 0,
-        settings.aspectRatioCrop or 1.0,
-        settings.borderSize or 2,
-        settings.growthDirection or "CENTERED_HORIZONTAL",
-        settings.anchorTo or "disabled",
-        settings.anchorPlacement or "center",
-        settings.anchorSpacing or 0,
-        settings.anchorSourcePoint or "CENTER",
-        settings.anchorTargetPoint or "CENTER",
-        settings.anchorOffsetX or 0,
-        settings.anchorOffsetY or 0
-    )
+local ICON_STATE_FIELDS = {
+    { "iconSize", 42 },
+    { "padding", 0 },
+    { "aspectRatioCrop", 1.0 },
+    { "borderSize", 2 },
+    { "growthDirection", "CENTERED_HORIZONTAL" },
+    { "anchorTo", "disabled" },
+    { "anchorPlacement", "center" },
+    { "anchorSpacing", 0 },
+    { "anchorSourcePoint", "CENTER" },
+    { "anchorTargetPoint", "CENTER" },
+    { "anchorOffsetX", 0 },
+    { "anchorOffsetY", 0 },
+}
+
+local function InvalidateIconState()
+    lastIconState.count = -1
+end
+
+-- Returns true (and records the new state) when the icon count or any
+-- tracked setting changed since the last call. Zero allocations.
+local function UpdateIconState(count, settings)
+    local changed = lastIconState.count ~= count
+    lastIconState.count = count
+    for i = 1, #ICON_STATE_FIELDS do
+        local field = ICON_STATE_FIELDS[i]
+        local key = field[1]
+        local value = settings[key]
+        if value == nil then value = field[2] end
+        if lastIconState[key] ~= value then
+            lastIconState[key] = value
+            changed = true
+        end
+    end
+    return changed
 end
 
 local function CheckIconChanges()
@@ -1260,17 +1281,16 @@ local function CheckIconChanges()
         end
     end
 
-    -- Build hash including count AND settings
+    -- Anchor stays per-check: it is self-caching and doubles as the re-pin /
+    -- retry loop for protected anchor targets (see ApplyBuffIconAnchor).
     local settings = GetBuffSettings()
     ApplyBuffIconAnchor(settings)
-    local hash = BuildIconHash(visibleCount, settings)
 
-    -- Only layout if hash changed (count or settings)
-    if hash == lastIconHash then
+    -- Only layout if the count or a tracked setting changed
+    if not UpdateIconState(visibleCount, settings) then
         return
     end
 
-    lastIconHash = hash
     LayoutBuffIcons()
 end
 
@@ -1279,15 +1299,24 @@ end
 -- instead of being captured upvalues inside anonymous closures.
 ---------------------------------------------------------------------------
 local buffIconOnUpdateElapsed = 0
+local buffIconScanElapsed = 0
 
 local function BuffIconViewer_OnUpdate(self, elapsed)
     buffIconOnUpdateElapsed = buffIconOnUpdateElapsed + elapsed
+    buffIconScanElapsed = buffIconScanElapsed + elapsed
     if buffIconOnUpdateElapsed > 0.1 then  -- 10 FPS polling (was 20 FPS)
         buffIconOnUpdateElapsed = 0
-        -- Suppress Blizzard's dirty flag at the same cadence as our poll.
-        -- Previously ran every frame; moving inside the throttle reduces
-        -- calls from 60+/sec to ~10/sec with no visible layout glitches.
+        -- Suppress Blizzard's dirty flag at this cadence. Previously ran
+        -- every frame; moving inside the throttle reduces calls from
+        -- 60+/sec to ~10/sec with no visible layout glitches.
         if self.MarkClean then self:MarkClean() end
+    end
+    -- The pool scan + change detection is a fallback — UNIT_AURA events
+    -- drive icon changes immediately via the coalesce frame — so it runs
+    -- at a relaxed cadence. It also re-pins protected anchor targets, for
+    -- which 0.25s remains visually immediate.
+    if buffIconScanElapsed > 0.25 then
+        buffIconScanElapsed = 0
         if self:IsShown() then
             CheckIconChanges()
         end
@@ -1421,7 +1450,7 @@ local function Initialize()
                 lastAuraIconCount = currentCount
             end
 
-            lastIconHash = ""
+            InvalidateIconState()
             CheckIconChanges()
         end)
 
@@ -1582,7 +1611,7 @@ end
 
 function CDMBuffLayout.OnLayoutReady()
     -- Icons were (re)built in the owned container; position + style them
-    lastIconHash = ""
+    InvalidateIconState()
     LayoutBuffIcons()
 end
 
@@ -1601,8 +1630,8 @@ do
     local core = GetCore()
     if core and core.RegisterEditModeExit then
         core:RegisterEditModeExit(function()
-            -- Reset hash so the next CheckIconChanges() triggers a full re-layout
-            lastIconHash = ""
+            -- Reset icon state so the next CheckIconChanges() triggers a full re-layout
+            InvalidateIconState()
 
             -- Invalidate the anchor cache so ApplyBuffIconAnchor re-applies
             -- the saved anchor settings.  Edit Mode may have moved the
@@ -1634,7 +1663,7 @@ CDMBuffLayout.GetTrackedBarRuntimeEntries = GetTrackedBarRuntimeEntries
 -- Force refresh function (can be called from GUI)
 function CDMBuffLayout.Refresh()
     -- Reset states to force recalculation
-    lastIconHash = ""  -- Force hash recalculation for icons
+    InvalidateIconState()  -- Force change detection to fire for icons
 
     -- Update layout direction when settings change (e.g., orientation toggle)
     -- Must be done outside combat to take effect
