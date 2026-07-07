@@ -1133,6 +1133,14 @@ ns.ShouldHideActionBarsForVisibility = function()
     return not ShouldActionBarsBeVisible()
 end
 
+local function ApplyBarAlpha(setBarAlpha, barKey, container, alpha)
+    if setBarAlpha then
+        pcall(setBarAlpha, barKey, alpha)
+    elseif container and container.SetAlpha then
+        pcall(container.SetAlpha, container, alpha)
+    end
+end
+
 local function OnActionBarsFadeUpdate(self)
     local targetAlpha = ReadNumber(ActionBarsVisibility.fadeTargetAlpha, 1)
     local vis = GetActionBarsVisibilitySettings()
@@ -1146,13 +1154,21 @@ local function OnActionBarsFadeUpdate(self)
     local startAlpha = ReadNumber(ActionBarsVisibility.fadeStartAlpha, targetAlpha)
     local alpha = startAlpha + (targetAlpha - startAlpha) * progress
 
-    local frames = ActionBarsVisibility.fadeTargets or GetActionBarFrames()
     local setBarAlpha = ns.ActionBarsOwned and ns.ActionBarsOwned.SetBarAlpha
-    for _, entry in ipairs(frames) do
-        if setBarAlpha then
-            pcall(setBarAlpha, entry.barKey, alpha)
-        elseif entry.container and entry.container.SetAlpha then
-            pcall(entry.container.SetAlpha, entry.container, alpha)
+    local frames = ActionBarsVisibility.fadeTargets
+    if frames then
+        for _, entry in ipairs(frames) do
+            ApplyBarAlpha(setBarAlpha, entry.barKey, entry.container, alpha)
+        end
+    else
+        -- Defensive fallback (fadeTargets is normally set for the fade's
+        -- lifetime): iterate the containers directly instead of allocating
+        -- a snapshot per frame.
+        local containers = ns.ActionBarsOwned and ns.ActionBarsOwned.containers
+        if containers then
+            for barKey, container in pairs(containers) do
+                ApplyBarAlpha(setBarAlpha, barKey, container, alpha)
+            end
         end
     end
 
@@ -1323,9 +1339,12 @@ local function SetupActionBarsMouseoverDetector()
             return
         end
 
-        local frames = GetActionBarFrames()
-        for _, entry in ipairs(frames) do
-            local container = entry.container
+        -- Iterate the owned containers directly — this poll runs for the
+        -- whole time bars are hidden or fading, so it must not allocate a
+        -- snapshot table per tick.
+        local containers = ns.ActionBarsOwned and ns.ActionBarsOwned.containers
+        if not containers then return end
+        for _, container in pairs(containers) do
             local alpha = container and container.GetAlpha and ReadNumber(container:GetAlpha(), 1) or 1
             if container and alpha < 0.99 and container:IsMouseOver() then
                 if ActionBarsVisibility.leaveTimer then
