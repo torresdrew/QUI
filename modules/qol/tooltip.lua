@@ -2108,28 +2108,31 @@ local function SetupTooltipHook()
     -- by this interval plus the mouse-focus cache TTL.
     local TOOLTIP_VISIBILITY_CHECK_INTERVAL = 0.05
     gtSpellIDWatcher:SetScript("OnUpdate", function(_, elapsed)
-        local shown = GameTooltip:IsShown()
-        if shown then
-            TooltipDebugCount("qol.visibilityFrame")
-        end
-        if shown and not gtSpellIDWasShown then
-            gtVisibilityElapsed = TOOLTIP_VISIBILITY_CHECK_INTERVAL
-            gtTooltipHadUnit = false
-            ResetTooltipHideFade()
-        end
-        if gtSpellIDWasShown and not shown then
+        -- IsShown polling, show/hide edge detection, and the visibility
+        -- evaluation all run at the check interval, not per frame — the idle
+        -- path is one accumulate-and-compare. Perceived hide latency was
+        -- already bounded by this interval.
+        gtVisibilityElapsed = gtVisibilityElapsed + (elapsed or 0)
+        if gtVisibilityElapsed >= TOOLTIP_VISIBILITY_CHECK_INTERVAL then
             gtVisibilityElapsed = 0
-            gtTooltipHadUnit = false
-            ResetTooltipHideFade()
-            InvalidatePendingSetUnit()
-            tooltipSpellIDAdded[GameTooltip] = nil
-            tooltipMaxStackAdded[GameTooltip] = nil
-            tooltipPlayerItemLevelGUID[GameTooltip] = nil
-            tooltipUnitInfoState[GameTooltip] = nil
-        elseif shown then
-            gtVisibilityElapsed = gtVisibilityElapsed + (elapsed or 0)
-            if gtVisibilityElapsed >= TOOLTIP_VISIBILITY_CHECK_INTERVAL then
-                gtVisibilityElapsed = 0
+
+            local shown = GameTooltip:IsShown()
+            if shown then
+                TooltipDebugCount("qol.visibilityFrame")
+            end
+            if shown and not gtSpellIDWasShown then
+                gtTooltipHadUnit = false
+                ResetTooltipHideFade()
+            end
+            if gtSpellIDWasShown and not shown then
+                gtTooltipHadUnit = false
+                ResetTooltipHideFade()
+                InvalidatePendingSetUnit()
+                tooltipSpellIDAdded[GameTooltip] = nil
+                tooltipMaxStackAdded[GameTooltip] = nil
+                tooltipPlayerItemLevelGUID[GameTooltip] = nil
+                tooltipUnitInfoState[GameTooltip] = nil
+            elseif shown then
                 TooltipDebugCount("qol.visibilityCheck")
                 -- Latch the "had a unit this cycle" flag before evaluating
                 -- visibility, so ShouldKeepTooltipVisible can distinguish a
@@ -2157,21 +2160,25 @@ local function SetupTooltipHook()
                     end
                 end
             end
+            gtSpellIDWasShown = shown
+        end
 
-            if tooltipHideFadeState.active then
-                tooltipHideFadeState.elapsed = tooltipHideFadeState.elapsed + (elapsed or 0)
-                local duration = tooltipHideFadeState.duration
-                local progress = (duration > 0) and (tooltipHideFadeState.elapsed / duration) or 1
-                if progress >= 1 then
-                    ResetTooltipHideFade()
-                    GameTooltip:Hide()
-                else
-                    local nextAlpha = math.max(0, tooltipHideFadeState.startAlpha * (1 - progress))
-                    pcall(GameTooltip.SetAlpha, GameTooltip, nextAlpha)
-                end
+        -- The hide-fade alpha animation is the only per-frame work, and it
+        -- only runs while a fade is active, so the fade renders smoothly. It
+        -- sits after the evaluation so a fade started this tick also begins
+        -- progressing this tick.
+        if tooltipHideFadeState.active then
+            tooltipHideFadeState.elapsed = tooltipHideFadeState.elapsed + (elapsed or 0)
+            local duration = tooltipHideFadeState.duration
+            local progress = (duration > 0) and (tooltipHideFadeState.elapsed / duration) or 1
+            if progress >= 1 then
+                ResetTooltipHideFade()
+                GameTooltip:Hide()
+            else
+                local nextAlpha = math.max(0, tooltipHideFadeState.startAlpha * (1 - progress))
+                pcall(GameTooltip.SetAlpha, GameTooltip, nextAlpha)
             end
         end
-        gtSpellIDWasShown = shown
     end)
 
     local idOwnerSkipPrefixes = {
