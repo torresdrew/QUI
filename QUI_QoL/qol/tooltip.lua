@@ -466,6 +466,13 @@ end
 -- is active can re-enter Blizzard's secure widget layout and trigger
 -- LayoutFrame secret-value comparison errors.
 local function HasActiveWidgetContainer(tooltip)
+    if Helpers.HasTaintedWidgetContainer then
+        TooltipDebugCount("qol.widgetScan")
+        local active = Helpers.HasTaintedWidgetContainer(tooltip)
+        if active then TooltipDebugCount("qol.widgetHit") end
+        return active
+    end
+
     if not tooltip or not tooltip.GetChildren or not tooltip.GetNumChildren then return false end
     TooltipDebugCount("qol.widgetScan")
 
@@ -630,6 +637,7 @@ local function AnchorTooltipToCursor(tooltip, parent, settings)
     if not tooltip then return false end
     if tooltip.IsForbidden and tooltip:IsForbidden() then return false end
     if tooltip == GameTooltip and HasActiveMoneyFrame(tooltip) then return false end
+    if tooltip == GameTooltip and HasActiveWidgetContainer(tooltip) then return false end
     EnsureCursorFollowHooks(tooltip)
     tooltip:SetOwner(parent or UIParent, "ANCHOR_NONE")
     if tooltip == GameTooltip then
@@ -1889,6 +1897,11 @@ local function SetupTooltipHook()
                 tooltip:ClearLines()
                 return
             end
+        end
+
+        if tooltip == GameTooltip and HasActiveWidgetContainer(tooltip) then
+            SetCursorFollowActive(tooltip, false)
+            return
         end
 
         -- Reposition immediately — ClearAllPoints/SetPoint are C-side and

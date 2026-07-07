@@ -193,7 +193,15 @@ local function assertAbsent(text, needle, reason)
     assert(not text:find(needle, 1, true), reason)
 end
 
+local function assertBefore(text, first, second, reason)
+    local firstAt = assert(text:find(first, 1, true), reason .. " (missing first: " .. first .. ")")
+    local secondAt = assert(text:find(second, 1, true), reason .. " (missing second: " .. second .. ")")
+    assert(firstAt < secondAt, reason)
+end
+
 local tooltipSkinningSource = readFile("QUI_Skinning/skinning/system/tooltips.lua")
+local tooltipQoLSource = readFile("QUI_QoL/qol/tooltip.lua")
+local helpersSource = readFile("core/utils.lua")
 assertContains(tooltipSkinningSource, "local function IsInternalEmbeddedItemTooltipFrame(tooltip)",
     "tooltip skinning must centralize the embedded item reward tooltip guard")
 
@@ -209,5 +217,48 @@ local hookBody = assert(tooltipSkinningSource:match("HookTooltipOnShow = functio
     "tooltip skinning must define HookTooltipOnShow before HookAllTooltips")
 assertContains(hookBody, "IsInternalEmbeddedItemTooltipFrame(tooltip)",
     "dynamic tooltip discovery must refuse embedded item reward tooltip frames before installing Show hooks")
+
+assertContains(helpersSource, "function Helpers.HasTaintedWidgetContainer(tooltip)",
+    "shared widget-container taint guard must exist for world quest/GameTooltip widget sets")
+assertContains(helpersSource, "child:GetNumPoints()",
+    "widget-container guard must probe point counts without comparing them directly")
+assertContains(helpersSource, "Helpers.IsSecretValue(widgetSetID)",
+    "secret widget-set IDs must make the tooltip cycle unsafe before nil comparison")
+assertContains(helpersSource, "Helpers.IsSecretValue(dirty)",
+    "secret dirty flags must make the tooltip cycle unsafe before boolean comparison")
+assertContains(helpersSource, "widgetSetID ~= nil or dirty == true",
+    "registered or dirty widget containers must make the tooltip cycle unsafe")
+
+assertContains(tooltipSkinningSource, "Helpers.HasTaintedWidgetContainer",
+    "tooltip skinning must use the shared widget-container detector")
+assertContains(tooltipSkinningSource, "skin.fontWidgetSkipped",
+    "deferred GameTooltip font refresh must skip active widget-set tooltips")
+local styleTooltipStart = assert(tooltipSkinningSource:find("local function StyleTooltip", 1, true))
+local styleTooltipBody = tooltipSkinningSource:sub(styleTooltipStart)
+assertBefore(styleTooltipBody,
+    "HasActiveWidgetContainer and HasActiveWidgetContainer(tooltip)",
+    "pcall(ApplyTooltipChrome, tooltip)",
+    "StyleTooltip must guard widget containers before applying chrome")
+local onTooltipShowStart = assert(tooltipSkinningSource:find("local function OnTooltipShow", 1, true))
+local onTooltipShowBody = tooltipSkinningSource:sub(onTooltipShowStart)
+assertBefore(onTooltipShowBody,
+    "if HasActiveWidgetContainer(tooltip) then",
+    "if HasActiveMoneyFrame(tooltip) then",
+    "OnTooltipShow must guard widget containers before money-frame fallback")
+local styleGameTooltipStart = assert(tooltipSkinningSource:find("StyleGameTooltip = function%(tooltip%)", 1))
+local styleGameTooltipBody = tooltipSkinningSource:sub(styleGameTooltipStart)
+assertBefore(styleGameTooltipBody,
+    "HasActiveWidgetContainer(tooltip)",
+    "IsChromeStable(tooltip)",
+    "StyleGameTooltip must fall back before the stable chrome fast path")
+
+assertContains(tooltipQoLSource, "Helpers.HasTaintedWidgetContainer",
+    "QoL tooltip layout refresh must use the shared widget-container detector")
+assertContains(tooltipQoLSource, "tooltip == GameTooltip and HasActiveWidgetContainer(tooltip) then return false",
+    "cursor anchoring must refuse active widget-set GameTooltip cycles")
+assertBefore(tooltipQoLSource,
+    "if tooltip == GameTooltip and HasActiveWidgetContainer(tooltip) then",
+    "-- Reposition immediately",
+    "default-anchor hook must bail before immediate custom positioning")
 
 print("OK: tooltip_game_font_object_test")
