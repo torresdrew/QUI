@@ -12,6 +12,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+
+## v4.1.0 - 2026-07-07
+
+### Added
+- feat(qol): add cursor trail, sound mute, loot curation + tooltip/bags extras
+- feat(qol): add five QoL modules - audio device lock, event sounds, extended ignore, friends class colors, no-target warning
+- feat(actionbars): add position options for the open-ticket icon
+
+### Fixed
+- perf(infobar): skip the mouseover-fade alpha work while settled
+- perf(options): debounce slider onChange during drags
+- perf(qol): park the cursor-follow watcher and gate repositioning on movement
+- perf(damagemeter): stop walking settings on every render frame of the ticker
+- perf(qol): run the pairs(_G) action-button sweep once per session
+- perf(cdm): stop allocating bar-frame snapshots in the mouseover poll and fade fallback
+- perf(cdm): make the buff-icon poll allocation-free and relax its cadence
+- perf(qol): throttle the tooltip visibility watcher's idle and shown paths
+- perf(cdm): gate alpha-enforcer work behind its throttle and child-count cache
+- fix(core): park profile changes during Mythic+ instead of dropping them
+- fix(core): detect cross-suite namespace export collisions
+- fix(options): skip tab strip for single sub-page tiles
+- fix(sounds): defer QoL whisper alert to chat when chat owns it
+- fix(tooltips): guard GameTooltip widget containers from tainted layout
 ## v4.0.5 - 2026-07-06
 
 ### Added
