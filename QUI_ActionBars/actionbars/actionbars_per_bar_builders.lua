@@ -177,6 +177,9 @@ do
                     "enabled", markersDB, RefreshRaidMarkersBar,
                     { description = ns.L["Show a bar of buttons that place raid target markers on your target. Requires raid lead or assist in a group."] }), body, sy)
                 sy = sy - FORM_ROW
+                sy = P(GUI:CreateFormCheckbox(body, ns.L["Only In Dungeons & Raids"],
+                    "onlyInInstances", markersDB, RefreshRaidMarkersBar,
+                    { description = ns.L["Only show the bar while you are inside a dungeon or raid instance."] }), body, sy)
                 P(GUI:CreateFormDropdown(body, ns.L["Grow Direction"],
                     totemBarGrowOptions, "growDirection", markersDB, RefreshRaidMarkersBar,
                     { description = ns.L["Direction the raid markers bar grows."] }), body, sy)

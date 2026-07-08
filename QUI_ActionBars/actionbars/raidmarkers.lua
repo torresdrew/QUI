@@ -141,6 +141,21 @@ local function ComputeLeaderish()
 end
 
 ---------------------------------------------------------------------------
+-- BAR CONTEXT (whole-bar gate: optionally only inside dungeons and raids)
+---------------------------------------------------------------------------
+local function InDungeonOrRaid()
+    local inInstance, instanceType = IsInInstance()
+    return inInstance and (instanceType == "party" or instanceType == "raid") or false
+end
+
+-- Preview always shows the bar so it can be positioned anywhere.
+local function IsBarContextActive(db)
+    if RaidMarkersBar.previewing then return true end
+    if not db or not db.onlyInInstances then return true end
+    return InDungeonOrRaid()
+end
+
+---------------------------------------------------------------------------
 -- SECURE ATTRIBUTES (set OOC only; deferred in combat)
 ---------------------------------------------------------------------------
 local function SetMarkerAction(btn, marker)
@@ -687,7 +702,7 @@ end)
 ---------------------------------------------------------------------------
 function RaidMarkersBar:Refresh()
     local db = GetDB()
-    if not db or not db.enabled then
+    if not db or not db.enabled or not IsBarContextActive(db) then
         Disable()
         return
     end
@@ -775,23 +790,32 @@ if ns.Registry then
 end
 
 ---------------------------------------------------------------------------
--- LEADERSHIP WATCHER
+-- LEADERSHIP / CONTEXT WATCHER
 -- GROUP_ROSTER_UPDATE fires in bursts of 5-20 during roster churn, so the
 -- recompute is coalesced through a hidden frame's OnUpdate (one pass per
--- render frame at most; same pattern as hud_visibility.lua).
+-- render frame at most; same pattern as hud_visibility.lua). The same pass
+-- tracks the whole-bar instance gate (onlyInInstances), re-evaluated on
+-- PLAYER_ENTERING_WORLD.
 ---------------------------------------------------------------------------
 local leaderCoalesce = CreateFrame("Frame")
 leaderCoalesce:Hide()
 leaderCoalesce:SetScript("OnUpdate", function(self)
     self:Hide()
-    local newState = ComputeLeaderish()
-    if newState == isLeaderish then return end
-    isLeaderish = newState
+    local db = GetDB()
+    local newLeader = ComputeLeaderish()
+    -- Compare desired bar state against the ACTUAL applied state
+    -- (RaidMarkersBar.enabled) rather than a snapshot of the inputs: a
+    -- snapshot goes stale whenever Refresh() runs outside this watcher
+    -- (e.g. the options toggle), which would swallow the next transition.
+    local shouldBeActive = (db and db.enabled and IsBarContextActive(db)) and true or false
+    if newLeader == isLeaderish and shouldBeActive == RaidMarkersBar.enabled then return end
+    isLeaderish = newLeader
     if RaidMarkersBar.previewing then return end
-    if not RaidMarkersBar.enabled then return end
-    -- Re-applies row visibility (alpha-only in combat) and relayouts
-    -- (combat-deferred inside LayoutButtons via pendingReconcile).
-    ShowMarkers()
+    -- Refresh handles both directions: it disables the bar when the
+    -- instance gate closes and re-enables + re-applies rows when it opens
+    -- or leadership changes. Visibility stays alpha-only in combat and
+    -- layout defers via pendingReconcile.
+    RaidMarkersBar:Refresh()
 end)
 
 local leaderWatch = CreateFrame("Frame")

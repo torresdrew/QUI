@@ -128,6 +128,9 @@ function _G.IsInGroup() return inGroup end
 function _G.UnitIsGroupLeader() return isLeader end
 function _G.UnitIsGroupAssistant() return isAssistant end
 
+local inInstance, instanceType = false, "none"
+function _G.IsInInstance() return inInstance, instanceType end
+
 local countdownCalls = {}
 _G.C_PartyInfo = {
     DoReadyCheck = function()
@@ -307,5 +310,43 @@ assert(Bar.worldRow[1].alpha == 1 and Bar.stripRow[1].alpha == 1,
     "preview shows enabled leader rows regardless of leadership")
 Bar:HidePreview()
 assert(Bar.worldRow[1].alpha == 0, "leaving preview restores the leadership gate")
+
+-- ---------------------------------------------------------------------------
+-- Whole-bar instance gate (onlyInInstances)
+-- ---------------------------------------------------------------------------
+markersDB.onlyInInstances = true
+inInstance, instanceType = false, "none"
+Bar:Refresh()
+assert(Bar.buttons[1].alpha == 0 and Bar.container.alpha == 0,
+    "onlyInInstances hides the whole bar in the open world")
+
+-- Entering a dungeon flips the gate through the coalesced watcher (PEW).
+inInstance, instanceType = true, "party"
+FireLeadershipChange()
+assert(Bar.buttons[1].alpha == 1 and Bar.container.alpha == 1,
+    "entering a dungeon shows the bar again")
+
+-- Battlegrounds do not count as dungeon/raid content.
+inInstance, instanceType = true, "pvp"
+FireLeadershipChange()
+assert(Bar.container.alpha == 0, "battlegrounds keep the instance-gated bar hidden")
+
+-- Raids count.
+inInstance, instanceType = true, "raid"
+FireLeadershipChange()
+assert(Bar.container.alpha == 1, "raid instances show the instance-gated bar")
+
+-- Preview bypasses the instance gate so the bar can be positioned anywhere.
+inInstance, instanceType = false, "none"
+FireLeadershipChange()
+assert(Bar.container.alpha == 0, "back outside: bar hidden again")
+Bar:ShowPreview()
+assert(Bar.container.alpha == 1 and Bar.buttons[1].alpha == 1,
+    "preview shows the instance-gated bar in the open world")
+Bar:HidePreview()
+assert(Bar.container.alpha == 0, "leaving preview restores the instance gate")
+markersDB.onlyInInstances = false
+Bar:Refresh()
+assert(Bar.container.alpha == 1, "clearing onlyInInstances restores the bar")
 
 print("OK: raidmarkers_leader_secure_contract")

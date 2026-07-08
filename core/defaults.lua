@@ -4093,6 +4093,8 @@ local defaults = {
             spacing = 4,
             borderSize = 2,
             zoom = 0,
+            -- Whole-bar gate: only show inside dungeons and raids.
+            onlyInInstances = false,
             -- Leader toolbar rows (world markers + ready/roles/pull strip);
             -- autoShowForLeader gates both rows to group lead / raid assist.
             worldMarkers = { enabled = true },

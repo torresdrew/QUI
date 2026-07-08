@@ -6201,6 +6201,7 @@ return {
           locked = false,
           offsetX = 0,
           offsetY = -200,
+          onlyInInstances = false,
           spacing = 4,
           worldMarkers = {
             enabled = true
