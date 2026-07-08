@@ -320,16 +320,24 @@ local function GetActionSlot(frame)
         return nil
     end
 
+    -- The secure template overloads the "action" attribute: for
+    -- type="action" it is a numeric slot, but raidtarget/worldmarker
+    -- buttons (e.g. QUI's own marker bar) carry verbs like "toggle" /
+    -- "set" / "clear". GetActionInfo only accepts numeric slots, so
+    -- non-numeric values must be treated as "not an action button".
     if frame.GetAttribute then
         local ok, actionSlot = pcall(frame.GetAttribute, frame, "action")
         if ok and actionSlot and not Helpers.IsSecretValue(actionSlot) then
-            return actionSlot
+            local slot = tonumber(actionSlot)
+            if slot then
+                return slot
+            end
         end
     end
 
     local actionSlot = frame.action
     if actionSlot and not Helpers.IsSecretValue(actionSlot) then
-        return actionSlot
+        return tonumber(actionSlot)
     end
 
     return nil
