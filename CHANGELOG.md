@@ -9,6 +9,90 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v5.0.0-alpha14 - 2026-07-07
+
+> ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will
+> not load on the 12.0.x live client. Stay on the v4.x beta line for live realms.
+
+### Added
+
+A large batch of new Quality-of-Life modules. **All are opt-in and default OFF.**
+
+- feat(qol): Group Death Alert — on-screen text plus an optional sound when a
+  party/raid member dies (feign-death filtered).
+- feat(qol): Healer Mana Watcher — a movable frame with a mana bar for each
+  healer in your group.
+- feat(qol): Focus Marker — one action to focus and raid-mark your mouseover
+  target via a character macro or clickable button.
+- feat(qol): Map Teleports — M+ season dungeon teleport panel on the world map
+  with click-to-cast buttons and cooldown swipes.
+- feat(qol): Vendor Sell Rules — rule-based auto-sell for equippable gear by
+  quality/ilvl with force/never lists; runs in preview-only mode until you
+  turn previews off.
+- feat(qol): Gem Socket Picker — a panel of socketable gems from your bags
+  under the item socketing window.
+- feat(qol): Mail Contacts — an address-book side panel on the send-mail tab
+  (your alts + past recipients), plus a remember-last-recipient toggle.
+- feat(qol): Trade & Mail Log — account-wide trade / sent-mail / received-mail
+  history, browsable via `/quilog`.
+- feat(qol): EJ Loot Specs — spec-eligibility icons on Encounter Journal loot
+  rows.
+- feat(qol): Communities Privacy — a click-to-reveal cover over community chat
+  and rosters.
+- feat(qol): Cursor Trail — fading afterimage dots with combat-only and
+  class-color options.
+- feat(qol): Sound Mute — mute individual game sounds from a built-in catalog.
+- feat(qol): Collection Fanfare — auto-clears the "new" fanfare glow on
+  freshly collected mounts/pets/toys.
+- feat(qol): Merchant Pets — green check on already-collected pets at
+  merchants.
+- feat(qol): Loot Toast Filter — hide loot-won toasts below a chosen quality,
+  with keep-overrides.
+- feat(qol): auto-confirm popups for socket replacement, token purchase, and
+  high-cost items.
+- feat(qol): Audio Device Lock — re-asserts your chosen audio output device
+  whenever the OS device list changes.
+- feat(qol): Event Sounds — play a chosen sound on whisper / ready check /
+  LFG proposal / resurrection offer / loot roll won / loot upgrade.
+- feat(qol): Extended Ignore — a user-managed ignore list beyond Blizzard's
+  cap; suppresses public chat from listed names and auto-declines their
+  invites and duels.
+- feat(qol): Friends List class colors — class-colored names for WoW and
+  BNet friends playing WoW.
+- feat(qol): No-Target Warning — an in-combat "No Target" banner with
+  movable placement.
+- feat(tooltips): new tooltip options — scale, hide faction/PvP lines,
+  connected-realm mark, guild rank, and guild-name coloring.
+- feat(character): gem summary on the character pane (per-color counts and
+  empty sockets).
+- feat(bags): currency bar, corner widgets, and item-button refinements.
+- feat(datatexts): additional datatext providers.
+- feat(actionbars): position options for the open-ticket icon.
+
+### Fixed
+- fix(actionbars): Blizzard's open-ticket (help request) icon now anchors to
+  the reclaimed micro bar instead of floating loose.
+- fix(core): profile changes made during a Mythic+ run are parked and applied
+  when the run ends, instead of being dropped.
+- fix(core): cross-suite namespace export collisions are now detected, so two
+  sub-addons can no longer silently overwrite each other's shared symbols.
+- fix(tooltips): guard GameTooltip widget containers from tainted layout.
+- fix(sounds): whispers no longer double-ping when both QUI Chat's new-message
+  sound and the QoL Event Sounds whisper alert are enabled — chat owns the
+  whisper sound and the QoL module defers to it.
+- fix(options): settings tiles with a single sub-page no longer render a lone
+  redundant tab that repeated the header title.
+
+### Changed
+- perf: idle-cost sweep across the suite — tooltip visibility watcher
+  throttled, CDM buff-icon poll made allocation-free with a relaxed cadence,
+  CDM mouseover poll and fade fallback stop allocating bar-frame snapshots,
+  the action-button global sweep runs once per session, the damage-meter
+  ticker stops walking settings every render frame, the cursor-follow watcher
+  parks until you move, options sliders debounce their onChange while
+  dragging, and the info bar skips mouseover-fade alpha work while settled.
+
+
 ## v5.0.0-alpha13 - 2026-07-05
 
 > ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will
