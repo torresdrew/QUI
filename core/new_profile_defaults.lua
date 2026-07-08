@@ -4561,6 +4561,13 @@ ns.NewProfileSeed = {
             useClassColor = true,
         },
         darkMode = false,
+        deathAlert = {
+            enabled = false,
+            fontSize = 24,
+            offsetX = 0,
+            offsetY = 220,
+            sound = "None",
+        },
         darkModeBgColor = {
             [1] = 0.59199999999999997,
             [2] = 0.59199999999999997,
@@ -4628,6 +4635,12 @@ ns.NewProfileSeed = {
             },
             useClassColor = false,
         },
+        focusMarker = {
+            enabled = false,
+            marker = 8,
+            useMouseover = true,
+            writeMacro = true,
+        },
         font = "Quazii",
         fontOutline = "OUTLINE",
         friendsClassColor = true,
@@ -4643,6 +4656,12 @@ ns.NewProfileSeed = {
         gameMenuFontSize = 12,
         gameMenuHideBorder = false,
         gemSocketPicker = false,
+        healerMana = {
+            enabled = false,
+            instanceOnly = true,
+            offsetX = 0,
+            offsetY = -260,
+        },
         hideObjectiveTrackerBorder = true,
         hideSkinBorders = false,
         hostilityColorFriendly = {
@@ -4936,6 +4955,7 @@ ns.NewProfileSeed = {
             neverSell = "",
             previewOnly = true,
         },
+        worldMapTeleports = false,
     },
     hudLayering = {
         bossFrames = 4,

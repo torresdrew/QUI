@@ -254,6 +254,9 @@ modules\qol\gem_picker.lua
 modules\qol\mail_contacts.lua
 modules\qol\vendor_rules.lua
 modules\qol\trade_mail_log.lua
+modules\qol\focus_marker.lua
+modules\qol\healer_mana.lua
+modules\qol\death_alert.lua
 modules\qol\friends_decor.lua
 modules\qol\audio_device.lua
 modules\qol\extended_ignore.lua
@@ -265,6 +268,7 @@ modules\dungeon\keystone.lua
 modules\dungeon\mplus_timer.lua
 modules\dungeon\mplus_progress.lua
 modules\dungeon\teleport.lua
+modules\dungeon\map_teleports.lua
 modules\dungeon\party_keystones.lua
 modules\dungeon\brez_counter.lua
 modules\alts\alts.lua
