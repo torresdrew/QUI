@@ -20,6 +20,13 @@ end
 local src = readFile("QUI_UnitFrames/unitframes/unitframe_private_auras.lua")
 
 ---------------------------------------------------------------------------
+-- 12.1 PTR4: AuraContainers render private auras natively, so the dedicated
+-- anchor machinery in this file must be gated off (one greppable flag).
+---------------------------------------------------------------------------
+assert(src:find("QUI_PA_ANCHORS_RETIRED", 1, true),
+    "private-aura anchors must be gated off on PTR4 (containers render private auras natively)")
+
+---------------------------------------------------------------------------
 -- Bug 1: exactly ONE anchor per slot; textScale machinery fully removed.
 ---------------------------------------------------------------------------
 local _, pcallCount = src:gsub("pcall%(AddPrivateAuraAnchor", "")

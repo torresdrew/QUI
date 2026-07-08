@@ -3,11 +3,11 @@
 --
 -- 12.1 PTR contract: CREATING a forbidden CustomAuraContainer/AuraButton in
 -- combat is restricted (crashes the client today), but MUTATING pre-created
--- ones (SetPoint / SetSize / filters / enable) is legal in combat. The old
+-- ones (SetPoint / SetSize / groups / enable) is legal in combat. The old
 -- ApplyOrDefer deferred ALL config to PLAYER_REGEN_ENABLED; the split applies
--- the combat-legal subset immediately and still queues the full pass (secure
--- cancel-header attributes, private-aura anchor registration, and any missing
--- creation are OOC-only), so a wrong PTR assumption self-heals at regen.
+-- the combat-legal subset immediately and still queues the full pass
+-- (private-aura anchor registration and any missing creation are OOC-only),
+-- so a wrong PTR assumption self-heals at regen.
 
 local function readAll(path)
     local file = assert(io.open(path, "rb"))
@@ -31,24 +31,24 @@ end
 local pass = slice("local function ApplyConfigPass(allowCreate)")
 local gatePos = pass:find("if allowCreate then", 1, true)
 assert(gatePos, "ApplyConfigPass must gate OOC-only work on allowCreate")
-local headerPos = pass:find("ConfigureBuffCancelHeader(", 1, true)
-assert(headerPos, "ApplyConfigPass must still configure the cancel header on the full pass")
-assert(headerPos > gatePos,
-    "ConfigureBuffCancelHeader (secure SetAttribute = combat-blocked) must sit behind the allowCreate gate")
 local paPos = pass:find("SetupPrivateAuras()", 1, true)
 assert(paPos and paPos > gatePos,
     "SetupPrivateAuras (anchor re-registration) must sit behind the allowCreate gate")
 
 -- Zone config: creation only via EnsureZoneContainer under allowCreate; the
--- mutation branch re-flows existing buttons (never creates) and re-anchors.
+-- mutation branch reconciles existing groups (never creates) and re-anchors,
+-- pcall-guarding AuraSkin.Configure and falling back to the always-combat-legal
+-- AuraSkin.Restyle if PTR4 blocks group mutation in combat.
 local zone = slice("local function ConfigureZoneAuraContainer(")
 local zoneGate = zone:find("if allowCreate then", 1, true)
 assert(zoneGate, "ConfigureZoneAuraContainer must branch on allowCreate")
 local ensurePos = zone:find("EnsureZoneContainer(anchorFrame, profile)", 1, true)
 assert(ensurePos and ensurePos > zoneGate,
     "container creation (EnsureZoneContainer) must be allowCreate-only")
-assert(zone:find("AuraSkin.Reflow", 1, true),
-    "the mutation branch must re-flow existing buttons via AuraSkin.Reflow (creation-free)")
+assert(zone:find("pcall(AuraSkin.Configure", 1, true),
+    "the mutation branch must attempt AuraSkin.Configure via pcall (creation-free reconcile)")
+assert(zone:find("AuraSkin.Restyle", 1, true),
+    "the mutation branch must fall back to AuraSkin.Restyle if Configure fails in combat")
 assert(not zone:find("CreateFrame", 1, true),
     "ConfigureZoneAuraContainer must not CreateFrame directly")
 

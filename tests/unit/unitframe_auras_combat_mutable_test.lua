@@ -34,10 +34,23 @@ assert(ensure and ensure > gate, "container creation (EnsureContainers) must be 
 assert(pass:find("ReflowContainers(frame, auraSettings)", 1, true),
     "the mutation branch must re-flow existing containers (creation-free)")
 
--- ReflowContainers: Reflow + re-anchor, never create.
+-- Per-zone group config: OOC configures directly, combat pcall-guards
+-- AuraSkin.Configure and falls back to the always combat-legal AuraSkin.Restyle
+-- (mirrors the buffborders ConfigureZoneAuraContainer pattern).
+assert(pass:find("AuraSkin.Configure", 1, true),
+    "pass must configure zone groups via AuraSkin.Configure")
+assert(pass:find("pcall(AuraSkin.Configure", 1, true),
+    "combat zone configuration must be pcall-guarded")
+assert(pass:find("AuraSkin.Restyle", 1, true),
+    "combat zone configuration must fall back to AuraSkin.Restyle")
+
+-- ReflowContainers: re-anchor ONLY (creation-free, group-free — AuraSkin.Reflow
+-- no longer exists; group reconcile lives in ApplyContainerConfigPass above).
 local reflow = slice("local function ReflowContainers(frame, auraSettings)")
-assert(reflow:find("AuraSkin.Reflow", 1, true),
-    "ReflowContainers must use the shared creation-free AuraSkin.Reflow")
+assert(not reflow:find("AuraSkin.Reflow", 1, true),
+    "AuraSkin.Reflow no longer exists; ReflowContainers must not call it")
+assert(not reflow:find("AuraSkin.Attach", 1, true),
+    "AuraSkin.Attach no longer exists; ReflowContainers must not call it")
 assert(reflow:find("AnchorContainer", 1, true),
     "ReflowContainers must re-anchor (anchor moves are combat-legal mutation)")
 assert(not reflow:find("CreateFrame", 1, true),

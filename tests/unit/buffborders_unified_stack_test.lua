@@ -26,10 +26,10 @@ assert(src:find("debuffContainer", 1, true),
     "the debuffContainer upvalue/uses must be restored")
 
 -- Independent filters on independent containers.
-assert(src:find("BuildAuraFilter(settings, true)", 1, true),
-    "buff container must use the helpful filter")
-assert(src:find("BuildAuraFilter(settings, false)", 1, true),
-    "debuff container must use the harmful filter")
+assert(src:find("BuildAuraFilter(settings, isBuff)", 1, true),
+    "each zone group must build its own filter via BuildAuraFilter(settings, isBuff)")
+assert(src:find('local s = isBuff and "HELPFUL" or "HARMFUL"', 1, true),
+    "buff/debuff filters must diverge on isBuff (HELPFUL vs HARMFUL base)")
 assert(not src:find("roundUpFrameIndex", 1, true),
     "two-container path must not use stacked-filter roundUpFrameIndex")
 assert(not src:find("buffMax + debuffMax", 1, true),

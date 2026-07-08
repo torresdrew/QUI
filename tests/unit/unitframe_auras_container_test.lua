@@ -6,7 +6,8 @@
 -- self-driving object that cannot be exercised headless, so these source-text
 -- assertions pin the structural contract:
 --   * live path uses the secure container template + AuraSkin adapter,
---   * classification filters map onto the container's AddAuraFilter API,
+--   * classification filters map onto AuraSkin group descriptors (container:
+--     AddAuraGroup), not the removed per-filter AddAuraFilter API,
 --   * the public entry names callers depend on still exist,
 --   * the layout-mode preview renderer is preserved,
 --   * forbidden-object work is combat-deferred.
@@ -27,14 +28,15 @@ assert(src:find('"CustomAuraContainerTemplate"', 1, true),
     "live path must create CustomAuraContainerTemplate frames")
 assert(src:find("QUI.AuraSkin", 1, true) or src:find("ns.Addon.AuraSkin", 1, true),
     "live path must resolve the QUI.AuraSkin adapter")
-assert(src:find("AuraSkin.Attach", 1, true),
-    "live path must call AuraSkin.Attach to pool + theme container buttons")
 
--- FILTERS: classification filters map onto the container's AddAuraFilter -------
-assert(src:find("AddAuraFilter", 1, true),
-    "live path must register filters via container:AddAuraFilter")
-assert(src:find("ClearAuraFilters", 1, true),
-    "live path must clear filters before re-adding (re-config)")
+-- AURASKIN GROUP CONTRACT: zones configure via AuraSkin.Configure/Restyle, not
+-- the retired per-button AddAuraFilter/AuraSkin.Attach API --------------------
+assert(not src:find("AddAuraFilter", 1, true), "AddAuraFilter replaced by AuraSkin.Configure")
+assert(src:find("AuraSkin.Configure", 1, true), "zones must configure via AuraSkin.Configure")
+assert(src:find("AuraSkin.Restyle", 1, true), "combat pass must use AuraSkin.Restyle")
+assert(src:find("SetUnit", 1, true), "SetUnit must still precede group configuration")
+
+-- FILTERS: classification filters still feed the resolved zone filter strings --
 assert(src:find("BuildClassificationFilters", 1, true),
     "classification-derived filter strings must still feed the container")
 assert(src:find("BUFF_CLASSIFICATION_MAP", 1, true)

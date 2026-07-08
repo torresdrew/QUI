@@ -21,6 +21,18 @@ local ADDON_NAME, ns = ...
 -- API guard — private auras require WoW 10.1.0+
 if not C_UnitAuras or not C_UnitAuras.AddPrivateAuraAnchor then return end
 
+-- 12.1 PTR4: AuraContainers render private auras like regular auras — the
+-- normal groupframe strips now show them, so these dedicated anchors would
+-- double-display every private aura. The ANCHOR paths below are gated off;
+-- flip to false to restore the pre-PTR4 anchor path if in-game verification
+-- shows containers do NOT surface private auras for our filters. The
+-- dispel-state cache (RefreshPrivateDispelState/RefreshAllPrivateDispelState,
+-- the public getters, the AuraEvents subscriber, encounter-start wipes) is
+-- orthogonal to anchors -- it feeds GF:UpdateDispelOverlay and stays LIVE.
+-- Teardown (CleanupAll/ClearPrivateAuras/RemoveAllAnchors) also stays LIVE
+-- so stale anchors still clear on profile swap.
+local QUI_PA_ANCHORS_RETIRED = true
+
 -- 12.0.5+ introduced the `isContainer` discriminator on AddPrivateAuraAnchor args.
 -- Non-container anchors must pass `isContainer = false` or the registration silently
 -- fails on 12.0.5+ clients. On older clients the field is unknown and must not be
@@ -210,6 +222,8 @@ local CalculateSlotOffset = ns.QUI_GroupFrameIconLayout.CalculateSlotOffset
 --- @param settings table privateAuras settings
 --- @return number|nil anchorID
 local function RegisterAnchor(unit, auraIndex, container, settings)
+    if QUI_PA_ANCHORS_RETIRED then return nil end
+
     local iconSize = settings.iconSize or 20
     local borderScale = settings.borderScale or 1
     local showCountdown = settings.showCountdown ~= false
@@ -316,6 +330,8 @@ end
 -- CORE: Setup private auras on a single frame
 ---------------------------------------------------------------------------
 local function SetupPrivateAuras(frame)
+    if QUI_PA_ANCHORS_RETIRED then return end
+
     local settings = GetSettings(frame._isRaid)
     if not settings or not settings.enabled then return end
 
@@ -407,6 +423,8 @@ end
 -- CORE: Reanchor — unit token changed, rebuild anchors (reuse containers)
 ---------------------------------------------------------------------------
 local function ReanchorPrivateAuras(frame)
+    if QUI_PA_ANCHORS_RETIRED then return end
+
     local settings = GetSettings(frame._isRaid)
     if not settings or not settings.enabled then return end
 
@@ -461,7 +479,10 @@ function QUI_GFPA:SetupAll()
     local GF = ns.QUI_GroupFrames
     if not GF or not GF.initialized then return end
 
+    -- Dispel-state cache refresh stays live even when anchors are retired.
     RefreshAllPrivateDispelState()
+
+    if QUI_PA_ANCHORS_RETIRED then return end
 
     for _, list in pairs(GF.unitFrameMap) do
         for i = 1, #list do
@@ -481,7 +502,10 @@ function QUI_GFPA:ReanchorAll()
     local GF = ns.QUI_GroupFrames
     if not GF or not GF.initialized then return end
 
+    -- Dispel-state cache refresh stays live even when anchors are retired.
     RefreshAllPrivateDispelState()
+
+    if QUI_PA_ANCHORS_RETIRED then return end
 
     for _, list in pairs(GF.unitFrameMap) do
         for i = 1, #list do
@@ -508,6 +532,9 @@ function QUI_GFPA:CleanupAll()
 end
 
 --- Full refresh — tear down and rebuild everything
+-- No QUI_PA_ANCHORS_RETIRED check needed here directly: the clear loop below
+-- is teardown (stays live) and SetupAll already keeps its dispel-refresh half
+-- live while gating only its anchor-rebuild loop.
 function QUI_GFPA:RefreshAll()
     -- Clear existing anchors
     for frame in pairs(frameState) do
@@ -520,6 +547,9 @@ function QUI_GFPA:RefreshAll()
 end
 
 --- Refresh a single frame
+-- No QUI_PA_ANCHORS_RETIRED check needed here directly: ClearPrivateAuras is
+-- teardown (stays live), SetupPrivateAuras already gates itself, and the
+-- dispel-state refresh below must stay live regardless of the anchor gate.
 function QUI_GFPA:RefreshFrame(frame)
     ClearPrivateAuras(frame)
     frameState[frame] = nil
@@ -548,6 +578,8 @@ end
 
 --- Attach placeholder icons to a test/preview frame
 function QUI_GFPA:SetupTestFrame(frame)
+    if QUI_PA_ANCHORS_RETIRED then return end
+
     local settings = GetSettings(frame._isRaid)
     if not settings or not settings.enabled then return end
 

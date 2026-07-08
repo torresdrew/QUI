@@ -21,6 +21,14 @@ local ADDON_NAME, ns = ...
 -- API guard — private auras require WoW 10.1.0+
 if not C_UnitAuras or not C_UnitAuras.AddPrivateAuraAnchor then return end
 
+-- 12.1 PTR4: AuraContainers render private auras like regular auras — the
+-- normal unitframe strips now show them, so these dedicated anchors would
+-- double-display every private aura. Gated off; flip to false to restore the
+-- pre-PTR4 anchor path if in-game verification shows containers do NOT
+-- surface private auras for our filters.
+local QUI_PA_ANCHORS_RETIRED = true
+if QUI_PA_ANCHORS_RETIRED then return end
+
 -- 12.0.5+ introduced the `isContainer` discriminator on AddPrivateAuraAnchor
 -- args. Non-container anchors must pass `isContainer = false` or the
 -- registration silently fails on 12.0.5+ clients. On older clients the field

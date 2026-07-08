@@ -37,6 +37,34 @@ end
 local src = readFile("QUI_GroupFrames/groupframes/groupframes_private_auras.lua")
 
 ---------------------------------------------------------------------------
+-- 12.1 PTR4: AuraContainers render private auras natively, so the anchor
+-- machinery in this file must be gated off (one greppable flag). The
+-- dispel-state cache (RefreshPrivateDispelState etc.) is orthogonal and
+-- must stay live -- it feeds GF:UpdateDispelOverlay.
+---------------------------------------------------------------------------
+assert(src:find("QUI_PA_ANCHORS_RETIRED", 1, true),
+    "private-aura anchors must be gated off on PTR4 (containers render private auras natively)")
+
+-- The gate must NOT reach the dispel-state cache or the teardown paths:
+-- dispel state feeds GF:UpdateDispelOverlay (live), and teardown must keep
+-- clearing stale anchors on profile swap even while the gate is on.
+local UNGATED_BODIES = {
+    "local function RefreshPrivateDispelState",
+    "local function RefreshAllPrivateDispelState",
+    "local function RemoveAllAnchors",
+    "local function ClearPrivateAuras",
+    "function QUI_GFPA:CleanupAll",
+}
+for _, header in ipairs(UNGATED_BODIES) do
+    local startPos = src:find(header, 1, true)
+    assert(startPos, header .. " must still exist")
+    local bodyEnd = src:find("\nend", startPos, true) or #src
+    local body = src:sub(startPos, bodyEnd)
+    assert(not body:find("QUI_PA_ANCHORS_RETIRED", 1, true),
+        header .. " must stay UNGATED (dispel cache / teardown live invariant)")
+end
+
+---------------------------------------------------------------------------
 -- Bug 1: exactly ONE anchor per slot; dual-anchor artifacts stay removed.
 ---------------------------------------------------------------------------
 local _, pcallCount = src:gsub("pcall%(AddPrivateAuraAnchor", "")

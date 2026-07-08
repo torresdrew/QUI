@@ -32,8 +32,19 @@ local gate = pass:find("if allowCreate then", 1, true)
 assert(gate, "ApplyStripPass must branch on allowCreate")
 local ensure = pass:find("EnsureStripContainers(frame, buffElems, debuffElems)", 1, true)
 assert(ensure and ensure > gate, "creation (EnsureStripContainers) must be allowCreate-only")
-assert(pass:find("AuraSkin.Reflow", 1, true),
-    "the mutation branch must re-flow existing pooled buttons (creation-free)")
+
+-- Per-zone group config: OOC configures directly, combat pcall-guards
+-- AuraSkin.Configure and falls back to the always combat-legal AuraSkin.Restyle
+-- (mirrors the unitframe_auras / buffborders ConfigureZoneAuraContainer pattern).
+assert(pass:find("AuraSkin.Configure", 1, true),
+    "pass must configure zone groups via AuraSkin.Configure")
+assert(pass:find("pcall(AuraSkin.Configure", 1, true),
+    "combat zone configuration must be pcall-guarded")
+assert(pass:find("AuraSkin.Restyle", 1, true),
+    "combat zone configuration must fall back to AuraSkin.Restyle")
+assert(not pass:find("AuraSkin.Reflow", 1, true),
+    "AuraSkin.Reflow no longer exists; ApplyStripPass must not call it")
+
 assert(pass:find("AnchorZoneContainer", 1, true),
     "the mutation branch must re-anchor the containers")
 

@@ -3725,9 +3725,11 @@ do
                 dbKey = "buffBorders", enabledField = "enableBuffs",
                 refresh = "QUI_RefreshBuffBorders",
                 getFrame = function() return _G["QUI_BuffIconContainer"] end,
-                -- SecureAuraHeaderTemplate auto-sizes from its secure children.
-                -- Return _naturalW/_naturalH so the mover tracks the settings-
-                -- computed size (from StyleHeaderChildren / preview grid).
+                -- The anchor frame's size is NOT auto-derived from the secure
+                -- CustomAuraContainer (PTR4 removed SecureAuraHeaderTemplate).
+                -- buffborders' ApplyConfigPass computes the natural grid
+                -- extent and stashes it on _naturalW/_naturalH each pass;
+                -- return those so the mover tracks the settings-computed size.
                 getSize = function()
                     local f = _G["QUI_BuffIconContainer"]
                     if f then return f._naturalW, f._naturalH end

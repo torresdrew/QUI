@@ -120,4 +120,47 @@ do
         "T6: wrapper passes through without C_Secrets")
 end
 
+---------------------------------------------------------------------------
+-- T7: PTR4 fully-secret addedAuras struct. UNIT_AURA now delivers a fully
+-- secret payload while auras are secret, so an addedAuras struct's spellId /
+-- spellID / name are secret. InvalidateAuraMemoForDelta must NOT compare
+-- ad.spellID ~= ad.spellId (a raw ~= on a secret THROWS in-game) -- it must
+-- detect the secret via issecretvalue and widen the sweep instead.
+--
+-- Stock Lua ~= never throws on plain values, so model the in-game throw with
+-- secret sentinels whose metatable errors on ==/~= (Lua invokes __eq only when
+-- BOTH operands are tables, matching two secret struct fields being compared).
+---------------------------------------------------------------------------
+do
+    aurasSecret = false
+    -- Seed the player memo so the delta handler proceeds into the added-aura block
+    -- (it returns early when the unit has no memo table).
+    assert(S.QueryUnitAuraBySpellID("player", 8080, "HELPFUL") == auraDataToken, "T7: seed player memo")
+
+    -- One shared metatable: Lua 5.1 invokes __eq only when both operands carry
+    -- the SAME __eq metamethod, so per-sentinel metatables would never fire (and
+    -- the test would pass even against the unguarded code). A shared table models
+    -- the in-game "== on a secret throws" for two secret struct fields.
+    local SECRET_MT = {
+        __eq = function() error("attempt to compare a secret value") end,
+        __lt = function() error("attempt to compare a secret value") end,
+        __le = function() error("attempt to compare a secret value") end,
+    }
+    local function makeSecret(token)
+        local s = setmetatable({ token = token }, SECRET_MT)
+        secretValues[s] = true
+        return s
+    end
+
+    local secretAdd = {
+        spellId = makeSecret("spellId"),
+        spellID = makeSecret("mappedSpellID"),
+        name    = makeSecret("name"),
+    }
+    -- Pre-guard, `ad.spellID ~= ad.spellId` compares two secret tables -> __eq
+    -- fires -> error. The guard must skip that compare and never throw.
+    local ok, err = pcall(S.InvalidateAuraMemoForDelta, "player", { addedAuras = { secretAdd } })
+    assert(ok, "T7: fully-secret addedAuras struct must not throw (guard the ~= compare): " .. tostring(err))
+end
+
 print("cdm_sources_secret_aura_gate_test: OK")

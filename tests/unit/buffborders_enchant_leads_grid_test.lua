@@ -6,10 +6,9 @@
 -- liveEnchantCount cells further along the grow direction. Rationale: the
 -- enchant count is Lua-visible (GetWeaponEnchantInfo — item info, not aura
 -- data) while the live aura count is secret, so dynamic packing can only start
--- from the enchant side. The cancel header must shift by the SAME offset or
--- its uniform secure grid misaligns with the display buttons and right-click
--- cancels the wrong aura. The whole container shifts (rows 2+ indent too):
--- a ragged first-row indent cannot be mirrored by the secure header.
+-- from the enchant side. PTR4 own-buff cancel is engine-owned (cancelButtons
+-- on the SAME buttons the display uses, no separate hit layer), so only the
+-- container anchor itself needs the enchant-lead offset now.
 
 local function readAll(path)
     local file = assert(io.open(path, "rb"))
@@ -49,11 +48,24 @@ local anchor = slice("local function AnchorAuraContainer(")
 assert(anchor:find("liveEnchantCount", 1, true),
     "AnchorAuraContainer must offset the buff zone by the live enchant extent")
 
--- The cancel header must apply the SAME offset (alignment with the display
--- grid is what makes right-click cancel hit the right aura).
-local header = slice("local function ConfigureBuffCancelHeader(")
-assert(header:find("liveEnchantCount", 1, true),
-    "ConfigureBuffCancelHeader must shift the header by the same enchant offset")
+-- Ported from the deleted buffborders_cancelaura_initialconfig_test.lua (PTR4
+-- removed the secure cancel-header overlay; own-buff cancel is now engine-
+-- owned via cancelButtons, so only the SEPARATE temp-enchant strip keeps a
+-- QUI-scripted right-click cancel). Guard that it stays RightButton-only and
+-- checks InCombatLockdown BEFORE CancelItemTempEnchantment (cancel is
+-- protected in combat for everyone).
+local onClickStart = src:find('SetScript("OnClick"', 1, true)
+assert(onClickStart, "temp-enchant button must set an OnClick handler")
+local cancelPos = src:find("CancelItemTempEnchantment", onClickStart, true)
+assert(cancelPos, "temp-enchant OnClick must call CancelItemTempEnchantment")
+local onClickBody = src:sub(onClickStart, cancelPos + 40)
+assert(onClickBody:find("RightButton", 1, true),
+    "temp-enchant OnClick must act only on RightButton")
+local combatPos = onClickBody:find("InCombatLockdown", 1, true)
+assert(combatPos, "temp-enchant OnClick must gate on InCombatLockdown (cancel is protected in combat)")
+local localCancelPos = onClickBody:find("CancelItemTempEnchantment", 1, true)
+assert(combatPos < localCancelPos,
+    "temp-enchant OnClick must check InCombatLockdown BEFORE CancelItemTempEnchantment")
 
 -- Enchant events must re-run the config pass when the count changes (the grid
 -- origin moved); in combat that resolves to the mutable pass + queued full pass.

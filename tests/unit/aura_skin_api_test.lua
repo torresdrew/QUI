@@ -1,5 +1,5 @@
 -- tests/unit/aura_skin_api_test.lua
--- Source-text assertion test for core/aura_skin.lua.
+-- Source-text assertion test for core/aura_skin.lua (12.1 PTR4 contract).
 -- AuraSkin cannot be behaviorally unit-tested headless (needs the live secure
 -- template); source-text assertions verify the structural contract instead.
 -- Run: lua tests/unit/aura_skin_api_test.lua
@@ -8,142 +8,57 @@ local function readAll(path)
     local file = assert(io.open(path, "rb"))
     local data = file:read("*a")
     file:close()
-    data = data:gsub("\r\n", "\n")
-    return data
+    return (data:gsub("\r\n", "\n"))
 end
 
 local src = readAll("core/aura_skin.lua")
 
 -- Public namespace exposure
-assert(src:find("QUI.AuraSkin", 1, true),
-    "aura_skin.lua must expose QUI.AuraSkin")
-assert(src:find("ns.Addon.AuraSkin", 1, true),
-    "aura_skin.lua must register on ns.Addon.AuraSkin")
+assert(src:find("QUI.AuraSkin", 1, true), "must expose QUI.AuraSkin")
+assert(src:find("ns.Addon.AuraSkin", 1, true), "must register on ns.Addon.AuraSkin")
 
--- Public API surface
-assert(src:find("AuraSkin.Attach", 1, true),
-    "aura_skin.lua must define AuraSkin.Attach")
+-- PTR4 public API surface
+assert(src:find("AuraSkin.Configure", 1, true), "must define AuraSkin.Configure")
+assert(src:find("AuraSkin.Restyle", 1, true), "must define AuraSkin.Restyle")
+assert(src:find("AuraSkin.LayoutAnchor", 1, true), "must define AuraSkin.LayoutAnchor")
+assert(src:find("AddAuraGroup", 1, true), "must register groups via AddAuraGroup")
+assert(src:find("SetAuraLayoutGrowthDirection", 1, true), "must set container-wide flow direction")
+assert(src:find("SetAuraLayoutRowWidth", 1, true), "must derive row wrap from maxPerRow (pixels)")
+assert(src:find("initializeFrame", 1, true), "must style buttons via the initializeFrame callback")
 
--- OFFICIAL Blizzard AuraButton example: the addon CREATES each button as a child
--- of the container, SIZES + POSITIONS it, wires the regions in Lua, and registers
--- it via container:AddAuraFrame.  The engine-pool APIs are not used.
-assert(src:find('CreateFrame("AuraButton", nil, container, "CustomAuraButtonTemplate")', 1, true),
-    "aura_skin.lua must CreateFrame an AuraButton from CustomAuraButtonTemplate (official pattern)")
-assert(not src:find("AddAuraFramesFromTemplate", 1, true),
-    "aura_skin.lua must NOT use AddAuraFramesFromTemplate (old engine-pool pattern, removed)")
-assert(not src:find("GetAuraFrameCount", 1, true),
-    "aura_skin.lua must NOT use GetAuraFrameCount (old engine-pool pattern, removed)")
-assert(not src:find("GetAuraFrame(", 1, true),
-    "aura_skin.lua must NOT re-fetch buttons via GetAuraFrame (old engine-pool pattern, removed)")
+-- Groups are unremovable + filter-immutable: reconcile, never clear.
+assert(not src:find("ClearAuraGroups", 1, true), "ClearAuraGroups is not addon-callable")
+assert(not src:find("ClearAuraFilters", 1, true), "PTR3 filter API is gone")
+assert(src:find("SetAuraGroupMaxFrameCount", 1, true), "stale groups retire via maxFrameCount 0")
+assert(src:find("_quiGroups", 1, true), "must track registered group keys per container")
 
--- The addon SIZES + POSITIONS each button (the engine drives aura DATA, not layout).
-assert(src:find("button:SetSize", 1, true),
-    "aura_skin.lua must SetSize each button (official pattern sizes the buttons)")
-assert(src:find("button:SetPoint", 1, true),
-    "aura_skin.lua must SetPoint each button in a grid (official pattern positions the buttons)")
+-- REMOVED 12.1 PTR4 APIs — using any of these is a hard error on live PTR
+assert(not src:find("AddAuraFrame", 1, true), "AddAuraFrame was removed in PTR4")
+assert(not src:find('CreateFrame("AuraButton"', 1, true), "addons may not create AuraButtons in PTR4")
+assert(not src:find("SecureAuraHeader", 1, true), "SecureAuraHeaderTemplate was removed from Mainline")
 
--- No script on the forbidden buttons (the intrinsic owns its scripts;
--- UntrustedScriptExecution).
-assert(not src:find("button:SetScript", 1, true),
-    "aura_skin.lua must NOT set any script on the forbidden buttons (taint)")
+-- The engine owns button layout now — AuraSkin must not size/position buttons
+-- or fake a 1x1 container rect (containers auto-resize in PTR4).
+assert(not src:find("button:SetPoint", 1, true), "engine anchors buttons; no addon SetPoint on buttons")
+assert(not src:find("container:SetSize", 1, true), "containers auto-resize; no manual container SetSize")
+assert(not src:find("GridOffset", 1, true), "addon grid math replaced by SetAuraGroupLayout")
 
--- Idempotency: buttons are pooled on the container and reused on re-Attach; the
--- per-button art build is guarded so it wires the inbound API only once.
-assert(src:find("_quiButtons", 1, true),
-    "aura_skin.lua must store buttons on container._quiButtons for idempotent reuse")
-assert(src:find("_quiWired", 1, true),
-    "aura_skin.lua art build must have a per-button idempotency guard (_quiWired)")
+-- No script on the forbidden buttons (UntrustedScriptExecution).
+assert(not src:find("button:SetScript", 1, true), "no scripts on forbidden buttons (taint)")
 
--- SetTheme / Detach / DurationFormatter remain removed (dead/incorrect APIs).
-assert(not src:find("AuraSkin.SetTheme", 1, true),
-    "aura_skin.lua must NOT define AuraSkin.SetTheme (dead API, removed)")
-assert(not src:find("AuraSkin.Detach", 1, true),
-    "aura_skin.lua must NOT define AuraSkin.Detach (dead API, removed)")
-assert(not src:find("AuraSkin.DurationFormatter", 1, true),
-    "aura_skin.lua must NOT define AuraSkin.DurationFormatter (plain Lua fn is not a NumericFormatter)")
-assert(not src:find("formatter = AuraSkin", 1, true),
-    "aura_skin.lua must NOT pass a Lua formatter to SetDurationText")
+-- Restyle registry: engine-created buttons are tracked for combat-legal restyle.
+assert(src:find("_quiButtons", 1, true), "must track engine-created buttons on container._quiButtons")
+assert(src:find("_quiWired", 1, true), "art build must keep the per-button idempotency guard")
 
--- Secure inbound subset (matches Blizzard's official CustomAuraButton contract):
--- art regions are addon-created button children, then handed to the AuraButton
--- inbound API. The secure-side apply path owns aura-data reads, dispel border,
--- colorblind symbol text, stacks, duration, icon, and visibility.
-assert(src:find("SetIcon", 1, true),
-    "aura_skin.lua must call SetIcon to wire the aura icon texture")
-assert(src:find("SetDurationCooldown", 1, true),
-    "aura_skin.lua must call SetDurationCooldown on the button")
-assert(src:find("SetDurationText", 1, true),
-    "aura_skin.lua must call SetDurationText on the button")
-assert(src:find("AddAuraFrame(button)", 1, true),
-    "aura_skin.lua must register each button via container:AddAuraFrame(button)")
+-- Cancel support rides the initializer.
+assert(src:find("SetCancelAuraButtons", 1, true), "must wire SetCancelAuraButtons for cancelButtons groups")
 
--- Stack count: wired EXACTLY like duration — fontstring + SetApplicationCount with
--- an EMPTY options table, NO formatter.  A QUI-created formatter is a tainted value
--- and SetApplicationCount writes options.formatter directly (no securecopy), so it
--- would throw; with {} the engine's secret-safe `applications > 1` path drives it.
-assert(src:find("button:SetApplicationCount(count, {})", 1, true),
-    "aura_skin.lua must wire SetApplicationCount with an empty options table (no formatter)")
-assert(not src:find("CreateNumericRuleFormatter", 1, true),
-    "aura_skin.lua must NOT pass a QUI-created formatter to SetApplicationCount (tainted value -> blocked)")
--- Dispel border: SetAuraBorder securecopies its options, so it is addon-safe; the
--- engine vertex-colours it by dispel type secure-side.
-assert(src:find("button:SetAuraBorder", 1, true),
-    "aura_skin.lua must wire SetAuraBorder for the per-dispel-type border colour")
-assert(src:find("showWhenHelpful = false", 1, true),
-    "aura_skin.lua dispel border must set showWhenHelpful = false (buffs keep the static ring)")
-assert(src:find("button:SetAuraSymbol", 1, true),
-    "aura_skin.lua must wire SetAuraSymbol for Blizzard's colorblind dispel text")
-assert(src:find("_quiSymbol", 1, true),
-    "aura_skin.lua must store the SetAuraSymbol fontstring on button._quiSymbol")
+-- The engine's flow layout only positions buttons (SetPoint) and never sizes
+-- them, so styleButton must size engine-created buttons itself.
+assert(src:find("button:SetSize", 1, true), "must size engine-created buttons (engine flow layout never sizes them)")
 
--- Static QUI border: a button-child texture ALWAYS shown (aura-data-INDEPENDENT,
--- so it renders regardless of the secure apply path).  BACKGROUND draw layer.
-assert(src:find('button:CreateTexture(nil, "BACKGROUND")', 1, true),
-    "aura_skin.lua must create a BACKGROUND-layer button child texture for the static QUI border")
-assert(src:find("_quiBorder", 1, true),
-    "aura_skin.lua must store the static border texture on button._quiBorder")
-assert(src:find("AuraTheme.BorderColor", 1, true),
-    "aura_skin.lua must color the border via AuraTheme.BorderColor() (QUI theme color)")
-assert(src:find("DisablePixelSnap", 1, true),
-    "aura_skin.lua must call DisablePixelSnap on the border texture (1px solid crispness)")
+-- In-combat AddAuraGroup runs forbidden frame creation synchronously; Configure
+-- must refuse to register a new group while in combat.
+assert(src:find("InCombatLockdown", 1, true), "Configure must refuse new-group creation in combat")
 
--- Duration font: honors profile.fontSize via plain SetFont (secret-safe).
-assert(src:find("profile.fontSize", 1, true),
-    "aura_skin.lua must read profile.fontSize for the duration font")
-assert(src:find(":SetFont(", 1, true),
-    "aura_skin.lua must call SetFont to apply the profile font size (plain, secret-safe)")
-
--- Swipe: cooldown honors profile.hideSwipe + profile.reverseSwipe.
-assert(src:find("SetDrawSwipe", 1, true),
-    "aura_skin.lua must call SetDrawSwipe on the cooldown (profile.hideSwipe)")
-assert(src:find("SetReverse", 1, true),
-    "aura_skin.lua must call SetReverse on the cooldown (profile.reverseSwipe)")
-assert(src:find("profile.hideSwipe", 1, true),
-    "aura_skin.lua must read profile.hideSwipe to drive SetDrawSwipe")
-assert(src:find("profile.reverseSwipe", 1, true),
-    "aura_skin.lua must read profile.reverseSwipe to drive SetReverse")
-
--- Art regions are button children (created on 'button'), so they inherit the
--- button's forbidden parent + layout aspects.
-assert(src:find("button:CreateTexture", 1, true),
-    "aura_skin.lua icon/border textures must be created as button:CreateTexture (button child)")
-assert(src:find("button:CreateFontString", 1, true),
-    "aura_skin.lua font strings must be created as button:CreateFontString (button child)")
-assert(src:find('CreateFrame("Cooldown", nil, button,', 1, true),
-    "aura_skin.lua cooldown frame must be CreateFrame(\"Cooldown\", nil, button, ...) (button child)")
-
--- AuraTheme consumption
-assert(src:find("AuraTheme.Metrics", 1, true),
-    "aura_skin.lua must call AuraTheme.Metrics for layout params")
-
--- Attach point: layout must honour an optional profile.attachPoint (the point ON
--- THE BUTTON pinned to the container's anchor corner).  Unit frames pass the
--- vertically-flipped corner for outside positioning (buffs above a TOP anchor,
--- below a BOTTOM anchor — preview parity); consumers that omit it keep the
--- legacy same-corner behaviour.
-assert(src:find("profile.attachPoint", 1, true),
-    "aura_skin.lua ResolveLayout must read profile.attachPoint")
-assert(src:find("L.attachPoint, container, L.anchor", 1, true),
-    "aura_skin.lua layoutButton must pin button attachPoint -> container anchor corner")
-
-print("OK: aura_skin_api_test")
+print("aura_skin_api_test OK")

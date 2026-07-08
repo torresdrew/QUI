@@ -234,16 +234,21 @@ end
 
 -- Anchor a container OOC with fixed points relative to its unit frame.  The
 -- container is forbidden, so SetPoint/SetSize are NEVER called in combat.
--- The 1x1 container is pinned corner-to-corner (TOPRIGHT -> frame TOPRIGHT
--- etc.); the outside vertical flip is carried by the buttons' attachPoint in
--- the AuraSkin profile, so live geometry == the layout-mode preview geometry
--- (MapAuraAnchorToFramePoint).  borderOffsetX is the same 1px border
--- compensation the preview applies per icon.
-local function AnchorContainer(container, frame, anchor)
-    local _, framePoint, borderOffsetX = MapAuraAnchorToFramePoint(anchor)
+-- Buttons no longer carry offsetX/offsetY or an outside vertical flip (the
+-- engine owns button layout) — the flip now applies to the CONTAINER point
+-- itself: AuraSkin.LayoutAnchor(profile) returns the flow-origin corner (grow
+-- + profile.wrap, see BuildZoneProfiles), and pinning THAT corner to the
+-- frame's matching anchor point (framePoint == profile.anchor) makes the
+-- auto-sized container hang off the frame edge exactly where the old
+-- 1x1-anchored button grid did, with multi-row growth extending AWAY from the
+-- frame.  borderOffsetX is the same 1px border compensation the preview
+-- applies per icon.
+local function AnchorContainer(container, frame, profile)
+    local _, framePoint, borderOffsetX = MapAuraAnchorToFramePoint(profile.anchor)
     framePoint = framePoint or "TOPLEFT"
     container:ClearAllPoints()
-    container:SetPoint(framePoint, frame, framePoint, borderOffsetX or 0, 0)
+    container:SetPoint(AuraSkin.LayoutAnchor(profile), frame, framePoint,
+        (borderOffsetX or 0) + (profile.offsetX or 0), (profile.offsetY or 0))
 end
 
 -- Full grid profiles built from the per-zone aura settings.  Key names match
@@ -251,6 +256,11 @@ end
 -- so live container layout == preview layout.  (debuff iconSize is the shared
 -- `iconSize`; buff iconSize is `buffIconSize` — mirrors the schema sliders.)
 local function BuildZoneProfiles(auraSettings)
+    -- attachPoint is the flipped corner (icon side) MapAuraAnchorToFramePoint
+    -- derives for this anchor; a zone flipped ABOVE the frame edge (attachPoint
+    -- contains "BOTTOM" — its own bottom corner pins to the frame) must wrap
+    -- upward too, so extra rows grow away from the frame instead of into it.
+    local debuffAttachPoint = (MapAuraAnchorToFramePoint(auraSettings.debuffAnchor or "TOPLEFT"))
     local debuffProfile = {
         maxIcons    = auraSettings.debuffMaxIcons or 16,
         iconSize    = auraSettings.iconSize or 22,
@@ -260,12 +270,17 @@ local function BuildZoneProfiles(auraSettings)
         offsetX     = auraSettings.debuffOffsetX or 0,
         offsetY     = auraSettings.debuffOffsetY or 2,
         anchor      = auraSettings.debuffAnchor or "TOPLEFT",
-        attachPoint = (MapAuraAnchorToFramePoint(auraSettings.debuffAnchor or "TOPLEFT")),
+        attachPoint = debuffAttachPoint,
+        -- MapAuraAnchorToFramePoint returns nil for anchors outside its 4-corner
+        -- map (stale/hand-edited profiles) — same nilable contract AnchorContainer
+        -- already guards.
+        wrap        = ((debuffAttachPoint or ""):find("BOTTOM", 1, true) and "UP" or "DOWN"),
         borderSize  = auraSettings.debuffBorderSize or auraSettings.borderSize or 1,
         fontSize    = auraSettings.debuffFontSize or auraSettings.fontSize or 11,
         hideSwipe   = auraSettings.debuffHideSwipe ~= nil and auraSettings.debuffHideSwipe or (auraSettings.hideSwipe or false),
         reverseSwipe = auraSettings.debuffReverseSwipe ~= nil and auraSettings.debuffReverseSwipe or (auraSettings.reverseSwipe or false),
     }
+    local buffAttachPoint = (MapAuraAnchorToFramePoint(auraSettings.buffAnchor or "BOTTOMLEFT"))
     local buffProfile = {
         maxIcons    = auraSettings.buffMaxIcons or 16,
         iconSize    = auraSettings.buffIconSize or 22,
@@ -275,7 +290,8 @@ local function BuildZoneProfiles(auraSettings)
         offsetX     = auraSettings.buffOffsetX or 0,
         offsetY     = auraSettings.buffOffsetY or -2,
         anchor      = auraSettings.buffAnchor or "BOTTOMLEFT",
-        attachPoint = (MapAuraAnchorToFramePoint(auraSettings.buffAnchor or "BOTTOMLEFT")),
+        attachPoint = buffAttachPoint,
+        wrap        = ((buffAttachPoint or ""):find("BOTTOM", 1, true) and "UP" or "DOWN"),
         borderSize  = auraSettings.buffBorderSize or auraSettings.borderSize or 1,
         fontSize    = auraSettings.buffFontSize or auraSettings.fontSize or 11,
         hideSwipe   = auraSettings.buffHideSwipe ~= nil and auraSettings.buffHideSwipe or (auraSettings.hideSwipe or false),
@@ -284,8 +300,10 @@ local function BuildZoneProfiles(auraSettings)
     return debuffProfile, buffProfile
 end
 
--- Create (OOC) the two zone containers for a unit frame and theme/pool them via
--- AuraSkin.  Idempotent — re-attaches/re-themes if maxIcons grew.
+-- Create (OOC) the two zone containers for a unit frame and anchor them.
+-- Group registration/theming now happens every ApplyContainerConfigPass zone
+-- pass via AuraSkin.Configure/Restyle, not here — this only owns the
+-- forbidden-object creation (combat-restricted) and the container anchor.
 local function EnsureContainers(frame, auraSettings)
     -- Re-resolve defensively in case core/aura_skin.lua loaded after this file's
     -- top-level chunk captured the (then-nil) upvalue.
@@ -301,63 +319,66 @@ local function EnsureContainers(frame, auraSettings)
         frame.buffContainer = CreateFrame("AuraContainer", nil, frame, "CustomAuraContainerTemplate")
     end
 
-    AuraSkin.Attach(frame.debuffContainer, debuffProfile)
-    AuraSkin.Attach(frame.buffContainer, buffProfile)
-
-    AnchorContainer(frame.debuffContainer, frame, debuffProfile.anchor)
-    AnchorContainer(frame.buffContainer, frame, buffProfile.anchor)
+    AnchorContainer(frame.debuffContainer, frame, debuffProfile)
+    AnchorContainer(frame.buffContainer, frame, buffProfile)
     return true
 end
 
--- Combat-legal re-flow of EXISTING containers: re-lay + re-style the pooled
--- buttons (AuraSkin.Reflow — no creation) and re-pin the container corners.
--- No-op when the containers don't exist yet (creation is OOC-only; the queued
--- full pass builds them at regen).
+-- Combat-legal re-anchor of EXISTING containers (creation-free): re-pin the
+-- container corners so an anchor/offset change applies live in combat.  Group
+-- (re)configuration for the combat path lives in ApplyContainerConfigPass's
+-- zone bodies (pcall-guarded AuraSkin.Configure, falling back to
+-- AuraSkin.Restyle) — this function never touches groups.  No-op when the
+-- containers don't exist yet (creation is OOC-only; the queued full pass
+-- builds them at regen).
 local function ReflowContainers(frame, auraSettings)
     if not (frame.debuffContainer and frame.buffContainer) then return false end
     AuraSkin = AuraSkin or (ns.Addon and ns.Addon.AuraSkin) or (_G.QUI and _G.QUI.AuraSkin)
-    if not (AuraSkin and AuraSkin.Reflow) then return false end
+    if not AuraSkin then return false end
     local debuffProfile, buffProfile = BuildZoneProfiles(auraSettings)
-    AuraSkin.Reflow(frame.debuffContainer, debuffProfile)
-    AuraSkin.Reflow(frame.buffContainer, buffProfile)
-    AnchorContainer(frame.debuffContainer, frame, debuffProfile.anchor)
-    AnchorContainer(frame.buffContainer, frame, buffProfile.anchor)
+    AnchorContainer(frame.debuffContainer, frame, debuffProfile)
+    AnchorContainer(frame.buffContainer, frame, buffProfile)
     return true
 end
 
--- The container's AddAuraFilter eagerly runs C_UnitAuras.GetUnitAuras(unit,
--- filterString); some AuraFilters tokens are only valid in a specific polarity
--- combo and the C API hard-errors on a bad one (and AddAuraFilter inserts the
--- filter BEFORE that throwing call, so a pcall around it would leave a poisoned
--- filter that re-throws on every later UNIT_AURA). Pre-validate the string with
--- our own (addon-allowed) GetUnitAuras and only hand accepted strings over.
+-- AuraSkin.Configure's AddAuraGroup validates group registration eagerly, but
+-- PTR4 defers the actual aura data parse to the secure OnUpdate dirty pass.
+-- Some AuraFilters tokens are only valid in a specific polarity combo and the
+-- C API hard-errors on a bad one (and group registration inserts the filter
+-- BEFORE that throwing call, so a pcall around it would leave a poisoned
+-- group that re-throws on every later dirty pass). FilterStringUsable
+-- pre-validation is still required so a bad filter can't poison the secure
+-- dirty pass — pre-validate the string with our own (addon-allowed)
+-- GetUnitAuras and only hand accepted strings over.
 local function FilterStringUsable(unit, filterString)
     if not (C_UnitAuras and C_UnitAuras.GetUnitAuras) then return true end
     return (pcall(C_UnitAuras.GetUnitAuras, unit, filterString))
 end
 
--- Add a zone's filter strings to its container, dropping any the C API rejects,
--- and guaranteeing at least the base polarity so a zone never silently shows
--- nothing when every classification filter is dropped.
-local function AddZoneFilters(container, unit, filters, base, maxIcons)
-    local added = 0
-    for _, filterString in ipairs(filters) do
-        if FilterStringUsable(unit, filterString) then
-            container:AddAuraFilter(filterString, { maxFrameCount = maxIcons })
-            added = added + 1
+-- Build AuraSkin group descriptors from resolved zone filter strings. Filters
+-- that fail the C-side pre-validation probe are dropped (same policy as the
+-- pre-PTR4 per-filter registration loop); if everything dropped, fall back to
+-- the bare base.
+local function BuildZoneGroups(unit, filterStrings, base, maxIcons)
+    local groups = {}
+    for i = 1, #filterStrings do
+        local fs = filterStrings[i]
+        if FilterStringUsable(unit, fs) then
+            groups[#groups + 1] = { key = "zone" .. i, filter = fs, maxFrameCount = maxIcons }
         end
     end
-    if added == 0 then
-        container:AddAuraFilter(base, { maxFrameCount = maxIcons })
+    if #groups == 0 then
+        groups[1] = { key = "zonebase", filter = base, maxFrameCount = maxIcons }
     end
+    return groups
 end
 
--- Apply enable/disable + filter + unit config to the live containers.  This is
--- the heart of the live path: filters and SetEnabled change, the container
--- self-drives the rest.  allowCreate=true is the full OOC pass (may create
--- containers + pool buttons); allowCreate=false is the combat pass — only
--- combat-legal mutation of PRE-CREATED containers (re-flow, anchor, unit,
--- filters, enable).
+-- Apply enable/disable + group + unit config to the live containers.  This is
+-- the heart of the live path: groups (via AuraSkin.Configure) and SetEnabled
+-- change, the container self-drives the rest.  allowCreate=true is the full
+-- OOC pass (may create containers + pool buttons); allowCreate=false is the
+-- combat pass — only combat-legal mutation of PRE-CREATED containers (anchor,
+-- unit, group reconcile pcall-guarded with a Restyle fallback, enable).
 local function ApplyContainerConfigPass(frame, allowCreate)
     if not frame or not frame.unit then return end
     local unitKey = frame.unitKey or frame.unit
@@ -369,6 +390,8 @@ local function ApplyContainerConfigPass(frame, allowCreate)
     else
         if not ReflowContainers(frame, auraSettings) then return end
     end
+
+    local debuffProfile, buffProfile = BuildZoneProfiles(auraSettings)
 
     local showBuffs = auraSettings.showBuffs == true
     local showDebuffs = auraSettings.showDebuffs == true
@@ -383,19 +406,24 @@ local function ApplyContainerConfigPass(frame, allowCreate)
     local buffPreviewActive = QUI_UF.auraPreviewMode[previewKey .. "_buff"]
     local debuffPreviewActive = QUI_UF.auraPreviewMode[previewKey .. "_debuff"]
 
-    -- Per-zone icon cap: maxFrameCount caps how many auras the container shows
-    -- (it never assigns past the Nth registered button).  Match each zone's
-    -- maxIcons so the cap == the number of pooled buttons.
-    local debuffMaxIcons = auraSettings.debuffMaxIcons or 16
-    local buffMaxIcons = auraSettings.buffMaxIcons or 16
-
-    -- Debuff zone.  SetUnit BEFORE the filters so the container's eager
-    -- GetUnitAuras (inside AddAuraFilter) has a valid unit.
+    -- Debuff zone.  SetUnit BEFORE group configuration so the container's eager
+    -- group registration (inside AuraSkin.Configure) has a valid unit.  OOC
+    -- configures directly; the combat pass pcall-guards Configure (PTR4 may
+    -- still restrict group mutation in combat) and falls back to the always
+    -- combat-legal Restyle (style-only, no group changes) on failure.
     local dc = frame.debuffContainer
     dc:SetUnit(frame.unit)
-    dc:ClearAuraFilters()
     if showDebuffs and not debuffPreviewActive then
-        AddZoneFilters(dc, frame.unit, ResolveZoneFilters(auraSettings, unitKey, true), "HARMFUL", debuffMaxIcons)
+        local debuffGroups = BuildZoneGroups(frame.unit,
+            ResolveZoneFilters(auraSettings, unitKey, true), "HARMFUL", debuffProfile.maxIcons)
+        if allowCreate then
+            AuraSkin.Configure(dc, debuffProfile, debuffGroups)
+        else
+            local ok = pcall(AuraSkin.Configure, dc, debuffProfile, debuffGroups)
+            if not ok then
+                AuraSkin.Restyle(dc, debuffProfile)
+            end
+        end
         dc:SetEnabled(true)
         dc:Show()
     else
@@ -406,9 +434,17 @@ local function ApplyContainerConfigPass(frame, allowCreate)
     -- Buff zone
     local bc = frame.buffContainer
     bc:SetUnit(frame.unit)
-    bc:ClearAuraFilters()
     if showBuffs and not buffPreviewActive then
-        AddZoneFilters(bc, frame.unit, ResolveZoneFilters(auraSettings, unitKey, false), "HELPFUL", buffMaxIcons)
+        local buffGroups = BuildZoneGroups(frame.unit,
+            ResolveZoneFilters(auraSettings, unitKey, false), "HELPFUL", buffProfile.maxIcons)
+        if allowCreate then
+            AuraSkin.Configure(bc, buffProfile, buffGroups)
+        else
+            local ok = pcall(AuraSkin.Configure, bc, buffProfile, buffGroups)
+            if not ok then
+                AuraSkin.Restyle(bc, buffProfile)
+            end
+        end
         bc:SetEnabled(true)
         bc:Show()
     else

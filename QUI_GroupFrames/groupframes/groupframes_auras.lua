@@ -801,6 +801,19 @@ local function ApplyAuraDelta(unit, updateInfo)
         return false
     end
 
+    -- 12.1 PTR4: while auras are secret the UNIT_AURA payload is fully secret --
+    -- addedAuras structs and the updated/removed instanceID arrays carry secret
+    -- values (auraInstanceID/spellId/name). This delta path keys the cache maps
+    -- by auraInstanceID and compares instanceIDs; a secret TABLE KEY poisons the
+    -- whole map (assertsafe hard-error, per Blizzard_AuraContainerGroups
+    -- CreateSecureAuraInstanceMap) and a secret == throws. We can't patch the
+    -- cache safely then -- and ScanUnitAuras also freezes while secret -- so bail
+    -- to the full-scan/frozen fallback (return false). No scan storm: the
+    -- fallback ScanUnitAuras returns immediately at its own AurasAreSecret gate.
+    if AurasAreSecret() then
+        return false
+    end
+
     ResetDeltaSummary()
     local buffsDirty = false
     local debuffsDirty = false
@@ -1286,7 +1299,8 @@ end
 -- frame), themed by QUI.AuraSkin. The container self-drives UNIT_AURA and reads
 -- aura data C-side, so no QUI Lua ever reads a secret aura field on this path.
 -- This mirrors the unit-frame cutover (QUI_UnitFrames/.../unitframe_auras.lua):
---   classification → AddAuraFilter strings, SetUnit(frame.unit), SetEnabled(true).
+--   classification → AuraSkin.Configure(group descriptors), SetUnit(frame.unit),
+--   SetEnabled(true).
 --
 -- The container is a FORBIDDEN object whose CREATION (+ button pooling) is
 -- combat-restricted — combat creation crashes the 12.1 client — and stays
@@ -1393,20 +1407,26 @@ local function BuildZoneFilters(elems, isDebuff)
 end
 
 -- Derive a FULL grid profile (icon metrics + layout) from the first enabled
--- strip. AuraSkin.Attach lays the buttons out relative to the container's anchor
--- corner using this profile, so the strip's anchor / offset / grow / spacing all
--- live in the profile; AnchorZoneContainer only pins the container's anchor
--- corner to the unit frame (the per-icon offset is carried by the buttons, so it
--- is NOT applied again at the container point). GF strip elements have no
--- maxPerRow key, so the grid stays a single line (maxPerRow = 0).
+-- strip. AuraSkin.Configure lays the container-wide flow out relative to the
+-- container's anchor corner using this profile, so the strip's anchor / offset
+-- / grow / spacing all live in the profile; AnchorZoneContainer pins the
+-- container's flow-origin corner (AuraSkin.LayoutAnchor) to the unit frame,
+-- folding in the per-icon offset (the engine, not QUI, positions buttons now,
+-- so the offset can no longer be carried by them). GF strip elements have no
+-- maxPerRow key, so the grid stays a single line (maxPerRow = 0). `wrap`
+-- selects the flow's wrap axis: a BOTTOM-anchored strip must wrap UPWARD, away
+-- from the frame, or extra rows would grow back into it.
 local function ZoneProfile(elems, isDebuff)
     local e = elems[1]
     local defAnchor = isDebuff and "BOTTOMRIGHT" or "TOPLEFT"
     if not e then
+        local anchor = defAnchor
         return { maxIcons = 0, iconSize = 16, spacing = 2, grow = "RIGHT",
-                 maxPerRow = 0, offsetX = 0, offsetY = 0, anchor = defAnchor,
+                 maxPerRow = 0, offsetX = 0, offsetY = 0, anchor = anchor,
+                 wrap = ((anchor or ""):find("BOTTOM", 1, true) and "UP" or "DOWN"),
                  borderSize = 1, fontSize = 11, hideSwipe = false, reverseSwipe = false }
     end
+    local anchor = e.anchor or defAnchor
     return {
         maxIcons     = e.maxIcons and e.maxIcons > 0 and e.maxIcons or 32,
         iconSize     = e.iconSize or 16,
@@ -1415,7 +1435,8 @@ local function ZoneProfile(elems, isDebuff)
         maxPerRow    = 0,
         offsetX      = e.offsetX or 0,
         offsetY      = e.offsetY or 0,
-        anchor       = e.anchor or defAnchor,
+        anchor       = anchor,
+        wrap         = ((anchor or ""):find("BOTTOM", 1, true) and "UP" or "DOWN"),
         borderSize   = e.borderSize or 1,
         fontSize     = e.fontSize or 11,
         hideSwipe    = e.hideSwipe or false,
@@ -1424,19 +1445,25 @@ local function ZoneProfile(elems, isDebuff)
 end
 
 -- Anchor a container OOC relative to its unit frame at the first enabled strip's
--- anchor corner. The per-icon offset (e.offsetX / e.offsetY) is carried by the
--- pooled buttons in ZoneProfile, so it is NOT applied here — only the corner is
--- pinned. The container is forbidden → SetPoint is NEVER called in combat
+-- anchor corner. AuraSkin.LayoutAnchor(profile) returns the flow-origin corner
+-- (grow + profile.wrap); pinning THAT corner to the frame's matching anchor
+-- point makes the auto-sized container hang off the frame edge exactly where
+-- the old 1x1-anchored button grid did, with multi-row growth extending AWAY
+-- from the frame. The per-icon offset (profile.offsetX / offsetY) is folded in
+-- here now — the engine, not QUI, positions buttons, so there is no button to
+-- carry it. The container is forbidden → SetPoint is NEVER called in combat
 -- (callers gate via QueueContainerCombatWork / InCombatLockdown).
 local function AnchorZoneContainer(container, frame, elems, isDebuff)
-    local e = elems[1]
-    local anchor = (e and e.anchor) or (isDebuff and "BOTTOMRIGHT" or "TOPLEFT")
+    local profile = ZoneProfile(elems, isDebuff)
+    local anchor = profile.anchor
     container:ClearAllPoints()
-    container:SetPoint(anchor, frame, anchor, 0, 0)
+    container:SetPoint(AuraSkin.LayoutAnchor(profile), frame, anchor, (profile.offsetX or 0), (profile.offsetY or 0))
 end
 
--- Create (OOC) the two zone containers for a unit frame and theme/pool via
--- AuraSkin. Idempotent — re-attaches/re-themes if maxIcons grew.
+-- Create (OOC) the two zone containers for a unit frame and anchor them.
+-- Group registration/theming now happens every ApplyStripPass zone pass via
+-- AuraSkin.Configure/Restyle, not here — this only owns the forbidden-object
+-- creation (combat-restricted) and the container anchor.
 local function EnsureStripContainers(frame, buffElems, debuffElems)
     AuraSkin = AuraSkin or (ns.Addon and ns.Addon.AuraSkin) or (_G.QUI and _G.QUI.AuraSkin)
     if not AuraSkin or not CreateFrame then return false end
@@ -1447,9 +1474,6 @@ local function EnsureStripContainers(frame, buffElems, debuffElems)
     if not frame.buffContainer then
         frame.buffContainer = CreateFrame("AuraContainer", nil, frame, "CustomAuraContainerTemplate")
     end
-
-    AuraSkin.Attach(frame.debuffContainer, ZoneProfile(debuffElems, true))
-    AuraSkin.Attach(frame.buffContainer, ZoneProfile(buffElems, false))
 
     AnchorZoneContainer(frame.debuffContainer, frame, debuffElems, true)
     AnchorZoneContainer(frame.buffContainer, frame, buffElems, false)
@@ -1463,7 +1487,7 @@ end
 -- forbidden containers already exist: creation is combat-forbidden (crashes
 -- the 12.1 client), but SetUnit/filter/enable on a pre-created container is
 -- combat-legal mutation. Cheap re-entry: skips frames that own both
--- containers (config-time Attach handles profile growth).
+-- containers (config-time AuraSkin.Configure handles profile growth).
 function QUI_GFA.EnsureContainersForFrame(frame)
     if not frame or InCombatLockdown() then return end
     if frame.buffContainer and frame.debuffContainer then return end
@@ -1472,44 +1496,51 @@ function QUI_GFA.EnsureContainersForFrame(frame)
     EnsureStripContainers(frame, buffElems, debuffElems)
 end
 
--- The container's AddAuraFilter eagerly runs C_UnitAuras.GetUnitAuras(unit,
--- filterString) (Blizzard_CustomAuraContainer ParseAllAuras). Some AuraFilters
--- tokens are only valid in a specific polarity combo and the C API HARD-ERRORS
--- on a bad one — and because this runs inside SecureGroupHeader_Update's
--- SetAttribute chain, the error taints + aborts the whole header. Worse,
--- AddAuraFilter table.inserts the filter BEFORE the throwing GetUnitAuras, so a
--- pcall around AddAuraFilter would leave a poisoned filter that re-throws on
--- every later UNIT_AURA. So pre-validate the string with our own (insecure,
--- addon-allowed) GetUnitAuras and only hand accepted strings to the container.
+-- AuraSkin.Configure's AddAuraGroup validates group registration eagerly, but
+-- PTR4 defers the actual aura data parse to the secure OnUpdate dirty pass
+-- (Blizzard_CustomAuraContainer). Some AuraFilters tokens are only valid in a
+-- specific polarity combo and the C API HARD-ERRORS on a bad one — and
+-- because this runs inside SecureGroupHeader_Update's SetAttribute chain, the
+-- error taints + aborts the whole header. Worse, group registration
+-- table.inserts the filter BEFORE the throwing call, so a pcall around it
+-- would leave a poisoned group that re-throws on every later dirty pass.
+-- FilterStringUsable pre-validation is still required so a bad filter can't
+-- poison the secure dirty pass — pre-validate the string with our own
+-- (insecure, addon-allowed) GetUnitAuras and only hand accepted strings to
+-- the container.
 local function FilterStringUsable(unit, filterString)
     if not (C_UnitAuras and C_UnitAuras.GetUnitAuras) then return true end
     return (pcall(C_UnitAuras.GetUnitAuras, unit, filterString))
 end
 
--- Add a zone's pre-built filter strings to its container, dropping any the C
--- API rejects, and guaranteeing at least the base polarity (always valid) so a
--- zone never silently shows nothing when every classification filter is dropped.
-local function AddZoneFilters(container, unit, filters, base, maxIcons)
-    local added = 0
-    for _, filterString in ipairs(filters) do
-        if FilterStringUsable(unit, filterString) then
-            container:AddAuraFilter(filterString, { maxFrameCount = maxIcons })
-            added = added + 1
+-- Build AuraSkin group descriptors from a zone's pre-built filter strings,
+-- dropping any the C API rejects, and guaranteeing at least the base polarity
+-- (always valid) so a zone never silently shows nothing when every
+-- classification filter is dropped.
+local function BuildZoneGroups(unit, filterStrings, base, maxIcons)
+    local groups = {}
+    for i = 1, #filterStrings do
+        local fs = filterStrings[i]
+        if FilterStringUsable(unit, fs) then
+            groups[#groups + 1] = { key = "zone" .. i, filter = fs, maxFrameCount = maxIcons }
         end
     end
-    if added == 0 then
-        container:AddAuraFilter(base, { maxFrameCount = maxIcons })
+    if #groups == 0 then
+        groups[1] = { key = "zonebase", filter = base, maxFrameCount = maxIcons }
     end
+    return groups
 end
 
--- Apply enable/disable + filter + unit config to the live strip containers.
--- This is the heart of the live strip path: filters + SetEnabled change, the
--- container self-drives the rest. allowCreate=true is the full OOC pass (may
--- create containers + pool buttons); allowCreate=false is the combat pass —
--- only combat-legal mutation of PRE-CREATED containers (re-flow, anchor,
--- unit, filters, enable).
+-- Apply enable/disable + group + unit config to the live strip containers.
+-- This is the heart of the live strip path: groups (via AuraSkin.Configure)
+-- and SetEnabled change, the container self-drives the rest. allowCreate=true
+-- is the full OOC pass (may create containers + pool buttons); allowCreate=
+-- false is the combat pass — only combat-legal mutation of PRE-CREATED
+-- containers (anchor, unit, group reconcile pcall-guarded with a Restyle
+-- fallback, enable).
 local function ApplyStripPass(frame, allowCreate)
     if not frame or not frame.unit then return end
+    AuraSkin = AuraSkin or (ns.Addon and ns.Addon.AuraSkin) or (_G.QUI and _G.QUI.AuraSkin)
     local buffElems, debuffElems = ResolveStripElements(frame)
     local showBuffs = #buffElems > 0
     local showDebuffs = #debuffElems > 0
@@ -1518,11 +1549,7 @@ local function ApplyStripPass(frame, allowCreate)
         if not EnsureStripContainers(frame, buffElems, debuffElems) then return end
     else
         if not (frame.buffContainer and frame.debuffContainer) then return end
-        AuraSkin = AuraSkin or (ns.Addon and ns.Addon.AuraSkin) or (_G.QUI and _G.QUI.AuraSkin)
-        if AuraSkin and AuraSkin.Reflow then
-            AuraSkin.Reflow(frame.debuffContainer, ZoneProfile(debuffElems, true))
-            AuraSkin.Reflow(frame.buffContainer, ZoneProfile(buffElems, false))
-        end
+        if not AuraSkin then return end
         AnchorZoneContainer(frame.debuffContainer, frame, debuffElems, true)
         AnchorZoneContainer(frame.buffContainer, frame, buffElems, false)
     end
@@ -1530,16 +1557,27 @@ local function ApplyStripPass(frame, allowCreate)
     -- Per-zone icon cap: maxFrameCount caps how many auras the container shows
     -- (it never assigns past the Nth registered button). Match each zone's pooled
     -- button count, derived from the first enabled strip's maxIcons (ZoneProfile).
-    local debuffMaxIcons = ZoneProfile(debuffElems, true).maxIcons
-    local buffMaxIcons = ZoneProfile(buffElems, false).maxIcons
+    local debuffProfile = ZoneProfile(debuffElems, true)
+    local buffProfile = ZoneProfile(buffElems, false)
 
-    -- Debuff zone (HARMFUL strips). SetUnit BEFORE the filters so the
-    -- container's eager GetUnitAuras (inside AddAuraFilter) has a valid unit.
+    -- Debuff zone (HARMFUL strips). SetUnit BEFORE group configuration so the
+    -- container's eager group registration (inside AuraSkin.Configure) has a
+    -- valid unit. OOC configures directly; the combat pass pcall-guards
+    -- Configure (PTR4 may still restrict group mutation in combat) and falls
+    -- back to the always combat-legal Restyle (style-only, no group changes)
+    -- on failure.
     local dc = frame.debuffContainer
     dc:SetUnit(frame.unit)
-    dc:ClearAuraFilters()
     if showDebuffs then
-        AddZoneFilters(dc, frame.unit, BuildZoneFilters(debuffElems, true), "HARMFUL", debuffMaxIcons)
+        local debuffGroups = BuildZoneGroups(frame.unit, BuildZoneFilters(debuffElems, true), "HARMFUL", debuffProfile.maxIcons)
+        if allowCreate then
+            AuraSkin.Configure(dc, debuffProfile, debuffGroups)
+        else
+            local ok = pcall(AuraSkin.Configure, dc, debuffProfile, debuffGroups)
+            if not ok then
+                AuraSkin.Restyle(dc, debuffProfile)
+            end
+        end
         dc:SetEnabled(true)
         dc:Show()
     else
@@ -1550,9 +1588,16 @@ local function ApplyStripPass(frame, allowCreate)
     -- Buff zone (HELPFUL strips).
     local bc = frame.buffContainer
     bc:SetUnit(frame.unit)
-    bc:ClearAuraFilters()
     if showBuffs then
-        AddZoneFilters(bc, frame.unit, BuildZoneFilters(buffElems, false), "HELPFUL", buffMaxIcons)
+        local buffGroups = BuildZoneGroups(frame.unit, BuildZoneFilters(buffElems, false), "HELPFUL", buffProfile.maxIcons)
+        if allowCreate then
+            AuraSkin.Configure(bc, buffProfile, buffGroups)
+        else
+            local ok = pcall(AuraSkin.Configure, bc, buffProfile, buffGroups)
+            if not ok then
+                AuraSkin.Restyle(bc, buffProfile)
+            end
+        end
         bc:SetEnabled(true)
         bc:Show()
     else
@@ -1873,6 +1918,12 @@ if ns.AuraEvents then
             local updated = updateInfo.updatedAuraInstanceIDs
             local nUpdated = #updated
             if nUpdated == 0 then return end
+            -- 12.1 PTR4: updatedAuraInstanceIDs are secret while auras are secret;
+            -- the icon/bar reseat (RefreshUpdatedIcons/Bars) matches them with ==,
+            -- which throws on a secret value. Skip the reseat during secret windows
+            -- -- swipes hold their last C-side SetCooldown, and skipping keeps this
+            -- zero-alloc hot path storm-free (no fall-through to a full scan).
+            if AurasAreSecret() then return end
             if auraStats then auraStats.fastUpdates = auraStats.fastUpdates + 1 end
 
             -- Reseat only the C-side swipes/bars on element visuals whose aura

@@ -728,7 +728,18 @@ local function InvalidateAuraMemoForDelta(unit, updateInfo)
             local ad = added[i]
             if ad then
                 if not DropAuraMemoKey(u, ad.spellId) then dropAllNils = true end
-                if ad.spellID ~= ad.spellId and not DropAuraMemoKey(u, ad.spellID) then dropAllNils = true end
+                -- 12.1 PTR4: an addedAuras struct is fully secret while auras are
+                -- secret, so ad.spellID / ad.spellId can both be secret. The dedup
+                -- compare `ad.spellID ~= ad.spellId` is a raw ~= that THROWS on a
+                -- secret operand, so gate it: when either side is secret we can't
+                -- compare -- hand the mapped id straight to DropAuraMemoKey (its own
+                -- secret guard returns false and widens the sweep).
+                local mapped = ad.spellID
+                if (WoW_IsSecretValue and (WoW_IsSecretValue(mapped) or WoW_IsSecretValue(ad.spellId))) then
+                    if not DropAuraMemoKey(u, mapped) then dropAllNils = true end
+                elseif mapped ~= ad.spellId and not DropAuraMemoKey(u, mapped) then
+                    dropAllNils = true
+                end
                 if not DropAuraMemoKey(u, ad.name) then dropAllNils = true end
             end
         end

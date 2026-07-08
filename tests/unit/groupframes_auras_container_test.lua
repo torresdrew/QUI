@@ -6,7 +6,8 @@
 -- The container is a forbidden, self-driving object that cannot be exercised
 -- headless, so these source-text assertions pin the structural contract:
 --   * each unit frame gets buff + debuff CustomAuraContainer zones,
---   * classification → AddAuraFilter, SetUnit, SetEnabled self-drive,
+--   * classification → AuraSkin group descriptors (AddAuraGroup), SetUnit,
+--     SetEnabled self-drive,
 --   * the engine NO LONGER renders filterStrip elements (container's job) and
 --     NO LONGER renders the dropped tracked icon/square/bar display,
 --   * Missing Raid Buffs (missingRaidBuff) + the healthTint tint feeder STILL
@@ -45,8 +46,6 @@ check("creates CustomAuraContainerTemplate frames",
     src:find('"CustomAuraContainerTemplate"', 1, true) ~= nil)
 check("resolves the QUI.AuraSkin adapter",
     src:find("QUI.AuraSkin", 1, true) ~= nil or src:find("ns.Addon.AuraSkin", 1, true) ~= nil)
-check("calls AuraSkin.Attach to pool + theme container buttons",
-    src:find("AuraSkin.Attach", 1, true) ~= nil)
 
 -- Per-unit buff + debuff zones ------------------------------------------------
 check("creates a per-unit buff container",
@@ -55,11 +54,22 @@ check("creates a per-unit buff container",
 check("creates a per-unit debuff container",
     src:find("frame.debuffContainer", 1, true) ~= nil)
 
--- FILTERS / UNIT / ENABLE: container is told its filters, unit, and switched on
-check("registers filters via container:AddAuraFilter(filterString, {})",
-    src:find("AddAuraFilter", 1, true) ~= nil)
-check("clears filters before re-adding (re-config)",
-    src:find("ClearAuraFilters", 1, true) ~= nil)
+-- AURASKIN GROUP CONTRACT: zones configure via AuraSkin.Configure/Restyle, not
+-- the retired per-button AddAuraFilter/AuraSkin.Attach API --------------------
+check("AddAuraFilter replaced by AuraSkin.Configure (retired per-button API gone)",
+    src:find("AddAuraFilter", 1, true) == nil)
+check("ClearAuraFilters gone (PTR4 groups are reconciled, never cleared)",
+    src:find("ClearAuraFilters", 1, true) == nil)
+check("AuraSkin.Attach gone (engine creates buttons; Configure replaces it)",
+    src:find("AuraSkin.Attach", 1, true) == nil)
+check("AuraSkin.Reflow gone (Restyle is the combat-legal pass)",
+    src:find("AuraSkin.Reflow", 1, true) == nil)
+check("zones configure via AuraSkin.Configure",
+    src:find("AuraSkin.Configure", 1, true) ~= nil)
+check("combat pass falls back to AuraSkin.Restyle",
+    src:find("AuraSkin.Restyle", 1, true) ~= nil)
+check("SetUnit still precedes group configuration",
+    src:find("SetUnit(frame.unit)", 1, true) ~= nil)
 check("HELPFUL strips → buff zone, HARMFUL strips → debuff zone",
     src:find('"HELPFUL"', 1, true) ~= nil and src:find('"HARMFUL"', 1, true) ~= nil)
 check("calls container:SetUnit(frame.unit)",
