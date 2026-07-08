@@ -29,7 +29,7 @@ local GRANDFATHERED = {
     ["QUI_CDM/cdm/cdm_icon_renderer.lua"] = 0,
     ["QUI_CDM/cdm/cdm_spelldata.lua"] = 1,
     ["QUI_GroupFrames/groupframes/groupframes.lua"] = 0,
-    ["QUI_Minimap/minimap/minimap.lua"] = 5,
+    ["modules/minimap/minimap.lua"] = 5,
 }
 
 local loadchunk = loadstring or load
