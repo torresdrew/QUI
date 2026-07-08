@@ -120,6 +120,29 @@ local defaults = {
             autoConfirmHighCost = false,  -- Auto-confirm the expensive-item purchase popup (opt-in)
             merchantKnownPetMark = false,  -- Green check on merchant pet items already collected (opt-in)
             ejLootSpecIcons = false,  -- Spec-eligibility icons on Encounter Journal loot rows (opt-in)
+            worldMapTeleports = false,  -- M+ teleport button panel on the world map (opt-in)
+            -- Group death alert (CLEU-free: UnitIsDeadOrGhost state flips)
+            deathAlert = {
+                enabled = false,
+                sound = "None",
+                fontSize = 24,
+                offsetX = 0,
+                offsetY = 220,
+            },
+            -- Healer mana watcher: bars-only display (12.x secret-safe)
+            healerMana = {
+                enabled = false,
+                instanceOnly = true,
+                offsetX = 0,
+                offsetY = -260,
+            },
+            -- Focus + raid marker one-button (writes the "QUI Focus Marker" macro)
+            focusMarker = {
+                enabled = false,
+                marker = 8,          -- raid target index (8 = skull)
+                useMouseover = true, -- prefer hostile living mouseover, else target
+                writeMacro = true,   -- keep the character macro in sync
+            },
             communitiesPrivacy = false,  -- Hide Communities chat/roster behind a click-to-reveal cover (opt-in)
             gemSocketPicker = false,  -- Bag-gem picker panel under the item socketing window (opt-in)
             mailContactsPanel = false,  -- Contacts side panel on the send-mail tab (opt-in)

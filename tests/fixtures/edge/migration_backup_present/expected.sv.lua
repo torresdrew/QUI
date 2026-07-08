@@ -2438,6 +2438,13 @@ return {
           },
           darkModeHealthOpacity = 0.69999999999999996,
           darkModeOpacity = 0.69999999999999996,
+          deathAlert = {
+            enabled = false,
+            fontSize = 24,
+            offsetX = 0,
+            offsetY = 220,
+            sound = "None"
+          },
           defaultBgColor = {
             [1] = 0,
             [2] = 0,
@@ -2492,12 +2499,24 @@ return {
             },
             useClassColor = false
           },
+          focusMarker = {
+            enabled = false,
+            marker = 8,
+            useMouseover = true,
+            writeMacro = true
+          },
           font = "Quazii",
           fontOutline = "OUTLINE",
           friendsClassColor = true,
           gameMenuDim = true,
           gameMenuFontSize = 12,
           gemSocketPicker = false,
+          healerMana = {
+            enabled = false,
+            instanceOnly = true,
+            offsetX = 0,
+            offsetY = -260
+          },
           hideObjectiveTrackerBorder = true,
           hostilityColorFriendly = {
             [1] = 0.20000000000000001,
@@ -2684,7 +2703,8 @@ return {
             maxQuality = 1,
             neverSell = "",
             previewOnly = true
-          }
+          },
+          worldMapTeleports = false
         },
         hudLayering = {
           bossFrames = 4,

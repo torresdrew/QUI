@@ -459,6 +459,63 @@ local function BuildAutomation(L, generalDB)
         { description = ns.L["Pre-fill the word DELETE into the confirmation box when destroying a rare or higher item."] })
     s.AddRow(row(s.frame, ns.L["Click-to-Teleport on M+ Tab"], telW), row(s.frame, ns.L["Auto-Fill DELETE Confirmation Text"], delW))
 
+    local mapTelW = GUI:CreateFormCheckbox(s.frame, nil, "worldMapTeleports", generalDB, function()
+        if ns.RefreshWorldMapTeleports then ns.RefreshWorldMapTeleports() end
+    end, { description = ns.L["Show a panel of this season's M+ dungeon teleports on the world map. Unlearned teleports show desaturated. Panel builds out of combat."] })
+    s.AddRow(row(s.frame, ns.L["World Map Teleport Panel"], mapTelW))
+
+    -- FOCUS + RAID MARKER BUTTON
+    if type(generalDB.focusMarker) ~= "table" then generalDB.focusMarker = {} end
+    local fm = generalDB.focusMarker
+    local function RefreshFM()
+        if ns.RefreshFocusMarker then ns.RefreshFocusMarker() end
+    end
+    local fmEnableW = GUI:CreateFormCheckbox(s.frame, nil, "enabled", fm, RefreshFM,
+        { description = ns.L["One press sets your focus AND puts a raid marker on it (hostile living mouseover first, else your target). Keeps a character macro named 'QUI Focus Marker' in sync — drag it to a bar or keybind it. Updates apply out of combat."] })
+    local markerOptions = {
+        { value = 1, text = ns.L["Star"] },
+        { value = 2, text = ns.L["Circle"] },
+        { value = 3, text = ns.L["Diamond"] },
+        { value = 4, text = ns.L["Triangle"] },
+        { value = 5, text = ns.L["Moon"] },
+        { value = 6, text = ns.L["Square"] },
+        { value = 7, text = ns.L["Cross"] },
+        { value = 8, text = ns.L["Skull"] },
+    }
+    local fmMarkerW = GUI:CreateFormDropdown(s.frame, nil, markerOptions, "marker", fm, RefreshFM,
+        { description = ns.L["Raid target icon the button applies."] })
+    s.AddRow(row(s.frame, ns.L["Focus + Marker Button"], fmEnableW), row(s.frame, ns.L["Marker Icon"], fmMarkerW))
+
+    local fmMouseoverW = GUI:CreateFormCheckbox(s.frame, nil, "useMouseover", fm, RefreshFM,
+        { description = ns.L["Prefer the hostile living unit under your mouse; fall back to your current target."] })
+    local fmMacroW = GUI:CreateFormCheckbox(s.frame, nil, "writeMacro", fm, RefreshFM,
+        { description = ns.L["Create/update the 'QUI Focus Marker' character macro automatically."] })
+    s.AddRow(row(s.frame, ns.L["Use Mouseover"], fmMouseoverW), row(s.frame, ns.L["Maintain Macro"], fmMacroW))
+
+    -- HEALER MANA WATCHER
+    if type(generalDB.healerMana) ~= "table" then generalDB.healerMana = {} end
+    local hm = generalDB.healerMana
+    local function RefreshHM()
+        if ns.RefreshHealerMana then ns.RefreshHealerMana() end
+    end
+    local hmEnableW = GUI:CreateFormCheckbox(s.frame, nil, "enabled", hm, RefreshHM,
+        { description = ns.L["Show a small movable list of your group's healers with a mana bar each (bars only — mana numbers are combat-restricted in 12.x). Position it in Layout Mode."] })
+    local hmInstanceW = GUI:CreateFormCheckbox(s.frame, nil, "instanceOnly", hm, RefreshHM,
+        { description = ns.L["Only show inside dungeons, raids, and other instances."] })
+    s.AddRow(row(s.frame, ns.L["Healer Mana Bars"], hmEnableW), row(s.frame, ns.L["Instances Only"], hmInstanceW))
+
+    -- GROUP DEATH ALERT
+    if type(generalDB.deathAlert) ~= "table" then generalDB.deathAlert = {} end
+    local da = generalDB.deathAlert
+    local function RefreshDA()
+        if ns.RefreshDeathAlert then ns.RefreshDeathAlert() end
+    end
+    local daEnableW = GUI:CreateFormCheckbox(s.frame, nil, "enabled", da, RefreshDA,
+        { description = ns.L["Flash an on-screen alert when a party or raid member dies (hunter feigns filtered). Position it in Layout Mode. Names fall back to 'An ally' when combat-restricted."] })
+    local daSoundW = GUI:CreateFormDropdown(s.frame, nil, Shared.GetSoundList(), "sound", da, nil,
+        { description = ns.L["Sound played with the death alert. None = silent."] })
+    s.AddRow(row(s.frame, ns.L["Group Death Alert"], daEnableW), row(s.frame, ns.L["Death Alert Sound"], daSoundW))
+
     local ahW = GUI:CreateFormCheckbox(s.frame, nil, "auctionHouseExpansionFilter", generalDB, nil,
         { description = ns.L["Automatically toggle the current expansion filter when you open the Auction House so you only see modern items."] })
     local coW = GUI:CreateFormCheckbox(s.frame, nil, "craftingOrderExpansionFilter", generalDB, nil,
