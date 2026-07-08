@@ -13,6 +13,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v4.1.1-beta1 - 2026-07-07
+
+Beta channel rebased onto the v4.1.0 release base. Localization is re-enabled on beta — stable ships English-only; beta runs fully localized (deDE, esES, esMX, frFR, itIT, koKR, ptBR, ruRU, zhCN, zhTW).
+
+All new modules below are opt-in (off by default).
+
+### Added
+- feat(qol): vendor sell rules — rule-based auto-sell for equippable gear by quality/item level with force-sell/never-sell lists; runs in preview-only mode until you disable the safety
+- feat(qol): gem socket picker — panel listing the gems in your bags below the item socketing window; click to insert
+- feat(qol): mail contacts — address book side panel on the mail send tab (your alts + past recipients) with a remember-last-recipient toggle
+- feat(qol): trade & mail log — account-wide history of trades and sent/received mail, browsable via /quilog
+- feat(qol): encounter journal loot specs — spec-eligibility icons on Encounter Journal loot rows
+- feat(qol): communities privacy — click-to-reveal cover over community chat and roster (for streaming)
+- feat(qol): group death alert — on-screen text and optional sound when a party/raid member dies (feign-death filtered)
+- feat(qol): healer mana watcher — small movable frame with a mana bar for each healer in your group
+- feat(qol): focus + raid marker button — one click to set focus and put a raid marker on it (mouseover-aware; character macro or clickable button)
+- feat(qol): world map M+ teleports — panel on the world map listing the current season's dungeon teleports as click-to-cast buttons with cooldowns
+
 ## v4.1.0 - 2026-07-07
 
 ### Added
