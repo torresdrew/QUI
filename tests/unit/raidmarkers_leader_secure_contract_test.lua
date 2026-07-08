@@ -13,7 +13,11 @@
 --     watcher; preview mode bypasses the leadership gate
 --   * strip clicks call the party APIs with permission hints
 
-local WORLD_MARKER_ORDER = { 8, 4, 1, 7, 2, 3, 6, 5 }
+-- Star-first symbol → world marker index (star→yellow 5 … skull→white 8).
+-- This is Blizzard's WORLD_RAID_MARKER_ORDER[9 - i]; the in-game bug report
+-- that motivated it: shipping ORDER[i] placed every flare mirrored (button 1
+-- placed button 8's flare).
+local WORLD_MARKER_ORDER = { 5, 6, 3, 2, 7, 1, 4, 8 }
 
 local markersDB = {
     enabled = true,

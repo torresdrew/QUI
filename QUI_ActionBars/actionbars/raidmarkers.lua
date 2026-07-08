@@ -43,12 +43,17 @@ local Helpers = ns.Helpers
 local MAX_MARKERS = 8
 local BASE_CROP = 0.08
 
--- World markers project the same 8 symbols onto the ground, but display slot d
--- places world marker WORLD_MARKER_ORDER[d] — the mapping Blizzard's own
--- CompactRaidFrameManager uses (its buttons show symbol d via the
--- "GM-raidMarker"..d atlas and place WORLD_RAID_MARKER_ORDER[d]).
+-- World markers project the same 8 symbols onto the ground, but the world
+-- marker INDEX for a symbol differs from its raid target index. Our buttons
+-- show symbol i (star-first UI-RaidTargetingIcon_i), so slot i must place
+-- the world marker whose flare shows symbol i. In Blizzard terms that is
+-- WORLD_RAID_MARKER_ORDER[9 - i]: their manager buttons are skull-first
+-- (atlas GM-raidMarker(ReverseMarkerID(id)) with ReverseMarkerID = 9 - id).
+-- Star-first result: star→5 (yellow), circle→6 (orange), diamond→3 (purple),
+-- triangle→2 (green), moon→7 (silver), square→1 (blue), cross→4 (red),
+-- skull→8 (white).
 local MAX_WORLD_MARKERS = 8
-local WORLD_MARKER_ORDER = { 8, 4, 1, 7, 2, 3, 6, 5 }
+local WORLD_MARKER_ORDER = { 5, 6, 3, 2, 7, 1, 4, 8 }
 
 -- Per-marker icon textures (individual files, indexed 1-8).
 local function MarkerTexture(i)
