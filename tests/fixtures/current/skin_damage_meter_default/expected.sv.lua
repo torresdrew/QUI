@@ -6504,7 +6504,7 @@ return {
       Default = {
         _defaultsVersion = 3,
         _needsLateAbImport = true,
-        _schemaVersion = 50,
+        _schemaVersion = 51,
         quiUnitFrames = {
           focus = {
             castbar = {

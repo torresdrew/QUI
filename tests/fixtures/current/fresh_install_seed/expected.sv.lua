@@ -6507,7 +6507,7 @@ return {
       Default = {
         _defaultsVersion = 3,
         _needsLateAbImport = true,
-        _schemaVersion = 50,
+        _schemaVersion = 51,
         actionBars = {
           bars = {
             bags = {
@@ -14654,10 +14654,8 @@ return {
                       show = false
                     },
                     enabled = false,
-                    filterFlags = {
-                      modifiers = true
-                    },
-                    filterMode = "flags",
+                    filterFlags = {},
+                    filterMode = "off",
                     growDirection = "RIGHT",
                     hidePermanent = false,
                     hideSwipe = false,
@@ -14717,10 +14715,8 @@ return {
                       show = true
                     },
                     enabled = false,
-                    filterFlags = {
-                      modifiers = true
-                    },
-                    filterMode = "flags",
+                    filterFlags = {},
+                    filterMode = "off",
                     growDirection = "RIGHT",
                     hidePermanent = false,
                     hideSwipe = false,
@@ -14939,10 +14935,8 @@ return {
                       show = false
                     },
                     enabled = false,
-                    filterFlags = {
-                      modifiers = true
-                    },
-                    filterMode = "flags",
+                    filterFlags = {},
+                    filterMode = "off",
                     growDirection = "RIGHT",
                     hidePermanent = false,
                     hideSwipe = false,
@@ -15003,7 +14997,7 @@ return {
                     },
                     enabled = true,
                     filterFlags = {
-                      modifiers = true
+                      RAID = true
                     },
                     filterMode = "flags",
                     growDirection = "RIGHT",
@@ -15348,10 +15342,8 @@ return {
                       show = false
                     },
                     enabled = false,
-                    filterFlags = {
-                      modifiers = true
-                    },
-                    filterMode = "flags",
+                    filterFlags = {},
+                    filterMode = "off",
                     growDirection = "RIGHT",
                     hidePermanent = false,
                     hideSwipe = false,
@@ -15411,10 +15403,8 @@ return {
                       show = true
                     },
                     enabled = false,
-                    filterFlags = {
-                      modifiers = true
-                    },
-                    filterMode = "flags",
+                    filterFlags = {},
+                    filterMode = "off",
                     growDirection = "RIGHT",
                     hidePermanent = false,
                     hideSwipe = false,
@@ -15623,10 +15613,8 @@ return {
                       show = false
                     },
                     enabled = true,
-                    filterFlags = {
-                      modifiers = true
-                    },
-                    filterMode = "flags",
+                    filterFlags = {},
+                    filterMode = "off",
                     growDirection = "RIGHT",
                     hidePermanent = false,
                     hideSwipe = false,
@@ -15686,10 +15674,8 @@ return {
                       show = true
                     },
                     enabled = false,
-                    filterFlags = {
-                      modifiers = true
-                    },
-                    filterMode = "flags",
+                    filterFlags = {},
+                    filterMode = "off",
                     growDirection = "RIGHT",
                     hidePermanent = false,
                     hideSwipe = false,
@@ -16041,7 +16027,7 @@ return {
                     },
                     enabled = true,
                     filterFlags = {
-                      modifiers = true
+                      PLAYER = true
                     },
                     filterMode = "flags",
                     growDirection = "RIGHT",
@@ -16103,10 +16089,8 @@ return {
                       show = true
                     },
                     enabled = true,
-                    filterFlags = {
-                      modifiers = true
-                    },
-                    filterMode = "flags",
+                    filterFlags = {},
+                    filterMode = "off",
                     growDirection = "LEFT",
                     hidePermanent = false,
                     hideSwipe = true,
@@ -16300,10 +16284,8 @@ return {
                       show = false
                     },
                     enabled = true,
-                    filterFlags = {
-                      modifiers = true
-                    },
-                    filterMode = "flags",
+                    filterFlags = {},
+                    filterMode = "off",
                     growDirection = "LEFT",
                     hidePermanent = false,
                     hideSwipe = false,
@@ -16363,10 +16345,8 @@ return {
                       show = true
                     },
                     enabled = false,
-                    filterFlags = {
-                      modifiers = true
-                    },
-                    filterMode = "flags",
+                    filterFlags = {},
+                    filterMode = "off",
                     growDirection = "RIGHT",
                     hidePermanent = false,
                     hideSwipe = false,

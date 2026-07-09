@@ -87,7 +87,15 @@ end
 -- group (registration inserts the filter BEFORE the throwing call, so pcall
 -- would strand it). Pre-validate every string with our own insecure
 -- GetUnitAuras and only hand accepted strings to the container.
+-- The C-side probe alone is NOT sufficient: the C parser tolerates unknown
+-- components (e.g. "HARMFUL|modifiers") that the container's Lua-side
+-- AuraUtil.IsValidFilterString assert rejects inside AddAuraGroup — check
+-- both.
 function G.FilterStringUsable(unit, filterString)
+    local AU = _G.AuraUtil
+    if AU and AU.IsValidFilterString and not AU.IsValidFilterString(filterString) then
+        return false
+    end
     if not (C_UnitAuras and C_UnitAuras.GetUnitAuras) then return true end
     return (pcall(C_UnitAuras.GetUnitAuras, unit, filterString))
 end

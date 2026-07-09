@@ -20,7 +20,7 @@ do
     M.RunOnProfile(profile)
     check("below-floor (46) wiped: user data gone", profile.someModule == nil, tostring(profile.someModule))
     check("below-floor (46) flagged _needsStarterReseed", profile._needsStarterReseed == true, tostring(profile._needsStarterReseed))
-    check("below-floor (46) stamped to CURRENT (50)", profile._schemaVersion == 50, tostring(profile._schemaVersion))
+    check("below-floor (46) stamped to CURRENT (51)", profile._schemaVersion == 51, tostring(profile._schemaVersion))
 end
 
 -- 2) At-floor profile (47) is NOT floored; gates run RestoreBuffDebuffSplit +
@@ -37,7 +37,7 @@ do
     check("at-floor (47) flat buffIconSize pruned by v50", profile.buffBorders.buffIconSize == nil, tostring(profile.buffBorders.buffIconSize))
     check("at-floor (47) NOT flagged for reseed", profile._needsStarterReseed == nil, tostring(profile._needsStarterReseed))
     check("at-floor (47) debuffFrame restored", profile.frameAnchoring.debuffFrame ~= nil, "debuffFrame nil")
-    check("at-floor (47) stamped to 50", profile._schemaVersion == 50, tostring(profile._schemaVersion))
+    check("at-floor (47) stamped to 51", profile._schemaVersion == 51, tostring(profile._schemaVersion))
 end
 
 -- 2b) v49 PrunePrivateAuras: seeded privateAuras subtables are stripped from
@@ -70,17 +70,17 @@ do
         and profile.quiUnitFrames.player.portrait.enabled == true, "portrait clobbered")
     check("v49 prune preserves sibling group settings", profile.quiGroupFrames.party.frames
         and profile.quiGroupFrames.party.frames.width == 90, "frames clobbered")
-    check("stored 48 stamps to CURRENT (50)", profile._schemaVersion == 50, tostring(profile._schemaVersion))
+    check("stored 48 stamps to CURRENT (51)", profile._schemaVersion == 51, tostring(profile._schemaVersion))
 end
 
--- 3) Already-current profile (50) is a no-op: the v50 aura-unification gate does
+-- 3) Already-current profile (51) is a no-op: the v50 aura-unification gate does
 -- NOT run, so a flat buffIconSize left in place is preserved untouched.
 do
-    local profile = { _schemaVersion = 50, buffBorders = { buffIconSize = 35, debuffIconSize = 12 } }
+    local profile = { _schemaVersion = 51, buffBorders = { buffIconSize = 35, debuffIconSize = 12 } }
     M.RunOnProfile(profile)
-    check("current (50) untouched: custom debuffIconSize preserved", profile.buffBorders.debuffIconSize == 12, tostring(profile.buffBorders.debuffIconSize))
-    check("current (50) buffIconSize NOT migrated (no-op)", profile.buffBorders.buffIconSize == 35, tostring(profile.buffBorders.buffIconSize))
-    check("current (50) stays at 50", profile._schemaVersion == 50, tostring(profile._schemaVersion))
+    check("current (51) untouched: custom debuffIconSize preserved", profile.buffBorders.debuffIconSize == 12, tostring(profile.buffBorders.debuffIconSize))
+    check("current (51) buffIconSize NOT migrated (no-op)", profile.buffBorders.buffIconSize == 35, tostring(profile.buffBorders.buffIconSize))
+    check("current (51) stays at 51", profile._schemaVersion == 51, tostring(profile._schemaVersion))
 end
 
 print("migration_floor_collapse_test " .. (failures == 0 and "OK" or "FAILED"))

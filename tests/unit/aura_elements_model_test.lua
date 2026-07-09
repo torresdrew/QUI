@@ -75,6 +75,18 @@ do
     check("compile: flags mode with nothing enabled → empty (bare polarity fallback)",
         #E.CompileFilters(flags) == 0)
 
+    -- Out-of-set tokens are DROPPED, never emitted: the container's
+    -- AddAuraGroup asserts AuraUtil.IsValidFilterString, and the C-side
+    -- GetUnitAuras probe doesn't reject unknown components (live PTR error
+    -- "Unknown aura filter component: 'modifiers'" from a corrupted store).
+    flags.filterFlags = { PLAYER = true, modifiers = true }
+    local dropped = E.CompileFilters(flags)
+    check("compile: flags mode drops out-of-set tokens",
+        #dropped == 1 and dropped[1] == "HELPFUL|PLAYER", tostring(dropped[1]))
+    flags.filterFlags = { modifiers = true, exclusive = true }
+    check("compile: flags mode with ONLY out-of-set tokens → empty (bare polarity fallback)",
+        #E.CompileFilters(flags) == 0)
+
     -- Legacy UF fallback: helpful/harmful master toggles stored as raid/raidInCombat.
     local legacy = E.NewFilterStripElement("HELPFUL")
     legacy.filterMode = "classify"

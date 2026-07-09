@@ -57,10 +57,19 @@ local _currentGlobalDB     = nil  -- db.global; for cross-profile reads (v32+)
 --       (enableBuffs/enableDebuffs/hide*/fade*/iconSkin/borderSize/font*)
 --       SURVIVE — the runtime still reads them as per-frame gates.
 --
+-- v51 = RepairAuraFilterFlags — the shipped v50 UF seed misread the NESTED
+--       legacy filter shape ({ modifiers = {TOKEN=bool}, exclusive =
+--       "TOKEN"|nil }), stamping the literal "modifiers"/"exclusive" keys as
+--       filter tokens; the compiled "HARMFUL|modifiers" string hard-errors
+--       the container's IsValidFilterString assert on 12.1. Strips tokens
+--       outside the engine AuraFilters set from every UF element's
+--       filterFlags; flags-mode elements left empty revert to "off" (the
+--       correct v50 outcome for the common all-false legacy shape).
+--
 -- When adding a new migration: bump CURRENT_SCHEMA_VERSION, add a single
 -- linear gate in RunOnProfile, and document the version above.
 ---------------------------------------------------------------------------
-local CURRENT_SCHEMA_VERSION = 50
+local CURRENT_SCHEMA_VERSION = 51
 
 -- The oldest schema we still carry forward. The last 4.x stable release and
 -- 5.0 alpha4 both shipped schema 47, and every step-by-step migration through
@@ -663,13 +672,33 @@ function Migrations.SeedAuraElements(profile)
                         if c[master] == nil and (c.raid or c.raidInCombat) then
                             c[master] = true
                         end
-                    elseif type(a[prefix .. "Filter"]) == "table" and next(a[prefix .. "Filter"]) then
-                        e.filterMode = "flags"
+                    elseif type(a[prefix .. "Filter"]) == "table" then
+                        -- Legacy UF filter store is NESTED (HEAD's BuildFilterString
+                        -- read { modifiers = {TOKEN=bool}, exclusive = "TOKEN"|nil });
+                        -- tolerate flat {TOKEN=true} variants too. Only engine tokens
+                        -- survive: the shipped v50 iterated the OUTER table, stamping
+                        -- the literal "modifiers"/"exclusive" container keys as filter
+                        -- tokens — the compiled "HARMFUL|modifiers" string fails the
+                        -- container's IsValidFilterString assert. v51
+                        -- (RepairAuraFilterFlags) heals stores seeded by that build.
+                        local lf = a[prefix .. "Filter"]
+                        local valid = E.VALID_FILTER_TOKENS or {}
                         local flags = {}
-                        for tok, on in pairs(a[prefix .. "Filter"]) do
-                            if on then flags[tok] = true end
+                        if type(lf.modifiers) == "table" then
+                            for tok, on in pairs(lf.modifiers) do
+                                if on == true and valid[tok] then flags[tok] = true end
+                            end
                         end
-                        e.filterFlags = flags
+                        if type(lf.exclusive) == "string" and valid[lf.exclusive] then
+                            flags[lf.exclusive] = true
+                        end
+                        for tok, on in pairs(lf) do
+                            if on == true and valid[tok] then flags[tok] = true end
+                        end
+                        if next(flags) then
+                            e.filterMode = "flags"
+                            e.filterFlags = flags
+                        end
                     end
                     -- Absent duration/stack sub-tables resolve to the HEAD
                     -- defaults.lua declarations (player/target blocks:
@@ -753,6 +782,52 @@ function Migrations.SeedAuraElements(profile)
             end
         end
     end
+end
+
+-- v51: repair filterFlags corrupted by the shipped v50 UF seed. The legacy UF
+-- filter store was NESTED ({ modifiers = {TOKEN=bool}, exclusive =
+-- "TOKEN"|nil }, read by HEAD's BuildFilterString), but the shipped v50 seed
+-- iterated the OUTER table — stamping the literal container keys as filter
+-- tokens (filterFlags = { modifiers = true, exclusive = true }). The compiled
+-- "HARMFUL|modifiers" string passes the C-side GetUnitAuras probe (the C
+-- parser tolerates unknown components) but fails the container's
+-- AuraUtil.IsValidFilterString assert inside AddAuraGroup, hard-erroring the
+-- config pass. The legacy source table was pruned right after the seed, so
+-- the original intent is unrecoverable: strip out-of-set tokens; a flags-mode
+-- element left with none reverts to bare polarity ("off") — which is exactly
+-- what a correct v50 would have produced for the common all-false legacy
+-- shape. Returns false (don't stamp v51) if the element model isn't loaded;
+-- same belt-and-braces contract as SeedAuraElements.
+function Migrations.RepairAuraFilterFlags(profile)
+    local E = _G.QUI and _G.QUI.AuraElements
+    local valid = E and E.VALID_FILTER_TOKENS
+    if not valid then return false end
+    local uf = profile.quiUnitFrames
+    if type(uf) ~= "table" then return true end
+    for _, unit in pairs(uf) do
+        local a = type(unit) == "table" and unit.auras
+        local elements = type(a) == "table" and a.elements
+        if type(elements) == "table" then
+            for _, bucket in pairs(elements) do
+                if type(bucket) == "table" then
+                    for _, e in ipairs(bucket) do
+                        if type(e) == "table" and e.filterMode == "flags" then
+                            local flags = type(e.filterFlags) == "table" and e.filterFlags
+                            if flags then
+                                for tok in pairs(flags) do
+                                    if not valid[tok] then flags[tok] = nil end
+                                end
+                            end
+                            if not flags or next(flags) == nil then
+                                e.filterMode = "off"
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return true
 end
 
 ---------------------------------------------------------------------------
@@ -1746,6 +1821,20 @@ function Migrations.RunOnProfile(profile)
             -- Stamp only through v49 so the flat keys aren't stranded behind
             -- the version gate — the next RunOnProfile retries the v50 seed.
             profile._schemaVersion = 49
+            return true
+        end
+    end
+
+    -- v51: strip out-of-set filter tokens the shipped v50 UF seed stamped
+    -- from the nested legacy filter shape ("modifiers"/"exclusive" literal
+    -- keys). See Migrations.RepairAuraFilterFlags above.
+    if stored < 51 then
+        if Migrations.RepairAuraFilterFlags(profile) == false then
+            -- Element model unavailable (belt-and-braces; mirrors the v50
+            -- contract). Stamp only through v50 so the corrupted flags aren't
+            -- stranded behind the version gate — the next RunOnProfile
+            -- retries the repair.
+            profile._schemaVersion = 50
             return true
         end
     end

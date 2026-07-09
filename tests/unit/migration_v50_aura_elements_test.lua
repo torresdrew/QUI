@@ -163,7 +163,7 @@ do
     check("BB survive enableBuffs=true", bb.enableBuffs == true, tostring(bb.enableBuffs))
     check("BB survive enableDebuffs=false", bb.enableDebuffs == false, tostring(bb.enableDebuffs))
 
-    check("BB stamped v50", profile._schemaVersion == 50, tostring(profile._schemaVersion))
+    check("BB stamped to current (51)", profile._schemaVersion == 51, tostring(profile._schemaVersion))
 end
 
 ----------------------------------------------------------------------------
@@ -253,6 +253,20 @@ do
                     debuffFilterMode = "classification", debuffClassifications = { raidInCombat = true },
                 },
             },
+            pet = {
+                auras = {
+                    -- The REAL legacy UF filter shape is NESTED (HEAD's
+                    -- BuildFilterString read { modifiers = {TOKEN=bool},
+                    -- exclusive = "TOKEN"|nil }). The outer container keys must
+                    -- NEVER leak into filterFlags as tokens — the shipped v50
+                    -- did exactly that ("HARMFUL|modifiers" fails the
+                    -- container's IsValidFilterString assert on 12.1).
+                    showBuffs = true,
+                    buffFilter = { modifiers = { PLAYER = true, RAID = false }, exclusive = "CANCELABLE" },
+                    showDebuffs = true,
+                    debuffFilter = { modifiers = { PLAYER = false, RAID = false } },
+                },
+            },
         },
     }
     M.RunOnProfile(profile)
@@ -314,7 +328,32 @@ do
         fDebuff and filterArraySetEqual(E.CompileFilters(fDebuff), { "HARMFUL|RAID" }),
         fDebuff and table.concat(E.CompileFilters(fDebuff), " , "))
 
-    check("UF stamped v50", profile._schemaVersion == 50, tostring(profile._schemaVersion))
+    -- Nested legacy filter shape: enabled modifiers + exclusive become flags
+    -- tokens; the outer "modifiers"/"exclusive" container keys never leak.
+    local peta = profile.quiUnitFrames.pet.auras
+    local petBuff = findByType(peta.elements and peta.elements["*"], "HELPFUL")
+    local petDebuff = findByType(peta.elements and peta.elements["*"], "HARMFUL")
+    check("UF pet buff nested filter -> filterMode=flags", petBuff and petBuff.filterMode == "flags",
+        petBuff and tostring(petBuff.filterMode))
+    check("UF pet buff filterFlags == {PLAYER, CANCELABLE}", petBuff and petBuff.filterFlags
+        and deepEqual(petBuff.filterFlags, { PLAYER = true, CANCELABLE = true }),
+        petBuff and petBuff.filterFlags and table.concat((function()
+            local t = {} for k in pairs(petBuff.filterFlags) do t[#t + 1] = k end
+            table.sort(t) return t
+        end)(), ","))
+    check("UF pet buff no literal 'modifiers' token", petBuff and petBuff.filterFlags
+        and petBuff.filterFlags.modifiers == nil, "modifiers leaked")
+    check("UF pet buff no literal 'exclusive' token", petBuff and petBuff.filterFlags
+        and petBuff.filterFlags.exclusive == nil, "exclusive leaked")
+    -- All-false nested modifiers = no enabled token: stays at the element
+    -- default filterMode ("off", bare polarity) — never an empty flags mode.
+    check("UF pet debuff all-false nested filter stays off", petDebuff and petDebuff.filterMode == "off",
+        petDebuff and tostring(petDebuff.filterMode))
+    check("UF pet debuff compiles to empty (bare polarity fallback)",
+        petDebuff and #E.CompileFilters(petDebuff) == 0,
+        petDebuff and table.concat(E.CompileFilters(petDebuff), " , "))
+
+    check("UF stamped to current (51)", profile._schemaVersion == 51, tostring(profile._schemaVersion))
 end
 
 ----------------------------------------------------------------------------
@@ -449,7 +488,7 @@ do
     check("GF elementsSeeded still true", profile.quiGroupFrames.party.auras.elementsSeeded == true, "flag lost")
     check("GF classifications untouched (raid only)", e.classifications and e.classifications.raid == true
         and e.classifications.helpful == nil and e.classifications.harmful == nil, "classifications mutated")
-    check("GF stamped v50", profile._schemaVersion == 50, tostring(profile._schemaVersion))
+    check("GF stamped to current (51)", profile._schemaVersion == 51, tostring(profile._schemaVersion))
 end
 
 ----------------------------------------------------------------------------
@@ -515,7 +554,7 @@ do
     local eqD, whyD = deepEqual(snapshotDebuff, profile.buffBorders.debuffAuras, "debuffAuras")
     check("idempotent buffAuras tree", eqB, whyB)
     check("idempotent debuffAuras tree", eqD, whyD)
-    check("idempotent stays v50", profile._schemaVersion == 50, tostring(profile._schemaVersion))
+    check("idempotent stays at current (51)", profile._schemaVersion == 51, tostring(profile._schemaVersion))
 end
 
 -- F5 (re-review): "Hide Duration Swipe" was a real HEAD checkbox writing the

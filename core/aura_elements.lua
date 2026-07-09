@@ -228,6 +228,22 @@ end
 -- tokens, so it needs the guard explicitly.
 local HELPFUL_ONLY_TOKENS = { RAID_IN_COMBAT = true }
 
+-- Engine-valid AuraFilters components (Blizzard_FrameXMLUtil/AuraUtil.lua
+-- AuraUtil.AuraFilters). The container's AddAuraGroup asserts
+-- IsValidFilterString on every group registration, and the C-side
+-- GetUnitAuras probe in AuraGlue.FilterStringUsable does NOT catch unknown
+-- components (the C parser tolerates them) — so an out-of-set token in
+-- filterFlags hard-errors the secure config pass. CompileFilters drops
+-- unknown tokens instead of emitting them. NOT_CANCELABLE was removed from
+-- the engine set but survives via Blizzard_DeprecatedAuraFilters.
+local VALID_FILTER_TOKENS = {
+    HELPFUL = true, HARMFUL = true, RAID = true, INCLUDE_NAME_PLATE_ONLY = true,
+    PLAYER = true, CANCELABLE = true, NOT_CANCELABLE = true, MAW = true,
+    EXTERNAL_DEFENSIVE = true, CROWD_CONTROL = true, RAID_IN_COMBAT = true,
+    RAID_PLAYER_DISPELLABLE = true, BIG_DEFENSIVE = true,
+}
+E.VALID_FILTER_TOKENS = VALID_FILTER_TOKENS
+
 function E.CompileFilters(element)
     local out = {}
     if element.filterMode == "flags" then
@@ -235,7 +251,8 @@ function E.CompileFilters(element)
         local harmful = (element.auraType == "HARMFUL")
         local toks = {}
         for tok, on in pairs(flags) do
-            if on and not (harmful and HELPFUL_ONLY_TOKENS[tok]) then
+            if on and VALID_FILTER_TOKENS[tok]
+                and not (harmful and HELPFUL_ONLY_TOKENS[tok]) then
                 toks[#toks + 1] = tok
             end
         end
