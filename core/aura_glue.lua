@@ -39,6 +39,7 @@ local function SortMethodFor(rule)
         EXPIRY = M.Expiration, EXPIRY_ONLY = M.ExpirationOnly,
         NAME = M.Name, NAME_ONLY = M.NameOnly,
         BIG_DEFENSIVE = M.BigDefensive,
+        IMPORTANT_ONLY = M.ImportantOnly, UF_DEBUFF = M.UnitFrameDebuff,
     }
     return map[rule or "INDEX"] or M.Default
 end

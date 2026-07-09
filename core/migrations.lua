@@ -798,6 +798,19 @@ end
 -- what a correct v50 would have produced for the common all-false legacy
 -- shape. Returns false (don't stamp v51) if the element model isn't loaded;
 -- same belt-and-braces contract as SeedAuraElements.
+--
+-- NOT_CANCELABLE heal: this repair runs at ADDON_LOADED, directly on the raw
+-- profile table, strictly BEFORE EnsureSeeded/NormalizeElement ever gets a
+-- chance to run its own NOT_CANCELABLE -> CANCELABLE="exclude" heal (that
+-- heal only fires later, at render time, on whatever is still in
+-- filterFlags). Since the engine removed NOT_CANCELABLE, it is no longer in
+-- VALID_FILTER_TOKENS and would otherwise be blind-stripped below like any
+-- other out-of-set token — silently discarding a pre-v51 user's "not
+-- cancelable" intent instead of preserving it. Rewrite it to the
+-- engine-valid equivalent FIRST (same no-clobber rule as NormalizeElement's
+-- heal: never overwrite an existing CANCELABLE value), then let the generic
+-- strip below clean up anything else (e.g. the "modifiers"/"exclusive"
+-- corruption this repair primarily exists for).
 function Migrations.RepairAuraFilterFlags(profile)
     local E = _G.QUI and _G.QUI.AuraElements
     local valid = E and E.VALID_FILTER_TOKENS
@@ -814,6 +827,12 @@ function Migrations.RepairAuraFilterFlags(profile)
                         if type(e) == "table" and e.filterMode == "flags" then
                             local flags = type(e.filterFlags) == "table" and e.filterFlags
                             if flags then
+                                if flags.NOT_CANCELABLE ~= nil then
+                                    if flags.NOT_CANCELABLE == true and flags.CANCELABLE == nil then
+                                        flags.CANCELABLE = "exclude"
+                                    end
+                                    flags.NOT_CANCELABLE = nil
+                                end
                                 for tok in pairs(flags) do
                                     if not valid[tok] then flags[tok] = nil end
                                 end

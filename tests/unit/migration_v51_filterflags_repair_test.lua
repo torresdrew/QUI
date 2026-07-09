@@ -145,5 +145,46 @@ do
     check("already-51: stamp unchanged", profile._schemaVersion == 51, tostring(profile._schemaVersion))
 end
 
+----------------------------------------------------------------------------
+-- 5) NOT_CANCELABLE heal: the engine removed NOT_CANCELABLE (build 68569)
+--    from AuraUtil.AuraFilters after v51 originally shipped, so a store
+--    seeded while that build's VALID_FILTER_TOKENS still allowed it can
+--    reach this repair carrying it. The repair runs BEFORE
+--    EnsureSeeded/NormalizeElement ever get a chance to heal it themselves,
+--    so it must rewrite (not blind-strip) to keep pre-repair user intent.
+----------------------------------------------------------------------------
+do
+    local profile = {
+        _schemaVersion = 50,
+        quiUnitFrames = {
+            player = {
+                auras = {
+                    elementsSeeded = true,
+                    elements = { ["*"] = {
+                        -- require-only legacy token -> heals to CANCELABLE exclude
+                        stripElement("HELPFUL", "flags", { NOT_CANCELABLE = true }),
+                        -- an existing CANCELABLE value is never clobbered
+                        stripElement("HELPFUL", "flags", { NOT_CANCELABLE = true, CANCELABLE = true }),
+                    } },
+                },
+            },
+        },
+    }
+    M.RunOnProfile(profile)
+
+    local bucket = profile.quiUnitFrames.player.auras.elements["*"]
+    local healed, conflict = bucket[1], bucket[2]
+    check("heal: NOT_CANCELABLE require rewrites to CANCELABLE exclude",
+        healed.filterFlags.CANCELABLE == "exclude", tostring(healed.filterFlags.CANCELABLE))
+    check("heal: NOT_CANCELABLE removed after rewrite", healed.filterFlags.NOT_CANCELABLE == nil)
+    check("heal: healed element stays in flags mode", healed.filterMode == "flags",
+        tostring(healed.filterMode))
+    check("heal: existing CANCELABLE value not clobbered",
+        conflict.filterFlags.CANCELABLE == true, tostring(conflict.filterFlags.CANCELABLE))
+    check("heal: NOT_CANCELABLE removed even when CANCELABLE already set",
+        conflict.filterFlags.NOT_CANCELABLE == nil)
+    check("stamped to current (51)", profile._schemaVersion == 51, tostring(profile._schemaVersion))
+end
+
 print("migration_v51_filterflags_repair_test " .. (failures == 0 and "OK" or "FAILED"))
 os.exit(failures == 0 and 0 or 1)

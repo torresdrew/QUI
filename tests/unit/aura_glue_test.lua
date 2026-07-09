@@ -90,5 +90,18 @@ do
     end
 end
 
+-- Filter expansion: new sort methods ---------------------------------------
+do
+    local e = E.NewFilterStripElement("HELPFUL")
+    e.sortRule = "IMPORTANT_ONLY"
+    local groups = G.ElementGroups("player", e, G.ElementProfile(e), false)
+    check("sort: IMPORTANT_ONLY maps to ImportantOnly",
+        groups[1].sortMethod == _G.AuraContainerSortMethod.ImportantOnly)
+    e.sortRule = "UF_DEBUFF"
+    groups = G.ElementGroups("player", e, G.ElementProfile(e), false)
+    check("sort: UF_DEBUFF maps to UnitFrameDebuff",
+        groups[1].sortMethod == _G.AuraContainerSortMethod.UnitFrameDebuff)
+end
+
 print("aura_glue_test " .. (failures == 0 and "OK" or "FAILED"))
 os.exit(failures == 0 and 0 or 1)

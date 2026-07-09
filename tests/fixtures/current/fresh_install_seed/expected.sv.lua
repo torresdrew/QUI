@@ -7713,6 +7713,8 @@ return {
                     raidInCombat = false
                   },
                   dedupeDefensives = true,
+                  dispelFilterMode = "off",
+                  dispelTypes = {},
                   duration = {
                     anchor = "CENTER",
                     color = {
@@ -7735,6 +7737,7 @@ return {
                   iconSize = 35,
                   iconsPerRow = 10,
                   id = "buffs",
+                  maxDurationSec = 0,
                   maxIcons = 40,
                   mode = "filterStrip",
                   offsetX = 0,
@@ -7787,6 +7790,8 @@ return {
                     raid = true
                   },
                   dedupeDefensives = true,
+                  dispelFilterMode = "off",
+                  dispelTypes = {},
                   duration = {
                     anchor = "CENTER",
                     color = {
@@ -7809,6 +7814,7 @@ return {
                   iconSize = 35,
                   iconsPerRow = 10,
                   id = "debuffs",
+                  maxDurationSec = 0,
                   maxIcons = 40,
                   mode = "filterStrip",
                   offsetX = 0,
@@ -14274,6 +14280,8 @@ return {
                       raidInCombat = true
                     },
                     dedupeDefensives = true,
+                    dispelFilterMode = "off",
+                    dispelTypes = {},
                     duration = {
                       anchor = "CENTER",
                       color = {
@@ -14295,6 +14303,7 @@ return {
                     hideSwipe = false,
                     iconSize = 14,
                     id = "e5",
+                    maxDurationSec = 0,
                     maxIcons = 3,
                     mode = "filterStrip",
                     offsetX = 0,
@@ -14640,6 +14649,8 @@ return {
                       raid = true
                     },
                     dedupeDefensives = true,
+                    dispelFilterMode = "off",
+                    dispelTypes = {},
                     duration = {
                       anchor = "CENTER",
                       color = {
@@ -14662,6 +14673,7 @@ return {
                     iconSize = 22,
                     iconsPerRow = 0,
                     id = "debuffs",
+                    maxDurationSec = 0,
                     maxIcons = 4,
                     mode = "filterStrip",
                     offsetX = 0,
@@ -14701,6 +14713,8 @@ return {
                       raidInCombat = false
                     },
                     dedupeDefensives = true,
+                    dispelFilterMode = "off",
+                    dispelTypes = {},
                     duration = {
                       anchor = "CENTER",
                       color = {
@@ -14723,6 +14737,7 @@ return {
                     iconSize = 22,
                     iconsPerRow = 0,
                     id = "buffs",
+                    maxDurationSec = 0,
                     maxIcons = 4,
                     mode = "filterStrip",
                     offsetX = 0,
@@ -14921,6 +14936,8 @@ return {
                       raid = true
                     },
                     dedupeDefensives = true,
+                    dispelFilterMode = "off",
+                    dispelTypes = {},
                     duration = {
                       anchor = "CENTER",
                       color = {
@@ -14943,6 +14960,7 @@ return {
                     iconSize = 20,
                     iconsPerRow = 0,
                     id = "debuffs",
+                    maxDurationSec = 0,
                     maxIcons = 16,
                     mode = "filterStrip",
                     offsetX = 0,
@@ -14982,6 +15000,8 @@ return {
                       raidInCombat = false
                     },
                     dedupeDefensives = true,
+                    dispelFilterMode = "off",
+                    dispelTypes = {},
                     duration = {
                       anchor = "CENTER",
                       color = {
@@ -15006,6 +15026,7 @@ return {
                     iconSize = 20,
                     iconsPerRow = 0,
                     id = "buffs",
+                    maxDurationSec = 0,
                     maxIcons = 16,
                     mode = "filterStrip",
                     offsetX = 0,
@@ -15195,6 +15216,8 @@ return {
                       raid = true
                     },
                     dedupeDefensives = true,
+                    dispelFilterMode = "off",
+                    dispelTypes = {},
                     duration = {
                       anchor = "CENTER",
                       color = {
@@ -15217,6 +15240,7 @@ return {
                     iconSize = 22,
                     iconsPerRow = 0,
                     id = "debuffs",
+                    maxDurationSec = 0,
                     maxIcons = 16,
                     mode = "filterStrip",
                     offsetX = 0,
@@ -15256,6 +15280,8 @@ return {
                       raidInCombat = false
                     },
                     dedupeDefensives = true,
+                    dispelFilterMode = "off",
+                    dispelTypes = {},
                     duration = {
                       anchor = "CENTER",
                       color = {
@@ -15278,6 +15304,7 @@ return {
                     iconSize = 22,
                     iconsPerRow = 0,
                     id = "buffs",
+                    maxDurationSec = 0,
                     maxIcons = 16,
                     mode = "filterStrip",
                     offsetX = 0,
@@ -15328,6 +15355,8 @@ return {
                       raid = true
                     },
                     dedupeDefensives = true,
+                    dispelFilterMode = "off",
+                    dispelTypes = {},
                     duration = {
                       anchor = "CENTER",
                       color = {
@@ -15350,6 +15379,7 @@ return {
                     iconSize = 22,
                     iconsPerRow = 0,
                     id = "debuffs",
+                    maxDurationSec = 0,
                     maxIcons = 4,
                     mode = "filterStrip",
                     offsetX = 0,
@@ -15389,6 +15419,8 @@ return {
                       raidInCombat = false
                     },
                     dedupeDefensives = true,
+                    dispelFilterMode = "off",
+                    dispelTypes = {},
                     duration = {
                       anchor = "CENTER",
                       color = {
@@ -15411,6 +15443,7 @@ return {
                     iconSize = 22,
                     iconsPerRow = 0,
                     id = "buffs",
+                    maxDurationSec = 0,
                     maxIcons = 4,
                     mode = "filterStrip",
                     offsetX = 0,
@@ -15599,6 +15632,8 @@ return {
                       raid = true
                     },
                     dedupeDefensives = true,
+                    dispelFilterMode = "off",
+                    dispelTypes = {},
                     duration = {
                       anchor = "CENTER",
                       color = {
@@ -15621,6 +15656,7 @@ return {
                     iconSize = 16,
                     iconsPerRow = 0,
                     id = "debuffs",
+                    maxDurationSec = 0,
                     maxIcons = 4,
                     mode = "filterStrip",
                     offsetX = 0,
@@ -15660,6 +15696,8 @@ return {
                       raidInCombat = false
                     },
                     dedupeDefensives = true,
+                    dispelFilterMode = "off",
+                    dispelTypes = {},
                     duration = {
                       anchor = "CENTER",
                       color = {
@@ -15682,6 +15720,7 @@ return {
                     iconSize = 22,
                     iconsPerRow = 0,
                     id = "buffs",
+                    maxDurationSec = 0,
                     maxIcons = 4,
                     mode = "filterStrip",
                     offsetX = 0,
@@ -15874,6 +15913,8 @@ return {
                       raid = true
                     },
                     dedupeDefensives = true,
+                    dispelFilterMode = "off",
+                    dispelTypes = {},
                     duration = {
                       anchor = "CENTER",
                       color = {
@@ -15896,6 +15937,7 @@ return {
                     iconSize = 22,
                     iconsPerRow = 0,
                     id = "debuffs",
+                    maxDurationSec = 0,
                     maxIcons = 16,
                     mode = "filterStrip",
                     offsetX = 0,
@@ -15935,6 +15977,8 @@ return {
                       raidInCombat = false
                     },
                     dedupeDefensives = true,
+                    dispelFilterMode = "off",
+                    dispelTypes = {},
                     duration = {
                       anchor = "CENTER",
                       color = {
@@ -15957,6 +16001,7 @@ return {
                     iconSize = 22,
                     iconsPerRow = 0,
                     id = "buffs",
+                    maxDurationSec = 0,
                     maxIcons = 16,
                     mode = "filterStrip",
                     offsetX = 0,
@@ -16012,6 +16057,8 @@ return {
                       raid = true
                     },
                     dedupeDefensives = true,
+                    dispelFilterMode = "off",
+                    dispelTypes = {},
                     duration = {
                       anchor = "CENTER",
                       color = {
@@ -16036,6 +16083,7 @@ return {
                     iconSize = 26,
                     iconsPerRow = 0,
                     id = "debuffs",
+                    maxDurationSec = 0,
                     maxIcons = 4,
                     mode = "filterStrip",
                     offsetX = 0,
@@ -16075,6 +16123,8 @@ return {
                       raidInCombat = false
                     },
                     dedupeDefensives = true,
+                    dispelFilterMode = "off",
+                    dispelTypes = {},
                     duration = {
                       anchor = "CENTER",
                       color = {
@@ -16097,6 +16147,7 @@ return {
                     iconSize = 18,
                     iconsPerRow = 0,
                     id = "buffs",
+                    maxDurationSec = 0,
                     maxIcons = 4,
                     mode = "filterStrip",
                     offsetX = 0,
@@ -16270,6 +16321,8 @@ return {
                       raid = true
                     },
                     dedupeDefensives = true,
+                    dispelFilterMode = "off",
+                    dispelTypes = {},
                     duration = {
                       anchor = "CENTER",
                       color = {
@@ -16292,6 +16345,7 @@ return {
                     iconSize = 22,
                     iconsPerRow = 0,
                     id = "debuffs",
+                    maxDurationSec = 0,
                     maxIcons = 4,
                     mode = "filterStrip",
                     offsetX = 0,
@@ -16331,6 +16385,8 @@ return {
                       raidInCombat = false
                     },
                     dedupeDefensives = true,
+                    dispelFilterMode = "off",
+                    dispelTypes = {},
                     duration = {
                       anchor = "CENTER",
                       color = {
@@ -16353,6 +16409,7 @@ return {
                     iconSize = 22,
                     iconsPerRow = 0,
                     id = "buffs",
+                    maxDurationSec = 0,
                     maxIcons = 4,
                     mode = "filterStrip",
                     offsetX = 0,

@@ -186,6 +186,28 @@ for _, deadKey in ipairs({ "buffIconSize", "debuffMaxIcons", "buffFilterPlayer" 
         bbContent and bbContent:find(deadKey, 1, true) == nil)
 end
 
+-- SORT_OPTIONS expansion: new sort methods --------------------------------
+check("editor: SORT_OPTIONS carries IMPORTANT_ONLY", editor:find('"IMPORTANT_ONLY"', 1, true) ~= nil)
+check("editor: SORT_OPTIONS carries UF_DEBUFF", editor:find('"UF_DEBUFF"', 1, true) ~= nil)
+
+-- Whitelist filter mode + blacklist spell list (Task 5) -------------------
+check("editor: whitelist filter mode offered", editor:find('value = "whitelist"', 1, true) ~= nil)
+check("editor: spell map helper exists", editor:find("AddSpellMapEditor", 1, true) ~= nil)
+check("editor: blacklist bound", editor:find("element.blacklist", 1, true) ~= nil)
+check("editor: whitelist bound", editor:find("element.whitelist", 1, true) ~= nil)
+
+-- Tri-state filter-flag dropdowns (Task 6) ---------------------------------
+check("editor: tri-state flag options table", editor:find("TRI_STATE_OPTIONS", 1, true) ~= nil)
+check("editor: flags no longer plain checkboxes",
+    editor:find('CreateFormCheckbox%(ctx%.detailArea, nil, entry%.token') == nil)
+
+-- Dispel filter, max duration, boolean gates (Task 7) ----------------------
+check("editor: dispel mode options table", editor:find("DISPEL_FILTER_MODE_OPTIONS", 1, true) ~= nil)
+check("editor: Bleed dispel type offered", editor:find('key = "Bleed"', 1, true) ~= nil)
+check("editor: max duration slider bound", editor:find('"maxDurationSec"', 1, true) ~= nil)
+check("editor: stealable gate bound", editor:find('"gateStealable"', 1, true) ~= nil)
+check("editor: boss-or-role gate bound", editor:find('"gateBossOrRoleAura"', 1, true) ~= nil)
+
 if fails > 0 then
     print(("%d failures"):format(fails))
     os.exit(1)

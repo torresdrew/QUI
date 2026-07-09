@@ -47,7 +47,9 @@ local BUFF_CLASSIFICATION_MAP = {
     raid              = "HELPFUL|RAID",
     raidInCombat      = "HELPFUL|RAID_IN_COMBAT",
     cancelable        = "HELPFUL|CANCELABLE",
-    notCancelable     = "HELPFUL|NOT_CANCELABLE",
+    -- NOT_CANCELABLE was removed from the engine's AuraFilters set (build
+    -- 68569); the replacement is CANCELABLE excluded (`!CANCELABLE`).
+    notCancelable     = "HELPFUL|!CANCELABLE",
     bigDefensive      = "HELPFUL|BIG_DEFENSIVE",
     externalDefensive = "HELPFUL|EXTERNAL_DEFENSIVE",
 }
@@ -104,6 +106,11 @@ function E.NewFilterStripElement(auraType)
         onlyMine = false, hidePermanent = false, dedupeDefensives = true,
         classifications = defaultClassifications(auraType),
         whitelist = {}, blacklist = {},
+        dispelFilterMode = "off", dispelTypes = {},
+        maxDurationSec = 0,
+        -- Boolean gates (gateStealable, gateBossAura, gatePriorityAura,
+        -- gateRoleAura, gateBossOrRoleAura) are intentionally NOT seeded:
+        -- absent = off, the editor stamps them on first toggle.
         sortRule = "INDEX", sortReverse = false,
         -- Honored only on cancel-eligible hosts (player-unit) + HELPFUL strips;
         -- runtime maps it to SetCancelAuraButtons("RightButtonUp").
@@ -204,6 +211,30 @@ function E.NormalizeElement(e)
         if e.sortReverse == nil then e.sortReverse = false end
         if e.rightClickCancel == nil then e.rightClickCancel = true end
         if e.filterFlags == nil then e.filterFlags = {} end
+        -- Tri-state flag values: true = require, "exclude" = negate. Coerce
+        -- any other legacy truthy value to true and drop falsy entries, so
+        -- the compiler and editor only ever see the two canonical values.
+        for tok, v in pairs(e.filterFlags) do
+            if v ~= true and v ~= "exclude" then
+                e.filterFlags[tok] = v and true or nil
+            end
+        end
+        -- Engine-removed token heal: NOT_CANCELABLE no longer validates (the
+        -- engine dropped it; see VALID_FILTER_TOKENS above). A legacy
+        -- REQUIRE heals onto the CANCELABLE token's exclude state, unless a
+        -- CANCELABLE value is already stored (never clobber it). A legacy
+        -- EXCLUDE or a conflicting existing CANCELABLE value just drops — no
+        -- invented semantics. Kept OUTSIDE the pairs() loop above: adding a
+        -- new key to a table mid-iteration is illegal in Lua 5.1.
+        if e.filterFlags.NOT_CANCELABLE ~= nil then
+            if e.filterFlags.NOT_CANCELABLE == true and e.filterFlags.CANCELABLE == nil then
+                e.filterFlags.CANCELABLE = "exclude"
+            end
+            e.filterFlags.NOT_CANCELABLE = nil
+        end
+        if e.dispelFilterMode == nil then e.dispelFilterMode = "off" end
+        if type(e.dispelTypes) ~= "table" then e.dispelTypes = {} end
+        if type(e.maxDurationSec) ~= "number" then e.maxDurationSec = 0 end
         -- Legacy GF editor spelling: "classification" → canonical "classify"
         -- (CompileFilters keys on "classify"; unmapped, a classified strip
         -- would silently fall to bare polarity = show-everything).
@@ -216,12 +247,15 @@ end
 
 -- Compile a filterStrip element's filter config into Blizzard filter strings.
 -- "classify" fans out one string per enabled classification (OR semantics —
--- one group each). "flags" AND-composes the enabled raw AuraFilters tokens
--- onto ONE string (`HELPFUL|PLAYER|CANCELABLE` = helpful AND player AND
--- cancelable — the legacy buffborders/UF filter semantics; tokens sorted for
--- determinism). "off" and "whitelist" return an EMPTY array — the caller
--- (AuraGlue.ElementGroups) falls back to the bare polarity, with per-spell
--- restriction carried by candidateFilters instead.
+-- one group each). "flags" AND-composes the tri-state filterFlags tokens onto
+-- ONE string: `true` = require, `"exclude"` = negate (`!TOKEN`). Required
+-- tokens are emitted first, then excluded tokens as `!TOKEN`
+-- (`HELPFUL|PLAYER|!CANCELABLE` = helpful AND player AND NOT cancelable —
+-- the legacy buffborders/UF filter semantics extended with negation); each
+-- group is sorted independently for determinism. "off" and "whitelist"
+-- return an EMPTY array — the caller (AuraGlue.ElementGroups) falls back to
+-- the bare polarity, with per-spell restriction carried by candidateFilters
+-- instead.
 -- AuraFilters tokens that are only valid combined with HELPFUL; pairing them
 -- with HARMFUL hard-errors in C_UnitAuras.GetUnitAuras (same crash class the
 -- HARMFUL classification map avoids structurally). Flags mode takes raw user
@@ -235,10 +269,14 @@ local HELPFUL_ONLY_TOKENS = { RAID_IN_COMBAT = true }
 -- components (the C parser tolerates them) — so an out-of-set token in
 -- filterFlags hard-errors the secure config pass. CompileFilters drops
 -- unknown tokens instead of emitting them. NOT_CANCELABLE was removed from
--- the engine set but survives via Blizzard_DeprecatedAuraFilters.
+-- the engine set (build 68569); Blizzard_DeprecatedAuraFilters only aliases
+-- the enum KEY `NotCancelable` to the VALUE "!CANCELABLE" — it does NOT make
+-- the literal component NOT_CANCELABLE pass AuraUtil.IsValidFilterString
+-- (component validation is by VALUE via EnumUtil.IsValid). The replacement
+-- is CANCELABLE excluded (`!CANCELABLE`).
 local VALID_FILTER_TOKENS = {
     HELPFUL = true, HARMFUL = true, RAID = true, INCLUDE_NAME_PLATE_ONLY = true,
-    PLAYER = true, CANCELABLE = true, NOT_CANCELABLE = true, MAW = true,
+    PLAYER = true, CANCELABLE = true, MAW = true,
     EXTERNAL_DEFENSIVE = true, CROWD_CONTROL = true, RAID_IN_COMBAT = true,
     RAID_PLAYER_DISPELLABLE = true, BIG_DEFENSIVE = true,
 }
@@ -249,16 +287,28 @@ function E.CompileFilters(element)
     if element.filterMode == "flags" then
         local flags = element.filterFlags or {}
         local harmful = (element.auraType == "HARMFUL")
-        local toks = {}
-        for tok, on in pairs(flags) do
-            if on and VALID_FILTER_TOKENS[tok]
-                and not (harmful and HELPFUL_ONLY_TOKENS[tok]) then
-                toks[#toks + 1] = tok
+        local req, exc = {}, {}
+        for tok, v in pairs(flags) do
+            -- VALID_FILTER_TOKENS: out-of-set tokens hard-error AddAuraGroup
+            -- (the C probe tolerates them; only AuraUtil.IsValidFilterString
+            -- rejects) — drop them here, in BOTH directions. The HELPFUL-only
+            -- guard is also directionless: a negated helpful-only token
+            -- paired with HARMFUL is the same invalid-combo crash class.
+            if VALID_FILTER_TOKENS[tok] and not (harmful and HELPFUL_ONLY_TOKENS[tok]) then
+                if v == true then
+                    req[#req + 1] = tok
+                elseif v == "exclude" then
+                    exc[#exc + 1] = "!" .. tok
+                end
             end
         end
-        if #toks > 0 then
-            table.sort(toks)
-            out[1] = (element.auraType or "HELPFUL") .. "|" .. table.concat(toks, "|")
+        if #req > 0 or #exc > 0 then
+            table.sort(req)
+            table.sort(exc)
+            local parts = { element.auraType or "HELPFUL" }
+            for i = 1, #req do parts[#parts + 1] = req[i] end
+            for i = 1, #exc do parts[#parts + 1] = exc[i] end
+            out[1] = table.concat(parts, "|")
         end
         return out
     end
@@ -297,10 +347,14 @@ function E.CompileCandidateFilters(element)
     if element.onlyMine == true then
         ensure().isFromPlayerOrPlayerPet = true
     end
-    if element.hidePermanent == true then
-        -- Any non-nil maxDuration implicitly hides permanent auras
-        -- (Blizzard_AuraContainerUtil.lua:93); the large cap keeps every
-        -- real timed aura visible.
+    -- Any non-nil maxDuration implicitly hides permanent auras
+    -- (Blizzard_AuraContainerUtil.lua:93). A user-set cap wins; the large
+    -- fallback keeps every real timed aura visible for hidePermanent-only.
+    -- Engine filters on BASE duration, not remaining time.
+    local maxDur = tonumber(element.maxDurationSec) or 0
+    if maxDur > 0 then
+        ensure().maxDuration = maxDur
+    elseif element.hidePermanent == true then
         ensure().maxDuration = 999999
     end
     if element.filterMode == "whitelist" and type(element.whitelist) == "table" and next(element.whitelist) then
@@ -317,6 +371,30 @@ function E.CompileCandidateFilters(element)
         end
         if next(exc) then ensure().excludeSpellIDs = exc end
     end
+    -- Dispel-type filters are NOT identity-gated by the engine — they apply
+    -- on every unit (Blizzard_AuraContainerUtil.lua:53-63).
+    local dmode = element.dispelFilterMode
+    if (dmode == "include" or dmode == "exclude") and type(element.dispelTypes) == "table" then
+        local set = {}
+        for name, on in pairs(element.dispelTypes) do
+            if on then set[name] = true end
+        end
+        if next(set) then
+            if dmode == "include" then
+                ensure().includeDispelTypes = set
+            else
+                ensure().excludeDispelTypes = set
+            end
+        end
+    end
+    -- Boolean gates: the engine only accepts true or nil for these
+    -- (ValidateCandidateFilters, Blizzard_CustomAuraContainer.lua:121-138);
+    -- a false gate must therefore emit NOTHING, not false.
+    if element.gateStealable == true then ensure().isStealable = true end
+    if element.gateBossAura == true then ensure().isBossAura = true end
+    if element.gatePriorityAura == true then ensure().isPriorityAura = true end
+    if element.gateRoleAura == true then ensure().isRoleAura = true end
+    if element.gateBossOrRoleAura == true then ensure().isBossOrRoleAura = true end
     return cf
 end
 

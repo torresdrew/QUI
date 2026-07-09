@@ -285,5 +285,146 @@ do
         tonumber(fresh.id:match("^e(%d+)$")) > 9000, tostring(fresh.id))
 end
 
+-- Filter expansion: new model fields + normalization ----------------------
+do
+    local e = E.NewFilterStripElement("HELPFUL")
+    check("strip: dispel filter defaults", e.dispelFilterMode == "off" and type(e.dispelTypes) == "table")
+    check("strip: maxDurationSec defaults 0", e.maxDurationSec == 0)
+
+    local legacy = { mode = "filterStrip", auraType = "HELPFUL",
+        filterFlags = { PLAYER = 1, RAID = true, CANCELABLE = "exclude", BAD = false } }
+    E.NormalizeElement(legacy)
+    check("normalize: dispel/maxDuration seeded", legacy.dispelFilterMode == "off"
+        and type(legacy.dispelTypes) == "table" and legacy.maxDurationSec == 0)
+    check("normalize: filterFlags values coerced to true/'exclude'/absent",
+        legacy.filterFlags.PLAYER == true and legacy.filterFlags.RAID == true
+        and legacy.filterFlags.CANCELABLE == "exclude" and legacy.filterFlags.BAD == nil)
+end
+
+-- Filter expansion: tri-state flags compile ------------------------------
+do
+    local e = E.NewFilterStripElement("HELPFUL")
+    e.filterMode = "flags"
+    e.filterFlags = { PLAYER = true, RAID = true }
+    local out = E.CompileFilters(e)
+    check("flags: legacy require-only output unchanged", #out == 1 and out[1] == "HELPFUL|PLAYER|RAID")
+
+    e.filterFlags = { RAID = true, CANCELABLE = "exclude", PLAYER = "exclude" }
+    out = E.CompileFilters(e)
+    check("flags: excludes negated, sorted, after requires",
+        #out == 1 and out[1] == "HELPFUL|RAID|!CANCELABLE|!PLAYER")
+
+    e.filterFlags = { CANCELABLE = "exclude" }
+    out = E.CompileFilters(e)
+    check("flags: exclude-only keeps polarity lead", #out == 1 and out[1] == "HELPFUL|!CANCELABLE")
+
+    local h = E.NewFilterStripElement("HARMFUL")
+    h.filterMode = "flags"
+    h.filterFlags = { RAID_IN_COMBAT = "exclude", RAID = true }
+    out = E.CompileFilters(h)
+    check("flags: HELPFUL-only token dropped both directions on HARMFUL",
+        #out == 1 and out[1] == "HARMFUL|RAID")
+
+    h.filterFlags = {}
+    check("flags: empty set compiles to no strings", #E.CompileFilters(h) == 0)
+
+    -- v51 repair invariant: out-of-set tokens never reach the engine, in
+    -- EITHER direction (a negated unknown token still hard-errors AddAuraGroup).
+    local w = E.NewFilterStripElement("HELPFUL")
+    w.filterMode = "flags"
+    w.filterFlags = { modifiers = true, exclusive = "exclude", RAID = true }
+    out = E.CompileFilters(w)
+    check("flags: out-of-set tokens dropped both directions",
+        #out == 1 and out[1] == "HELPFUL|RAID")
+end
+
+-- Filter expansion: candidateFilters compile ------------------------------
+do
+    local e = E.NewFilterStripElement("HARMFUL")
+    e.dispelFilterMode = "include"
+    e.dispelTypes = { Magic = true, Poison = false }
+    local cf = E.CompileCandidateFilters(e)
+    check("cf: dispel include set", cf ~= nil and cf.includeDispelTypes ~= nil
+        and cf.includeDispelTypes.Magic == true and cf.includeDispelTypes.Poison == nil
+        and cf.excludeDispelTypes == nil)
+
+    e.dispelFilterMode = "exclude"
+    cf = E.CompileCandidateFilters(e)
+    check("cf: dispel exclude set", cf ~= nil and cf.excludeDispelTypes ~= nil
+        and cf.excludeDispelTypes.Magic == true and cf.includeDispelTypes == nil)
+
+    e.dispelTypes = { Magic = false }
+    cf = E.CompileCandidateFilters(e)
+    check("cf: empty enabled dispel set is inert", cf == nil)
+
+    local d = E.NewFilterStripElement("HELPFUL")
+    d.maxDurationSec = 90
+    d.hidePermanent = true
+    cf = E.CompileCandidateFilters(d)
+    check("cf: maxDurationSec wins over hidePermanent", cf ~= nil and cf.maxDuration == 90)
+    d.maxDurationSec = 0
+    cf = E.CompileCandidateFilters(d)
+    check("cf: hidePermanent alone still emits 999999", cf ~= nil and cf.maxDuration == 999999)
+
+    local g = E.NewFilterStripElement("HELPFUL")
+    g.gateStealable = true; g.gateBossAura = true; g.gatePriorityAura = true
+    g.gateRoleAura = true; g.gateBossOrRoleAura = true
+    cf = E.CompileCandidateFilters(g)
+    check("cf: gates map to true-only engine fields", cf ~= nil
+        and cf.isStealable == true and cf.isBossAura == true and cf.isPriorityAura == true
+        and cf.isRoleAura == true and cf.isBossOrRoleAura == true)
+
+    local off = E.NewFilterStripElement("HELPFUL")
+    off.gateStealable = false
+    cf = E.CompileCandidateFilters(off)
+    check("cf: false gates emit nothing (engine rejects false)", cf == nil)
+
+    local plain = E.NewFilterStripElement("HELPFUL")
+    check("cf: untouched element still compiles to nil", E.CompileCandidateFilters(plain) == nil)
+end
+
+-- NOT_CANCELABLE engine-removal heal ---------------------------------------
+-- The engine dropped NOT_CANCELABLE from AuraUtil.AuraFilters (build 68569);
+-- the replacement is CANCELABLE excluded ("!CANCELABLE").
+do
+    -- (a) NormalizeElement heals a legacy require into CANCELABLE="exclude"
+    -- and drops the dead token.
+    local legacy = { mode = "filterStrip", auraType = "HELPFUL",
+        filterFlags = { NOT_CANCELABLE = true } }
+    E.NormalizeElement(legacy)
+    check("heal: NOT_CANCELABLE require -> CANCELABLE exclude",
+        legacy.filterFlags.CANCELABLE == "exclude", tostring(legacy.filterFlags.CANCELABLE))
+    check("heal: NOT_CANCELABLE removed", legacy.filterFlags.NOT_CANCELABLE == nil)
+
+    -- (b) An existing CANCELABLE value is never clobbered — the legacy token
+    -- just drops.
+    local conflict = { mode = "filterStrip", auraType = "HELPFUL",
+        filterFlags = { NOT_CANCELABLE = true, CANCELABLE = true } }
+    E.NormalizeElement(conflict)
+    check("heal: existing CANCELABLE value not clobbered",
+        conflict.filterFlags.CANCELABLE == true, tostring(conflict.filterFlags.CANCELABLE))
+    check("heal: NOT_CANCELABLE removed even when CANCELABLE already set",
+        conflict.filterFlags.NOT_CANCELABLE == nil)
+
+    -- (c) Unhealed direct compile: NOT_CANCELABLE is no longer in
+    -- VALID_FILTER_TOKENS, so a raw filterFlags table carrying it emits NO
+    -- string for that token (CompileFilters drops out-of-set tokens).
+    local raw = E.NewFilterStripElement("HELPFUL")
+    raw.filterMode = "flags"
+    raw.filterFlags = { NOT_CANCELABLE = "exclude" }
+    check("heal: unhealed NOT_CANCELABLE compiles to nothing (dropped token)",
+        #E.CompileFilters(raw) == 0)
+
+    -- (d) Classify mode: notCancelable now compiles to "HELPFUL|!CANCELABLE"
+    -- (helpful=false to isolate — the 'helpful' master key would otherwise
+    -- also emit RAID/RAID_IN_COMBAT).
+    local classify = E.NewFilterStripElement("HELPFUL")
+    classify.filterMode = "classify"
+    classify.classifications = { helpful = false, notCancelable = true }
+    local cfs = E.CompileFilters(classify)
+    check("heal: classify notCancelable compiles to HELPFUL|!CANCELABLE",
+        #cfs == 1 and cfs[1] == "HELPFUL|!CANCELABLE", table.concat(cfs, ","))
+end
+
 print("aura_elements_model_test " .. (failures == 0 and "OK" or "FAILED"))
 os.exit(failures == 0 and 0 or 1)

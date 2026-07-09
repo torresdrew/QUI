@@ -65,6 +65,7 @@ local FILTER_MODE_OPTIONS = {
     { value = "off", text = ns.L["Off (Show All)"] },
     { value = "flags", text = ns.L["Filter Flags"] },
     { value = "classify", text = ns.L["Classification"] },
+    { value = "whitelist", text = ns.L["Spell Whitelist"] },
 }
 
 local AURA_TYPE_OPTIONS = {
@@ -87,6 +88,31 @@ local SORT_OPTIONS = {
     { value = "NAME", text = ns.L["Name"] },
     { value = "NAME_ONLY", text = ns.L["Name Only"] },
     { value = "BIG_DEFENSIVE", text = ns.L["Big Defensives First"] },
+    { value = "IMPORTANT_ONLY", text = ns.L["Important First"] },
+    { value = "UF_DEBUFF", text = ns.L["Debuff Priority"] },
+}
+
+-- Tri-state filter-flag row values. Stored form on element.filterFlags:
+-- absent = off, true = require, "exclude" = compile as !TOKEN.
+local TRI_STATE_OPTIONS = {
+    { value = "off", text = ns.L["Off"] },
+    { value = "require", text = ns.L["Require"] },
+    { value = "exclude", text = ns.L["Exclude"] },
+}
+
+local DISPEL_FILTER_MODE_OPTIONS = {
+    { value = "off", text = ns.L["Off"] },
+    { value = "include", text = ns.L["Only These Types"] },
+    { value = "exclude", text = ns.L["Hide These Types"] },
+}
+
+-- Valid dispel names per the vendored engine (Blizzard_FrameXMLUtil/AuraUtil.lua).
+local DISPEL_TYPES = {
+    { key = "Magic", label = ns.L["Magic"] },
+    { key = "Curse", label = ns.L["Curse"] },
+    { key = "Disease", label = ns.L["Disease"] },
+    { key = "Poison", label = ns.L["Poison"] },
+    { key = "Bleed", label = ns.L["Bleed"] },
 }
 
 local HEALTH_TINT_ANIMATION_OPTIONS = {
@@ -135,7 +161,6 @@ local HELPFUL_FLAG_TOKENS = {
     { token = "PLAYER", label = ns.L["Player"] },
     { token = "RAID", label = ns.L["Raid"] },
     { token = "CANCELABLE", label = ns.L["Cancelable"] },
-    { token = "NOT_CANCELABLE", label = ns.L["Not Cancelable"] },
     { token = "BIG_DEFENSIVE", label = ns.L["Big Defensive"] },
     { token = "EXTERNAL_DEFENSIVE", label = ns.L["External Defensive"] },
 }
@@ -397,6 +422,95 @@ local function AddTextRegionWidgets(ctx, element, key, label)
     }))
 end
 
+-- Spell-list editor over a MAP ({ [spellID] = true }). Used directly by the
+-- whitelist/blacklist (the element's map mutates in place) and by
+-- AddTrackedSpellListEditor through a map view synced back to its array.
+-- onMutate (optional) runs after any map mutation; defaults to ctx.onChange.
+local function AddSpellMapEditor(ctx, map, headerText, onMutate)
+    local GUI = ctx.GUI
+    local C = ctx.C
+    local add = ctx.AddDetailWidget
+    local notify = onMutate or ctx.onChange
+
+    local header = GUI:CreateLabel(ctx.detailArea, "|cFFAAAAAA" .. headerText .. "|r", 11, C.textMuted)
+    header:SetJustifyH("LEFT")
+    add(header, 18, true)
+
+    if not (SpellList and SpellList.CreateListFrame) then
+        return
+    end
+
+    local manualRow = CreateFrame("Frame", nil, ctx.detailArea)
+    manualRow:SetHeight(24)
+
+    local inputBox = CreateFrame("EditBox", nil, manualRow, "BackdropTemplate")
+    inputBox:SetSize(80, 20)
+    inputBox:SetPoint("LEFT", 0, 0)
+    SkinBase.ApplyPixelBackdrop(inputBox, 1, true, false, { 0.25, 0.25, 0.25, 1 }, { 0.06, 0.06, 0.08, 1 })
+    inputBox:SetFontObject("GameFontNormalSmall")
+    inputBox:SetAutoFocus(false)
+    inputBox:SetMaxLetters(10)
+    inputBox:SetTextInsets(4, 4, 0, 0)
+    inputBox:SetScript("OnEscapePressed", function(self)
+        self:ClearFocus()
+    end)
+
+    local inputLabel = manualRow:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    inputLabel:SetPoint("LEFT", inputBox, "RIGHT", 4, 0)
+    inputLabel:SetText(ns.L["Spell ID"])
+    inputLabel:SetTextColor(0.5, 0.5, 0.5)
+
+    local addManualButton = CreateFrame("Button", nil, manualRow, "BackdropTemplate")
+    addManualButton:SetSize(40, 20)
+    addManualButton:SetPoint("LEFT", inputLabel, "RIGHT", 8, 0)
+    SkinBase.ApplyPixelBackdrop(addManualButton, 1, true, false, { 0.3, 0.3, 0.3, 1 }, { 0.15, 0.15, 0.15, 1 })
+    local addManualText = addManualButton:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    addManualText:SetPoint("CENTER")
+    addManualText:SetText(ns.L["Add"])
+    StyleSpellInputText(GUI, C, inputBox, inputLabel, addManualText)
+
+    local function CommitManual()
+        local spellID = tonumber(inputBox:GetText())
+        if spellID and spellID > 0 then
+            map[spellID] = true
+            inputBox:SetText("")
+            inputBox:ClearFocus()
+            notify()
+            ctx.rebuild()
+        end
+    end
+    addManualButton:SetScript("OnClick", CommitManual)
+    inputBox:SetScript("OnEnterPressed", CommitManual)
+    add(manualRow, 26, true)
+
+    local presets = (SpellList.GetDefaultPresets and SpellList.GetDefaultPresets()) or {}
+    local listFrame = SpellList.CreateListFrame(ctx.detailArea, map, presets, function()
+        notify()
+    end, function()
+        ctx.rebuild()
+    end)
+    add(listFrame, math.max(1, listFrame:GetHeight() or 1), true)
+end
+
+-- Spell-list editor for a tracked element's spells (an ARRAY). Delegates to
+-- AddSpellMapEditor over a map view, synced back to the array on every change.
+local function AddTrackedSpellListEditor(ctx, element)
+    if type(element.spells) ~= "table" then element.spells = {} end
+
+    local mapView = {}
+    for _, sid in ipairs(element.spells) do mapView[sid] = true end
+
+    AddSpellMapEditor(ctx, mapView,
+        ns.L["Tracked Spells (click a suggestion or enter a Spell ID):"],
+        function()
+            local arr = element.spells
+            for i = #arr, 1, -1 do arr[i] = nil end
+            for sid in pairs(mapView) do arr[#arr + 1] = sid end
+            table.sort(arr)
+            ctx.onChange()
+        end)
+end
+
 local function AddFilterStripConfig(ctx, element)
     local GUI = ctx.GUI
     local row = ctx.AddFormRow
@@ -435,7 +549,7 @@ local function AddFilterStripConfig(ctx, element)
         ctx.NotifyChanged()
         rebuild()
     end, {
-        description = ns.L["Off shows everything; Flags composes the raw aura filter tokens ticked below; Classification shows only the categories ticked below."],
+        description = ns.L["Off shows everything; Flags composes the raw aura filter tokens below; Classification shows only the categories ticked below; Spell Whitelist shows only the spells listed below."],
         keywords = { "filter", "include", "flags" },
     }))
     row(ns.L["Only My Auras"], GUI:CreateFormCheckbox(ctx.detailArea, nil, "onlyMine", element, onChange, {
@@ -444,6 +558,43 @@ local function AddFilterStripConfig(ctx, element)
     }))
     row(ns.L["Hide Permanent"], GUI:CreateFormCheckbox(ctx.detailArea, nil, "hidePermanent", element, onChange, {
         description = ns.L["Hide auras with no remaining duration."],
+    }))
+    row(ns.L["Max Duration (seconds)"], GUI:CreateFormSlider(ctx.detailArea, nil, 0, 600, 5, "maxDurationSec", element, onChange, { deferOnDrag = true }, {
+        description = ns.L["Hide auras whose base duration is longer than this. 0 disables. Any value also hides permanent auras."],
+    }))
+    row(ns.L["Dispel Type Filter"], GUI:CreateFormDropdown(ctx.detailArea, nil, DISPEL_FILTER_MODE_OPTIONS, "dispelFilterMode", element, function()
+        ctx.NotifyChanged()
+        rebuild()
+    end, {
+        description = ns.L["Include or exclude auras by dispel type. Works on every unit."],
+        keywords = { "dispel", "magic", "curse", "disease", "poison", "bleed" },
+    }))
+    if element.dispelFilterMode == "include" or element.dispelFilterMode == "exclude" then
+        if type(element.dispelTypes) ~= "table" then element.dispelTypes = {} end
+        for _, entry in ipairs(DISPEL_TYPES) do
+            row(entry.label, GUI:CreateFormCheckbox(ctx.detailArea, nil, entry.key, element.dispelTypes, onChange, {
+                description = string.format(ns.L["Match auras with the %s dispel type."], entry.label),
+            }))
+        end
+    end
+    if element.auraType == "HELPFUL" then
+        row(ns.L["Stealable (Purge)"], GUI:CreateFormCheckbox(ctx.detailArea, nil, "gateStealable", element, onChange, {
+            description = ns.L["Only show buffs that can be stolen or purged. Combines with the other filters."],
+        }))
+    end
+    if element.auraType == "HARMFUL" then
+        row(ns.L["Priority Debuffs"], GUI:CreateFormCheckbox(ctx.detailArea, nil, "gatePriorityAura", element, onChange, {
+            description = ns.L["Only show debuffs Blizzard flags as priority. Combines with the other filters."],
+        }))
+    end
+    row(ns.L["Boss Auras"], GUI:CreateFormCheckbox(ctx.detailArea, nil, "gateBossAura", element, onChange, {
+        description = ns.L["Only show auras applied by bosses. Combines with the other filters."],
+    }))
+    row(ns.L["Role Auras"], GUI:CreateFormCheckbox(ctx.detailArea, nil, "gateRoleAura", element, onChange, {
+        description = ns.L["Only show role-relevant auras. Combines with the other filters."],
+    }))
+    row(ns.L["Boss or Role Auras"], GUI:CreateFormCheckbox(ctx.detailArea, nil, "gateBossOrRoleAura", element, onChange, {
+        description = ns.L["Only show auras that are boss-applied or role-relevant. Combines with the other filters."],
     }))
     row(ns.L["Deduplicate Defensives"], GUI:CreateFormCheckbox(ctx.detailArea, nil, "dedupeDefensives", element, onChange, {
         description = ns.L["Hide icons already shown by another tracked element."],
@@ -466,97 +617,36 @@ local function AddFilterStripConfig(ctx, element)
         end
         local tokens = element.auraType == "HARMFUL" and HARMFUL_FLAG_TOKENS or HELPFUL_FLAG_TOKENS
         for _, entry in ipairs(tokens) do
-            row(entry.label, GUI:CreateFormCheckbox(ctx.detailArea, nil, entry.token, element.filterFlags, onChange, {
-                description = string.format(ns.L["Require the %s aura filter flag."], entry.label),
+            -- CreateFormDropdown writes dbTable[dbKey] directly, so bind a
+            -- scratch cell and translate to the stored tri-state on change
+            -- (off = absent so untouched tokens stay invisible to compile).
+            local cur = element.filterFlags[entry.token]
+            local scratch = { value = (cur == true and "require") or (cur == "exclude" and "exclude") or "off" }
+            row(entry.label, GUI:CreateFormDropdown(ctx.detailArea, nil, TRI_STATE_OPTIONS, "value", scratch, function()
+                local v = scratch.value
+                if v == "require" then
+                    element.filterFlags[entry.token] = true
+                elseif v == "exclude" then
+                    element.filterFlags[entry.token] = "exclude"
+                else
+                    element.filterFlags[entry.token] = nil
+                end
+                onChange()
+            end, {
+                description = string.format(ns.L["Require or exclude the %s aura filter flag."], entry.label),
             }))
         end
-    end
-end
-
--- Spell-list editor for a tracked element's spells (an ARRAY). Reuses the shared
--- spell-list widget over a map view synced back to the array on every change,
--- plus a manual Spell ID input.
-local function AddTrackedSpellListEditor(ctx, element)
-    local GUI = ctx.GUI
-    local C = ctx.C
-    local add = ctx.AddDetailWidget
-    local onChange = ctx.onChange
-
-    if type(element.spells) ~= "table" then element.spells = {} end
-
-    local header = GUI:CreateLabel(ctx.detailArea,
-        "|cFFAAAAAA" .. ns.L["Tracked Spells (click a suggestion or enter a Spell ID):"] .. "|r", 11, C.textMuted)
-    header:SetJustifyH("LEFT")
-    add(header, 18, true)
-
-    if not (SpellList and SpellList.CreateListFrame) then
-        return
+    elseif filterMode == "whitelist" then
+        if type(element.whitelist) ~= "table" then element.whitelist = {} end
+        AddSpellMapEditor(ctx, element.whitelist,
+            ns.L["Whitelisted Spells — only these show. Buff lists apply on friendly units, debuff lists on enemies; empty list shows everything."])
     end
 
-    -- Manual Spell ID add row.
-    local manualRow = CreateFrame("Frame", nil, ctx.detailArea)
-    manualRow:SetHeight(24)
-
-    local inputBox = CreateFrame("EditBox", nil, manualRow, "BackdropTemplate")
-    inputBox:SetSize(80, 20)
-    inputBox:SetPoint("LEFT", 0, 0)
-    SkinBase.ApplyPixelBackdrop(inputBox, 1, true, false, { 0.25, 0.25, 0.25, 1 }, { 0.06, 0.06, 0.08, 1 })
-    inputBox:SetFontObject("GameFontNormalSmall")
-    inputBox:SetAutoFocus(false)
-    inputBox:SetMaxLetters(10)
-    inputBox:SetTextInsets(4, 4, 0, 0)
-    inputBox:SetScript("OnEscapePressed", function(self)
-        self:ClearFocus()
-    end)
-
-    local inputLabel = manualRow:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    inputLabel:SetPoint("LEFT", inputBox, "RIGHT", 4, 0)
-    inputLabel:SetText(ns.L["Spell ID"])
-    inputLabel:SetTextColor(0.5, 0.5, 0.5)
-
-    local addManualButton = CreateFrame("Button", nil, manualRow, "BackdropTemplate")
-    addManualButton:SetSize(40, 20)
-    addManualButton:SetPoint("LEFT", inputLabel, "RIGHT", 8, 0)
-    SkinBase.ApplyPixelBackdrop(addManualButton, 1, true, false, { 0.3, 0.3, 0.3, 1 }, { 0.15, 0.15, 0.15, 1 })
-    local addManualText = addManualButton:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    addManualText:SetPoint("CENTER")
-    addManualText:SetText(ns.L["Add"])
-    StyleSpellInputText(GUI, C, inputBox, inputLabel, addManualText)
-
-    local function CommitManual()
-        local spellID = tonumber(inputBox:GetText())
-        if spellID and spellID > 0 then
-            local exists = false
-            for _, sid in ipairs(element.spells) do
-                if sid == spellID then exists = true break end
-            end
-            if not exists then
-                element.spells[#element.spells + 1] = spellID
-            end
-            inputBox:SetText("")
-            inputBox:ClearFocus()
-            onChange()
-            ctx.rebuild()
-        end
-    end
-    addManualButton:SetScript("OnClick", CommitManual)
-    inputBox:SetScript("OnEnterPressed", CommitManual)
-    add(manualRow, 26, true)
-
-    -- Preset toggle rows + "Other" remove rows over a map view of element.spells.
-    local mapView = {}
-    for _, sid in ipairs(element.spells) do mapView[sid] = true end
-    local presets = (SpellList.GetDefaultPresets and SpellList.GetDefaultPresets()) or {}
-    local listFrame = SpellList.CreateListFrame(ctx.detailArea, mapView, presets, function()
-        local arr = element.spells
-        for i = #arr, 1, -1 do arr[i] = nil end
-        for sid in pairs(mapView) do arr[#arr + 1] = sid end
-        table.sort(arr)
-        onChange()
-    end, function()
-        ctx.rebuild()
-    end)
-    add(listFrame, math.max(1, listFrame:GetHeight() or 1), true)
+    -- Blacklist compiles in EVERY filter mode (excludeSpellIDs composes with
+    -- flags/classify/whitelist alike), so it renders unconditionally.
+    if type(element.blacklist) ~= "table" then element.blacklist = {} end
+    AddSpellMapEditor(ctx, element.blacklist,
+        ns.L["Blacklisted Spells — never show. Buff lists apply on friendly units, debuff lists on enemies."])
 end
 
 -- Tracked element config. displayType picks the LIVE display: icon strip,
