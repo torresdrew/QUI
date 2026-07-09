@@ -9,6 +9,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v5.0.0-alpha15 - 2026-07-08
+
+> ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will
+> not load on the 12.0.x live client. Stay on the v4.x beta line for live realms.
+
+### Fixed
+- fix(auras): all aura surfaces (unit-frame buffs/debuffs, action-bar buff
+  borders, group-frame auras) migrated to the new 12.1 PTR4 aura container
+  API — the latest PTR build removed the old aura APIs, which broke every
+  aura display in alpha14. Right-click-to-cancel and the sort options now go
+  through the game engine directly.
+
+### Changed
+- style(auras): aura icons now crop the dark bevel edge baked into icon art,
+  matching the rest of the suite's icon treatment.
+
+### Removed
+- the private-aura anchor feature on unit frames and group frames. The 12.1
+  aura containers render private auras natively, so the dedicated anchors
+  would show them twice. Any stored private-aura settings are cleaned up
+  automatically (profile schema v49).
+
 ## v5.0.0-alpha14 - 2026-07-07
 
 > ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will
