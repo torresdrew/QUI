@@ -26,15 +26,25 @@ assert(src:find('CreateFrame("Frame", "QUI_DebuffIconContainer", UIParent)', 1, 
 assert(src:find("debuffContainer", 1, true),
     "the debuffContainer upvalue/uses must be restored")
 
--- Independent filters on independent containers.
-assert(src:find("BuildAuraFilter(settings, isBuff)", 1, true),
-    "each zone group must build its own filter via BuildAuraFilter(settings, isBuff)")
-assert(src:find('local s = isBuff and "HELPFUL" or "HARMFUL"', 1, true),
-    "buff/debuff filters must diverge on isBuff (HELPFUL vs HARMFUL base)")
+-- Independent per-host element STORES on independent hosts (the approved
+-- two-store deviation: buffBorders.buffAuras / buffBorders.debuffAuras, each a
+-- { elementsSeeded, elements = { ["*"] = {...} } } bucket). Filters diverge on
+-- the element's auraType (HELPFUL vs HARMFUL) and compile C-side via the shared
+-- AuraGlue.ElementGroups — the local BuildAuraFilter helper is gone.
+assert(not src:find("BuildAuraFilter", 1, true),
+    "the per-zone Lua BuildAuraFilter helper must be deleted (filters are element-borne)")
+assert(src:find("buffAuras", 1, true) and src:find("debuffAuras", 1, true),
+    "each host must own its own element store (buffAuras / debuffAuras)")
+assert(src:find('EE.NewFilterStripElement("HELPFUL")', 1, true),
+    "the buff default bucket must seed a HELPFUL filterStrip element")
+assert(src:find('EE.NewFilterStripElement("HARMFUL")', 1, true),
+    "the debuff default bucket must seed a HARMFUL filterStrip element")
+assert(src:find("G.ElementGroups", 1, true) or src:find("AuraGlue.ElementGroups", 1, true),
+    "group descriptors (buff/debuff filter divergence) come from AuraGlue.ElementGroups")
 assert(not src:find("roundUpFrameIndex", 1, true),
-    "two-container path must not use stacked-filter roundUpFrameIndex")
+    "two-host path must not use stacked-filter roundUpFrameIndex")
 assert(not src:find("buffMax + debuffMax", 1, true),
-    "two-container path must not use cumulative maxFrameCount math")
+    "two-host path must not use cumulative maxFrameCount math")
 
 -- The dedicated private-aura anchor subsystem must not creep back: 12.1
 -- AuraContainers render private auras natively via the normal debuff strip.

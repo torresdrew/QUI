@@ -15,6 +15,15 @@ local AuraModel = ns.QUI_GroupFramesAuraModel
 -- render time via GetRender() so file load order can't matter.
 local function GetRender() return ns.QUI_GroupFrameAuraRender end
 
+-- The shipped default strip bucket lives in the model shim (always loaded,
+-- TOC line above this file) — NOT Options-side: E.EnsureSeeded LATCHES
+-- elementsSeeded after seeding, so an Options-only bucket would let an
+-- Options-disabled install latch an EMPTY "*" bucket and permanently lose
+-- the shipped strips.
+local function DefaultStripBucket()
+    return AuraModel.DefaultStripBucket()
+end
+
 -- Upvalue hot-path globals
 local pairs = pairs
 local ipairs = ipairs
@@ -30,26 +39,26 @@ local QUI_GFA = {}
 ns.QUI_GroupFrameAuras = QUI_GFA
 
 ---------------------------------------------------------------------------
--- ELEMENT-MODEL GLUE (inert — wired in a later flip task)
+-- ELEMENT-MODEL GLUE
 ---------------------------------------------------------------------------
 
--- STEP D1a CUTOVER: the generic buff/debuff STRIP display moved to Blizzard's
--- secure per-unit CustomAuraContainer (see the LIVE STRIP CONTAINER section
--- below). The v46 element engine no longer produces or renders `filterStrip`
--- elements, and the `tracked` ICON/SQUARE/BAR display was DROPPED entirely
--- (owner decision). The engine now emits ONLY:
+-- CONTAINER CUTOVER: the generic buff/debuff STRIP display AND the tracked
+-- ICON/SQUARE/BAR display render on Blizzard's secure per-unit
+-- CustomAuraContainer — one container PER active element (see the LIVE AURA
+-- CONTAINERS section below; tracked rides AddAuraSlot via core/aura_slots.lua).
+-- The v46 element engine renderer now emits ONLY:
 --   * `missingRaidBuff` — Missing Raid Buffs synthetic icons (unchanged), and
 --   * `tracked` with displayType == "healthTint" — the health-bar tint feeder
 --     consumed by R.RenderHealthTint / R.SyncHealthBarTint (unchanged).
 -- EngineRendersElement is the single gate every engine consumer below routes
--- through, so the strip/tracked drop stays in one place and MRB + tint keep
--- flowing through the (untouched) renderer.
+-- through, so the container/renderer split stays in one place and MRB + tint
+-- keep flowing through the (untouched) renderer.
 local function EngineRendersElement(element)
     if not element then return false end
     local mode = element.mode
     if mode == "missingRaidBuff" then return true end
     if mode == "tracked" and element.displayType == "healthTint" then return true end
-    -- filterStrip => secure CustomAuraContainer; tracked icon/square/bar => dropped.
+    -- filterStrip + tracked icon/square/bar => secure CustomAuraContainer.
     return false
 end
 QUI_GFA.EngineRendersElement = EngineRendersElement
@@ -60,7 +69,7 @@ QUI_GFA.EngineRendersElement = EngineRendersElement
 local function BuildElementRenderList(auras, specID, cache)
     local work = {}
     if not auras then return work end
-    if AuraModel.EnsureSeeded then AuraModel.EnsureSeeded(auras) end
+    if AuraModel.EnsureSeeded then AuraModel.EnsureSeeded(auras, DefaultStripBucket) end
     if auras.enabled == false then return work end
     local elements = AuraModel.ActiveElementsForSpec(auras, specID)
     for _, element in ipairs(elements) do
@@ -979,36 +988,15 @@ end
 -- consumer lookup tables on every roster aura change.
 
 ---------------------------------------------------------------------------
--- CLASSIFICATION FILTER: Build filter strings and check auras
+-- CLASSIFICATION FILTER
 ---------------------------------------------------------------------------
--- Maps DB toggle keys to Blizzard classification filter strings
-local BUFF_CLASSIFICATION_MAP = {
-    raid              = "HELPFUL|RAID",
-    raidInCombat      = "HELPFUL|RAID_IN_COMBAT",
-    cancelable        = "HELPFUL|CANCELABLE",
-    notCancelable     = "HELPFUL|NOT_CANCELABLE",
-    bigDefensive      = "HELPFUL|BIG_DEFENSIVE",
-    externalDefensive = "HELPFUL|EXTERNAL_DEFENSIVE",
-}
-
-local DEBUFF_CLASSIFICATION_MAP = {
-    raid         = "HARMFUL|RAID",
-    -- NOTE: no raidInCombat here. RAID_IN_COMBAT is a HELPFUL-only AuraFilters
-    -- token (Blizzard doc: "Combine with Player & Helpful to return self-cast
-    -- HoTs"); "HARMFUL|RAID_IN_COMBAT" is an invalid combo and C_UnitAuras.
-    -- GetUnitAuras hard-errors on it. It only ever made sense for the buff zone.
-    crowdControl = "HARMFUL|CROWD_CONTROL",
-}
-
--- STEP D1b: the per-spell whitelist/blacklist (AuraPassesSpellFilter), the
--- inline classification query (AuraPassesFilter), and the dispel/boss priority
--- sort (GetAuraPriority + its PRIORITY_* constants) were REMOVED. They were the
--- last Lua-side strip-filter primitives, retained "for a later step" after the
--- D1a cutover but never re-wired: the live strip now filters C-side in the
--- secure CustomAuraContainer (BuildZoneFilters consumes the classification maps
--- above directly), so these had zero callers across QUI_GroupFrames/. The two
--- BUFF/DEBUFF_CLASSIFICATION_MAP tables are RETAINED — the container path
--- (CONTAINER_*_CLASS_MAP) still maps classification toggles → filter strings.
+-- The DB-toggle to Blizzard filter-string maps, the per-spell
+-- whitelist/blacklist, the inline classification query, and the dispel/boss
+-- priority sort all moved to the shared core modules: the element filter
+-- compiler now lives in core/aura_elements.lua (E.CompileFilters /
+-- E.CompileCandidateFilters) and the container glue in core/aura_glue.lua
+-- (AuraGlue.ElementGroups). This file no longer owns any Lua-side strip filter
+-- primitive -- the per-element containers filter C-side on secret-safe data.
 
 ---------------------------------------------------------------------------
 -- UNIFIED ELEMENT RENDER (groupframes_aura_render.lua is the sole consumer)
@@ -1058,15 +1046,14 @@ do
     end)
 end
 
--- STEP D1a: the legacy BuildFilterStripMatches builder (Lua-side filter +
--- priority-sort that fed the strip's icon renderer) was REMOVED — the generic
--- buff/debuff strip is now drawn by the secure per-unit CustomAuraContainer
--- (LIVE STRIP CONTAINER section), which filters C-side on secret-safe data. The
--- `_strip*` scratch tables and the StripPrioritySort helper that only served it
--- are gone with it. STEP D1b then dropped the last orphaned strip-filter
--- primitives (AuraPassesFilter / AuraPassesSpellFilter / GetAuraPriority); only
--- the BUFF/DEBUFF_CLASSIFICATION_MAP tables survive, consumed C-side by the
--- container's BuildZoneFilters.
+-- The legacy Lua-side strip match builder (BuildFilterStripMatches), its
+-- `_strip*` scratch + priority-sort helper, and the orphaned strip-filter
+-- primitives (AuraPassesFilter / AuraPassesSpellFilter / GetAuraPriority) were
+-- all REMOVED. Every container-rendered element is now drawn by its own secure
+-- per-unit CustomAuraContainer (LIVE AURA CONTAINERS section), which filters
+-- C-side on secret-safe data via the shared core glue (AuraGlue / AuraSlots).
+-- No classification map survives in this file -- the filter compiler moved to
+-- core/aura_elements.lua.
 
 -- Reusable scratch for the zero-alloc engine render path. Each is filled and
 -- fully consumed within a single RenderFrameElements pass (Render:Dispatch only
@@ -1122,8 +1109,8 @@ local function GetAuraRelevance(auras, specID)
     rel.hasTracked = false
     wipe(rel.trackedSpells)
     -- Rare path (only on spec/settings change): a plain alloc here is fine.
-    -- STEP D1a: strips are container-driven and tracked icon/square/bar are
-    -- dropped, so the relevance descriptor only tracks the engine's remaining
+    -- Strips + tracked icon/square/bar are container-driven (self-drive
+    -- UNIT_AURA), so the relevance descriptor only tracks the engine's remaining
     -- emitters — MRB (helpful-dirty) and the healthTint tracked feeder (by spell).
     local elements = AuraModel.ActiveElementsForSpec(auras, specID)
     for i = 1, #elements do
@@ -1144,7 +1131,7 @@ local function GetAuraRelevance(auras, specID)
 end
 
 -- True if this delta could change anything the frame's engine elements render
--- (MRB + the healthTint feeder; strips/tracked-icon left the engine in D1a).
+-- (MRB + the healthTint feeder; container-rendered elements self-drive).
 local function DeltaTouchesFrame(rel, dirty)
     if dirty.helpful and rel.hasMissingRaidBuff then return true end
     if rel.hasTracked then
@@ -1175,7 +1162,7 @@ local function RenderFrameElements(frame, cache, dirty)
     end
 
     local specID = GetPlayerSpecID()
-    if AuraModel.EnsureSeeded then AuraModel.EnsureSeeded(auras) end
+    if AuraModel.EnsureSeeded then AuraModel.EnsureSeeded(auras, DefaultStripBucket) end
 
     -- Frame-level dirty skip: if this delta can't touch any element this frame
     -- shows, leave every widget exactly as-is (no element rebuild, no release).
@@ -1200,10 +1187,10 @@ local function RenderFrameElements(frame, cache, dirty)
     wipe(current)
     for i = 1, #elements do
         local element = elements[i]
-        -- STEP D1a: the engine only renders MRB + the healthTint tracked feeder.
-        -- filterStrip is drawn by the secure CustomAuraContainer, and tracked
-        -- icon/square/bar were dropped — skip both entirely (no id recorded, so
-        -- the release reconciliation tears down any lingering widgets from a
+        -- The engine only renders MRB + the healthTint tracked feeder.
+        -- filterStrip AND tracked icon/square/bar are drawn by their own secure
+        -- CustomAuraContainer — skip both entirely (no id recorded, so the
+        -- release reconciliation tears down any lingering widgets from a
         -- pre-cutover pass and never re-acquires them).
         if EngineRendersElement(element) then
             -- Per-element dirty gate: skip the (expensive) match build + Dispatch
@@ -1292,33 +1279,40 @@ function GetFrameAuraSettings(frame)
 end
 
 ---------------------------------------------------------------------------
--- LIVE STRIP CONTAINER — secure per-unit CustomAuraContainer (STEP D1a)
+-- LIVE AURA CONTAINERS — one secure CustomAuraContainer PER active element
 ---------------------------------------------------------------------------
--- The generic buff/debuff STRIP display is rendered by Blizzard's secure
--- CustomAuraContainer (one buff + one debuff container per group/raid unit
--- frame), themed by QUI.AuraSkin. The container self-drives UNIT_AURA and reads
--- aura data C-side, so no QUI Lua ever reads a secret aura field on this path.
--- This mirrors the unit-frame cutover (QUI_UnitFrames/.../unitframe_auras.lua):
---   classification → AuraSkin.Configure(group descriptors), SetUnit(frame.unit),
---   SetEnabled(true).
+-- Every container-rendered element (filterStrip + tracked icon/square/bar) gets
+-- its OWN secure CustomAuraContainer, themed by the shared core glue: element →
+-- AuraGlue.ElementProfile + AuraGlue.ElementGroups → AuraGlue.RunConfigPass
+-- (AuraSkin.Configure OOC / Restyle in combat), tracked slots via AuraSlots.Sync
+-- (AddAuraSlot). The container self-drives UNIT_AURA and reads aura data C-side,
+-- so no QUI Lua ever reads a secret aura field on this path.
 --
--- The container is a FORBIDDEN object whose CREATION (+ button pooling) is
--- combat-restricted — combat creation crashes the 12.1 client — and stays
--- queued for PLAYER_REGEN_ENABLED. MUTATION of a pre-created container
--- (anchor / filters / SetUnit / enable) is combat-legal, so the update path
--- applies that subset live in combat (pcall-guarded) and STILL queues the
--- full pass so a wrong assumption self-heals at regen.
+-- Containers pool on the frame by ORDINAL (frame._quiAuraContainers[i]) — they
+-- are engine objects that can't be destroyed, so a changing element list
+-- re-purposes them (group retire inside AuraSkin.Configure, slot park via
+-- AuraSlots.Park). CREATION (CreateFrame + AddAuraGroup/AddAuraSlot button
+-- pooling) is combat-restricted (crashes the 12.1 client) and stays queued for
+-- PLAYER_REGEN_ENABLED. MUTATION of a pre-created container (anchor / filters /
+-- SetUnit / enable) is combat-legal, so the update path applies that subset live
+-- in combat and STILL queues the full pass so a wrong assumption self-heals.
 --
 -- MRB synthetic icons + the health-bar tint feeder remain on the v46 element
--- engine (RenderFrameElements above) — only the strips moved here.
+-- engine (RenderFrameElements above) — only container-rendered elements live here.
 
+-- ONE lazy resolver for the three shared deps. AuraGlue/AuraSlots live in the
+-- QUI core addon (a dependency, loaded before this file); AuraSkin needs the
+-- live secure button template so it may bind slightly later — resolve all lazily
+-- following the file's existing `AuraSkin = AuraSkin or ...` idiom.
 local AuraSkin = (ns.Addon and ns.Addon.AuraSkin) or (_G.QUI and _G.QUI.AuraSkin)
-
--- Map a GF filterStrip element's classification toggles → Blizzard filter strings.
--- Keyed identically to the legacy strip filter logic (BUFF/DEBUFF_CLASSIFICATION_MAP
--- above) so the container applies the SAME C-side inclusion test the strip used.
-local CONTAINER_BUFF_CLASS_MAP = BUFF_CLASSIFICATION_MAP
-local CONTAINER_DEBUFF_CLASS_MAP = DEBUFF_CLASSIFICATION_MAP
+local AuraGlue = ns.AuraGlue
+local AuraSlots = ns.AuraSlots
+local function ResolveAuraDeps()
+    AuraSkin  = AuraSkin  or (ns.Addon and ns.Addon.AuraSkin) or (_G.QUI and _G.QUI.AuraSkin)
+    AuraGlue  = AuraGlue  or ns.AuraGlue
+    AuraSlots = AuraSlots or ns.AuraSlots
+    return AuraSkin and AuraGlue and AuraSlots
+end
 
 -- Combat-deferral queue. [frame] = true → re-apply config OOC.
 local _containerPendingCombatWork = {}
@@ -1348,318 +1342,203 @@ local function QueueContainerCombatWork(frame)
     _containerPendingCombatWork[frame] = true
 end
 
--- Resolve the active filterStrip elements for a frame, split by zone. Returns
--- two arrays (buffElems, debuffElems) of enabled HELPFUL / HARMFUL strips for
--- the unit's active spec bucket. Empty arrays = that zone shows nothing.
-local _stripBuffElems = {}
-local _stripDebuffElems = {}
-local function ResolveStripElements(frame)
-    wipe(_stripBuffElems)
-    wipe(_stripDebuffElems)
+-- Resolve the active CONTAINER-RENDERED elements for a frame: filterStrips +
+-- tracked (icon/square/bar) in bucket order. healthTint tracked elements and
+-- missingRaidBuff stay on the element-renderer path (EngineRendersElement).
+-- Returns a SHARED module scratch (do not retain across a re-resolve).
+local _activeElems = {}
+local function ResolveContainerElements(frame)
+    for i = #_activeElems, 1, -1 do _activeElems[i] = nil end
     local auras = GetFrameAuraSettings(frame)
-    if not auras or auras.enabled == false then
-        return _stripBuffElems, _stripDebuffElems
-    end
-    if AuraModel.EnsureSeeded then AuraModel.EnsureSeeded(auras) end
+    if not auras or auras.enabled == false then return _activeElems end
+    AuraModel.EnsureSeeded(auras, DefaultStripBucket)
     local specID = GetPlayerSpecID()
     local elements = AuraModel.ActiveElementsForSpec(auras, specID)
     for i = 1, #elements do
         local e = elements[i]
-        if e.mode == "filterStrip" then
-            if e.auraType == "HARMFUL" then
-                _stripDebuffElems[#_stripDebuffElems + 1] = e
-            else
-                _stripBuffElems[#_stripBuffElems + 1] = e
-            end
+        if e.mode == "filterStrip"
+            or (e.mode == "tracked" and e.displayType ~= "healthTint") then
+            _activeElems[#_activeElems + 1] = e
         end
     end
-    return _stripBuffElems, _stripDebuffElems
+    return _activeElems
 end
 
--- Build the Blizzard filter-string list for one zone from its enabled strips.
--- Each strip contributes one filter string (OR-unioned across strips): a
--- classification-mode strip emits its per-toggle classification strings; an
--- off / whitelist-mode strip emits the bare base (HELPFUL / HARMFUL) so the
--- container shows every aura of that polarity (per-spell whitelist/blacklist is
--- folded into the container filter set in a later step). Returns a fresh array.
-local function BuildZoneFilters(elems, isDebuff)
-    local base = isDebuff and "HARMFUL" or "HELPFUL"
-    local map = isDebuff and CONTAINER_DEBUFF_CLASS_MAP or CONTAINER_BUFF_CLASS_MAP
-    local filters = {}
-    local seen = {}
-    local function addFilter(str)
-        if str and not seen[str] then seen[str] = true; filters[#filters + 1] = str end
-    end
-    for i = 1, #elems do
-        local e = elems[i]
-        local emitted = false
-        if (e.filterMode or "off") == "classification" and e.classifications then
-            for key, filterStr in pairs(map) do
-                if e.classifications[key] then addFilter(filterStr); emitted = true end
-            end
-        end
-        -- off / whitelist / classification-with-nothing-checked → show the
-        -- whole polarity so a strip never silently displays nothing.
-        if not emitted then addFilter(base) end
-    end
-    if #filters == 0 then addFilter(base) end
-    return filters
-end
-
--- Derive a FULL grid profile (icon metrics + layout) from the first enabled
--- strip. AuraSkin.Configure lays the container-wide flow out relative to the
--- container's anchor corner using this profile, so the strip's anchor / offset
--- / grow / spacing all live in the profile; AnchorZoneContainer pins the
--- container's flow-origin corner (AuraSkin.LayoutAnchor) to the unit frame,
--- folding in the per-icon offset (the engine, not QUI, positions buttons now,
--- so the offset can no longer be carried by them). GF strip elements have no
--- maxPerRow key, so the grid stays a single line (maxPerRow = 0). `wrap`
--- selects the flow's wrap axis: a BOTTOM-anchored strip must wrap UPWARD, away
--- from the frame, or extra rows would grow back into it.
-local function ZoneProfile(elems, isDebuff)
-    local e = elems[1]
-    local defAnchor = isDebuff and "BOTTOMRIGHT" or "TOPLEFT"
-    if not e then
-        local anchor = defAnchor
-        return { maxIcons = 0, iconSize = 16, spacing = 2, grow = "RIGHT",
-                 maxPerRow = 0, offsetX = 0, offsetY = 0, anchor = anchor,
-                 wrap = ((anchor or ""):find("BOTTOM", 1, true) and "UP" or "DOWN"),
-                 borderSize = 1, fontSize = 11, hideSwipe = false, reverseSwipe = false }
-    end
-    local anchor = e.anchor or defAnchor
-    return {
-        maxIcons     = e.maxIcons and e.maxIcons > 0 and e.maxIcons or 32,
-        iconSize     = e.iconSize or 16,
-        spacing      = e.spacing or 2,
-        grow         = e.growDirection or "RIGHT",
-        maxPerRow    = 0,
-        offsetX      = e.offsetX or 0,
-        offsetY      = e.offsetY or 0,
-        anchor       = anchor,
-        wrap         = ((anchor or ""):find("BOTTOM", 1, true) and "UP" or "DOWN"),
-        borderSize   = e.borderSize or 1,
-        fontSize     = e.fontSize or 11,
-        hideSwipe    = e.hideSwipe or false,
-        reverseSwipe = e.reverseSwipe or false,
-    }
-end
-
--- Anchor a container OOC relative to its unit frame at the first enabled strip's
--- anchor corner. AuraSkin.LayoutAnchor(profile) returns the flow-origin corner
+-- Anchor a container OOC relative to its unit frame at the element's anchor
+-- corner. AuraSkin.LayoutAnchor(profile) returns the flow-origin corner
 -- (grow + profile.wrap); pinning THAT corner to the frame's matching anchor
--- point makes the auto-sized container hang off the frame edge exactly where
--- the old 1x1-anchored button grid did, with multi-row growth extending AWAY
--- from the frame. The per-icon offset (profile.offsetX / offsetY) is folded in
--- here now — the engine, not QUI, positions buttons, so there is no button to
--- carry it. The container is forbidden → SetPoint is NEVER called in combat
--- (callers gate via QueueContainerCombatWork / InCombatLockdown).
-local function AnchorZoneContainer(container, frame, elems, isDebuff)
-    local profile = ZoneProfile(elems, isDebuff)
-    local anchor = profile.anchor
+-- point makes the auto-sized container hang off the frame edge, with multi-row
+-- growth extending AWAY from the frame. The per-element offset is folded in
+-- here (the engine, not QUI, positions buttons/slots). The container is
+-- forbidden → SetPoint is NEVER called in combat (callers gate on
+-- InCombatLockdown / QueueContainerCombatWork).
+local function AnchorElementContainer(container, frame, element)
+    local profile = AuraGlue.ElementProfile(element)
     container:ClearAllPoints()
-    container:SetPoint(AuraSkin.LayoutAnchor(profile), frame, anchor, (profile.offsetX or 0), (profile.offsetY or 0))
+    container:SetPoint(AuraSkin.LayoutAnchor(profile), frame, element.anchor or "TOPLEFT",
+        (element.offsetX or 0), (element.offsetY or 0))
 end
 
--- Create (OOC) the two zone containers for a unit frame and anchor them.
--- Group registration/theming now happens every ApplyStripPass zone pass via
--- AuraSkin.Configure/Restyle, not here — this only owns the forbidden-object
--- creation (combat-restricted) and the container anchor.
-local function EnsureStripContainers(frame, buffElems, debuffElems)
-    AuraSkin = AuraSkin or (ns.Addon and ns.Addon.AuraSkin) or (_G.QUI and _G.QUI.AuraSkin)
-    if not AuraSkin or not CreateFrame then return false end
-
-    if not frame.debuffContainer then
-        frame.debuffContainer = CreateFrame("AuraContainer", nil, frame, "CustomAuraContainerTemplate")
-    end
-    if not frame.buffContainer then
-        frame.buffContainer = CreateFrame("AuraContainer", nil, frame, "CustomAuraContainerTemplate")
-    end
-
-    AnchorZoneContainer(frame.debuffContainer, frame, debuffElems, true)
-    AnchorZoneContainer(frame.buffContainer, frame, buffElems, false)
-    return true
-end
-
--- Pre-create (OOC) the two zone containers for one header child, even a
--- unitless padding child (ResolveStripElements keys on frame._isRaid, stamped
--- at child birth by the decorate bridge — no unit needed). Called by the
--- header preallocator so a member joining MID-COMBAT lands on a child whose
--- forbidden containers already exist: creation is combat-forbidden (crashes
--- the 12.1 client), but SetUnit/filter/enable on a pre-created container is
--- combat-legal mutation. Cheap re-entry: skips frames that own both
--- containers (config-time AuraSkin.Configure handles profile growth).
-function QUI_GFA.EnsureContainersForFrame(frame)
-    if not frame or InCombatLockdown() then return end
-    if frame.buffContainer and frame.debuffContainer then return end
-    local buffElems, debuffElems = ResolveStripElements(frame)
-    if #buffElems == 0 and #debuffElems == 0 then return end
-    EnsureStripContainers(frame, buffElems, debuffElems)
-end
-
--- AuraSkin.Configure's AddAuraGroup validates group registration eagerly, but
--- PTR4 defers the actual aura data parse to the secure OnUpdate dirty pass
--- (Blizzard_CustomAuraContainer). Some AuraFilters tokens are only valid in a
--- specific polarity combo and the C API HARD-ERRORS on a bad one — and
--- because this runs inside SecureGroupHeader_Update's SetAttribute chain, the
--- error taints + aborts the whole header. Worse, group registration
--- table.inserts the filter BEFORE the throwing call, so a pcall around it
--- would leave a poisoned group that re-throws on every later dirty pass.
--- FilterStringUsable pre-validation is still required so a bad filter can't
--- poison the secure dirty pass — pre-validate the string with our own
--- (insecure, addon-allowed) GetUnitAuras and only hand accepted strings to
--- the container.
-local function FilterStringUsable(unit, filterString)
-    if not (C_UnitAuras and C_UnitAuras.GetUnitAuras) then return true end
-    return (pcall(C_UnitAuras.GetUnitAuras, unit, filterString))
-end
-
--- Build AuraSkin group descriptors from a zone's pre-built filter strings,
--- dropping any the C API rejects, and guaranteeing at least the base polarity
--- (always valid) so a zone never silently shows nothing when every
--- classification filter is dropped.
-local function BuildZoneGroups(unit, filterStrings, base, maxIcons)
-    local groups = {}
-    for i = 1, #filterStrings do
-        local fs = filterStrings[i]
-        if FilterStringUsable(unit, fs) then
-            groups[#groups + 1] = { key = "zone" .. i, filter = fs, maxFrameCount = maxIcons }
-        end
-    end
-    if #groups == 0 then
-        groups[1] = { key = "zonebase", filter = base, maxFrameCount = maxIcons }
-    end
-    return groups
-end
-
--- Apply enable/disable + group + unit config to the live strip containers.
--- This is the heart of the live strip path: groups (via AuraSkin.Configure)
--- and SetEnabled change, the container self-drives the rest. allowCreate=true
--- is the full OOC pass (may create containers + pool buttons); allowCreate=
--- false is the combat pass — only combat-legal mutation of PRE-CREATED
--- containers (anchor, unit, group reconcile pcall-guarded with a Restyle
--- fallback, enable).
-local function ApplyStripPass(frame, allowCreate)
+-- One container per active element, pooled by ORDINAL on the frame. Containers
+-- are engine objects that can't be destroyed; a changing element list
+-- re-purposes them (group retire inside AuraSkin.Configure via RunConfigPass,
+-- slot park via AuraSlots.Park). allowCreate=false (combat) NEVER creates
+-- containers or slots and never SetPoints; it only mutates pre-created
+-- containers (pcall-guarded group reconcile with a Restyle fallback, inside
+-- AuraGlue.RunConfigPass). Any forbidden work skipped in combat sets
+-- `incomplete`, which queues a full replay for PLAYER_REGEN_ENABLED.
+local function ApplyElementPass(frame, allowCreate)
     if not frame or not frame.unit then return end
-    AuraSkin = AuraSkin or (ns.Addon and ns.Addon.AuraSkin) or (_G.QUI and _G.QUI.AuraSkin)
-    local buffElems, debuffElems = ResolveStripElements(frame)
-    local showBuffs = #buffElems > 0
-    local showDebuffs = #debuffElems > 0
-
-    if allowCreate then
-        if not EnsureStripContainers(frame, buffElems, debuffElems) then return end
-    else
-        if not (frame.buffContainer and frame.debuffContainer) then return end
-        if not AuraSkin then return end
-        AnchorZoneContainer(frame.debuffContainer, frame, debuffElems, true)
-        AnchorZoneContainer(frame.buffContainer, frame, buffElems, false)
+    if not ResolveAuraDeps() then return end
+    local elems = ResolveContainerElements(frame)
+    local pool = frame._quiAuraContainers
+    if not pool then
+        pool = {}
+        frame._quiAuraContainers = pool
     end
-
-    -- Per-zone icon cap: maxFrameCount caps how many auras the container shows
-    -- (it never assigns past the Nth registered button). Match each zone's pooled
-    -- button count, derived from the first enabled strip's maxIcons (ZoneProfile).
-    local debuffProfile = ZoneProfile(debuffElems, true)
-    local buffProfile = ZoneProfile(buffElems, false)
-
-    -- Debuff zone (HARMFUL strips). SetUnit BEFORE group configuration so the
-    -- container's eager group registration (inside AuraSkin.Configure) has a
-    -- valid unit. OOC configures directly; the combat pass pcall-guards
-    -- Configure (PTR4 may still restrict group mutation in combat) and falls
-    -- back to the always combat-legal Restyle (style-only, no group changes)
-    -- on failure.
-    local dc = frame.debuffContainer
-    dc:SetUnit(frame.unit)
-    if showDebuffs then
-        local debuffGroups = BuildZoneGroups(frame.unit, BuildZoneFilters(debuffElems, true), "HARMFUL", debuffProfile.maxIcons)
-        if allowCreate then
-            AuraSkin.Configure(dc, debuffProfile, debuffGroups)
-        else
-            local ok = pcall(AuraSkin.Configure, dc, debuffProfile, debuffGroups)
-            if not ok then
-                AuraSkin.Restyle(dc, debuffProfile)
+    local incomplete = false
+    for i = 1, #elems do
+        local element = elems[i]
+        local container = pool[i]
+        if not container then
+            if allowCreate and not InCombatLockdown() and CreateFrame then
+                container = CreateFrame("AuraContainer", nil, frame, "CustomAuraContainerTemplate")
+                pool[i] = container
+            else
+                incomplete = true
             end
         end
-        dc:SetEnabled(true)
-        dc:Show()
-    else
-        dc:SetEnabled(false)
-        dc:Hide()
-    end
-
-    -- Buff zone (HELPFUL strips).
-    local bc = frame.buffContainer
-    bc:SetUnit(frame.unit)
-    if showBuffs then
-        local buffGroups = BuildZoneGroups(frame.unit, BuildZoneFilters(buffElems, false), "HELPFUL", buffProfile.maxIcons)
-        if allowCreate then
-            AuraSkin.Configure(bc, buffProfile, buffGroups)
-        else
-            local ok = pcall(AuraSkin.Configure, bc, buffProfile, buffGroups)
-            if not ok then
-                AuraSkin.Restyle(bc, buffProfile)
+        if container then
+            -- SetUnit BEFORE group configuration so the container's eager group
+            -- registration (inside AuraSkin.Configure) has a valid unit.
+            container:SetUnit(frame.unit)
+            if not InCombatLockdown() then
+                AnchorElementContainer(container, frame, element)
             end
+            if element.mode == "tracked" then
+                -- Retire any strip groups a re-purposed container carries, then
+                -- reconcile the tracked slots (AddAuraSlot) onto it.
+                if not AuraGlue.RunConfigPass(container, AuraGlue.ElementProfile(element), {}, allowCreate) then incomplete = true end
+                if not AuraSlots.Sync(container, element, allowCreate) then incomplete = true end
+            else
+                local profile = AuraGlue.ElementProfile(element)
+                local groups = AuraGlue.ElementGroups(frame.unit, element, profile, false)
+                if not AuraGlue.RunConfigPass(container, profile, groups, allowCreate) then incomplete = true end
+                AuraSlots.Park(container)
+            end
+            container:SetEnabled(true)
+            container:Show()
         end
-        bc:SetEnabled(true)
-        bc:Show()
-    else
-        bc:SetEnabled(false)
-        bc:Hide()
+    end
+    -- Retire pooled containers beyond the active element count: empty groups +
+    -- park slots + disable + hide (all combat-legal on a pre-created container).
+    for i = #elems + 1, #pool do
+        local container = pool[i]
+        if not AuraGlue.RunConfigPass(container, container._quiProfile or {}, {}, allowCreate) then incomplete = true end
+        AuraSlots.Park(container)
+        container:SetEnabled(false)
+        container:Hide()
+    end
+    if incomplete then
+        QueueContainerCombatWork(frame)
     end
 end
 
--- Full OOC pass (the forward-declared name + the QUI_GFA export; also what the
--- combat-flush closure replays at PLAYER_REGEN_ENABLED).
+-- Full pass entry (the forward-declared name + the QUI_GFA export; also what
+-- the combat-flush closure replays at PLAYER_REGEN_ENABLED, always OOC there).
 function ApplyStripContainers(frame)
-    ApplyStripPass(frame, true)
+    ApplyElementPass(frame, not InCombatLockdown())
 end
 QUI_GFA.ApplyStripContainers = ApplyStripContainers
 
--- Public entry: (re)apply the strip container config for one frame, deferring to
--- OOC if the forbidden container can't be touched right now. The container self-
--- drives UNIT_AURA, so this is config-only — not a per-event render loop.
+-- Public entry: (re)apply the per-element container config for one frame. In
+-- combat, mutation of pre-created containers is legal (SetUnit / filters /
+-- enable), so run the mutation-only pass immediately AND queue the full pass
+-- (creation + reconcile) for regen so any skipped forbidden work self-heals.
+-- The containers self-drive UNIT_AURA, so this is config-only — not a per-event
+-- render loop.
 local function UpdateStripContainers(frame)
     if not frame or not frame.unit then return end
     if InCombatLockdown() then
         -- Mutation of pre-created containers is 12.1-PTR-legal (SetUnit /
-        -- filters / enable / anchor); pcall-guard and STILL queue the full
-        -- pass (creation + reconcile) for regen.
-        pcall(ApplyStripPass, frame, false)
+        -- filters / enable); pcall-guard the whole mutable pass (a surprise
+        -- combat restriction must not error out of the event handler) and
+        -- STILL queue the full pass (creation + reconcile) for regen.
+        pcall(ApplyElementPass, frame, false)
         QueueContainerCombatWork(frame)
         return
     end
-    ApplyStripContainers(frame)
+    ApplyElementPass(frame, true)
 end
 QUI_GFA.UpdateStripContainers = UpdateStripContainers
 
--- Disable + hide both strip containers for a frame (unit cleared / frame hidden).
--- Forbidden-object SetEnabled/Hide → OOC only; defer in combat.
+-- Disable + hide every aura container on a frame (unit cleared / frame hidden):
+-- retire each (empty groups + park slots + disable + hide). Group/slot mutation
+-- and SetEnabled/Hide on a pre-created container are combat-legal; RunConfigPass
+-- pcall-guards Configure in combat. Forbidden work skipped in combat queues a
+-- regen replay.
+local function RetireContainer(container, allowCreate)
+    local ok = AuraGlue.RunConfigPass(container, container._quiProfile or {}, {}, allowCreate)
+    AuraSlots.Park(container)
+    container:SetEnabled(false)
+    container:Hide()
+    return ok
+end
+
 local function DisableStripContainers(frame)
     if not frame then return end
-    if not frame.buffContainer and not frame.debuffContainer then return end
-    if InCombatLockdown() then
-        -- SetEnabled/Hide on a pre-created container is combat-legal mutation:
-        -- hide the cleared unit's strips NOW instead of showing stale auras
-        -- for the rest of the fight; the queued pass reconciles at regen.
-        if frame.debuffContainer then
-            pcall(frame.debuffContainer.SetEnabled, frame.debuffContainer, false)
-            pcall(frame.debuffContainer.Hide, frame.debuffContainer)
+    local pool = frame._quiAuraContainers
+    if not pool or #pool == 0 then return end
+    if not ResolveAuraDeps() then return end
+    local inCombat = InCombatLockdown()
+    local incomplete = false
+    for i = 1, #pool do
+        local container = pool[i]
+        if container then
+            if inCombat then
+                -- SetEnabled/Hide/park on a pre-created container is combat-
+                -- legal mutation: hide the cleared unit's auras NOW instead of
+                -- showing stale icons all fight; pcall-guard so a surprise
+                -- restriction can't error out, and reconcile at regen.
+                local ok, complete = pcall(RetireContainer, container, false)
+                if not ok or not complete then incomplete = true end
+            else
+                if not RetireContainer(container, true) then incomplete = true end
+            end
         end
-        if frame.buffContainer then
-            pcall(frame.buffContainer.SetEnabled, frame.buffContainer, false)
-            pcall(frame.buffContainer.Hide, frame.buffContainer)
-        end
+    end
+    if incomplete or inCombat then
         QueueContainerCombatWork(frame)
-        return
-    end
-    if frame.debuffContainer then
-        frame.debuffContainer:SetEnabled(false)
-        frame.debuffContainer:Hide()
-    end
-    if frame.buffContainer then
-        frame.buffContainer:SetEnabled(false)
-        frame.buffContainer:Hide()
     end
 end
 QUI_GFA.DisableStripContainers = DisableStripContainers
+
+-- Pre-create (OOC) one container per active element for a header child, even a
+-- unitless padding child (ResolveContainerElements keys on frame._isRaid,
+-- stamped at child birth by the decorate bridge — no unit needed). Called by
+-- the header preallocator so a member joining MID-COMBAT lands on a child whose
+-- forbidden containers already exist + are anchored: creation is combat-forbidden
+-- (crashes the 12.1 client), but SetUnit/filter/enable on a pre-created
+-- container is combat-legal mutation. Cheap re-entry: skips when the pool
+-- already holds enough containers (config-time RunConfigPass handles growth).
+function QUI_GFA.EnsureContainersForFrame(frame)
+    if not frame or InCombatLockdown() then return end
+    if not ResolveAuraDeps() or not CreateFrame then return end
+    local elems = ResolveContainerElements(frame)
+    local want = #elems
+    if want == 0 then return end
+    local pool = frame._quiAuraContainers
+    if not pool then
+        pool = {}
+        frame._quiAuraContainers = pool
+    end
+    if #pool >= want then return end
+    for i = #pool + 1, want do
+        local container = CreateFrame("AuraContainer", nil, frame, "CustomAuraContainerTemplate")
+        pool[i] = container
+        AnchorElementContainer(container, frame, elems[i])
+    end
+end
 
 -- True when the unit's context has at least one enabled aura element.
 local function HasActiveAuraElements(vdb)
@@ -1847,9 +1726,9 @@ local function ProcessUnitAuraSetChange(unit, updateInfo)
                 GF:UpdateDefensiveIndicator(frame)
             end
             -- Engine element pass (MRB synthetic icons + the healthTint feeder).
-            -- The generic buff/debuff strips left this path in D1a — they now
-            -- self-draw on the secure CustomAuraContainer — so the dispel/
-            -- defensive overlays above no longer gate or feed this call.
+            -- Strips + tracked icon/square/bar self-draw on their secure
+            -- CustomAuraContainers — so the dispel/defensive overlays above no
+            -- longer gate or feed this call.
             RenderFrameElements(frame, cache, dirty)
         end
     end

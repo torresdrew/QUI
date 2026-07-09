@@ -37,22 +37,22 @@ assert(gatePos, "ApplyConfigPass must gate OOC-only work on allowCreate")
 assert(not src:find("PrivateAura", 1, true) and not src:find("QUI_PA_", 1, true),
     "buffborders.lua must not reintroduce the private-aura anchor subsystem")
 
--- Zone config: creation only via EnsureZoneContainer under allowCreate; the
--- mutation branch reconciles existing groups (never creates) and re-anchors,
--- pcall-guarding AuraSkin.Configure and falling back to the always-combat-legal
--- AuraSkin.Restyle if PTR4 blocks group mutation in combat.
-local zone = slice("local function ConfigureZoneAuraContainer(")
-local zoneGate = zone:find("if allowCreate then", 1, true)
-assert(zoneGate, "ConfigureZoneAuraContainer must branch on allowCreate")
-local ensurePos = zone:find("EnsureZoneContainer(anchorFrame, profile)", 1, true)
-assert(ensurePos and ensurePos > zoneGate,
-    "container creation (EnsureZoneContainer) must be allowCreate-only")
-assert(zone:find("pcall(AuraSkin.Configure", 1, true),
-    "the mutation branch must attempt AuraSkin.Configure via pcall (creation-free reconcile)")
-assert(zone:find("AuraSkin.Restyle", 1, true),
-    "the mutation branch must fall back to AuraSkin.Restyle if Configure fails in combat")
-assert(not zone:find("CreateFrame", 1, true),
-    "ConfigureZoneAuraContainer must not CreateFrame directly")
+-- Per-host element pass (ApplyMoverElements): container CREATION is gated on
+-- allowCreate AND out-of-combat (forbidden object); the combat path only mutates
+-- pre-created containers, reconciling groups through the SHARED
+-- AuraGlue.RunConfigPass (which owns the pcall(AuraSkin.Configure) + Restyle
+-- fallback internally, so buffborders.lua no longer names them directly).
+local zone = slice("local function ApplyMoverElements(")
+assert(zone:find("allowCreate and not InCombatLockdown()", 1, true),
+    "container creation must be gated on allowCreate AND out-of-combat")
+assert(zone:find("CreateFrame(\"AuraContainer\"", 1, true),
+    "ApplyMoverElements creates the forbidden AuraContainer under the OOC gate")
+assert(zone:find("G.RunConfigPass(", 1, true),
+    "the pass must reconcile groups via the shared AuraGlue.RunConfigPass (Configure OOC / Restyle combat)")
+assert(zone:find("S.Park(", 1, true),
+    "BB is strips-only: the pass must Park (never Sync) each container's slot pool")
+assert(not zone:find("AuraSkin.Configure", 1, true),
+    "the pass must not call AuraSkin.Configure directly — it goes through AuraGlue.RunConfigPass")
 
 -- ApplyOrDefer: in combat, apply the mutable subset now AND queue the full pass.
 local apply = slice("local function ApplyOrDefer()")
@@ -65,7 +65,17 @@ assert(apply:find("QueueContainerWork()", 1, true),
 
 -- The combat pass must pcall-guard forbidden-container mutation (PTR-observed
 -- legality; a restriction error must not abort the rest of the pass).
-assert(pass:find("pcall(ConfigureZoneAuraContainer", 1, true),
-    "the mutation pass must pcall the per-zone container mutation")
+assert(pass:find("pcall(ApplyMoverElements", 1, true),
+    "the mutation pass must pcall the per-host container mutation")
+
+-- v50 grow-anchor repoint: the mover's grow corner must derive from the element
+-- store (buffAuras/debuffAuras), NOT the pruned flat buff*/debuffGrowLeft/GrowUp
+-- keys. Reading the flat keys here would compute the WRONG corner for every
+-- default/LEFT-grow profile after v50 prunes them.
+local grow = slice("local function UpdateGrowAnchor(faKey)")
+assert(not grow:find("GrowLeft", 1, true) and not grow:find("GrowUp", 1, true),
+    "UpdateGrowAnchor must not read the pruned flat buff*/debuffGrowLeft/GrowUp keys")
+assert(grow:find("buffAuras", 1, true) and grow:find("debuffAuras", 1, true),
+    "UpdateGrowAnchor must derive the grow corner from the buffAuras/debuffAuras element store")
 
 print("OK: buffborders_combat_mutable_config_test")

@@ -2251,66 +2251,12 @@ local defaults = {
                     maxLength = 0,
                 },
                 -- Auras (buffs/debuffs)
-                auras = {
-                    showBuffs = false,
-                    showDebuffs = false,
-                    -- Debuff settings
-                    iconSize = 22,
-                    debuffAnchor = "TOPLEFT",
-                    debuffGrow = "RIGHT",
-                    debuffMaxIcons = 4,
-                    debuffMaxPerRow = 0,  -- 0 = unlimited (no row wrapping)
-                    debuffOffsetX = 0,
-                    debuffOffsetY = 0,
-                    -- Buff settings
-                    buffIconSize = 22,
-                    buffAnchor = "BOTTOMLEFT",
-                    buffGrow = "RIGHT",
-                    buffMaxIcons = 4,
-                    buffMaxPerRow = 0,  -- 0 = unlimited (no row wrapping)
-                    buffOffsetX = 0,
-                    buffOffsetY = 0,
-                    -- Duration text
-                    iconSpacing = 2,
-                    buffSpacing = 2,
-                    debuffSpacing = 2,
-                    durationColor = {1, 1, 1, 1},
-                    showDuration = false,
-                    durationSize = 12,
-                    durationAnchor = "CENTER",
-                    durationOffsetX = 0,
-                    durationOffsetY = 0,
-                    -- Stack text
-                    stackColor = {1, 1, 1, 1},
-                    showStack = true,
-                    stackSize = 10,
-                    stackAnchor = "BOTTOMRIGHT",
-                    stackOffsetX = -1,
-                    stackOffsetY = 1,
-                    -- Buff duration/stack
-                    buffDuration = { show = true, fontSize = 12, anchor = "CENTER", offsetX = 0, offsetY = 0, color = {1, 1, 1, 1} },
-                    buffStack = { show = true, fontSize = 10, anchor = "BOTTOMRIGHT", offsetX = -1, offsetY = 1, color = {1, 1, 1, 1} },
-                    buffShowStack = true,
-                    buffStackSize = 10,
-                    buffStackAnchor = "BOTTOMRIGHT",
-                    buffStackOffsetX = -1,
-                    buffStackOffsetY = 1,
-                    buffStackColor = {1, 1, 1, 1},
-                    -- Debuff duration/stack
-                    debuffDuration = { show = false, fontSize = 10, anchor = "CENTER", offsetX = 0, offsetY = 0, color = {1, 1, 1, 1} },
-                    debuffStack = { show = true, fontSize = 10, anchor = "BOTTOMRIGHT", offsetX = -1, offsetY = 1, color = {1, 1, 1, 1} },
-                    debuffShowStack = true,
-                    debuffStackSize = 10,
-                    debuffStackAnchor = "BOTTOMRIGHT",
-                    debuffStackOffsetX = -1,
-                    debuffStackOffsetY = 1,
-                    debuffStackColor = {1, 1, 1, 1},
-                    buffFilterMode = "off",
-                    debuffFilterMode = "off",
-                    buffFilterOnlyMine = true,
-                    buffClassifications = { helpful = false, cancelable = false, notCancelable = false, bigDefensive = false, externalDefensive = false },
-                    debuffClassifications = { harmful = false, dispellable = false, crowdControl = false },
-                },
+                -- Per-strip aura settings are element-list stores now, seeded once
+                -- by Migrations.SeedAuraElements (v50) via the file-local
+                -- DefaultUnitAuraBucket in unitframe_auras.lua. Element arrays are
+                -- NEVER declared here (AceDB copyDefaults refills deleted indices);
+                -- a bare table lets EnsureSeeded populate elements/elementsSeeded.
+                auras = {},
                 -- Status indicators (player only)
                 indicators = {
                     rested = {
@@ -2483,64 +2429,9 @@ local defaults = {
                     maxLength = 12,
                 },
                 -- Auras (buffs/debuffs)
-                auras = {
-                    showBuffs = false,
-                    showDebuffs = false,
-                    -- Debuff settings
-                    iconSize = 26,
-                    debuffAnchor = "TOPLEFT",
-                    debuffGrow = "RIGHT",
-                    debuffMaxIcons = 4,
-                    debuffOffsetX = 0,
-                    debuffOffsetY = 0,
-                    -- Buff settings
-                    buffIconSize = 18,
-                    buffAnchor = "BOTTOMLEFT",
-                    buffGrow = "RIGHT",
-                    buffMaxIcons = 4,
-                    buffOffsetX = 0,
-                    buffOffsetY = 0,
-                    -- Duration text
-                    iconSpacing = 2,
-                    buffSpacing = 2,
-                    debuffSpacing = 2,
-                    durationColor = {1, 1, 1, 1},
-                    showDuration = false,
-                    durationSize = 12,
-                    durationAnchor = "CENTER",
-                    durationOffsetX = 0,
-                    durationOffsetY = 0,
-                    -- Stack text
-                    stackColor = {1, 1, 1, 1},
-                    showStack = true,
-                    stackSize = 10,
-                    stackAnchor = "BOTTOMRIGHT",
-                    stackOffsetX = -1,
-                    stackOffsetY = 1,
-                    -- Buff duration/stack
-                    buffDuration = { show = true, fontSize = 12, anchor = "CENTER", offsetX = 0, offsetY = 0, color = {1, 1, 1, 1} },
-                    buffStack = { show = true, fontSize = 10, anchor = "BOTTOMRIGHT", offsetX = -1, offsetY = 1, color = {1, 1, 1, 1} },
-                    buffShowStack = true,
-                    buffStackSize = 10,
-                    buffStackAnchor = "BOTTOMRIGHT",
-                    buffStackOffsetX = -1,
-                    buffStackOffsetY = 1,
-                    buffStackColor = {1, 1, 1, 1},
-                    -- Debuff duration/stack
-                    debuffDuration = { show = false, fontSize = 10, anchor = "CENTER", offsetX = 0, offsetY = 0, color = {1, 1, 1, 1} },
-                    debuffStack = { show = true, fontSize = 10, anchor = "BOTTOMRIGHT", offsetX = -1, offsetY = 1, color = {1, 1, 1, 1} },
-                    debuffShowStack = true,
-                    debuffStackSize = 10,
-                    debuffStackAnchor = "BOTTOMRIGHT",
-                    debuffStackOffsetX = -1,
-                    debuffStackOffsetY = 1,
-                    debuffStackColor = {1, 1, 1, 1},
-                    buffFilterMode = "off",
-                    debuffFilterMode = "off",
-                    buffFilterOnlyMine = true,
-                    buffClassifications = { helpful = false, cancelable = false, notCancelable = false, bigDefensive = false, externalDefensive = false },
-                    debuffClassifications = { harmful = false, dispellable = false, crowdControl = false },
-                },
+                -- Per-strip aura settings are element-list stores now (v50);
+                -- seeded once by Migrations.SeedAuraElements / EnsureSeeded.
+                auras = {},
                 -- Target marker (raid icons like skull, cross, etc.)
                 targetMarker = {
                     enabled = false,
@@ -2646,24 +2537,9 @@ local defaults = {
                     anchor = "unitframe",
                 },
                 -- Auras (buffs/debuffs)
-                auras = {
-                    showBuffs = false,
-                    showDebuffs = false,
-                    -- Debuff settings
-                    iconSize = 22,
-                    debuffAnchor = "TOPLEFT",
-                    debuffGrow = "RIGHT",
-                    debuffMaxIcons = 4,
-                    debuffOffsetX = 0,
-                    debuffOffsetY = 0,
-                    -- Buff settings
-                    buffIconSize = 22,
-                    buffAnchor = "BOTTOMLEFT",
-                    buffGrow = "RIGHT",
-                    buffMaxIcons = 4,
-                    buffOffsetX = 0,
-                    buffOffsetY = 0,
-                },
+                -- Per-strip aura settings are element-list stores now (v50);
+                -- seeded once by Migrations.SeedAuraElements / EnsureSeeded.
+                auras = {},
                 -- Target marker (raid icons like skull, cross, etc.)
                 targetMarker = {
                     enabled = false,    -- Disabled by default for ToT (small frame)
@@ -2740,24 +2616,9 @@ local defaults = {
                     texture = "QUI Stripes",
                 },
                 -- Auras (buffs/debuffs)
-                auras = {
-                    showBuffs = false,
-                    showDebuffs = false,
-                    -- Debuff settings
-                    iconSize = 22,
-                    debuffAnchor = "TOPLEFT",
-                    debuffGrow = "RIGHT",
-                    debuffMaxIcons = 4,
-                    debuffOffsetX = 0,
-                    debuffOffsetY = 0,
-                    -- Buff settings
-                    buffIconSize = 22,
-                    buffAnchor = "BOTTOMLEFT",
-                    buffGrow = "RIGHT",
-                    buffMaxIcons = 4,
-                    buffOffsetX = 0,
-                    buffOffsetY = 0,
-                },
+                -- Per-strip aura settings are element-list stores now (v50);
+                -- seeded once by Migrations.SeedAuraElements / EnsureSeeded.
+                auras = {},
                 -- Target marker (raid icons like skull, cross, etc.)
                 targetMarker = {
                     enabled = false,    -- Disabled by default for pet (rarely marked)
@@ -2869,24 +2730,9 @@ local defaults = {
                     anchor = "unitframe",
                 },
                 -- Auras (buffs/debuffs)
-                auras = {
-                    showBuffs = false,
-                    showDebuffs = false,
-                    -- Debuff settings
-                    iconSize = 20,
-                    debuffAnchor = "TOPLEFT",
-                    debuffGrow = "RIGHT",
-                    debuffMaxIcons = 16,
-                    debuffOffsetX = 0,
-                    debuffOffsetY = 2,
-                    -- Buff settings
-                    buffIconSize = 20,
-                    buffAnchor = "BOTTOMLEFT",
-                    buffGrow = "RIGHT",
-                    buffMaxIcons = 16,
-                    buffOffsetX = 0,
-                    buffOffsetY = -2,
-                },
+                -- Per-strip aura settings are element-list stores now (v50);
+                -- seeded once by Migrations.SeedAuraElements / EnsureSeeded.
+                auras = {},
                 -- Target marker (raid icons like skull, cross, etc.)
                 targetMarker = {
                     enabled = false,
@@ -3001,24 +2847,9 @@ local defaults = {
                     anchor = "unitframe",
                 },
                 -- Auras (buffs/debuffs)
-                auras = {
-                    showBuffs = false,
-                    showDebuffs = false,
-                    -- Debuff settings
-                    iconSize = 22,
-                    debuffAnchor = "TOPLEFT",
-                    debuffGrow = "RIGHT",
-                    debuffMaxIcons = 4,
-                    debuffOffsetX = 0,
-                    debuffOffsetY = 0,
-                    -- Buff settings
-                    buffIconSize = 22,
-                    buffAnchor = "BOTTOMLEFT",
-                    buffGrow = "RIGHT",
-                    buffMaxIcons = 4,
-                    buffOffsetX = 0,
-                    buffOffsetY = 0,
-                },
+                -- Per-strip aura settings are element-list stores now (v50);
+                -- seeded once by Migrations.SeedAuraElements / EnsureSeeded.
+                auras = {},
                 -- Target marker (raid icons like skull, cross, etc.)
                 targetMarker = {
                     enabled = false,
@@ -3672,6 +3503,13 @@ local defaults = {
 
         -- Buff/Debuff Visuals
         buffBorders = {
+            -- Frame-level toggles. These are per-frame GATES the runtime still
+            -- reads directly (ApplyConfigPass / ManageBlizzardFrames); they are
+            -- NOT element-borne. The per-strip geometry / filter / sort / text
+            -- settings that USED to live here are now element-list stores
+            -- (buffAuras / debuffAuras), seeded once by Migrations.SeedAuraElements
+            -- (v50). Element arrays are NEVER declared here (AceDB copyDefaults
+            -- refills deleted array indices).
             enableBuffs = true,
             enableDebuffs = true,
             showBuffBorders = true,
@@ -3686,54 +3524,6 @@ local defaults = {
             borderSize = 1,
             fontSize = 12,
             fontOutline = true,
-            -- Layout overrides (0 = use Blizzard default)
-            buffIconsPerRow = 10,
-            buffIconSpacing = 0,
-            buffIconSize = 35,
-            buffGrowLeft = true,
-            buffGrowUp = false,
-            buffInvertSwipeDarkening = false,
-            buffRowSpacing = 0,
-            debuffIconsPerRow = 10,
-            debuffIconSpacing = 0,
-            debuffIconSize = 35,
-            debuffGrowLeft = true,
-            debuffGrowUp = false,
-            debuffInvertSwipeDarkening = false,
-            debuffRowSpacing = 0,
-            -- Text positioning (per-frame)
-            buffStackTextAnchor = "BOTTOMRIGHT",
-            buffStackTextOffsetX = -1,
-            buffStackTextOffsetY = 1,
-            buffDurationTextAnchor = "CENTER",
-            buffDurationTextOffsetX = 0,
-            buffDurationTextOffsetY = 0,
-            debuffStackTextAnchor = "BOTTOMRIGHT",
-            debuffStackTextOffsetX = -1,
-            debuffStackTextOffsetY = 1,
-            debuffDurationTextAnchor = "CENTER",
-            debuffDurationTextOffsetX = 0,
-            debuffDurationTextOffsetY = 0,
-            -- Filter flags (HELPFUL/HARMFUL is implicit per frame). Each enabled
-            -- flag is appended to the AuraFilters string passed to both the
-            -- SecureAuraHeader and C_UnitAuras.GetUnitAuras — they must stay in
-            -- sync or child↔aura pairing breaks.
-            buffFilterPlayer = false,
-            buffFilterRaid = false,
-            buffFilterCancelable = false,
-            buffFilterNotCancelable = false,
-            buffFilterBigDefensive = false,
-            debuffFilterPlayer = false,
-            debuffFilterRaid = false,
-            debuffFilterIncludeNameplateOnly = false,
-            debuffFilterRaidPlayerDispellable = false,
-            debuffFilterCrowdControl = false,
-            -- Sort: keys map to SORT_TRANSLATIONS in modules/ui/buffborders.lua.
-            -- INDEX = raw API slot order (matches existing behavior pre-3.6).
-            buffSortRule = "INDEX",
-            buffSortReverse = false,
-            debuffSortRule = "INDEX",
-            debuffSortReverse = false,
         },
 
         -- QUI Autohides

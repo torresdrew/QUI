@@ -43,9 +43,16 @@ local SafeValue = Helpers.SafeValue
 -- Aura theme (A1): border color + count/duration font objects.
 local AuraTheme = ns.Addon and ns.Addon.AuraTheme or (QUI and QUI.AuraTheme)
 -- Aura skin (shared secure container adapter — the SINGLE path that touches the
--- forbidden CustomAuraButton inbound API). Re-resolved in EnsureContainers in
+-- forbidden CustomAuraButton inbound API). Re-resolved in ResolveAuraDeps in
 -- case core/aura_skin.lua loaded after this file's top-level chunk.
 local AuraSkin = (ns.Addon and ns.Addon.AuraSkin) or (_G.QUI and _G.QUI.AuraSkin)
+-- Shared element-model core (core/aura_elements, aura_glue, aura_slots): the ONE
+-- copy of the element schema + settings→container glue every QUI aura surface
+-- uses. Resolved lazily via ResolveAuraDeps (TOC order loads QUI core first, but
+-- stay defensive across sub-addon load timing).
+local E = ns.AuraElements or (_G.QUI and _G.QUI.AuraElements)
+local G = ns.AuraGlue    or (_G.QUI and _G.QUI.AuraGlue)
+local S = ns.AuraSlots   or (_G.QUI and _G.QUI.AuraSlots)
 
 -- Upvalue caching
 local type = type
@@ -78,28 +85,8 @@ local DEFAULTS = {
     borderSize = 2,
     fontSize = 12,
     fontOutline = true,
-    buffIconsPerRow = 0,
-    buffIconSpacing = 0,
-    buffIconSize = 0,
-    buffGrowLeft = false,
-    buffGrowUp = false,
-    buffInvertSwipeDarkening = false,
-    buffRowSpacing = 0,
     showStacks = true,
     hideSwipe = false,
-    -- Text positioning (per-frame)
-    buffStackTextAnchor = "BOTTOMRIGHT",
-    buffStackTextOffsetX = -1,
-    buffStackTextOffsetY = 1,
-    buffDurationTextAnchor = "CENTER",
-    buffDurationTextOffsetX = 0,
-    buffDurationTextOffsetY = 0,
-    debuffStackTextAnchor = "BOTTOMRIGHT",
-    debuffStackTextOffsetX = -1,
-    debuffStackTextOffsetY = 1,
-    debuffDurationTextAnchor = "CENTER",
-    debuffDurationTextOffsetX = 0,
-    debuffDurationTextOffsetY = 0,
 }
 
 local function GetSettings()
@@ -151,143 +138,166 @@ local DEBUFF_MAX_DISPLAY = 40
 local TEMP_ENCHANT_MAX = 3
 
 ---------------------------------------------------------------------------
--- AURA FILTER CONFIG
+-- ELEMENT-MODEL CORE (shared aura_elements / aura_glue / aura_slots)
 --
--- Filter flags are exposed as user options and appended to the per-zone filter
--- string. The CustomAuraContainer applies the SAME inclusion test internally for
--- each registered filter string (C_UnitAuras.IsAuraFilteredOutByInstanceID — see
--- Blizzard_CustomAuraContainer:AddAura), so the filter behaviour is identical to
--- the old Lua GetUnitAuras read, just driven C-side on secret-safe data.
---
--- (The legacy sort config is gone: the container drives its own ordering via
---  AuraUtil.DefaultAuraCompare on the priority table — there is no per-frame sort
---  enum on the container path.)
+-- The two hosts (buff mover / debuff mover) each render a per-element bucket
+-- STORE under the SAME container contract every QUI aura surface uses:
+--   element (core/aura_elements) → AuraGlue.ElementProfile + ElementGroups
+--     → AuraGlue.RunConfigPass (AuraSkin.Configure OOC / Restyle in combat).
+-- Filter, sort and layout are ALL element-borne now (the container forwards the
+-- element's AuraFilters string to the C-side aura read, secret-safe). BB is
+-- STRIPS-ONLY: it never creates AddAuraSlot frames, so the pass SKIPS tracked
+-- elements entirely and only ever PARKS a container's slot pool (never Syncs).
 ---------------------------------------------------------------------------
+local function ResolveAuraDeps()
+    AuraSkin = AuraSkin or (ns.Addon and ns.Addon.AuraSkin) or (_G.QUI and _G.QUI.AuraSkin)
+    E = E or ns.AuraElements or (_G.QUI and _G.QUI.AuraElements)
+    G = G or ns.AuraGlue    or (_G.QUI and _G.QUI.AuraGlue)
+    S = S or ns.AuraSlots   or (_G.QUI and _G.QUI.AuraSlots)
+    return AuraSkin and E and G and S
+end
 
--- DB key (per-frame) → AuraFilters flag appended to the filter string.
--- HELPFUL/HARMFUL is implicit on the per-zone base.
-local BUFF_FILTER_FLAGS = {
-    { dbKey = "buffFilterPlayer",        flag = "PLAYER" },
-    { dbKey = "buffFilterRaid",          flag = "RAID" },
-    { dbKey = "buffFilterCancelable",    flag = "CANCELABLE" },
-    { dbKey = "buffFilterNotCancelable", flag = "NOT_CANCELABLE" },
-    { dbKey = "buffFilterBigDefensive",  flag = "BIG_DEFENSIVE" },
-}
+-- The player buff host is the only cancel-eligible BB host (own buffs).
+-- ElementGroups additionally gates cancel to HELPFUL strips — but eligibility
+-- must ALSO be per-host: the debuff editor mount hides the cancel toggle
+-- (cancelEligible=false), so a HELPFUL strip living in the DEBUFF store must
+-- not silently gain cancel behavior the user can't see or turn off.
 
-local DEBUFF_FILTER_FLAGS = {
-    { dbKey = "debuffFilterPlayer",                flag = "PLAYER" },
-    { dbKey = "debuffFilterRaid",                  flag = "RAID" },
-    { dbKey = "debuffFilterIncludeNameplateOnly",  flag = "INCLUDE_NAME_PLATE_ONLY" },
-    { dbKey = "debuffFilterRaidPlayerDispellable", flag = "RAID_PLAYER_DISPELLABLE" },
-    { dbKey = "debuffFilterCrowdControl",          flag = "CROWD_CONTROL" },
-}
+-- Immutable empty active list: passed as a host's "active strips" when the
+-- frame-level toggle (enableBuffs/hideBuffFrame) is off, so every pooled
+-- container retires (disabled + hidden) instead of rendering.
+local EMPTY = {}
 
--- Build the AuraFilters string for a zone. "HELPFUL"/"HARMFUL" base + any enabled
--- modifier flags, PIPE-joined to match AuraUtil.CreateFilterString (string.join
--- "|") and the unit/group container paths. The container forwards this exact
--- string to the C-side aura read / IsAuraFilteredOutByInstanceID.
-local function BuildAuraFilter(settings, isBuff)
-    local s = isBuff and "HELPFUL" or "HARMFUL"
-    if not settings then return s end
-    local list = isBuff and BUFF_FILTER_FLAGS or DEBUFF_FILTER_FLAGS
-    for i = 1, #list do
-        local entry = list[i]
-        if settings[entry.dbKey] then
-            s = s .. "|" .. entry.flag
+-- Reusable scratch for the strip resolves (config path, not a hot render loop,
+-- but avoid per-pass churn). _profileStrips is used ONLY by the first-strip
+-- profile helpers so it never aliases the pass scratch.
+local _buffStrips = {}
+local _debuffStrips = {}
+local _profileStrips = {}
+
+-- Default element buckets — the runtime source of truth for a fresh profile,
+-- transcribed from the core/defaults.lua buffBorders block (iconSize 35,
+-- iconsPerRow 10, spacing 0, buffGrowLeft=true ⇒ growDirection LEFT + TOPRIGHT
+-- origin, stack/duration text keys, fontSize 12). MUST stay file-local on the
+-- runtime path: E.EnsureSeeded LATCHES elementsSeeded after the first seed, so an
+-- Options-only bucket would let an Options-disabled install latch an EMPTY "*"
+-- bucket and permanently lose the shipped strip.
+local function DefaultBuffBucket()
+    local EE = E or ns.AuraElements or (_G.QUI and _G.QUI.AuraElements)
+    if not EE then return {} end
+    local e = EE.NewFilterStripElement("HELPFUL")
+    e.id = "buffs"
+    e.enabled = true                     -- enableBuffs default
+    e.iconSize = 35
+    e.iconsPerRow = 10
+    -- Stored default buffIconSpacing/debuffIconSpacing is the SENTINEL 0
+    -- ("use default"); HEAD's BuildZoneProfile resolved 0 -> 2px. The element
+    -- model carries RESOLVED values, so seed 2, not the raw sentinel.
+    e.spacing = 2
+    e.growDirection = "LEFT"             -- buffGrowLeft = true
+    e.anchor = "TOPRIGHT"                -- growLeft + growUp=false ⇒ TOPRIGHT origin
+    e.maxIcons = BUFF_MAX_DISPLAY
+    e.sortRule = "INDEX"
+    e.sortReverse = false
+    e.rightClickCancel = true
+    e.duration = { show = true, fontSize = 12, anchor = "CENTER", offsetX = 0, offsetY = 0, color = { 1, 1, 1, 1 } }
+    e.stack = { show = true, fontSize = 12, anchor = "BOTTOMRIGHT", offsetX = -1, offsetY = 1, color = { 1, 1, 1, 1 } }
+    return { e }
+end
+
+local function DefaultDebuffBucket()
+    local EE = E or ns.AuraElements or (_G.QUI and _G.QUI.AuraElements)
+    if not EE then return {} end
+    local e = EE.NewFilterStripElement("HARMFUL")
+    e.id = "debuffs"
+    e.enabled = true                     -- enableDebuffs default
+    e.iconSize = 35
+    e.iconsPerRow = 10
+    -- Stored default buffIconSpacing/debuffIconSpacing is the SENTINEL 0
+    -- ("use default"); HEAD's BuildZoneProfile resolved 0 -> 2px. The element
+    -- model carries RESOLVED values, so seed 2, not the raw sentinel.
+    e.spacing = 2
+    e.growDirection = "LEFT"             -- debuffGrowLeft = true
+    e.anchor = "TOPRIGHT"                -- growLeft + growUp=false ⇒ TOPRIGHT origin
+    e.maxIcons = DEBUFF_MAX_DISPLAY
+    e.sortRule = "INDEX"
+    e.sortReverse = false
+    e.rightClickCancel = false           -- the engine cannot cancel debuffs
+    e.duration = { show = true, fontSize = 12, anchor = "CENTER", offsetX = 0, offsetY = 0, color = { 1, 1, 1, 1 } }
+    e.stack = { show = true, fontSize = 12, anchor = "BOTTOMRIGHT", offsetX = -1, offsetY = 1, color = { 1, 1, 1, 1 } }
+    return { e }
+end
+
+-- Published for the shared aura element editor mount (Task 9): the Buff/
+-- Debuff settings tab threads these in as capabilities.defaultBucketFn so a
+-- fresh profile viewed in Options seeds identically to the runtime defaults
+-- above.
+local BB = ns.QUI_BuffBorders or {}
+ns.QUI_BuffBorders = BB
+BB.DefaultBuffBucket = DefaultBuffBucket
+BB.DefaultDebuffBucket = DefaultDebuffBucket
+
+-- Create-on-demand element STORE per host: { elementsSeeded, elements =
+-- { ["*"] = { element, ... } } }. Element lists are NEVER declared in
+-- core/defaults.lua (AceDB copyDefaults re-fills deleted array indices), so the
+-- store is created here and seeded exactly once behind elementsSeeded.
+local function GetBuffStore(settings)
+    settings.buffAuras = settings.buffAuras or {}
+    return settings.buffAuras
+end
+local function GetDebuffStore(settings)
+    settings.debuffAuras = settings.debuffAuras or {}
+    return settings.debuffAuras
+end
+
+-- One element → AuraSkin layout profile. BB anchors each container at the
+-- element's OWN anchor corner on the mover (no unit-frame corner flip), so no
+-- profile overrides are needed.
+local function ElementProfileFor(element)
+    return G.ElementProfile(element)
+end
+
+-- Fallback profile when a host has NO enabled strip (keeps the mover handle a
+-- grabbable size in layout mode): synthesize from the shipped default bucket.
+local function FallbackProfile(defaultBucketFn)
+    local bucket = defaultBucketFn()
+    if bucket and bucket[1] then return ElementProfileFor(bucket[1]) end
+    return G.ElementProfile({})
+end
+
+-- Resolve a host's ENABLED filterStrip elements into `out`. EnsureSeeded latches
+-- the shipped default bucket first. BB is STRIPS-ONLY: a tracked element
+-- (icon/square/bar) would need AuraSlots.Sync/AddAuraSlot, which BB never does,
+-- so tracked elements are skipped ENTIRELY here — the pass parks (never Syncs)
+-- any container a tracked element might otherwise have claimed. BB never uses
+-- spec buckets, so the specID is always nil.
+local function ResolveStrips(store, defaultBucketFn, out)
+    for i = #out, 1, -1 do out[i] = nil end
+    if not store then return out end
+    E.EnsureSeeded(store, defaultBucketFn)
+    local elements = E.ActiveElementsForSpec(store, nil)
+    for i = 1, #elements do
+        local e = elements[i]
+        if e.mode == "filterStrip" then
+            out[#out + 1] = e
         end
     end
-    return s
+    return out
 end
 
--- Sort dropdown revival: SORT_OPTIONS values (settings/action_bars_buffdebuff_content.lua)
--- → AuraContainerSortMethod (verified: plain global, Blizzard_AuraContainerShared.lua:46).
--- No Index member exists on PTR4 — INDEX maps to Default.
-local SORT_TRANSLATIONS = {
-    INDEX         = AuraContainerSortMethod.Default,
-    DEFAULT       = AuraContainerSortMethod.Default,
-    EXPIRY        = AuraContainerSortMethod.Expiration,
-    EXPIRY_ONLY   = AuraContainerSortMethod.ExpirationOnly,
-    NAME          = AuraContainerSortMethod.Name,
-    NAME_ONLY     = AuraContainerSortMethod.NameOnly,
-    BIG_DEFENSIVE = AuraContainerSortMethod.BigDefensive,
-}
-
--- One display zone = one AuraSkin group descriptor. Buff zone additionally
--- requests engine click-cancel (right-click, matching the old cancel overlay);
--- cancelButtons is a RegisterForClicks token string per SetCancelAuraButtons.
-local function BuildZoneGroups(settings, isBuff, profile)
-    local sortKey, sortRev
-    if isBuff then
-        sortKey, sortRev = settings.buffSortRule, settings.buffSortReverse
-    else
-        sortKey, sortRev = settings.debuffSortRule, settings.debuffSortReverse
-    end
-    return {
-        {
-            key           = isBuff and "buffs" or "debuffs",
-            filter        = BuildAuraFilter(settings, isBuff),
-            maxFrameCount = profile.maxIcons,
-            sortMethod    = SORT_TRANSLATIONS[sortKey],
-            sortDirection = sortRev and AuraContainerSortDirection.Reverse
-                                     or AuraContainerSortDirection.Normal,
-            cancelButtons = isBuff and "RightButtonUp" or nil,
-        },
-    }
+-- The first ENABLED strip's profile drives the mover's natural extent and the
+-- temp-enchant strip geometry. Falls back to the shipped default when nothing is
+-- enabled.
+local function FirstStripProfile(store, defaultBucketFn)
+    local strips = ResolveStrips(store, defaultBucketFn, _profileStrips)
+    if strips[1] then return ElementProfileFor(strips[1]) end
+    return FallbackProfile(defaultBucketFn)
 end
-
----------------------------------------------------------------------------
--- LAYOUT PROFILE (settings → AuraSkin/AuraTheme grid profile)
----------------------------------------------------------------------------
--- Map the per-zone buffBorders settings to the AuraSkin profile shape
--- (iconSize, spacing, grow, maxIcons, maxPerRow, offsetX/Y, anchor) that
--- QUI.AuraSkin.Configure + AuraTheme.Metrics consume. This is the SAME profile
--- contract the unit-frame container path builds (unitframe_auras.lua
--- EnsureContainers), so all three surfaces flow through one helper.
---
--- growLeft → horizontal grow LEFT/RIGHT (the player strip is row-major
--- horizontal); growUp picks the BOTTOM grow corner so the strip's origin sits at
--- the bottom. Row wrap follows the shared AuraSkin GridOffset (perpendicular to
--- grow). maxPerRow = iconsPerRow.
-local function BuildZoneProfile(settings, isBuff)
-    local prefix = isBuff and "buff" or "debuff"
-
-    local iconSize = settings and settings[prefix .. "IconSize"] or 0
-    if not iconSize or iconSize <= 0 then iconSize = DEFAULT_ICON_SIZE end
-
-    local perRow = settings and settings[prefix .. "IconsPerRow"] or 0
-    if not perRow or perRow <= 0 then perRow = 10 end
-
-    local spacing = settings and settings[prefix .. "IconSpacing"] or 0
-    if not spacing or spacing <= 0 then spacing = 2 end
-
-    local growLeft = settings and settings[prefix .. "GrowLeft"]
-    local growUp = settings and settings[prefix .. "GrowUp"]
-
-    local grow = growLeft and "LEFT" or "RIGHT"
-    local anchor
-    if growUp then
-        anchor = growLeft and "BOTTOMRIGHT" or "BOTTOMLEFT"
-    else
-        anchor = growLeft and "TOPRIGHT" or "TOPLEFT"
-    end
-
-    local maxIcons = isBuff and BUFF_MAX_DISPLAY or DEBUFF_MAX_DISPLAY
-
-    return {
-        maxIcons     = maxIcons,
-        iconSize     = iconSize,
-        spacing      = spacing,
-        grow         = grow,
-        maxPerRow    = perRow,
-        offsetX      = 0,
-        offsetY      = 0,
-        anchor       = anchor,
-        wrap         = growUp and "UP" or "DOWN",
-        borderSize   = settings and settings.borderSize or DEFAULTS.borderSize,
-        fontSize     = settings and settings.fontSize or DEFAULTS.fontSize,
-        hideSwipe    = settings and settings.hideSwipe or false,
-        reverseSwipe = false,
-    }
+local function FirstBuffStripProfile()
+    if not ResolveAuraDeps() then return nil end
+    local settings = GetSettings()
+    if not settings then return nil end
+    return FirstStripProfile(GetBuffStore(settings), DefaultBuffBucket)
 end
 
 -- Natural grid extent of a fully-populated row (mover handle covers the full
@@ -310,14 +320,15 @@ local enchantCachedDuration = {}
 -- Live temp-enchant count (strip slots actually occupied). Enchants are item
 -- info (GetWeaponEnchantInfo) — Lua-visible, unlike the secret live aura count
 -- — so the strip LEADS the buff row and the secure grid is anchored this many
--- cells further along the grow direction (see AnchorAuraContainer).
+-- cells further along the grow direction (see AnchorElementContainer).
 local liveEnchantCount = 0
 
 -- The QUI named anchor frames (created in Init) are the published, movable
--- frames the anchoring system resolves by global name and positions. Each owns
--- its own forbidden AuraContainer (._auraContainer) for one aura type.
-local buffContainer = nil       -- QUI_BuffIconContainer (named anchor frame)
-local debuffContainer = nil     -- QUI_DebuffIconContainer (named anchor frame)
+-- frames the anchoring system resolves by global name and positions. Each host
+-- owns a POOL of forbidden AuraContainers (._quiAuraContainers[ordinal]) — one
+-- per active filterStrip element in that host's element store.
+local buffContainer = nil       -- QUI_BuffIconContainer (named anchor / buff host)
+local debuffContainer = nil     -- QUI_DebuffIconContainer (named anchor / debuff host)
 local tempEnchantFrame = nil    -- small separate insecure temp-enchant strip
 local initialized = false
 
@@ -385,7 +396,7 @@ end
 -- Style a 4-edge preview icon (color, size, swipe, fonts). Used by
 -- the layout-mode preview grid + temp-enchant strip only; live auras style their
 -- single-texture border through AuraSkin/AuraTheme.
-local function StyleIcon(icon, settings, isBuff, debuffType)
+local function StyleIcon(icon, settings, isBuff, debuffType, stackCfg)
     if not icon or not settings then return end
 
     local borderSizePx = GetBorderSizePx(icon, settings)
@@ -425,11 +436,15 @@ local function StyleIcon(icon, settings, isBuff, debuffType)
         CJKFont(icon.Stacks, font, fontSize, outline)
     end
 
-    local tp = isBuff and "buff" or "debuff"
-    local stackAnchor = settings[tp .. "StackTextAnchor"] or "BOTTOMRIGHT"
-    local stackOffX = settings[tp .. "StackTextOffsetX"]
+    -- Stack-count text position is element-borne now (element.stack), passed in
+    -- as stackCfg. The insecure temp-enchant strip + preview grid mirror the
+    -- first enabled strip's stack config (the old per-frame buff*/debuff*StackText
+    -- keys are no longer read).
+    local stack = stackCfg or {}
+    local stackAnchor = stack.anchor or "BOTTOMRIGHT"
+    local stackOffX = stack.offsetX
     if stackOffX == nil then stackOffX = -1 end
-    local stackOffY = settings[tp .. "StackTextOffsetY"]
+    local stackOffY = stack.offsetY
     if stackOffY == nil then stackOffY = 1 end
     if icon.Stacks then
         icon.Stacks:ClearAllPoints()
@@ -571,8 +586,12 @@ local function UpdateTempEnchants()
     if not settings then return end
     if previewActive then return end
 
+    -- Frame-level buff toggle stays a settings-level read (enableBuffs /
+    -- hideBuffFrame). Geometry now comes from the first ENABLED buff strip's
+    -- element profile — the strip the enchant row leads.
     local show = settings.enableBuffs and not settings.hideBuffFrame
-    if not show then
+    local profile = show and FirstBuffStripProfile() or nil
+    if not show or not profile then
         liveEnchantCount = 0
         tempEnchantFrame:Hide()
         return
@@ -582,13 +601,11 @@ local function UpdateTempEnchants()
     local n = #list
     liveEnchantCount = n
 
-    local profile = BuildZoneProfile(settings, true)
     local iconSize, spacing = profile.iconSize, profile.spacing
-    local growLeft = settings.buffGrowLeft
     -- The strip LEADS the buff row (default-UI parity): enchants render at the
-    -- grid origin corner; AnchorAuraContainer shifts the secure grid past them.
+    -- grid origin corner; AnchorElementContainer shifts the secure grid past them.
     local point = profile.anchor
-    local xDir = growLeft and -1 or 1
+    local xDir = (profile.grow == "LEFT") and -1 or 1
 
     tempEnchantFrame:ClearAllPoints()
     tempEnchantFrame:SetPoint(point, buffContainer, point, 0, 0)
@@ -603,7 +620,7 @@ local function UpdateTempEnchants()
             b.enchantSlot = info.enchantSlot
             b.enchantCancelIndex = info.enchantCancelIndex
             pcall(b.Icon.SetTexture, b.Icon, info.icon)
-            StyleIcon(b, settings, true)
+            StyleIcon(b, settings, true, nil, profile.stack)
             if b.Cooldown then
                 if info.enchantStart and info.enchantTotal and info.enchantTotal > 0 then
                     pcall(b.Cooldown.SetCooldown, b.Cooldown, info.enchantStart, info.enchantTotal)
@@ -751,105 +768,130 @@ local function ManageBlizzardFrames()
 end
 
 ---------------------------------------------------------------------------
--- LIVE CONTAINER CONFIG (shared secure path)
--- Create (OOC) the per-zone AuraContainer on each named anchor frame, theme +
--- pool the buttons via QUI.AuraSkin (the SAME helper the unit/group frames use),
--- then apply filters + unit + enable. The container self-drives UNIT_AURA; QUI
--- never reads a secret aura field on this path.
+-- LIVE CONTAINER CONFIG (shared per-element secure path)
+-- Each host mover (buff / debuff) owns a POOL of forbidden AuraContainers, one
+-- per active filterStrip element in its store, pooled by ORDINAL on the mover.
+-- The containers self-drive UNIT_AURA and render aura DATA C-side (secret-safe);
+-- QUI never reads a secret aura field on this path. CREATION is OOC-only (combat
+-- creation crashes the 12.1 client); MUTATION of a pre-created container
+-- (anchor / groups / unit / enable) is combat-legal, so config changes apply
+-- live in combat and the full pass replays at PLAYER_REGEN_ENABLED.
 ---------------------------------------------------------------------------
-local function AnchorAuraContainer(container, parent, profile)
-    -- The engine's flow layout grows the container's auto-sized rect AWAY from
-    -- AuraSkin.LayoutAnchor(profile) (the flow-origin corner), so pin THAT
-    -- corner to the parent anchor frame's matching corner (profile.anchor may
-    -- differ from the flow corner for vertical-grow profiles; LayoutAnchor is
-    -- authoritative here).
-    -- BUFF zone: the temp-enchant strip (Lua-knowable count) leads the row, so
-    -- the secure grid starts liveEnchantCount cells along the grow direction —
-    -- the one direction dynamic packing can work while the aura count is secret.
+
+-- Anchor one element's container on its host mover. AuraSkin.LayoutAnchor(profile)
+-- is the flow-origin corner (grow + wrap); pinning THAT corner to the mover's
+-- element.anchor corner makes the auto-sized container hang off the mover with
+-- multi-row growth extending away from the origin.
+-- BUFF host FIRST container: the temp-enchant strip (Lua-knowable count) leads
+-- the row, so the secure grid starts liveEnchantCount cells along the grow
+-- direction — the one axis dynamic packing can use while the aura count is secret
+-- (ported from the pre-element AnchorAuraContainer fold).
+local function AnchorElementContainer(container, moverFrame, element, isFirstBuff)
+    local profile = ElementProfileFor(element)
     local xOff = 0
-    if parent == buffContainer and liveEnchantCount > 0 then
+    if isFirstBuff and liveEnchantCount > 0 then
         local xDir = (profile.grow == "LEFT") and -1 or 1
         xOff = xDir * liveEnchantCount * (profile.iconSize + profile.spacing)
     end
     container:ClearAllPoints()
-    container:SetPoint(AuraSkin.LayoutAnchor(profile), parent, profile.anchor,
-        xOff + (profile.offsetX or 0), (profile.offsetY or 0))
+    container:SetPoint(AuraSkin.LayoutAnchor(profile), moverFrame, element.anchor or "TOPRIGHT",
+        xOff + (element.offsetX or 0), (element.offsetY or 0))
 end
 
-local function EnsureZoneContainer(anchorFrame, profile)
-    AuraSkin = AuraSkin or (ns.Addon and ns.Addon.AuraSkin) or (_G.QUI and _G.QUI.AuraSkin)
-    if not AuraSkin or not CreateFrame then return nil end
-
-    local container = anchorFrame._auraContainer
-    if not container then
-        container = CreateFrame("AuraContainer", nil, anchorFrame, "CustomAuraContainerTemplate")
-        anchorFrame._auraContainer = container
+-- One host's per-element container pass, pooled by ordinal on the mover.
+-- allowCreate=true is the full OOC pass (may CreateFrame the forbidden containers
+-- and reconcile groups). allowCreate=false is the combat pass: only combat-legal
+-- mutation of pre-created containers (SetUnit / group reconcile via
+-- AuraGlue.RunConfigPass's pcall+Restyle fallback / enable); any work needing
+-- creation sets `incomplete` and the caller queues an OOC replay. BB is
+-- STRIPS-ONLY, so every container is filterStrip-configured and its slot pool is
+-- PARKED (AuraSlots.Park, never AuraSlots.Sync). `strips` is EMPTY when the host
+-- is frame-gated off, which retires every pooled container.
+local function ApplyMoverElements(moverFrame, strips, isBuff, allowCreate)
+    local pool = moverFrame._quiAuraContainers
+    if not pool then
+        pool = {}
+        moverFrame._quiAuraContainers = pool
     end
-    AnchorAuraContainer(container, anchorFrame, profile)
-    return container
-end
-
--- Configure one zone's AuraContainer: groups, anchor, unit, enable. allowCreate
--- gates the OOC-only creation path (frame creation of the forbidden container,
--- via EnsureZoneContainer). With allowCreate false (in combat) only
--- PRE-CREATED objects are mutated: AuraSkin.Configure reconciles the existing
--- group registry (creation-free on the container, though PTR4 may still
--- restrict group mutation in combat) and AnchorAuraContainer re-anchors; a
--- pcall guards the reconcile, falling back to AuraSkin.Restyle (style-only,
--- always combat-legal) on failure.
-local function ConfigureZoneAuraContainer(anchorFrame, profile, active, settings, isBuff, allowCreate)
-    local container = anchorFrame._auraContainer
-    if allowCreate then
-        container = EnsureZoneContainer(anchorFrame, profile)
-    elseif container then
-        AnchorAuraContainer(container, anchorFrame, profile)
-    end
-    if not container then return nil end
-
-    if active then
-        -- SetUnit BEFORE Configure: group registration is validated eagerly
-        -- but the aura data parse itself is deferred to the secure OnUpdate
-        -- dirty pass, so SetUnit must land before Configure registers groups.
-        -- Configure only runs for an active (shown) zone — a disabled zone
-        -- must not register groups at all.
-        container:SetUnit("player")
-        local groups = BuildZoneGroups(settings, isBuff, profile)
-        if allowCreate then
-            AuraSkin.Configure(container, profile, groups)
-        else
-            local ok = pcall(AuraSkin.Configure, container, profile, groups)
-            if not ok then
-                AuraSkin.Restyle(container, profile)
+    local incomplete = false
+    for i = 1, #strips do
+        local element = strips[i]
+        local container = pool[i]
+        if not container then
+            if allowCreate and not InCombatLockdown() and CreateFrame then
+                container = CreateFrame("AuraContainer", nil, moverFrame, "CustomAuraContainerTemplate")
+                pool[i] = container
+            else
+                -- Creation is OOC-only (forbidden object); queue a regen replay.
+                incomplete = true
             end
         end
-        container:SetEnabled(true)
-        container:Show()
-    else
+        if container then
+            -- SetUnit BEFORE Configure: group registration parses auras eagerly.
+            container:SetUnit("player")
+            if not InCombatLockdown() then
+                AnchorElementContainer(container, moverFrame, element, isBuff and i == 1)
+            end
+            local profile = ElementProfileFor(element)
+            local groups = G.ElementGroups("player", element, profile, isBuff)
+            if not G.RunConfigPass(container, profile, groups, allowCreate) then incomplete = true end
+            -- Strips-only: keep any slot pool a re-purposed container carries parked.
+            S.Park(container)
+            container:SetEnabled(true)
+            container:Show()
+        end
+    end
+    -- Retire pooled containers beyond the active strip count (empty groups + park
+    -- slots + disable + hide — all combat-legal on a pre-created container).
+    for i = #strips + 1, #pool do
+        local container = pool[i]
+        if not G.RunConfigPass(container, container._quiProfile or {}, {}, allowCreate) then incomplete = true end
+        S.Park(container)
         container:SetEnabled(false)
         container:Hide()
     end
-    return container
+    return incomplete
+end
+
+-- Disable + hide every pooled container on a host mover (layout-mode preview
+-- owns the display while active, so the live secure containers go dark and the
+-- fake preview icons render alone). SetEnabled/Hide is combat-legal; preview
+-- only toggles OOC (its caller gates on InCombatLockdown).
+local function DisableMoverContainers(moverFrame)
+    local pool = moverFrame._quiAuraContainers
+    if not pool then return end
+    for i = 1, #pool do
+        local c = pool[i]
+        if c then
+            pcall(c.SetEnabled, c, false)
+            pcall(c.Hide, c)
+        end
+    end
 end
 
 -- Heart of the live path, shared by both passes. allowCreate=true is the full
--- OOC pass: may create the forbidden containers, pool buttons, and reconcile
--- AuraSkin groups.
--- allowCreate=false is the combat pass: only combat-legal mutation of
--- pre-created objects (anchor-frame sizing, container anchor/groups/enable,
--- alpha fades, the insecure temp-enchant strip).
+-- OOC pass; allowCreate=false is the combat-legal mutation subset. Reads the
+-- per-host element STORES (never the old per-strip settings keys); frame-level
+-- toggles (enableBuffs/hideBuffFrame/fade*) stay settings-level reads.
 local function ApplyConfigPass(allowCreate)
     if not buffContainer or not debuffContainer then return end
     if previewActive then return end
+    if not ResolveAuraDeps() then return end
 
     local settings = GetSettings()
     if not settings then return end
 
-    -- Temp enchants FIRST: the strip's live count feeds the buff zone's anchor
+    -- Temp enchants FIRST: the strip's live count feeds the buff host's anchor
     -- offset and natural width below.
     UpdateTempEnchants()
 
-    local buffProfile = BuildZoneProfile(settings, true)
-    local debuffProfile = BuildZoneProfile(settings, false)
+    local buffStrips   = ResolveStrips(GetBuffStore(settings),   DefaultBuffBucket,  _buffStrips)
+    local debuffStrips = ResolveStrips(GetDebuffStore(settings), DefaultDebuffBucket, _debuffStrips)
+
+    -- Mover natural extent = first ENABLED strip's grid extent (unchanged math,
+    -- element-profile input); the buff host widens by the enchant lead-in.
+    local buffProfile   = buffStrips[1]   and ElementProfileFor(buffStrips[1])   or FallbackProfile(DefaultBuffBucket)
+    local debuffProfile = debuffStrips[1] and ElementProfileFor(debuffStrips[1]) or FallbackProfile(DefaultDebuffBucket)
 
     local bw, bh = GridExtent(buffProfile)
     if liveEnchantCount > 0 then
@@ -864,27 +906,30 @@ local function ApplyConfigPass(allowCreate)
     debuffContainer._naturalW, debuffContainer._naturalH = dw, dh
     debuffContainer:SetSize(dw, dh)
 
+    -- Frame-level gates stay settings-level; element.enabled governs per-strip
+    -- visibility WITHIN a shown host (ActiveElementsForSpec already filtered it).
+    -- When a host is gated off, pass EMPTY so every pooled container retires.
     local anyBuffs   = settings.enableBuffs   and not settings.hideBuffFrame
     local anyDebuffs = settings.enableDebuffs and not settings.hideDebuffFrame
+    local buffActive   = anyBuffs   and buffStrips   or EMPTY
+    local debuffActive = anyDebuffs and debuffStrips or EMPTY
 
     if allowCreate then
-        ConfigureZoneAuraContainer(buffContainer, buffProfile, anyBuffs,
-            settings, true, true)
-        ConfigureZoneAuraContainer(debuffContainer, debuffProfile, anyDebuffs,
-            settings, false, true)
+        local inc1 = ApplyMoverElements(buffContainer,   buffActive,   true,  true)
+        local inc2 = ApplyMoverElements(debuffContainer, debuffActive, false, true)
+        if inc1 or inc2 then QueueContainerWork() end
     else
         -- In-combat mutation of a pre-created container is 12.1-PTR-legal
         -- (anchor/size/enable; group reconcile is pcall-guarded inside
-        -- ConfigureZoneAuraContainer itself). pcall-guard here too: on any
+        -- AuraGlue.RunConfigPass). pcall-guard the whole mover pass too: on any
         -- restriction error the queued full pass still reconciles at
         -- PLAYER_REGEN_ENABLED.
-        pcall(ConfigureZoneAuraContainer, buffContainer, buffProfile, anyBuffs,
-            settings, true, false)
-        pcall(ConfigureZoneAuraContainer, debuffContainer, debuffProfile, anyDebuffs,
-            settings, false, false)
+        local ok1, inc1 = pcall(ApplyMoverElements, buffContainer,   buffActive,   true,  false)
+        local ok2, inc2 = pcall(ApplyMoverElements, debuffContainer, debuffActive, false, false)
+        if (not ok1) or (not ok2) or inc1 or inc2 then QueueContainerWork() end
     end
 
-    -- Fade support (SetAlpha is unprotected on the named anchor frames).
+    -- Fade support (SetAlpha is unprotected on the named mover frames).
     if anyBuffs then
         buffContainer:SetAlpha(settings.fadeBuffFrame and (settings.fadeOutAlpha or 0) or 1)
     else
@@ -937,123 +982,25 @@ end
 
 ---------------------------------------------------------------------------
 -- LAYOUT MODE PREVIEW
--- The secure container cannot be fed fake auras, so during preview each zone's
--- live container is disabled + hidden and the preview icons render alone on a
--- HIGH-strata overlay; the container is restored on exit.
+-- The secure container cannot be fed fake auras, so during preview each host's
+-- live container is disabled + hidden and the shared placeholder preview
+-- (ns.AuraPreview) renders alone on the mover host — WYSIWYG via the SAME
+-- AuraGlue.ElementProfile layout math the live path uses. Restored on exit.
 ---------------------------------------------------------------------------
-local PREVIEW_BUFF_TEXTURES = {
-    136012, 136085, 135932, 132333, 136247, 135987, 136048, 135964,
-}
-local PREVIEW_DEBUFF_TEXTURES = {
-    135849, 135813, 132851, 136139, 136066, 135959,
-}
-local PREVIEW_DEBUFF_TYPES = { "Magic", "Curse", "Disease", "Poison", "Magic", "" }
-
-local previewBuffIcons = {}
-local previewDebuffIcons = {}
-local previewBuffOverlay = nil
-local previewDebuffOverlay = nil
-
-local function GetPreviewCount(settings, prefix)
-    local perRow = settings[prefix .. "IconsPerRow"] or 0
-    if perRow <= 0 then perRow = 10 end
-    return math.max(3, math.min(perRow + math.ceil(perRow / 2), 20))
-end
-
-local function CreatePreviewGrid(parent, textures, debuffTypes, settings, prefix, isBuff)
-    local iconSize = settings[prefix .. "IconSize"] or 0
-    if iconSize <= 0 then iconSize = DEFAULT_ICON_SIZE end
-    local iconsPerRow = settings[prefix .. "IconsPerRow"] or 0
-    if iconsPerRow <= 0 then iconsPerRow = 10 end
-    local spacing = settings[prefix .. "IconSpacing"] or 0
-    if spacing <= 0 then spacing = 2 end
-    local rowSpacing = settings[prefix .. "RowSpacing"] or 0
-    if rowSpacing <= 0 then rowSpacing = spacing end
-    local growLeft = settings[prefix .. "GrowLeft"]
-    local growUp = settings[prefix .. "GrowUp"]
-
-    local anchor
-    if growUp then
-        anchor = growLeft and "BOTTOMRIGHT" or "BOTTOMLEFT"
-    else
-        anchor = growLeft and "TOPRIGHT" or "TOPLEFT"
-    end
-
-    local count = GetPreviewCount(settings, prefix)
-    local icons = {}
-
-    for i = 1, count do
-        local icon = CreateFrame("Frame", nil, parent)
-        icon:SetSize(iconSize, iconSize)
-
-        local tex = icon:CreateTexture(nil, "ARTWORK")
-        tex:SetAllPoints()
-        tex:SetTexCoord(BASE_CROP, 1 - BASE_CROP, BASE_CROP, 1 - BASE_CROP)
-        tex:SetTexture(textures[((i - 1) % #textures) + 1])
-        icon.Icon = tex
-
-        CreateBorderEdges(icon)
-
-        icon.Stacks = icon:CreateFontString(nil, "OVERLAY")
-        CJKFont(icon.Stacks, GetGeneralFont(), 10, GetGeneralFontOutline())
-        icon.Stacks:SetPoint("BOTTOMRIGHT", -1, 1)
-        icon.Stacks:SetText("")
-        icon.Stacks:Hide()
-
-        icon.Cooldown = CreateFrame("Cooldown", nil, icon, "CooldownFrameTemplate")
-        icon.Cooldown:SetAllPoints()
-        icon.Cooldown:Clear()
-        icon.TextOverlay = CreateFrame("Frame", nil, icon)
-        icon.TextOverlay:SetAllPoints()
-
-        local debuffType = debuffTypes and debuffTypes[((i - 1) % #debuffTypes) + 1]
-        StyleIcon(icon, settings, isBuff, debuffType)
-
-        local idx = i - 1
-        local col = idx % iconsPerRow
-        local row = math.floor(idx / iconsPerRow)
-        local colStep = iconSize + spacing
-        local rowStep = iconSize + rowSpacing
-        local xOff = growLeft and -(col * colStep) or (col * colStep)
-        local yOff = growUp and (row * rowStep) or -(row * rowStep)
-        icon:SetPoint(anchor, parent, anchor, xOff, yOff)
-        icon:Show()
-
-        icons[#icons + 1] = icon
-    end
-
-    local numCols = math.min(count, iconsPerRow)
-    local numRows = math.ceil(count / iconsPerRow)
-    local totalW = numCols * iconSize + math.max(0, numCols - 1) * spacing
-    local totalH = numRows * iconSize + math.max(0, numRows - 1) * rowSpacing
-    parent:SetSize(totalW, totalH)
-    parent._naturalW = totalW
-    parent._naturalH = totalH
-
-    return icons
-end
-
 local function ShowPreview()
     if previewActive then return end
     if not buffContainer or not debuffContainer then return end
-    previewActive = true
 
     local settings = GetSettings()
-    if not settings then
-        previewActive = false
-        return
-    end
+    if not settings then return end
+    local Preview = ns.AuraPreview
+    if not Preview or not ResolveAuraDeps() then return end
+    previewActive = true
 
-    -- Disable the live secure containers so the fake icons own the zone.
+    -- Disable the live secure containers so the placeholder icons own each host.
     if not InCombatLockdown() then
-        if buffContainer._auraContainer then
-            pcall(buffContainer._auraContainer.SetEnabled, buffContainer._auraContainer, false)
-            pcall(buffContainer._auraContainer.Hide, buffContainer._auraContainer)
-        end
-        if debuffContainer._auraContainer then
-            pcall(debuffContainer._auraContainer.SetEnabled, debuffContainer._auraContainer, false)
-            pcall(debuffContainer._auraContainer.Hide, debuffContainer._auraContainer)
-        end
+        DisableMoverContainers(buffContainer)
+        DisableMoverContainers(debuffContainer)
     end
     if tempEnchantFrame then tempEnchantFrame:Hide() end
 
@@ -1062,32 +1009,24 @@ local function ShowPreview()
     buffContainer:SetAlpha(1)
     debuffContainer:SetAlpha(1)
 
-    if not previewBuffOverlay then
-        previewBuffOverlay = CreateFrame("Frame", nil, buffContainer)
-    end
-    previewBuffOverlay:SetAllPoints(buffContainer)
-    previewBuffOverlay:SetIgnoreParentAlpha(true)
-    previewBuffOverlay:SetFrameStrata("HIGH")
-    previewBuffOverlay:Show()
+    -- Resolve each host's enabled strips and draw the placeholder preview ON the
+    -- mover host. Size the host to the first strip's worst-case grid extent so
+    -- the layout-mode grab handle covers the placeholders (mirrors
+    -- ApplyConfigPass; the enchant lead-in is omitted — the temp-enchant strip
+    -- is hidden during preview).
+    local buffStrips  = ResolveStrips(GetBuffStore(settings), DefaultBuffBucket, _buffStrips)
+    local buffProfile = buffStrips[1] and ElementProfileFor(buffStrips[1]) or FallbackProfile(DefaultBuffBucket)
+    local bw, bh = GridExtent(buffProfile)
+    buffContainer._naturalW, buffContainer._naturalH = bw, bh
+    buffContainer:SetSize(bw, bh)
+    Preview.Show(buffContainer, buffStrips)
 
-    previewBuffIcons = CreatePreviewGrid(previewBuffOverlay, PREVIEW_BUFF_TEXTURES, nil, settings, "buff", true)
-
-    if not previewDebuffOverlay then
-        previewDebuffOverlay = CreateFrame("Frame", nil, debuffContainer)
-    end
-    previewDebuffOverlay:SetAllPoints(debuffContainer)
-    previewDebuffOverlay:SetIgnoreParentAlpha(true)
-    previewDebuffOverlay:SetFrameStrata("HIGH")
-    previewDebuffOverlay:Show()
-
-    previewDebuffIcons = CreatePreviewGrid(previewDebuffOverlay, PREVIEW_DEBUFF_TEXTURES, PREVIEW_DEBUFF_TYPES, settings, "debuff", false)
-
-    buffContainer._naturalW = previewBuffOverlay._naturalW
-    buffContainer._naturalH = previewBuffOverlay._naturalH
-    buffContainer:SetSize(previewBuffOverlay._naturalW, previewBuffOverlay._naturalH)
-    debuffContainer._naturalW = previewDebuffOverlay._naturalW
-    debuffContainer._naturalH = previewDebuffOverlay._naturalH
-    debuffContainer:SetSize(previewDebuffOverlay._naturalW, previewDebuffOverlay._naturalH)
+    local debuffStrips  = ResolveStrips(GetDebuffStore(settings), DefaultDebuffBucket, _debuffStrips)
+    local debuffProfile = debuffStrips[1] and ElementProfileFor(debuffStrips[1]) or FallbackProfile(DefaultDebuffBucket)
+    local dw, dh = GridExtent(debuffProfile)
+    debuffContainer._naturalW, debuffContainer._naturalH = dw, dh
+    debuffContainer:SetSize(dw, dh)
+    Preview.Show(debuffContainer, debuffStrips)
 
     if _G.QUI_LayoutModeSyncHandle then
         _G.QUI_LayoutModeSyncHandle("buffFrame")
@@ -1099,13 +1038,11 @@ local function HidePreview()
     if not previewActive then return end
     previewActive = false
 
-    for _, icon in ipairs(previewBuffIcons) do icon:Hide() end
-    wipe(previewBuffIcons)
-    for _, icon in ipairs(previewDebuffIcons) do icon:Hide() end
-    wipe(previewDebuffIcons)
-
-    if previewBuffOverlay then previewBuffOverlay:Hide() end
-    if previewDebuffOverlay then previewDebuffOverlay:Hide() end
+    local Preview = ns.AuraPreview
+    if Preview then
+        Preview.Hide(buffContainer)
+        Preview.Hide(debuffContainer)
+    end
 
     ApplyOrDefer()
 end
@@ -1116,6 +1053,27 @@ end
 local GROW_ANCHOR_FRAC_X = { TOPLEFT = 0, TOPRIGHT = 1, BOTTOMLEFT = 0, BOTTOMRIGHT = 1 }
 local GROW_ANCHOR_FRAC_Y = { TOPLEFT = 1, TOPRIGHT = 1, BOTTOMLEFT = 0, BOTTOMRIGHT = 0 }
 
+-- The mover's grow corner is the first ENABLED filterStrip element's `anchor`
+-- in the matching per-host store (buffAuras / debuffAuras). Since v50 that
+-- element `anchor` IS the old growLeft/growUp→corner formula's output (the
+-- migration seeded it from the user's toggles before pruning the flat
+-- buff*/debuffGrowLeft/GrowUp keys). Falls back to the host default corner
+-- ("TOPRIGHT", matching Default{Buff,Debuff}Bucket) when no strip is enabled.
+local function FirstEnabledStripAnchor(store, fallback)
+    if type(store) == "table" and type(store.elements) == "table" then
+        local bucket = store.elements["*"]
+        if type(bucket) == "table" then
+            for _, e in ipairs(bucket) do
+                if type(e) == "table" and e.enabled ~= false and e.mode == "filterStrip"
+                    and GROW_ANCHOR_FRAC_X[e.anchor] ~= nil then
+                    return e.anchor
+                end
+            end
+        end
+    end
+    return fallback
+end
+
 local function UpdateGrowAnchor(faKey)
     if not faKey then return end
     local profile = QUI and QUI.db and QUI.db.profile
@@ -1123,22 +1081,13 @@ local function UpdateGrowAnchor(faKey)
     local bbDB = profile.buffBorders
     if type(bbDB) ~= "table" then return end
 
-    local growLeft, growUp
+    local newCorner
     if faKey == "buffFrame" then
-        growLeft = bbDB.buffGrowLeft
-        growUp   = bbDB.buffGrowUp
+        newCorner = FirstEnabledStripAnchor(bbDB.buffAuras, "TOPRIGHT")
     elseif faKey == "debuffFrame" then
-        growLeft = bbDB.debuffGrowLeft
-        growUp   = bbDB.debuffGrowUp
+        newCorner = FirstEnabledStripAnchor(bbDB.debuffAuras, "TOPRIGHT")
     else
         return
-    end
-
-    local newCorner
-    if growUp then
-        newCorner = growLeft and "BOTTOMRIGHT" or "BOTTOMLEFT"
-    else
-        newCorner = growLeft and "TOPRIGHT" or "TOPLEFT"
     end
 
     if not profile.frameAnchoring then

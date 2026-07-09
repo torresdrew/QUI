@@ -43,7 +43,7 @@ assert(not partyKeystones:find("edgeSize = 1", 1, true),
 local rawBackdropFiles = {
     "QUI_Options/framework.lua",
     "QUI_GroupFrames/groupframes/groupframes_editmode.lua",
-    "QUI_GroupFrames/groupframes/settings/group_frames_auras_editor.lua",
+    "QUI_Options/aura_elements_editor.lua",
     "core/diagnostics_console.lua",
     "modules/utility/settings/keybinds_content.lua",
     "QUI_Chat/chat/settings/chat_frame1_provider.lua",

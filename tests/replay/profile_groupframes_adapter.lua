@@ -159,11 +159,17 @@ end
 -- -----------------------------------------------------------------------
 local function loadSubModules()
     local ns = {}
+    -- The GF model file is now a compatibility SHIM delegating to the shared
+    -- core element model (ns.AuraElements) -- load core/aura_elements.lua
+    -- (pure Lua, headless-safe) into the same ns FIRST so the shim's __index
+    -- delegation resolves.
+    assert(loadfile("core/aura_elements.lua"))("QUI", ns)
     assert(loadfile("QUI_GroupFrames/groupframes/groupframes_aura_model.lua"))(
         "QUI_GroupFrames", ns)
     assert(loadfile("QUI_GroupFrames/groupframes/groupframes_aura_render.lua"))(
         "QUI_GroupFrames", ns)
-    assert(ns.QUI_GroupFramesAuraModel,   "aura model must load")
+    assert(ns.AuraElements,               "core element model must load")
+    assert(ns.QUI_GroupFramesAuraModel,   "aura model shim must load")
     assert(ns.QUI_GroupFrameAuraRender,   "aura render must load")
     return ns
 end

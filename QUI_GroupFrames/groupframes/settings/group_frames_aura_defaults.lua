@@ -5,6 +5,18 @@ ns.QUI_GroupFramesAuraDefaults = AuraDefaults
 
 local FALLBACK_ICON = 134400
 
+-- The shipped default filter strips (debuffs + buffs) for the all-specs ("*")
+-- bucket. Ported byte-for-byte from the old groupframes_aura_model.lua
+-- The shipped default strip bucket DEFINITION lives in the always-loaded
+-- model shim (groupframes_aura_model.lua) — the runtime seed path latches
+-- elementsSeeded, so an Options-only definition would let an Options-disabled
+-- install latch an EMPTY bucket and permanently lose the shipped strips.
+-- This delegate keeps the settings-side name (editor capability wiring
+-- passes AuraDefaults.DefaultStripBucket as defaultBucketFn).
+function AuraDefaults.DefaultStripBucket()
+    return ns.QUI_GroupFramesAuraModel.DefaultStripBucket()
+end
+
 local SPEC_AURA_PRESETS = {
     {
         name = "Restoration Druid",

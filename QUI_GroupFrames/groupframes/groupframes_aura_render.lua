@@ -846,12 +846,12 @@ local function ApplyIconData(icon, unit, element, auraData, cfgGen, br, bg, bb, 
             icon._cfgElement = element
             icon._cfgGen = cfgGen
             local showText = element.showDurationText == true
-            local swipeStyle = element.swipeStyle or "radial"
-            if cd.SetDrawSwipe then
-                pcall(cd.SetDrawSwipe, cd, swipeStyle == "radial" and element.hideSwipe ~= true)
-            end
-            if cd.SetReverse then
-                pcall(cd.SetReverse, cd, element.reverseSwipe == true)
+            -- Shared radial-suppression rule (core/utils.lua) -- also used by
+            -- core/aura_slots.lua's tracked-slot runtime, so the swipe/reverse
+            -- toggle lives in exactly one place.
+            local H = ns.Helpers
+            if H and H.ApplyCooldownSwipeStyle then
+                H.ApplyCooldownSwipeStyle(cd, element)
             end
             -- Duration TEXT is the native C-side countdown (secret-safe). Configure
             -- visibility/formatter and style its FontString per element font size.

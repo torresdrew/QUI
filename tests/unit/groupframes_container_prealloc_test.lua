@@ -27,17 +27,19 @@ end
 
 local auras = readAll("QUI_GroupFrames/groupframes/groupframes_auras.lua")
 
--- Per-frame pre-creation entry: OOC-only, cheap-idempotent, creation via the
--- shared EnsureStripContainers path.
+-- Per-frame pre-creation entry: OOC-only, cheap-idempotent, one container per
+-- active element pre-created into the ordinal pool.
 local ensure = slice(auras, "function QUI_GFA.EnsureContainersForFrame(frame)")
 assert(ensure:find("InCombatLockdown()", 1, true),
     "EnsureContainersForFrame must be OOC-only (container creation is combat-forbidden)")
-assert(ensure:find("if frame.buffContainer and frame.debuffContainer then return", 1, true),
-    "EnsureContainersForFrame must skip frames that already own both containers (cheap re-entry)")
-assert(ensure:find("ResolveStripElements(frame)", 1, true),
-    "EnsureContainersForFrame must resolve strip elements for the frame's context")
-assert(ensure:find("EnsureStripContainers(frame", 1, true),
-    "EnsureContainersForFrame must create via the shared EnsureStripContainers path")
+assert(ensure:find("if #pool >= want then return", 1, true),
+    "EnsureContainersForFrame must skip frames whose pool already holds enough containers (cheap re-entry)")
+assert(ensure:find("ResolveContainerElements(frame)", 1, true),
+    "EnsureContainersForFrame must resolve the container-rendered elements for the frame's context")
+assert(ensure:find('CreateFrame("AuraContainer", nil, frame, "CustomAuraContainerTemplate")', 1, true),
+    "EnsureContainersForFrame must pre-create one CustomAuraContainer per active element")
+assert(ensure:find("AnchorElementContainer(container, frame, elems[i])", 1, true),
+    "EnsureContainersForFrame must anchor each pre-created container OOC (mid-combat joiner ready)")
 
 local gf = readAll("QUI_GroupFrames/groupframes/groupframes.lua")
 

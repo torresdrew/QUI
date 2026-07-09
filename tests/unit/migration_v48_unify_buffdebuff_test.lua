@@ -14,7 +14,13 @@ local profile = {
     },
 }
 
-M.RunOnProfile(profile)
+-- Test v48 (RestoreBuffDebuffSplit) IN ISOLATION. Running the full pipeline
+-- (M.RunOnProfile) would also fire the v50 gate (SeedAuraElements), which
+-- CONSUMES these flat buff*/debuff* grid keys into element stores and prunes
+-- them — so the v48 transform is asserted against the function directly. The
+-- v48→v50 end-to-end path (flat keys reshaped into element stores) is covered
+-- by migration_floor_collapse_test.lua's at-floor(47) case.
+M.RestoreBuffDebuffSplit(profile)
 
 assert(profile.buffBorders.buffIconSize == 35, "buffIconSize must survive")
 assert(profile.buffBorders.debuffIconSize == 35, "missing debuffIconSize must be restored from buffIconSize")

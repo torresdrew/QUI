@@ -1090,6 +1090,26 @@ collect_qui_options_scripts(scripts, script_xml_seen)
 local failures = {}
 local loaded_count = 0
 
+-- groupframes_aura_model.lua is now a compatibility shim: `local E =
+-- ns.AuraElements` captured at file scope, delegating every constructor to the
+-- shared core model (core/aura_elements.lua). That core file is part of
+-- QUI.toc and would normally load via the main scripts loop below, but the
+-- shim (pre-loaded next) needs ns.AuraElements populated BEFORE it runs, so
+-- pull it in here first. Pure Lua / no dependencies, safe to load standalone;
+-- the main loop loading it again later is harmless (a fresh idempotent table
+-- assignment — this file's shim already captured its own reference).
+do
+    local core_model_path = "core/aura_elements.lua"
+    local probe = io.open(core_model_path, "r")
+    if probe then
+        probe:close()
+        local ok, err = load_script(core_model_path)
+        if not ok then
+            failures[#failures + 1] = { path = core_model_path, error = err }
+        end
+    end
+end
+
 -- The unified-auras editor captures `local Model = ns.QUI_GroupFramesAuraModel`
 -- at file scope, and the auras element-list capture below needs the model's
 -- element constructors. That model lives in the QUI_GroupFrames runtime TOC, not
@@ -1929,7 +1949,7 @@ end
 -- the element renders expanded. The variant matrix covers every conditional
 -- branch (each filterMode, each tracked displayType, multi-spell per-spell rows).
 local function capture_group_frames_auras_elements()
-    local AurasEditor = ns.QUI_GroupFramesAurasSettings
+    local AurasEditor = ns.QUI_AuraElementsEditor
     local Model = ns.QUI_GroupFramesAuraModel
     if type(AurasEditor) ~= "table"
         or type(AurasEditor.RenderAuras) ~= "function"
@@ -1944,8 +1964,8 @@ local function capture_group_frames_auras_elements()
     -- render (they only appear when a strip tracks more than one spell). Missing
     -- raid buff renders twice so both auto-detect and manual buff rows enter the
     -- generated search cache.
-    local function strip(filterMode)
-        local element = Model.NewFilterStripElement("HARMFUL")
+    local function strip(filterMode, auraType)
+        local element = Model.NewFilterStripElement(auraType or "HARMFUL")
         element.filterMode = filterMode
         return element
     end
@@ -1965,7 +1985,15 @@ local function capture_group_frames_auras_elements()
     -- One entry per expanded-element render. label is diagnostic only.
     local variants = {
         { label = "filterStrip:off", element = strip("off") },
-        { label = "filterStrip:classification", element = strip("classification") },
+        { label = "filterStrip:flags", element = strip("flags") },
+        { label = "filterStrip:classify", element = strip("classify") },
+        -- HELPFUL variants: the classify checkboxes + flag tokens differ by
+        -- polarity (Cancelable / Not Cancelable / Big Defensive / External
+        -- Defensive are HELPFUL-only) — without these renders those labels
+        -- vanish from the search cache (they were searchable at HEAD via the
+        -- old flat filter rows).
+        { label = "filterStrip:classify:HELPFUL", element = strip("classify", "HELPFUL") },
+        { label = "filterStrip:flags:HELPFUL", element = strip("flags", "HELPFUL") },
         { label = "filterStrip:whitelist", element = strip("whitelist") },
         { label = "tracked:icon", element = tracked("icon") },
         { label = "tracked:bar", element = tracked("bar") },

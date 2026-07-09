@@ -228,6 +228,8 @@ local function LoadCore()
     -- migration / compat / io machinery.
     LoadAddonFile("core/utils.lua",          "QUI", SHARED_NS)
     LoadAddonFile("core/ns_export_guard.lua", "QUI", SHARED_NS)
+    LoadAddonFile("core/aura_elements.lua",  "QUI", SHARED_NS)
+    LoadAddonFile("core/aura_glue.lua",      "QUI", SHARED_NS)
     LoadAddonFile("core/new_profile_defaults.lua", "QUI", SHARED_NS)
     LoadAddonFile("core/border_registry.lua", "QUI", SHARED_NS)
     LoadAddonFile("core/defaults.lua",       "QUI", SHARED_NS)

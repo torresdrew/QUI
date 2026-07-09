@@ -654,46 +654,6 @@ return {
         },
         buffBorders = {
           borderSize = 1,
-          buffDurationTextAnchor = "CENTER",
-          buffDurationTextOffsetX = 0,
-          buffDurationTextOffsetY = 0,
-          buffFilterBigDefensive = false,
-          buffFilterCancelable = false,
-          buffFilterNotCancelable = false,
-          buffFilterPlayer = false,
-          buffFilterRaid = false,
-          buffGrowLeft = true,
-          buffGrowUp = false,
-          buffIconSize = 35,
-          buffIconSpacing = 0,
-          buffIconsPerRow = 10,
-          buffInvertSwipeDarkening = false,
-          buffRowSpacing = 0,
-          buffSortReverse = false,
-          buffSortRule = "INDEX",
-          buffStackTextAnchor = "BOTTOMRIGHT",
-          buffStackTextOffsetX = -1,
-          buffStackTextOffsetY = 1,
-          debuffDurationTextAnchor = "CENTER",
-          debuffDurationTextOffsetX = 0,
-          debuffDurationTextOffsetY = 0,
-          debuffFilterCrowdControl = false,
-          debuffFilterIncludeNameplateOnly = false,
-          debuffFilterPlayer = false,
-          debuffFilterRaid = false,
-          debuffFilterRaidPlayerDispellable = false,
-          debuffGrowLeft = true,
-          debuffGrowUp = false,
-          debuffIconSize = 35,
-          debuffIconSpacing = 0,
-          debuffIconsPerRow = 10,
-          debuffInvertSwipeDarkening = false,
-          debuffRowSpacing = 0,
-          debuffSortReverse = false,
-          debuffSortRule = "INDEX",
-          debuffStackTextAnchor = "BOTTOMRIGHT",
-          debuffStackTextOffsetX = -1,
-          debuffStackTextOffsetY = 1,
           enableBuffs = true,
           enableDebuffs = true,
           externalSkinning = false,
@@ -4919,22 +4879,7 @@ return {
               opacity = 0.69999999999999996,
               texture = "QUI Stripes"
             },
-            auras = {
-              buffAnchor = "BOTTOMLEFT",
-              buffGrow = "RIGHT",
-              buffIconSize = 22,
-              buffMaxIcons = 4,
-              buffOffsetX = 0,
-              buffOffsetY = 0,
-              debuffAnchor = "TOPLEFT",
-              debuffGrow = "RIGHT",
-              debuffMaxIcons = 4,
-              debuffOffsetX = 0,
-              debuffOffsetY = 0,
-              iconSize = 22,
-              showBuffs = false,
-              showDebuffs = false
-            },
+            auras = {},
             borderSize = 1,
             castbar = {
               anchor = "unitframe",
@@ -5088,22 +5033,7 @@ return {
               opacity = 0.69999999999999996,
               texture = "QUI Stripes"
             },
-            auras = {
-              buffAnchor = "BOTTOMLEFT",
-              buffGrow = "RIGHT",
-              buffIconSize = 20,
-              buffMaxIcons = 16,
-              buffOffsetX = 0,
-              buffOffsetY = -2,
-              debuffAnchor = "TOPLEFT",
-              debuffGrow = "RIGHT",
-              debuffMaxIcons = 16,
-              debuffOffsetX = 0,
-              debuffOffsetY = 2,
-              iconSize = 20,
-              showBuffs = false,
-              showDebuffs = false
-            },
+            auras = {},
             borderSize = 1,
             castbar = {
               anchor = "unitframe",
@@ -5317,22 +5247,7 @@ return {
               opacity = 0.69999999999999996,
               texture = "QUI Stripes"
             },
-            auras = {
-              buffAnchor = "BOTTOMLEFT",
-              buffGrow = "RIGHT",
-              buffIconSize = 22,
-              buffMaxIcons = 4,
-              buffOffsetX = 0,
-              buffOffsetY = 0,
-              debuffAnchor = "TOPLEFT",
-              debuffGrow = "RIGHT",
-              debuffMaxIcons = 4,
-              debuffOffsetX = 0,
-              debuffOffsetY = 0,
-              iconSize = 22,
-              showBuffs = false,
-              showDebuffs = false
-            },
+            auras = {},
             borderSize = 1,
             castbar = {
               anchor = "unitframe",
@@ -5455,138 +5370,7 @@ return {
             anchorGap = 10,
             anchorTo = "disabled",
             anchorYOffset = 0,
-            auras = {
-              buffAnchor = "BOTTOMLEFT",
-              buffClassifications = {
-                bigDefensive = false,
-                cancelable = false,
-                externalDefensive = false,
-                helpful = false,
-                notCancelable = false
-              },
-              buffDuration = {
-                anchor = "CENTER",
-                color = {
-                  [1] = 1,
-                  [2] = 1,
-                  [3] = 1,
-                  [4] = 1
-                },
-                fontSize = 12,
-                offsetX = 0,
-                offsetY = 0,
-                show = true
-              },
-              buffFilterMode = "off",
-              buffFilterOnlyMine = true,
-              buffGrow = "RIGHT",
-              buffIconSize = 22,
-              buffMaxIcons = 4,
-              buffMaxPerRow = 0,
-              buffOffsetX = 0,
-              buffOffsetY = 0,
-              buffShowStack = true,
-              buffSpacing = 2,
-              buffStack = {
-                anchor = "BOTTOMRIGHT",
-                color = {
-                  [1] = 1,
-                  [2] = 1,
-                  [3] = 1,
-                  [4] = 1
-                },
-                fontSize = 10,
-                offsetX = -1,
-                offsetY = 1,
-                show = true
-              },
-              buffStackAnchor = "BOTTOMRIGHT",
-              buffStackColor = {
-                [1] = 1,
-                [2] = 1,
-                [3] = 1,
-                [4] = 1
-              },
-              buffStackOffsetX = -1,
-              buffStackOffsetY = 1,
-              buffStackSize = 10,
-              debuffAnchor = "TOPLEFT",
-              debuffClassifications = {
-                crowdControl = false,
-                dispellable = false,
-                harmful = false
-              },
-              debuffDuration = {
-                anchor = "CENTER",
-                color = {
-                  [1] = 1,
-                  [2] = 1,
-                  [3] = 1,
-                  [4] = 1
-                },
-                fontSize = 10,
-                offsetX = 0,
-                offsetY = 0,
-                show = false
-              },
-              debuffFilterMode = "off",
-              debuffGrow = "RIGHT",
-              debuffMaxIcons = 4,
-              debuffMaxPerRow = 0,
-              debuffOffsetX = 0,
-              debuffOffsetY = 0,
-              debuffShowStack = true,
-              debuffSpacing = 2,
-              debuffStack = {
-                anchor = "BOTTOMRIGHT",
-                color = {
-                  [1] = 1,
-                  [2] = 1,
-                  [3] = 1,
-                  [4] = 1
-                },
-                fontSize = 10,
-                offsetX = -1,
-                offsetY = 1,
-                show = true
-              },
-              debuffStackAnchor = "BOTTOMRIGHT",
-              debuffStackColor = {
-                [1] = 1,
-                [2] = 1,
-                [3] = 1,
-                [4] = 1
-              },
-              debuffStackOffsetX = -1,
-              debuffStackOffsetY = 1,
-              debuffStackSize = 10,
-              durationAnchor = "CENTER",
-              durationColor = {
-                [1] = 1,
-                [2] = 1,
-                [3] = 1,
-                [4] = 1
-              },
-              durationOffsetX = 0,
-              durationOffsetY = 0,
-              durationSize = 12,
-              iconSize = 22,
-              iconSpacing = 2,
-              showBuffs = false,
-              showDebuffs = false,
-              showDuration = false,
-              showStack = true,
-              stackAnchor = "BOTTOMRIGHT",
-              stackColor = {
-                [1] = 1,
-                [2] = 1,
-                [3] = 1,
-                [4] = 1
-              },
-              stackOffsetX = -1,
-              stackOffsetY = 1,
-              stackSize = 10
-            },
+            auras = {},
             borderSize = 1,
             castbar = {
               anchor = "none",
@@ -5801,136 +5585,7 @@ return {
             anchorGap = 10,
             anchorTo = "disabled",
             anchorYOffset = 0,
-            auras = {
-              buffAnchor = "BOTTOMLEFT",
-              buffClassifications = {
-                bigDefensive = false,
-                cancelable = false,
-                externalDefensive = false,
-                helpful = false,
-                notCancelable = false
-              },
-              buffDuration = {
-                anchor = "CENTER",
-                color = {
-                  [1] = 1,
-                  [2] = 1,
-                  [3] = 1,
-                  [4] = 1
-                },
-                fontSize = 12,
-                offsetX = 0,
-                offsetY = 0,
-                show = true
-              },
-              buffFilterMode = "off",
-              buffFilterOnlyMine = true,
-              buffGrow = "RIGHT",
-              buffIconSize = 18,
-              buffMaxIcons = 4,
-              buffOffsetX = 0,
-              buffOffsetY = 0,
-              buffShowStack = true,
-              buffSpacing = 2,
-              buffStack = {
-                anchor = "BOTTOMRIGHT",
-                color = {
-                  [1] = 1,
-                  [2] = 1,
-                  [3] = 1,
-                  [4] = 1
-                },
-                fontSize = 10,
-                offsetX = -1,
-                offsetY = 1,
-                show = true
-              },
-              buffStackAnchor = "BOTTOMRIGHT",
-              buffStackColor = {
-                [1] = 1,
-                [2] = 1,
-                [3] = 1,
-                [4] = 1
-              },
-              buffStackOffsetX = -1,
-              buffStackOffsetY = 1,
-              buffStackSize = 10,
-              debuffAnchor = "TOPLEFT",
-              debuffClassifications = {
-                crowdControl = false,
-                dispellable = false,
-                harmful = false
-              },
-              debuffDuration = {
-                anchor = "CENTER",
-                color = {
-                  [1] = 1,
-                  [2] = 1,
-                  [3] = 1,
-                  [4] = 1
-                },
-                fontSize = 10,
-                offsetX = 0,
-                offsetY = 0,
-                show = false
-              },
-              debuffFilterMode = "off",
-              debuffGrow = "RIGHT",
-              debuffMaxIcons = 4,
-              debuffOffsetX = 0,
-              debuffOffsetY = 0,
-              debuffShowStack = true,
-              debuffSpacing = 2,
-              debuffStack = {
-                anchor = "BOTTOMRIGHT",
-                color = {
-                  [1] = 1,
-                  [2] = 1,
-                  [3] = 1,
-                  [4] = 1
-                },
-                fontSize = 10,
-                offsetX = -1,
-                offsetY = 1,
-                show = true
-              },
-              debuffStackAnchor = "BOTTOMRIGHT",
-              debuffStackColor = {
-                [1] = 1,
-                [2] = 1,
-                [3] = 1,
-                [4] = 1
-              },
-              debuffStackOffsetX = -1,
-              debuffStackOffsetY = 1,
-              debuffStackSize = 10,
-              durationAnchor = "CENTER",
-              durationColor = {
-                [1] = 1,
-                [2] = 1,
-                [3] = 1,
-                [4] = 1
-              },
-              durationOffsetX = 0,
-              durationOffsetY = 0,
-              durationSize = 12,
-              iconSize = 26,
-              iconSpacing = 2,
-              showBuffs = false,
-              showDebuffs = false,
-              showDuration = false,
-              showStack = true,
-              stackAnchor = "BOTTOMRIGHT",
-              stackColor = {
-                [1] = 1,
-                [2] = 1,
-                [3] = 1,
-                [4] = 1
-              },
-              stackOffsetX = -1,
-              stackOffsetY = 1,
-              stackSize = 10
-            },
+            auras = {},
             borderSize = 1,
             castbar = {
               anchor = "unitframe",
@@ -6142,22 +5797,7 @@ return {
               opacity = 0.69999999999999996,
               texture = "QUI Stripes"
             },
-            auras = {
-              buffAnchor = "BOTTOMLEFT",
-              buffGrow = "RIGHT",
-              buffIconSize = 22,
-              buffMaxIcons = 4,
-              buffOffsetX = 0,
-              buffOffsetY = 0,
-              debuffAnchor = "TOPLEFT",
-              debuffGrow = "RIGHT",
-              debuffMaxIcons = 4,
-              debuffOffsetX = 0,
-              debuffOffsetY = 0,
-              iconSize = 22,
-              showBuffs = false,
-              showDebuffs = false
-            },
+            auras = {},
             borderSize = 1,
             castbar = {
               anchor = "unitframe",
@@ -6867,7 +6507,7 @@ return {
       Default = {
         _defaultsVersion = 3,
         _needsLateAbImport = true,
-        _schemaVersion = 49,
+        _schemaVersion = 50,
         actionBars = {
           bars = {
             bags = {
@@ -8057,11 +7697,75 @@ return {
             isHorizontal = true,
             verticalLayout = false
           },
+          buffAuras = {
+            elements = {
+              ["*"] = {
+                [1] = {
+                  anchor = "TOPRIGHT",
+                  auraType = "HELPFUL",
+                  blacklist = {},
+                  classifications = {
+                    bigDefensive = false,
+                    cancelable = false,
+                    externalDefensive = false,
+                    notCancelable = false,
+                    raid = false,
+                    raidInCombat = false
+                  },
+                  dedupeDefensives = true,
+                  duration = {
+                    anchor = "CENTER",
+                    color = {
+                      [1] = 1,
+                      [2] = 1,
+                      [3] = 1,
+                      [4] = 1
+                    },
+                    fontSize = 12,
+                    offsetX = 0,
+                    offsetY = 0,
+                    show = true
+                  },
+                  enabled = true,
+                  filterFlags = {},
+                  filterMode = "off",
+                  growDirection = "LEFT",
+                  hidePermanent = false,
+                  hideSwipe = false,
+                  iconSize = 35,
+                  iconsPerRow = 10,
+                  id = "buffs",
+                  maxIcons = 40,
+                  mode = "filterStrip",
+                  offsetX = 0,
+                  offsetY = 0,
+                  onlyMine = false,
+                  reverseSwipe = false,
+                  rightClickCancel = true,
+                  sortReverse = false,
+                  sortRule = "INDEX",
+                  spacing = 1,
+                  stack = {
+                    anchor = "BOTTOMRIGHT",
+                    color = {
+                      [1] = 1,
+                      [2] = 1,
+                      [3] = 1,
+                      [4] = 1
+                    },
+                    fontSize = 12,
+                    offsetX = 0,
+                    offsetY = 0,
+                    show = true
+                  },
+                  swipeStyle = "radial",
+                  whitelist = {}
+                }
+              }
+            },
+            elementsSeeded = true
+          },
           buffBottomPadding = 25,
-          buffIconSpacing = 1,
-          buffRowSpacing = 1,
-          buffStackTextOffsetX = 0,
-          buffStackTextOffsetY = 0,
           debuff = {
             addIconsToRight = false,
             addIconsToTop = false,
@@ -8070,6 +7774,70 @@ return {
             iconStride = 16,
             isHorizontal = true,
             verticalLayout = false
+          },
+          debuffAuras = {
+            elements = {
+              ["*"] = {
+                [1] = {
+                  anchor = "TOPRIGHT",
+                  auraType = "HARMFUL",
+                  blacklist = {},
+                  classifications = {
+                    crowdControl = true,
+                    raid = true
+                  },
+                  dedupeDefensives = true,
+                  duration = {
+                    anchor = "CENTER",
+                    color = {
+                      [1] = 1,
+                      [2] = 1,
+                      [3] = 1,
+                      [4] = 1
+                    },
+                    fontSize = 12,
+                    offsetX = 0,
+                    offsetY = 0,
+                    show = true
+                  },
+                  enabled = true,
+                  filterFlags = {},
+                  filterMode = "off",
+                  growDirection = "LEFT",
+                  hidePermanent = false,
+                  hideSwipe = false,
+                  iconSize = 35,
+                  iconsPerRow = 10,
+                  id = "debuffs",
+                  maxIcons = 40,
+                  mode = "filterStrip",
+                  offsetX = 0,
+                  offsetY = 0,
+                  onlyMine = false,
+                  reverseSwipe = false,
+                  rightClickCancel = false,
+                  sortReverse = false,
+                  sortRule = "INDEX",
+                  spacing = 2,
+                  stack = {
+                    anchor = "BOTTOMRIGHT",
+                    color = {
+                      [1] = 1,
+                      [2] = 1,
+                      [3] = 1,
+                      [4] = 1
+                    },
+                    fontSize = 12,
+                    offsetX = -1,
+                    offsetY = 1,
+                    show = true
+                  },
+                  swipeStyle = "radial",
+                  whitelist = {}
+                }
+              }
+            },
+            elementsSeeded = true
           },
           debuffBottomPadding = 0,
           debuffFilterImportant = false,
@@ -14506,9 +14274,22 @@ return {
                       raidInCombat = true
                     },
                     dedupeDefensives = true,
-                    durationFontSize = 10,
+                    duration = {
+                      anchor = "CENTER",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 10,
+                      offsetX = 0,
+                      offsetY = 0,
+                      show = true
+                    },
                     enabled = true,
-                    filterMode = "classification",
+                    filterFlags = {},
+                    filterMode = "classify",
                     growDirection = "RIGHT",
                     hidePermanent = true,
                     hideSwipe = false,
@@ -14520,10 +14301,23 @@ return {
                     offsetY = 0,
                     onlyMine = false,
                     reverseSwipe = false,
-                    showDurationColor = true,
-                    showDurationText = true,
-                    showExpiringPulse = false,
+                    rightClickCancel = true,
+                    sortReverse = false,
+                    sortRule = "INDEX",
                     spacing = 0,
+                    stack = {
+                      anchor = "BOTTOMRIGHT",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 9,
+                      offsetX = -1,
+                      offsetY = 1,
+                      show = true
+                    },
                     whitelist = {}
                   }
                 }
@@ -14678,12 +14472,26 @@ return {
                 [250] = {
                   [1] = {
                     anchor = "TOP",
+                    auraType = "HELPFUL",
                     color = {
                       [1] = 1,
                       [2] = 1,
                       [3] = 1
                     },
                     displayType = "icon",
+                    duration = {
+                      anchor = "CENTER",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 9,
+                      offsetX = 0,
+                      offsetY = 0,
+                      show = true
+                    },
                     hideSwipe = true,
                     iconSize = 8,
                     mode = "tracked",
@@ -14693,6 +14501,19 @@ return {
                     onlyMineSpells = {},
                     spells = {
                       [1] = 31821
+                    },
+                    stack = {
+                      anchor = "BOTTOMRIGHT",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 9,
+                      offsetX = -1,
+                      offsetY = 1,
+                      show = true
                     }
                   }
                 },
@@ -14808,71 +14629,133 @@ return {
               opacity = 0.70000000000000007
             },
             auras = {
-              buffDurationAnchor = "CENTER",
-              buffDurationColor = {
-                [1] = 1,
-                [2] = 1,
-                [3] = 1,
-                [4] = 1
-              },
-              buffDurationOffsetX = 0,
-              buffDurationOffsetY = 0,
-              buffDurationSize = 12,
-              buffFilter = {
-                modifiers = {
-                  CANCELABLE = false,
-                  NOT_CANCELABLE = false,
-                  PLAYER = false,
-                  RAID = false
+              elements = {
+                ["*"] = {
+                  [1] = {
+                    anchor = "TOPLEFT",
+                    auraType = "HARMFUL",
+                    blacklist = {},
+                    classifications = {
+                      crowdControl = true,
+                      raid = true
+                    },
+                    dedupeDefensives = true,
+                    duration = {
+                      anchor = "CENTER",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 10,
+                      offsetX = 0,
+                      offsetY = 0,
+                      show = false
+                    },
+                    enabled = false,
+                    filterFlags = {
+                      modifiers = true
+                    },
+                    filterMode = "flags",
+                    growDirection = "RIGHT",
+                    hidePermanent = false,
+                    hideSwipe = false,
+                    iconSize = 22,
+                    iconsPerRow = 0,
+                    id = "debuffs",
+                    maxIcons = 4,
+                    mode = "filterStrip",
+                    offsetX = 0,
+                    offsetY = 0,
+                    onlyMine = false,
+                    reverseSwipe = false,
+                    rightClickCancel = false,
+                    sortReverse = false,
+                    sortRule = "INDEX",
+                    spacing = 2,
+                    stack = {
+                      anchor = "BOTTOMRIGHT",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 10,
+                      offsetX = -1,
+                      offsetY = 1,
+                      show = true
+                    },
+                    swipeStyle = "radial",
+                    whitelist = {}
+                  },
+                  [2] = {
+                    anchor = "BOTTOMLEFT",
+                    auraType = "HELPFUL",
+                    blacklist = {},
+                    classifications = {
+                      bigDefensive = false,
+                      cancelable = false,
+                      externalDefensive = false,
+                      notCancelable = false,
+                      raid = false,
+                      raidInCombat = false
+                    },
+                    dedupeDefensives = true,
+                    duration = {
+                      anchor = "CENTER",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 12,
+                      offsetX = 0,
+                      offsetY = 0,
+                      show = true
+                    },
+                    enabled = false,
+                    filterFlags = {
+                      modifiers = true
+                    },
+                    filterMode = "flags",
+                    growDirection = "RIGHT",
+                    hidePermanent = false,
+                    hideSwipe = false,
+                    iconSize = 22,
+                    iconsPerRow = 0,
+                    id = "buffs",
+                    maxIcons = 4,
+                    mode = "filterStrip",
+                    offsetX = 0,
+                    offsetY = 0,
+                    onlyMine = false,
+                    reverseSwipe = false,
+                    rightClickCancel = false,
+                    sortReverse = false,
+                    sortRule = "INDEX",
+                    spacing = 2,
+                    stack = {
+                      anchor = "BOTTOMRIGHT",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 10,
+                      offsetX = -1,
+                      offsetY = 1,
+                      show = true
+                    },
+                    swipeStyle = "radial",
+                    whitelist = {}
+                  }
                 }
               },
-              buffHideSwipe = false,
-              buffMaxPerRow = 0,
-              buffShowDuration = true,
-              buffShowStack = true,
-              buffSpacing = 2,
-              buffStackAnchor = "BOTTOMRIGHT",
-              buffStackColor = {
-                [1] = 1,
-                [2] = 1,
-                [3] = 1,
-                [4] = 1
-              },
-              buffStackOffsetX = -1,
-              buffStackOffsetY = 1,
-              buffStackSize = 10,
-              debuffDurationAnchor = "CENTER",
-              debuffDurationColor = {
-                [1] = 1,
-                [2] = 1,
-                [3] = 1,
-                [4] = 1
-              },
-              debuffDurationOffsetX = 0,
-              debuffDurationOffsetY = 0,
-              debuffDurationSize = 12,
-              debuffFilter = {
-                modifiers = {
-                  INCLUDE_NAME_PLATE_ONLY = false,
-                  PLAYER = false,
-                  RAID = false
-                }
-              },
-              debuffHideSwipe = false,
-              debuffMaxPerRow = 0,
-              debuffShowDuration = true,
-              debuffShowStack = true,
-              debuffSpacing = 2,
-              debuffStackAnchor = "BOTTOMRIGHT",
-              debuffStackColor = {
-                [1] = 1,
-                [2] = 1,
-                [3] = 1,
-                [4] = 1
-              },
-              debuffStackOffsetX = -1,
-              debuffStackOffsetY = 1,
-              debuffStackSize = 10,
+              elementsSeeded = true,
               onlyMyDebuffs = true
             },
             castbar = {
@@ -15031,73 +14914,134 @@ return {
               opacity = 0.70000000000000007
             },
             auras = {
-              buffDurationAnchor = "CENTER",
-              buffDurationColor = {
-                [1] = 1,
-                [2] = 1,
-                [3] = 1,
-                [4] = 1
-              },
-              buffDurationOffsetX = 0,
-              buffDurationOffsetY = 0,
-              buffDurationSize = 12,
-              buffFilter = {
-                modifiers = {
-                  CANCELABLE = false,
-                  NOT_CANCELABLE = false,
-                  PLAYER = false,
-                  RAID = true
+              elements = {
+                ["*"] = {
+                  [1] = {
+                    anchor = "TOPLEFT",
+                    auraType = "HARMFUL",
+                    blacklist = {},
+                    classifications = {
+                      crowdControl = true,
+                      raid = true
+                    },
+                    dedupeDefensives = true,
+                    duration = {
+                      anchor = "CENTER",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 10,
+                      offsetX = 0,
+                      offsetY = 0,
+                      show = false
+                    },
+                    enabled = false,
+                    filterFlags = {
+                      modifiers = true
+                    },
+                    filterMode = "flags",
+                    growDirection = "RIGHT",
+                    hidePermanent = false,
+                    hideSwipe = false,
+                    iconSize = 20,
+                    iconsPerRow = 0,
+                    id = "debuffs",
+                    maxIcons = 16,
+                    mode = "filterStrip",
+                    offsetX = 0,
+                    offsetY = 2,
+                    onlyMine = false,
+                    reverseSwipe = false,
+                    rightClickCancel = false,
+                    sortReverse = false,
+                    sortRule = "INDEX",
+                    spacing = 2,
+                    stack = {
+                      anchor = "BOTTOMRIGHT",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 10,
+                      offsetX = -1,
+                      offsetY = 1,
+                      show = true
+                    },
+                    swipeStyle = "radial",
+                    whitelist = {}
+                  },
+                  [2] = {
+                    anchor = "BOTTOMLEFT",
+                    auraType = "HELPFUL",
+                    blacklist = {},
+                    classifications = {
+                      bigDefensive = false,
+                      cancelable = false,
+                      externalDefensive = false,
+                      notCancelable = false,
+                      raid = false,
+                      raidInCombat = false
+                    },
+                    dedupeDefensives = true,
+                    duration = {
+                      anchor = "CENTER",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 12,
+                      offsetX = 0,
+                      offsetY = 0,
+                      show = true
+                    },
+                    enabled = true,
+                    filterFlags = {
+                      modifiers = true
+                    },
+                    filterMode = "flags",
+                    growDirection = "RIGHT",
+                    hidePermanent = false,
+                    hideSwipe = false,
+                    iconSize = 20,
+                    iconsPerRow = 0,
+                    id = "buffs",
+                    maxIcons = 16,
+                    mode = "filterStrip",
+                    offsetX = 0,
+                    offsetY = -2,
+                    onlyMine = false,
+                    reverseSwipe = false,
+                    rightClickCancel = false,
+                    sortReverse = false,
+                    sortRule = "INDEX",
+                    spacing = 2,
+                    stack = {
+                      anchor = "BOTTOMRIGHT",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 10,
+                      offsetX = -1,
+                      offsetY = 1,
+                      show = true
+                    },
+                    swipeStyle = "radial",
+                    whitelist = {}
+                  }
                 }
               },
-              buffHideSwipe = false,
-              buffMaxPerRow = 0,
-              buffShowDuration = true,
-              buffShowStack = true,
-              buffSpacing = 2,
-              buffStackAnchor = "BOTTOMRIGHT",
-              buffStackColor = {
-                [1] = 1,
-                [2] = 1,
-                [3] = 1,
-                [4] = 1
-              },
-              buffStackOffsetX = -1,
-              buffStackOffsetY = 1,
-              buffStackSize = 10,
-              debuffDurationAnchor = "CENTER",
-              debuffDurationColor = {
-                [1] = 1,
-                [2] = 1,
-                [3] = 1,
-                [4] = 1
-              },
-              debuffDurationOffsetX = 0,
-              debuffDurationOffsetY = 0,
-              debuffDurationSize = 12,
-              debuffFilter = {
-                modifiers = {
-                  INCLUDE_NAME_PLATE_ONLY = false,
-                  PLAYER = false,
-                  RAID = false
-                }
-              },
-              debuffHideSwipe = false,
-              debuffMaxPerRow = 0,
-              debuffShowDuration = true,
-              debuffShowStack = true,
-              debuffSpacing = 2,
-              debuffStackAnchor = "BOTTOMRIGHT",
-              debuffStackColor = {
-                [1] = 1,
-                [2] = 1,
-                [3] = 1,
-                [4] = 1
-              },
-              debuffStackOffsetX = -1,
-              debuffStackOffsetY = 1,
-              debuffStackSize = 10,
-              onlyMyDebuffs = false,
-              showBuffs = true
+              elementsSeeded = true,
+              onlyMyDebuffs = false
             },
             castbar = {
               bgColor = {
@@ -15246,6 +15190,129 @@ return {
               opacity = 0.70000000000000007
             },
             auras = {
+              elements = {
+                ["*"] = {
+                  [1] = {
+                    anchor = "TOPLEFT",
+                    auraType = "HARMFUL",
+                    blacklist = {},
+                    classifications = {
+                      crowdControl = true,
+                      raid = true
+                    },
+                    dedupeDefensives = true,
+                    duration = {
+                      anchor = "CENTER",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 10,
+                      offsetX = 0,
+                      offsetY = 0,
+                      show = false
+                    },
+                    enabled = false,
+                    filterFlags = {},
+                    filterMode = "off",
+                    growDirection = "RIGHT",
+                    hidePermanent = false,
+                    hideSwipe = false,
+                    iconSize = 22,
+                    iconsPerRow = 0,
+                    id = "debuffs",
+                    maxIcons = 16,
+                    mode = "filterStrip",
+                    offsetX = 0,
+                    offsetY = 2,
+                    onlyMine = false,
+                    reverseSwipe = false,
+                    rightClickCancel = false,
+                    sortReverse = false,
+                    sortRule = "INDEX",
+                    spacing = 2,
+                    stack = {
+                      anchor = "BOTTOMRIGHT",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 10,
+                      offsetX = -1,
+                      offsetY = 1,
+                      show = true
+                    },
+                    swipeStyle = "radial",
+                    whitelist = {}
+                  },
+                  [2] = {
+                    anchor = "BOTTOMLEFT",
+                    auraType = "HELPFUL",
+                    blacklist = {},
+                    classifications = {
+                      bigDefensive = false,
+                      cancelable = false,
+                      externalDefensive = false,
+                      notCancelable = false,
+                      raid = false,
+                      raidInCombat = false
+                    },
+                    dedupeDefensives = true,
+                    duration = {
+                      anchor = "CENTER",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 12,
+                      offsetX = 0,
+                      offsetY = 0,
+                      show = true
+                    },
+                    enabled = false,
+                    filterFlags = {},
+                    filterMode = "off",
+                    growDirection = "RIGHT",
+                    hidePermanent = false,
+                    hideSwipe = false,
+                    iconSize = 22,
+                    iconsPerRow = 0,
+                    id = "buffs",
+                    maxIcons = 16,
+                    mode = "filterStrip",
+                    offsetX = 0,
+                    offsetY = -2,
+                    onlyMine = false,
+                    reverseSwipe = false,
+                    rightClickCancel = false,
+                    sortReverse = false,
+                    sortRule = "INDEX",
+                    spacing = 2,
+                    stack = {
+                      anchor = "BOTTOMRIGHT",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 10,
+                      offsetX = -1,
+                      offsetY = 1,
+                      show = true
+                    },
+                    swipeStyle = "radial",
+                    whitelist = {}
+                  }
+                }
+              },
+              elementsSeeded = true,
               onlyMyDebuffs = true
             },
             offsetX = -540,
@@ -15256,25 +15323,133 @@ return {
               opacity = 0.70000000000000007
             },
             auras = {
-              buffFilter = {
-                modifiers = {
-                  CANCELABLE = false,
-                  NOT_CANCELABLE = false,
-                  PLAYER = false,
-                  RAID = false
+              elements = {
+                ["*"] = {
+                  [1] = {
+                    anchor = "TOPLEFT",
+                    auraType = "HARMFUL",
+                    blacklist = {},
+                    classifications = {
+                      crowdControl = true,
+                      raid = true
+                    },
+                    dedupeDefensives = true,
+                    duration = {
+                      anchor = "CENTER",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 10,
+                      offsetX = 0,
+                      offsetY = 0,
+                      show = false
+                    },
+                    enabled = false,
+                    filterFlags = {
+                      modifiers = true
+                    },
+                    filterMode = "flags",
+                    growDirection = "RIGHT",
+                    hidePermanent = false,
+                    hideSwipe = false,
+                    iconSize = 22,
+                    iconsPerRow = 0,
+                    id = "debuffs",
+                    maxIcons = 4,
+                    mode = "filterStrip",
+                    offsetX = 0,
+                    offsetY = 0,
+                    onlyMine = false,
+                    reverseSwipe = false,
+                    rightClickCancel = false,
+                    sortReverse = false,
+                    sortRule = "INDEX",
+                    spacing = 2,
+                    stack = {
+                      anchor = "BOTTOMRIGHT",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 10,
+                      offsetX = -1,
+                      offsetY = 1,
+                      show = true
+                    },
+                    swipeStyle = "radial",
+                    whitelist = {}
+                  },
+                  [2] = {
+                    anchor = "BOTTOMLEFT",
+                    auraType = "HELPFUL",
+                    blacklist = {},
+                    classifications = {
+                      bigDefensive = false,
+                      cancelable = false,
+                      externalDefensive = false,
+                      notCancelable = false,
+                      raid = false,
+                      raidInCombat = false
+                    },
+                    dedupeDefensives = true,
+                    duration = {
+                      anchor = "CENTER",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 12,
+                      offsetX = 0,
+                      offsetY = 0,
+                      show = true
+                    },
+                    enabled = false,
+                    filterFlags = {
+                      modifiers = true
+                    },
+                    filterMode = "flags",
+                    growDirection = "RIGHT",
+                    hidePermanent = false,
+                    hideSwipe = false,
+                    iconSize = 22,
+                    iconsPerRow = 0,
+                    id = "buffs",
+                    maxIcons = 4,
+                    mode = "filterStrip",
+                    offsetX = 0,
+                    offsetY = 0,
+                    onlyMine = false,
+                    reverseSwipe = false,
+                    rightClickCancel = false,
+                    sortReverse = false,
+                    sortRule = "INDEX",
+                    spacing = 2,
+                    stack = {
+                      anchor = "BOTTOMRIGHT",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 10,
+                      offsetX = -1,
+                      offsetY = 1,
+                      show = true
+                    },
+                    swipeStyle = "radial",
+                    whitelist = {}
+                  }
                 }
               },
-              buffHideSwipe = false,
-              buffMaxPerRow = 0,
-              debuffFilter = {
-                modifiers = {
-                  INCLUDE_NAME_PLATE_ONLY = false,
-                  PLAYER = false,
-                  RAID = false
-                }
-              },
-              debuffHideSwipe = false,
-              debuffMaxPerRow = 0,
+              elementsSeeded = true,
               onlyMyDebuffs = true
             },
             castbar = {
@@ -15423,54 +15598,133 @@ return {
             anchorGap = 0,
             anchorTo = "essential",
             auras = {
-              buffClassifications = {
-                important = false
-              },
-              buffDurationAnchor = "CENTER",
-              buffDurationColor = {
-                [1] = 1,
-                [2] = 1,
-                [3] = 1,
-                [4] = 1
-              },
-              buffDurationOffsetX = 0,
-              buffDurationOffsetY = 0,
-              buffDurationSize = 12,
-              buffFilter = {
-                modifiers = {
-                  CANCELABLE = false,
-                  NOT_CANCELABLE = false,
-                  PLAYER = false,
-                  RAID = false
+              elements = {
+                ["*"] = {
+                  [1] = {
+                    anchor = "TOPLEFT",
+                    auraType = "HARMFUL",
+                    blacklist = {},
+                    classifications = {
+                      crowdControl = true,
+                      raid = true
+                    },
+                    dedupeDefensives = true,
+                    duration = {
+                      anchor = "CENTER",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 10,
+                      offsetX = 0,
+                      offsetY = 0,
+                      show = false
+                    },
+                    enabled = true,
+                    filterFlags = {
+                      modifiers = true
+                    },
+                    filterMode = "flags",
+                    growDirection = "RIGHT",
+                    hidePermanent = false,
+                    hideSwipe = false,
+                    iconSize = 16,
+                    iconsPerRow = 0,
+                    id = "debuffs",
+                    maxIcons = 4,
+                    mode = "filterStrip",
+                    offsetX = 0,
+                    offsetY = 0,
+                    onlyMine = false,
+                    reverseSwipe = false,
+                    rightClickCancel = false,
+                    sortReverse = false,
+                    sortRule = "INDEX",
+                    spacing = 0,
+                    stack = {
+                      anchor = "BOTTOMRIGHT",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 10,
+                      offsetX = -1,
+                      offsetY = 1,
+                      show = true
+                    },
+                    swipeStyle = "radial",
+                    whitelist = {}
+                  },
+                  [2] = {
+                    anchor = "BOTTOMLEFT",
+                    auraType = "HELPFUL",
+                    blacklist = {},
+                    classifications = {
+                      bigDefensive = false,
+                      cancelable = false,
+                      externalDefensive = false,
+                      notCancelable = false,
+                      raid = false,
+                      raidInCombat = false
+                    },
+                    dedupeDefensives = true,
+                    duration = {
+                      anchor = "CENTER",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 12,
+                      offsetX = 0,
+                      offsetY = 0,
+                      show = true
+                    },
+                    enabled = false,
+                    filterFlags = {
+                      modifiers = true
+                    },
+                    filterMode = "flags",
+                    growDirection = "RIGHT",
+                    hidePermanent = false,
+                    hideSwipe = false,
+                    iconSize = 22,
+                    iconsPerRow = 0,
+                    id = "buffs",
+                    maxIcons = 4,
+                    mode = "filterStrip",
+                    offsetX = 0,
+                    offsetY = 0,
+                    onlyMine = false,
+                    reverseSwipe = false,
+                    rightClickCancel = true,
+                    sortReverse = false,
+                    sortRule = "INDEX",
+                    spacing = 2,
+                    stack = {
+                      anchor = "BOTTOMRIGHT",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 10,
+                      offsetX = -1,
+                      offsetY = 1,
+                      show = true
+                    },
+                    swipeStyle = "radial",
+                    whitelist = {}
+                  }
                 }
               },
-              buffHideSwipe = false,
-              buffShowDuration = true,
-              debuffClassifications = {
-                important = false
-              },
-              debuffDurationAnchor = "CENTER",
-              debuffDurationColor = {
-                [1] = 1,
-                [2] = 1,
-                [3] = 1,
-                [4] = 1
-              },
-              debuffDurationOffsetX = 0,
-              debuffDurationOffsetY = 0,
-              debuffDurationSize = 12,
-              debuffFilter = {
-                modifiers = {
-                  INCLUDE_NAME_PLATE_ONLY = false,
-                  PLAYER = false,
-                  RAID = false
-                }
-              },
-              debuffHideSwipe = false,
-              debuffShowDuration = true,
-              debuffSpacing = 0,
-              iconSize = 16,
-              showDebuffs = true
+              elementsSeeded = true
             },
             castbar = {
               anchor = "unitframe",
@@ -15623,6 +15877,129 @@ return {
               opacity = 0.70000000000000007
             },
             auras = {
+              elements = {
+                ["*"] = {
+                  [1] = {
+                    anchor = "TOPLEFT",
+                    auraType = "HARMFUL",
+                    blacklist = {},
+                    classifications = {
+                      crowdControl = true,
+                      raid = true
+                    },
+                    dedupeDefensives = true,
+                    duration = {
+                      anchor = "CENTER",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 10,
+                      offsetX = 0,
+                      offsetY = 0,
+                      show = false
+                    },
+                    enabled = false,
+                    filterFlags = {},
+                    filterMode = "off",
+                    growDirection = "RIGHT",
+                    hidePermanent = false,
+                    hideSwipe = false,
+                    iconSize = 22,
+                    iconsPerRow = 0,
+                    id = "debuffs",
+                    maxIcons = 16,
+                    mode = "filterStrip",
+                    offsetX = 0,
+                    offsetY = 2,
+                    onlyMine = false,
+                    reverseSwipe = false,
+                    rightClickCancel = false,
+                    sortReverse = false,
+                    sortRule = "INDEX",
+                    spacing = 2,
+                    stack = {
+                      anchor = "BOTTOMRIGHT",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 10,
+                      offsetX = -1,
+                      offsetY = 1,
+                      show = true
+                    },
+                    swipeStyle = "radial",
+                    whitelist = {}
+                  },
+                  [2] = {
+                    anchor = "BOTTOMLEFT",
+                    auraType = "HELPFUL",
+                    blacklist = {},
+                    classifications = {
+                      bigDefensive = false,
+                      cancelable = false,
+                      externalDefensive = false,
+                      notCancelable = false,
+                      raid = false,
+                      raidInCombat = false
+                    },
+                    dedupeDefensives = true,
+                    duration = {
+                      anchor = "CENTER",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 12,
+                      offsetX = 0,
+                      offsetY = 0,
+                      show = true
+                    },
+                    enabled = false,
+                    filterFlags = {},
+                    filterMode = "off",
+                    growDirection = "RIGHT",
+                    hidePermanent = false,
+                    hideSwipe = false,
+                    iconSize = 22,
+                    iconsPerRow = 0,
+                    id = "buffs",
+                    maxIcons = 16,
+                    mode = "filterStrip",
+                    offsetX = 0,
+                    offsetY = -2,
+                    onlyMine = false,
+                    reverseSwipe = false,
+                    rightClickCancel = false,
+                    sortReverse = false,
+                    sortRule = "INDEX",
+                    spacing = 2,
+                    stack = {
+                      anchor = "BOTTOMRIGHT",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 10,
+                      offsetX = -1,
+                      offsetY = 1,
+                      show = true
+                    },
+                    swipeStyle = "radial",
+                    whitelist = {}
+                  }
+                }
+              },
+              elementsSeeded = true,
               onlyMyDebuffs = true
             },
             enabled = true,
@@ -15638,62 +16015,134 @@ return {
             anchorGap = 0,
             anchorTo = "essential",
             auras = {
-              buffAnchor = "TOPRIGHT",
-              buffClassifications = {
-                important = false
-              },
-              buffDurationAnchor = "CENTER",
-              buffDurationColor = {
-                [1] = 1,
-                [2] = 1,
-                [3] = 1,
-                [4] = 1
-              },
-              buffDurationOffsetX = 0,
-              buffDurationOffsetY = 0,
-              buffDurationSize = 12,
-              buffFilter = {
-                modifiers = {
-                  CANCELABLE = false,
-                  NOT_CANCELABLE = false,
-                  PLAYER = false,
-                  RAID = false
+              elements = {
+                ["*"] = {
+                  [1] = {
+                    anchor = "TOPLEFT",
+                    auraType = "HARMFUL",
+                    blacklist = {},
+                    classifications = {
+                      crowdControl = true,
+                      raid = true
+                    },
+                    dedupeDefensives = true,
+                    duration = {
+                      anchor = "CENTER",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 10,
+                      offsetX = 0,
+                      offsetY = 0,
+                      show = false
+                    },
+                    enabled = true,
+                    filterFlags = {
+                      modifiers = true
+                    },
+                    filterMode = "flags",
+                    growDirection = "RIGHT",
+                    hidePermanent = false,
+                    hideSwipe = false,
+                    iconSize = 26,
+                    iconsPerRow = 0,
+                    id = "debuffs",
+                    maxIcons = 4,
+                    mode = "filterStrip",
+                    offsetX = 0,
+                    offsetY = 0,
+                    onlyMine = false,
+                    reverseSwipe = false,
+                    rightClickCancel = false,
+                    sortReverse = false,
+                    sortRule = "INDEX",
+                    spacing = 0,
+                    stack = {
+                      anchor = "BOTTOMRIGHT",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 10,
+                      offsetX = -1,
+                      offsetY = 1,
+                      show = true
+                    },
+                    swipeStyle = "radial",
+                    whitelist = {}
+                  },
+                  [2] = {
+                    anchor = "TOPRIGHT",
+                    auraType = "HELPFUL",
+                    blacklist = {},
+                    classifications = {
+                      bigDefensive = false,
+                      cancelable = false,
+                      externalDefensive = false,
+                      notCancelable = false,
+                      raid = false,
+                      raidInCombat = false
+                    },
+                    dedupeDefensives = true,
+                    duration = {
+                      anchor = "CENTER",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 12,
+                      offsetX = 0,
+                      offsetY = 0,
+                      show = true
+                    },
+                    enabled = true,
+                    filterFlags = {
+                      modifiers = true
+                    },
+                    filterMode = "flags",
+                    growDirection = "LEFT",
+                    hidePermanent = false,
+                    hideSwipe = true,
+                    iconSize = 18,
+                    iconsPerRow = 0,
+                    id = "buffs",
+                    maxIcons = 4,
+                    mode = "filterStrip",
+                    offsetX = 0,
+                    offsetY = 0,
+                    onlyMine = false,
+                    reverseSwipe = false,
+                    rightClickCancel = false,
+                    sortReverse = false,
+                    sortRule = "INDEX",
+                    spacing = 0,
+                    stack = {
+                      anchor = "BOTTOMRIGHT",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 10,
+                      offsetX = -1,
+                      offsetY = 1,
+                      show = true
+                    },
+                    swipeStyle = "radial",
+                    whitelist = {}
+                  }
                 }
               },
-              buffGrow = "LEFT",
-              buffHideSwipe = true,
-              buffMaxPerRow = 0,
-              buffShowDuration = true,
-              buffSpacing = 0,
-              debuffClassifications = {
-                important = false
-              },
-              debuffDurationAnchor = "CENTER",
-              debuffDurationColor = {
-                [1] = 1,
-                [2] = 1,
-                [3] = 1,
-                [4] = 1
-              },
-              debuffDurationOffsetX = 0,
-              debuffDurationOffsetY = 0,
-              debuffDurationSize = 12,
-              debuffFilter = {
-                modifiers = {
-                  INCLUDE_NAME_PLATE_ONLY = false,
-                  PLAYER = true,
-                  RAID = false
-                }
-              },
-              debuffHideSwipe = false,
-              debuffMaxPerRow = 0,
-              debuffShowDuration = true,
-              debuffSpacing = 0,
-              debuffStackOffsetX = 0,
-              debuffStackOffsetY = 0,
-              onlyMyDebuffs = true,
-              showBuffs = true,
-              showDebuffs = true
+              elementsSeeded = true,
+              onlyMyDebuffs = true
             },
             castbar = {
               channelFillForward = false,
@@ -15826,75 +16275,134 @@ return {
               opacity = 0.70000000000000007
             },
             auras = {
-              buffDurationAnchor = "CENTER",
-              buffDurationColor = {
-                [1] = 1,
-                [2] = 1,
-                [3] = 1,
-                [4] = 1
-              },
-              buffDurationOffsetX = 0,
-              buffDurationOffsetY = 0,
-              buffDurationSize = 12,
-              buffFilter = {
-                modifiers = {
-                  CANCELABLE = false,
-                  NOT_CANCELABLE = false,
-                  PLAYER = false,
-                  RAID = false
+              elements = {
+                ["*"] = {
+                  [1] = {
+                    anchor = "TOPRIGHT",
+                    auraType = "HARMFUL",
+                    blacklist = {},
+                    classifications = {
+                      crowdControl = true,
+                      raid = true
+                    },
+                    dedupeDefensives = true,
+                    duration = {
+                      anchor = "CENTER",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 10,
+                      offsetX = 0,
+                      offsetY = 0,
+                      show = false
+                    },
+                    enabled = true,
+                    filterFlags = {
+                      modifiers = true
+                    },
+                    filterMode = "flags",
+                    growDirection = "LEFT",
+                    hidePermanent = false,
+                    hideSwipe = false,
+                    iconSize = 22,
+                    iconsPerRow = 0,
+                    id = "debuffs",
+                    maxIcons = 4,
+                    mode = "filterStrip",
+                    offsetX = 0,
+                    offsetY = 0,
+                    onlyMine = false,
+                    reverseSwipe = false,
+                    rightClickCancel = false,
+                    sortReverse = false,
+                    sortRule = "INDEX",
+                    spacing = 0,
+                    stack = {
+                      anchor = "BOTTOMRIGHT",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 10,
+                      offsetX = -1,
+                      offsetY = 1,
+                      show = true
+                    },
+                    swipeStyle = "radial",
+                    whitelist = {}
+                  },
+                  [2] = {
+                    anchor = "BOTTOMLEFT",
+                    auraType = "HELPFUL",
+                    blacklist = {},
+                    classifications = {
+                      bigDefensive = false,
+                      cancelable = false,
+                      externalDefensive = false,
+                      notCancelable = false,
+                      raid = false,
+                      raidInCombat = false
+                    },
+                    dedupeDefensives = true,
+                    duration = {
+                      anchor = "CENTER",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 12,
+                      offsetX = 0,
+                      offsetY = 0,
+                      show = true
+                    },
+                    enabled = false,
+                    filterFlags = {
+                      modifiers = true
+                    },
+                    filterMode = "flags",
+                    growDirection = "RIGHT",
+                    hidePermanent = false,
+                    hideSwipe = false,
+                    iconSize = 22,
+                    iconsPerRow = 0,
+                    id = "buffs",
+                    maxIcons = 4,
+                    mode = "filterStrip",
+                    offsetX = 0,
+                    offsetY = 0,
+                    onlyMine = false,
+                    reverseSwipe = false,
+                    rightClickCancel = false,
+                    sortReverse = false,
+                    sortRule = "INDEX",
+                    spacing = 2,
+                    stack = {
+                      anchor = "BOTTOMRIGHT",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 10,
+                      offsetX = -1,
+                      offsetY = 1,
+                      show = true
+                    },
+                    swipeStyle = "radial",
+                    whitelist = {}
+                  }
                 }
               },
-              buffHideSwipe = false,
-              buffMaxPerRow = 0,
-              buffShowDuration = true,
-              buffShowStack = true,
-              buffSpacing = 2,
-              buffStackAnchor = "BOTTOMRIGHT",
-              buffStackColor = {
-                [1] = 1,
-                [2] = 1,
-                [3] = 1,
-                [4] = 1
-              },
-              buffStackOffsetX = -1,
-              buffStackOffsetY = 1,
-              buffStackSize = 10,
-              debuffAnchor = "TOPRIGHT",
-              debuffDurationAnchor = "CENTER",
-              debuffDurationColor = {
-                [1] = 1,
-                [2] = 1,
-                [3] = 1,
-                [4] = 1
-              },
-              debuffDurationOffsetX = 0,
-              debuffDurationOffsetY = 0,
-              debuffDurationSize = 12,
-              debuffFilter = {
-                modifiers = {
-                  INCLUDE_NAME_PLATE_ONLY = false,
-                  PLAYER = false,
-                  RAID = false
-                }
-              },
-              debuffGrow = "LEFT",
-              debuffHideSwipe = false,
-              debuffMaxPerRow = 0,
-              debuffShowDuration = true,
-              debuffShowStack = true,
-              debuffSpacing = 0,
-              debuffStackAnchor = "BOTTOMRIGHT",
-              debuffStackColor = {
-                [1] = 1,
-                [2] = 1,
-                [3] = 1,
-                [4] = 1
-              },
-              debuffStackOffsetX = -1,
-              debuffStackOffsetY = 1,
-              debuffStackSize = 10,
-              onlyMyDebuffs = false,
-              showDebuffs = true
+              elementsSeeded = true,
+              onlyMyDebuffs = false
             },
             castbar = {
               anchor = "none",

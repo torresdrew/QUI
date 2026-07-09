@@ -10,8 +10,9 @@ if not Renderer or type(Renderer.RenderFeature) ~= "function"
 end
 
 local Helpers = ns.Helpers
-local AurasEditor = ns.QUI_GroupFramesAurasSettings
+local AurasEditor = ns.QUI_AuraElementsEditor
 local AuraModel = ns.QUI_GroupFramesAuraModel
+local AuraDefaults = ns.QUI_GroupFramesAuraDefaults
 
 local GroupFramesSchema = ns.QUI_GroupFramesSettingsSchema or {}
 ns.QUI_GroupFramesSettingsSchema = GroupFramesSchema
@@ -2986,6 +2987,15 @@ local function RenderAurasSection(sectionHost, ctx)
         end, {
             contentWidth = contentWidth,
             forceSelectedIndex = forcedIndex,
+            capabilities = {
+                elementTypes        = { filterStrip = true, tracked = true, missingRaidBuff = true },
+                trackedDisplayTypes = { icon = true, square = true, bar = true, healthTint = true },
+                cancelEligible      = false,
+                maxStripElements    = 4,   -- per-frame container cap: 40-man parse cost
+                allowSpecOverride   = true,
+                defaultBucketFn     = AuraDefaults and AuraDefaults.DefaultStripBucket,
+                suggestions         = AuraDefaults and AuraDefaults.GetSuggestionSpells,
+            },
             onSelectionChanged = function(index)
                 SetSelectedElementIndex(ctx, groupFrames.contextMode, selectedBucket, index)
             end,

@@ -7,20 +7,24 @@ local function CJKFont(fs, p, s, f)
     end
 end
 
--- Unified Auras editor: renders the element list for a single spec bucket of
--- auras.elements (the v46 model from groupframes_aura_model.lua). Each element
--- is a filterStrip (Buffs/Debuffs) or a tracked element (icon/square/bar/tint).
--- Reuses the spell-picker UX (suggestion grid + manual spellID) salvaged from
--- the old tracked-aura/pinned editors.
+-- Shared aura element editor: renders the element list for a single spec bucket
+-- of auras.elements (the unified core/aura_elements.lua model). Each element is
+-- a filterStrip (Buffs/Debuffs), a tracked element (icon/square/bar/tint), or a
+-- missing-raid-buff watcher. The surface's capabilities table (opts.capabilities)
+-- gates which element types / display types / controls are offered so unit
+-- frames, buff borders and group frames can share ONE editor.
+--
+-- Moved from QUI_GroupFrames/groupframes/settings/group_frames_auras_editor.lua
+-- and generalized. The model import is now ns.AuraElements (the shared core
+-- model) — never the group-frames model shim.
 
-local Model = ns.QUI_GroupFramesAuraModel
-local AuraDefaults = ns.QUI_GroupFramesAuraDefaults
-local SpellList = ns.QUI_GroupFramesSpellListSettings
+local E = ns.AuraElements
+local SpellList = ns.QUI_AuraSpellList
 local SkinBase = ns.SkinBase
 local MissingRaidBuffs = ns.QUI_GroupFrameMissingRaidBuffs
 
-local AurasEditor = ns.QUI_GroupFramesAurasSettings or {}
-ns.QUI_GroupFramesAurasSettings = AurasEditor
+local AurasEditor = ns.QUI_AuraElementsEditor or {}
+ns.QUI_AuraElementsEditor = AurasEditor
 
 local FORM_ROW = 32
 local PAD = 10
@@ -53,19 +57,36 @@ local AURA_GROW_OPTIONS = {
     { value = "DOWN", text = ns.L["Down"] },
 }
 
--- The live buff/debuff strip is drawn by Blizzard's secure CustomAuraContainer,
--- which filters ONLY by Blizzard filter string. Off and Classification map to
--- those filter strings; the old per-spell Whitelist mode could not affect the
--- secure container, so it was removed from the editor (see BuildZoneFilters in
--- groupframes_auras.lua — off/whitelist already emitted the same bare filter).
+-- Filter mode. "off" rides the bare polarity; "flags" AND-composes raw
+-- AuraFilters tokens onto one filter string; "classify" (the canonical value —
+-- core E.CompileFilters keys on it; legacy "classification" is migrated to it)
+-- fans out one filter per ticked classification.
 local FILTER_MODE_OPTIONS = {
     { value = "off", text = ns.L["Off (Show All)"] },
-    { value = "classification", text = ns.L["Classification"] },
+    { value = "flags", text = ns.L["Filter Flags"] },
+    { value = "classify", text = ns.L["Classification"] },
 }
 
 local AURA_TYPE_OPTIONS = {
     { value = "HELPFUL", text = ns.L["Buffs (Helpful)"] },
     { value = "HARMFUL", text = ns.L["Debuffs (Harmful)"] },
+}
+
+local TRACKED_DISPLAY_OPTIONS_ALL = {
+    { value = "icon", text = ns.L["Icon"] },
+    { value = "square", text = ns.L["Colored Square"] },
+    { value = "bar", text = ns.L["Bar"] },
+    { value = "healthTint", text = ns.L["Health Bar Tint"] },
+}
+
+-- Container sort rules → AuraContainerSortMethod (see core/aura_glue.lua).
+local SORT_OPTIONS = {
+    { value = "INDEX", text = ns.L["Default Order"] },
+    { value = "EXPIRY", text = ns.L["Expiration"] },
+    { value = "EXPIRY_ONLY", text = ns.L["Expiration Only"] },
+    { value = "NAME", text = ns.L["Name"] },
+    { value = "NAME_ONLY", text = ns.L["Name Only"] },
+    { value = "BIG_DEFENSIVE", text = ns.L["Big Defensives First"] },
 }
 
 local HEALTH_TINT_ANIMATION_OPTIONS = {
@@ -91,8 +112,7 @@ local MISSING_RAID_BUFF_OPTIONS = {
     { key = "bronze", label = ns.L["Blessing of the Bronze (Evoker)"] },
 }
 
--- Buff/debuff classification options, keyed by aura type (mirrors the old
--- Buffs/Debuffs filtering cards).
+-- Buff/debuff classification options, keyed by aura type.
 local HELPFUL_CLASSIFICATIONS = {
     { key = "raid", label = ns.L["Raid"] },
     { key = "raidInCombat", label = ns.L["Raid (In Combat)"] },
@@ -104,10 +124,76 @@ local HELPFUL_CLASSIFICATIONS = {
 
 local HARMFUL_CLASSIFICATIONS = {
     { key = "raid", label = ns.L["Raid"] },
-    -- No raidInCombat: RAID_IN_COMBAT is a HELPFUL-only aura filter, so it only
-    -- exists on the buff side (a "HARMFUL|RAID_IN_COMBAT" filter is invalid).
+    -- No raidInCombat: RAID_IN_COMBAT is a HELPFUL-only aura filter.
     { key = "crowdControl", label = ns.L["Crowd Control"] },
 }
+
+-- Raw AuraFilters tokens offered in "flags" mode, per aura type. HELPFUL-only
+-- tokens are never offered on HARMFUL (a "HARMFUL|RAID_IN_COMBAT"-class combo
+-- hard-errors in C_UnitAuras; the model also drops them defensively).
+local HELPFUL_FLAG_TOKENS = {
+    { token = "PLAYER", label = ns.L["Player"] },
+    { token = "RAID", label = ns.L["Raid"] },
+    { token = "CANCELABLE", label = ns.L["Cancelable"] },
+    { token = "NOT_CANCELABLE", label = ns.L["Not Cancelable"] },
+    { token = "BIG_DEFENSIVE", label = ns.L["Big Defensive"] },
+    { token = "EXTERNAL_DEFENSIVE", label = ns.L["External Defensive"] },
+}
+
+local HARMFUL_FLAG_TOKENS = {
+    { token = "PLAYER", label = ns.L["Player"] },
+    { token = "RAID", label = ns.L["Raid"] },
+    { token = "INCLUDE_NAME_PLATE_ONLY", label = ns.L["Nameplate Auras Only"] },
+    { token = "RAID_PLAYER_DISPELLABLE", label = ns.L["Dispellable by Me"] },
+    { token = "CROWD_CONTROL", label = ns.L["Crowd Control"] },
+}
+
+-- Full GF capability set. Used as the default when opts.capabilities is nil so
+-- the GF mount (and anything mid-migration) keeps working. defaultBucketFn and
+-- suggestions resolve lazily from the GF defaults module (always loaded by the
+-- time RenderAuras runs), so this file carries no load-order dependency on it.
+local function DefaultCapabilities()
+    local AuraDefaults = ns.QUI_GroupFramesAuraDefaults
+    return {
+        elementTypes        = { filterStrip = true, tracked = true, missingRaidBuff = true },
+        trackedDisplayTypes = { icon = true, square = true, bar = true, healthTint = true },
+        cancelEligible      = false,
+        maxStripElements    = 4,
+        allowSpecOverride   = true,
+        defaultBucketFn     = AuraDefaults and AuraDefaults.DefaultStripBucket or nil,
+        suggestions         = AuraDefaults and AuraDefaults.GetSuggestionSpells or nil,
+    }
+end
+
+local function ResolveCapabilities(opts)
+    local caps = type(opts) == "table" and opts.capabilities
+    if type(caps) ~= "table" then
+        return DefaultCapabilities()
+    end
+    caps.elementTypes = caps.elementTypes or {}
+    caps.trackedDisplayTypes = caps.trackedDisplayTypes or {}
+    return caps
+end
+
+local function BuildTrackedDisplayOptions(trackedDisplayTypes)
+    local out = {}
+    for _, opt in ipairs(TRACKED_DISPLAY_OPTIONS_ALL) do
+        if not trackedDisplayTypes or trackedDisplayTypes[opt.value] then
+            out[#out + 1] = opt
+        end
+    end
+    if #out == 0 then out[1] = TRACKED_DISPLAY_OPTIONS_ALL[1] end
+    return out
+end
+
+local function DefaultTrackedDisplay(caps)
+    local t = caps and caps.trackedDisplayTypes
+    if type(t) ~= "table" then return "icon" end
+    for _, v in ipairs({ "icon", "square", "bar", "healthTint" }) do
+        if t[v] then return v end
+    end
+    return "icon"
+end
 
 local function GetGUI()
     return QUI and QUI.GUI or nil
@@ -145,9 +231,8 @@ local function GetSpellTexture(spellID)
     return FALLBACK_ICON
 end
 
--- Apply the QUI settings font (Quazii) + standard text colors to the spell-ID
--- input pieces, so they match the rest of the settings UI instead of Blizzard's
--- GameFont + hardcoded greys. Any of box/label/addText may be nil.
+-- Apply the QUI settings font + standard text colors to the spell-ID input
+-- pieces. Any of box/label/addText may be nil.
 local function StyleSpellInputText(GUI, C, box, label, addText)
     local fp = (GUI and GUI.FONT_PATH) or [[Interface\AddOns\QUI\assets\Quazii.ttf]]
     local tc = (C and C.text) or { 1, 1, 1, 1 }
@@ -199,10 +284,11 @@ local function GetElementLabel(element)
     return name, GetSpellTexture(first)
 end
 
-local function GetSuggestionSpells(bucket)
-    if AuraDefaults and type(AuraDefaults.GetSuggestionSpells) == "function" then
-        -- Suggestions exclude spells already tracked in this bucket. Flatten the
-        -- bucket's tracked spell IDs into entry stubs the defaults engine reads.
+-- Spell suggestions for the tracked picker, routed through the surface's
+-- capabilities.suggestions provider (nil => no suggestions). Suggestions exclude
+-- spells already tracked in this bucket.
+local function GetSuggestionSpells(caps, bucket)
+    if caps and type(caps.suggestions) == "function" then
         local existing = {}
         for _, element in ipairs(bucket or {}) do
             if element.mode == "tracked" then
@@ -211,7 +297,7 @@ local function GetSuggestionSpells(bucket)
                 end
             end
         end
-        return AuraDefaults.GetSuggestionSpells(existing)
+        return caps.suggestions(existing)
     end
     return {}
 end
@@ -258,7 +344,7 @@ local function AddPlacementWidgets(ctx, element, includeStrip)
     }))
 end
 
-local function AddDurationTextWidgets(ctx, element)
+local function AddSwipeWidgets(ctx, element)
     local GUI = ctx.GUI
     local row = ctx.AddFormRow
     local onChange = ctx.onChange
@@ -272,27 +358,42 @@ local function AddDurationTextWidgets(ctx, element)
     row(ns.L["Swipe Style"], GUI:CreateFormDropdown(ctx.detailArea, nil, SWIPE_STYLE_OPTIONS, "swipeStyle", element, onChange, {
         description = ns.L["Radial or linear (horizontal/vertical) cooldown animation over aura icons."],
     }))
-    row(ns.L["Show Duration Text"], GUI:CreateFormCheckbox(ctx.detailArea, nil, "showDurationText", element, onChange, {
-        description = ns.L["Show the remaining-time countdown text on each icon."],
-    }))
-    row(ns.L["Duration Font Size"], GUI:CreateFormSlider(ctx.detailArea, nil, 6, 24, 1, "durationFontSize", element, onChange, { deferOnDrag = true }, {
-        description = ns.L["Font size used for the remaining-time text."],
-    }))
 end
 
--- Duration color-coding toggles. filterStrip-only (the model defines these
--- fields on filter strips, default true); the renderer reads them to color the
--- countdown text by remaining time and pulse icons near expiry.
-local function AddDurationColorWidgets(ctx, element)
+-- Shared text-region widget block for the duration{} / stack{} sub-tables. key
+-- is "duration" or "stack"; the widgets write element[key].{show,fontSize,
+-- anchor,offsetX,offsetY,color}. label is the region's display name.
+local function AddTextRegionWidgets(ctx, element, key, label)
     local GUI = ctx.GUI
+    local C = ctx.C
     local row = ctx.AddFormRow
+    local add = ctx.AddDetailWidget
     local onChange = ctx.onChange
 
-    row(ns.L["Color Duration Text"], GUI:CreateFormCheckbox(ctx.detailArea, nil, "showDurationColor", element, onChange, {
-        description = ns.L["Tint the remaining-time text by how much duration is left (e.g. red when low)."],
+    if type(element[key]) ~= "table" then element[key] = {} end
+    local region = element[key]
+
+    local header = GUI:CreateLabel(ctx.detailArea, "|cFFAAAAAA" .. label .. "|r", 11, C.textMuted)
+    header:SetJustifyH("LEFT")
+    add(header, 18, true)
+
+    row(ns.L["Show"], GUI:CreateFormCheckbox(ctx.detailArea, nil, "show", region, onChange, {
+        description = string.format(ns.L["Show the %s on each icon."], label),
     }))
-    row(ns.L["Pulse When Expiring"], GUI:CreateFormCheckbox(ctx.detailArea, nil, "showExpiringPulse", element, onChange, {
-        description = ns.L["Pulse the icon as the aura nears expiry to draw attention."],
+    row(ns.L["Font Size"], GUI:CreateFormSlider(ctx.detailArea, nil, 6, 24, 1, "fontSize", region, onChange, { deferOnDrag = true }, {
+        description = string.format(ns.L["Font size used for the %s."], label),
+    }))
+    row(ns.L["Text Anchor"], GUI:CreateFormDropdown(ctx.detailArea, nil, NINE_POINT_OPTIONS, "anchor", region, onChange, {
+        description = ns.L["Where on the icon this text sits."],
+    }))
+    row(ns.L["X Offset"], GUI:CreateFormSlider(ctx.detailArea, nil, -30, 30, 1, "offsetX", region, onChange, { deferOnDrag = true }, {
+        description = ns.L["Horizontal pixel offset from the text anchor."],
+    }))
+    row(ns.L["Y Offset"], GUI:CreateFormSlider(ctx.detailArea, nil, -30, 30, 1, "offsetY", region, onChange, { deferOnDrag = true }, {
+        description = ns.L["Vertical pixel offset from the text anchor."],
+    }))
+    row(ns.L["Text Color"], GUI:CreateFormColorPicker(ctx.detailArea, nil, "color", region, onChange, nil, {
+        description = string.format(ns.L["Color of the %s."], label),
     }))
 end
 
@@ -301,6 +402,7 @@ local function AddFilterStripConfig(ctx, element)
     local row = ctx.AddFormRow
     local onChange = ctx.onChange
     local rebuild = ctx.rebuild
+    local caps = ctx.caps
 
     row(ns.L["Aura Type"], GUI:CreateFormDropdown(ctx.detailArea, nil, AURA_TYPE_OPTIONS, "auraType", element, function()
         ctx.NotifyChanged()
@@ -310,18 +412,31 @@ local function AddFilterStripConfig(ctx, element)
     }))
 
     AddPlacementWidgets(ctx, element, true)
-    AddDurationTextWidgets(ctx, element)
-    AddDurationColorWidgets(ctx, element)
+    AddSwipeWidgets(ctx, element)
+    AddTextRegionWidgets(ctx, element, "duration", ns.L["Duration Text"])
+    AddTextRegionWidgets(ctx, element, "stack", ns.L["Stack Text"])
 
-    -- Filtering. The live buff/debuff strip is a secure CustomAuraContainer that
-    -- filters ONLY by Blizzard filter string, so only Off and Classification
-    -- (which map to those strings) are offered.
+    row(ns.L["Sort Order"], GUI:CreateFormDropdown(ctx.detailArea, nil, SORT_OPTIONS, "sortRule", element, onChange, {
+        description = ns.L["Order icons in this strip are displayed in."],
+    }))
+    row(ns.L["Reverse Sort"], GUI:CreateFormCheckbox(ctx.detailArea, nil, "sortReverse", element, onChange, {
+        description = ns.L["Reverse the sort order of icons in this strip."],
+    }))
+
+    -- Right-click-cancel is only honored on cancel-eligible (player-unit) hosts
+    -- for HELPFUL strips, so only offer the toggle there.
+    if caps.cancelEligible and element.auraType == "HELPFUL" then
+        row(ns.L["Right-Click to Cancel"], GUI:CreateFormCheckbox(ctx.detailArea, nil, "rightClickCancel", element, onChange, {
+            description = ns.L["Allow right-clicking an icon in this strip to cancel the aura."],
+        }))
+    end
+
     row(ns.L["Filter Mode"], GUI:CreateFormDropdown(ctx.detailArea, nil, FILTER_MODE_OPTIONS, "filterMode", element, function()
         ctx.NotifyChanged()
         rebuild()
     end, {
-        description = ns.L["Off shows everything; Classification shows only the categories ticked below."],
-        keywords = { "filter", "include" },
+        description = ns.L["Off shows everything; Flags composes the raw aura filter tokens ticked below; Classification shows only the categories ticked below."],
+        keywords = { "filter", "include", "flags" },
     }))
     row(ns.L["Only My Auras"], GUI:CreateFormCheckbox(ctx.detailArea, nil, "onlyMine", element, onChange, {
         description = ns.L["Only show auras you applied."],
@@ -335,7 +450,7 @@ local function AddFilterStripConfig(ctx, element)
     }))
 
     local filterMode = element.filterMode or "off"
-    if filterMode == "classification" then
+    if filterMode == "classify" then
         if type(element.classifications) ~= "table" then
             element.classifications = {}
         end
@@ -345,60 +460,188 @@ local function AddFilterStripConfig(ctx, element)
                 description = ns.L["Include auras Blizzard flags as "] .. entry.label .. ".",
             }))
         end
+    elseif filterMode == "flags" then
+        if type(element.filterFlags) ~= "table" then
+            element.filterFlags = {}
+        end
+        local tokens = element.auraType == "HARMFUL" and HARMFUL_FLAG_TOKENS or HELPFUL_FLAG_TOKENS
+        for _, entry in ipairs(tokens) do
+            row(entry.label, GUI:CreateFormCheckbox(ctx.detailArea, nil, entry.token, element.filterFlags, onChange, {
+                description = string.format(ns.L["Require the %s aura filter flag."], entry.label),
+            }))
+        end
     end
 end
 
--- Tracked element config. After the secure-container aura cutover the only LIVE
--- tracked display is healthTint (the dispel/aggro health-bar tint, rendered by
--- the engine); the old icon/square/bar tracked WATCHERS were dropped from the
--- engine and can no longer be created here. healthTint watches the spells it
--- carries and tints the health bar while any are present.
---
--- Legacy profiles may still hold icon/square/bar tracked elements (the model and
--- preview renderer keep rendering them). We don't expose the removed controls for
--- those — we show a short read-only notice instead — so the editor never crashes
--- on an old element but is honest that its display is no longer configurable.
-local function AddTrackedConfig(ctx, element)
+-- Spell-list editor for a tracked element's spells (an ARRAY). Reuses the shared
+-- spell-list widget over a map view synced back to the array on every change,
+-- plus a manual Spell ID input.
+local function AddTrackedSpellListEditor(ctx, element)
     local GUI = ctx.GUI
     local C = ctx.C
-    local row = ctx.AddFormRow
     local add = ctx.AddDetailWidget
     local onChange = ctx.onChange
 
-    -- No embedded spell editor: a tracked element carries the single spell it
-    -- was created with (top-level Spell ID box / picker). Spells are added only
-    -- from there, one tracked element per spell.
+    if type(element.spells) ~= "table" then element.spells = {} end
 
-    local displayType = element.displayType or "icon"
-    if displayType ~= "healthTint" then
-        -- Legacy icon/square/bar watcher: removed feature. Degrade gracefully —
-        -- the model/preview still render it, but its display is no longer
-        -- editable. Surface a notice and stop (no removed controls).
-        local notice = GUI:CreateLabel(ctx.detailArea,
-            "|cFFAAAAAA" .. ns.L["This tracked display is no longer available. Delete it, or keep it as-is."] .. "|r",
-            11, C.textMuted)
-        notice:SetJustifyH("LEFT")
-        add(notice, 18, true)
+    local header = GUI:CreateLabel(ctx.detailArea,
+        "|cFFAAAAAA" .. ns.L["Tracked Spells (click a suggestion or enter a Spell ID):"] .. "|r", 11, C.textMuted)
+    header:SetJustifyH("LEFT")
+    add(header, 18, true)
+
+    if not (SpellList and SpellList.CreateListFrame) then
         return
     end
 
-    if type(element.color) ~= "table" then
-        element.color = { 0.2, 0.8, 0.2, 1 }
-    end
-    if type(element.healthTint) ~= "table" then
-        element.healthTint = {}
-    end
+    -- Manual Spell ID add row.
+    local manualRow = CreateFrame("Frame", nil, ctx.detailArea)
+    manualRow:SetHeight(24)
 
+    local inputBox = CreateFrame("EditBox", nil, manualRow, "BackdropTemplate")
+    inputBox:SetSize(80, 20)
+    inputBox:SetPoint("LEFT", 0, 0)
+    SkinBase.ApplyPixelBackdrop(inputBox, 1, true, false, { 0.25, 0.25, 0.25, 1 }, { 0.06, 0.06, 0.08, 1 })
+    inputBox:SetFontObject("GameFontNormalSmall")
+    inputBox:SetAutoFocus(false)
+    inputBox:SetMaxLetters(10)
+    inputBox:SetTextInsets(4, 4, 0, 0)
+    inputBox:SetScript("OnEscapePressed", function(self)
+        self:ClearFocus()
+    end)
+
+    local inputLabel = manualRow:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    inputLabel:SetPoint("LEFT", inputBox, "RIGHT", 4, 0)
+    inputLabel:SetText(ns.L["Spell ID"])
+    inputLabel:SetTextColor(0.5, 0.5, 0.5)
+
+    local addManualButton = CreateFrame("Button", nil, manualRow, "BackdropTemplate")
+    addManualButton:SetSize(40, 20)
+    addManualButton:SetPoint("LEFT", inputLabel, "RIGHT", 8, 0)
+    SkinBase.ApplyPixelBackdrop(addManualButton, 1, true, false, { 0.3, 0.3, 0.3, 1 }, { 0.15, 0.15, 0.15, 1 })
+    local addManualText = addManualButton:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    addManualText:SetPoint("CENTER")
+    addManualText:SetText(ns.L["Add"])
+    StyleSpellInputText(GUI, C, inputBox, inputLabel, addManualText)
+
+    local function CommitManual()
+        local spellID = tonumber(inputBox:GetText())
+        if spellID and spellID > 0 then
+            local exists = false
+            for _, sid in ipairs(element.spells) do
+                if sid == spellID then exists = true break end
+            end
+            if not exists then
+                element.spells[#element.spells + 1] = spellID
+            end
+            inputBox:SetText("")
+            inputBox:ClearFocus()
+            onChange()
+            ctx.rebuild()
+        end
+    end
+    addManualButton:SetScript("OnClick", CommitManual)
+    inputBox:SetScript("OnEnterPressed", CommitManual)
+    add(manualRow, 26, true)
+
+    -- Preset toggle rows + "Other" remove rows over a map view of element.spells.
+    local mapView = {}
+    for _, sid in ipairs(element.spells) do mapView[sid] = true end
+    local presets = (SpellList.GetDefaultPresets and SpellList.GetDefaultPresets()) or {}
+    local listFrame = SpellList.CreateListFrame(ctx.detailArea, mapView, presets, function()
+        local arr = element.spells
+        for i = #arr, 1, -1 do arr[i] = nil end
+        for sid in pairs(mapView) do arr[#arr + 1] = sid end
+        table.sort(arr)
+        onChange()
+    end, function()
+        ctx.rebuild()
+    end)
+    add(listFrame, math.max(1, listFrame:GetHeight() or 1), true)
+end
+
+-- Tracked element config. displayType picks the LIVE display: icon strip,
+-- colored square, duration bar, or health-bar tint. The available displayTypes
+-- are gated by capabilities.trackedDisplayTypes (a surface without a health-bar
+-- would omit healthTint, etc.).
+local function AddTrackedConfig(ctx, element)
+    local GUI = ctx.GUI
+    local row = ctx.AddFormRow
+    local onChange = ctx.onChange
+    local rebuild = ctx.rebuild
+    local caps = ctx.caps
+
+    local displayOptions = BuildTrackedDisplayOptions(caps.trackedDisplayTypes)
+    row(ns.L["Display Type"], GUI:CreateFormDropdown(ctx.detailArea, nil, displayOptions, "displayType", element, function()
+        ctx.NotifyChanged()
+        rebuild()
+    end, {
+        description = ns.L["How this tracked aura displays: an icon strip, a colored square, a duration bar, or a health-bar tint."],
+    }))
+    row(ns.L["Aura Type"], GUI:CreateFormDropdown(ctx.detailArea, nil, AURA_TYPE_OPTIONS, "auraType", element, onChange, {
+        description = ns.L["Whether this tracked aura is a helpful buff or a harmful debuff."],
+    }))
     row(ns.L["Only My Cast"], GUI:CreateFormCheckbox(ctx.detailArea, nil, "onlyMine", element, onChange, {
         description = ns.L["Only track this aura when you applied it."],
         keywords = { "Only Mine", "mine only" },
     }))
-    row(ns.L["Tint Color"], GUI:CreateFormColorPicker(ctx.detailArea, nil, "color", element, onChange, nil, {
-        description = ns.L["Color tint applied across the health bar while the aura is active."],
-    }))
-    row(ns.L["Tint Animation"], GUI:CreateFormDropdown(ctx.detailArea, nil, HEALTH_TINT_ANIMATION_OPTIONS, "animation", element.healthTint, onChange, {
-        description = ns.L["How the health-bar tint appears when the aura is detected."],
-    }))
+
+    local displayType = element.displayType or "icon"
+    if displayType == "healthTint" then
+        if type(element.color) ~= "table" then element.color = { 0.2, 0.8, 0.2, 1 } end
+        if type(element.healthTint) ~= "table" then element.healthTint = {} end
+        row(ns.L["Tint Color"], GUI:CreateFormColorPicker(ctx.detailArea, nil, "color", element, onChange, nil, {
+            description = ns.L["Color tint applied across the health bar while the aura is active."],
+        }))
+        row(ns.L["Tint Animation"], GUI:CreateFormDropdown(ctx.detailArea, nil, HEALTH_TINT_ANIMATION_OPTIONS, "animation", element.healthTint, onChange, {
+            description = ns.L["How the health-bar tint appears when the aura is detected."],
+        }))
+    elseif displayType == "square" then
+        if type(element.color) ~= "table" then element.color = { 0.2, 0.8, 0.2, 1 } end
+        row(ns.L["Square Size"], GUI:CreateFormSlider(ctx.detailArea, nil, 4, 40, 1, "iconSize", element, onChange, { deferOnDrag = true }, {
+            description = ns.L["Pixel size of the colored square."],
+        }))
+        row(ns.L["Anchor"], GUI:CreateFormDropdown(ctx.detailArea, nil, NINE_POINT_OPTIONS, "anchor", element, onChange, {
+            description = ns.L["Where on the frame the square is anchored."],
+        }))
+        row(ns.L["X Offset"], GUI:CreateFormSlider(ctx.detailArea, nil, -100, 100, 1, "offsetX", element, onChange, { deferOnDrag = true }, {
+            description = ns.L["Horizontal pixel offset from the anchor."],
+        }))
+        row(ns.L["Y Offset"], GUI:CreateFormSlider(ctx.detailArea, nil, -100, 100, 1, "offsetY", element, onChange, { deferOnDrag = true }, {
+            description = ns.L["Vertical pixel offset from the anchor."],
+        }))
+        row(ns.L["Square Color"], GUI:CreateFormColorPicker(ctx.detailArea, nil, "color", element, onChange, nil, {
+            description = ns.L["Fill color of the colored square."],
+        }))
+    elseif displayType == "bar" then
+        if type(element.color) ~= "table" then element.color = { 0.2, 0.8, 0.2, 1 } end
+        if type(element.bar) ~= "table" then element.bar = { thickness = 12, length = 48 } end
+        row(ns.L["Anchor"], GUI:CreateFormDropdown(ctx.detailArea, nil, NINE_POINT_OPTIONS, "anchor", element, onChange, {
+            description = ns.L["Where on the frame the bar is anchored."],
+        }))
+        row(ns.L["X Offset"], GUI:CreateFormSlider(ctx.detailArea, nil, -100, 100, 1, "offsetX", element, onChange, { deferOnDrag = true }, {
+            description = ns.L["Horizontal pixel offset from the anchor."],
+        }))
+        row(ns.L["Y Offset"], GUI:CreateFormSlider(ctx.detailArea, nil, -100, 100, 1, "offsetY", element, onChange, { deferOnDrag = true }, {
+            description = ns.L["Vertical pixel offset from the anchor."],
+        }))
+        row(ns.L["Bar Color"], GUI:CreateFormColorPicker(ctx.detailArea, nil, "color", element, onChange, nil, {
+            description = ns.L["Fill color of the bar while the aura is active."],
+        }))
+        row(ns.L["Thickness"], GUI:CreateFormSlider(ctx.detailArea, nil, 1, 40, 1, "thickness", element.bar, onChange, { deferOnDrag = true }, {
+            description = ns.L["Pixel thickness of the bar."],
+        }))
+        row(ns.L["Length"], GUI:CreateFormSlider(ctx.detailArea, nil, 4, 200, 1, "length", element.bar, onChange, { deferOnDrag = true }, {
+            description = ns.L["Pixel length of the bar."],
+        }))
+    else
+        -- icon
+        AddPlacementWidgets(ctx, element, true)
+        AddSwipeWidgets(ctx, element)
+        AddTextRegionWidgets(ctx, element, "duration", ns.L["Duration Text"])
+        AddTextRegionWidgets(ctx, element, "stack", ns.L["Stack Text"])
+    end
+
+    AddTrackedSpellListEditor(ctx, element)
 end
 
 local function AddMissingRaidBuffConfig(ctx, element)
@@ -701,53 +944,65 @@ local function RebuildList(ctx)
         ctx.detailArea:Hide()
     end
 
-    -- Add controls.
-    listY = listY - 8
-    ctx.addRow:ClearAllPoints()
-    ctx.addRow:SetPoint("TOPLEFT", ctx.listArea, "TOPLEFT", 0, listY)
-    ctx.addRow:SetPoint("TOPRIGHT", ctx.listArea, "TOPRIGHT", 0, listY)
-    ctx.addRow:Show()
-    listY = listY - 30
+    -- Add controls (only when the surface offers addable element types).
+    if ctx.hasAddButtons then
+        ctx.UpdateAddStripState()
+        listY = listY - 8
+        ctx.addRow:ClearAllPoints()
+        ctx.addRow:SetPoint("TOPLEFT", ctx.listArea, "TOPLEFT", 0, listY)
+        ctx.addRow:SetPoint("TOPRIGHT", ctx.listArea, "TOPRIGHT", 0, listY)
+        ctx.addRow:Show()
+        listY = listY - 30
+    else
+        ctx.addRow:Hide()
+    end
 
-    -- Tracked-aura picker (suggestion grid + manual spellID).
-    listY = listY - 4
-    ctx.pickerHeader:ClearAllPoints()
-    ctx.pickerHeader:SetPoint("TOPLEFT", ctx.listArea, "TOPLEFT", 0, listY)
-    ctx.pickerHeader:Show()
-    listY = listY - 16
+    -- Tracked-aura picker (suggestion grid + manual spellID) — tracked surfaces
+    -- only.
+    if ctx.trackedEnabled then
+        listY = listY - 4
+        ctx.pickerHeader:ClearAllPoints()
+        ctx.pickerHeader:SetPoint("TOPLEFT", ctx.listArea, "TOPLEFT", 0, listY)
+        ctx.pickerHeader:Show()
+        listY = listY - 16
 
-    ctx.inputRow:ClearAllPoints()
-    ctx.inputRow:SetPoint("TOPLEFT", ctx.listArea, "TOPLEFT", 0, listY)
-    ctx.inputRow:SetPoint("TOPRIGHT", ctx.listArea, "TOPRIGHT", 0, listY)
-    listY = listY - 28
+        ctx.inputRow:ClearAllPoints()
+        ctx.inputRow:SetPoint("TOPLEFT", ctx.listArea, "TOPLEFT", 0, listY)
+        ctx.inputRow:SetPoint("TOPRIGHT", ctx.listArea, "TOPRIGHT", 0, listY)
+        ctx.inputRow:Show()
+        listY = listY - 28
 
-    local suggestions = GetSuggestionSpells(bucket)
-    if #suggestions > 0 then
-        -- Prefer the explicit width threaded from the host section; it is stable
-        -- across the synchronous render and the in-place rebuild. Fall back to
-        -- the live width, then a fixed default, only when none was supplied.
-        local contentWidth = ctx.contentWidth or ctx.listArea:GetWidth()
-        if type(contentWidth) ~= "number" or contentWidth < SUGGEST_CELL_STRIDE then
-            contentWidth = 480
+        local suggestions = GetSuggestionSpells(ctx.caps, bucket)
+        if #suggestions > 0 then
+            -- Prefer the explicit width threaded from the host section; it is stable
+            -- across the synchronous render and the in-place rebuild. Fall back to
+            -- the live width, then a fixed default, only when none was supplied.
+            local contentWidth = ctx.contentWidth or ctx.listArea:GetWidth()
+            if type(contentWidth) ~= "number" or contentWidth < SUGGEST_CELL_STRIDE then
+                contentWidth = 480
+            end
+            local cols = math.max(1, math.floor(contentWidth / SUGGEST_CELL_STRIDE))
+            local rowsUsed = math.ceil(#suggestions / cols)
+            for sIndex, spell in ipairs(suggestions) do
+                local cell = ctx.AcquireSuggestCell()
+                local col = (sIndex - 1) % cols
+                local rIdx = math.floor((sIndex - 1) / cols)
+                cell:SetParent(ctx.listArea)
+                cell:ClearAllPoints()
+                cell:SetPoint("TOPLEFT", col * SUGGEST_CELL_STRIDE, listY - (rIdx * SUGGEST_CELL_STRIDE))
+                cell._spell = spell
+                cell.icon:SetTexture(spell.icon or GetSpellTexture(spell.id))
+                cell:Show()
+                cell:SetScript("OnClick", function()
+                    ctx.AddTracked(spell.id)
+                end)
+                ctx.activeSuggestRows[#ctx.activeSuggestRows + 1] = cell
+            end
+            listY = listY - (rowsUsed * SUGGEST_CELL_STRIDE) - 4
         end
-        local cols = math.max(1, math.floor(contentWidth / SUGGEST_CELL_STRIDE))
-        local rowsUsed = math.ceil(#suggestions / cols)
-        for sIndex, spell in ipairs(suggestions) do
-            local cell = ctx.AcquireSuggestCell()
-            local col = (sIndex - 1) % cols
-            local rIdx = math.floor((sIndex - 1) / cols)
-            cell:SetParent(ctx.listArea)
-            cell:ClearAllPoints()
-            cell:SetPoint("TOPLEFT", col * SUGGEST_CELL_STRIDE, listY - (rIdx * SUGGEST_CELL_STRIDE))
-            cell._spell = spell
-            cell.icon:SetTexture(spell.icon or GetSpellTexture(spell.id))
-            cell:Show()
-            cell:SetScript("OnClick", function()
-                ctx.AddTracked(spell.id)
-            end)
-            ctx.activeSuggestRows[#ctx.activeSuggestRows + 1] = cell
-        end
-        listY = listY - (rowsUsed * SUGGEST_CELL_STRIDE) - 4
+    else
+        ctx.pickerHeader:Hide()
+        ctx.inputRow:Hide()
     end
 
     local contentHeight = math.max(1, math.abs(listY))
@@ -769,20 +1024,37 @@ end
 -- opts is optional. opts.forceSelectedIndex seeds the initially-expanded element
 -- (used by the headless options-search harvest so per-element config labels get
 -- rendered and captured). In-game callers omit opts and the list opens collapsed.
+-- opts.capabilities gates which element types / display types / controls the
+-- surface offers (see DefaultCapabilities for the shape; nil => full GF set).
 function AurasEditor.RenderAuras(host, auras, bucketKey, onChange, opts)
     local GUI = GetGUI()
-    if not host or not GUI or type(auras) ~= "table" or not Model then
+    if not host or not GUI or type(auras) ~= "table" or not E then
         return 1
     end
+
+    local caps = ResolveCapabilities(opts)
 
     if type(auras.elements) ~= "table" then
         auras.elements = {}
     end
+    -- Seed the surface's shipped defaults once, threading its default bucket fn
+    -- (never the one-arg legacy form — core E.EnsureSeeded seeds an EMPTY bucket
+    -- and latches when handed no fn). Idempotent: the runtime host normally seeds
+    -- first, so this short-circuits on auras.elementsSeeded.
+    if E.EnsureSeeded then
+        E.EnsureSeeded(auras, caps.defaultBucketFn)
+    end
+
     bucketKey = bucketKey or "*"
+    -- Surfaces without spec overrides only ever edit the shared "*" bucket; never
+    -- honor a stray spec bucketKey there (their host cannot create one).
+    if not caps.allowSpecOverride then
+        bucketKey = "*"
+    end
     -- Only the shared "*" bucket is auto-created. Spec buckets must NOT be
     -- created merely by viewing/editing — their presence is the override flag
-    -- (see Model.EnableSpecOverride), so the schema only calls RenderAuras for a
-    -- spec once override is on (bucket already exists).
+    -- (see AuraElements.EnableSpecOverride), so the schema only calls RenderAuras
+    -- for a spec once override is on (bucket already exists).
     if bucketKey == "*" and type(auras.elements["*"]) ~= "table" then
         auras.elements["*"] = {}
     end
@@ -805,17 +1077,30 @@ function AurasEditor.RenderAuras(host, auras, bucketKey, onChange, opts)
 
     local pickerHeader = listArea:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     pickerHeader:SetJustifyH("LEFT")
-    pickerHeader:SetText("|cFFAAAAAA" .. ns.L["Add Health Tint Watcher (click a suggestion or enter a Spell ID):"] .. "|r")
+    pickerHeader:SetText("|cFFAAAAAA" .. ns.L["Add Tracked Aura (click a suggestion or enter a Spell ID):"] .. "|r")
 
-    -- Add buttons row (Filter strip / Missing raid buff).
+    -- Add buttons row (Filter strip / Missing raid buff), gated by the surface's
+    -- element types. Anchored left-to-right in the order created.
     local addRow = CreateFrame("Frame", nil, listArea)
     addRow:SetHeight(26)
-    local addStripButton = GUI:CreateButton(addRow, ns.L["Add Filter Strip"], 130, 22)
-    addStripButton:SetPoint("LEFT", 0, 0)
-    local addMissingBuffButton = GUI:CreateButton(addRow, ns.L["Add Missing Raid Buff"], 170, 22)
-    addMissingBuffButton:SetPoint("LEFT", addStripButton, "RIGHT", 8, 0)
+    local elementTypes = caps.elementTypes or {}
+    local addStripButton, addMissingBuffButton
+    if elementTypes.filterStrip then
+        addStripButton = GUI:CreateButton(addRow, ns.L["Add Filter Strip"], 130, 22)
+        addStripButton:ClearAllPoints()
+        addStripButton:SetPoint("LEFT", addRow, "LEFT", 0, 0)
+    end
+    if elementTypes.missingRaidBuff then
+        addMissingBuffButton = GUI:CreateButton(addRow, ns.L["Add Missing Raid Buff"], 170, 22)
+        addMissingBuffButton:ClearAllPoints()
+        if addStripButton then
+            addMissingBuffButton:SetPoint("LEFT", addStripButton, "RIGHT", 8, 0)
+        else
+            addMissingBuffButton:SetPoint("LEFT", addRow, "LEFT", 0, 0)
+        end
+    end
 
-    -- Manual spellID input row.
+    -- Manual spellID input row (tracked picker).
     local inputRow = CreateFrame("Frame", nil, listArea)
     inputRow:SetHeight(24)
 
@@ -856,6 +1141,7 @@ function AurasEditor.RenderAuras(host, auras, bucketKey, onChange, opts)
         C = C,
         host = host,
         auras = auras,
+        caps = caps,
         bucket = auras.elements[bucketKey],
         onChangeRaw = onChange,
         listArea = listArea,
@@ -863,10 +1149,13 @@ function AurasEditor.RenderAuras(host, auras, bucketKey, onChange, opts)
         detailArea = detailArea,
         pickerHeader = pickerHeader,
         addRow = addRow,
+        addStripButton = addStripButton,
         inputRow = inputRow,
         activeRows = activeRows,
         activeSuggestRows = activeSuggestRows,
         selectedIndex = nil,
+        hasAddButtons = (addStripButton ~= nil) or (addMissingBuffButton ~= nil),
+        trackedEnabled = elementTypes.tracked and true or false,
         -- Explicit content width from the host section (see group_frames_schema
         -- RenderAurasSection). Used for the suggestion-grid column math so the
         -- list height is identical on the synchronous tab render and on the
@@ -894,7 +1183,8 @@ function AurasEditor.RenderAuras(host, auras, bucketKey, onChange, opts)
     end
 
     -- Re-entrancy guard: a child widget that lays itself out synchronously inside
-    -- a RebuildList pass could fire a callback that calls rebuild again, re-entering
+    -- a RebuildList pass (the spell-list frame's CreateListFrame fires its
+    -- onLayoutChanged) could fire a callback that calls rebuild again, re-entering
     -- RebuildList -> RenderDetail -> ... -> rebuild without end. The outer pass
     -- already reads each widget's final height as it returns, so any rebuild
     -- requested mid-pass is redundant -- drop it.
@@ -922,6 +1212,29 @@ function AurasEditor.RenderAuras(host, auras, bucketKey, onChange, opts)
     ctx.RegisterDetailWidget = function(widget)
         detailWidgets[#detailWidgets + 1] = widget
         return widget
+    end
+
+    -- Update the "Add Filter Strip" button's enabled state against the surface's
+    -- maxStripElements cap (counts ENABLED filter strips). At cap the button
+    -- dims and clicks are swallowed with a tooltip.
+    ctx.UpdateAddStripState = function()
+        local b = ctx.addStripButton
+        if not b then return end
+        local cap = ctx.caps.maxStripElements
+        if not cap then
+            b._atCap = false
+            b:SetAlpha(1)
+            return
+        end
+        local n = 0
+        for _, e in ipairs(ctx.bucket) do
+            if e.mode == "filterStrip" and e.enabled ~= false then
+                n = n + 1
+            end
+        end
+        local atCap = n >= cap
+        b._atCap = atCap
+        b:SetAlpha(atCap and 0.4 or 1)
     end
 
     ctx.AcquireRow = function()
@@ -1043,12 +1356,10 @@ function AurasEditor.RenderAuras(host, auras, bucketKey, onChange, opts)
         wipe(activeSuggestRows)
     end
 
-    -- New tracked elements are health-bar tint watchers: the icon/square/bar
-    -- tracked displays left the engine in the aura cutover, so healthTint is the
-    -- only LIVE tracked display the editor can create.
+    -- New tracked elements default to the surface's preferred display type.
     ctx.AddTracked = function(spellID)
         spellID = tonumber(spellID) or spellID
-        local element = Model.NewTrackedElement(spellID and { spellID } or {}, "healthTint")
+        local element = E.NewTrackedElement(spellID and { spellID } or {}, DefaultTrackedDisplay(ctx.caps))
         ctx.bucket[#ctx.bucket + 1] = element
         ctx.selectedIndex = #ctx.bucket
         NotifyChanged()
@@ -1064,7 +1375,7 @@ function AurasEditor.RenderAuras(host, auras, bucketKey, onChange, opts)
                 hasBuff = true
             end
         end
-        local element = Model.NewFilterStripElement(hasBuff and "HARMFUL" or "HELPFUL")
+        local element = E.NewFilterStripElement(hasBuff and "HARMFUL" or "HELPFUL")
         ctx.bucket[#ctx.bucket + 1] = element
         ctx.selectedIndex = #ctx.bucket
         NotifyChanged()
@@ -1072,20 +1383,36 @@ function AurasEditor.RenderAuras(host, auras, bucketKey, onChange, opts)
     end
 
     ctx.AddMissingRaidBuff = function()
-        if not Model.NewMissingRaidBuffElement then return end
-        local element = Model.NewMissingRaidBuffElement()
+        if not E.NewMissingRaidBuffElement then return end
+        local element = E.NewMissingRaidBuffElement()
         ctx.bucket[#ctx.bucket + 1] = element
         ctx.selectedIndex = #ctx.bucket
         NotifyChanged()
         rebuild()
     end
 
-    addStripButton:SetScript("OnClick", function()
-        ctx.AddFilterStrip()
-    end)
-    addMissingBuffButton:SetScript("OnClick", function()
-        ctx.AddMissingRaidBuff()
-    end)
+    if addStripButton then
+        addStripButton:SetScript("OnClick", function(self)
+            if self._atCap then return end
+            ctx.AddFilterStrip()
+        end)
+        addStripButton:HookScript("OnEnter", function(self)
+            if self._atCap and GameTooltip then
+                GameTooltip:SetOwner(self, "ANCHOR_TOP")
+                GameTooltip:SetFrameStrata("TOOLTIP")
+                GameTooltip:AddLine(ns.L["Maximum filter strips reached for these frames."], 1, 0.82, 0)
+                GameTooltip:Show()
+            end
+        end)
+        addStripButton:HookScript("OnLeave", function()
+            if GameTooltip then GameTooltip:Hide() end
+        end)
+    end
+    if addMissingBuffButton then
+        addMissingBuffButton:SetScript("OnClick", function()
+            ctx.AddMissingRaidBuff()
+        end)
+    end
     addManualButton:SetScript("OnClick", function()
         local spellID = tonumber(inputBox:GetText())
         if spellID and spellID > 0 then

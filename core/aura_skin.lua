@@ -158,14 +158,26 @@ local function styleButton(button, profile)
         if border.DisablePixelSnap then border:DisablePixelSnap() end
     end
 
-    -- Duration font: QUI general font at profile.fontSize.
-    local fontSize = profile.fontSize or 11
-    if fontSize <= 0 then fontSize = 11 end
+    -- Text regions: duration + stack. The element model carries per-region
+    -- config (duration{} / stack{}); fall back to the legacy flat fontSize so
+    -- pre-migration profiles and non-element callers keep rendering.
     local fontPath = (Helpers and Helpers.GetGeneralFont and Helpers.GetGeneralFont())
     local fontFlags = (Helpers and Helpers.GetGeneralFontOutline and Helpers.GetGeneralFontOutline()) or "OUTLINE"
-    if fontPath and button._quiDuration then button._quiDuration:SetFont(fontPath, fontSize, fontFlags) end
-    if fontPath and button._quiCount then button._quiCount:SetFont(fontPath, fontSize, fontFlags) end
-    if fontPath and button._quiSymbol then button._quiSymbol:SetFont(fontPath, fontSize, fontFlags) end
+    local function styleText(fs, cfg, fallbackSize, defAnchor, defX, defY)
+        if not fs then return end
+        local size = (cfg and cfg.fontSize) or fallbackSize or 11
+        if size <= 0 then size = 11 end
+        if fontPath then fs:SetFont(fontPath, size, fontFlags) end
+        fs:ClearAllPoints()
+        fs:SetPoint((cfg and cfg.anchor) or defAnchor, button, (cfg and cfg.anchor) or defAnchor,
+            (cfg and cfg.offsetX) or defX, (cfg and cfg.offsetY) or defY)
+        local c = cfg and cfg.color
+        if c then fs:SetTextColor(c[1] or 1, c[2] or 1, c[3] or 1, c[4] or 1) end
+        fs:SetAlpha(cfg and cfg.show == false and 0 or 1)
+    end
+    styleText(button._quiDuration, profile.duration, profile.fontSize, "CENTER", 0, 0)
+    styleText(button._quiCount, profile.stack, profile.fontSize, "BOTTOMRIGHT", -1, 1)
+    if fontPath and button._quiSymbol then button._quiSymbol:SetFont(fontPath, (profile.fontSize and profile.fontSize > 0) and profile.fontSize or 11, fontFlags) end
 
     -- Swipe (config on the Cooldown — appearance, not aura data).
     local cd = button._quiCooldown
@@ -348,4 +360,13 @@ function AuraSkin.Restyle(container, profile)
             styleButton(button, profile)
         end
     end
+end
+
+-- Wire + style ONE engine-created aura frame outside the group
+-- initializeFrame path — AddAuraSlot returns its frame directly, so the slot
+-- runtime (core/aura_slots.lua) calls this on the returned frame. Same art,
+-- same styling, same forbidden-object legality class as the group path.
+function AuraSkin.WireButton(button, profile)
+    buildButtonArt(button)
+    styleButton(button, profile or {})
 end

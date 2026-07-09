@@ -1512,23 +1512,14 @@ local function SavePendingPosition(key, point, relPoint, offsetX, offsetY, ancho
                 local isGrowAnchorKey = key == "buffFrame" or key == "debuffFrame"
                 local growCorner
                 if isGrowAnchorKey then
-                    local profile = QUI and QUI.db and QUI.db.profile
-                    local bbDB = profile and profile.buffBorders
-                    if bbDB then
-                        local growLeft, growUp
-                        if key == "buffFrame" then
-                            growLeft = bbDB.buffGrowLeft
-                            growUp   = bbDB.buffGrowUp
-                        else
-                            growLeft = bbDB.debuffGrowLeft
-                            growUp   = bbDB.debuffGrowUp
-                        end
-                        if growUp then
-                            growCorner = growLeft and "BOTTOMRIGHT" or "BOTTOMLEFT"
-                        else
-                            growCorner = growLeft and "TOPRIGHT" or "TOPLEFT"
-                        end
-                    end
+                    -- The corner is derived from the FIRST enabled filter-strip
+                    -- element's anchor and kept fresh by buffborders.lua's own
+                    -- UpdateGrowAnchor (every FullRefresh + Init). Migration v50
+                    -- pruned the flat buff/debuffGrowLeft/GrowUp keys this used
+                    -- to read directly in favor of the buffAuras/debuffAuras
+                    -- element store, so read the maintained value instead of
+                    -- re-deriving it from keys that no longer exist.
+                    growCorner = (fa[key] and fa[key].growAnchor) or "TOPRIGHT"
                 end
 
                 if growCorner then

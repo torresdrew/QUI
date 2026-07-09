@@ -43,10 +43,10 @@ assert(strip:find(":Show()", 1, true) and strip:find(":Hide()", 1, true),
     "UpdateTempEnchants must still Show/Hide strip buttons per live enchant")
 
 -- The container anchor must offset by the enchant extent along the grow
--- direction for the buff zone.
-local anchor = slice("local function AnchorAuraContainer(")
+-- direction for the buff host's FIRST strip container.
+local anchor = slice("local function AnchorElementContainer(")
 assert(anchor:find("liveEnchantCount", 1, true),
-    "AnchorAuraContainer must offset the buff zone by the live enchant extent")
+    "AnchorElementContainer must offset the buff host's first container by the live enchant extent")
 
 -- Ported from the deleted buffborders_cancelaura_initialconfig_test.lua (PTR4
 -- removed the secure cancel-header overlay; own-buff cancel is now engine-

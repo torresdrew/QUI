@@ -5,10 +5,29 @@ local src = read("QUI_GroupFrames/groupframes/groupframes_auras.lua")
 local fails = 0
 local function check(n, ok) if ok then print("  ok  " .. n) else fails = fails + 1; print("FAIL  " .. n) end end
 
-check("references the model module", src:find("QUI_GroupFramesAuraModel", 1, true) ~= nil)
+check("references the model module (now a core-backed shim)", src:find("QUI_GroupFramesAuraModel", 1, true) ~= nil)
 check("calls ActiveElementsForSpec", src:find("ActiveElementsForSpec", 1, true) ~= nil)
 check("calls PopulateElementMatches", src:find("PopulateElementMatches", 1, true) ~= nil)
 check("defines BuildElementRenderList", src:find("BuildElementRenderList", 1, true) ~= nil)
+
+-- Shared core glue consumption (Tasks 2/3) ----------------------------------
+-- The container/tracked runtime now flows through the ONE shared copy of the
+-- settings->container glue: ns.AuraGlue (profile + group descriptors +
+-- combat-aware RunConfigPass) and ns.AuraSlots (AddAuraSlot tracked runtime).
+check("consumes ns.AuraGlue", src:find("ns.AuraGlue", 1, true) ~= nil)
+check("consumes ns.AuraSlots", src:find("ns.AuraSlots", 1, true) ~= nil)
+check("configures containers via AuraGlue.RunConfigPass", src:find("AuraGlue.RunConfigPass", 1, true) ~= nil)
+check("builds group descriptors via AuraGlue.ElementGroups", src:find("AuraGlue.ElementGroups", 1, true) ~= nil)
+check("derives layout profiles via AuraGlue.ElementProfile", src:find("AuraGlue.ElementProfile", 1, true) ~= nil)
+check("reconciles tracked slots via AuraSlots.Sync", src:find("AuraSlots.Sync", 1, true) ~= nil)
+check("parks unused slots via AuraSlots.Park", src:find("AuraSlots.Park", 1, true) ~= nil)
+-- Seed bucket must come from the ALWAYS-LOADED model shim, never Options-side:
+-- the seed latches elementsSeeded, so an Options-only bucket would latch an
+-- EMPTY "*" bucket on Options-disabled installs (Task 4 review regression).
+check("seeds via the shim-owned default bucket, no Options-side dependency",
+    src:find("QUI_GroupFramesAuraDefaults", 1, true) == nil
+    and src:find("AuraModel.DefaultStripBucket()", 1, true) ~= nil
+    and src:find("EnsureSeeded(auras, DefaultStripBucket)", 1, true) ~= nil)
 
 -- PTR4 UNIT_AURA fully-secret payload guards (Task 7) ------------------------
 -- groupframes_auras.lua needs real WoW frames + the AuraEvents subscription and

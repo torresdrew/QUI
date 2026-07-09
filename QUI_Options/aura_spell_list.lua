@@ -1,8 +1,18 @@
 local ADDON_NAME, ns = ...
 
-local GroupFrameSpellList = ns.QUI_GroupFramesSpellListSettings or {}
-ns.QUI_GroupFramesSpellListSettings = GroupFrameSpellList
-local AuraDefaults = ns.QUI_GroupFramesAuraDefaults
+-- Shared spell-list widget for the aura element editor (moved out of
+-- QUI_GroupFrames/groupframes/settings/group_frames_spell_list.lua so every
+-- aura surface can reuse it). Exposes the pill mini-toggle used by the element
+-- list rows plus the preset-backed spell-list frame used by tracked spell
+-- pickers and filter whitelist/blacklist editors.
+local SpellList = ns.QUI_AuraSpellList or {}
+ns.QUI_AuraSpellList = SpellList
+
+-- AuraDefaults is resolved lazily (inside GetDefaultPresets) so this file has no
+-- file-scope load-order dependency on the GF defaults module.
+local function GetAuraDefaults()
+    return ns.QUI_GroupFramesAuraDefaults
+end
 
 local function GetSpellName(spellId)
     if C_Spell and C_Spell.GetSpellName then
@@ -93,9 +103,9 @@ local function CreateMiniToggle(parent)
     return toggle
 end
 
--- Exported so other group-frame editors (the unified Auras editor) can reuse the
--- same pill toggle widget for per-row enable switches.
-GroupFrameSpellList.CreateMiniToggle = CreateMiniToggle
+-- Exported so the aura element editor can reuse the same pill toggle widget for
+-- per-row enable switches.
+SpellList.CreateMiniToggle = CreateMiniToggle
 
 local BUFF_BLACKLIST_PRESETS = {
     {
@@ -297,25 +307,28 @@ local function RebuildSpellToggleRows(container, listTable, presets, onChange)
     end
 end
 
-function GroupFrameSpellList.GetDefaultPresets()
+function SpellList.GetDefaultPresets()
+    local AuraDefaults = GetAuraDefaults()
     if AuraDefaults and type(AuraDefaults.GetDefaultPresets) == "function" then
         return AuraDefaults.GetDefaultPresets()
     end
     return {}
 end
 
-function GroupFrameSpellList.GetBuffBlacklistPresets()
+function SpellList.GetBuffBlacklistPresets()
     return BUFF_BLACKLIST_PRESETS
 end
 
-function GroupFrameSpellList.GetDebuffBlacklistPresets()
+function SpellList.GetDebuffBlacklistPresets()
     return DEBUFF_BLACKLIST_PRESETS
 end
 
-function GroupFrameSpellList.CreateListFrame(parent, listTable, presets, onChange, onLayoutChanged)
+function SpellList.CreateListFrame(parent, listTable, presets, onChange, onLayoutChanged)
     local frame = CreateFrame("Frame", nil, parent)
     frame:SetHeight(1)
     frame._onLayoutChanged = onLayoutChanged
     RebuildSpellToggleRows(frame, listTable, presets, onChange)
     return frame
 end
+
+return SpellList

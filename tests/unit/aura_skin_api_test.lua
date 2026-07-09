@@ -61,4 +61,18 @@ assert(src:find("button:SetSize", 1, true), "must size engine-created buttons (e
 -- must refuse to register a new group while in combat.
 assert(src:find("InCombatLockdown", 1, true), "Configure must refuse new-group creation in combat")
 
+-- WireButton: wiring pair for slot buttons (core/aura_slots.lua), outside the
+-- group initializeFrame path.
+assert(src:find("function AuraSkin.WireButton", 1, true), "must define and export AuraSkin.WireButton")
+
+-- styleButton is sub-table aware: duration{}/stack{} config drives text-region
+-- styling (element model), with the legacy flat fontSize as fallback.
+assert(src:find("profile.duration", 1, true), "styleButton must apply the duration text sub-table")
+assert(src:find("profile.stack", 1, true), "styleButton must apply the stack text sub-table")
+
+-- Text regions are re-anchored (ClearAllPoints before SetPoint) so a config
+-- change moves them without a /reload; _quiDuration is the region restyled.
+assert(src:find("button._quiDuration", 1, true), "must restyle the _quiDuration text region")
+assert(src:find("fs:ClearAllPoints()", 1, true), "text regions must ClearAllPoints before re-anchoring")
+
 print("aura_skin_api_test OK")

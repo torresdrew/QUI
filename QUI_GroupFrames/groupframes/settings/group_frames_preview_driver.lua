@@ -31,7 +31,6 @@ ns.QUI_GroupFramesPreview = Driver
 -- FAKE DATA POOLS (preview only — not gameplay data)
 ---------------------------------------------------------------------------
 local PREVIEW_BUFF_ICONS   = { 136034, 135940, 136081, 135932, 136063 }
-local PREVIEW_DEBUFF_ICONS = { 136207, 136130, 136067, 135813, 136118 }
 local FAKE_DURATIONS = { 8, 15, 30, 45, 60 }
 local DISPEL_CYCLE   = { "Magic", "Curse", "Disease", "Poison" }
 
@@ -163,31 +162,11 @@ function Driver._IndicatorHostLevel(baseLevel)
     return (tonumber(baseLevel) or 0) + INDICATOR_HOST_OFFSET
 end
 
-function Driver._BuildFilterStripMatches(element, now)
-    local harmful = element.auraType == "HARMFUL"
-    local pool = harmful and PREVIEW_DEBUFF_ICONS or PREVIEW_BUFF_ICONS
-    local maxIcons = tonumber(element.maxIcons) or 0
-    local count = (maxIcons > 0) and math.min(maxIcons, #pool) or #pool
-    if count < 1 then count = 1 end
-    local out = {}
-    for i = 1, count do
-        out[i] = MakeFakeAura(pool[((i - 1) % #pool) + 1], i, harmful, now)
-    end
-    return out
-end
-
-function Driver._BuildTrackedMatches(element, now)
-    local out = {}
-    local spells = element.spells
-    if type(spells) == "table" then
-        for i, sid in ipairs(spells) do
-            local icon = ResolveSpellIcon(sid)
-                or PREVIEW_BUFF_ICONS[((i - 1) % #PREVIEW_BUFF_ICONS) + 1]
-            out[sid] = MakeFakeAura(icon, i, false, now, sid)
-        end
-    end
-    return out
-end
+-- filterStrip + tracked icon/square/bar previews are now drawn by the shared
+-- placeholder renderer (ns.AuraPreview) in RenderFrameAuras — the old
+-- _BuildFilterStripMatches / _BuildTrackedMatches fabricators that fed fake
+-- matches into the real renderer are gone. MRB (below) and healthTint still
+-- fabricate matches for the real renderer (icon strip / bar tint respectively).
 
 function Driver._BuildMissingRaidBuffMatches(element, now)
     local out = {}
@@ -1077,20 +1056,41 @@ Driver._ApplyFrameSettings = ApplyFrameSettings
 local state = Driver._state
 local AURA_PREVIEW_LIMIT = 5
 
--- AURA ELEMENTS via the REAL renderer with fabricated matches ---------------
+-- AURA ELEMENTS: filterStrip + tracked icon/square/bar preview through the
+-- SHARED placeholder renderer (ns.AuraPreview); MRB + healthTint stay on the
+-- REAL renderer with fabricated matches -----------------------------------
 local function GetPreviewSpecID()
     local idx = GetSpecialization and GetSpecialization()
     if idx and GetSpecializationInfo then return (GetSpecializationInfo(idx)) end
     return nil
 end
 
+-- healthTint tracked previews as a health-bar tint (not an icon slot), so it
+-- rides the real renderer and needs a fake match keyed by a tracked spell for
+-- RenderHealthTint to find an "active" aura. The icon field is irrelevant for a
+-- tint, so a helpful placeholder is fine.
+local function BuildHealthTintMatches(element, now)
+    local out = {}
+    local spells = element.spells
+    if type(spells) == "table" then
+        for i, sid in ipairs(spells) do
+            local icon = ResolveSpellIcon(sid)
+                or PREVIEW_BUFF_ICONS[((i - 1) % #PREVIEW_BUFF_ICONS) + 1]
+            out[sid] = MakeFakeAura(icon, i, false, now, sid)
+        end
+    end
+    return out
+end
+
 local function RenderFrameAuras(f, auras, now)
-    local Render = ns.QUI_GroupFrameAuraRender
-    local Model  = ns.QUI_GroupFramesAuraModel
+    local Render  = ns.QUI_GroupFrameAuraRender
+    local Model   = ns.QUI_GroupFramesAuraModel
+    local Preview = ns.AuraPreview
     if not Render or not Model or not Model.ActiveElementsForSpec then return end
     if auras and Model.EnsureSeeded then Model.EnsureSeeded(auras) end
     if not auras or auras.enabled == false then
         if Render.ReleaseAll then Render:ReleaseAll(f) end
+        if Preview then Preview.Hide(f) end
         f._previewAuraWork = nil
         f._previewAuraIDs = nil
         return
@@ -1102,20 +1102,32 @@ local function RenderFrameAuras(f, auras, now)
     local bucketKey = state.previewBucket and state.previewBucket[state.contextMode]
     if bucketKey == nil then bucketKey = GetPreviewSpecID() end
     local elements = Model.ActiveElementsForSpec(auras, bucketKey)
+
+    -- `work`/`current` track ONLY the real-renderer elements (MRB + healthTint)
+    -- for the animation ticker + stale-element release. filterStrip and tracked
+    -- icon/square/bar go into `previewElements`; ns.AuraPreview owns their pool
+    -- (hides its own surplus), so they are never added to `current`.
+    local previewElements = {}
     local work, current = {}, {}
     for _, element in ipairs(elements) do
-        local matches
-        if element.mode == "filterStrip" then
-            matches = Driver._BuildFilterStripMatches(element, now)
-        elseif element.mode == "missingRaidBuff" then
-            matches = Driver._BuildMissingRaidBuffMatches(element, now)
+        if element.mode == "missingRaidBuff" then
+            local matches = Driver._BuildMissingRaidBuffMatches(element, now)
+            work[#work + 1] = { element = element, matches = matches }
+            current[element.id] = true
+            Render:Dispatch(f, element, matches)
+        elseif element.mode == "tracked" and element.displayType == "healthTint" then
+            local matches = BuildHealthTintMatches(element, now)
+            work[#work + 1] = { element = element, matches = matches }
+            current[element.id] = true
+            Render:Dispatch(f, element, matches)
         else
-            matches = Driver._BuildTrackedMatches(element, now)
+            previewElements[#previewElements + 1] = element
         end
-        work[#work + 1] = { element = element, matches = matches }
-        current[element.id] = true
-        Render:Dispatch(f, element, matches)
     end
+    if Preview then Preview.Show(f, previewElements) end
+
+    -- Release any MRB/healthTint element the real renderer owned last pass but no
+    -- longer does (e.g. a healthTint tracked element flipped to icon, or removed).
     local prev = f._previewAuraIDs
     if prev then
         for id in pairs(prev) do

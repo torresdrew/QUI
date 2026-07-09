@@ -141,6 +141,10 @@ core\settings\pins_lifecycle.lua
 core\rangeutils.lua
 core\aura_theme.lua
 core\aura_skin.lua
+core\aura_elements.lua
+core\aura_glue.lua
+core\aura_slots.lua
+core\aura_preview.lua
 
 
 

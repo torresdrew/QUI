@@ -1,24 +1,24 @@
 -- tests/unit/groupframes_auras_container_test.lua
 -- Source-text assertion test for QUI_GroupFrames/groupframes/groupframes_auras.lua.
 --
--- STEP D1a moved the generic buff/debuff STRIP display from the v46 element
--- engine to Blizzard's secure per-unit CustomAuraContainer (via QUI.AuraSkin).
--- The container is a forbidden, self-driving object that cannot be exercised
+-- The container-rendered aura display (generic buff/debuff filter strips AND
+-- tracked icon/square/bar) now renders ONE secure per-unit CustomAuraContainer
+-- PER active element, pooled by ordinal on frame._quiAuraContainers, driven by
+-- the SHARED core modules:
+--   * ns.AuraGlue  — element -> profile + group descriptors, RunConfigPass
+--                    (AuraSkin.Configure OOC / Restyle in combat),
+--   * ns.AuraSlots — tracked slots (AddAuraSlot) via AuraSlots.Sync / Park.
+-- Containers are forbidden, self-driving objects that cannot be exercised
 -- headless, so these source-text assertions pin the structural contract:
---   * each unit frame gets buff + debuff CustomAuraContainer zones,
---   * classification → AuraSkin group descriptors (AddAuraGroup), SetUnit,
---     SetEnabled self-drive,
---   * the engine NO LONGER renders filterStrip elements (container's job) and
---     NO LONGER renders the dropped tracked icon/square/bar display,
+--   * ApplyElementPass walks the active elements into a per-ordinal pool,
+--   * filter strips -> AuraGlue group descriptors, tracked -> AuraSlots.Sync,
+--     SetUnit / SetEnabled self-drive,
+--   * the OLD two-zone buff/debuff container split (buffContainer /
+--     debuffContainer / BuildZoneFilters / ZoneProfile / ApplyStripPass) is GONE,
 --   * Missing Raid Buffs (missingRaidBuff) + the healthTint tint feeder STILL
 --     flow through the (untouched) element renderer,
---   * forbidden-object work is combat-deferred to PLAYER_REGEN_ENABLED.
---
--- STEP D1b extends this with a conservative dead-code trim: the orphaned
--- Lua-side strip-filter primitives (AuraPassesSpellFilter / AuraPassesFilter /
--- GetAuraPriority) were removed from the engine file, while the renderer +
--- model square/bar paths were KEPT — they are still live via the layout-mode
--- preview driver (a second R.Dispatch consumer) and the aura editor.
+--   * forbidden-object work is combat-deferred to PLAYER_REGEN_ENABLED,
+--   * the element model file is now a delegating SHIM.
 -- Run: lua tests/unit/groupframes_auras_container_test.lua
 
 local function readAll(path)
@@ -41,41 +41,65 @@ local function check(name, ok)
     end
 end
 
--- LIVE STRIP PATH: secure CustomAuraContainer + AuraSkin adapter --------------
+-- LIVE CONTAINER PATH: secure CustomAuraContainer + shared core glue ----------
 check("creates CustomAuraContainerTemplate frames",
     src:find('"CustomAuraContainerTemplate"', 1, true) ~= nil)
 check("resolves the QUI.AuraSkin adapter",
     src:find("QUI.AuraSkin", 1, true) ~= nil or src:find("ns.Addon.AuraSkin", 1, true) ~= nil)
 
--- Per-unit buff + debuff zones ------------------------------------------------
-check("creates a per-unit buff container",
-    src:find("frame.buffContainer", 1, true) ~= nil
-    and src:find("CreateFrame(\"AuraContainer\", nil, frame, \"CustomAuraContainerTemplate\")", 1, true) ~= nil)
-check("creates a per-unit debuff container",
-    src:find("frame.debuffContainer", 1, true) ~= nil)
+-- PER-ELEMENT POOL: one container per active element, pooled by ordinal -------
+check("per-element container pool on the frame (frame._quiAuraContainers)",
+    src:find("frame._quiAuraContainers", 1, true) ~= nil)
+check("ApplyElementPass drives the per-element container pass",
+    src:find("local function ApplyElementPass(frame, allowCreate)", 1, true) ~= nil)
+check("containers are created via CreateFrame(\"AuraContainer\", ...)",
+    src:find('CreateFrame("AuraContainer", nil, frame, "CustomAuraContainerTemplate")', 1, true) ~= nil)
 
--- AURASKIN GROUP CONTRACT: zones configure via AuraSkin.Configure/Restyle, not
--- the retired per-button AddAuraFilter/AuraSkin.Attach API --------------------
-check("AddAuraFilter replaced by AuraSkin.Configure (retired per-button API gone)",
+-- SHARED CORE GLUE: config via AuraGlue.RunConfigPass, slots via AuraSlots ----
+check("consumes ns.AuraGlue + ns.AuraSlots",
+    src:find("ns.AuraGlue", 1, true) ~= nil and src:find("ns.AuraSlots", 1, true) ~= nil)
+check("elements configure via AuraGlue.RunConfigPass (Configure/Restyle live in core)",
+    src:find("AuraGlue.RunConfigPass", 1, true) ~= nil)
+check("tracked elements reconcile slots via AuraSlots.Sync + Park",
+    src:find("AuraSlots.Sync", 1, true) ~= nil and src:find("AuraSlots.Park", 1, true) ~= nil)
+check("filter strips build group descriptors via AuraGlue.ElementGroups",
+    src:find("AuraGlue.ElementGroups", 1, true) ~= nil)
+check("container flow anchors via AuraSkin.LayoutAnchor",
+    src:find("AuraSkin.LayoutAnchor", 1, true) ~= nil)
+-- The retired per-button / two-zone APIs must be gone.
+check("AddAuraFilter gone (engine creates buttons; RunConfigPass replaces it)",
     src:find("AddAuraFilter", 1, true) == nil)
 check("ClearAuraFilters gone (PTR4 groups are reconciled, never cleared)",
     src:find("ClearAuraFilters", 1, true) == nil)
-check("AuraSkin.Attach gone (engine creates buttons; Configure replaces it)",
-    src:find("AuraSkin.Attach", 1, true) == nil)
-check("AuraSkin.Reflow gone (Restyle is the combat-legal pass)",
-    src:find("AuraSkin.Reflow", 1, true) == nil)
-check("zones configure via AuraSkin.Configure",
-    src:find("AuraSkin.Configure", 1, true) ~= nil)
-check("combat pass falls back to AuraSkin.Restyle",
-    src:find("AuraSkin.Restyle", 1, true) ~= nil)
-check("SetUnit still precedes group configuration",
-    src:find("SetUnit(frame.unit)", 1, true) ~= nil)
-check("HELPFUL strips → buff zone, HARMFUL strips → debuff zone",
-    src:find('"HELPFUL"', 1, true) ~= nil and src:find('"HARMFUL"', 1, true) ~= nil)
-check("calls container:SetUnit(frame.unit)",
+check("AuraSkin.Attach / Reflow gone",
+    src:find("AuraSkin.Attach", 1, true) == nil and src:find("AuraSkin.Reflow", 1, true) == nil)
+-- Configure/Restyle now live in core (AuraGlue.RunConfigPass): this file no
+-- longer CALLS them directly (comments may still reference the core plumbing).
+check("AuraSkin.Configure/Restyle no longer called directly here (moved to core)",
+    src:find("AuraSkin.Configure(", 1, true) == nil
+    and src:find("pcall(AuraSkin.Configure", 1, true) == nil
+    and src:find("AuraSkin.Restyle(", 1, true) == nil)
+check("SetUnit still precedes container configuration",
     src:find("SetUnit(frame.unit)", 1, true) ~= nil)
 check("calls container:SetEnabled to self-drive UNIT_AURA",
     src:find("SetEnabled(true)", 1, true) ~= nil and src:find("SetEnabled(false)", 1, true) ~= nil)
+
+-- OLD TWO-ZONE STRIP MODEL IS GONE -------------------------------------------
+check("buffContainer / debuffContainer fields removed (per-element pool now)",
+    src:find("buffContainer", 1, true) == nil and src:find("debuffContainer", 1, true) == nil)
+check("ResolveStripElements replaced by ResolveContainerElements",
+    src:find("ResolveStripElements", 1, true) == nil
+    and src:find("local function ResolveContainerElements(frame)", 1, true) ~= nil)
+check("zone helpers removed (BuildZoneFilters / ZoneProfile / ApplyStripPass / AnchorZoneContainer)",
+    src:find("BuildZoneFilters", 1, true) == nil
+    and src:find("ZoneProfile", 1, true) == nil
+    and src:find("ApplyStripPass", 1, true) == nil
+    and src:find("AnchorZoneContainer", 1, true) == nil)
+check("container classification maps removed (moved to core aura_elements)",
+    src:find("CONTAINER_BUFF_CLASS_MAP", 1, true) == nil
+    and src:find("CONTAINER_DEBUFF_CLASS_MAP", 1, true) == nil
+    and src:find("local BUFF_CLASSIFICATION_MAP", 1, true) == nil
+    and src:find("local DEBUFF_CLASSIFICATION_MAP", 1, true) == nil)
 
 -- PUBLIC ENTRY NAMES the call sites in groupframes.lua depend on --------------
 check("QUI_GFA.ApplyStripContainers exposed",
@@ -84,6 +108,8 @@ check("QUI_GFA.UpdateStripContainers exposed",
     src:find("QUI_GFA.UpdateStripContainers = UpdateStripContainers", 1, true) ~= nil)
 check("QUI_GFA.DisableStripContainers exposed (unit clear)",
     src:find("QUI_GFA.DisableStripContainers = DisableStripContainers", 1, true) ~= nil)
+check("QUI_GFA.EnsureContainersForFrame exposed (mid-combat joiner prealloc)",
+    src:find("function QUI_GFA.EnsureContainersForFrame(frame)", 1, true) ~= nil)
 check("groupframes.lua wires UpdateStripContainers on unit assign",
     callSrc:find("UpdateStripContainers(", 1, true) ~= nil)
 check("groupframes.lua wires DisableStripContainers on unit clear",
@@ -97,7 +123,6 @@ check("EngineRendersElement gate defined + exported",
 -- The dead Lua-side strip match builder is gone (container filters C-side now).
 check("BuildFilterStripMatches (strip Lua render path) removed",
     src:find("local function BuildFilterStripMatches", 1, true) == nil)
--- The renderer must no longer dispatch a filterStrip element.
 check("RenderFrameElements no longer dispatches a filterStrip match build",
     src:find("BuildFilterStripMatches(frame.unit", 1, true) == nil)
 
@@ -112,69 +137,72 @@ check("RenderFrameElements still defined + exported (MRB + tint renderer)",
     src:find("QUI_GFA.RenderFrameElements = RenderFrameElements", 1, true) ~= nil)
 
 -- COMBAT SAFETY: forbidden-object work deferred to PLAYER_REGEN_ENABLED -------
-check("strip container setup guards on InCombatLockdown()",
+check("container setup guards on InCombatLockdown()",
     src:find("InCombatLockdown()", 1, true) ~= nil)
 check("deferred container work replays on PLAYER_REGEN_ENABLED",
     src:find('"PLAYER_REGEN_ENABLED"', 1, true) ~= nil)
 check("a combat-deferral queue exists for forbidden container work",
     src:find("QueueContainerCombatWork", 1, true) ~= nil)
 
--- The live strip container must NOT re-introduce a manual per-icon aura read
--- loop on this path — the whole point is no QUI Lua reading secret aura data.
-check("strip container path adds no GetAuraDataByIndex poll",
+-- The live container path must NOT re-introduce a manual per-icon aura read
+-- loop -- the whole point is no QUI Lua reading secret aura data.
+check("container path adds no GetAuraDataByIndex poll",
     src:find("ApplyStripContainers", 1, true) ~= nil
     and src:find("C_UnitAuras.GetAuraDataByIndex", 1, true) == nil)
 
--- STEP D1b: DEAD-CODE TRIM (engine-only) -------------------------------------
--- D1b removed the last orphaned Lua-side strip-filter primitives from the
--- engine file. These had ZERO callers across QUI_GroupFrames/ after the D1a
--- cutover (the live strip filters C-side in the container). Pin their removal.
-check("D1b: AuraPassesSpellFilter (whitelist/blacklist) removed",
+-- DEAD-CODE TRIM (engine-only) -----------------------------------------------
+-- The last orphaned Lua-side strip-filter primitives stay removed.
+check("AuraPassesSpellFilter (whitelist/blacklist) removed",
     src:find("local function AuraPassesSpellFilter", 1, true) == nil)
-check("D1b: AuraPassesFilter (inline classification query) removed",
+check("AuraPassesFilter (inline classification query) removed",
     src:find("local function AuraPassesFilter", 1, true) == nil)
-check("D1b: GetAuraPriority + PRIORITY_* sort constants removed",
+check("GetAuraPriority + PRIORITY_* sort constants removed",
     src:find("local function GetAuraPriority", 1, true) == nil
     and src:find("PRIORITY_DISPELLABLE", 1, true) == nil)
--- KEPT: the classification maps still feed the secure container's C-side filter
--- build (CONTAINER_*_CLASS_MAP → BuildZoneFilters), so they must survive D1b.
-check("D1b: BUFF/DEBUFF_CLASSIFICATION_MAP kept (container filter source)",
-    src:find("BUFF_CLASSIFICATION_MAP", 1, true) ~= nil
-    and src:find("DEBUFF_CLASSIFICATION_MAP", 1, true) ~= nil
-    and src:find("CONTAINER_BUFF_CLASS_MAP", 1, true) ~= nil)
 
--- STEP D1b: ENTANGLEMENT — renderer/model square+bar paths are NOT dead -------
--- The runtime engine gate (EngineRendersElement) only governs the in-combat
--- render path. The layout-mode PREVIEW DRIVER (group_frames_preview_driver.lua)
--- is a SECOND live consumer of R.Dispatch that renders EVERY element type —
--- filterStrip, tracked icon/square/bar, MRB — so the renderer's RenderSquare /
--- RenderBar / Dispatch-filterStrip paths and the model's NewFilterStripElement /
--- NewTrackedElement constructors (also used by the editor) are LIVE, not dead.
--- D1b therefore deliberately left aura_render.lua + aura_model.lua untouched.
--- These assertions guard that the live preview paths were NOT mistakenly trimmed.
+-- ENTANGLEMENT: renderer/preview paths are NOT dead --------------------------
+-- The LIVE group-frame runtime (groupframes_auras.lua) dispatches EVERY element
+-- type through R.Dispatch, so the renderer's RenderSquare / RenderBar / Dispatch
+-- paths (aura_render.lua) are LIVE, not dead. The layout-mode PREVIEW DRIVER
+-- (group_frames_preview_driver.lua) now previews filterStrip + tracked
+-- icon/square/bar through the shared ns.AuraPreview placeholder renderer and
+-- keeps ONLY missingRaidBuff + healthTint on R.Dispatch. These assertions guard
+-- that the renderer paths were NOT mistakenly trimmed.
 local renderSrc = readAll("QUI_GroupFrames/groupframes/groupframes_aura_render.lua")
 local modelSrc  = readAll("QUI_GroupFrames/groupframes/groupframes_aura_model.lua")
 local previewSrc = readAll("QUI_GroupFrames/groupframes/settings/group_frames_preview_driver.lua")
-check("D1b: preview driver still dispatches every element type via R.Dispatch",
+check("live runtime dispatches every element type via R.Dispatch",
+    src:find("Render:Dispatch(frame, element, matches)", 1, true) ~= nil)
+check("preview driver keeps MRB + healthTint on R.Dispatch, rest via ns.AuraPreview",
     previewSrc:find("Render:Dispatch(f, element, matches)", 1, true) ~= nil
-    and previewSrc:find('element.mode == "filterStrip"', 1, true) ~= nil)
-check("D1b: R.RenderSquare KEPT (live via preview tracked-square)",
+    and previewSrc:find('element.mode == "missingRaidBuff"', 1, true) ~= nil
+    and previewSrc:find("ns.AuraPreview", 1, true) ~= nil)
+check("R.RenderSquare KEPT (live via tracked-square dispatch)",
     renderSrc:find("function R.RenderSquare", 1, true) ~= nil)
-check("D1b: R.RenderBar KEPT (live via preview tracked-bar)",
+check("R.RenderBar KEPT (live via tracked-bar dispatch)",
     renderSrc:find("function R.RenderBar", 1, true) ~= nil)
-check("D1b: R.RenderIcon + R.RenderHealthTint + R.Dispatch KEPT",
+check("R.RenderIcon + R.RenderHealthTint + R.Dispatch KEPT",
     renderSrc:find("function R.RenderIcon", 1, true) ~= nil
     and renderSrc:find("function R.RenderHealthTint", 1, true) ~= nil
     and renderSrc:find("function R.SyncHealthBarTint", 1, true) ~= nil
     and renderSrc:find("function R.Dispatch", 1, true) ~= nil)
-check("D1b: model NewFilterStripElement + NewTrackedElement KEPT (editor uses them)",
-    modelSrc:find("function Model.NewFilterStripElement", 1, true) ~= nil
-    and modelSrc:find("function Model.NewTrackedElement", 1, true) ~= nil
-    and modelSrc:find("function Model.NewMissingRaidBuffElement", 1, true) ~= nil)
-check("D1b: model DISPLAY_TYPES square/bar/icon KEPT (editor + Validate)",
-    modelSrc:find("square = true", 1, true) ~= nil
-    and modelSrc:find("bar = true", 1, true) ~= nil
-    and modelSrc:find("icon = true", 1, true) ~= nil)
+
+-- MODEL FILE IS NOW A DELEGATING SHIM ----------------------------------------
+-- The element model moved to core/aura_elements.lua; the GF model file only
+-- delegates (setmetatable __index) + keeps the GF preview populator.
+check("model file is a setmetatable(__index=E) shim, not a re-declaration",
+    modelSrc:find("setmetatable({}, { __index = E })", 1, true) ~= nil
+    and modelSrc:find("function Model.NewFilterStripElement", 1, true) == nil)
+-- The shipped default bucket must be SHIM-owned (always-loaded), never
+-- Options-side: the runtime seed LATCHES elementsSeeded, so an Options-only
+-- bucket would let an Options-disabled install latch an empty "*" bucket and
+-- permanently lose the shipped strips (Task 4 review regression).
+check("DefaultStripBucket owned by the always-loaded shim",
+    modelSrc:find("function Model.DefaultStripBucket", 1, true) ~= nil)
+check("runtime seed path has NO Options-side dependency",
+    src:find("QUI_GroupFramesAuraDefaults", 1, true) == nil)
+check("shim keeps the GF-only PopulateElementMatches populator",
+    modelSrc:find("function Model.PopulateElementMatches", 1, true) ~= nil)
 
 if fails > 0 then error(fails .. " failure(s) in groupframes_auras_container_test") end
 print("OK: groupframes_auras_container_test (" .. "all checks passed)")

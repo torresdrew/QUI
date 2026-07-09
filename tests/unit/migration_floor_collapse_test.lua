@@ -1,9 +1,10 @@
 -- tests/unit/migration_floor_collapse_test.lua
 -- Run: lua5.1 tests/unit/migration_floor_collapse_test.lua
 -- Verifies the 47-floor + linear-gate collapse:
---   - stored < 47 → floored (wiped, _needsStarterReseed, stamped CURRENT=49)
---   - stored == 47 → NOT floored; gates run RestoreBuffDebuffSplit + PrunePrivateAuras, stamped 49
---   - stored == 49 → no-op (already current)
+--   - stored < 47 → floored (wiped, _needsStarterReseed, stamped CURRENT=50)
+--   - stored == 47 → NOT floored; gates run RestoreBuffDebuffSplit + PrunePrivateAuras
+--                    + SeedAuraElements, stamped 50
+--   - stored == 50 → no-op (already current)
 local ns = dofile("tools/_addon_env.lua").LoadCore()
 local M = ns.Migrations
 
@@ -19,17 +20,24 @@ do
     M.RunOnProfile(profile)
     check("below-floor (46) wiped: user data gone", profile.someModule == nil, tostring(profile.someModule))
     check("below-floor (46) flagged _needsStarterReseed", profile._needsStarterReseed == true, tostring(profile._needsStarterReseed))
-    check("below-floor (46) stamped to CURRENT (49)", profile._schemaVersion == 49, tostring(profile._schemaVersion))
+    check("below-floor (46) stamped to CURRENT (50)", profile._schemaVersion == 50, tostring(profile._schemaVersion))
 end
 
--- 2) At-floor profile (47) is NOT floored; gates run RestoreBuffDebuffSplit + PrunePrivateAuras.
+-- 2) At-floor profile (47) is NOT floored; gates run RestoreBuffDebuffSplit +
+-- PrunePrivateAuras + SeedAuraElements. The user's buffIconSize is not wiped —
+-- v50 reshapes it into a buffAuras element (flat key pruned, value preserved).
 do
-    local profile = { _schemaVersion = 47, buffBorders = { buffIconSize = 35 }, frameAnchoring = { buffFrame = { parent = "minimap" } } }
+    local profile = { _schemaVersion = 47, buffBorders = { enableBuffs = true, buffIconSize = 35 }, frameAnchoring = { buffFrame = { parent = "minimap" } } }
     M.RunOnProfile(profile)
-    check("at-floor (47) NOT wiped: buffIconSize survives", profile.buffBorders and profile.buffBorders.buffIconSize == 35, tostring(profile.buffBorders and profile.buffBorders.buffIconSize))
+    local buffEl = profile.buffBorders and profile.buffBorders.buffAuras
+        and profile.buffBorders.buffAuras.elements and profile.buffBorders.buffAuras.elements["*"]
+        and profile.buffBorders.buffAuras.elements["*"][1]
+    check("at-floor (47) NOT wiped: buffIconSize reshaped to element iconSize=35",
+        buffEl and buffEl.iconSize == 35, buffEl and tostring(buffEl.iconSize))
+    check("at-floor (47) flat buffIconSize pruned by v50", profile.buffBorders.buffIconSize == nil, tostring(profile.buffBorders.buffIconSize))
     check("at-floor (47) NOT flagged for reseed", profile._needsStarterReseed == nil, tostring(profile._needsStarterReseed))
     check("at-floor (47) debuffFrame restored", profile.frameAnchoring.debuffFrame ~= nil, "debuffFrame nil")
-    check("at-floor (47) stamped to 49", profile._schemaVersion == 49, tostring(profile._schemaVersion))
+    check("at-floor (47) stamped to 50", profile._schemaVersion == 50, tostring(profile._schemaVersion))
 end
 
 -- 2b) v49 PrunePrivateAuras: seeded privateAuras subtables are stripped from
@@ -62,15 +70,17 @@ do
         and profile.quiUnitFrames.player.portrait.enabled == true, "portrait clobbered")
     check("v49 prune preserves sibling group settings", profile.quiGroupFrames.party.frames
         and profile.quiGroupFrames.party.frames.width == 90, "frames clobbered")
-    check("v49 prune stamps to 49", profile._schemaVersion == 49, tostring(profile._schemaVersion))
+    check("stored 48 stamps to CURRENT (50)", profile._schemaVersion == 50, tostring(profile._schemaVersion))
 end
 
--- 3) Already-current profile (49) is a no-op.
+-- 3) Already-current profile (50) is a no-op: the v50 aura-unification gate does
+-- NOT run, so a flat buffIconSize left in place is preserved untouched.
 do
-    local profile = { _schemaVersion = 49, buffBorders = { buffIconSize = 35, debuffIconSize = 12 } }
+    local profile = { _schemaVersion = 50, buffBorders = { buffIconSize = 35, debuffIconSize = 12 } }
     M.RunOnProfile(profile)
-    check("current (49) untouched: custom debuffIconSize preserved", profile.buffBorders.debuffIconSize == 12, tostring(profile.buffBorders.debuffIconSize))
-    check("current (49) stays at 49", profile._schemaVersion == 49, tostring(profile._schemaVersion))
+    check("current (50) untouched: custom debuffIconSize preserved", profile.buffBorders.debuffIconSize == 12, tostring(profile.buffBorders.debuffIconSize))
+    check("current (50) buffIconSize NOT migrated (no-op)", profile.buffBorders.buffIconSize == 35, tostring(profile.buffBorders.buffIconSize))
+    check("current (50) stays at 50", profile._schemaVersion == 50, tostring(profile._schemaVersion))
 end
 
 print("migration_floor_collapse_test " .. (failures == 0 and "OK" or "FAILED"))

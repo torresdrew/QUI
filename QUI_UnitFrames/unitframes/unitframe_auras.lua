@@ -4,23 +4,10 @@
 -- Extracted from modules/unitframes/unitframes.lua for maintainability.
 ---------------------------------------------------------------------------
 local ADDON_NAME, ns = ...
-local QUICore = ns.Addon
-
-local function CJKFont(fs, p, s, f)
-    if ns.Helpers and ns.Helpers.ApplyFontWithFallback then
-        ns.Helpers.ApplyFontWithFallback(fs, p, s, f)
-    else
-        fs:SetFont(p, s, f)
-    end
-end
 
 -- Upvalue caching for hot-path performance
-local ipairs = ipairs
 local CreateFrame = CreateFrame
-local GetTime = GetTime
 local C_Timer = C_Timer
-local pairs = pairs
-local rawget = rawget
 local type = type
 local UnitExists = UnitExists
 
@@ -30,47 +17,19 @@ local QUI_UF = ns.QUI_UnitFrames
 if not QUI_UF then return end
 
 -- Internal helpers exposed by unitframes.lua
-local GetFontPath = QUI_UF._GetFontPath
-local GetFontOutline = QUI_UF._GetFontOutline
 local GetUnitSettings = QUI_UF._GetUnitSettings
 local UpdateFrame = QUI_UF._UpdateFrame
 ---------------------------------------------------------------------------
 -- CONSTANTS
 ---------------------------------------------------------------------------
 
--- Preview aura data for buff/debuff preview mode (4 icons with varied stacks)
-local PREVIEW_AURAS = {
-    buffs = {
-        {icon = "Interface\\Icons\\spell_nature_regenerate", stacks = 0, duration = 10},
-        {icon = "Interface\\Icons\\spell_holy_powerwordshield", stacks = 0, duration = 10},
-        {icon = "Interface\\Icons\\spell_nature_lightningshield", stacks = 3, duration = 10},
-        {icon = "Interface\\Icons\\ability_warrior_battleshout", stacks = 5, duration = 10},
-    },
-    debuffs = {
-        {icon = "Interface\\Icons\\spell_shadow_shadowwordpain", stacks = 0, duration = 10},
-        {icon = "Interface\\Icons\\spell_shadow_mindblast", stacks = 0, duration = 10},
-        {icon = "Interface\\Icons\\spell_nature_slow", stacks = 2, duration = 10},
-        {icon = "Interface\\Icons\\spell_shadow_shadesofdarkness", stacks = 5, duration = 10},
-    }
-}
-
--- Maps DB toggle keys to Blizzard classification filter strings.
-local BUFF_CLASSIFICATION_MAP = {
-    helpful           = { "HELPFUL|RAID", "HELPFUL|RAID_IN_COMBAT" },
-    cancelable        = "HELPFUL|CANCELABLE",
-    notCancelable     = "HELPFUL|NOT_CANCELABLE",
-    bigDefensive      = "HELPFUL|BIG_DEFENSIVE",
-    externalDefensive = "HELPFUL|EXTERNAL_DEFENSIVE",
-}
-
-local DEBUFF_CLASSIFICATION_MAP = {
-    -- RAID_IN_COMBAT is a HELPFUL-only AuraFilters token (Blizzard doc: "Combine
-    -- with Player & Helpful"); "HARMFUL|RAID_IN_COMBAT" is an invalid combo and
-    -- C_UnitAuras.GetUnitAuras hard-errors on it. The harmful key emits RAID only.
-    harmful     = { "HARMFUL|RAID" },
-    dispellable = "HARMFUL|RAID_PLAYER_DISPELLABLE",
-    crowdControl = "HARMFUL|CROWD_CONTROL",
-}
+-- Classification maps, the structured/classification filter-string builders and
+-- the two-zone (buff/debuff) container split all moved to the shared core
+-- modules: core/aura_elements.lua compiles an element's filter config into
+-- Blizzard filter strings, core/aura_glue.lua builds the group descriptors +
+-- owns the combat-regen replay queue, core/aura_slots.lua reconciles tracked
+-- slots. This file now drives ONE secure CustomAuraContainer PER active aura
+-- element through those modules (see LIVE AURA CONTAINERS below).
 
 -- Boss engage is a global event; one shared listener avoids five frames
 -- reprocessing every transient boss-slot pulse.
@@ -91,416 +50,334 @@ local function MapAuraAnchorToFramePoint(anchor)
     return map[1], map[2], map[3]
 end
 
-local function IsClassificationEnabled(classifications, key)
-    if key == "helpful" then
-        local value = rawget(classifications, "helpful")
-        if value ~= nil then return value end
-        -- Legacy migration: previous Player/Target buff filters stored the
-        -- two raid-frame filters as separate raid/raidInCombat toggles.
-        return classifications.raid or classifications.raidInCombat
-    end
-
-    if key == "harmful" then
-        local value = rawget(classifications, "harmful")
-        if value ~= nil then return value end
-        -- Legacy migration: previous Player/Target debuff filters stored the
-        -- two raid-frame filters as separate raid/raidInCombat toggles.
-        return classifications.raid or classifications.raidInCombat
-    end
-
-    return classifications[key]
-end
-
-local function BuildClassificationFilters(classifications, classificationMap)
-    if not classifications or not classificationMap then return nil end
-
-    local filters
-    for key, filterSpec in pairs(classificationMap) do
-        if IsClassificationEnabled(classifications, key) then
-            filters = filters or {}
-            if type(filterSpec) == "table" then
-                for _, filterString in ipairs(filterSpec) do
-                    filters[#filters + 1] = filterString
-                end
-            else
-                filters[#filters + 1] = filterSpec
-            end
-        end
-    end
-
-    return filters
-end
-
--- NOTE: per-icon filtering (the legacy IsAuraFilteredOutByInstanceID /
--- AuraPassesAnyFilter helpers) was removed when the LIVE display path moved to
--- the secure CustomAuraContainer.  The container applies the SAME inclusion
--- test, C_UnitAuras.IsAuraFilteredOutByInstanceID, internally for every
--- registered filter string (see Blizzard_CustomAuraContainer:AddAura) — so the
--- filter behaviour is identical, just driven C-side on secret-safe data.
-
 ---------------------------------------------------------------------------
--- AURA UPDATE
+-- LIVE AURA CONTAINERS — one secure CustomAuraContainer PER active element
 ---------------------------------------------------------------------------
-
----------------------------------------------------------------------------
--- FILTER STRING BUILDER
----------------------------------------------------------------------------
--- Concatenates a Blizzard aura filter string from the structured filter DB.
--- base       : "HELPFUL" or "HARMFUL" — required anchor flag.
--- filterDB   : { modifiers = {FLAG = bool, …}, exclusive = string|nil } or nil
--- Returns base unchanged if filterDB is missing or empty.
-local function BuildFilterString(base, filterDB)
-    if not filterDB then return base end
-    local parts = { base }
-    if filterDB.modifiers then
-        for flag, enabled in pairs(filterDB.modifiers) do
-            if enabled then parts[#parts + 1] = flag end
-        end
-    end
-    if filterDB.exclusive then
-        parts[#parts + 1] = filterDB.exclusive
-    end
-    return table.concat(parts, "|")
-end
-
----------------------------------------------------------------------------
--- LIVE DISPLAY PATH — secure CustomAuraContainer
----------------------------------------------------------------------------
--- The live buff/debuff display is rendered by Blizzard's secure
--- CustomAuraContainer (one container per zone), themed by QUI.AuraSkin.  The
--- container self-drives UNIT_AURA and handles secret aura data internally — no
--- QUI Lua ever reads a secret aura field on the live path.
+-- Each enabled aura element (the unit's buff strip / debuff strip, plus any
+-- tracked icon/square/bar) renders on its OWN secure per-unit
+-- CustomAuraContainer, themed by the shared core glue:
+--   element -> AuraGlue.ElementProfile + AuraGlue.ElementGroups
+--           -> AuraGlue.RunConfigPass (AuraSkin.Configure OOC / Restyle combat),
+--   tracked slots via AuraSlots.Sync (AddAuraSlot).
+-- The container self-drives UNIT_AURA and reads aura data C-side, so no QUI Lua
+-- ever reads a secret aura field on this path.
 --
--- LAYOUT-MODE PREVIEW keeps its own custom-icon renderer (the inline icon code
--- in ShowAuraPreviewForFrame): a secure, self-driving container cannot be fed
--- fake auras, so during preview the live container for that zone is disabled
--- and the preview icons render alone; the container is restored on exit.
--- The preview surface is self-contained and builds its icons inline.
----------------------------------------------------------------------------
+-- Containers pool on the frame by ORDINAL (frame._quiAuraContainers[i]); a
+-- changing element list re-purposes them (group retire inside AuraSkin.Configure,
+-- slot park via AuraSlots.Park) because engine containers can't be destroyed.
+-- CREATION (CreateFrame + AddAuraGroup/AddAuraSlot button pooling) is combat-
+-- restricted (crashes the 12.1 client) and stays queued for PLAYER_REGEN_ENABLED
+-- via AuraGlue.QueueRegenWork. MUTATION of a pre-created container (anchor /
+-- filters / SetUnit / enable) is combat-legal, so the update path applies that
+-- subset live in combat and STILL queues the full pass so a wrong assumption
+-- self-heals.
 
-local AuraSkin = (ns.Addon and ns.Addon.AuraSkin) or (_G.QUI and _G.QUI.AuraSkin)
+-- Lazily resolve the shared deps (AuraSkin needs the live secure button template
+-- so it may bind slightly later than this file's top-level chunk; AuraGlue /
+-- AuraSlots / AuraElements live in the QUI core addon, loaded before this file).
+local AuraSkin     = (ns.Addon and ns.Addon.AuraSkin) or (_G.QUI and _G.QUI.AuraSkin)
+local AuraGlue     = ns.AuraGlue
+local AuraSlots    = ns.AuraSlots
+local AuraElements = ns.AuraElements
+local function ResolveAuraDeps()
+    AuraSkin     = AuraSkin     or (ns.Addon and ns.Addon.AuraSkin) or (_G.QUI and _G.QUI.AuraSkin)
+    AuraGlue     = AuraGlue     or ns.AuraGlue
+    AuraSlots    = AuraSlots    or ns.AuraSlots
+    AuraElements = AuraElements or ns.AuraElements
+    return AuraSkin and AuraGlue and AuraSlots and AuraElements
+end
 
--- Combat-deferral queue.  The container is a forbidden object whose CREATION
--- (+ button pooling) is combat-restricted — combat creation crashes the 12.1
--- client — and stays queued for PLAYER_REGEN_ENABLED.  MUTATION of a
--- pre-created container (anchor / filters / SetUnit / enable) is combat-legal,
--- so UpdateAuras applies that subset live in combat (pcall-guarded) and STILL
--- queues the full pass so a wrong assumption self-heals at regen.
-local pendingCombatWork = {}        -- [frame] = true  (re-apply config OOC)
-local combatDeferFrame
+-- Fresh-profile default bucket: one debuff strip + one buff strip, BOTH disabled
+-- (the pre-element defaults shipped showBuffs / showDebuffs = false, so a fresh
+-- profile renders nothing until the user enables a strip). Geometry + duration /
+-- stack sub-tables mirror the flat auras keys in core/defaults.lua so a fresh
+-- profile renders identically to the pre-element defaults.
+-- MUST stay file-local on the runtime path: E.EnsureSeeded LATCHES elementsSeeded
+-- after the first seed, so the default bucket fn has to be available whenever the
+-- store is first touched (a conditionally-loaded Options file would let an
+-- Options-disabled install latch an empty "*" bucket and lose the shipped strips).
+local function DefaultUnitAuraBucket()
+    local E = AuraElements or ns.AuraElements
+    if not E then return {} end
+    local debuff = E.NewFilterStripElement("HARMFUL")
+    debuff.id = "debuffs"; debuff.enabled = false
+    debuff.anchor = "TOPLEFT"; debuff.growDirection = "RIGHT"
+    debuff.iconSize = 22; debuff.maxIcons = 4; debuff.iconsPerRow = 0
+    debuff.spacing = 2; debuff.offsetX = 0; debuff.offsetY = 0
+    debuff.rightClickCancel = false
+    debuff.duration = { show = false, fontSize = 10, anchor = "CENTER", offsetX = 0, offsetY = 0, color = { 1, 1, 1, 1 } }
+    debuff.stack    = { show = true,  fontSize = 10, anchor = "BOTTOMRIGHT", offsetX = -1, offsetY = 1, color = { 1, 1, 1, 1 } }
+    local buff = E.NewFilterStripElement("HELPFUL")
+    buff.id = "buffs"; buff.enabled = false
+    buff.anchor = "BOTTOMLEFT"; buff.growDirection = "RIGHT"
+    buff.iconSize = 22; buff.maxIcons = 4; buff.iconsPerRow = 0
+    buff.spacing = 2; buff.offsetX = 0; buff.offsetY = 0
+    buff.duration = { show = true, fontSize = 12, anchor = "CENTER", offsetX = 0, offsetY = 0, color = { 1, 1, 1, 1 } }
+    buff.stack    = { show = true, fontSize = 10, anchor = "BOTTOMRIGHT", offsetX = -1, offsetY = 1, color = { 1, 1, 1, 1 } }
+    return { debuff, buff }
+end
 
-local function FlushPendingCombatWork()
-    for frame in pairs(pendingCombatWork) do
-        pendingCombatWork[frame] = nil
-        if frame and QUI_UF.ApplyContainerConfig then
-            QUI_UF.ApplyContainerConfig(frame)
+-- Published for the shared aura element editor mount (Task 9): the Icons tab
+-- settings section threads this in as capabilities.defaultBucketFn so a fresh
+-- profile viewed in Options seeds identically to this runtime default.
+local UnitFrameAuras = ns.QUI_UnitFrameAuras or {}
+ns.QUI_UnitFrameAuras = UnitFrameAuras
+UnitFrameAuras.DefaultUnitAuraBucket = DefaultUnitAuraBucket
+
+-- The per-unit aura settings table (quiUnitFrames.<unit>.auras), which gained the
+-- element-model fields (elements / elementsSeeded). nil when the unit has none.
+local function GetFrameAuraSettings(frame)
+    if not frame then return nil end
+    local unitKey = frame.unitKey or frame.unit
+    local settings = GetUnitSettings and GetUnitSettings(unitKey)
+    return settings and settings.auras or nil
+end
+
+-- Resolve the active CONTAINER-RENDERED elements for a frame (enabled strips +
+-- tracked icon/square/bar, in bucket order). Unit frames never use per-spec
+-- buckets, so the spec key is always nil. healthTint tracked elements are skipped
+-- defensively (unit frames have no health-tint feeder; capabilities gate them at
+-- the editor). Returns a SHARED module scratch — do not retain across a re-resolve.
+local _activeElems = {}
+local function ResolveContainerElements(frame)
+    for i = #_activeElems, 1, -1 do _activeElems[i] = nil end
+    local auras = GetFrameAuraSettings(frame)
+    if not auras then return _activeElems end
+    AuraElements = AuraElements or ns.AuraElements
+    if not AuraElements then return _activeElems end
+    AuraElements.EnsureSeeded(auras, DefaultUnitAuraBucket)
+    local elements = AuraElements.ActiveElementsForSpec(auras, nil)
+    for i = 1, #elements do
+        local e = elements[i]
+        if e.mode == "filterStrip"
+            or (e.mode == "tracked" and e.displayType ~= "healthTint") then
+            _activeElems[#_activeElems + 1] = e
         end
     end
+    return _activeElems
 end
 
-local function EnsureCombatDeferFrame()
-    if combatDeferFrame then return end
-    combatDeferFrame = CreateFrame("Frame")
-    combatDeferFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
-    combatDeferFrame:SetScript("OnEvent", FlushPendingCombatWork)
+-- Build the AuraSkin layout profile for one element WITH the unit-frame corner
+-- flip folded in: MapAuraAnchorToFramePoint gives the flipped (icon-side) attach
+-- corner, and a strip flipped ABOVE the frame edge (attach corner contains
+-- "BOTTOM") must wrap upward so extra rows grow away from the frame. Built ONCE
+-- here so the anchor pass and the configure pass share the exact same
+-- profile+overrides (they can never drift).
+local function ElementProfileFor(element)
+    local attachPoint = (MapAuraAnchorToFramePoint(element.anchor or "TOPLEFT"))
+    return AuraGlue.ElementProfile(element, {
+        attachPoint = attachPoint,
+        wrap = ((attachPoint or ""):find("BOTTOM", 1, true) and "UP" or "DOWN"),
+    })
 end
 
-local function QueueCombatWork(frame)
-    EnsureCombatDeferFrame()
-    pendingCombatWork[frame] = true
-end
-
--- Resolve the Blizzard filter strings for a zone from the unit's aura settings.
--- Mirrors the legacy live-path filter logic: classification mode emits the
--- per-classification filter strings, otherwise the structured/base filter.
-local function ResolveZoneFilters(auraSettings, unitKey, isDebuff)
-    local base = isDebuff and "HARMFUL" or "HELPFUL"
-    local usePlayerTargetAuraFilters = (unitKey == "player" or unitKey == "target")
-
-    if isDebuff then
-        if usePlayerTargetAuraFilters and auraSettings.debuffFilterMode == "classification" then
-            local f = BuildClassificationFilters(auraSettings.debuffClassifications, DEBUFF_CLASSIFICATION_MAP)
-            if f and #f > 0 then return f end
-        end
-        return { BuildFilterString(base, auraSettings.debuffFilter) }
-    end
-
-    if usePlayerTargetAuraFilters and auraSettings.buffFilterMode == "classification" then
-        local f = BuildClassificationFilters(auraSettings.buffClassifications, BUFF_CLASSIFICATION_MAP)
-        if f and #f > 0 then return f end
-    end
-    return { BuildFilterString(base, auraSettings.buffFilter) }
-end
-
--- Anchor a container OOC with fixed points relative to its unit frame.  The
--- container is forbidden, so SetPoint/SetSize are NEVER called in combat.
--- Buttons no longer carry offsetX/offsetY or an outside vertical flip (the
--- engine owns button layout) — the flip now applies to the CONTAINER point
--- itself: AuraSkin.LayoutAnchor(profile) returns the flow-origin corner (grow
--- + profile.wrap, see BuildZoneProfiles), and pinning THAT corner to the
--- frame's matching anchor point (framePoint == profile.anchor) makes the
--- auto-sized container hang off the frame edge exactly where the old
--- 1x1-anchored button grid did, with multi-row growth extending AWAY from the
--- frame.  borderOffsetX is the same 1px border compensation the preview
--- applies per icon.
-local function AnchorContainer(container, frame, profile)
-    local _, framePoint, borderOffsetX = MapAuraAnchorToFramePoint(profile.anchor)
+-- Anchor a container OOC relative to its unit frame. AuraSkin.LayoutAnchor(profile)
+-- returns the flow-origin corner (grow + the flipped wrap); pinning THAT corner to
+-- the frame's matching NON-flipped corner (framePoint) makes the auto-sized
+-- container hang off the frame edge exactly where the pre-element 1x1 grid did,
+-- with multi-row growth extending AWAY from the frame. borderOffsetX is the same
+-- 1px border compensation the preview applies per icon. The container is
+-- forbidden -> SetPoint is NEVER called in combat (callers gate on InCombatLockdown).
+local function AnchorElementContainer(container, frame, element)
+    local _, framePoint, borderOffsetX = MapAuraAnchorToFramePoint(element.anchor or "TOPLEFT")
     framePoint = framePoint or "TOPLEFT"
+    local profile = ElementProfileFor(element)
     container:ClearAllPoints()
     container:SetPoint(AuraSkin.LayoutAnchor(profile), frame, framePoint,
-        (borderOffsetX or 0) + (profile.offsetX or 0), (profile.offsetY or 0))
+        (borderOffsetX or 0) + (element.offsetX or 0), (element.offsetY or 0))
 end
 
--- Full grid profiles built from the per-zone aura settings.  Key names match
--- exactly what the layout-mode preview path reads (ShowAuraPreviewForFrame),
--- so live container layout == preview layout.  (debuff iconSize is the shared
--- `iconSize`; buff iconSize is `buffIconSize` — mirrors the schema sliders.)
-local function BuildZoneProfiles(auraSettings)
-    -- attachPoint is the flipped corner (icon side) MapAuraAnchorToFramePoint
-    -- derives for this anchor; a zone flipped ABOVE the frame edge (attachPoint
-    -- contains "BOTTOM" — its own bottom corner pins to the frame) must wrap
-    -- upward too, so extra rows grow away from the frame instead of into it.
-    local debuffAttachPoint = (MapAuraAnchorToFramePoint(auraSettings.debuffAnchor or "TOPLEFT"))
-    local debuffProfile = {
-        maxIcons    = auraSettings.debuffMaxIcons or 16,
-        iconSize    = auraSettings.iconSize or 22,
-        spacing     = auraSettings.debuffSpacing or auraSettings.iconSpacing or 2,
-        grow        = auraSettings.debuffGrow or "RIGHT",
-        maxPerRow   = auraSettings.debuffMaxPerRow or 0,
-        offsetX     = auraSettings.debuffOffsetX or 0,
-        offsetY     = auraSettings.debuffOffsetY or 2,
-        anchor      = auraSettings.debuffAnchor or "TOPLEFT",
-        attachPoint = debuffAttachPoint,
-        -- MapAuraAnchorToFramePoint returns nil for anchors outside its 4-corner
-        -- map (stale/hand-edited profiles) — same nilable contract AnchorContainer
-        -- already guards.
-        wrap        = ((debuffAttachPoint or ""):find("BOTTOM", 1, true) and "UP" or "DOWN"),
-        borderSize  = auraSettings.debuffBorderSize or auraSettings.borderSize or 1,
-        fontSize    = auraSettings.debuffFontSize or auraSettings.fontSize or 11,
-        hideSwipe   = auraSettings.debuffHideSwipe ~= nil and auraSettings.debuffHideSwipe or (auraSettings.hideSwipe or false),
-        reverseSwipe = auraSettings.debuffReverseSwipe ~= nil and auraSettings.debuffReverseSwipe or (auraSettings.reverseSwipe or false),
-    }
-    local buffAttachPoint = (MapAuraAnchorToFramePoint(auraSettings.buffAnchor or "BOTTOMLEFT"))
-    local buffProfile = {
-        maxIcons    = auraSettings.buffMaxIcons or 16,
-        iconSize    = auraSettings.buffIconSize or 22,
-        spacing     = auraSettings.buffSpacing or auraSettings.iconSpacing or 2,
-        grow        = auraSettings.buffGrow or "RIGHT",
-        maxPerRow   = auraSettings.buffMaxPerRow or 0,
-        offsetX     = auraSettings.buffOffsetX or 0,
-        offsetY     = auraSettings.buffOffsetY or -2,
-        anchor      = auraSettings.buffAnchor or "BOTTOMLEFT",
-        attachPoint = buffAttachPoint,
-        wrap        = ((buffAttachPoint or ""):find("BOTTOM", 1, true) and "UP" or "DOWN"),
-        borderSize  = auraSettings.buffBorderSize or auraSettings.borderSize or 1,
-        fontSize    = auraSettings.buffFontSize or auraSettings.fontSize or 11,
-        hideSwipe   = auraSettings.buffHideSwipe ~= nil and auraSettings.buffHideSwipe or (auraSettings.hideSwipe or false),
-        reverseSwipe = auraSettings.buffReverseSwipe ~= nil and auraSettings.buffReverseSwipe or (auraSettings.reverseSwipe or false),
-    }
-    return debuffProfile, buffProfile
-end
-
--- Create (OOC) the two zone containers for a unit frame and anchor them.
--- Group registration/theming now happens every ApplyContainerConfigPass zone
--- pass via AuraSkin.Configure/Restyle, not here — this only owns the
--- forbidden-object creation (combat-restricted) and the container anchor.
-local function EnsureContainers(frame, auraSettings)
-    -- Re-resolve defensively in case core/aura_skin.lua loaded after this file's
-    -- top-level chunk captured the (then-nil) upvalue.
-    AuraSkin = AuraSkin or (ns.Addon and ns.Addon.AuraSkin) or (_G.QUI and _G.QUI.AuraSkin)
-    if not AuraSkin or not CreateFrame then return false end
-
-    local debuffProfile, buffProfile = BuildZoneProfiles(auraSettings)
-
-    if not frame.debuffContainer then
-        frame.debuffContainer = CreateFrame("AuraContainer", nil, frame, "CustomAuraContainerTemplate")
-    end
-    if not frame.buffContainer then
-        frame.buffContainer = CreateFrame("AuraContainer", nil, frame, "CustomAuraContainerTemplate")
-    end
-
-    AnchorContainer(frame.debuffContainer, frame, debuffProfile)
-    AnchorContainer(frame.buffContainer, frame, buffProfile)
-    return true
-end
-
--- Combat-legal re-anchor of EXISTING containers (creation-free): re-pin the
--- container corners so an anchor/offset change applies live in combat.  Group
--- (re)configuration for the combat path lives in ApplyContainerConfigPass's
--- zone bodies (pcall-guarded AuraSkin.Configure, falling back to
--- AuraSkin.Restyle) — this function never touches groups.  No-op when the
--- containers don't exist yet (creation is OOC-only; the queued full pass
--- builds them at regen).
-local function ReflowContainers(frame, auraSettings)
-    if not (frame.debuffContainer and frame.buffContainer) then return false end
-    AuraSkin = AuraSkin or (ns.Addon and ns.Addon.AuraSkin) or (_G.QUI and _G.QUI.AuraSkin)
-    if not AuraSkin then return false end
-    local debuffProfile, buffProfile = BuildZoneProfiles(auraSettings)
-    AnchorContainer(frame.debuffContainer, frame, debuffProfile)
-    AnchorContainer(frame.buffContainer, frame, buffProfile)
-    return true
-end
-
--- AuraSkin.Configure's AddAuraGroup validates group registration eagerly, but
--- PTR4 defers the actual aura data parse to the secure OnUpdate dirty pass.
--- Some AuraFilters tokens are only valid in a specific polarity combo and the
--- C API hard-errors on a bad one (and group registration inserts the filter
--- BEFORE that throwing call, so a pcall around it would leave a poisoned
--- group that re-throws on every later dirty pass). FilterStringUsable
--- pre-validation is still required so a bad filter can't poison the secure
--- dirty pass — pre-validate the string with our own (addon-allowed)
--- GetUnitAuras and only hand accepted strings over.
-local function FilterStringUsable(unit, filterString)
-    if not (C_UnitAuras and C_UnitAuras.GetUnitAuras) then return true end
-    return (pcall(C_UnitAuras.GetUnitAuras, unit, filterString))
-end
-
--- Build AuraSkin group descriptors from resolved zone filter strings. Filters
--- that fail the C-side pre-validation probe are dropped (same policy as the
--- pre-PTR4 per-filter registration loop); if everything dropped, fall back to
--- the bare base.
-local function BuildZoneGroups(unit, filterStrings, base, maxIcons)
-    local groups = {}
-    for i = 1, #filterStrings do
-        local fs = filterStrings[i]
-        if FilterStringUsable(unit, fs) then
-            groups[#groups + 1] = { key = "zone" .. i, filter = fs, maxFrameCount = maxIcons }
-        end
-    end
-    if #groups == 0 then
-        groups[1] = { key = "zonebase", filter = base, maxFrameCount = maxIcons }
-    end
-    return groups
-end
-
--- Apply enable/disable + group + unit config to the live containers.  This is
--- the heart of the live path: groups (via AuraSkin.Configure) and SetEnabled
--- change, the container self-drives the rest.  allowCreate=true is the full
--- OOC pass (may create containers + pool buttons); allowCreate=false is the
--- combat pass — only combat-legal mutation of PRE-CREATED containers (anchor,
--- unit, group reconcile pcall-guarded with a Restyle fallback, enable).
-local function ApplyContainerConfigPass(frame, allowCreate)
+-- One container per active element, pooled by ORDINAL on the frame. allowCreate=
+-- false (combat) NEVER creates containers/slots and never SetPoints; it only
+-- mutates pre-created containers (SetUnit / pcall-guarded group reconcile inside
+-- AuraGlue.RunConfigPass / enable). Any forbidden work skipped in combat sets
+-- `incomplete`, which queues a full OOC replay via AuraGlue.QueueRegenWork.
+-- Layout-mode preview owns a polarity's display while active: a previewed polarity
+-- keeps its element containers disabled + hidden so the fake preview icons render
+-- alone (until Task 10 rewires preview to feed the containers directly).
+local function ApplyElementPass(frame, allowCreate)
     if not frame or not frame.unit then return end
+    if not ResolveAuraDeps() then return end
     local unitKey = frame.unitKey or frame.unit
-    local settings = GetUnitSettings(unitKey)
-    local auraSettings = settings and settings.auras or {}
-
-    if allowCreate then
-        if not EnsureContainers(frame, auraSettings) then return end
-    else
-        if not ReflowContainers(frame, auraSettings) then return end
+    local elems = ResolveContainerElements(frame)
+    local pool = frame._quiAuraContainers
+    if not pool then
+        pool = {}
+        frame._quiAuraContainers = pool
     end
 
-    local debuffProfile, buffProfile = BuildZoneProfiles(auraSettings)
-
-    local showBuffs = auraSettings.showBuffs == true
-    local showDebuffs = auraSettings.showDebuffs == true
-
-    -- Preview mode owns the display for a zone while active: keep the live
-    -- container disabled so the fake preview icons render alone.  Boss frames
-    -- preview as a GROUP — ShowAuraPreview("boss", ...) sets the "boss_*" key for
-    -- all five — so map boss1..boss5 to "boss" here, or the live container would
-    -- re-enable on top of the preview.
+    -- Boss frames preview as a GROUP — ShowAuraPreview("boss", ...) sets the
+    -- "boss_*" key for all five — so map boss1..boss5 to "boss" here.
     local previewKey = unitKey
-    if type(unitKey) == "string" and unitKey:match("^boss%d+$") then previewKey = "boss" end
-    local buffPreviewActive = QUI_UF.auraPreviewMode[previewKey .. "_buff"]
-    local debuffPreviewActive = QUI_UF.auraPreviewMode[previewKey .. "_debuff"]
+    if type(previewKey) == "string" and previewKey:match("^boss%d+$") then previewKey = "boss" end
+    local previewMode = QUI_UF.auraPreviewMode
+    local buffPreviewActive = previewMode and previewMode[previewKey .. "_buff"]
+    local debuffPreviewActive = previewMode and previewMode[previewKey .. "_debuff"]
 
-    -- Debuff zone.  SetUnit BEFORE group configuration so the container's eager
-    -- group registration (inside AuraSkin.Configure) has a valid unit.  OOC
-    -- configures directly; the combat pass pcall-guards Configure (PTR4 may
-    -- still restrict group mutation in combat) and falls back to the always
-    -- combat-legal Restyle (style-only, no group changes) on failure.
-    local dc = frame.debuffContainer
-    dc:SetUnit(frame.unit)
-    if showDebuffs and not debuffPreviewActive then
-        local debuffGroups = BuildZoneGroups(frame.unit,
-            ResolveZoneFilters(auraSettings, unitKey, true), "HARMFUL", debuffProfile.maxIcons)
-        if allowCreate then
-            AuraSkin.Configure(dc, debuffProfile, debuffGroups)
-        else
-            local ok = pcall(AuraSkin.Configure, dc, debuffProfile, debuffGroups)
-            if not ok then
-                AuraSkin.Restyle(dc, debuffProfile)
+    -- Engine-side right-click cancel is only offered on cancel-eligible hosts
+    -- (the player unit) for HELPFUL strips (AuraGlue.ElementGroups gates it).
+    local cancelEligible = (unitKey == "player")
+
+    local incomplete = false
+    for i = 1, #elems do
+        local element = elems[i]
+        local container = pool[i]
+        if not container then
+            if allowCreate and not InCombatLockdown() and CreateFrame then
+                container = CreateFrame("AuraContainer", nil, frame, "CustomAuraContainerTemplate")
+                pool[i] = container
+            else
+                incomplete = true
             end
         end
-        dc:SetEnabled(true)
-        dc:Show()
-    else
-        dc:SetEnabled(false)
-        dc:Hide()
+        if container then
+            -- SetUnit BEFORE group configuration so the container's eager group
+            -- registration (inside AuraSkin.Configure) has a valid unit.
+            container:SetUnit(frame.unit)
+            if not InCombatLockdown() then
+                AnchorElementContainer(container, frame, element)
+            end
+            local isDebuff = (element.auraType == "HARMFUL")
+            local previewSuppressed = (isDebuff and debuffPreviewActive)
+                or ((not isDebuff) and buffPreviewActive)
+            if previewSuppressed then
+                -- Previewed polarity: keep the live container off so the fake
+                -- preview icons own the display (SetEnabled/Hide is combat-legal).
+                container:SetEnabled(false)
+                container:Hide()
+            elseif element.mode == "tracked" then
+                -- Retire any strip groups a re-purposed container carries, then
+                -- reconcile the tracked slots (AddAuraSlot) onto it.
+                if not AuraGlue.RunConfigPass(container, ElementProfileFor(element), {}, allowCreate) then incomplete = true end
+                if not AuraSlots.Sync(container, element, allowCreate) then incomplete = true end
+                container:SetEnabled(true)
+                container:Show()
+            else
+                local profile = ElementProfileFor(element)
+                local groups = AuraGlue.ElementGroups(frame.unit, element, profile, cancelEligible)
+                if not AuraGlue.RunConfigPass(container, profile, groups, allowCreate) then incomplete = true end
+                AuraSlots.Park(container)
+                container:SetEnabled(true)
+                container:Show()
+            end
+        end
     end
-
-    -- Buff zone
-    local bc = frame.buffContainer
-    bc:SetUnit(frame.unit)
-    if showBuffs and not buffPreviewActive then
-        local buffGroups = BuildZoneGroups(frame.unit,
-            ResolveZoneFilters(auraSettings, unitKey, false), "HELPFUL", buffProfile.maxIcons)
-        if allowCreate then
-            AuraSkin.Configure(bc, buffProfile, buffGroups)
-        else
-            local ok = pcall(AuraSkin.Configure, bc, buffProfile, buffGroups)
-            if not ok then
-                AuraSkin.Restyle(bc, buffProfile)
-            end
-        end
-        bc:SetEnabled(true)
-        bc:Show()
-    else
-        bc:SetEnabled(false)
-        bc:Hide()
+    -- Retire pooled containers beyond the active element count: empty groups +
+    -- park slots + disable + hide (all combat-legal on a pre-created container).
+    for i = #elems + 1, #pool do
+        local container = pool[i]
+        if not AuraGlue.RunConfigPass(container, container._quiProfile or {}, {}, allowCreate) then incomplete = true end
+        AuraSlots.Park(container)
+        container:SetEnabled(false)
+        container:Hide()
+    end
+    if incomplete then
+        AuraGlue.QueueRegenWork(frame, function(f) ApplyElementPass(f, true) end)
     end
 end
 
--- Full OOC pass (the name FlushPendingCombatWork replays at regen).
+-- Full OOC pass. Public export name preserved (the combat-mutable test + any
+-- unitframes.lua caller depend on it); also what the regen replay closure runs.
 local function ApplyContainerConfig(frame)
-    ApplyContainerConfigPass(frame, true)
+    -- Defense-in-depth (GF parity): a direct in-combat call must run the
+    -- mutation-only pass, never allowCreate — unguarded Configure would
+    -- silently skip new groups without tripping the regen replay.
+    ApplyElementPass(frame, not InCombatLockdown())
 end
 QUI_UF.ApplyContainerConfig = ApplyContainerConfig
 
--- Public entry (callers in unitframes.lua depend on the name).  The live
--- container self-drives UNIT_AURA, so this is no longer a per-frame render
--- loop; it (re)applies enable/disable + filter config.  OOC: full pass.  In
--- combat: apply the combat-legal mutation subset immediately AND still queue
--- the full pass (creation + reconcile) for PLAYER_REGEN_ENABLED.
+-- Public entry (callers in unitframes.lua depend on the name). The live
+-- containers self-drive UNIT_AURA, so this is config-only, not a per-frame render
+-- loop. OOC: full pass. In combat: apply the combat-legal mutation subset
+-- immediately (pcall-guarded) AND still queue the full pass (creation + reconcile)
+-- for PLAYER_REGEN_ENABLED so a wrong assumption self-heals.
 local function UpdateAuras(frame)
     if not frame or not frame.unit then return end
     if InCombatLockdown() then
-        -- Mutation of pre-created containers is 12.1-PTR-legal; pcall-guard and
-        -- STILL queue the full pass (creation + reconcile) for regen.
-        pcall(ApplyContainerConfigPass, frame, false)
-        QueueCombatWork(frame)
+        -- Mutation of pre-created containers is 12.1-PTR-legal (SetUnit / filters
+        -- / enable); pcall-guard the whole mutable pass (a surprise combat
+        -- restriction must not error out of the event handler) and STILL queue
+        -- the full pass (creation + reconcile) for regen.
+        pcall(ApplyElementPass, frame, false)
+        AuraGlue = AuraGlue or ns.AuraGlue
+        if AuraGlue then
+            AuraGlue.QueueRegenWork(frame, function(f) ApplyElementPass(f, true) end)
+        end
         return
     end
-    ApplyContainerConfig(frame)
+    ApplyElementPass(frame, true)
+end
+QUI_UF.UpdateAuras = UpdateAuras
+
+-- Suppress the live containers of the previewed polarity around layout-mode
+-- preview. The preview flag for the polarity is already set by the caller, so a
+-- full (combat-aware) pass now disables + hides that polarity's element
+-- containers (the buffPreviewActive/debuffPreviewActive gate in ApplyElementPass)
+-- while leaving the other polarity live. Restored on preview exit via UpdateAuras.
+local function SuppressContainerForPreview(frame)
+    if not frame then return end
+    UpdateAuras(frame)
 end
 
--- Suppress / restore the live containers around layout-mode preview.  Disabling
--- + hiding lets the fake preview icons own the zone; restore re-applies live
--- config (deferred if in combat).
-local function SuppressContainerForPreview(frame, isDebuff)
+-- Which polarities are in aura-preview for this frame. Boss frames preview as a
+-- GROUP (ShowAuraPreview("boss",...) sets the shared "boss_*" key), so map
+-- boss1..boss5 to "boss" to read the same flags ApplyElementPass consults.
+local function PreviewPolarityFlags(unitKey)
+    local key = unitKey
+    if type(key) == "string" and key:match("^boss%d+$") then key = "boss" end
+    local pm = QUI_UF.auraPreviewMode
+    if not pm then return false, false end
+    return pm[key .. "_buff"] == true, pm[key .. "_debuff"] == true
+end
+
+-- Preview resolve: the unit-frame corner flip, folded EXACTLY as the live path
+-- folds it — the SAME ElementProfileFor (attachPoint + flipped wrap overrides)
+-- the configure pass uses, pinned to the frame's NON-flipped corner with the
+-- same 1px border compensation AnchorElementContainer applies. One source of
+-- truth: preview reuses the live helpers, no duplicated flip logic.
+local function PreviewResolve(element)
+    local _, framePoint, borderOffsetX = MapAuraAnchorToFramePoint(element.anchor or "TOPLEFT")
+    return ElementProfileFor(element), framePoint or "TOPLEFT",
+        (borderOffsetX or 0) + (element.offsetX or 0), (element.offsetY or 0)
+end
+
+-- Shared aura-preview refresh. The caller has already flipped the polarity's
+-- auraPreviewMode flag, so this reads them fresh and is order-independent when
+-- buff + debuff preview overlap (one pooled placeholder set per frame). Step 1
+-- re-runs the live pass, which disables + hides the previewed polarity's live
+-- containers (SetEnabled/Hide is combat-legal). Step 2 draws placeholder
+-- previews through the shared ns.AuraPreview for whichever polarity/polarities
+-- are active, using the SAME layout math the live containers use
+-- (ElementProfileFor over AuraGlue.ElementProfile, threaded via opts.resolve so
+-- the corner flip lands in the preview too) — reading each element's own
+-- duration{}/stack{}, never the pruned per-unit scalar keys the old fake-icon
+-- renderer read.
+local function RefreshAuraPreviewForFrame(frame, unitKey)
     if not frame then return end
-    local container = isDebuff and frame.debuffContainer or frame.buffContainer
-    if not container then return end
-    if InCombatLockdown() then
-        -- SetEnabled/Hide on a pre-created container is combat-legal mutation;
-        -- pcall-guard and still queue the reconcile pass for regen.
-        pcall(container.SetEnabled, container, false)
-        pcall(container.Hide, container)
-        QueueCombatWork(frame)
+    SuppressContainerForPreview(frame)
+    local Preview = ns.AuraPreview
+    if not Preview then return end
+    local buffActive, debuffActive = PreviewPolarityFlags(unitKey)
+    if not (buffActive or debuffActive) then
+        Preview.Hide(frame)
         return
     end
-    container:SetEnabled(false)
-    container:Hide()
+    -- ResolveContainerElements returns a shared scratch; take it AFTER the live
+    -- pass above (which also touches it) and hand it straight to Preview.Show.
+    local elems = ResolveContainerElements(frame)
+    Preview.Show(frame, elems, {
+        resolve = PreviewResolve,
+        only = function(e)
+            if e.auraType == "HARMFUL" then return debuffActive end
+            return buffActive
+        end,
+    })
 end
 
 -- (The legacy live-render body — the manual per-index aura polling loop and its
 --  SafeSetCooldown / DisplayStackCount closures — was removed when the live
 --  display moved to the secure CustomAuraContainer above, which reads aura data
 --  C-side and never hands a secret value to QUI Lua.)
--- Expose for unitframes.lua callers
-QUI_UF.UpdateAuras = UpdateAuras
 
 local function RefreshBossFrameForEngage(frame)
     if not frame or not frame.unit then return end
@@ -535,7 +412,7 @@ local function SetupAuraTracking(frame)
 
     local unit = frame.unit
 
-    -- Live aura display is now a secure CustomAuraContainer per zone — it
+    -- Live aura display is now a secure CustomAuraContainer per element — it
     -- self-drives UNIT_AURA internally (see AuraContainerPrivateMixin), so QUI
     -- no longer registers UNIT_AURA on the unit frame for aura rendering.  We
     -- still listen for token-change events so the container re-points at the
@@ -577,7 +454,7 @@ local function SetupAuraTracking(frame)
         end
     end)
 
-    -- Create + configure the containers once at load.  EnsureContainers /
+    -- Create + configure the containers once at load.  Container creation /
     -- anchoring touch a forbidden object, so do it OOC; UpdateAuras defers to
     -- PLAYER_REGEN_ENABLED if we somehow land here in combat.
     UpdateAuras(frame)
@@ -621,200 +498,12 @@ function QUI_UF:ShowAuraPreview(unitKey, auraType)
     self:ShowAuraPreviewForFrame(frame, unitKey, auraType)
 end
 
-function QUI_UF:ShowAuraPreviewForFrame(frame, unitKey, auraType)
-    if not frame then return end
-
-    -- Get settings
-    local settings = GetUnitSettings(unitKey)
-    local auraSettings = settings and settings.auras or {}
-
-    -- Determine which preview data and settings to use
-    local previewData = (auraType == "buff") and PREVIEW_AURAS.buffs or PREVIEW_AURAS.debuffs
-    local isDebuff = (auraType == "debuff")
-
-    -- Get size and positioning settings
-    local iconSize, anchor, grow, offsetX, offsetY, spacing, maxIcons
-    if isDebuff then
-        iconSize = auraSettings.iconSize or 22
-        anchor = auraSettings.debuffAnchor or "TOPLEFT"
-        grow = auraSettings.debuffGrow or "RIGHT"
-        offsetX = auraSettings.debuffOffsetX or 0
-        offsetY = auraSettings.debuffOffsetY or 2
-        spacing = auraSettings.debuffSpacing or 2
-        maxIcons = auraSettings.debuffMaxIcons or 16
-    else
-        iconSize = auraSettings.buffIconSize or 22
-        anchor = auraSettings.buffAnchor or "BOTTOMLEFT"
-        grow = auraSettings.buffGrow or "RIGHT"
-        offsetX = auraSettings.buffOffsetX or 0
-        offsetY = auraSettings.buffOffsetY or -2
-        spacing = auraSettings.buffSpacing or 2
-        maxIcons = auraSettings.buffMaxIcons or 16
-    end
-
-    -- Initialize preview icon container if needed
-    local containerKey = isDebuff and "previewDebuffIcons" or "previewBuffIcons"
-    frame[containerKey] = frame[containerKey] or {}
-    local container = frame[containerKey]
-
-    -- Disable the live secure container for this zone so the fake preview icons
-    -- own the display.  (A self-driving secure container cannot be fed fake
-    -- auras — preview keeps the custom-icon renderer; restored on preview exit.)
-    SuppressContainerForPreview(frame, isDebuff)
-
-    -- Hide any legacy real-icon table that may exist (dead on the live path now,
-    -- but cleared defensively).
-    local realContainer = isDebuff and frame.debuffIcons or frame.buffIcons
-    if realContainer then
-        for _, icon in ipairs(realContainer) do
-            icon:Hide()
-        end
-    end
-
-    -- Hide any existing preview icons first (in case maxIcons was reduced)
-    for _, icon in ipairs(container) do
-        icon:SetScript("OnUpdate", nil)
-        icon:Hide()
-    end
-
-    -- Track start time for looping cooldown animation
-    local previewStartTime = GetTime()
-    local previewDuration = 10
-    local previewDataCount = #previewData
-
-    -- Create/show preview icons based on maxIcons setting
-    for i = 1, maxIcons do
-        -- Cycle through mock data using modulo
-        local dataIndex = ((i - 1) % previewDataCount) + 1
-        local auraData = previewData[dataIndex]
-        local icon = container[i]
-        if not icon then
-            -- Create new preview icon (simplified, no tooltip interaction needed)
-            icon = CreateFrame("Frame", nil, frame)
-            icon:SetFrameLevel(frame:GetFrameLevel() + 10)
-
-            -- Border
-            local border = icon:CreateTexture(nil, "BACKGROUND", nil, -8)
-            border:SetColorTexture(0, 0, 0, 1)
-            local prevIconPx = QUICore:GetPixelSize(icon)
-            border:SetPoint("TOPLEFT", icon, "TOPLEFT", -prevIconPx, prevIconPx)
-            border:SetPoint("BOTTOMRIGHT", icon, "BOTTOMRIGHT", prevIconPx, -prevIconPx)
-            icon.border = border
-
-            -- Icon texture
-            local tex = icon:CreateTexture(nil, "ARTWORK")
-            tex:SetPoint("TOPLEFT", 0, 0)
-            tex:SetPoint("BOTTOMRIGHT", 0, 0)
-            tex:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-            icon.icon = tex
-
-            -- Cooldown swipe
-            local cd = CreateFrame("Cooldown", nil, icon, "CooldownFrameTemplate")
-            cd:SetAllPoints(icon)
-            cd:SetDrawEdge(false)
-            cd:SetReverse(true)
-            cd:SetSwipeTexture("Interface\\Buttons\\WHITE8X8")
-            cd:SetSwipeColor(0, 0, 0, 0.8)
-            cd.noOCC = true
-            cd.noCooldownCount = true
-            icon.cooldown = cd
-
-            -- Stack count — parented above the cooldown swipe
-            local stackOverlay = CreateFrame("Frame", nil, icon)
-            stackOverlay:SetAllPoints(icon)
-            stackOverlay:SetFrameLevel(cd:GetFrameLevel() + 1)
-            local count = stackOverlay:CreateFontString(nil, "OVERLAY")
-            count:SetTextColor(1, 1, 1, 1)
-            icon.count = count
-
-            container[i] = icon
-        end
-
-        -- Configure icon size
-        icon:SetSize(iconSize, iconSize)
-
-        -- Apply settings (font, stack position, etc.)
-        local fontPath = GetFontPath()
-        local fontOutline = GetFontOutline()
-        local prefix = isDebuff and "debuff" or "buff"
-
-        local showStack = auraSettings[prefix .. "ShowStack"]
-        if showStack == nil then showStack = auraSettings.showStack end
-        if showStack == nil then showStack = true end
-
-        local stackSize = auraSettings[prefix .. "StackSize"] or auraSettings.stackSize or 10
-        local stackAnchor = auraSettings[prefix .. "StackAnchor"] or auraSettings.stackAnchor or "BOTTOMRIGHT"
-        local stackOffsetX = auraSettings[prefix .. "StackOffsetX"] or auraSettings.stackOffsetX or -1
-        local stackOffsetY = auraSettings[prefix .. "StackOffsetY"] or auraSettings.stackOffsetY or 1
-        local stackColor = auraSettings[prefix .. "StackColor"] or auraSettings.stackColor or {1, 1, 1, 1}
-
-        CJKFont(icon.count, fontPath, stackSize, fontOutline)
-        icon.count:ClearAllPoints()
-        icon.count:SetPoint(stackAnchor, icon, stackAnchor, stackOffsetX, stackOffsetY)
-        icon.count:SetTextColor(stackColor[1] or 1, stackColor[2] or 1, stackColor[3] or 1, stackColor[4] or 1)
-
-        -- Hide Duration Swipe setting
-        local hideSwipe = auraSettings[prefix .. "HideSwipe"]
-        if hideSwipe == nil then hideSwipe = false end
-        icon.cooldown:SetDrawSwipe(not hideSwipe)
-
-        -- Set texture
-        icon.icon:SetTexture(auraData.icon)
-
-        -- Set border color (red for debuffs, black for buffs)
-        if isDebuff then
-            icon.border:SetColorTexture(0.8, 0.2, 0.2, 1)
-        else
-            icon.border:SetColorTexture(0, 0, 0, 1)
-        end
-
-        -- Set stack count
-        if showStack and auraData.stacks and auraData.stacks > 1 then
-            icon.count:SetText(auraData.stacks)
-            icon.count:Show()
-        else
-            icon.count:Hide()
-        end
-
-        -- Calculate position
-        local idx = i - 1
-        local xPos, yPos = offsetX, offsetY
-        if grow == "RIGHT" then
-            xPos = xPos + idx * (iconSize + spacing)
-        elseif grow == "LEFT" then
-            xPos = xPos - idx * (iconSize + spacing)
-        elseif grow == "UP" then
-            yPos = yPos + idx * (iconSize + spacing)
-        elseif grow == "DOWN" then
-            yPos = yPos - idx * (iconSize + spacing)
-        end
-
-        -- Map user anchor to frame anchor points (flip vertical only for outside positioning)
-        -- Border compensation: icons have 1px border extending beyond frame
-        local iconPoint, framePoint, borderOffsetX = MapAuraAnchorToFramePoint(anchor)
-
-        icon:ClearAllPoints()
-        icon:SetPoint(iconPoint, frame, framePoint, xPos + (borderOffsetX or 0), yPos)
-
-        -- Setup looping cooldown animation
-        icon.cooldown:SetCooldown(previewStartTime, previewDuration)
-        icon.cooldown:Show()
-
-        -- Store start time for OnUpdate loop
-        icon._previewStartTime = previewStartTime
-        icon._previewDuration = previewDuration
-
-        icon:SetScript("OnUpdate", function(self, elapsed)
-            local now = GetTime()
-            local elapsedTime = now - self._previewStartTime
-            if elapsedTime >= self._previewDuration then
-                self._previewStartTime = now
-                self.cooldown:SetCooldown(now, self._previewDuration)
-            end
-        end)
-
-        icon:Show()
-    end
+-- Placeholder aura preview for one polarity. Delegates to the shared refresh so
+-- overlapping buff/debuff previews (independent auraPreviewMode flags) resolve
+-- from the pooled placeholder set on the frame. auraType is unused: the caller
+-- has already set the polarity flag the refresh reads.
+function QUI_UF:ShowAuraPreviewForFrame(frame, unitKey, _auraType)
+    RefreshAuraPreviewForFrame(frame, unitKey)
 end
 
 function QUI_UF:HideAuraPreview(unitKey, auraType)
@@ -841,21 +530,9 @@ function QUI_UF:HideAuraPreview(unitKey, auraType)
     self:HideAuraPreviewForFrame(frame, unitKey, auraType)
 end
 
-function QUI_UF:HideAuraPreviewForFrame(frame, unitKey, auraType)
-    if not frame then return end
-
-    local isDebuff = (auraType == "debuff")
-    local containerKey = isDebuff and "previewDebuffIcons" or "previewBuffIcons"
-    local container = frame[containerKey]
-
-    -- Hide and cleanup preview icons
-    if container then
-        for _, icon in ipairs(container) do
-            icon:SetScript("OnUpdate", nil)
-            icon:Hide()
-        end
-    end
-
-    -- Refresh real auras
-    UpdateAuras(frame)
+-- Exit aura preview for one polarity. Delegates to the shared refresh: the
+-- caller has already cleared this polarity's flag, so the refresh re-enables the
+-- live container and Preview.Show/Hide reflects any still-active polarity.
+function QUI_UF:HideAuraPreviewForFrame(frame, unitKey, _auraType)
+    RefreshAuraPreviewForFrame(frame, unitKey)
 end

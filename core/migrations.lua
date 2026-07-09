@@ -45,10 +45,22 @@ local _currentGlobalDB     = nil  -- db.global; for cross-profile reads (v32+)
 --       stored privateAuras subtable under quiUnitFrames.player/target/focus
 --       and quiGroupFrames.party/raid so no orphaned settings linger.
 --
+-- v50 = SeedAuraElements — the aura-surface unification. Buffborders and
+--       unit-frame flat per-strip settings (buff*/debuff* geometry, filter,
+--       sort and text-position keys) become unified element-list stores
+--       (spec-bucket stores backed by core/aura_elements.lua); group-frame
+--       elements (already element-shaped) are normalized in place. Reproduces
+--       the RESOLVED pre-migration render (sentinels resolved, not copied),
+--       heals the UF legacy classification master keys, prunes only the known
+--       migrated flat keys, and is idempotent (bucket elementsSeeded flag
+--       short-circuits re-entry). Frame-level buffborders toggles
+--       (enableBuffs/enableDebuffs/hide*/fade*/iconSkin/borderSize/font*)
+--       SURVIVE — the runtime still reads them as per-frame gates.
+--
 -- When adding a new migration: bump CURRENT_SCHEMA_VERSION, add a single
 -- linear gate in RunOnProfile, and document the version above.
 ---------------------------------------------------------------------------
-local CURRENT_SCHEMA_VERSION = 49
+local CURRENT_SCHEMA_VERSION = 50
 
 -- The oldest schema we still carry forward. The last 4.x stable release and
 -- 5.0 alpha4 both shipped schema 47, and every step-by-step migration through
@@ -463,6 +475,281 @@ function Migrations.PrunePrivateAuras(profile)
             local contextDB = gf[contextMode]
             if type(contextDB) == "table" then
                 contextDB.privateAuras = nil
+            end
+        end
+    end
+end
+
+-- v50: aura-surface unification. The three aura surfaces converge on ONE model
+-- (core/aura_elements.lua): a spec-bucket store `auras.elements = { ["*"] = {
+-- element, ... } }` guarded by `elementsSeeded`.
+--   * buffborders: flat per-strip settings -> buffAuras / debuffAuras stores.
+--   * unit frames: flat per-strip settings -> auras.elements store.
+--   * group frames: elements already exist -> NormalizeElement in place.
+-- Runs at ADDON_LOADED, strictly before any surface renders (renders are
+-- post-PEW), so the stores are seeded first. SKIPS any store already carrying
+-- elementsSeeded (idempotency + never clobbers a runtime-seeded fresh profile).
+-- Nil-guarded throughout; prunes ONLY known migrated keys.
+-- Returns false (without seeding) if the element model isn't loaded — the
+-- caller must NOT stamp v50 in that case or the flat keys would strand
+-- unmigrated behind the version gate. Unreachable in practice (migration
+-- fires at ADDON_LOADED after all TOC files; headless/import callers load
+-- core first); belt-and-braces only.
+function Migrations.SeedAuraElements(profile)
+    local E = _G.QUI and _G.QUI.AuraElements
+    if not E then return false end
+
+    -- ---- buffborders ------------------------------------------------------
+    local bb = profile.buffBorders
+    if type(bb) == "table" then
+        local FLAG_KEYS = {
+            buff = { buffFilterPlayer = "PLAYER", buffFilterRaid = "RAID",
+                     buffFilterCancelable = "CANCELABLE", buffFilterNotCancelable = "NOT_CANCELABLE",
+                     buffFilterBigDefensive = "BIG_DEFENSIVE" },
+            debuff = { debuffFilterPlayer = "PLAYER", debuffFilterRaid = "RAID",
+                       debuffFilterIncludeNameplateOnly = "INCLUDE_NAME_PLATE_ONLY",
+                       debuffFilterRaidPlayerDispellable = "RAID_PLAYER_DISPELLABLE",
+                       debuffFilterCrowdControl = "CROWD_CONTROL" },
+        }
+        local function seedZone(prefix, storeKey, auraType, enableKey, cancelable)
+            if type(bb[storeKey]) == "table" and bb[storeKey].elementsSeeded then return end
+            local e = E.NewFilterStripElement(auraType)
+            e.id = prefix .. "s"
+            -- Frame-level enable stays a settings-level read (the runtime gates
+            -- the whole host on bb.enableBuffs/enableDebuffs), but the per-strip
+            -- element inherits the same on/off state so a disabled host does not
+            -- render a strip that would flip on the moment the host is enabled.
+            e.enabled = (bb[enableKey] ~= false)
+            -- ABSENT-key resolution: this migration reads RAW SavedVariables
+            -- (Migrations.Run iterates db.sv.profiles) and AceDB never persists
+            -- unchanged defaults — an absent key means HEAD rendered the
+            -- defaults.lua value. Two DISTINCT iconSize resolutions:
+            --   * ABSENT           -> 35 (defaults.lua buff/debuffIconSize)
+            --   * PRESENT but <= 0 -> 30 (HEAD BuildZoneProfile's explicit
+            --     DEFAULT_ICON_SIZE reset for the 0 = "use default" sentinel)
+            -- perRow/spacing resolve identically on both paths (absent ->
+            -- defaults 10/0; BuildZoneProfile resolved <= 0 -> 10/2 either way).
+            local size = bb[prefix .. "IconSize"]
+            if type(size) == "number" then
+                e.iconSize = (size > 0) and size or 30
+            else
+                e.iconSize = 35
+            end
+            local perRow = bb[prefix .. "IconsPerRow"]
+            e.iconsPerRow = (type(perRow) == "number" and perRow > 0) and perRow or 10
+            local spacing = bb[prefix .. "IconSpacing"]
+            e.spacing = (type(spacing) == "number" and spacing > 0) and spacing or 2
+            -- HEAD's BuildZoneProfile capped every zone at the FIXED
+            -- BUFF_MAX_DISPLAY / DEBUFF_MAX_DISPLAY (= 40), never a setting;
+            -- the element-model default (3) would truncate the strip.
+            e.maxIcons = 40
+            -- Absent grow toggles resolve to the defaults.lua values
+            -- (buff/debuffGrowLeft = true, GrowUp = false => grow LEFT from a
+            -- TOPRIGHT origin). This corner also feeds UpdateGrowAnchor.
+            local growLeft = bb[prefix .. "GrowLeft"]
+            if growLeft == nil then growLeft = true end
+            local growUp = bb[prefix .. "GrowUp"] == true
+            e.growDirection = growLeft and "LEFT" or "RIGHT"
+            if growUp then
+                e.anchor = growLeft and "BOTTOMRIGHT" or "BOTTOMLEFT"
+            else
+                e.anchor = growLeft and "TOPRIGHT" or "TOPLEFT"
+            end
+            e.sortRule = bb[prefix .. "SortRule"] or "INDEX"
+            e.sortReverse = bb[prefix .. "SortReverse"] == true
+            local flags, any = {}, false
+            for dbKey, token in pairs(FLAG_KEYS[prefix]) do
+                if bb[dbKey] then flags[token] = true; any = true end
+            end
+            if any then
+                e.filterMode = "flags"
+                e.filterFlags = flags
+            end
+            -- Absent fontSize rendered the defaults.lua value (12), not the
+            -- element-model default (9).
+            e.duration.fontSize = (type(bb.fontSize) == "number" and bb.fontSize > 0) and bb.fontSize or 12
+            e.duration.anchor = bb[prefix .. "DurationTextAnchor"] or e.duration.anchor
+            e.duration.offsetX = bb[prefix .. "DurationTextOffsetX"] or e.duration.offsetX
+            e.duration.offsetY = bb[prefix .. "DurationTextOffsetY"] or e.duration.offsetY
+            e.stack.fontSize = e.duration.fontSize
+            e.stack.anchor = bb[prefix .. "StackTextAnchor"] or e.stack.anchor
+            e.stack.offsetX = bb[prefix .. "StackTextOffsetX"] or e.stack.offsetX
+            e.stack.offsetY = bb[prefix .. "StackTextOffsetY"] or e.stack.offsetY
+            e.rightClickCancel = cancelable
+            bb[storeKey] = { elementsSeeded = true, elements = { ["*"] = { e } } }
+        end
+        seedZone("buff", "buffAuras", "HELPFUL", "enableBuffs", true)
+        seedZone("debuff", "debuffAuras", "HARMFUL", "enableDebuffs", false)
+        -- Prune every migrated per-strip key. Frame-level keys SURVIVE:
+        -- enableBuffs/enableDebuffs (per-frame master gate), hide*/fade*,
+        -- showBuffBorders/showDebuffBorders, iconSkin, externalSkinning,
+        -- borderSize, fontSize, fontOutline.
+        local PRUNE_SUFFIXES = {
+            "IconSize", "IconsPerRow", "IconSpacing", "GrowLeft", "GrowUp",
+            "SortRule", "SortReverse", "RowSpacing", "InvertSwipeDarkening",
+            "DurationTextAnchor", "DurationTextOffsetX", "DurationTextOffsetY",
+            "StackTextAnchor", "StackTextOffsetX", "StackTextOffsetY",
+        }
+        for _, prefix in ipairs({ "buff", "debuff" }) do
+            for _, suffix in ipairs(PRUNE_SUFFIXES) do
+                bb[prefix .. suffix] = nil
+            end
+            for dbKey in pairs(FLAG_KEYS[prefix]) do
+                bb[dbKey] = nil
+            end
+        end
+    end
+
+    -- ---- unit frames ------------------------------------------------------
+    -- Effective HEAD render defaults PER UNIT. This migration reads RAW
+    -- SavedVariables, and AceDB never persists unchanged defaults — an absent
+    -- key means HEAD rendered that unit's defaults.lua value (per-unit auras
+    -- blocks, deleted by v50's defaults restructure), falling through to
+    -- HEAD's code fallback for keys no block declared (buff/debuffMaxPerRow on
+    -- non-player units -> 0, spacing on tt/pet/focus/boss -> 2). Values below
+    -- transcribed from `git show HEAD:core/defaults.lua`: iconSize + maxIcons
+    -- + offsetY are the only per-unit variations (HEAD's debuff size read the
+    -- shared `iconSize` key; only focus declared non-zero offsets and 16 max).
+    local UF_HEAD_DEFAULTS = {
+        player       = { buff = { iconSize = 22, maxIcons = 4,  offsetY = 0 },  debuff = { iconSize = 22, maxIcons = 4,  offsetY = 0 } },
+        target       = { buff = { iconSize = 18, maxIcons = 4,  offsetY = 0 },  debuff = { iconSize = 26, maxIcons = 4,  offsetY = 0 } },
+        targettarget = { buff = { iconSize = 22, maxIcons = 4,  offsetY = 0 },  debuff = { iconSize = 22, maxIcons = 4,  offsetY = 0 } },
+        pet          = { buff = { iconSize = 22, maxIcons = 4,  offsetY = 0 },  debuff = { iconSize = 22, maxIcons = 4,  offsetY = 0 } },
+        focus        = { buff = { iconSize = 20, maxIcons = 16, offsetY = -2 }, debuff = { iconSize = 20, maxIcons = 16, offsetY = 2 } },
+        boss         = { buff = { iconSize = 22, maxIcons = 4,  offsetY = 0 },  debuff = { iconSize = 22, maxIcons = 4,  offsetY = 0 } },
+    }
+    -- Units with no HEAD defaults block: HEAD's code fallbacks
+    -- (BuildZoneProfiles: iconSize 22, maxIcons 16, offsetY -2 buff / 2 debuff).
+    local UF_HEAD_FALLBACK = {
+        buff = { iconSize = 22, maxIcons = 16, offsetY = -2 },
+        debuff = { iconSize = 22, maxIcons = 16, offsetY = 2 },
+    }
+    local uf = profile.quiUnitFrames
+    if type(uf) == "table" then
+        for unitKey, unit in pairs(uf) do
+            local a = type(unit) == "table" and unit.auras
+            if type(a) == "table" and not a.elementsSeeded then
+                local unitDefaults = UF_HEAD_DEFAULTS[unitKey] or UF_HEAD_FALLBACK
+                local function seedElem(prefix, auraType, showKey)
+                    local d = unitDefaults[prefix]
+                    local e = E.NewFilterStripElement(auraType)
+                    e.id = prefix .. "s"
+                    e.enabled = (a[showKey] == true)
+                    -- HEAD's UF BuildZoneProfiles used auraSettings.iconSize for
+                    -- the DEBUFF size fallback (there is no debuffIconSize key in
+                    -- the shipped defaults — only the shared `iconSize`).
+                    local size = a[prefix .. "IconSize"] or ((prefix == "debuff") and a.iconSize)
+                    e.iconSize = (type(size) == "number" and size > 0) and size or d.iconSize
+                    e.anchor = a[prefix .. "Anchor"] or ((prefix == "buff") and "BOTTOMLEFT" or "TOPLEFT")
+                    e.growDirection = a[prefix .. "Grow"] or "RIGHT"
+                    local m = a[prefix .. "MaxIcons"]
+                    e.maxIcons = (type(m) == "number" and m > 0) and m or d.maxIcons
+                    e.iconsPerRow = a[prefix .. "MaxPerRow"] or 0
+                    e.offsetX = a[prefix .. "OffsetX"] or 0
+                    e.offsetY = a[prefix .. "OffsetY"] or d.offsetY
+                    e.spacing = a[prefix .. "Spacing"] or a.iconSpacing or 2
+                    if a[prefix .. "FilterMode"] == "classification" and type(a[prefix .. "Classifications"]) == "table" then
+                        e.filterMode = "classify"
+                        e.classifications = a[prefix .. "Classifications"]
+                        -- Legacy-master heal: pre-merge UF maps had ONLY the
+                        -- helpful/harmful master keys and derived them as
+                        -- (raid or raidInCombat). The merged model reads keys
+                        -- independently, so a legacy {raid=true} shape would
+                        -- silently lose RAID_IN_COMBAT (helpful) or fall to
+                        -- bare-polarity (harmful). Stamp the master to preserve
+                        -- pre-migration visuals exactly.
+                        local c = e.classifications
+                        local master = (auraType == "HELPFUL") and "helpful" or "harmful"
+                        if c[master] == nil and (c.raid or c.raidInCombat) then
+                            c[master] = true
+                        end
+                    elseif type(a[prefix .. "Filter"]) == "table" and next(a[prefix .. "Filter"]) then
+                        e.filterMode = "flags"
+                        local flags = {}
+                        for tok, on in pairs(a[prefix .. "Filter"]) do
+                            if on then flags[tok] = true end
+                        end
+                        e.filterFlags = flags
+                    end
+                    -- Absent duration/stack sub-tables resolve to the HEAD
+                    -- defaults.lua declarations (player/target blocks:
+                    -- buffDuration show/fs12, debuffDuration hidden/fs10, stack
+                    -- fs10) — identical to the staged DefaultUnitAuraBucket, so
+                    -- migrated and fresh-seeded stores render the same. The
+                    -- element-model defaults (fs 9) never rendered on UF.
+                    local dur = a[prefix .. "Duration"]
+                    if type(dur) == "table" then
+                        e.duration = { show = dur.show ~= false, fontSize = dur.fontSize or 10,
+                                       anchor = dur.anchor or "CENTER", offsetX = dur.offsetX or 0,
+                                       offsetY = dur.offsetY or 0, color = dur.color or { 1, 1, 1, 1 } }
+                    else
+                        e.duration = { show = (prefix == "buff"), fontSize = (prefix == "buff") and 12 or 10,
+                                       anchor = "CENTER", offsetX = 0, offsetY = 0, color = { 1, 1, 1, 1 } }
+                    end
+                    local st = a[prefix .. "Stack"]
+                    if type(st) == "table" then
+                        e.stack = { show = st.show ~= false, fontSize = st.fontSize or 10,
+                                    anchor = st.anchor or "BOTTOMRIGHT", offsetX = st.offsetX or -1,
+                                    offsetY = st.offsetY or 1, color = st.color or { 1, 1, 1, 1 } }
+                    else
+                        e.stack = { show = true, fontSize = 10, anchor = "BOTTOMRIGHT",
+                                    offsetX = -1, offsetY = 1, color = { 1, 1, 1, 1 } }
+                    end
+                    -- "Hide Duration Swipe" was a real HEAD checkbox
+                    -- (per-zone prefixed key, shared fallback) — map it or
+                    -- the user's setting silently reverts (element default
+                    -- false re-enables the swipe permanently). reverseSwipe:
+                    -- same shared-fallback read on HEAD's live path.
+                    e.hideSwipe = (a[prefix .. "HideSwipe"] == true) or (a.hideSwipe == true)
+                    e.reverseSwipe = (a[prefix .. "ReverseSwipe"] == true) or (a.reverseSwipe == true)
+                    e.rightClickCancel = (unitKey == "player") and (auraType == "HELPFUL")
+                    return e
+                end
+                local debuff = seedElem("debuff", "HARMFUL", "showDebuffs")
+                local buff = seedElem("buff", "HELPFUL", "showBuffs")
+                a.elements = { ["*"] = { debuff, buff } }
+                a.elementsSeeded = true
+                -- Prune migrated flat keys; unknown/sibling keys survive.
+                local PRUNE = {
+                    "showBuffs", "showDebuffs", "iconSize", "iconSpacing",
+                    "hideSwipe", "reverseSwipe",
+                    "durationColor", "showDuration", "durationSize", "durationAnchor",
+                    "durationOffsetX", "durationOffsetY",
+                    "stackColor", "showStack", "stackSize", "stackAnchor",
+                    "stackOffsetX", "stackOffsetY",
+                }
+                for _, k in ipairs(PRUNE) do a[k] = nil end
+                for _, prefix in ipairs({ "buff", "debuff" }) do
+                    -- Duration* scalars (buffDurationSize etc.) were PREVIEW-only
+                    -- orphans at HEAD (never live-rendered): prune, don't map.
+                    for _, suffix in ipairs({ "IconSize", "Anchor", "Grow", "MaxIcons", "MaxPerRow",
+                        "OffsetX", "OffsetY", "Spacing", "FilterMode", "FilterOnlyMine", "Classifications",
+                        "Filter", "Duration", "Stack", "ShowStack", "StackSize", "StackAnchor",
+                        "StackOffsetX", "StackOffsetY", "StackColor", "BorderSize", "FontSize",
+                        "HideSwipe", "ReverseSwipe", "ShowDuration", "DurationSize", "DurationAnchor",
+                        "DurationOffsetX", "DurationOffsetY", "DurationColor" }) do
+                        a[prefix .. suffix] = nil
+                    end
+                end
+            end
+        end
+    end
+
+    -- ---- group frames (normalize in place) --------------------------------
+    -- GF stores are already element-shaped at HEAD; normalize each element to
+    -- fold flat duration fields and stamp the new fields. No legacy-master heal
+    -- here: GF's HEAD classification map used the SPLIT keys directly (raid /
+    -- raidInCombat), so no master derivation to preserve.
+    local gf = profile.quiGroupFrames
+    if type(gf) == "table" then
+        for _, groupKey in ipairs({ "party", "raid" }) do
+            local a = type(gf[groupKey]) == "table" and gf[groupKey].auras
+            if type(a) == "table" and type(a.elements) == "table" then
+                for _, bucket in pairs(a.elements) do
+                    if type(bucket) == "table" then
+                        for _, e in ipairs(bucket) do E.NormalizeElement(e) end
+                    end
+                end
             end
         end
     end
@@ -1449,6 +1736,19 @@ function Migrations.RunOnProfile(profile)
     -- subtable left over from before the removal. See
     -- Migrations.PrunePrivateAuras above.
     if stored < 49 then Migrations.PrunePrivateAuras(profile) end
+
+    -- v50: aura-surface unification — flat buffborders / unit-frame strip
+    -- settings become unified element stores; group-frame elements are
+    -- normalized in place. See Migrations.SeedAuraElements above.
+    if stored < 50 then
+        if Migrations.SeedAuraElements(profile) == false then
+            -- Element model unavailable (belt-and-braces; see SeedAuraElements).
+            -- Stamp only through v49 so the flat keys aren't stranded behind
+            -- the version gate — the next RunOnProfile retries the v50 seed.
+            profile._schemaVersion = 49
+            return true
+        end
+    end
 
     profile._schemaVersion = CURRENT_SCHEMA_VERSION
     return true

@@ -2214,6 +2214,31 @@ function Helpers.ApplyCooldownFromAura(cooldownFrame, unit, auraInstanceID, expi
     return false
 end
 
+--- Toggle a Cooldown's native radial swipe per an element's swipeStyle config
+--- (radial / horizontal / vertical). Lifted out of the group-frames aura
+--- renderer (commit 8735c4429b, "linear cooldown swipe option") so
+--- core/aura_slots.lua's tracked-slot runtime can share the exact same
+--- radial-suppression rule instead of re-deriving it: "radial" (the default)
+--- shows the native swipe, honoring hideSwipe; any other style suppresses it
+--- (a linear replacement, where one exists, is a SEPARATE object -- the
+--- native swipe texture has no linear mode of its own). Pure config: no aura
+--- reads, so this is safe to call from any host.
+--- @param cooldownFrame table|nil
+--- @param element table|nil Reads swipeStyle / hideSwipe / reverseSwipe.
+function Helpers.ApplyCooldownSwipeStyle(cooldownFrame, element)
+    if not cooldownFrame then
+        return
+    end
+    local style = (element and element.swipeStyle) or "radial"
+    if cooldownFrame.SetDrawSwipe then
+        pcall(cooldownFrame.SetDrawSwipe, cooldownFrame,
+            style == "radial" and (not element or element.hideSwipe ~= true))
+    end
+    if cooldownFrame.SetReverse then
+        pcall(cooldownFrame.SetReverse, cooldownFrame, element and element.reverseSwipe == true)
+    end
+end
+
 ---------------------------------------------------------------------------
 -- FORM LAYOUT HELPERS
 ---------------------------------------------------------------------------
