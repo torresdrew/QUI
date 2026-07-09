@@ -9,6 +9,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v5.0.0-alpha16 - 2026-07-09
+
+> ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will
+> not load on the 12.0.x live client. Stay on the v4.x beta line for live realms.
+
+> 🔄 **Profile schema migrated to v50.** Aura settings on all three surfaces
+> (action-bar buff borders, unit-frame auras, group-frame auras) are converted
+> to the new unified element format. Your profile is backed up automatically
+> before the migration runs.
+
+### Added
+- feat(auras): tracked aura elements — pin specific spells as icon, square, or
+  duration-bar displays — return on group frames and are new on unit frames
+  (they had been non-functional since the PTR4 aura rework).
+- feat(auras): sort options for unit-frame and group-frame auras, and
+  right-click-to-cancel for eligible player buffs (both previously action-bar
+  buff borders only).
+
+### Changed
+- feat(auras): buff borders, unit-frame auras, and group-frame auras now share
+  one element-based configuration model and one editor — add aura elements per
+  frame, each with its own filters (classification / whitelist / blacklist),
+  sorting, layout, and placement.
+
+### Fixed
+- fix(auras): group-frame aura elements honor their individual anchor and grow
+  settings again (alpha15 collapsed all of a frame's aura strips onto the
+  first element's layout).
+
 ## v5.0.0-alpha15 - 2026-07-08
 
 > ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will
