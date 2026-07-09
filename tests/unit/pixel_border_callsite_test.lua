@@ -22,12 +22,16 @@ local buffBorders = readFile("QUI_ActionBars/actionbars/buffborders.lua")
 local cdmBars = readFile("QUI_CDM/cdm/cdm_bar_renderer.lua")
 local partyKeystones = readFile("modules/dungeon/party_keystones.lua")
 
-assert(buffBorders:find("local function GetBorderSizePx", 1, true),
-    "buff border module must convert configured border size through the pixel helper")
-assert(not buffBorders:find("SetHeight(borderSize)", 1, true),
+-- buffborders draws no border textures itself anymore: live aura/enchant
+-- borders are owned by AuraSkin/AuraTheme and the layout-mode preview moved
+-- to core/aura_preview.lua. Lock the exit — border drawing must not be
+-- reintroduced here bypassing the shared pixel-aware paths.
+assert(not buffBorders:find("SetHeight(borderSize", 1, true),
     "buff border textures must not use raw configured border size for height")
-assert(not buffBorders:find("SetWidth(borderSize)", 1, true),
+assert(not buffBorders:find("SetWidth(borderSize", 1, true),
     "buff border textures must not use raw configured border size for width")
+assert(not buffBorders:find("BorderTop", 1, true),
+    "buffborders must not draw its own border textures; borders are owned by AuraSkin/AuraTheme")
 assert(cdmBars:find("local function GetBorderSizePx", 1, true),
     "CDM bars must convert configured border size through the pixel helper")
 assert(not cdmBars:find("SetHeight(borderSize)", 1, true),

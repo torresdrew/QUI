@@ -2366,6 +2366,57 @@ local function IsDynamicSizeAnchorKey(key)
     return false
 end
 
+-- Container-first aura keys: buffborders publishes its live forbidden
+-- strip-1 AuraContainer on the insecure mover (mover._quiLiveContainer,
+-- nil while the pool is empty or the host is gated off). The apply path
+-- positions THAT container directly — its rect is the real auto-sized
+-- display, so an aura container docked to it tracks live growth C-side.
+-- The mover stays the resolver result everywhere else: all geometry reads
+-- (GetPoint/GetWidth/_naturalW math) stay on insecure frames, and anything
+-- that is NOT itself a forbidden aura container keeps anchoring to the
+-- mover (forbidden aspects propagate through anchors; only
+-- forbidden→forbidden docking is aspect-safe).
+local FORBIDDEN_AURA_KEYS = { buffFrame = true, debuffFrame = true }
+
+local function LiveAuraContainerFor(key)
+    if not FORBIDDEN_AURA_KEYS[key] then return nil end
+    local resolver = FRAME_RESOLVERS[key]
+    local mover = resolver and resolver()
+    if not mover then return nil end
+    return mover._quiLiveContainer, mover
+end
+
+-- Aura→aura docking: when a forbidden-container key anchors to the OTHER
+-- forbidden-container key, hand back the live container so the C-side
+-- anchor system tracks its auto-sized rect (the whole point of
+-- container-first). Every other originKey keeps the insecure mover —
+-- forbidden aspects propagate to anchored frames.
+--
+-- Implemented as a post-hoc wrapper (capture + reassign) rather than an
+-- inline edit at ResolveParentFrame's own definition (~line 2086): that
+-- function is defined lexically BEFORE this file's FRAME_RESOLVERS-
+-- dependent aura-key helpers, so a literal inline reference to
+-- LiveAuraContainerFor there would resolve to a global (nil), not this
+-- local. Reassigning the already-declared top-level local here — after
+-- both dependencies exist and before any real call site (first call is at
+-- ApplyFrameAnchor, well below) — augments it safely without touching the
+-- original function's four internal return points. Extra return values
+-- (chainSettings) are preserved via tail-call passthrough on the
+-- non-swapped path; the swap path returns only the live container, since a
+-- chain walk never happened for it.
+do
+    local ResolveParentFrameBase = ResolveParentFrame
+    ResolveParentFrame = function(parentKey, originKey)
+        if FORBIDDEN_AURA_KEYS[parentKey] and originKey and FORBIDDEN_AURA_KEYS[originKey] then
+            local live = LiveAuraContainerFor(parentKey)
+            if live then
+                return live
+            end
+        end
+        return ResolveParentFrameBase(parentKey, originKey)
+    end
+end
+
 local function GetPointOffsetForRect(point, width, height)
     local halfW = (width or 0) * 0.5
     local halfH = (height or 0) * 0.5
@@ -2429,6 +2480,16 @@ end
 
 local function GetParentAnchorRect(frame, parentKey)
     if not frame then return 1, 1 end
+
+    -- Never geometry-read a forbidden live aura container (its rect encodes
+    -- the secret aura count): retarget to its insecure host mover, whose
+    -- mirrored position + worst-case natural extent is the right proxy.
+    -- Defense-in-depth: today this path is unreachable for those containers
+    -- (their keys force useSizeStable=false), but that relies on
+    -- FORBIDDEN_AURA_KEYS ⊆ DYNAMIC_SIZE_ANCHOR_KEYS staying in sync.
+    if frame._quiHostMover then
+        frame = frame._quiHostMover
+    end
 
     local width, height
 
@@ -2526,7 +2587,15 @@ local function ApplyAutoSizing(frame, settings, parentFrame, key)
     if not frame then return end
 
     -- Auto-width: match anchor target width
-    if settings.autoWidth and parentFrame and parentFrame ~= UIParent then
+    -- parentFrame may now be a live forbidden aura container (aura→aura
+    -- docking via ResolveParentFrame's Step 4 swap). GetWidth() on a
+    -- forbidden frame returns a secret value, not a throw — the pcall below
+    -- would not catch the later `parentWidth > 0` comparison exploding on
+    -- it. _quiHostMover only exists on a live container, so this exclusion
+    -- is a no-op until Task 4 stamps it.
+    if settings.autoWidth and parentFrame and parentFrame ~= UIParent
+        and not parentFrame._quiHostMover
+    then
         local ok, parentWidth = pcall(function() return parentFrame:GetWidth() end)
         if ok and parentWidth and parentWidth > 0 then
             -- Resource bars size to the actual source frame, not the proxy.
@@ -2668,6 +2737,35 @@ end
 -- with fresh rect coords.  No per-tick loop — protected Blizzard parents are
 -- repositioned out of combat (Edit Mode), covered by ApplyAllFrameAnchors.
 local function AnchorOrPin(key, frame, pt, parentFrame, relPt, x, y)
+    -- Container-first fan-out for buff/debuff: SetPoint the live forbidden
+    -- container at the stored anchor (raw pcall'd Clear+Set — GetPoint-style
+    -- reads on forbidden frames are not known-safe, so no SmoothSetPoint /
+    -- FrameAlreadyAtPosition on this branch) and mirror the insecure mover
+    -- to the same spot as the layout-mode handle. If the parent resolved to
+    -- a live container (aura→aura docking), the mover mirrors against that
+    -- container's insecure host mover instead — an insecure frame must
+    -- never anchor to a forbidden one.
+    local live, mover = LiveAuraContainerFor(key)
+    if live then
+        pcall(live.ClearAllPoints, live)
+        pcall(live.SetPoint, live, pt, parentFrame, relPt, x, y)
+        if mover then
+            local moverParent = parentFrame
+            if moverParent and moverParent._quiHostMover then
+                moverParent = moverParent._quiHostMover
+            end
+            SmoothSetPoint(mover, pt, moverParent, relPt, x, y)
+        end
+        return
+    end
+    -- Non-live fall-through (this key's own container pool is empty — e.g.
+    -- debuff host with no strips while docked to the buff host): the parent
+    -- may still be a live forbidden container from the aura→aura swap.
+    -- Retarget to its insecure host mover — an insecure frame must never
+    -- anchor to a forbidden one (aspects propagate through anchors).
+    if parentFrame and parentFrame._quiHostMover then
+        parentFrame = parentFrame._quiHostMover
+    end
     if IsDynamicSizeAnchorKey(key) and ParentRestricts(parentFrame)
         and not FrameSelfRestricts(frame)
     then
@@ -2837,6 +2935,21 @@ function QUI_Anchoring:ApplyFrameAnchor(key, settings)
         end
     end
 
+    -- Aura→aura docking swap, applied UNIFORMLY after every parent-resolution
+    -- branch above: the hideWithParent / keepInPlace / castbar branches
+    -- resolve via ResolveFrameForKey (mover), bypassing the swap inside
+    -- ResolveParentFrame — and debuffFrame ships keepInPlace=true by default,
+    -- so without this the default profile would never dock container→container.
+    -- Placed AFTER the branches so their IsShown/GetAlpha visibility reads
+    -- above always ran against the insecure mover. Idempotent when the chain
+    -- walk already swapped (LiveAuraContainerFor returns the same container).
+    if FORBIDDEN_AURA_KEYS[key] and parentKey and FORBIDDEN_AURA_KEYS[parentKey] then
+        local liveParent = LiveAuraContainerFor(parentKey)
+        if liveParent then
+            parentFrame = liveParent
+        end
+    end
+
     -- If parent is hidden, anchor directly to it — when it becomes visible
     -- and gets repositioned, the child follows automatically.
     -- (No chain walk needed without proxy system.)
@@ -2896,9 +3009,18 @@ function QUI_Anchoring:ApplyFrameAnchor(key, settings)
     local entryRelative = settings.relative or "CENTER"
     local isLegacyCenter = entryPoint == "CENTER" and entryRelative == "CENTER"
 
+    -- Excludes aura→aura docked parents: this branch reads parentFrame's
+    -- GetWidth/GetHeight directly below (no pcall-protected value gate), and
+    -- ResolveParentFrame's Step 4 swap can hand back a live forbidden
+    -- container as parentFrame when settings.parent is the OTHER aura key.
+    -- That combination is also semantically free-position-only per the
+    -- comment above (chain-anchored containers keep their own stable
+    -- corner and skip this self-heal), so falling through to the normal
+    -- AnchorOrPin path below is correct, not just safe.
     if isLegacyCenter
         and settings.growAnchor and CORNER_POINTS and CORNER_POINTS[settings.growAnchor]
         and (key == "buffFrame" or key == "debuffFrame")
+        and not (parentFrame and parentFrame._quiHostMover)
     then
         local corner = settings.growAnchor
         local fwRaw = (resolved.GetWidth and resolved:GetWidth()) or 0
@@ -3061,7 +3183,14 @@ function QUI_Anchoring:ApplyFrameAnchor(key, settings)
                 _editModeReapplyGuard = false
             end
         else
-            if not FrameAlreadyAtPosition(resolved, point, parentFrame, relative, offsetX, offsetY) then
+            -- The mover can already sit at the saved point (FrameAlreadyAtPosition
+            -- reads ITS geometry, always safe — resolved is the insecure mover)
+            -- while a live forbidden container needs its own SetPoint: never
+            -- observed by FrameAlreadyAtPosition, and pool-cycled/newly-claimed
+            -- containers must always be (re)anchored. Skip the short-circuit
+            -- whenever a live container is in play for this key.
+            local live = LiveAuraContainerFor(key)
+            if live or not FrameAlreadyAtPosition(resolved, point, parentFrame, relative, offsetX, offsetY) then
                 _editModeReapplyGuard = true
                 pcall(AnchorOrPin, key, resolved, point, parentFrame, relative, offsetX, offsetY)
                 _editModeReapplyGuard = false
@@ -3330,6 +3459,14 @@ _G.QUI_ReanchorFramePositionOnly = function(key)
 
     local parentFrame = ResolveParentFrame(settings.parent, key)
     if not parentFrame then return end
+    -- ResolveParentFrame can hand back a live forbidden aura container
+    -- (aura->aura docking). This path SetPoints `resolved` directly (no
+    -- AnchorOrPin fan-out) and `resolved` is always the insecure mover — an
+    -- insecure frame must never anchor to a forbidden one. Re-target to the
+    -- container's host-mover back-pointer; nil pre-Task 4, so a no-op today.
+    if parentFrame._quiHostMover then
+        parentFrame = parentFrame._quiHostMover
+    end
 
     local point = settings.point or "CENTER"
     local relative = settings.relative or "CENTER"
@@ -3371,6 +3508,14 @@ _G.QUI_AnchorOverlayToParent = function(overlayFrame, key, overlayW, overlayH)
 
     local parentFrame = ResolveParentFrame(settings.parent, key)
     if not parentFrame then return end
+    -- ResolveParentFrame can hand back a live forbidden aura container
+    -- (aura->aura docking). This path SetPoints an arbitrary insecure
+    -- overlay frame directly — an insecure frame must never anchor to a
+    -- forbidden one. Re-target to the container's host-mover back-pointer;
+    -- nil pre-Task 4, so a no-op today.
+    if parentFrame._quiHostMover then
+        parentFrame = parentFrame._quiHostMover
+    end
 
     local point = settings.point or "CENTER"
     local relative = settings.relative or "CENTER"

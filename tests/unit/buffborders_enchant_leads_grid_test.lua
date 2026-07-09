@@ -1,14 +1,16 @@
 -- tests/unit/buffborders_enchant_leads_grid_test.lua
 -- Run: lua tests/unit/buffborders_enchant_leads_grid_test.lua
 --
--- The temp-enchant strip LEADS the buff row (default-UI parity): enchants
--- render at the grid origin corner and the secure aura container is anchored
--- liveEnchantCount cells further along the grow direction. Rationale: the
--- enchant count is Lua-visible (GetWeaponEnchantInfo — item info, not aura
--- data) while the live aura count is secret, so dynamic packing can only start
--- from the enchant side. PTR4 own-buff cancel is engine-owned (cancelButtons
--- on the SAME buttons the display uses, no separate hit layer), so only the
--- container anchor itself needs the enchant-lead offset now.
+-- Temp weapon enchants used to render on a SEPARATE insecure strip that led
+-- the buff row via a hand-rolled liveEnchantCount offset (the enchant count is
+-- Lua-visible -- GetWeaponEnchantInfo, item info, not aura data -- while the
+-- live aura count is secret, so only the enchant side could drive that
+-- offset). PTR4 AddItemEnchantment (placement=BeforeAuraGroups) now folds
+-- enchants INSIDE the buff container itself via AuraSkin.ConfigureEnchantments
+-- (core/aura_skin.lua): the engine owns their frames, flow position and
+-- updates, so the lead-in offset and the separate strip are both gone. This
+-- guards the fold-in call site and the resulting simplified shapes of
+-- AnchorElementContainer / GridExtent's callers.
 
 local function readAll(path)
     local file = assert(io.open(path, "rb"))
@@ -19,6 +21,7 @@ end
 
 local src = readAll("QUI_ActionBars/actionbars/buffborders.lua")
 
+-- Slice helper: function start → next line-leading `end`.
 local function slice(marker)
     local startPos = src:find(marker, 1, true)
     assert(startPos, "missing: " .. marker)
@@ -27,60 +30,52 @@ local function slice(marker)
     return src:sub(startPos, endPos)
 end
 
--- The live enchant count must be a tracked upvalue.
-assert(src:find("local liveEnchantCount = 0", 1, true),
-    "must track liveEnchantCount as a file-local")
+-- No lead-in state (or the separate strip's own state) survives.
+for _, dead in ipairs({ "liveEnchantCount", "tempEnchantFrame", "enchantCachedDuration" }) do
+    assert(not src:find(dead, 1, true),
+        "must not track " .. dead .. " as a file-local: temp enchants are engine-rendered now")
+end
 
--- The strip anchors AT the buff grid origin corner (leads the row), not below
--- the max grid extent.
-local strip = slice("local function UpdateTempEnchants()")
-assert(strip:find("tempEnchantFrame:SetPoint(point, buffContainer, point, 0, 0)", 1, true),
-    "the strip must pin its grow corner to the buff anchor's SAME corner at (0,0) — it leads the row")
-assert(strip:find("liveEnchantCount = ", 1, true),
-    "UpdateTempEnchants must maintain liveEnchantCount")
--- Existing pins that must survive the rewrite:
-assert(strip:find(":Show()", 1, true) and strip:find(":Hide()", 1, true),
-    "UpdateTempEnchants must still Show/Hide strip buttons per live enchant")
-
--- The container anchor must offset by the enchant extent along the grow
--- direction for the buff host's FIRST strip container.
+-- AnchorElementContainer is a pure 3-arg pin: no isFirstBuff / enchant xOff.
 local anchor = slice("local function AnchorElementContainer(")
-assert(anchor:find("liveEnchantCount", 1, true),
-    "AnchorElementContainer must offset the buff host's first container by the live enchant extent")
+assert(anchor:find("local function AnchorElementContainer(container, baseFrame, element)", 1, true),
+    "AnchorElementContainer must be the plain 3-arg shape (no isFirstBuff/enchant lead-in)")
+assert(not anchor:find("isFirstBuff", 1, true) and not anchor:find("xOff", 1, true),
+    "AnchorElementContainer must not carry the enchant lead-in xOff branch")
 
--- Ported from the deleted buffborders_cancelaura_initialconfig_test.lua (PTR4
--- removed the secure cancel-header overlay; own-buff cancel is now engine-
--- owned via cancelButtons, so only the SEPARATE temp-enchant strip keeps a
--- QUI-scripted right-click cancel). Guard that it stays RightButton-only and
--- checks InCombatLockdown BEFORE CancelItemTempEnchantment (cancel is
--- protected in combat for everyone).
-local onClickStart = src:find('SetScript("OnClick"', 1, true)
-assert(onClickStart, "temp-enchant button must set an OnClick handler")
-local cancelPos = src:find("CancelItemTempEnchantment", onClickStart, true)
-assert(cancelPos, "temp-enchant OnClick must call CancelItemTempEnchantment")
-local onClickBody = src:sub(onClickStart, cancelPos + 40)
-assert(onClickBody:find("RightButton", 1, true),
-    "temp-enchant OnClick must act only on RightButton")
-local combatPos = onClickBody:find("InCombatLockdown", 1, true)
-assert(combatPos, "temp-enchant OnClick must gate on InCombatLockdown (cancel is protected in combat)")
-local localCancelPos = onClickBody:find("CancelItemTempEnchantment", 1, true)
-assert(combatPos < localCancelPos,
-    "temp-enchant OnClick must check InCombatLockdown BEFORE CancelItemTempEnchantment")
+-- ApplyMoverElements registers the buff host's FIRST container's engine-owned
+-- enchants via AuraSkin.ConfigureEnchantments -- gated to isBuff and i == 1 so
+-- only strip 1 of the BUFF host ever gets enchants (debuff hosts never do).
+local zone = slice("local function ApplyMoverElements(")
+assert(zone:find("pcall(AnchorElementContainer, container, pool[1] or moverFrame, element)", 1, true),
+    "the container anchor call site must drop the old isFirstBuff 4th argument and pcall-dock strips i>1 to strip 1's live container")
+assert(zone:find("if isBuff and i == 1 then", 1, true),
+    "ApplyMoverElements must gate enchant registration to the buff host's first container")
+assert(zone:find("pcall(AuraSkin.ConfigureEnchantments, container, profile)", 1, true),
+    "ApplyMoverElements must pcall AuraSkin.ConfigureEnchantments (first call creates forbidden frames -> OOC only)")
 
--- Enchant events must re-run the config pass when the count changes (the grid
--- origin moved); in combat that resolves to the mutable pass + queued full pass.
-local refresh = slice("local function RefreshTempEnchants()")
-assert(refresh:find("UpdateTempEnchants()", 1, true),
-    "RefreshTempEnchants must refresh the strip")
-assert(refresh:find("ApplyOrDefer()", 1, true),
-    "RefreshTempEnchants must re-run the config pass when the enchant count changed")
-assert(src:find("RefreshTempEnchants()", src:find("WEAPON_ENCHANT_CHANGED", 1, true), true),
-    "the WEAPON_ENCHANT_CHANGED handler must route through RefreshTempEnchants")
+-- First call is combat-unsafe (frame creation): in combat, if enchants were
+-- never registered on this container yet, the pass must mark itself
+-- incomplete so the OOC replay queues instead of silently dropping them; a
+-- pcall failure or a still-missing _quiEnchantsAdded stamp after the call
+-- must ALSO mark incomplete.
+assert(zone:find("InCombatLockdown() and not container._quiEnchantsAdded then", 1, true),
+    "ApplyMoverElements must gate first-time enchant registration on out-of-combat, queuing a replay otherwise")
+assert(zone:find("not okE or not container._quiEnchantsAdded", 1, true),
+    "ApplyMoverElements must treat a pcall failure OR a missing _quiEnchantsAdded stamp as incomplete")
 
--- The buff zone's natural width must include the enchant lead-in (mover /
--- anchoring extent must cover the shifted grid).
+-- GridExtent stays pure profile math -- no enchant widening.
+local grid = slice("local function GridExtent(")
+assert(not grid:lower():find("enchant", 1, true),
+    "GridExtent must be pure profile math with no enchant-lead-in widening")
+
+-- ApplyConfigPass no longer widens the buff zone's natural extent by any
+-- enchant lead-in and no longer drives a separate enchant refresh -- enchant
+-- registration now happens per-container inside ApplyMoverElements.
 local pass = slice("local function ApplyConfigPass(allowCreate)")
-assert(pass:find("liveEnchantCount", 1, true),
-    "ApplyConfigPass must widen the buff zone's natural extent by the enchant lead-in")
+assert(not pass:find("UpdateTempEnchants", 1, true) and not pass:find("RefreshTempEnchants", 1, true),
+    "ApplyConfigPass must not call the deleted temp-enchant strip refresh")
+assert(pass:find("local bw, bh = GridExtent(buffProfile)\n    buffContainer._naturalW, buffContainer._naturalH = bw, bh", 1, true),
+    "the buff zone's natural extent must be GridExtent(buffProfile) alone, with no post-hoc widening")
 
 print("OK: buffborders_enchant_leads_grid_test")

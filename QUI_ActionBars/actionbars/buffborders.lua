@@ -18,30 +18,16 @@
 -- C_UnitAuras.CancelAuraByInstanceID internally. QUI never scripts the
 -- forbidden CustomAuraButtons and never calls CancelUnitBuff directly.
 --
--- TEMP WEAPON ENCHANTS are NOT auras (GetWeaponEnchantInfo, never in UNIT_AURA),
--- so the secure container cannot show them. They keep a SMALL SEPARATE insecure
--- display (QUI's own buttons) with right-click CancelItemTempEnchantment gated on
--- InCombatLockdown, anchored adjacent to the buff container.
+-- TEMP WEAPON ENCHANTS render inside the buff container itself (PTR4
+-- AddItemEnchantment, placement=BeforeAuraGroups): the engine owns their
+-- frames, updates and flow position — no addon events, no lead-in offset.
+-- Known gap: the engine click-cancel path is auraInstanceID-only and
+-- no-ops for enchants, so right-click cancel of a temp enchant is
+-- unavailable until Blizzard wires their own enchant-cancel TODO.
 
 local _, ns = ...
 local Helpers = ns.Helpers
 
-local function CJKFont(fs, p, s, f)
-    if ns.Helpers and ns.Helpers.ApplyFontWithFallback then
-        ns.Helpers.ApplyFontWithFallback(fs, p, s, f)
-    else
-        fs:SetFont(p, s, f)
-    end
-end
-
-local GetCore = Helpers.GetCore
-local GetGeneralFont = Helpers.GetGeneralFont
-local GetGeneralFontOutline = Helpers.GetGeneralFontOutline
-local IsSecretValue = Helpers.IsSecretValue
-local SafeValue = Helpers.SafeValue
-
--- Aura theme (A1): border color + count/duration font objects.
-local AuraTheme = ns.Addon and ns.Addon.AuraTheme or (QUI and QUI.AuraTheme)
 -- Aura skin (shared secure container adapter — the SINGLE path that touches the
 -- forbidden CustomAuraButton inbound API). Re-resolved in ResolveAuraDeps in
 -- case core/aura_skin.lua loaded after this file's top-level chunk.
@@ -56,16 +42,10 @@ local S = ns.AuraSlots   or (_G.QUI and _G.QUI.AuraSlots)
 
 -- Upvalue caching
 local type = type
-local pairs = pairs
 local ipairs = ipairs
 local pcall = pcall
-local wipe = wipe
 local CreateFrame = CreateFrame
-local GetTime = GetTime
 local InCombatLockdown = InCombatLockdown
-local CancelItemTempEnchantment = CancelItemTempEnchantment
-local GetWeaponEnchantInfo = GetWeaponEnchantInfo
-local GetInventoryItemTexture = GetInventoryItemTexture
 
 ---------------------------------------------------------------------------
 -- DEFAULTS
@@ -93,49 +73,14 @@ local function GetSettings()
     return Helpers.GetModuleSettings("buffBorders", DEFAULTS)
 end
 
-local function GetBorderSizePx(frame, settings)
-    local borderSize = settings and settings.borderSize
-    if type(borderSize) ~= "number" then
-        borderSize = DEFAULTS.borderSize
-    end
-    if borderSize <= 0 then return 0 end
-
-    local core = GetCore and GetCore()
-    if core and core.Pixels then
-        return core:Pixels(borderSize, frame)
-    end
-    if core and core.GetPixelSize then
-        return borderSize * core:GetPixelSize(frame)
-    end
-    return borderSize
-end
-
 ---------------------------------------------------------------------------
 -- CONSTANTS
 ---------------------------------------------------------------------------
-local DEFAULT_ICON_SIZE = 30
-local BASE_CROP = 0.08
-
--- Debuff type → border color (r, g, b) — used by the layout-mode preview grid
--- (live container border color is owned by AuraTheme).
-local DEBUFF_TYPE_COLORS = {
-    Magic   = { 0.20, 0.60, 1.00 },
-    Curse   = { 0.60, 0.00, 1.00 },
-    Disease = { 0.60, 0.40, 0.00 },
-    Poison  = { 0.00, 0.60, 0.00 },
-    [""]    = { 0.50, 0.00, 0.00 },
-}
-local BORDER_COLOR_BUFF = { 0, 0, 0 }
-local BORDER_COLOR_DEBUFF_DEFAULT = { 0.50, 0.00, 0.00 }
-
 -- The fixed per-zone icon cap. Mirrors Blizzard's BUFF_MAX_DISPLAY /
 -- DEBUFF_MAX_DISPLAY; the container's maxFrameCount caps how many of the pooled
 -- AuraSkin buttons render, and AuraSkin pools exactly this many.
 local BUFF_MAX_DISPLAY = 40
 local DEBUFF_MAX_DISPLAY = 40
-
--- Temp-enchant strip is a small separate insecure display (synthetic, non-aura).
-local TEMP_ENCHANT_MAX = 3
 
 ---------------------------------------------------------------------------
 -- ELEMENT-MODEL CORE (shared aura_elements / aura_glue / aura_slots)
@@ -169,11 +114,9 @@ end
 local EMPTY = {}
 
 -- Reusable scratch for the strip resolves (config path, not a hot render loop,
--- but avoid per-pass churn). _profileStrips is used ONLY by the first-strip
--- profile helpers so it never aliases the pass scratch.
+-- but avoid per-pass churn).
 local _buffStrips = {}
 local _debuffStrips = {}
-local _profileStrips = {}
 
 -- Default element buckets — the runtime source of truth for a fresh profile,
 -- transcribed from the core/defaults.lua buffBorders block (iconSize 35,
@@ -285,21 +228,6 @@ local function ResolveStrips(store, defaultBucketFn, out)
     return out
 end
 
--- The first ENABLED strip's profile drives the mover's natural extent and the
--- temp-enchant strip geometry. Falls back to the shipped default when nothing is
--- enabled.
-local function FirstStripProfile(store, defaultBucketFn)
-    local strips = ResolveStrips(store, defaultBucketFn, _profileStrips)
-    if strips[1] then return ElementProfileFor(strips[1]) end
-    return FallbackProfile(defaultBucketFn)
-end
-local function FirstBuffStripProfile()
-    if not ResolveAuraDeps() then return nil end
-    local settings = GetSettings()
-    if not settings then return nil end
-    return FirstStripProfile(GetBuffStore(settings), DefaultBuffBucket)
-end
-
 -- Natural grid extent of a fully-populated row (mover handle covers the full
 -- possible width/height — the container renders an unknown live count C-side).
 local function GridExtent(profile)
@@ -314,22 +242,12 @@ end
 ---------------------------------------------------------------------------
 -- STATE
 ---------------------------------------------------------------------------
--- Weapon enchant cached total duration per slot
-local enchantCachedDuration = {}
-
--- Live temp-enchant count (strip slots actually occupied). Enchants are item
--- info (GetWeaponEnchantInfo) — Lua-visible, unlike the secret live aura count
--- — so the strip LEADS the buff row and the secure grid is anchored this many
--- cells further along the grow direction (see AnchorElementContainer).
-local liveEnchantCount = 0
-
 -- The QUI named anchor frames (created in Init) are the published, movable
 -- frames the anchoring system resolves by global name and positions. Each host
 -- owns a POOL of forbidden AuraContainers (._quiAuraContainers[ordinal]) — one
 -- per active filterStrip element in that host's element store.
 local buffContainer = nil       -- QUI_BuffIconContainer (named anchor / buff host)
 local debuffContainer = nil     -- QUI_DebuffIconContainer (named anchor / debuff host)
-local tempEnchantFrame = nil    -- small separate insecure temp-enchant strip
 local initialized = false
 
 -- Blizzard frame banish state
@@ -376,278 +294,6 @@ end
 
 local function QueueContainerWork()
     pendingContainerWork = true
-end
-
----------------------------------------------------------------------------
--- 4-EDGE BORDER (layout-mode preview icons + temp-enchant strip)
----------------------------------------------------------------------------
-local function ApplyBorderColorAndSize(frame, r, g, b, borderSizePx)
-    frame.BorderTop:SetColorTexture(r, g, b, 1)
-    frame.BorderBottom:SetColorTexture(r, g, b, 1)
-    frame.BorderLeft:SetColorTexture(r, g, b, 1)
-    frame.BorderRight:SetColorTexture(r, g, b, 1)
-
-    frame.BorderTop:SetHeight(borderSizePx)
-    frame.BorderBottom:SetHeight(borderSizePx)
-    frame.BorderLeft:SetWidth(borderSizePx)
-    frame.BorderRight:SetWidth(borderSizePx)
-end
-
--- Style a 4-edge preview icon (color, size, swipe, fonts). Used by
--- the layout-mode preview grid + temp-enchant strip only; live auras style their
--- single-texture border through AuraSkin/AuraTheme.
-local function StyleIcon(icon, settings, isBuff, debuffType, stackCfg)
-    if not icon or not settings then return end
-
-    local borderSizePx = GetBorderSizePx(icon, settings)
-
-    local r, g, b
-    if isBuff then
-        r, g, b = BORDER_COLOR_BUFF[1], BORDER_COLOR_BUFF[2], BORDER_COLOR_BUFF[3]
-    else
-        local safeType = Helpers.SafeValue(debuffType, "")
-        local colors = DEBUFF_TYPE_COLORS[safeType] or BORDER_COLOR_DEBUFF_DEFAULT
-        r, g, b = colors[1], colors[2], colors[3]
-    end
-
-    ApplyBorderColorAndSize(icon, r, g, b, borderSizePx)
-
-    local showBorders
-    if isBuff then
-        showBorders = settings.showBuffBorders ~= false
-    else
-        showBorders = settings.showDebuffBorders ~= false
-    end
-    icon.BorderTop:SetShown(showBorders)
-    icon.BorderBottom:SetShown(showBorders)
-    icon.BorderLeft:SetShown(showBorders)
-    icon.BorderRight:SetShown(showBorders)
-
-    if icon.Cooldown then
-        local showSwipe = not settings.hideSwipe
-        icon.Cooldown:SetDrawSwipe(showSwipe)
-        icon.Cooldown:SetDrawEdge(showSwipe)
-    end
-
-    local font = GetGeneralFont()
-    local outline = GetGeneralFontOutline()
-    local fontSize = settings.fontSize or 12
-    if icon.Stacks and icon.Stacks.SetFont then
-        CJKFont(icon.Stacks, font, fontSize, outline)
-    end
-
-    -- Stack-count text position is element-borne now (element.stack), passed in
-    -- as stackCfg. The insecure temp-enchant strip + preview grid mirror the
-    -- first enabled strip's stack config (the old per-frame buff*/debuff*StackText
-    -- keys are no longer read).
-    local stack = stackCfg or {}
-    local stackAnchor = stack.anchor or "BOTTOMRIGHT"
-    local stackOffX = stack.offsetX
-    if stackOffX == nil then stackOffX = -1 end
-    local stackOffY = stack.offsetY
-    if stackOffY == nil then stackOffY = 1 end
-    if icon.Stacks then
-        icon.Stacks:ClearAllPoints()
-        local stackParent = icon.TextOverlay or icon
-        icon.Stacks:SetPoint(stackAnchor, stackParent, stackAnchor, stackOffX, stackOffY)
-        if stackAnchor == "TOPLEFT" or stackAnchor == "LEFT" or stackAnchor == "BOTTOMLEFT" then
-            icon.Stacks:SetJustifyH("LEFT")
-        elseif stackAnchor == "TOPRIGHT" or stackAnchor == "RIGHT" or stackAnchor == "BOTTOMRIGHT" then
-            icon.Stacks:SetJustifyH("RIGHT")
-        else
-            icon.Stacks:SetJustifyH("CENTER")
-        end
-    end
-end
-
-local function CreateBorderEdges(frame)
-    frame.BorderTop = frame:CreateTexture(nil, "OVERLAY", nil, 7)
-    frame.BorderBottom = frame:CreateTexture(nil, "OVERLAY", nil, 7)
-    frame.BorderLeft = frame:CreateTexture(nil, "OVERLAY", nil, 7)
-    frame.BorderRight = frame:CreateTexture(nil, "OVERLAY", nil, 7)
-
-    frame.BorderTop:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, 0)
-    frame.BorderTop:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 0, 0)
-    frame.BorderBottom:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 0, 0)
-    frame.BorderBottom:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", 0, 0)
-    frame.BorderLeft:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, 0)
-    frame.BorderLeft:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 0, 0)
-    frame.BorderRight:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 0, 0)
-    frame.BorderRight:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", 0, 0)
-end
-
----------------------------------------------------------------------------
--- WEAPON ENCHANTS (small SEPARATE insecure display)
--- Temp weapon enchants come from GetWeaponEnchantInfo — they are NOT auras and
--- never appear in UNIT_AURA, so the secure CustomAuraContainer cannot show them.
--- QUI renders them on its OWN insecure buttons (NOT container-managed), keeping
--- right-click CancelItemTempEnchantment (slot index 1/2/3 = main/off/ranged),
--- gated on InCombatLockdown (cancel is protected in combat for everyone).
----------------------------------------------------------------------------
-local ENCHANT_SLOT_BY_INDEX = { 16, 17, 18 }
-
--- Read the live temp enchants → dense descriptor list (mirror BuffFrame.lua
--- UpdateTemporaryEnchantmentBuffs). Secret-guard the expiration timestamp.
-local function ReadTempEnchants()
-    local list = {}
-    local r = { GetWeaponEnchantInfo() }
-    for itemIndex = 1, TEMP_ENCHANT_MAX do
-        local base = (itemIndex - 1) * 4
-        local hasEnchant = r[base + 1]
-        local enchantExpiration = r[base + 2]
-        local enchantCharges = r[base + 3]
-        if hasEnchant and enchantExpiration and not IsSecretValue(enchantExpiration) then
-            local slot = ENCHANT_SLOT_BY_INDEX[itemIndex]
-            local remainingSec = enchantExpiration / 1000
-            local total = enchantCachedDuration[slot]
-            if not total or remainingSec > total then
-                total = remainingSec
-                enchantCachedDuration[slot] = total
-            end
-            list[#list + 1] = {
-                -- enchantSlot (16/17/18) feeds GetInventoryItemTexture +
-                -- GameTooltip:SetInventoryItem; enchantCancelIndex (1/2/3) is what
-                -- CancelItemTempEnchantment expects (BuffFrame.lua:903-913).
-                enchantSlot = slot,
-                enchantCancelIndex = itemIndex,
-                icon = GetInventoryItemTexture("player", slot),
-                applications = enchantCharges,
-                enchantStart = GetTime() - (total - remainingSec),
-                enchantTotal = total,
-            }
-        end
-    end
-    return list
-end
-
--- One insecure temp-enchant button. Plain QUI Button (NOT a forbidden
--- AuraButton), so QUI scripts it freely. Right-click cancels via
--- CancelItemTempEnchantment (combat-gated). Tooltip via SetInventoryItem.
-local function EnsureTempEnchantButton(parent, i)
-    local b = parent.buttons[i]
-    if b then return b end
-
-    b = CreateFrame("Button", nil, parent, nil)
-    b:RegisterForClicks("RightButtonUp")
-
-    local bd = b:CreateTexture(nil, "BACKGROUND", nil, -8)
-    bd:SetColorTexture(0, 0, 0, 1)
-    bd:SetAllPoints(b)
-    b._quiBackdrop = bd
-
-    local tex = b:CreateTexture(nil, "ARTWORK")
-    tex:SetAllPoints(b)
-    tex:SetTexCoord(BASE_CROP, 1 - BASE_CROP, BASE_CROP, 1 - BASE_CROP)
-    b.Icon = tex
-
-    CreateBorderEdges(b)
-
-    b.Cooldown = CreateFrame("Cooldown", nil, b, "CooldownFrameTemplate")
-    b.Cooldown:SetAllPoints(b)
-
-    b.Stacks = b:CreateFontString(nil, "OVERLAY")
-    b.Stacks:SetPoint("BOTTOMRIGHT", b, "BOTTOMRIGHT", -1, 1)
-    -- Seed a font at creation: the empty-slot path (elseif b then) calls
-    -- Stacks:SetText("") WITHOUT going through StyleIcon, which otherwise errors
-    -- "FontString:SetText(): Font not set".  StyleIcon re-applies the real size
-    -- when an enchant actually occupies the slot.
-    CJKFont(b.Stacks, GetGeneralFont(), 12, GetGeneralFontOutline())
-
-    b:SetScript("OnClick", function(self, button)
-        if button ~= "RightButton" then return end
-        -- Cancel is protected in combat for everyone, not just secure code.
-        if InCombatLockdown() then return end
-        if self.enchantCancelIndex then
-            pcall(CancelItemTempEnchantment, self.enchantCancelIndex)
-        end
-    end)
-    b:SetScript("OnEnter", function(self)
-        if GameTooltip.IsForbidden and GameTooltip:IsForbidden() then return end
-        GameTooltip:SetOwner(self, "ANCHOR_BOTTOMLEFT")
-        if self.enchantSlot then
-            pcall(GameTooltip.SetInventoryItem, GameTooltip, "player", self.enchantSlot)
-        end
-        pcall(GameTooltip.Show, GameTooltip)
-    end)
-    b:SetScript("OnLeave", function()
-        pcall(GameTooltip.Hide, GameTooltip)
-    end)
-
-    parent.buttons[i] = b
-    return b
-end
-
--- Refresh + lay out the temp-enchant strip. Pure insecure work — runs in or out
--- of combat (these are QUI's own frames). The strip anchors to the buff anchor
--- frame's grow corner, flowing away from the buff grid.
-local function UpdateTempEnchants()
-    if not tempEnchantFrame or not buffContainer then return end
-    local settings = GetSettings()
-    if not settings then return end
-    if previewActive then return end
-
-    -- Frame-level buff toggle stays a settings-level read (enableBuffs /
-    -- hideBuffFrame). Geometry now comes from the first ENABLED buff strip's
-    -- element profile — the strip the enchant row leads.
-    local show = settings.enableBuffs and not settings.hideBuffFrame
-    local profile = show and FirstBuffStripProfile() or nil
-    if not show or not profile then
-        liveEnchantCount = 0
-        tempEnchantFrame:Hide()
-        return
-    end
-
-    local list = ReadTempEnchants()
-    local n = #list
-    liveEnchantCount = n
-
-    local iconSize, spacing = profile.iconSize, profile.spacing
-    -- The strip LEADS the buff row (default-UI parity): enchants render at the
-    -- grid origin corner; AnchorElementContainer shifts the secure grid past them.
-    local point = profile.anchor
-    local xDir = (profile.grow == "LEFT") and -1 or 1
-
-    tempEnchantFrame:ClearAllPoints()
-    tempEnchantFrame:SetPoint(point, buffContainer, point, 0, 0)
-
-    for i = 1, TEMP_ENCHANT_MAX do
-        local b = EnsureTempEnchantButton(tempEnchantFrame, i)
-        local info = list[i]
-        if info then
-            b:SetSize(iconSize, iconSize)
-            b:ClearAllPoints()
-            b:SetPoint(point, tempEnchantFrame, point, xDir * (i - 1) * (iconSize + spacing), 0)
-            b.enchantSlot = info.enchantSlot
-            b.enchantCancelIndex = info.enchantCancelIndex
-            pcall(b.Icon.SetTexture, b.Icon, info.icon)
-            StyleIcon(b, settings, true, nil, profile.stack)
-            if b.Cooldown then
-                if info.enchantStart and info.enchantTotal and info.enchantTotal > 0 then
-                    pcall(b.Cooldown.SetCooldown, b.Cooldown, info.enchantStart, info.enchantTotal)
-                else
-                    pcall(b.Cooldown.Clear, b.Cooldown)
-                end
-            end
-            if b.Stacks then
-                local count = SafeValue(info.applications)
-                b.Stacks:SetText((type(count) == "number" and count > 1) and count or "")
-            end
-            b:Show()
-        elseif b then
-            b.enchantSlot = nil
-            b.enchantCancelIndex = nil
-            pcall(b.Icon.SetTexture, b.Icon, nil)
-            if b.Stacks then b.Stacks:SetText("") end
-            if b.Cooldown then pcall(b.Cooldown.Clear, b.Cooldown) end
-            b:Hide()
-        end
-    end
-
-    if n > 0 then
-        tempEnchantFrame:Show()
-    else
-        tempEnchantFrame:Hide()
-    end
 end
 
 ---------------------------------------------------------------------------
@@ -778,24 +424,15 @@ end
 -- live in combat and the full pass replays at PLAYER_REGEN_ENABLED.
 ---------------------------------------------------------------------------
 
--- Anchor one element's container on its host mover. AuraSkin.LayoutAnchor(profile)
--- is the flow-origin corner (grow + wrap); pinning THAT corner to the mover's
--- element.anchor corner makes the auto-sized container hang off the mover with
+-- Anchor one element's container on a base frame. AuraSkin.LayoutAnchor(profile)
+-- is the flow-origin corner (grow + wrap); pinning THAT corner to the base's
+-- element.anchor corner makes the auto-sized container hang off the base with
 -- multi-row growth extending away from the origin.
--- BUFF host FIRST container: the temp-enchant strip (Lua-knowable count) leads
--- the row, so the secure grid starts liveEnchantCount cells along the grow
--- direction — the one axis dynamic packing can use while the aura count is secret
--- (ported from the pre-element AnchorAuraContainer fold).
-local function AnchorElementContainer(container, moverFrame, element, isFirstBuff)
+local function AnchorElementContainer(container, baseFrame, element)
     local profile = ElementProfileFor(element)
-    local xOff = 0
-    if isFirstBuff and liveEnchantCount > 0 then
-        local xDir = (profile.grow == "LEFT") and -1 or 1
-        xOff = xDir * liveEnchantCount * (profile.iconSize + profile.spacing)
-    end
     container:ClearAllPoints()
-    container:SetPoint(AuraSkin.LayoutAnchor(profile), moverFrame, element.anchor or "TOPRIGHT",
-        xOff + (element.offsetX or 0), (element.offsetY or 0))
+    container:SetPoint(AuraSkin.LayoutAnchor(profile), baseFrame, element.anchor or "TOPRIGHT",
+        (element.offsetX or 0), (element.offsetY or 0))
 end
 
 -- One host's per-element container pass, pooled by ordinal on the mover.
@@ -814,6 +451,7 @@ local function ApplyMoverElements(moverFrame, strips, isBuff, allowCreate)
         moverFrame._quiAuraContainers = pool
     end
     local incomplete = false
+    local createdFresh = false
     for i = 1, #strips do
         local element = strips[i]
         local container = pool[i]
@@ -821,26 +459,72 @@ local function ApplyMoverElements(moverFrame, strips, isBuff, allowCreate)
             if allowCreate and not InCombatLockdown() and CreateFrame then
                 container = CreateFrame("AuraContainer", nil, moverFrame, "CustomAuraContainerTemplate")
                 pool[i] = container
+                createdFresh = true
             else
                 -- Creation is OOC-only (forbidden object); queue a regen replay.
                 incomplete = true
             end
         end
         if container then
+            if i == 1 then
+                -- Publish strip 1 as THE live container for this host: the
+                -- central anchoring system positions it directly and docks the
+                -- sibling aura host to it (container-first). Cleared when the
+                -- host retires every strip (see below) so anchor targets never
+                -- degenerate to a hidden container.
+                moverFrame._quiLiveContainer = container
+                container._quiHostMover = moverFrame
+            end
             -- SetUnit BEFORE Configure: group registration parses auras eagerly.
             container:SetUnit("player")
-            if not InCombatLockdown() then
-                AnchorElementContainer(container, moverFrame, element, isBuff and i == 1)
+            if not InCombatLockdown() and i > 1 then
+                -- Strip 1 is positioned by the central anchoring system
+                -- (container-first). Later strips hang off strip 1's live
+                -- container so they track its auto-sized growth too.
+                -- pcall: forbidden→forbidden relativeTo acceptance is a PTR4
+                -- in-game unknown — on rejection fall back to the mover and
+                -- queue an OOC replay rather than aborting the whole pass.
+                local okA = pcall(AnchorElementContainer, container, pool[1] or moverFrame, element)
+                if not okA then
+                    pcall(AnchorElementContainer, container, moverFrame, element)
+                    incomplete = true
+                end
             end
             local profile = ElementProfileFor(element)
             local groups = G.ElementGroups("player", element, profile, isBuff)
             if not G.RunConfigPass(container, profile, groups, allowCreate) then incomplete = true end
             -- Strips-only: keep any slot pool a re-purposed container carries parked.
             S.Park(container)
+            -- Temp weapon enchants render INSIDE the buff container
+            -- (PTR4 AddItemEnchantment, placement=BeforeAuraGroups — the
+            -- engine-owned version of the old strip + lead-in). First call
+            -- creates forbidden frames → OOC only; the layout mutator
+            -- re-applies every pass. Known gap: engine right-click cancel is
+            -- instanceID-only and no-ops for enchants (Blizzard's own
+            -- BuffFrame still cancels via the legacy path) — accepted.
+            if isBuff and i == 1 then
+                if InCombatLockdown() and not container._quiEnchantsAdded then
+                    incomplete = true
+                else
+                    local okE = pcall(AuraSkin.ConfigureEnchantments, container, profile)
+                    if not okE or not container._quiEnchantsAdded then
+                        incomplete = true
+                    end
+                end
+            end
             container:SetEnabled(true)
             container:Show()
         end
     end
+    if #strips == 0 then
+        -- Host retired every strip: clear the published live container so
+        -- the central anchoring system never anchors to a hidden container.
+        -- The retired container's own _quiHostMover back-pointer is
+        -- intentionally left in place (inert — every consumer path
+        -- re-derives liveness via mover._quiLiveContainer first).
+        moverFrame._quiLiveContainer = nil
+    end
+
     -- Retire pooled containers beyond the active strip count (empty groups + park
     -- slots + disable + hide — all combat-legal on a pre-created container).
     for i = #strips + 1, #pool do
@@ -850,7 +534,7 @@ local function ApplyMoverElements(moverFrame, strips, isBuff, allowCreate)
         container:SetEnabled(false)
         container:Hide()
     end
-    return incomplete
+    return incomplete, createdFresh
 end
 
 -- Disable + hide every pooled container on a host mover (layout-mode preview
@@ -881,24 +565,16 @@ local function ApplyConfigPass(allowCreate)
     local settings = GetSettings()
     if not settings then return end
 
-    -- Temp enchants FIRST: the strip's live count feeds the buff host's anchor
-    -- offset and natural width below.
-    UpdateTempEnchants()
-
     local buffStrips   = ResolveStrips(GetBuffStore(settings),   DefaultBuffBucket,  _buffStrips)
     local debuffStrips = ResolveStrips(GetDebuffStore(settings), DefaultDebuffBucket, _debuffStrips)
 
-    -- Mover natural extent = first ENABLED strip's grid extent (unchanged math,
-    -- element-profile input); the buff host widens by the enchant lead-in.
+    -- Mover natural extent = first ENABLED strip's grid extent (unchanged
+    -- profile math — temp enchants render INSIDE the buff container now, so
+    -- there is no lead-in to widen for).
     local buffProfile   = buffStrips[1]   and ElementProfileFor(buffStrips[1])   or FallbackProfile(DefaultBuffBucket)
     local debuffProfile = debuffStrips[1] and ElementProfileFor(debuffStrips[1]) or FallbackProfile(DefaultDebuffBucket)
 
     local bw, bh = GridExtent(buffProfile)
-    if liveEnchantCount > 0 then
-        -- The enchant lead-in shifts the grid origin; the natural (mover /
-        -- anchoring) extent must cover strip + shifted grid.
-        bw = bw + liveEnchantCount * (buffProfile.iconSize + buffProfile.spacing)
-    end
     buffContainer._naturalW, buffContainer._naturalH = bw, bh
     buffContainer:SetSize(bw, bh)
 
@@ -914,18 +590,21 @@ local function ApplyConfigPass(allowCreate)
     local buffActive   = anyBuffs   and buffStrips   or EMPTY
     local debuffActive = anyDebuffs and debuffStrips or EMPTY
 
+    local inc1, fresh1, inc2, fresh2
     if allowCreate then
-        local inc1 = ApplyMoverElements(buffContainer,   buffActive,   true,  true)
-        local inc2 = ApplyMoverElements(debuffContainer, debuffActive, false, true)
+        inc1, fresh1 = ApplyMoverElements(buffContainer,   buffActive,   true,  true)
+        inc2, fresh2 = ApplyMoverElements(debuffContainer, debuffActive, false, true)
         if inc1 or inc2 then QueueContainerWork() end
     else
         -- In-combat mutation of a pre-created container is 12.1-PTR-legal
         -- (anchor/size/enable; group reconcile is pcall-guarded inside
         -- AuraGlue.RunConfigPass). pcall-guard the whole mover pass too: on any
         -- restriction error the queued full pass still reconciles at
-        -- PLAYER_REGEN_ENABLED.
-        local ok1, inc1 = pcall(ApplyMoverElements, buffContainer,   buffActive,   true,  false)
-        local ok2, inc2 = pcall(ApplyMoverElements, debuffContainer, debuffActive, false, false)
+        -- PLAYER_REGEN_ENABLED. The combat path never creates, so freshN
+        -- stays nil/false here.
+        local ok1, ok2
+        ok1, inc1, fresh1 = pcall(ApplyMoverElements, buffContainer,   buffActive,   true,  false)
+        ok2, inc2, fresh2 = pcall(ApplyMoverElements, debuffContainer, debuffActive, false, false)
         if (not ok1) or (not ok2) or inc1 or inc2 then QueueContainerWork() end
     end
 
@@ -939,6 +618,20 @@ local function ApplyConfigPass(allowCreate)
         debuffContainer:SetAlpha(settings.fadeDebuffFrame and (settings.fadeOutAlpha or 0) or 1)
     else
         debuffContainer:SetAlpha(0)
+    end
+
+    -- Containers may have just been created/re-pooled: re-run the central
+    -- anchor apply so the container-first SetPoint lands on the CURRENT
+    -- strip-1 containers (combat-legal mutation; AnchorOrPin pcalls the
+    -- forbidden SetPoint). Layout mode owns handle positions while active --
+    -- EXCEPT a freshly-created live container has never been SetPoint'd, and
+    -- an unanchored frame does not render (fail-invisible): the central apply
+    -- is the only owner of strip-1 anchors, so fresh creation overrides the
+    -- layout-mode gate (the mover mirror side-effect is harmless here -- in
+    -- the triggering scenario the host had no layout handle to begin with).
+    if ((not Helpers.IsLayoutModeActive()) or fresh1 or fresh2) and _G.QUI_ApplyFrameAnchor then
+        _G.QUI_ApplyFrameAnchor("buffFrame")
+        _G.QUI_ApplyFrameAnchor("debuffFrame")
     end
 
     if buffBorderStats then buffBorderStats.containerConfigs = buffBorderStats.containerConfigs + 1 end
@@ -968,18 +661,6 @@ local function ApplyOrDefer()
     ApplyContainerConfig()
 end
 
--- Event entry point for enchant changes: refresh the strip, and when the live
--- count CHANGED the buff grid origin moved — re-run the config pass (in combat
--- that is the mutable pass now + the queued full pass at regen; the cancel
--- header is combat-hidden, so its shift waiting for regen is invisible).
-local function RefreshTempEnchants()
-    local before = liveEnchantCount
-    UpdateTempEnchants()
-    if liveEnchantCount ~= before then
-        ApplyOrDefer()
-    end
-end
-
 ---------------------------------------------------------------------------
 -- LAYOUT MODE PREVIEW
 -- The secure container cannot be fed fake auras, so during preview each host's
@@ -997,12 +678,13 @@ local function ShowPreview()
     if not Preview or not ResolveAuraDeps() then return end
     previewActive = true
 
-    -- Disable the live secure containers so the placeholder icons own each host.
+    -- Disable the live secure containers so the placeholder icons own each host
+    -- (this also hides the strip-1 container's engine-rendered enchant frames —
+    -- they are children of the SAME container, no separate hide needed).
     if not InCombatLockdown() then
         DisableMoverContainers(buffContainer)
         DisableMoverContainers(debuffContainer)
     end
-    if tempEnchantFrame then tempEnchantFrame:Hide() end
 
     if not buffContainer:IsShown() then buffContainer:Show() end
     if not debuffContainer:IsShown() then debuffContainer:Show() end
@@ -1012,8 +694,8 @@ local function ShowPreview()
     -- Resolve each host's enabled strips and draw the placeholder preview ON the
     -- mover host. Size the host to the first strip's worst-case grid extent so
     -- the layout-mode grab handle covers the placeholders (mirrors
-    -- ApplyConfigPass; the enchant lead-in is omitted — the temp-enchant strip
-    -- is hidden during preview).
+    -- ApplyConfigPass; the live containers — and their engine-rendered temp
+    -- enchants — are disabled/hidden above, so there is nothing to widen for).
     local buffStrips  = ResolveStrips(GetBuffStore(settings), DefaultBuffBucket, _buffStrips)
     local buffProfile = buffStrips[1] and ElementProfileFor(buffStrips[1]) or FallbackProfile(DefaultBuffBucket)
     local bw, bh = GridExtent(buffProfile)
@@ -1143,8 +825,6 @@ local function FullRefresh()
         return
     end
 
-    wipe(enchantCachedDuration)
-
     ApplyOrDefer()
 
     -- Re-run frame anchoring now that natural sizes are settled.
@@ -1190,12 +870,6 @@ local function BuildFrames()
     debuffContainer = CreateFrame("Frame", "QUI_DebuffIconContainer", UIParent)
     debuffContainer:SetSize(1, 1)
     debuffContainer:SetClampedToScreen(true)
-
-    -- Small SEPARATE insecure temp-enchant strip (synthetic non-aura entries).
-    tempEnchantFrame = CreateFrame("Frame", "QUI_TempEnchantStrip", buffContainer)
-    tempEnchantFrame.buttons = {}
-    tempEnchantFrame:SetSize(1, 1)
-    tempEnchantFrame:Hide()
 end
 
 Init = function()
@@ -1203,8 +877,6 @@ Init = function()
     initialized = true
 
     BuildFrames()
-
-    local settings = GetSettings()
 
     UpdateGrowAnchor("buffFrame")
     UpdateGrowAnchor("debuffFrame")
@@ -1218,18 +890,11 @@ Init = function()
     ManageBlizzardFrames()
 
     -- Create + configure the live containers (forbidden objects → OOC; defers to
-    -- PLAYER_REGEN_ENABLED if Init somehow lands in combat).
+    -- PLAYER_REGEN_ENABLED if Init somehow lands in combat). Temp weapon
+    -- enchants render inside the buff container as part of this same pass
+    -- (AuraSkin.ConfigureEnchantments, called from ApplyMoverElements) — no
+    -- separate enchant event wiring needed.
     ApplyOrDefer()
-
-    -- Temp-enchant events: inventory + enchant changes re-read GetWeaponEnchantInfo.
-    buffContainer:RegisterEvent("WEAPON_ENCHANT_CHANGED")
-    buffContainer:SetScript("OnEvent", function(self, event)
-        if previewActive then return end
-        if event == "WEAPON_ENCHANT_CHANGED" then
-            wipe(enchantCachedDuration)
-            RefreshTempEnchants()
-        end
-    end)
 
     -- Re-apply shortly after build so anchoring + first auras settle (mirrors the
     -- legacy double-tap).
@@ -1242,17 +907,11 @@ end
 ---------------------------------------------------------------------------
 -- EVENT HANDLING
 ---------------------------------------------------------------------------
--- The live container self-drives UNIT_AURA C-side, so QUI no longer polls auras
--- on UNIT_AURA. We only refresh the SEPARATE temp-enchant strip on inventory
--- changes (its data comes from GetWeaponEnchantInfo, not UNIT_AURA).
-local enchantEventFrame = CreateFrame("Frame")
-enchantEventFrame:RegisterEvent("UNIT_INVENTORY_CHANGED")
-enchantEventFrame:SetScript("OnEvent", function(self, event, unit)
-    if unit == "player" then
-        wipe(enchantCachedDuration)
-        RefreshTempEnchants()
-    end
-end)
+-- The live container self-drives UNIT_AURA C-side, so QUI no longer polls
+-- auras on UNIT_AURA. Weapon-enchant events are gone too — temp enchants
+-- render INSIDE the buff container now (AuraSkin.ConfigureEnchantments,
+-- called from ApplyMoverElements) and the engine self-drives their updates
+-- the same way.
 
 -- Combat-end handler: replay container work that was deferred during combat.
 -- Gated by pendingContainerWork (set only when ApplyOrDefer hits an in-combat
@@ -1269,11 +928,9 @@ local function SetupDebugInstrumentation()
         containerConfigs = 0,
     }
     local mp = ns._memprobes or {}; ns._memprobes = mp
-    mp[#mp + 1] = { name = "BB_enchantCache", tbl = enchantCachedDuration }
     mp[#mp + 1] = { name = "BB_containerConfigs", counter = true, fn = function() return buffBorderStats.containerConfigs end }
     local reg = ns.QUI_PerfRegistry or {}; ns.QUI_PerfRegistry = reg
-    reg[#reg + 1] = { name = "BuffBorders_CombatEnd",    frame = paRegenFrame }
-    reg[#reg + 1] = { name = "BuffBorders_EnchantEvent", frame = enchantEventFrame }
+    reg[#reg + 1] = { name = "BuffBorders_CombatEnd", frame = paRegenFrame }
 end
 if ns.DebugRegister then -- gate contract: core/debug_gate.lua
     ns.DebugRegister(SetupDebugInstrumentation)

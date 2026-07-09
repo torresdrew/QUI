@@ -31,12 +31,13 @@ assertAbsent(buffborders, "pcall(CJKFont, region, font, fontSize, outline)",
 assertAbsent(buffborders, "pcall(CJKFont, cdText, font, fontSize, outline)",
     "the dedicated private-aura anchor cooldown text styling path must not be reintroduced")
 
--- The surviving buff/debuff icon + temp-enchant-strip stack-count text must
--- still route through the CJK fallback wrapper.
-assertContains(buffborders, "CJKFont(icon.Stacks, font, fontSize, outline)",
-    "buff/debuff preview icon stack text must route through CJKFont")
-assertAbsent(buffborders, "icon.Stacks:SetFont(font, fontSize, outline)",
-    "buff/debuff preview icon stack text must not bypass the CJK fallback wrapper")
+-- buffborders no longer styles ANY text itself: live aura/enchant text is
+-- engine-rendered and themed through AuraSkin/AuraTheme, and the layout-mode
+-- preview moved to core/aura_preview.lua. Lock the file font-free — any
+-- future raw SetFont here must instead route through the shared CJK-safe
+-- helpers (Helpers.ApplyFontWithFallback).
+assertAbsent(buffborders, ":SetFont(",
+    "buffborders must stay font-free; new text styling must use the shared CJK-safe helpers")
 
 local castbar = readFile("QUI_UnitFrames/unitframes/castbar.lua")
 assertAbsent(castbar, "pcall(probe.SetFont, probe, safeFontPath, safeFontSize, safeFontFlags)",

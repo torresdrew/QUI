@@ -45,10 +45,13 @@ end
 assert(not source:find("C_UnitAuras.GetUnitAuras", 1, true),
     "buffborders.lua must NOT read auras in Lua (GetUnitAuras): the secure container reads them C-side")
 
--- The temp-enchant strip (NOT an aura -- GetWeaponEnchantInfo) renders its
--- countdown via the C-side Cooldown swipe (SetCooldown), not a Lua timer text.
-assert(source:find("Cooldown.SetCooldown", 1, true) or source:find("Cooldown:SetCooldown", 1, true)
-    or source:find("SetCooldown, b.Cooldown", 1, true) or source:find(".SetCooldown", 1, true),
-    "temp-enchant strip must render its countdown via the C-side Cooldown (SetCooldown)")
+-- Temp weapon enchants (NOT auras -- GetWeaponEnchantInfo) also render fully
+-- engine-side now: they fold into the buff container via PTR4
+-- AddItemEnchantment (AuraSkin.ConfigureEnchantments), so buffborders.lua must
+-- carry NO Lua-side SetCooldown call for them either (the old separate
+-- insecure strip drove its own Cooldown widget; that machinery is gone).
+assert(not source:find("SetCooldown", 1, true),
+    "buffborders.lua must not drive any Cooldown widget in Lua: live aura AND "
+    .. "temp-enchant countdowns are both engine-owned now (CustomAuraContainer / AddItemEnchantment)")
 
 print("OK: buffborders_native_countdown_test")

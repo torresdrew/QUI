@@ -51,7 +51,11 @@ assert(zone:find("G.RunConfigPass(", 1, true),
     "the pass must reconcile groups via the shared AuraGlue.RunConfigPass (Configure OOC / Restyle combat)")
 assert(zone:find("S.Park(", 1, true),
     "BB is strips-only: the pass must Park (never Sync) each container's slot pool")
-assert(not zone:find("AuraSkin.Configure", 1, true),
+-- "AuraSkin.Configure(" (the direct-call form) must not appear — but
+-- AuraSkin.ConfigureEnchantments(...) (a DIFFERENT function, folding temp
+-- weapon enchants into the strip-1 container) legitimately does, so the
+-- needle must not be a bare prefix of that name.
+assert(not zone:find("AuraSkin.Configure(", 1, true),
     "the pass must not call AuraSkin.Configure directly — it goes through AuraGlue.RunConfigPass")
 
 -- ApplyOrDefer: in combat, apply the mutable subset now AND queue the full pass.

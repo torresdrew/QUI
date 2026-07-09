@@ -15,26 +15,18 @@
 --     count (see Blizzard_CustomAuraContainer.lua). QUI no longer pools or clears
 --     the live aura buttons, so there is intentionally NO QUI Lua loop for them.
 --
--- What survives as a QUI-owned guarantee: the SEPARATE insecure temp-enchant strip
--- (synthetic non-aura entries the container can't show) is QUI-pooled, so QUI must
--- Clear + Hide each strip button with no enchant this pass, or a stale enchant icon
--- sits on an empty slot. Guard that, plus that the live path delegates blanking to
--- the container rather than re-implementing a pool.
+-- Temp weapon enchants (the old exception -- synthetic non-aura entries the
+-- container couldn't show) are ALSO engine-owned now: PTR4 AddItemEnchantment
+-- (AuraSkin.ConfigureEnchantments, folded into the SAME strip-1 container)
+-- means the engine's ClearAuraInstance blanking covers them too. QUI no
+-- longer pools ANY buff/debuff/enchant button -- guard that no bespoke pool
+-- of any kind crept back in.
 
 local function readFile(path)
     local fh = assert(io.open(path, "rb"), "failed to open " .. path)
     local text = fh:read("*a")
     fh:close()
     return text
-end
-
-local function sliceFunction(source, signature)
-    local startPos = source:find(signature, 1, true)
-    assert(startPos, signature .. " must exist in buffborders.lua")
-    local nextFn = source:find("\nfunction ", startPos + 1, true)
-    local nextLocal = source:find("\nlocal function ", startPos + 1, true)
-    if nextLocal and (not nextFn or nextLocal < nextFn) then nextFn = nextLocal end
-    return source:sub(startPos, nextFn or #source)
 end
 
 local source = readFile("QUI_ActionBars/actionbars/buffborders.lua")
@@ -45,15 +37,13 @@ assert(not source:find("function AuraFrame:Update", 1, true),
 assert(not source:find("function AuraButton:Clear", 1, true),
     "buffborders.lua must NOT keep a bespoke AuraButton:Clear (engine ClearAuraInstance owns blanking)")
 
--- The SEPARATE temp-enchant strip is QUI-pooled, so it must Clear + Hide buttons
--- with no enchant this pass (and Show those that DO have one).
-local updateBody = sliceFunction(source, "local function UpdateTempEnchants")
-assert(updateBody:find("b:Show()", 1, true),
-    "UpdateTempEnchants must Show strip buttons that have a live temp enchant")
-assert(updateBody:find("b:Hide()", 1, true),
-    "UpdateTempEnchants must Hide strip buttons with no temp enchant (no stale slot)")
-assert(updateBody:find(".SetTexture, b.Icon, nil", 1, true) or updateBody:find("SetTexture(b.Icon, nil)", 1, true)
-    or updateBody:find("b.Icon, nil", 1, true),
-    "UpdateTempEnchants must clear the icon texture on empty strip buttons (no stale icon)")
+-- The separate insecure temp-enchant strip (and its own Clear+Hide pool loop)
+-- is fully gone: enchants render inside the buff container via the engine now.
+assert(not source:find("function UpdateTempEnchants", 1, true),
+    "buffborders.lua must NOT keep a bespoke UpdateTempEnchants pool (enchants are engine-owned inside the buff container)")
+assert(not source:find("function EnsureTempEnchantButton", 1, true),
+    "buffborders.lua must NOT keep a bespoke EnsureTempEnchantButton (no QUI-pooled enchant buttons remain)")
+assert(source:find("AuraSkin.ConfigureEnchantments", 1, true),
+    "buffborders.lua must fold temp enchants into the buff container via AuraSkin.ConfigureEnchantments")
 
 print("OK: buffborders_blank_surplus_children_test")

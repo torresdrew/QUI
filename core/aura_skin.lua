@@ -362,6 +362,46 @@ function AuraSkin.Restyle(container, profile)
     end
 end
 
+-- Register the three weapon temp-enchant displays on a container (PTR4
+-- AddItemEnchantment) and (re)apply their flow layout. The engine renders
+-- them inline with the aura flow (BeforeAuraGroups = enchants lead the row)
+-- and self-drives updates from weapon-enchant state — no addon events.
+-- Registration is add-once per container lifetime: there is NO remove API
+-- (same retirement semantics as aura groups) and AddItemEnchantment asserts
+-- on a duplicate slot. hidePermanent keeps parity with the old
+-- GetWeaponEnchantInfo strip (temp enchants only). The layout call is a
+-- plain mutator and re-runs every pass so icon size/spacing changes apply.
+-- First call creates forbidden frames → OOC only; callers pcall + queue.
+function AuraSkin.ConfigureEnchantments(container, profile)
+    local slots = _G.AuraContainerItemEnchantmentSlot
+    local placement = _G.CustomAuraContainerItemEnchantmentPlacement
+    if not (slots and placement and container.AddItemEnchantment) then
+        return false
+    end
+    -- Stamp the profile BEFORE AddItemEnchantment: frame creation is
+    -- synchronous and the initializer styles via container._quiProfile.
+    container._quiProfile = profile
+    local L = ResolveLayout(profile)
+    container:SetItemEnchantmentLayout({
+        placement       = placement.BeforeAuraGroups,
+        elementSpacingX = L.spacing,
+        elementSpacingY = L.spacing,
+        elementWidth    = L.iconSize,
+        elementHeight   = L.iconSize,
+    })
+    if not container._quiEnchantsAdded then
+        local init = MakeInitializer(container, {})
+        for _, slot in ipairs({ slots.MainHand, slots.OffHand, slots.Ranged }) do
+            container:AddItemEnchantment(slot, {
+                initializeFrame = init,
+                hidePermanent   = true,
+            })
+        end
+        container._quiEnchantsAdded = true
+    end
+    return true
+end
+
 -- Wire + style ONE engine-created aura frame outside the group
 -- initializeFrame path — AddAuraSlot returns its frame directly, so the slot
 -- runtime (core/aura_slots.lua) calls this on the returned frame. Same art,

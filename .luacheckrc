@@ -116,6 +116,7 @@ read_globals = {
     -- Enum and utility tables
     "Enum", "AuraUtil", "TextureKitConstants", "AnchorUtil",
     "AuraContainerSortMethod", "AuraContainerSortDirection",
+    "AuraContainerItemEnchantmentSlot", "CustomAuraContainerItemEnchantmentPlacement",
 
     -- WoW Lua extensions (Lua 5.1 base + Blizzard additions)
     "wipe", "strsplit", "strjoin", "strtrim", "strconcat", "format",
