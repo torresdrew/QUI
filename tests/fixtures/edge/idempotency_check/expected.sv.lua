@@ -4465,21 +4465,6 @@ return {
               powerBarUsePowerColor = true,
               showPowerBar = true
             },
-            privateAuras = {
-              anchor = "RIGHT",
-              anchorOffsetX = -2,
-              anchorOffsetY = 0,
-              borderScale = 1,
-              enabled = true,
-              growDirection = "RIGHT",
-              iconSize = 20,
-              maxPerFrame = 2,
-              reverseSwipe = false,
-              showCountdown = true,
-              showCountdownNumbers = true,
-              spacing = 2,
-              textScale = 1
-            },
             range = {
               enabled = true,
               outOfRangeAlpha = 0.40000000000000002
@@ -4869,21 +4854,6 @@ return {
               powerBarUsePowerColor = true,
               showPowerBar = true
             },
-            privateAuras = {
-              anchor = "RIGHT",
-              anchorOffsetX = -2,
-              anchorOffsetY = 0,
-              borderScale = 1,
-              enabled = true,
-              growDirection = "RIGHT",
-              iconSize = 20,
-              maxPerFrame = 2,
-              reverseSwipe = false,
-              showCountdown = true,
-              showCountdownNumbers = true,
-              spacing = 2,
-              textScale = 1
-            },
             range = {
               enabled = true,
               outOfRangeAlpha = 0.40000000000000002
@@ -5253,21 +5223,6 @@ return {
             powerTextOffsetY = 2,
             powerTextUseClassColor = false,
             powerTextUsePowerColor = true,
-            privateAuras = {
-              anchor = "TOPLEFT",
-              anchorOffsetX = 2,
-              anchorOffsetY = -2,
-              borderScale = 1,
-              enabled = true,
-              frameLevel = 50,
-              growDirection = "RIGHT",
-              iconSize = 22,
-              maxPerFrame = 3,
-              reverseSwipe = false,
-              showCountdown = true,
-              showCountdownNumbers = true,
-              spacing = 2
-            },
             showHealth = true,
             showHealthAbsolute = true,
             showHealthPercent = true,
@@ -5811,21 +5766,6 @@ return {
             powerTextOffsetY = 4,
             powerTextUseClassColor = false,
             powerTextUsePowerColor = true,
-            privateAuras = {
-              anchor = "BOTTOMLEFT",
-              anchorOffsetX = 2,
-              anchorOffsetY = 2,
-              borderScale = 1,
-              enabled = true,
-              frameLevel = 50,
-              growDirection = "RIGHT",
-              iconSize = 24,
-              maxPerFrame = 3,
-              reverseSwipe = false,
-              showCountdown = true,
-              showCountdownNumbers = true,
-              spacing = 2
-            },
             showHealth = true,
             showHealthAbsolute = true,
             showHealthPercent = true,
@@ -6159,21 +6099,6 @@ return {
             powerTextOffsetY = 2,
             powerTextUseClassColor = false,
             powerTextUsePowerColor = false,
-            privateAuras = {
-              anchor = "TOPLEFT",
-              anchorOffsetX = 2,
-              anchorOffsetY = -2,
-              borderScale = 1,
-              enabled = true,
-              frameLevel = 50,
-              growDirection = "RIGHT",
-              iconSize = 24,
-              maxPerFrame = 4,
-              reverseSwipe = false,
-              showCountdown = true,
-              showCountdownNumbers = true,
-              spacing = 2
-            },
             showHealth = true,
             showHealthAbsolute = true,
             showHealthPercent = true,
@@ -6938,7 +6863,7 @@ return {
     profiles = {
       Default = {
         _defaultsVersion = 3,
-        _schemaVersion = 48,
+        _schemaVersion = 49,
         cdm = {
           engine = "owned"
         },

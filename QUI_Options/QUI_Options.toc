@@ -105,26 +105,6 @@ tiles\help_content.lua
 ..\QUI\modules\qol\settings\xp_tracker.lua
 ..\QUI\modules\qol\settings\focus_cast_alert.lua
 ..\QUI\modules\qol\settings\qol_content.lua
-=======
-..\QUI_Minimap\minimap\settings\minimap.lua
-..\QUI_Minimap\minimap\settings\minimap_providers.lua
-..\QUI_Datatexts\datatexts\settings\datatexts_features.lua
-..\QUI_Datatexts\datatexts\settings\datatexts_providers.lua
-..\QUI_InfoBar\infobar\settings\infobar_features.lua
-..\QUI_InfoBar\infobar\settings\infobar_content.lua
-..\QUI_QoL\qol\settings\pet_warning.lua
-..\QUI_QoL\qol\settings\no_target_warning.lua
-..\QUI_QoL\qol\settings\consumables.lua
-..\QUI_QoL\qol\settings\combat_timer.lua
-..\QUI_QoL\qol\settings\lust_timer.lua
-..\QUI_QoL\qol\settings\tooltip_anchor.lua
-..\QUI_QoL\qol\settings\provider_panels.lua
-..\QUI_QoL\qol\settings\action_tracker.lua
-..\QUI_QoL\qol\settings\skyriding.lua
-..\QUI_QoL\qol\settings\xp_tracker.lua
-..\QUI_QoL\qol\settings\focus_cast_alert.lua
-..\QUI_QoL\qol\settings\qol_content.lua
->>>>>>> 598e57f706 (feat(qol): add five QoL modules — audio device lock, event sounds, extended ignore, friends class colors, no-target warning)
 ..\QUI_Bags\bags\settings\bags_providers.lua
 ..\QUI_Bags\bags\settings\bags.lua
 ..\QUI\modules\alts\settings\alts_providers.lua

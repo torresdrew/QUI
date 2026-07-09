@@ -91,10 +91,13 @@ local function buildButtonArt(button)
         showWhenHelpful = false,
     })
 
-    -- Icon (ARTWORK, inset 1px so the border shows as a ring).
+    -- Icon (ARTWORK, inset 1px so the border shows as a ring).  Cropped 8% per
+    -- edge to cut the bevel baked into icon art (engine's ApplyIcon only calls
+    -- SetTexture on it, never texcoords, so this one-time crop sticks).
     local icon = button:CreateTexture(nil, "ARTWORK")
     icon:SetPoint("TOPLEFT", button, "TOPLEFT", 1, -1)
     icon:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", -1, 1)
+    icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
     button.Icon = icon
     button:SetIcon(icon)
 

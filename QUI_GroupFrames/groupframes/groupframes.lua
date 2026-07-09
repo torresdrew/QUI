@@ -2053,7 +2053,6 @@ local function UpdateDispelOverlay(frame)
     local hasDispellable = false
     local firstDispellableInstID = nil
     local firstDispellableType = nil
-    local fromPrivateSlots = false
 
     if cache and cache.playerDispellableOrder then
         -- The playerDispellable SET is the authoritative membership (cleared
@@ -2091,21 +2090,6 @@ local function UpdateDispelOverlay(frame)
                     end
                     break
                 end
-            end
-        end
-    end
-
-    if not hasDispellable then
-        local GFPA = ns.QUI_GroupFramePrivateAuras
-        if GFPA then
-            local privateState = GFPA.GetPrivateDispelState and GFPA:GetPrivateDispelState(unit)
-            if not privateState and GFPA.RefreshPrivateDispelState then
-                privateState = GFPA:RefreshPrivateDispelState(unit)
-            end
-            if privateState and (privateState.auraInstanceID or privateState.slot) then
-                hasDispellable = true
-                fromPrivateSlots = true
-                firstDispellableInstID = privateState.auraInstanceID
             end
         end
     end
@@ -2158,12 +2142,9 @@ local function UpdateDispelOverlay(frame)
     end
 
     -- Last-resort fallback: detection succeeded but no type-specific color
-    -- could be resolved. For private-slot-only matches, prefer any available
-    -- dispel color; otherwise default to Magic blue so the healer still sees
-    -- the overlay instead of silently dropping it.
-    local fallback = fromPrivateSlots and colors and (colors.Magic or colors.Curse or colors.Disease or colors.Poison)
-        or (colors and colors.Magic)
-    fallback = fallback or _state.defaultColors.dispelFallback
+    -- could be resolved. Default to Magic blue so the healer still sees the
+    -- overlay instead of silently dropping it.
+    local fallback = (colors and colors.Magic) or _state.defaultColors.dispelFallback
     SetDispelBorderColor(overlay, fallback[1], fallback[2], fallback[3], fallbackOpacity)
     overlay:Show()
 end
@@ -6168,7 +6149,7 @@ end
 ---------------------------------------------------------------------------
 -- REFRESH ALL: Update all visible frames
 ---------------------------------------------------------------------------
-function QUI_GF:RefreshAllFrames(reason)
+function QUI_GF:RefreshAllFrames(_reason)
     -- Pre-loop setup that each module's RefreshAll does once before iteration.
     -- Inlining per-frame aura work avoids extra full iterations of unitFrameMap.
     -- The unified element renderer (GFA:RenderFrame) draws strips + tracked
@@ -6211,14 +6192,6 @@ function QUI_GF:RefreshAllFrames(reason)
         end
     end
 
-    -- Private auras use a different clear-all + rebuild pattern for settings
-    -- changes. Roster changes are handled by their lighter reanchor debounce.
-    if reason ~= "roster"
-        and ns.QUI_GroupFramePrivateAuras
-        and ns.QUI_GroupFramePrivateAuras.RefreshAll
-    then
-        ns.QUI_GroupFramePrivateAuras:RefreshAll()
-    end
 end
 
 ---------------------------------------------------------------------------
@@ -6356,9 +6329,8 @@ function QUI_GF:RefreshSettings()
     -- path, a STATIC overlay (one whose value isn't changing, so no dedicated
     -- UNIT_*_AMOUNT_CHANGED fires) would otherwise stay hidden until its next
     -- value change. Repopulate from current unit state so it reappears now.
-    -- Combat-guarded: RefreshAllFrames runs PrivateAuras:RefreshAll (which the
-    -- in-combat roster path deliberately skips via reason == "roster"), and we
-    -- can reach here in combat through the init-safe window above.
+    -- Combat-guarded: RefreshAllFrames touches forbidden-object aura container
+    -- work, and we can reach here in combat through the init-safe window above.
     if not InCombatLockdown() then
         self:RefreshAllFrames()
     end
@@ -6492,10 +6464,6 @@ function QUI_GF:Disable()
 
     if self.spotlightHeader then self.spotlightHeader:Hide() end
     if self.spotlightContainer then self.spotlightContainer:Hide() end
-
-    if ns.QUI_GroupFramePrivateAuras and ns.QUI_GroupFramePrivateAuras.CleanupAll then
-        ns.QUI_GroupFramePrivateAuras:CleanupAll()
-    end
 
     wipe(self.unitFrameMap)
     self.initialized = false

@@ -6,7 +6,8 @@
 --   * each anchor owns exactly one CustomAuraContainerTemplate child;
 --   * buffs and debuffs use independent filters and maxFrameCount values;
 --   * no roundUpFrameIndex/cumulative stacked-filter math remains;
---   * private-aura slots parent to the debuff anchor.
+--   * the dedicated private-aura anchor subsystem is fully removed (12.1
+--     AuraContainers render private auras natively).
 
 local function readAll(path)
     local file = assert(io.open(path, "rb"))
@@ -35,8 +36,11 @@ assert(not src:find("roundUpFrameIndex", 1, true),
 assert(not src:find("buffMax + debuffMax", 1, true),
     "two-container path must not use cumulative maxFrameCount math")
 
--- Private auras live with the debuff anchor.
-assert(src:find('CreateFrame("Frame", "QUI_PlayerPrivateAura" .. i, debuffContainer)', 1, true),
-    "private-aura slots must parent to debuffContainer")
+-- The dedicated private-aura anchor subsystem must not creep back: 12.1
+-- AuraContainers render private auras natively via the normal debuff strip.
+assert(not src:find("PrivateAura", 1, true),
+    "buffborders.lua must not reintroduce dedicated private-aura anchors")
+assert(not src:find("QUI_PA_", 1, true),
+    "buffborders.lua must not reintroduce the QUI_PA_ private-aura gate")
 
 print("buffborders_two_container_stack_test: OK")

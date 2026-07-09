@@ -10,7 +10,7 @@
 -- MUTATION of pre-created objects (anchor/size/groups/enable) is combat-legal
 -- (pcall-guarded — PTR4 may still restrict group mutation in combat), so
 -- config changes apply live in combat and the full pass still replays at
--- regen (private-aura registration is OOC-only).
+-- regen.
 --
 -- Right-click cancel of own buffs is engine-owned per PTR4: the buff group is
 -- registered with cancelButtons (a RegisterForClicks token string), and each
@@ -59,15 +59,6 @@ local InCombatLockdown = InCombatLockdown
 local CancelItemTempEnchantment = CancelItemTempEnchantment
 local GetWeaponEnchantInfo = GetWeaponEnchantInfo
 local GetInventoryItemTexture = GetInventoryItemTexture
-
--- Private aura API (WoW 10.1.0+)
-local AddPrivateAuraAnchor = C_UnitAuras and C_UnitAuras.AddPrivateAuraAnchor
-local RemovePrivateAuraAnchor = C_UnitAuras and C_UnitAuras.RemovePrivateAuraAnchor
-
--- 12.0.5+ requires `isContainer` on AddPrivateAuraAnchor args; non-container
--- anchors must pass `isContainer = false` or registration silently fails.
-local CLIENT_VERSION = select(4, GetBuildInfo())
-local IS_CONTAINER_SUPPORTED = CLIENT_VERSION and CLIENT_VERSION >= 120005
 
 ---------------------------------------------------------------------------
 -- DEFAULTS
@@ -138,8 +129,8 @@ end
 local DEFAULT_ICON_SIZE = 30
 local BASE_CROP = 0.08
 
--- Debuff type → border color (r, g, b) — used by the layout-mode preview grid +
--- private-aura slot edges (live container border color is owned by AuraTheme).
+-- Debuff type → border color (r, g, b) — used by the layout-mode preview grid
+-- (live container border color is owned by AuraTheme).
 local DEBUFF_TYPE_COLORS = {
     Magic   = { 0.20, 0.60, 1.00 },
     Curse   = { 0.60, 0.00, 1.00 },
@@ -348,11 +339,6 @@ end
 -- Layout mode preview state
 local previewActive = false
 
--- Private aura state (player debuffs hidden from addon APIs)
-local PA_MAX_SLOTS = 3
-local paSlots = {}
-local paAnchorIDs = {}
-
 -- debug counters; nil until QUI_Debug activates instrumentation
 local buffBorderStats
 
@@ -382,7 +368,7 @@ local function QueueContainerWork()
 end
 
 ---------------------------------------------------------------------------
--- 4-EDGE BORDER (private-aura slots + layout-mode preview icons)
+-- 4-EDGE BORDER (layout-mode preview icons + temp-enchant strip)
 ---------------------------------------------------------------------------
 local function ApplyBorderColorAndSize(frame, r, g, b, borderSizePx)
     frame.BorderTop:SetColorTexture(r, g, b, 1)
@@ -396,7 +382,7 @@ local function ApplyBorderColorAndSize(frame, r, g, b, borderSizePx)
     frame.BorderRight:SetWidth(borderSizePx)
 end
 
--- Style a 4-edge preview/private-slot icon (color, size, swipe, fonts). Used by
+-- Style a 4-edge preview icon (color, size, swipe, fonts). Used by
 -- the layout-mode preview grid + temp-enchant strip only; live auras style their
 -- single-texture border through AuraSkin/AuraTheme.
 local function StyleIcon(icon, settings, isBuff, debuffType)
@@ -733,268 +719,6 @@ local function RestoreBlizzardFrame(frame)
 end
 
 ---------------------------------------------------------------------------
--- PRIVATE AURAS (player debuffs hidden from addon APIs)
--- Unchanged in spirit: 3 slot frames parented to the debuff anchor frame, each
--- registered as a private-aura anchor via C_UnitAuras.AddPrivateAuraAnchor
--- (client-side rendering). The container path renders normal debuffs C-side;
--- private auras layer on top via their own anchors (same as before).
---
--- 12.1 PTR4: the CustomAuraContainer above now renders private auras like
--- regular auras, so this dedicated anchor path would double-display every
--- private aura that also matches the debuff strip filter. Anchor creation
--- and slot layout are gated off; flip to false to restore the pre-PTR4
--- anchor path if in-game verification shows the container does NOT surface
--- private auras for our filters. Teardown (ClearPrivateAuraAnchors) stays
--- LIVE so stale anchors still clear.
----------------------------------------------------------------------------
-local QUI_PA_ANCHORS_RETIRED = true
-
-local function ClearPrivateAuraAnchors()
-    if not RemovePrivateAuraAnchor then return end
-    for i = 1, #paAnchorIDs do
-        local id = paAnchorIDs[i]
-        if id then pcall(RemovePrivateAuraAnchor, id) end
-    end
-    wipe(paAnchorIDs)
-    for i = 1, PA_MAX_SLOTS do
-        local slot = paSlots[i]
-        if slot then
-            for j = 1, slot:GetNumChildren() do
-                local child = select(j, slot:GetChildren())
-                if child then pcall(child.Hide, child) end
-            end
-        end
-    end
-end
-
-local function EnsureSlotBorders(slot)
-    if slot.BorderTop then return end
-    CreateBorderEdges(slot)
-end
-
-local function IsForbiddenObject(object)
-    if not object or not object.IsForbidden then return false end
-    local ok, forbidden = pcall(object.IsForbidden, object)
-    return ok and forbidden
-end
-
-local function IsObjectTypeSafe(object, objectType)
-    if not object or not object.IsObjectType then return false end
-    local ok, matches = pcall(object.IsObjectType, object, objectType)
-    return ok and matches
-end
-
-local function SlotHasVisibleAura(slot)
-    if not slot or not slot.GetNumChildren then return false end
-    local numOk, numChildren = pcall(slot.GetNumChildren, slot)
-    if not numOk or not numChildren or numChildren == 0 then return false end
-    local childrenOk, children = pcall(function() return { slot:GetChildren() } end)
-    if not childrenOk or not children then return false end
-    for i = 1, numChildren do
-        local child = children[i]
-        if child and not IsForbiddenObject(child) and child.IsShown then
-            local ok, shown = pcall(child.IsShown, child)
-            if ok and shown then return true end
-        end
-    end
-    return false
-end
-
-local function StyleSlotBorders(slot, settings)
-    if not slot.BorderTop then return end
-    local borderSizePx = GetBorderSizePx(slot, settings)
-    local r, g, b = BORDER_COLOR_DEBUFF_DEFAULT[1], BORDER_COLOR_DEBUFF_DEFAULT[2], BORDER_COLOR_DEBUFF_DEFAULT[3]
-
-    ApplyBorderColorAndSize(slot, r, g, b, borderSizePx)
-
-    local showBorders = settings and settings.showDebuffBorders ~= false
-    local visible = showBorders and SlotHasVisibleAura(slot)
-    slot.BorderTop:SetShown(visible)
-    slot.BorderBottom:SetShown(visible)
-    slot.BorderLeft:SetShown(visible)
-    slot.BorderRight:SetShown(visible)
-end
-
-local function StyleSlotTextRecursive(node, settings, depth)
-    if not node or depth > 5 or IsForbiddenObject(node) then return end
-    settings = settings or DEFAULTS
-
-    local font = GetGeneralFont()
-    local outline = GetGeneralFontOutline()
-    local fontSize = settings.fontSize or 12
-
-    local numRegions = 0
-    local regions
-    if node.GetNumRegions and node.GetRegions then
-        local numOk, count = pcall(node.GetNumRegions, node)
-        if numOk and type(count) == "number" and count > 0 then
-            local regionsOk, regionList = pcall(function() return { node:GetRegions() } end)
-            if regionsOk and regionList then
-                numRegions = count
-                regions = regionList
-            end
-        end
-    end
-    for i = 1, numRegions do
-        local region = regions and regions[i]
-        if region and not IsForbiddenObject(region) and IsObjectTypeSafe(region, "FontString") and region.SetFont then
-            pcall(CJKFont, region, font, fontSize, outline)
-            local text
-            if region.GetText then
-                local textOk, textValue = pcall(region.GetText, region)
-                if textOk then
-                    text = SafeValue(textValue, nil)
-                end
-            end
-            if text then
-                local anchor = settings.debuffDurationTextAnchor or "CENTER"
-                local offX = settings.debuffDurationTextOffsetX or 0
-                local offY = settings.debuffDurationTextOffsetY or 0
-                local parent
-                if region.GetParent then
-                    local parentOk, parentValue = pcall(region.GetParent, region)
-                    if parentOk then parent = parentValue end
-                end
-                pcall(region.ClearAllPoints, region)
-                pcall(region.SetPoint, region, anchor, parent or node, anchor, offX, offY)
-            end
-        end
-    end
-
-    if IsObjectTypeSafe(node, "Cooldown") and node.GetCountdownFontString then
-        local cdOk, cdText = pcall(node.GetCountdownFontString, node)
-        if cdOk and cdText and not IsForbiddenObject(cdText) and cdText.SetFont then
-            pcall(CJKFont, cdText, font, fontSize, outline)
-            local anchor = settings.debuffDurationTextAnchor or "CENTER"
-            local offX = settings.debuffDurationTextOffsetX or 0
-            local offY = settings.debuffDurationTextOffsetY or 0
-            pcall(cdText.ClearAllPoints, cdText)
-            pcall(cdText.SetPoint, cdText, anchor, node, anchor, offX, offY)
-        end
-    end
-
-    local numChildren = 0
-    local children
-    if node.GetNumChildren and node.GetChildren then
-        local numOk, count = pcall(node.GetNumChildren, node)
-        if numOk and type(count) == "number" and count > 0 then
-            local childrenOk, childList = pcall(function() return { node:GetChildren() } end)
-            if childrenOk and childList then
-                numChildren = count
-                children = childList
-            end
-        end
-    end
-    for i = 1, numChildren do
-        local child = children and children[i]
-        if child and not IsForbiddenObject(child) then
-            StyleSlotTextRecursive(child, settings, depth + 1)
-        end
-    end
-end
-
-local function DeferStyleSlotText(slot, settings)
-    C_Timer.After(0, function()
-        if not slot:IsShown() then return end
-        StyleSlotBorders(slot, settings)
-        StyleSlotTextRecursive(slot, settings, 1)
-    end)
-end
-
-local function SetupPrivateAuras()
-    if QUI_PA_ANCHORS_RETIRED then return end
-    if not AddPrivateAuraAnchor or not debuffContainer then return end
-    ClearPrivateAuraAnchors()
-
-    local settings = GetSettings()
-    local iconSize = DEFAULT_ICON_SIZE
-    if settings then
-        local s = settings.debuffIconSize or 0
-        if s > 0 then iconSize = s end
-    end
-
-    local borderSizePx = GetBorderSizePx(debuffContainer, settings)
-
-    for i = 1, PA_MAX_SLOTS do
-        local slot = paSlots[i]
-        if not slot then
-            slot = CreateFrame("Frame", "QUI_PlayerPrivateAura" .. i, debuffContainer)
-            slot:SetIgnoreParentAlpha(true)
-            paSlots[i] = slot
-        end
-        slot:SetSize(iconSize, iconSize)
-        slot:Show()
-
-        EnsureSlotBorders(slot)
-        StyleSlotBorders(slot, settings)
-
-        local anchorArgs = {
-            unitToken = "player",
-            auraIndex = i,
-            parent = slot,
-            showCountdownFrame = true,
-            showCountdownNumbers = true,
-            iconInfo = {
-                iconWidth = iconSize - borderSizePx * 2,
-                iconHeight = iconSize - borderSizePx * 2,
-                borderScale = -1000,
-                iconAnchor = {
-                    point = "CENTER",
-                    relativeTo = slot,
-                    relativePoint = "CENTER",
-                    offsetX = 0,
-                    offsetY = 0,
-                },
-            },
-        }
-        if IS_CONTAINER_SUPPORTED then anchorArgs.isContainer = false end
-        local ok, anchorID = pcall(AddPrivateAuraAnchor, anchorArgs)
-        paAnchorIDs[i] = ok and anchorID or nil
-    end
-
-    for _, slot in ipairs(paSlots) do
-        DeferStyleSlotText(slot, settings)
-    end
-end
-
--- Position the 3 private-aura slots on a FIXED reserved strip below the debuff
--- grid's max extent. Private auras cannot join the engine pool and the live
--- debuff count is secret-safe / unknown to Lua, so the slots sit one row below
--- the debuff container's possible extent, on the same grow corner as that grid.
-local function LayoutPrivateAuraSlots()
-    if QUI_PA_ANCHORS_RETIRED then return end
-    if not AddPrivateAuraAnchor or #paSlots == 0 or not debuffContainer then return end
-
-    local settings = GetSettings()
-    if not settings or not settings.enableDebuffs or settings.hideDebuffFrame then
-        for _, slot in ipairs(paSlots) do
-            slot:Hide()
-        end
-        return
-    end
-
-    local profile = BuildZoneProfile(settings, false)
-    local iconSize = profile.iconSize
-    local spacing = profile.spacing
-    local growLeft = settings.debuffGrowLeft
-    local growUp = settings.debuffGrowUp
-    local xDir = growLeft and -1 or 1
-    local point = profile.anchor
-    local _, gridH = GridExtent(profile)
-    local stripYBase = growUp and (gridH + spacing) or -(gridH + spacing)
-
-    for i = 1, #paSlots do
-        local slot = paSlots[i]
-        slot:SetSize(iconSize, iconSize)
-        slot:ClearAllPoints()
-        local x = xDir * (i - 1) * (iconSize + spacing)
-        slot:SetPoint(point, debuffContainer, point, x, stripYBase)
-        StyleSlotBorders(slot, settings)
-        slot:Show()
-    end
-end
-
----------------------------------------------------------------------------
 -- BLIZZARD FRAME MANAGEMENT
 ---------------------------------------------------------------------------
 local function ManageBlizzardFrames()
@@ -1108,11 +832,11 @@ local function ConfigureZoneAuraContainer(anchorFrame, profile, active, settings
 end
 
 -- Heart of the live path, shared by both passes. allowCreate=true is the full
--- OOC pass: may create the forbidden containers, pool buttons, reconcile
--- AuraSkin groups, and re-register private-aura anchors.
+-- OOC pass: may create the forbidden containers, pool buttons, and reconcile
+-- AuraSkin groups.
 -- allowCreate=false is the combat pass: only combat-legal mutation of
 -- pre-created objects (anchor-frame sizing, container anchor/groups/enable,
--- alpha fades, the insecure temp-enchant strip, private-aura slot layout).
+-- alpha fades, the insecure temp-enchant strip).
 local function ApplyConfigPass(allowCreate)
     if not buffContainer or not debuffContainer then return end
     if previewActive then return end
@@ -1173,11 +897,6 @@ local function ApplyConfigPass(allowCreate)
     end
 
     if buffBorderStats then buffBorderStats.containerConfigs = buffBorderStats.containerConfigs + 1 end
-
-    if allowCreate then
-        SetupPrivateAuras()
-    end
-    LayoutPrivateAuraSlots()
 end
 
 -- Full OOC pass (re-assigned to the forward declaration above; also what
@@ -1193,8 +912,7 @@ end
 
 -- Public re-config. OOC: run the full pass. In combat: apply the combat-legal
 -- mutation subset immediately (live feedback on pre-created containers) AND
--- queue the full pass — creation and private-aura registration can only run
--- at PLAYER_REGEN_ENABLED.
+-- queue the full pass — creation can only run at PLAYER_REGEN_ENABLED.
 local function ApplyOrDefer()
     if previewActive then return end
     if InCombatLockdown() then
@@ -1375,8 +1093,6 @@ local function ShowPreview()
         _G.QUI_LayoutModeSyncHandle("buffFrame")
         _G.QUI_LayoutModeSyncHandle("debuffFrame")
     end
-
-    for _, slot in ipairs(paSlots) do slot:Hide() end
 end
 
 local function HidePreview()

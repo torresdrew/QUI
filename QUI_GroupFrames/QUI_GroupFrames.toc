@@ -19,7 +19,6 @@ groupframes\groupframes_missing_raid_buffs.lua
 groupframes\groupframes_aura_model.lua
 groupframes\groupframes_auras.lua
 groupframes\groupframes_aura_render.lua
-groupframes\groupframes_private_auras.lua
 groupframes\groupframes_clickcast.lua
 groupframes\groupframes_blizzard.lua
 groupframes\groupframes_editmode.lua

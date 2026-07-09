@@ -5,9 +5,9 @@
 -- combat is restricted (crashes the client today), but MUTATING pre-created
 -- ones (SetPoint / SetSize / groups / enable) is legal in combat. The old
 -- ApplyOrDefer deferred ALL config to PLAYER_REGEN_ENABLED; the split applies
--- the combat-legal subset immediately and still queues the full pass
--- (private-aura anchor registration and any missing creation are OOC-only),
--- so a wrong PTR assumption self-heals at regen.
+-- the combat-legal subset immediately and still queues the full pass (any
+-- missing creation is OOC-only), so a wrong PTR assumption self-heals at
+-- regen.
 
 local function readAll(path)
     local file = assert(io.open(path, "rb"))
@@ -31,9 +31,11 @@ end
 local pass = slice("local function ApplyConfigPass(allowCreate)")
 local gatePos = pass:find("if allowCreate then", 1, true)
 assert(gatePos, "ApplyConfigPass must gate OOC-only work on allowCreate")
-local paPos = pass:find("SetupPrivateAuras()", 1, true)
-assert(paPos and paPos > gatePos,
-    "SetupPrivateAuras (anchor re-registration) must sit behind the allowCreate gate")
+
+-- The private-aura anchor subsystem is fully removed (12.1 AuraContainers
+-- render private auras natively) — lock this in so it cannot creep back.
+assert(not src:find("PrivateAura", 1, true) and not src:find("QUI_PA_", 1, true),
+    "buffborders.lua must not reintroduce the private-aura anchor subsystem")
 
 -- Zone config: creation only via EnsureZoneContainer under allowCreate; the
 -- mutation branch reconciles existing groups (never creates) and re-anchors,

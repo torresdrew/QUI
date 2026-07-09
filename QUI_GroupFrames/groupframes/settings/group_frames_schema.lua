@@ -109,7 +109,7 @@ local VISUAL_DB_KEYS = {
     general = true, layout = true, health = true, power = true, name = true,
     absorbs = true, healAbsorbs = true, healPrediction = true, indicators = true,
     healer = true, classPower = true, range = true, auras = true,
-    privateAuras = true, auraIndicators = true, castbar = true,
+    auraIndicators = true, castbar = true,
     targetedSpells = true,
     portrait = true, pets = true, dimensions = true, spotlight = true,
 }
@@ -2103,129 +2103,6 @@ local function RenderLevelSection(sectionHost, ctx)
     return builder.Height()
 end
 
-local function RenderPrivateAurasSection(sectionHost, ctx)
-    local gui = GetGUI()
-    local optionsAPI = GetOptionsAPI()
-    local groupFrames = ResolveGroupFramesDB(ctx and ctx.options and ctx.options.contextMode)
-    if not gui or not optionsAPI or not groupFrames then
-        return nil
-    end
-
-    local privateAuras = EnsureSubTable(groupFrames.contextDB, "privateAuras")
-    if not privateAuras then
-        return nil
-    end
-
-    -- Private Auras now lives under the Auras tab — tag search nav accordingly.
-    local builder = CreateSectionBuilder(sectionHost, ctx, CreateSearchContext("auras"))
-    if not builder then
-        return nil
-    end
-
-    local refresh = function()
-        RefreshGroupFrames(groupFrames.contextMode)
-    end
-
-    builder.Header(ns.L["Private Auras"])
-    builder.Description(string.format(ns.L["Private-aura anchors and countdown styling for %1$s group frames."], groupFrames.sourceLabel))
-
-    local card = builder.Card()
-    local controlledRows = {}
-    local function UpdatePrivateAuraRows()
-        local alpha = privateAuras.enabled and 1.0 or 0.4
-        for _, row in ipairs(controlledRows) do
-            row:SetAlpha(alpha)
-        end
-    end
-
-    local enableCheckbox = gui:CreateFormCheckbox(card.frame, nil, "enabled", privateAuras, function()
-        refresh()
-        UpdatePrivateAuraRows()
-    end, {
-        description = ns.L["Anchor Blizzard private aura indicators to this frame."],
-    })
-    local maxPerFrameSlider = gui:CreateFormSlider(card.frame, nil, 1, 5, 1, "maxPerFrame", privateAuras, refresh, { deferOnDrag = true }, {
-        description = ns.L["Hard cap on how many private aura slots this frame displays at once."],
-    })
-    local maxPerFrameRow = optionsAPI.BuildSettingRow(card.frame, ns.L["Max Per Frame"], maxPerFrameSlider)
-    controlledRows[#controlledRows + 1] = maxPerFrameRow
-    card.AddRow(
-        optionsAPI.BuildSettingRow(card.frame, ns.L["Enable Private Auras"], enableCheckbox),
-        maxPerFrameRow
-    )
-
-    local iconSizeSlider = gui:CreateFormSlider(card.frame, nil, 10, 40, 1, "iconSize", privateAuras, refresh, { deferOnDrag = true }, {
-        description = ns.L["Pixel size of each private aura icon."],
-    })
-    local iconSizeRow = optionsAPI.BuildSettingRow(card.frame, ns.L["Icon Size"], iconSizeSlider)
-    controlledRows[#controlledRows + 1] = iconSizeRow
-    local growDirectionDropdown = gui:CreateFormDropdown(card.frame, nil, AURA_GROW_OPTIONS, "growDirection", privateAuras, refresh, {
-        description = ns.L["Direction additional private aura icons are added in after the first."],
-    })
-    local growDirectionRow = optionsAPI.BuildSettingRow(card.frame, ns.L["Grow Direction"], growDirectionDropdown)
-    controlledRows[#controlledRows + 1] = growDirectionRow
-    card.AddRow(iconSizeRow, growDirectionRow)
-
-    local spacingSlider = gui:CreateFormSlider(card.frame, nil, 0, 8, 1, "spacing", privateAuras, refresh, { deferOnDrag = true }, {
-        description = ns.L["Pixel gap between adjacent private aura icons."],
-    })
-    local spacingRow = optionsAPI.BuildSettingRow(card.frame, ns.L["Spacing"], spacingSlider)
-    controlledRows[#controlledRows + 1] = spacingRow
-    local anchorDropdown = gui:CreateFormDropdown(card.frame, nil, NINE_POINT_OPTIONS, "anchor", privateAuras, refresh, {
-        description = ns.L["Where on the frame the first private aura icon is anchored. X/Y Offset below nudges it from this anchor point."],
-    })
-    local anchorRow = optionsAPI.BuildSettingRow(card.frame, ns.L["Anchor"], anchorDropdown)
-    controlledRows[#controlledRows + 1] = anchorRow
-    card.AddRow(spacingRow, anchorRow)
-
-    local xOffsetSlider = gui:CreateFormSlider(card.frame, nil, -100, 100, 1, "anchorOffsetX", privateAuras, refresh, { deferOnDrag = true }, {
-        description = ns.L["Horizontal pixel offset for the private aura block from its anchor."],
-    })
-    local xOffsetRow = optionsAPI.BuildSettingRow(card.frame, ns.L["X Offset"], xOffsetSlider)
-    controlledRows[#controlledRows + 1] = xOffsetRow
-    local yOffsetSlider = gui:CreateFormSlider(card.frame, nil, -100, 100, 1, "anchorOffsetY", privateAuras, refresh, { deferOnDrag = true }, {
-        description = ns.L["Vertical pixel offset for the private aura block from its anchor."],
-    })
-    local yOffsetRow = optionsAPI.BuildSettingRow(card.frame, ns.L["Y Offset"], yOffsetSlider)
-    controlledRows[#controlledRows + 1] = yOffsetRow
-    card.AddRow(xOffsetRow, yOffsetRow)
-
-    local borderScaleSlider = gui:CreateFormSlider(card.frame, nil, -100, 10, 0.5, "borderScale", privateAuras, refresh, { deferOnDrag = true }, {
-        description = ns.L["Scale applied to the Blizzard-drawn border around each private aura icon."],
-    })
-    local borderScaleRow = optionsAPI.BuildSettingRow(card.frame, ns.L["Border Scale"], borderScaleSlider)
-    controlledRows[#controlledRows + 1] = borderScaleRow
-    local showCountdownCheckbox = gui:CreateFormCheckbox(card.frame, nil, "showCountdown", privateAuras, refresh, {
-        description = ns.L["Show the cooldown swipe animation over private aura icons."],
-    })
-    local showCountdownRow = optionsAPI.BuildSettingRow(card.frame, ns.L["Show Countdown"], showCountdownCheckbox)
-    controlledRows[#controlledRows + 1] = showCountdownRow
-    card.AddRow(borderScaleRow, showCountdownRow)
-
-    local showCountdownNumbersCheckbox = gui:CreateFormCheckbox(card.frame, nil, "showCountdownNumbers", privateAuras, refresh, {
-        description = ns.L["Show the remaining-duration countdown text over private aura icons."],
-    })
-    local showCountdownNumbersRow = optionsAPI.BuildSettingRow(card.frame, ns.L["Show Countdown Numbers"], showCountdownNumbersCheckbox)
-    controlledRows[#controlledRows + 1] = showCountdownNumbersRow
-    local reverseSwipeCheckbox = gui:CreateFormCheckbox(card.frame, nil, "reverseSwipe", privateAuras, refresh, {
-        description = ns.L["Reverse the swipe direction so the shaded portion grows instead of shrinks as the aura ticks down."],
-    })
-    local reverseSwipeRow = optionsAPI.BuildSettingRow(card.frame, ns.L["Reverse Swipe"], reverseSwipeCheckbox)
-    controlledRows[#controlledRows + 1] = reverseSwipeRow
-    card.AddRow(showCountdownNumbersRow, reverseSwipeRow)
-
-    local textScaleSlider = gui:CreateFormSlider(card.frame, nil, 0.5, 1.5, 0.05, "textScale", privateAuras, refresh, { deferOnDrag = true }, {
-        description = ns.L["Scales the Blizzard-drawn countdown timer and stack-count text. There is no API to size that text directly, so the whole icon is scaled and the icon/border compensated -- lowering this shrinks the text while the icon and border stay at their configured size."],
-    })
-    local textScaleRow = optionsAPI.BuildSettingRow(card.frame, ns.L["Text Scale"], textScaleSlider)
-    controlledRows[#controlledRows + 1] = textScaleRow
-    card.AddRow(textScaleRow)
-
-    UpdatePrivateAuraRows()
-    builder.CloseCard(card)
-    return builder.Height()
-end
-
 local function EnsureDispelColors(dispel)
     if type(dispel.colors) ~= "table" then
         dispel.colors = {
@@ -3264,7 +3141,6 @@ local INDICATORS_TAB_FEATURE = CreateSingleSectionTabFeature(
 
 local AURAS_TAB_FEATURE = CreateMultiSectionTabFeature("groupFramesAurasTab", {
     { id = "auras", minHeight = 180, render = RenderAurasSection },
-    { id = "privateAuras", minHeight = 140, render = RenderPrivateAurasSection },
     { id = "defensive", minHeight = 140, render = RenderDefensiveSection },
     { id = "targetedSpells", minHeight = 160, render = RenderTargetedSpellsSection },
 })

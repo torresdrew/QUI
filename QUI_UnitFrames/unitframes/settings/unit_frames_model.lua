@@ -24,7 +24,6 @@ local PER_UNIT_TABS = {
     icons = true,
     indicators = true,
     portrait = true,
-    privateAuras = true,
     castbar = true,
 }
 
@@ -88,11 +87,6 @@ local function RenderIndicators(host, state)
     RenderSchema("RenderIndicatorsTab", host, unitKey, ns.L["Indicators"])
 end
 
-local function RenderPrivateAuras(host, state)
-    local unitKey = state and state.selectedUnit or nil
-    RenderSchema("RenderPrivateAurasTab", host, unitKey, ns.L["Priv. Auras"])
-end
-
 local function RenderCastbar(host, state)
     local unitKey = state and state.selectedUnit or nil
     RenderSchema("RenderCastbarTab", host, unitKey, ns.L["Castbar"])
@@ -107,7 +101,6 @@ local TAB_DEFINITIONS = {
     { key = "icons", label = ns.L["Icons"], render = RenderIcons },
     { key = "indicators", label = ns.L["Indicators"], render = RenderIndicators },
     { key = "portrait", label = ns.L["Portrait"], render = RenderPortrait },
-    { key = "privateAuras", label = ns.L["Priv. Auras"], render = RenderPrivateAuras },
 }
 
 function Model.GetTabDefinitions()

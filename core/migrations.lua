@@ -40,10 +40,15 @@ local _currentGlobalDB     = nil  -- db.global; for cross-profile reads (v32+)
 --       and frameAnchoring.debuffFrame (below buffFrame) for any profile that
 --       does not already carry them.
 --
+-- v49 = PrunePrivateAuras — the private-aura feature (Blizzard private-aura
+--       anchoring on unit frames and group frames) was removed. Deletes any
+--       stored privateAuras subtable under quiUnitFrames.player/target/focus
+--       and quiGroupFrames.party/raid so no orphaned settings linger.
+--
 -- When adding a new migration: bump CURRENT_SCHEMA_VERSION, add a single
 -- linear gate in RunOnProfile, and document the version above.
 ---------------------------------------------------------------------------
-local CURRENT_SCHEMA_VERSION = 48
+local CURRENT_SCHEMA_VERSION = 49
 
 -- The oldest schema we still carry forward. The last 4.x stable release and
 -- 5.0 alpha4 both shipped schema 47, and every step-by-step migration through
@@ -431,6 +436,35 @@ function Migrations.RestoreBuffDebuffSplit(profile)
             heightAdjust = 0,
             growAnchor = "TOPRIGHT",
         }
+    end
+end
+
+-- v49: the private-aura feature is gone (runtime consumers, settings
+-- surfaces, and defaults all removed). Strip any stored privateAuras
+-- subtable left behind by an older profile so it doesn't linger as dead
+-- data. Mirrors the exact paths the removed defaults carried it under:
+-- quiUnitFrames.player/target/focus and quiGroupFrames.party/raid.
+function Migrations.PrunePrivateAuras(profile)
+    if type(profile) ~= "table" then return end
+
+    local uf = profile.quiUnitFrames
+    if type(uf) == "table" then
+        for _, unitKey in ipairs({ "player", "target", "focus" }) do
+            local unit = uf[unitKey]
+            if type(unit) == "table" then
+                unit.privateAuras = nil
+            end
+        end
+    end
+
+    local gf = profile.quiGroupFrames
+    if type(gf) == "table" then
+        for _, contextMode in ipairs({ "party", "raid" }) do
+            local contextDB = gf[contextMode]
+            if type(contextDB) == "table" then
+                contextDB.privateAuras = nil
+            end
+        end
     end
 end
 
@@ -1410,6 +1444,11 @@ function Migrations.RunOnProfile(profile)
     -- of this function and never reach here. See
     -- docs/superpowers/specs/2026-06-26-migration-floor-47-collapse-design.md.
     if stored < 48 then Migrations.RestoreBuffDebuffSplit(profile) end
+
+    -- v49: private-aura feature removed; strip any stored privateAuras
+    -- subtable left over from before the removal. See
+    -- Migrations.PrunePrivateAuras above.
+    if stored < 49 then Migrations.PrunePrivateAuras(profile) end
 
     profile._schemaVersion = CURRENT_SCHEMA_VERSION
     return true

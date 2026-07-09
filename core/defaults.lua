@@ -2356,22 +2356,6 @@ local defaults = {
                     xOffset = -8,
                     yOffset = 8,
                 },
-                -- Private auras (boss debuffs invisible to the addon API)
-                privateAuras = {
-                    enabled = true,
-                    maxPerFrame = 3,
-                    iconSize = 24,
-                    growDirection = "RIGHT",
-                    spacing = 2,
-                    anchor = "BOTTOMLEFT",
-                    anchorOffsetX = 2,
-                    anchorOffsetY = 2,
-                    showCountdown = true,
-                    showCountdownNumbers = true,
-                    reverseSwipe = false,
-                    borderScale = 1,
-                    frameLevel = 50,
-                },
             },
             -- Target frame settings
             target = {
@@ -2580,22 +2564,6 @@ local defaults = {
                     anchor = "LEFT",
                     xOffset = -8,
                     yOffset = 0,
-                },
-                -- Private auras (boss debuffs invisible to the addon API)
-                privateAuras = {
-                    enabled = true,
-                    maxPerFrame = 4,
-                    iconSize = 24,
-                    growDirection = "RIGHT",
-                    spacing = 2,
-                    anchor = "TOPLEFT",
-                    anchorOffsetX = 2,
-                    anchorOffsetY = -2,
-                    showCountdown = true,
-                    showCountdownNumbers = true,
-                    reverseSwipe = false,
-                    borderScale = 1,
-                    frameLevel = 50,
                 },
             },
             -- Target of Target
@@ -2943,22 +2911,6 @@ local defaults = {
                     xOffset = -8,
                     yOffset = 0,
                 },
-                -- Private auras (boss debuffs invisible to the addon API)
-                privateAuras = {
-                    enabled = true,
-                    maxPerFrame = 3,
-                    iconSize = 22,
-                    growDirection = "RIGHT",
-                    spacing = 2,
-                    anchor = "TOPLEFT",
-                    anchorOffsetX = 2,
-                    anchorOffsetY = -2,
-                    showCountdown = true,
-                    showCountdownNumbers = true,
-                    reverseSwipe = false,
-                    borderScale = 1,
-                    frameLevel = 50,
-                },
             },
             -- Boss frames
             boss = {
@@ -3248,21 +3200,6 @@ local defaults = {
                     -- so deleting a strip never persisted. The strips are seeded
                     -- once per profile context via Model.EnsureSeeded instead.
                 },
-                privateAuras = {
-                    enabled = true,
-                    maxPerFrame = 2,
-                    iconSize = 20,
-                    growDirection = "RIGHT",
-                    spacing = 2,
-                    anchor = "RIGHT",
-                    anchorOffsetX = -2,
-                    anchorOffsetY = 0,
-                    showCountdown = true,
-                    showCountdownNumbers = true,
-                    reverseSwipe = false,
-                    borderScale = 1,
-                    textScale = 1,  -- scales Blizzard's fixed countdown/stack text; <1 shrinks it relative to the icon
-                },
                 castbar = { enabled = false, height = 8, showIcon = false, showText = false },
                 portrait = { showPortrait = false, portraitSide = "LEFT", portraitSize = 30 },
                 pets = {
@@ -3426,21 +3363,6 @@ local defaults = {
                     -- copyDefaults re-fill deleted array indices on every reload,
                     -- so deleting a strip never persisted. The strips are seeded
                     -- once per profile context via Model.EnsureSeeded instead.
-                },
-                privateAuras = {
-                    enabled = true,
-                    maxPerFrame = 2,
-                    iconSize = 20,
-                    growDirection = "RIGHT",
-                    spacing = 2,
-                    anchor = "RIGHT",
-                    anchorOffsetX = -2,
-                    anchorOffsetY = 0,
-                    showCountdown = true,
-                    showCountdownNumbers = true,
-                    reverseSwipe = false,
-                    borderScale = 1,
-                    textScale = 1,  -- scales Blizzard's fixed countdown/stack text; <1 shrinks it relative to the icon
                 },
                 castbar = { enabled = false, height = 8, showIcon = false, showText = false },
                 portrait = { showPortrait = false, portraitSide = "LEFT", portraitSize = 30 },

@@ -230,7 +230,6 @@ local UNIT_FRAMES_FEATURE_ROUTE = {
     unitFramesIconsTab = { surfaceTabKey = "icons", subTabName = "Icons" },
     unitFramesPortraitTab = { surfaceTabKey = "portrait", subTabName = "Portrait" },
     unitFramesIndicatorsTab = { surfaceTabKey = "indicators", subTabName = "Indicators" },
-    unitFramesPrivateAurasTab = { surfaceTabKey = "privateAuras", subTabName = "Priv. Auras" },
 }
 
 local CHAT_SEARCH_CONTEXT = {

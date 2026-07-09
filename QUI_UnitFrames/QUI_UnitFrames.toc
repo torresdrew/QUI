@@ -13,6 +13,5 @@ bootstrap.lua
 unitframes\castbar.lua
 unitframes\unitframes.lua
 unitframes\unitframe_auras.lua
-unitframes\unitframe_private_auras.lua
 unitframes\unitframe_editmode.lua
 unitframes\unitframe_blizzard.lua

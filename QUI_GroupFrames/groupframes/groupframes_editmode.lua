@@ -729,12 +729,6 @@ local function CreateTestFrame(parent, index, totalCount, classToken, name, role
 end
 
 local function DestroyTestFrames(onlyType)
-    -- Clean up private aura placeholders
-    local PA = ns.QUI_GroupFramePrivateAuras
-    if PA and PA.CleanupTestFrames then
-        PA:CleanupTestFrames()
-    end
-
     if onlyType then
         -- Destroy only the specified type's test frames (keep container for reuse)
         local frames = testFramesByType[onlyType]
@@ -936,12 +930,6 @@ function QUI_GFEM:EnableTestMode(previewType)
                 testFrame:SetPoint(anchor, container, anchor, xOff, yOff)
                 table_insert(testFrames, testFrame)
                 table_insert(testFramesByType[previewType], testFrame)
-
-                -- Attach private aura placeholders
-                local PA = ns.QUI_GroupFramePrivateAuras
-                if PA and PA.SetupTestFrame then
-                    PA:SetupTestFrame(testFrame)
-                end
             end
         end
     end

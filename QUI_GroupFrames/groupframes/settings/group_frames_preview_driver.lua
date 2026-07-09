@@ -144,7 +144,6 @@ function Driver._ChipEnabledInConfig(vdb, chipKey)
         return false
     elseif chipKey == "highlights" then
         if healer.targetHighlight and healer.targetHighlight.enabled then return true end
-        if vdb.privateAuras and vdb.privateAuras.enabled then return true end
         if healer.defensiveIndicator and healer.defensiveIndicator.enabled then return true end
         if vdb.targetedSpells and vdb.targetedSpells.enabled ~= false then return true end
         if vdb.pets and vdb.pets.enabled then return true end
@@ -845,90 +844,6 @@ local function ApplyDispelOverlay(f, healer, dispelType)
     ov:Show()
 end
 
--- private auras (privateAuras.enabled/maxPerFrame/iconSize/growDirection/spacing/
---   anchor/anchorOffsetX/Y/borderScale/showCountdown/showCountdownNumbers/
---   reverseSwipe/textScale) — a small fake icon strip via the shared slot math.
-local function ApplyPrivateAuras(f, pa, allowed)
-    f._paIcons = f._paIcons or {}
-    -- Only the representative aura-preview frames show private auras. Otherwise
-    -- every one of the (up to 40) raid frames renders maxPerFrame icons, which
-    -- both explodes the count past the unit total and pushes the docked preview
-    -- window far wider than it should be.
-    if allowed == false or not pa or not pa.enabled or not f._isAuraPreview then
-        for _, ic in ipairs(f._paIcons) do ic:Hide() end
-        return
-    end
-    local slotFn = ns.QUI_GroupFrameIconLayout and ns.QUI_GroupFrameIconLayout.CalculateSlotOffset
-    local maxSlots = tonumber(pa.maxPerFrame) or 2
-    local iconSize = tonumber(pa.iconSize) or 20
-    local spacing = tonumber(pa.spacing) or 2
-    local direction = pa.growDirection or "RIGHT"
-    local anchor = pa.anchor or "RIGHT"
-    local offX = tonumber(pa.anchorOffsetX) or -2
-    local offY = BottomPadY(anchor, tonumber(pa.anchorOffsetY) or 0, f._bottomPad)
-    local textScale = tonumber(pa.textScale) or 1
-    if textScale <= 0 then textScale = 1 end
-    local borderScale = tonumber(pa.borderScale) or 1
-    local showCountdown = pa.showCountdown ~= false
-    local reverseSwipe = pa.reverseSwipe == true
-    for i = 1, math.max(maxSlots, #f._paIcons) do
-        local ic = f._paIcons[i]
-        if i <= maxSlots then
-            if not ic then
-                ic = CreateFrame("Frame", nil, f)
-                ic._tex = ic:CreateTexture(nil, "OVERLAY")
-                ic._tex:SetAllPoints()
-                ic._border = ic:CreateTexture(nil, "BACKGROUND")
-                ic._count = ic:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-                ic._cd = CreateFrame("Cooldown", nil, ic, "CooldownFrameTemplate")
-                ic._cd:SetAllPoints()
-                f._paIcons[i] = ic
-            end
-            ic:SetFrameLevel(f:GetFrameLevel() + 10)
-            -- Mirror the live RegisterAnchor: textScale scales the WHOLE container
-            -- (so BOTH the stack count and the duration countdown number shrink,
-            -- since Blizzard's private-aura text has no sizing API), and the icon +
-            -- border are divided by textScale so they stay at their configured pixel
-            -- size. Previously only ic._count was scaled, so the duration number
-            -- never tracked Text Scale in the preview.
-            ic:SetScale(textScale)
-            ic:SetSize(iconSize / textScale, iconSize / textScale)
-            ic._tex:SetColorTexture(0.8, 0.2, 0.2, 0.6)
-            ic._border:ClearAllPoints()
-            local bpad = math.max(borderScale, 0) / textScale
-            ic._border:SetPoint("TOPLEFT", -bpad, bpad)
-            ic._border:SetPoint("BOTTOMRIGHT", bpad, -bpad)
-            ic._border:SetColorTexture(0, 0, 0, 1)
-            ic._count:ClearAllPoints()
-            ic._count:SetPoint("BOTTOMRIGHT", 0, 0)
-            ic._count:SetText((pa.showCountdownNumbers ~= false) and "3" or "")
-            -- showCountdown gates the swipe spiral; reverseSwipe flips its sweep.
-            if ic._cd then
-                if ic._cd.SetReverse then ic._cd:SetReverse(reverseSwipe) end
-                if showCountdown then
-                    if ic._cd.SetHideCountdownNumbers then
-                        ic._cd:SetHideCountdownNumbers(pa.showCountdownNumbers == false)
-                    end
-                    if ic._cd.SetCooldown then ic._cd:SetCooldown(GetTime and GetTime() or 0, 8) end
-                    ic._cd:Show()
-                else
-                    if ic._cd.Clear then ic._cd:Clear() end
-                    ic._cd:Hide()
-                end
-            end
-            ic:ClearAllPoints()
-            local sx, sy = 0, 0
-            if slotFn then sx, sy = slotFn(i, iconSize, spacing, direction, maxSlots) end
-            -- Offsets are screen px, divided into the container's scaled space (live
-            -- SetupPrivateAuras does the same) so position is unchanged by textScale.
-            ic:SetPoint(anchor, f, anchor, (offX + sx) / textScale, (offY + sy) / textScale)
-            ic:Show()
-        elseif ic then
-            ic:Hide()
-        end
-    end
-end
-
 -- defensive (healer.defensiveIndicator.enabled/maxIcons/iconSize/reverseSwipe/
 --   growDirection/spacing/position/offsetX/Y) — a small fake icon strip.
 local DEF_GROW = {
@@ -1149,7 +1064,6 @@ local function ApplyFrameSettings(f, member, vdb, gfdb, contextMode)
     ApplyThreat(f, vdb.indicators or {}, member._sampleThreat == true and F.threat ~= false)
     ApplyTargetHighlight(f, vdb.healer, member._sampleTarget == true and F.highlights ~= false)
     ApplyDispelOverlay(f, vdb.healer, (F.dispel ~= false) and member._sampleDispel or nil)
-    ApplyPrivateAuras(f, vdb.privateAuras, F.highlights ~= false)
     ApplyDefensive(f, vdb.healer, F.highlights ~= false, font)
     ApplyTargetedSpells(f, vdb.targetedSpells, member._sampleTargetedSpells, F.highlights ~= false)
     ApplyPets(f, vdb.pets, member._samplePet == true and F.highlights ~= false)

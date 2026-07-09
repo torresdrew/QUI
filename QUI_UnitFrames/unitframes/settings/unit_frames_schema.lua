@@ -59,7 +59,6 @@ local UNIT_SURFACE_TABS = {
     ["Icons"] = "icons",
     ["Indicators"] = "indicators",
     ["Portrait"] = "portrait",
-    ["Priv. Auras"] = "privateAuras",
 }
 local FRAME_TAB_FEATURES = {}
 local BARS_TAB_FEATURES = {}
@@ -68,7 +67,6 @@ local TEXT_TAB_FEATURES = {}
 local ICONS_TAB_FEATURES = {}
 local PORTRAIT_TAB_FEATURES = {}
 local INDICATORS_TAB_FEATURES = {}
-local PRIVATE_AURAS_TAB_FEATURES = {}
 local TOT_SEPARATOR_OPTIONS = {
     { value = " >> ",  text = ">>" },
     { value = " > ",   text = ">" },
@@ -100,13 +98,6 @@ local POWER_TEXT_FORMAT_OPTIONS = {
 local PORTRAIT_SIDE_OPTIONS = {
     { value = "LEFT", text = ns.L["Left"] },
     { value = "RIGHT", text = ns.L["Right"] },
-}
-local PRIVATE_AURA_GROW_OPTIONS = {
-    { value = "RIGHT",  text = ns.L["Right"] },
-    { value = "LEFT",   text = ns.L["Left"] },
-    { value = "UP",     text = ns.L["Up"] },
-    { value = "DOWN",   text = ns.L["Down"] },
-    { value = "CENTER", text = ns.L["Center"] },
 }
 local AURA_CORNER_OPTIONS = {
     { value = "TOPLEFT",     text = ns.L["Top Left"] },
@@ -297,10 +288,6 @@ local function UnitSupportsPortrait(unitKey)
     return unitKey == "player" or unitKey == "target" or unitKey == "focus"
 end
 
-local function UnitSupportsPrivateAuras(unitKey)
-    return unitKey == "player" or unitKey == "target" or unitKey == "focus"
-end
-
 local function UnitSupportsLeaderIndicator(unitKey)
     return unitKey == "player" or unitKey == "target" or unitKey == "focus"
 end
@@ -401,27 +388,6 @@ local function EnsureClassificationIndicatorSettings(unitDB)
         }
     end
     return unitDB.classificationIcon
-end
-
-local function EnsurePrivateAurasSettings(unitDB)
-    if type(unitDB.privateAuras) ~= "table" then
-        unitDB.privateAuras = {
-            enabled = true,
-            maxPerFrame = 3,
-            iconSize = 22,
-            growDirection = "RIGHT",
-            spacing = 2,
-            anchor = "TOPLEFT",
-            anchorOffsetX = 0,
-            anchorOffsetY = 0,
-            showCountdown = true,
-            showCountdownNumbers = true,
-            reverseSwipe = false,
-            borderScale = 1,
-            frameLevel = 50,
-        }
-    end
-    return unitDB.privateAuras
 end
 
 -- Build a filter sub-table { modifiers = {…false}, exclusive = nil } if absent.
@@ -3494,151 +3460,6 @@ local function BuildIndicatorsTabFeature(unitKey)
     return feature
 end
 
-local function RenderPrivateAurasUnavailableSection(sectionHost, ctx)
-    local unitKey = ctx and ctx.options and ctx.options.unitKey or nil
-    return RenderUnavailableSection(sectionHost, ctx, UnitSupportsPrivateAuras(unitKey),
-        "Priv. Auras", ns.L["Private Auras are only supported on the Player, Target, and Focus frames."])
-end
-
-local function RenderPrivateAurasSection(sectionHost, ctx)
-    local gui = GetGUI()
-    local optionsAPI = GetOptionsAPI()
-    local unitKey = ctx and ctx.options and ctx.options.unitKey or nil
-    local unit = ResolveUnitDB(unitKey)
-    if not gui or not optionsAPI or not unit or not UnitSupportsPrivateAuras(unitKey) then
-        return nil
-    end
-
-    local privateAuras = EnsurePrivateAurasSettings(unit.unitDB)
-    local builder = CreateSectionBuilder(sectionHost, ctx, CreateUnitSearchContext(unitKey, "Priv. Auras"))
-    if not builder then
-        return nil
-    end
-
-    builder.Header(ns.L["Private Auras"])
-    builder.Description(ns.L["Shows boss debuffs and other private auras on this unit frame. The client renders the icon, cooldown spiral, and stack/duration text."])
-    local card = builder.Card()
-
-    local enableCheckbox = gui:CreateFormCheckbox(card.frame, nil, "enabled", privateAuras, RefreshUnitFrames, {
-        description = ns.L["Enable private auras on this unit frame."],
-    })
-    local maxSlider = gui:CreateFormSlider(card.frame, nil, 1, 5, 1, "maxPerFrame", privateAuras, RefreshUnitFrames, { deferOnDrag = true }, {
-        description = ns.L["Maximum number of private-aura icons the client will draw on this frame at once."],
-    })
-    card.AddRow(
-        optionsAPI.BuildSettingRow(card.frame, ns.L["Enable Private Auras"], enableCheckbox),
-        optionsAPI.BuildSettingRow(card.frame, ns.L["Max Per Frame"], maxSlider)
-    )
-
-    local sizeSlider = gui:CreateFormSlider(card.frame, nil, 10, 40, 1, "iconSize", privateAuras, RefreshUnitFrames, { deferOnDrag = true }, {
-        description = ns.L["Pixel size of each private-aura icon."],
-    })
-    local spacingSlider = gui:CreateFormSlider(card.frame, nil, 0, 8, 1, "spacing", privateAuras, RefreshUnitFrames, { deferOnDrag = true }, {
-        description = ns.L["Pixel gap between adjacent private-aura icons."],
-    })
-    card.AddRow(
-        optionsAPI.BuildSettingRow(card.frame, ns.L["Icon Size"], sizeSlider),
-        optionsAPI.BuildSettingRow(card.frame, ns.L["Spacing"], spacingSlider)
-    )
-
-    local anchorDropdown = gui:CreateFormDropdown(card.frame, nil, optionsAPI.NINE_POINT_ANCHOR_OPTIONS, "anchor", privateAuras, RefreshUnitFrames, {
-        description = ns.L["Where on the frame the first private-aura icon is anchored."],
-    })
-    local growDropdown = gui:CreateFormDropdown(card.frame, nil, PRIVATE_AURA_GROW_OPTIONS, "growDirection", privateAuras, RefreshUnitFrames, {
-        description = ns.L["Direction additional private-aura icons are added in after the first."],
-    })
-    card.AddRow(
-        optionsAPI.BuildSettingRow(card.frame, ns.L["Anchor"], anchorDropdown),
-        optionsAPI.BuildSettingRow(card.frame, ns.L["Grow Direction"], growDropdown)
-    )
-
-    local xOffsetSlider = gui:CreateFormSlider(card.frame, nil, -100, 100, 1, "anchorOffsetX", privateAuras, RefreshUnitFrames, { deferOnDrag = true }, {
-        description = ns.L["Horizontal pixel offset for the private-aura block from its anchor."],
-    })
-    local yOffsetSlider = gui:CreateFormSlider(card.frame, nil, -100, 100, 1, "anchorOffsetY", privateAuras, RefreshUnitFrames, { deferOnDrag = true }, {
-        description = ns.L["Vertical pixel offset for the private-aura block from its anchor."],
-    })
-    card.AddRow(
-        optionsAPI.BuildSettingRow(card.frame, ns.L["X Offset"], xOffsetSlider),
-        optionsAPI.BuildSettingRow(card.frame, ns.L["Y Offset"], yOffsetSlider)
-    )
-
-    local countdownCheckbox = gui:CreateFormCheckbox(card.frame, nil, "showCountdown", privateAuras, RefreshUnitFrames, {
-        description = ns.L["Show the clockwise cooldown swipe over each private-aura icon."],
-    })
-    local numbersCheckbox = gui:CreateFormCheckbox(card.frame, nil, "showCountdownNumbers", privateAuras, RefreshUnitFrames, {
-        description = ns.L["Show the Blizzard-rendered countdown number on each private-aura icon."],
-    })
-    card.AddRow(
-        optionsAPI.BuildSettingRow(card.frame, ns.L["Show Countdown Spiral"], countdownCheckbox),
-        optionsAPI.BuildSettingRow(card.frame, ns.L["Show Countdown Numbers"], numbersCheckbox)
-    )
-
-    local reverseCheckbox = gui:CreateFormCheckbox(card.frame, nil, "reverseSwipe", privateAuras, RefreshUnitFrames, {
-        description = ns.L["Reverse the swipe direction so it fills clockwise as time elapses instead of sweeping away."],
-    })
-    local borderSlider = gui:CreateFormSlider(card.frame, nil, -100, 10, 0.5, "borderScale", privateAuras, RefreshUnitFrames, { deferOnDrag = true }, {
-        description = ns.L["Scale applied to the private-aura icon border. Set to -100 to hide the border entirely."],
-    })
-    card.AddRow(
-        optionsAPI.BuildSettingRow(card.frame, ns.L["Reverse Swipe"], reverseCheckbox),
-        optionsAPI.BuildSettingRow(card.frame, ns.L["Border Scale"], borderSlider)
-    )
-
-    local frameLevelSlider = gui:CreateFormSlider(card.frame, nil, 0, 100, 1, "frameLevel", privateAuras, RefreshUnitFrames, { deferOnDrag = true }, {
-        description = ns.L["Frame-level offset added to the private-aura container so icons render above or below other elements on this frame."],
-    })
-    card.AddRow(
-        optionsAPI.BuildSettingRow(card.frame, ns.L["Frame Level Offset"], frameLevelSlider)
-    )
-
-    builder.CloseCard(card)
-    return builder.Height()
-end
-
-local function BuildPrivateAurasTabFeature(unitKey)
-    if PRIVATE_AURAS_TAB_FEATURES[unitKey] then
-        return PRIVATE_AURAS_TAB_FEATURES[unitKey]
-    end
-
-    local sections
-    if UnitSupportsPrivateAuras(unitKey) then
-        sections = { "privateAuras" }
-    else
-        sections = { "unsupported" }
-    end
-
-    local feature = Schema.Feature({
-        id = "unitFramesPrivateAurasTab:" .. unitKey,
-        surfaces = {
-            unitFrameTab = {
-                sections = sections,
-                padding = 10,
-                sectionGap = 14,
-                topPadding = 10,
-                bottomPadding = 40,
-            },
-        },
-        sections = {
-            Schema.Section({
-                id = "unsupported",
-                kind = "custom",
-                minHeight = 60,
-                render = RenderPrivateAurasUnavailableSection,
-            }),
-            Schema.Section({
-                id = "privateAuras",
-                kind = "custom",
-                minHeight = 180,
-                render = RenderPrivateAurasSection,
-            }),
-        },
-    })
-
-    PRIVATE_AURAS_TAB_FEATURES[unitKey] = feature
-    return feature
-end
-
 local GENERAL_TAB_FEATURE = Schema.Feature({
     id = "unitFramesGeneralTab",
     createState = function()
@@ -3885,28 +3706,6 @@ function UnitFramesSchema.RenderIndicatorsTab(host, unitKey)
     end
 
     return Renderer:RenderFeature(BuildIndicatorsTabFeature(unitKey), host, {
-        surface = "unitFrameTab",
-        width = width,
-        unitKey = unitKey,
-    }) ~= nil
-end
-
-function UnitFramesSchema.RenderPrivateAurasTab(host, unitKey)
-    if not host then
-        return false
-    end
-
-    local unit = ResolveUnitDB(unitKey)
-    if not unit then
-        return false
-    end
-
-    local width = host.GetWidth and host:GetWidth() or 0
-    if type(width) ~= "number" or width <= 0 then
-        width = 760
-    end
-
-    return Renderer:RenderFeature(BuildPrivateAurasTabFeature(unitKey), host, {
         surface = "unitFrameTab",
         width = width,
         unitKey = unitKey,

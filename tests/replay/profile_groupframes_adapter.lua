@@ -683,7 +683,6 @@ local function buildFullNs(onCB)
         QUI_GroupFrames          = nil,
         -- Optional modules that groupframes.lua checks with guards:
         QUI_GroupFrameAuraRender    = nil,
-        QUI_GroupFramePrivateAuras  = nil,
         QUI_GroupFrameBlizzard      = nil,
         QUI_GroupFrameEditMode      = nil,
         QUI_GroupFrameClickCast     = nil,

@@ -293,8 +293,8 @@ eventFrame:SetScript("OnEvent", function(self, event, unit, updateInfo)
 end)
 
 -- Perf profiler opt-in: coalesceFrame.OnUpdate runs the aura subscriber fan-out
--- (group frames, CDM, raidbuffs, atonement, private auras, etc). Wrapping it
--- measures total aura dispatch cost as one "AuraDispatch" line.
+-- (group frames, CDM, raidbuffs, atonement, etc). Wrapping it measures total
+-- aura dispatch cost as one "AuraDispatch" line.
 local function SetupDebugInstrumentation()
     local mp = ns._memprobes or {}; ns._memprobes = mp
     mp[#mp + 1] = { name = "AuraEvt_mergedInfoPool", tbl = mergedInfoPool } -- AuraEvt_mergedInfoPool memprobe anchor

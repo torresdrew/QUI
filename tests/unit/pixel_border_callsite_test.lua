@@ -28,9 +28,6 @@ assert(not buffBorders:find("SetHeight(borderSize)", 1, true),
     "buff border textures must not use raw configured border size for height")
 assert(not buffBorders:find("SetWidth(borderSize)", 1, true),
     "buff border textures must not use raw configured border size for width")
-assert(not buffBorders:find("iconSize %- borderSize %* 2"),
-    "private aura icon dimensions must subtract frame-space pixel border size")
-
 assert(cdmBars:find("local function GetBorderSizePx", 1, true),
     "CDM bars must convert configured border size through the pixel helper")
 assert(not cdmBars:find("SetHeight(borderSize)", 1, true),
