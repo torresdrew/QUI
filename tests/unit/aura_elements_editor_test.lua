@@ -56,7 +56,7 @@ check("editor consumes moved spell list ns.QUI_AuraSpellList",
 for _, gate in ipairs({
     "capabilities", "elementTypes", "trackedDisplayTypes",
     "maxStripElements", "cancelEligible", "allowSpecOverride",
-    "defaultBucketFn",
+    "defaultBucketFn", "singleStrip", "fixedAuraType",
 }) do
     check("editor references capability field: " .. gate, editor:find(gate, 1, true) ~= nil)
 end
@@ -110,8 +110,38 @@ check("schema passes capabilities.maxStripElements = 4",
     schema and schema:find("maxStripElements", 1, true) ~= nil and schema:find("= 4", 1, true) ~= nil)
 check("schema passes defaultBucketFn = AuraDefaults.DefaultStripBucket",
     schema and schema:find("AuraDefaults.DefaultStripBucket", 1, true) ~= nil)
-check("schema passes suggestions = AuraDefaults.GetSuggestionSpells",
-    schema and schema:find("AuraDefaults.GetSuggestionSpells", 1, true) ~= nil)
+-- Suggestion grid removed: tracked elements are created empty via an "Add
+-- Tracked Aura" button; spell picking lives ONLY in the per-element detail
+-- (preset toggle list + manual spell ID).
+check("schema no longer passes a suggestions capability",
+    schema and schema:find("AuraDefaults.GetSuggestionSpells", 1, true) == nil)
+check("editor no longer renders a suggestion grid",
+    editor:find("AcquireSuggestCell", 1, true) == nil)
+check("editor offers the Add Tracked Aura button",
+    editor:find('ns.L["Add Tracked Aura"]', 1, true) ~= nil)
+check("editor keeps the per-element spell picker (AddTrackedSpellListEditor)",
+    editor:find("AddTrackedSpellListEditor", 1, true) ~= nil)
+
+-- Browse popup (spell picker modal): preset groups moved out of the inline
+-- toggle list into a shared floating popup (mirrors click-cast Browse). The
+-- editor re-binds opts every detail render so popup closures never go stale,
+-- and scope guards close the popup when its spell list stops rendering.
+check("spell list exports the Browse popup toggle",
+    spelllist:find("function SpellList.ToggleBrowsePopup", 1, true) ~= nil)
+check("spell list exports the per-render opts re-bind",
+    spelllist:find("function SpellList.RefreshBrowsePopup", 1, true) ~= nil)
+check("spell list exports the browse scope guards",
+    spelllist:find("function SpellList.BeginBrowseScope", 1, true) ~= nil
+    and spelllist:find("function SpellList.EndBrowseScope", 1, true) ~= nil)
+check("editor wires the Browse button through the shared popup",
+    editor:find("SpellList.ToggleBrowsePopup", 1, true) ~= nil)
+check("editor re-binds popup opts on every detail render",
+    editor:find("SpellList.RefreshBrowsePopup", 1, true) ~= nil)
+check("editor wraps list rebuilds in a browse scope",
+    editor:find("SpellList.BeginBrowseScope", 1, true) ~= nil
+    and editor:find("SpellList.EndBrowseScope", 1, true) ~= nil)
+check("editor's inline list renders current spells only (no preset groups)",
+    editor:find("SpellList.CreateListFrame(ctx.detailArea, map, nil,", 1, true) ~= nil)
 
 -- TOC surgery -------------------------------------------------------------
 local optsToc = read("QUI_Options/QUI_Options.toc")
@@ -161,9 +191,9 @@ check("BB mounts are filterStrip-only (no tracked icons/squares/bars)",
     bbContent and bbContent:find("elementTypes      = { filterStrip = true }", 1, true) ~= nil
     and bbContent:find("tracked = true", 1, true) == nil)
 check("BB debuff mount is cancelEligible = false (engine cancel is buff-only)",
-    bbContent and bbContent:find("BB.DefaultDebuffBucket, false)", 1, true) ~= nil)
+    bbContent and bbContent:find('BB.DefaultDebuffBucket, false, "HARMFUL")', 1, true) ~= nil)
 check("BB buff mount is cancelEligible = true",
-    bbContent and bbContent:find("BB.DefaultBuffBucket, true)", 1, true) ~= nil)
+    bbContent and bbContent:find('BB.DefaultBuffBucket, true, "HELPFUL")', 1, true) ~= nil)
 check("buffborders.lua publishes ns.QUI_BuffBorders.DefaultBuffBucket/DefaultDebuffBucket",
     bbAuras and bbAuras:find("ns.QUI_BuffBorders", 1, true) ~= nil
     and bbAuras:find("BB.DefaultBuffBucket = DefaultBuffBucket", 1, true) ~= nil

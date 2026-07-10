@@ -213,11 +213,17 @@ end
 -- (icon/square/bar) would need AuraSlots.Sync/AddAuraSlot, which BB never does,
 -- so tracked elements are skipped ENTIRELY here — the pass parks (never Syncs)
 -- any container a tracked element might otherwise have claimed. BB never uses
--- spec buckets, so the specID is always nil.
-local function ResolveStrips(store, defaultBucketFn, out)
+-- spec buckets, so the specID is always nil. The polarity argument (auraType)
+-- ensures every load normalizes each zone's bucket to the invariant.
+local function ResolveStrips(store, defaultBucketFn, out, auraType)
     for i = #out, 1, -1 do out[i] = nil end
     if not store then return out end
     E.EnsureSeeded(store, defaultBucketFn)
+    -- BB buckets are polarity-scoped and single-strip: enforce the invariant
+    -- on every resolve (idempotent; see E.NormalizeSingleStripBucket).
+    if E.NormalizeSingleStripBucket then
+        E.NormalizeSingleStripBucket(store, auraType)
+    end
     local elements = E.ActiveElementsForSpec(store, nil)
     for i = 1, #elements do
         local e = elements[i]
@@ -565,8 +571,8 @@ local function ApplyConfigPass(allowCreate)
     local settings = GetSettings()
     if not settings then return end
 
-    local buffStrips   = ResolveStrips(GetBuffStore(settings),   DefaultBuffBucket,  _buffStrips)
-    local debuffStrips = ResolveStrips(GetDebuffStore(settings), DefaultDebuffBucket, _debuffStrips)
+    local buffStrips   = ResolveStrips(GetBuffStore(settings),   DefaultBuffBucket,   _buffStrips,   "HELPFUL")
+    local debuffStrips = ResolveStrips(GetDebuffStore(settings), DefaultDebuffBucket, _debuffStrips, "HARMFUL")
 
     -- Mover natural extent = first ENABLED strip's grid extent (unchanged
     -- profile math — temp enchants render INSIDE the buff container now, so
@@ -696,14 +702,14 @@ local function ShowPreview()
     -- the layout-mode grab handle covers the placeholders (mirrors
     -- ApplyConfigPass; the live containers — and their engine-rendered temp
     -- enchants — are disabled/hidden above, so there is nothing to widen for).
-    local buffStrips  = ResolveStrips(GetBuffStore(settings), DefaultBuffBucket, _buffStrips)
+    local buffStrips  = ResolveStrips(GetBuffStore(settings), DefaultBuffBucket, _buffStrips, "HELPFUL")
     local buffProfile = buffStrips[1] and ElementProfileFor(buffStrips[1]) or FallbackProfile(DefaultBuffBucket)
     local bw, bh = GridExtent(buffProfile)
     buffContainer._naturalW, buffContainer._naturalH = bw, bh
     buffContainer:SetSize(bw, bh)
     Preview.Show(buffContainer, buffStrips)
 
-    local debuffStrips  = ResolveStrips(GetDebuffStore(settings), DefaultDebuffBucket, _debuffStrips)
+    local debuffStrips  = ResolveStrips(GetDebuffStore(settings), DefaultDebuffBucket, _debuffStrips, "HARMFUL")
     local debuffProfile = debuffStrips[1] and ElementProfileFor(debuffStrips[1]) or FallbackProfile(DefaultDebuffBucket)
     local dw, dh = GridExtent(debuffProfile)
     debuffContainer._naturalW, debuffContainer._naturalH = dw, dh

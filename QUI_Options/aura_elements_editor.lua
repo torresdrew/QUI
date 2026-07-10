@@ -31,11 +31,12 @@ local PAD = 10
 local COL_GAP = 12
 local ROW_HEIGHT = 30
 local ROW_STEP = 32
-local SUGGEST_CELL_SIZE = 36
-local SUGGEST_ICON_SIZE = 28
-local SUGGEST_CELL_GAP = 2
-local SUGGEST_CELL_STRIDE = SUGGEST_CELL_SIZE + SUGGEST_CELL_GAP
 local FALLBACK_ICON = 134400
+
+-- Distinguishes concurrently-mounted editors (e.g. the BB buff + debuff
+-- mounts) so Browse-popup scope guards never close a popup another editor
+-- instance owns. Bumped once per RenderAuras call.
+local browseInstanceCounter = 0
 
 local NINE_POINT_OPTIONS = {
     { value = "TOPLEFT", text = ns.L["Top Left"] },
@@ -174,9 +175,9 @@ local HARMFUL_FLAG_TOKENS = {
 }
 
 -- Full GF capability set. Used as the default when opts.capabilities is nil so
--- the GF mount (and anything mid-migration) keeps working. defaultBucketFn and
--- suggestions resolve lazily from the GF defaults module (always loaded by the
--- time RenderAuras runs), so this file carries no load-order dependency on it.
+-- the GF mount (and anything mid-migration) keeps working. defaultBucketFn
+-- resolves lazily from the GF defaults module (always loaded by the time
+-- RenderAuras runs), so this file carries no load-order dependency on it.
 local function DefaultCapabilities()
     local AuraDefaults = ns.QUI_GroupFramesAuraDefaults
     return {
@@ -186,7 +187,6 @@ local function DefaultCapabilities()
         maxStripElements    = 4,
         allowSpecOverride   = true,
         defaultBucketFn     = AuraDefaults and AuraDefaults.DefaultStripBucket or nil,
-        suggestions         = AuraDefaults and AuraDefaults.GetSuggestionSpells or nil,
     }
 end
 
@@ -309,23 +309,6 @@ local function GetElementLabel(element)
     return name, GetSpellTexture(first)
 end
 
--- Spell suggestions for the tracked picker, routed through the surface's
--- capabilities.suggestions provider (nil => no suggestions). Suggestions exclude
--- spells already tracked in this bucket.
-local function GetSuggestionSpells(caps, bucket)
-    if caps and type(caps.suggestions) == "function" then
-        local existing = {}
-        for _, element in ipairs(bucket or {}) do
-            if element.mode == "tracked" then
-                for _, sid in ipairs(element.spells or {}) do
-                    existing[#existing + 1] = { spellID = sid }
-                end
-            end
-        end
-        return caps.suggestions(existing)
-    end
-    return {}
-end
 
 ---------------------------------------------------------------------------
 -- PER-ELEMENT CONFIG WIDGETS
@@ -426,7 +409,14 @@ end
 -- whitelist/blacklist (the element's map mutates in place) and by
 -- AddTrackedSpellListEditor through a map view synced back to its array.
 -- onMutate (optional) runs after any map mutation; defaults to ctx.onChange.
-local function AddSpellMapEditor(ctx, map, headerText, onMutate)
+--
+-- browseCfg (optional) wires the shared Browse popup: { key, title, presets,
+-- isSelected(id), onToggle(id) }. isSelected/onToggle default to map-based
+-- closures — safe for the whitelist/blacklist whose map is the persistent
+-- element table. Array-backed callers (tracked spells) MUST pass their own
+-- closures over the persistent element, because their map is a per-render
+-- copy the popup would otherwise mutate after it went stale.
+local function AddSpellMapEditor(ctx, map, headerText, onMutate, browseCfg)
     local GUI = ctx.GUI
     local C = ctx.C
     local add = ctx.AddDetailWidget
@@ -481,10 +471,40 @@ local function AddSpellMapEditor(ctx, map, headerText, onMutate)
     end
     addManualButton:SetScript("OnClick", CommitManual)
     inputBox:SetScript("OnEnterPressed", CommitManual)
+
+    -- Browse popup trigger. Re-binding via RefreshBrowsePopup on every render
+    -- keeps an already-open popup's closures fresh across list rebuilds.
+    if browseCfg and browseCfg.key and SpellList.ToggleBrowsePopup then
+        local browseOpts = {
+            title = browseCfg.title or headerText,
+            presets = browseCfg.presets or {},
+            isSelected = browseCfg.isSelected or function(spellID)
+                return map[spellID] == true
+            end,
+            onToggle = browseCfg.onToggle or function(spellID)
+                if map[spellID] then
+                    map[spellID] = nil
+                else
+                    map[spellID] = true
+                end
+                notify()
+                ctx.rebuild()
+            end,
+        }
+        local browseButton = GUI:CreateButton(manualRow, ns.L["Browse"], 70, 20)
+        browseButton:ClearAllPoints()
+        browseButton:SetPoint("LEFT", addManualButton, "RIGHT", 8, 0)
+        browseButton:SetScript("OnClick", function()
+            SpellList.ToggleBrowsePopup(browseCfg.key, browseOpts)
+        end)
+        if SpellList.RefreshBrowsePopup then
+            SpellList.RefreshBrowsePopup(browseCfg.key, browseOpts)
+        end
+    end
     add(manualRow, 26, true)
 
-    local presets = (SpellList.GetDefaultPresets and SpellList.GetDefaultPresets()) or {}
-    local listFrame = SpellList.CreateListFrame(ctx.detailArea, map, presets, function()
+    -- Current spells only (no preset groups — those live in the Browse popup).
+    local listFrame = SpellList.CreateListFrame(ctx.detailArea, map, nil, function()
         notify()
     end, function()
         ctx.rebuild()
@@ -492,8 +512,29 @@ local function AddSpellMapEditor(ctx, map, headerText, onMutate)
     add(listFrame, math.max(1, listFrame:GetHeight() or 1), true)
 end
 
+-- Browse-popup preset groups for a filter strip's whitelist/blacklist, picked
+-- by the strip's polarity: buff lists get the spec/CDM suggestions plus the
+-- raid-buff preset, debuff lists get the sated/deserter presets.
+local function BuildFilterBrowsePresets(auraType)
+    if not SpellList then return {} end
+    if auraType == "HARMFUL" then
+        return (SpellList.GetDebuffBlacklistPresets and SpellList.GetDebuffBlacklistPresets()) or {}
+    end
+    local presets = {}
+    for _, preset in ipairs((SpellList.GetDefaultPresets and SpellList.GetDefaultPresets()) or {}) do
+        presets[#presets + 1] = preset
+    end
+    for _, preset in ipairs((SpellList.GetBuffBlacklistPresets and SpellList.GetBuffBlacklistPresets()) or {}) do
+        presets[#presets + 1] = preset
+    end
+    return presets
+end
+
 -- Spell-list editor for a tracked element's spells (an ARRAY). Delegates to
 -- AddSpellMapEditor over a map view, synced back to the array on every change.
+-- The Browse closures deliberately bypass the map view and mutate
+-- element.spells directly: the popup outlives detail rebuilds, and the element
+-- is the only table that persists across them.
 local function AddTrackedSpellListEditor(ctx, element)
     if type(element.spells) ~= "table" then element.spells = {} end
 
@@ -501,14 +542,40 @@ local function AddTrackedSpellListEditor(ctx, element)
     for _, sid in ipairs(element.spells) do mapView[sid] = true end
 
     AddSpellMapEditor(ctx, mapView,
-        ns.L["Tracked Spells (click a suggestion or enter a Spell ID):"],
+        ns.L["Tracked Spells (Browse or enter a Spell ID):"],
         function()
             local arr = element.spells
             for i = #arr, 1, -1 do arr[i] = nil end
             for sid in pairs(mapView) do arr[#arr + 1] = sid end
             table.sort(arr)
             ctx.onChange()
-        end)
+        end,
+        {
+            key = ctx.browsePrefix .. "tracked:" .. tostring(element.id),
+            title = ns.L["Add Tracked Spells"],
+            presets = (SpellList and SpellList.GetDefaultPresets and SpellList.GetDefaultPresets()) or {},
+            isSelected = function(spellID)
+                for _, sid in ipairs(element.spells) do
+                    if sid == spellID then return true end
+                end
+                return false
+            end,
+            onToggle = function(spellID)
+                local arr = element.spells
+                for i = #arr, 1, -1 do
+                    if arr[i] == spellID then
+                        table.remove(arr, i)
+                        ctx.NotifyChanged()
+                        ctx.rebuild()
+                        return
+                    end
+                end
+                arr[#arr + 1] = spellID
+                table.sort(arr)
+                ctx.NotifyChanged()
+                ctx.rebuild()
+            end,
+        })
 end
 
 local function AddFilterStripConfig(ctx, element)
@@ -518,12 +585,18 @@ local function AddFilterStripConfig(ctx, element)
     local rebuild = ctx.rebuild
     local caps = ctx.caps
 
-    row(ns.L["Aura Type"], GUI:CreateFormDropdown(ctx.detailArea, nil, AURA_TYPE_OPTIONS, "auraType", element, function()
-        ctx.NotifyChanged()
-        rebuild()
-    end, {
-        description = ns.L["Whether this strip shows helpful buffs or harmful debuffs."],
-    }))
+    if caps.fixedAuraType then
+        -- The surface owns this strip's polarity (BB buff/debuff zones): no
+        -- dropdown, and hard-assert against hand-edited SVs.
+        element.auraType = caps.fixedAuraType
+    else
+        row(ns.L["Aura Type"], GUI:CreateFormDropdown(ctx.detailArea, nil, AURA_TYPE_OPTIONS, "auraType", element, function()
+            ctx.NotifyChanged()
+            rebuild()
+        end, {
+            description = ns.L["Whether this strip shows helpful buffs or harmful debuffs."],
+        }))
+    end
 
     AddPlacementWidgets(ctx, element, true)
     AddSwipeWidgets(ctx, element)
@@ -639,14 +712,24 @@ local function AddFilterStripConfig(ctx, element)
     elseif filterMode == "whitelist" then
         if type(element.whitelist) ~= "table" then element.whitelist = {} end
         AddSpellMapEditor(ctx, element.whitelist,
-            ns.L["Whitelisted Spells — only these show. Buff lists apply on friendly units, debuff lists on enemies; empty list shows everything."])
+            ns.L["Whitelisted Spells — only these show. Buff lists apply on friendly units, debuff lists on enemies; empty list shows everything."],
+            nil, {
+                key = ctx.browsePrefix .. "whitelist:" .. tostring(element.id),
+                title = ns.L["Add Whitelisted Spells"],
+                presets = BuildFilterBrowsePresets(element.auraType),
+            })
     end
 
     -- Blacklist compiles in EVERY filter mode (excludeSpellIDs composes with
     -- flags/classify/whitelist alike), so it renders unconditionally.
     if type(element.blacklist) ~= "table" then element.blacklist = {} end
     AddSpellMapEditor(ctx, element.blacklist,
-        ns.L["Blacklisted Spells — never show. Buff lists apply on friendly units, debuff lists on enemies."])
+        ns.L["Blacklisted Spells — never show. Buff lists apply on friendly units, debuff lists on enemies."],
+        nil, {
+            key = ctx.browsePrefix .. "blacklist:" .. tostring(element.id),
+            title = ns.L["Add Blacklisted Spells"],
+            presets = BuildFilterBrowsePresets(element.auraType),
+        })
 end
 
 -- Tracked element config. displayType picks the LIVE display: icon strip,
@@ -898,12 +981,14 @@ local function RenderDetail(ctx, element)
         ctx.AddDetailWidget(cell, FORM_ROW, span)
     end
 
-    ctx.AddFormRow(ns.L["Element Enabled"], ctx.GUI:CreateFormCheckbox(ctx.detailArea, nil, "enabled", element, function()
-        ctx.NotifyChanged()
-        ctx.rebuild()
-    end, {
-        description = ns.L["Toggle this element. When off, it does not display."],
-    }), true)
+    if not ctx.caps.singleStrip then
+        ctx.AddFormRow(ns.L["Element Enabled"], ctx.GUI:CreateFormCheckbox(ctx.detailArea, nil, "enabled", element, function()
+            ctx.NotifyChanged()
+            ctx.rebuild()
+        end, {
+            description = ns.L["Toggle this element. When off, it does not display."],
+        }), true)
+    end
 
     if element.mode == "filterStrip" then
         AddFilterStripConfig(ctx, element)
@@ -921,13 +1006,59 @@ local function RenderDetail(ctx, element)
 end
 
 ---------------------------------------------------------------------------
--- LIST + ADD + PICKER rendering
+-- LIST + ADD rendering
 ---------------------------------------------------------------------------
 local function RebuildList(ctx)
     local bucket = ctx.bucket
     ctx.ReleaseRows()
-    ctx.ReleaseSuggestRows()
     ctx.ClearDetailWidgets()
+
+    -- Browse-popup scope: if this pass does not re-render the spell list the
+    -- popup is editing (row collapsed, element deleted, selection moved), the
+    -- matching EndBrowseScope below closes it.
+    if SpellList and SpellList.BeginBrowseScope then
+        SpellList.BeginBrowseScope(ctx.browsePrefix)
+    end
+
+    -- Single-strip surfaces (BB buff/debuff zones): no list chrome — render
+    -- the one strip's config form directly. The bucket is runtime-normalized
+    -- to one filterStrip; materialize a default if a hand-edited SV emptied
+    -- it (EnsureSeeded's latch means it will not re-seed).
+    if ctx.caps.singleStrip then
+        local element
+        for _, e in ipairs(bucket) do
+            if e.mode == "filterStrip" then element = e break end
+        end
+        if not element then
+            local seeded = type(ctx.caps.defaultBucketFn) == "function" and ctx.caps.defaultBucketFn() or nil
+            if seeded then
+                for _, e in ipairs(seeded) do
+                    if e.mode == "filterStrip" then element = e break end
+                end
+            end
+            element = element or (E.NewFilterStripElement and E.NewFilterStripElement(ctx.caps.fixedAuraType or "HELPFUL"))
+            if element then
+                bucket[#bucket + 1] = element
+                ctx.NotifyChanged()
+            end
+        end
+        ctx.emptyLabel:Hide()
+        ctx.addRow:Hide()
+        ctx.detailArea:ClearAllPoints()
+        ctx.detailArea:SetParent(ctx.listArea)
+        ctx.detailArea:SetPoint("TOPLEFT", ctx.listArea, "TOPLEFT", 0, 0)
+        ctx.detailArea:SetPoint("TOPRIGHT", ctx.listArea, "TOPRIGHT", 0, 0)
+        ctx.detailArea:Show()
+        local used = RenderDetail(ctx, element)
+        local contentHeight = math.max(1, used)
+        ctx.listArea:SetHeight(contentHeight)
+        local hostHeight = contentHeight + 8
+        ctx.host:SetHeight(hostHeight)
+        if ctx.onLayoutChanged then
+            ctx.onLayoutChanged(hostHeight)
+        end
+        return
+    end
 
     -- nil selectedIndex means "all collapsed" -- a valid state the expand/minus
     -- toggle relies on, so DON'T coerce nil to 1 here (that made the minus button
@@ -1047,52 +1178,8 @@ local function RebuildList(ctx)
         ctx.addRow:Hide()
     end
 
-    -- Tracked-aura picker (suggestion grid + manual spellID) — tracked surfaces
-    -- only.
-    if ctx.trackedEnabled then
-        listY = listY - 4
-        ctx.pickerHeader:ClearAllPoints()
-        ctx.pickerHeader:SetPoint("TOPLEFT", ctx.listArea, "TOPLEFT", 0, listY)
-        ctx.pickerHeader:Show()
-        listY = listY - 16
-
-        ctx.inputRow:ClearAllPoints()
-        ctx.inputRow:SetPoint("TOPLEFT", ctx.listArea, "TOPLEFT", 0, listY)
-        ctx.inputRow:SetPoint("TOPRIGHT", ctx.listArea, "TOPRIGHT", 0, listY)
-        ctx.inputRow:Show()
-        listY = listY - 28
-
-        local suggestions = GetSuggestionSpells(ctx.caps, bucket)
-        if #suggestions > 0 then
-            -- Prefer the explicit width threaded from the host section; it is stable
-            -- across the synchronous render and the in-place rebuild. Fall back to
-            -- the live width, then a fixed default, only when none was supplied.
-            local contentWidth = ctx.contentWidth or ctx.listArea:GetWidth()
-            if type(contentWidth) ~= "number" or contentWidth < SUGGEST_CELL_STRIDE then
-                contentWidth = 480
-            end
-            local cols = math.max(1, math.floor(contentWidth / SUGGEST_CELL_STRIDE))
-            local rowsUsed = math.ceil(#suggestions / cols)
-            for sIndex, spell in ipairs(suggestions) do
-                local cell = ctx.AcquireSuggestCell()
-                local col = (sIndex - 1) % cols
-                local rIdx = math.floor((sIndex - 1) / cols)
-                cell:SetParent(ctx.listArea)
-                cell:ClearAllPoints()
-                cell:SetPoint("TOPLEFT", col * SUGGEST_CELL_STRIDE, listY - (rIdx * SUGGEST_CELL_STRIDE))
-                cell._spell = spell
-                cell.icon:SetTexture(spell.icon or GetSpellTexture(spell.id))
-                cell:Show()
-                cell:SetScript("OnClick", function()
-                    ctx.AddTracked(spell.id)
-                end)
-                ctx.activeSuggestRows[#ctx.activeSuggestRows + 1] = cell
-            end
-            listY = listY - (rowsUsed * SUGGEST_CELL_STRIDE) - 4
-        end
-    else
-        ctx.pickerHeader:Hide()
-        ctx.inputRow:Hide()
+    if SpellList and SpellList.EndBrowseScope then
+        SpellList.EndBrowseScope(ctx.browsePrefix)
     end
 
     local contentHeight = math.max(1, math.abs(listY))
@@ -1150,12 +1237,21 @@ function AurasEditor.RenderAuras(host, auras, bucketKey, onChange, opts)
     end
 
     local C = GUI.Colors or {}
-    local accent = C.accent or { 0.204, 0.827, 0.6, 1 }
+
+    browseInstanceCounter = browseInstanceCounter + 1
+    local browsePrefix = "aurased" .. browseInstanceCounter .. ":"
 
     local listArea = CreateFrame("Frame", nil, host)
     listArea:SetPoint("TOPLEFT", host, "TOPLEFT", 0, 0)
     listArea:SetPoint("RIGHT", host, "RIGHT", 0, 0)
     listArea:SetHeight(1)
+    -- Editor going off-screen (tab/page switch) closes a Browse popup this
+    -- instance owns; rebuild-driven closes are handled by the scope guards.
+    listArea:SetScript("OnHide", function()
+        if SpellList and SpellList.CloseBrowsePopup then
+            SpellList.CloseBrowsePopup(browsePrefix)
+        end
+    end)
 
     local emptyLabel = GUI:CreateLabel(listArea, ns.L["No aura elements in this bucket yet. Add one below."], 11, C.textMuted)
     emptyLabel:SetJustifyH("LEFT")
@@ -1165,65 +1261,39 @@ function AurasEditor.RenderAuras(host, auras, bucketKey, onChange, opts)
     detailArea:SetHeight(1)
     detailArea:Hide()
 
-    local pickerHeader = listArea:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    pickerHeader:SetJustifyH("LEFT")
-    pickerHeader:SetText("|cFFAAAAAA" .. ns.L["Add Tracked Aura (click a suggestion or enter a Spell ID):"] .. "|r")
-
-    -- Add buttons row (Filter strip / Missing raid buff), gated by the surface's
-    -- element types. Anchored left-to-right in the order created.
+    -- Add buttons row (Tracked aura / Filter strip / Missing raid buff), gated by
+    -- the surface's element types. Anchored left-to-right in the order created.
+    -- A new tracked element starts empty and opens expanded; its spells are
+    -- picked inside the per-element detail (suggestion toggles + manual ID).
     local addRow = CreateFrame("Frame", nil, listArea)
     addRow:SetHeight(26)
     local elementTypes = caps.elementTypes or {}
-    local addStripButton, addMissingBuffButton
+    local addTrackedButton, addStripButton, addMissingBuffButton
+    local lastAddButton
+    local function PlaceAddButton(button)
+        button:ClearAllPoints()
+        if lastAddButton then
+            button:SetPoint("LEFT", lastAddButton, "RIGHT", 8, 0)
+        else
+            button:SetPoint("LEFT", addRow, "LEFT", 0, 0)
+        end
+        lastAddButton = button
+    end
+    if elementTypes.tracked then
+        addTrackedButton = GUI:CreateButton(addRow, ns.L["Add Tracked Aura"], 130, 22)
+        PlaceAddButton(addTrackedButton)
+    end
     if elementTypes.filterStrip then
         addStripButton = GUI:CreateButton(addRow, ns.L["Add Filter Strip"], 130, 22)
-        addStripButton:ClearAllPoints()
-        addStripButton:SetPoint("LEFT", addRow, "LEFT", 0, 0)
+        PlaceAddButton(addStripButton)
     end
     if elementTypes.missingRaidBuff then
         addMissingBuffButton = GUI:CreateButton(addRow, ns.L["Add Missing Raid Buff"], 170, 22)
-        addMissingBuffButton:ClearAllPoints()
-        if addStripButton then
-            addMissingBuffButton:SetPoint("LEFT", addStripButton, "RIGHT", 8, 0)
-        else
-            addMissingBuffButton:SetPoint("LEFT", addRow, "LEFT", 0, 0)
-        end
+        PlaceAddButton(addMissingBuffButton)
     end
-
-    -- Manual spellID input row (tracked picker).
-    local inputRow = CreateFrame("Frame", nil, listArea)
-    inputRow:SetHeight(24)
-
-    local inputBox = CreateFrame("EditBox", nil, inputRow, "BackdropTemplate")
-    inputBox:SetSize(80, 20)
-    inputBox:SetPoint("LEFT", 0, 0)
-    SkinBase.ApplyPixelBackdrop(inputBox, 1, true, false, { 0.25, 0.25, 0.25, 1 }, { 0.06, 0.06, 0.08, 1 })
-    inputBox:SetFontObject("GameFontNormalSmall")
-    inputBox:SetAutoFocus(false)
-    inputBox:SetMaxLetters(10)
-    inputBox:SetTextInsets(4, 4, 0, 0)
-    inputBox:SetScript("OnEscapePressed", function(self)
-        self:ClearFocus()
-    end)
-
-    local inputLabel = inputRow:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    inputLabel:SetPoint("LEFT", inputBox, "RIGHT", 4, 0)
-    inputLabel:SetText(ns.L["Spell ID"])
-    inputLabel:SetTextColor(0.5, 0.5, 0.5)
-
-    local addManualButton = CreateFrame("Button", nil, inputRow, "BackdropTemplate")
-    addManualButton:SetSize(40, 20)
-    addManualButton:SetPoint("LEFT", inputLabel, "RIGHT", 8, 0)
-    SkinBase.ApplyPixelBackdrop(addManualButton, 1, true, false, { 0.3, 0.3, 0.3, 1 }, { 0.15, 0.15, 0.15, 1 })
-    local addManualText = addManualButton:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    addManualText:SetPoint("CENTER")
-    addManualText:SetText(ns.L["Add"])
-    StyleSpellInputText(GUI, C, inputBox, inputLabel, addManualText)
 
     local rowPool = {}
     local activeRows = {}
-    local suggestPool = {}
-    local activeSuggestRows = {}
     local detailWidgets = {}
 
     local ctx = {
@@ -1237,21 +1307,12 @@ function AurasEditor.RenderAuras(host, auras, bucketKey, onChange, opts)
         listArea = listArea,
         emptyLabel = emptyLabel,
         detailArea = detailArea,
-        pickerHeader = pickerHeader,
         addRow = addRow,
         addStripButton = addStripButton,
-        inputRow = inputRow,
         activeRows = activeRows,
-        activeSuggestRows = activeSuggestRows,
+        browsePrefix = browsePrefix,
         selectedIndex = nil,
-        hasAddButtons = (addStripButton ~= nil) or (addMissingBuffButton ~= nil),
-        trackedEnabled = elementTypes.tracked and true or false,
-        -- Explicit content width from the host section (see group_frames_schema
-        -- RenderAurasSection). Used for the suggestion-grid column math so the
-        -- list height is identical on the synchronous tab render and on the
-        -- in-place add/remove rebuild, regardless of when anchors settle.
-        contentWidth = (type(opts) == "table" and type(opts.contentWidth) == "number" and opts.contentWidth > 0)
-            and opts.contentWidth or nil,
+        hasAddButtons = (addTrackedButton ~= nil) or (addStripButton ~= nil) or (addMissingBuffButton ~= nil),
         -- Host hooks (optional): onSelectionChanged(index) persists which row is
         -- expanded so a host-driven reflow can restore it; onLayoutChanged(height)
         -- lets the host re-anchor the sections below when this editor resizes.
@@ -1391,61 +1452,6 @@ function AurasEditor.RenderAuras(host, auras, bucketKey, onChange, opts)
         ReleaseRows(activeRows, rowPool)
     end
 
-    ctx.AcquireSuggestCell = function()
-        local cell = table.remove(suggestPool)
-        if cell then
-            cell:Show()
-            return cell
-        end
-
-        cell = CreateFrame("Button", nil, listArea, "BackdropTemplate")
-        cell:SetSize(SUGGEST_CELL_SIZE, SUGGEST_CELL_SIZE)
-        cell:RegisterForClicks("LeftButtonUp", "RightButtonUp")
-        SkinBase.ApplyPixelBackdrop(cell, 1, true, false, { 0.2, 0.2, 0.2, 0.5 }, { 0, 0, 0, 0 })
-
-        cell.icon = cell:CreateTexture(nil, "ARTWORK")
-        cell.icon:SetSize(SUGGEST_ICON_SIZE, SUGGEST_ICON_SIZE)
-        cell.icon:SetPoint("CENTER")
-        cell.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-
-        cell.highlight = cell:CreateTexture(nil, "HIGHLIGHT")
-        cell.highlight:SetAllPoints()
-        cell.highlight:SetColorTexture(accent[1], accent[2], accent[3], 0.15)
-
-        cell:SetScript("OnEnter", function(self)
-            self:SetBackdropBorderColor(accent[1], accent[2], accent[3], 0.8)
-            if GameTooltip and self._spell then
-                GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-                GameTooltip:SetFrameStrata("TOOLTIP")
-                GameTooltip:AddLine(self._spell.name or GetSpellName(self._spell.id) or (ns.L["Spell"] .. " " .. tostring(self._spell.id)), 1, 1, 1)
-                GameTooltip:AddLine(ns.L["ID: "] .. tostring(self._spell.id), 0.5, 0.5, 0.5)
-                if self._spell.source then
-                    GameTooltip:AddLine(self._spell.source, 0.45, 0.65, 0.95)
-                end
-                GameTooltip:AddLine(ns.L["Click to add"], 0.5, 0.5, 0.5)
-                GameTooltip:Show()
-            end
-        end)
-        cell:SetScript("OnLeave", function(self)
-            self:SetBackdropBorderColor(0.2, 0.2, 0.2, 0.5)
-            if GameTooltip then
-                GameTooltip:Hide()
-            end
-        end)
-
-        return cell
-    end
-    ctx.ReleaseSuggestRows = function()
-        for _, cell in ipairs(activeSuggestRows) do
-            cell:Hide()
-            cell:ClearAllPoints()
-            cell:SetScript("OnClick", nil)
-            cell._spell = nil
-            table.insert(suggestPool, cell)
-        end
-        wipe(activeSuggestRows)
-    end
-
     -- New tracked elements default to the surface's preferred display type.
     ctx.AddTracked = function(spellID)
         spellID = tonumber(spellID) or spellID
@@ -1503,20 +1509,11 @@ function AurasEditor.RenderAuras(host, auras, bucketKey, onChange, opts)
             ctx.AddMissingRaidBuff()
         end)
     end
-    addManualButton:SetScript("OnClick", function()
-        local spellID = tonumber(inputBox:GetText())
-        if spellID and spellID > 0 then
-            inputBox:SetText("")
-            inputBox:ClearFocus()
-            ctx.AddTracked(spellID)
-        end
-    end)
-    inputBox:SetScript("OnEnterPressed", function()
-        local click = addManualButton:GetScript("OnClick")
-        if click then
-            click(addManualButton)
-        end
-    end)
+    if addTrackedButton then
+        addTrackedButton:SetScript("OnClick", function()
+            ctx.AddTracked()
+        end)
+    end
 
     -- Harvest-only: open with a specific element expanded so its per-element
     -- config widgets render (and their labels get captured). Clamped by RebuildList.

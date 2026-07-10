@@ -144,6 +144,414 @@ local DEBUFF_BLACKLIST_PRESETS = {
     },
 }
 
+---------------------------------------------------------------------------
+-- Browse popup: floating spell picker shared by every aura surface (mirrors
+-- the click-cast Browse popup). Lazy singleton — ONE frame reused by all
+-- editors. Rows toggle membership and the popup stays open for multi-add.
+--
+-- Staleness contract: the editor re-binds opts (fresh closures) via
+-- RefreshBrowsePopup on EVERY detail render, so the popup never mutates a
+-- dead map/array copy across list rebuilds. Begin/EndBrowseScope close the
+-- popup when the spell list it was editing stops rendering (row collapsed,
+-- element deleted, selection moved) without touching popups owned by other
+-- editor instances.
+---------------------------------------------------------------------------
+
+local BROWSE_ROW_H = 24
+local BROWSE_SCROLL_STEP = 24
+
+local browse = {
+    popup = nil,
+    key = nil,   -- identity of the spell list being edited ("<prefix><kind>:<elementId>")
+    opts = nil,  -- { title, presets, isSelected(id), onToggle(id) }
+    scopeKept = false,
+}
+
+local function BrowseFont(fs, path, size, flags)
+    if ns.Helpers and ns.Helpers.ApplyFontWithFallback then
+        ns.Helpers.ApplyFontWithFallback(fs, path, size, flags)
+    else
+        fs:SetFont(path, size, flags)
+    end
+end
+
+local function GetSpellIcon(spellId)
+    if C_Spell and C_Spell.GetSpellTexture then
+        local ok, icon = pcall(C_Spell.GetSpellTexture, spellId)
+        if ok and icon then
+            return icon
+        end
+    end
+    return 134400
+end
+
+local RebuildBrowseRows
+
+local function EnsureBrowsePopup()
+    if browse.popup then
+        return browse.popup
+    end
+
+    local gui = QUI and QUI.GUI
+    local SkinBase = ns.SkinBase
+    if not gui or not SkinBase or not SkinBase.ApplyPixelBackdrop then
+        return nil
+    end
+    local C = gui.Colors or {}
+    local accent = C.accent or { 0.204, 0.827, 0.6, 1 }
+    local text = C.text or { 1, 1, 1, 1 }
+    local muted = C.textMuted or { 1, 1, 1, 0.45 }
+    local fontPath = gui.FONT_PATH or [[Interface\AddOns\QUI\assets\Quazii.ttf]]
+
+    local popup = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
+    popup:SetSize(320, 400)
+    popup:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+    popup:SetFrameStrata("TOOLTIP")
+    popup:SetFrameLevel(1000)
+    popup:SetToplevel(true)
+    popup:SetMovable(true)
+    popup:EnableMouse(true)
+    popup:RegisterForDrag("LeftButton")
+    popup:SetScript("OnDragStart", function(self) self:StartMoving() end)
+    popup:SetScript("OnDragStop", function(self) self:StopMovingOrSizing() end)
+    SkinBase.ApplyPixelBackdrop(popup, 1, true)
+    popup:SetBackdropColor(0.06, 0.06, 0.06, 0.97)
+    popup:SetBackdropBorderColor(accent[1], accent[2], accent[3], 0.8)
+    popup:Hide()
+
+    popup._accent = accent
+    popup._text = text
+    popup._muted = muted
+    popup._fontPath = fontPath
+
+    local title = popup:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    title:SetPoint("TOPLEFT", 10, -8)
+    title:SetPoint("RIGHT", popup, "RIGHT", -32, 0)
+    title:SetJustifyH("LEFT")
+    BrowseFont(title, fontPath, 12, "")
+    title:SetTextColor(accent[1], accent[2], accent[3], 1)
+    popup._title = title
+
+    local closeBtn = CreateFrame("Button", nil, popup)
+    closeBtn:SetSize(20, 20)
+    closeBtn:SetPoint("TOPRIGHT", -6, -6)
+    local closeText = closeBtn:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    closeText:SetPoint("CENTER")
+    closeText:SetText("X")
+    BrowseFont(closeText, fontPath, 11, "")
+    closeText:SetTextColor(muted[1], muted[2], muted[3], 1)
+    closeBtn:SetScript("OnEnter", function() closeText:SetTextColor(1, 0.4, 0.4, 1) end)
+    closeBtn:SetScript("OnLeave", function() closeText:SetTextColor(muted[1], muted[2], muted[3], 1) end)
+    closeBtn:SetScript("OnClick", function() popup:Hide() end)
+
+    local searchBg = CreateFrame("Frame", nil, popup, "BackdropTemplate")
+    searchBg:SetPoint("TOPLEFT", 8, -28)
+    searchBg:SetPoint("RIGHT", popup, "RIGHT", -8, 0)
+    searchBg:SetHeight(24)
+    SkinBase.ApplyPixelBackdrop(searchBg, 1, true)
+    searchBg:SetBackdropColor(0.08, 0.08, 0.08, 1)
+    searchBg:SetBackdropBorderColor(0.35, 0.35, 0.35, 1)
+
+    local search = CreateFrame("EditBox", nil, searchBg)
+    search:SetPoint("LEFT", 8, 0)
+    search:SetPoint("RIGHT", -8, 0)
+    search:SetHeight(22)
+    search:SetAutoFocus(false)
+    BrowseFont(search, fontPath, 11, "")
+    search:SetTextColor(text[1], text[2], text[3], 1)
+    search:SetText("")
+    search:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+    popup._search = search
+
+    local placeholder = searchBg:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    placeholder:SetPoint("LEFT", 8, 0)
+    placeholder:SetText(ns.L["Search spells..."])
+    BrowseFont(placeholder, fontPath, 11, "")
+    placeholder:SetTextColor(muted[1], muted[2], muted[3], 0.6)
+    popup._placeholder = placeholder
+
+    local SCROLLBAR_WIDTH = 4
+    local scroll = CreateFrame("ScrollFrame", nil, popup)
+    scroll:SetPoint("TOPLEFT", 8, -58)
+    scroll:SetPoint("BOTTOMRIGHT", -(8 + SCROLLBAR_WIDTH + 2), 8)
+    popup._scroll = scroll
+
+    local scrollChild = CreateFrame("Frame", nil, scroll)
+    scrollChild:SetWidth(scroll:GetWidth() or 296)
+    scrollChild:SetHeight(1)
+    scroll:SetScrollChild(scrollChild)
+    popup._scrollChild = scrollChild
+
+    local scrollBar = CreateFrame("Frame", nil, popup)
+    scrollBar:SetWidth(SCROLLBAR_WIDTH)
+    scrollBar:SetPoint("TOPRIGHT", popup, "TOPRIGHT", -8, -58)
+    scrollBar:SetPoint("BOTTOMRIGHT", popup, "BOTTOMRIGHT", -8, 8)
+    scrollBar:Hide()
+
+    local thumb = scrollBar:CreateTexture(nil, "OVERLAY")
+    thumb:SetWidth(SCROLLBAR_WIDTH)
+    thumb:SetColorTexture(accent[1], accent[2], accent[3], 0.5)
+
+    local function UpdateThumb()
+        local contentH = scrollChild:GetHeight()
+        local frameH = scroll:GetHeight()
+        if contentH <= frameH or frameH <= 0 then
+            scrollBar:Hide()
+            return
+        end
+        scrollBar:Show()
+        local trackH = scrollBar:GetHeight()
+        if trackH <= 0 then return end
+        local thumbH = math.max(20, (frameH / contentH) * trackH)
+        thumb:SetHeight(thumbH)
+        local scrollMax = contentH - frameH
+        local okScroll, scrollCur = pcall(scroll.GetVerticalScroll, scroll)
+        scrollCur = (okScroll and scrollCur) or 0
+        local ratio = (scrollMax > 0) and (scrollCur / scrollMax) or 0
+        thumb:ClearAllPoints()
+        thumb:SetPoint("TOP", scrollBar, "TOP", 0, -ratio * (trackH - thumbH))
+    end
+    popup._updateThumb = UpdateThumb
+
+    scroll:EnableMouseWheel(true)
+    scroll:SetScript("OnMouseWheel", function(self, delta)
+        local okCur, currentScroll = pcall(self.GetVerticalScroll, self)
+        if not okCur then return end
+        local maxScroll = math.max(0, scrollChild:GetHeight() - self:GetHeight())
+        pcall(self.SetVerticalScroll, self,
+            math.max(0, math.min(currentScroll - (delta * BROWSE_SCROLL_STEP), maxScroll)))
+        UpdateThumb()
+    end)
+    scroll:SetScript("OnScrollRangeChanged", UpdateThumb)
+    scroll:SetScript("OnSizeChanged", function(_, w)
+        scrollChild:SetWidth(w or 296)
+    end)
+
+    local empty = scrollChild:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    empty:SetPoint("TOPLEFT", 4, -4)
+    empty:SetText(ns.L["No matching spells."])
+    BrowseFont(empty, fontPath, 11, "")
+    empty:SetTextColor(muted[1], muted[2], muted[3], 0.8)
+    empty:Hide()
+    popup._empty = empty
+
+    popup._headerRows = {}
+    popup._spellRows = {}
+
+    local searchTimer
+    search:SetScript("OnTextChanged", function(self, userInput)
+        local txt = self:GetText()
+        placeholder:SetShown(not txt or txt == "")
+        if not userInput then return end
+        if searchTimer then searchTimer:Cancel() end
+        searchTimer = C_Timer.NewTimer(0.15, function()
+            searchTimer = nil
+            RebuildBrowseRows(txt)
+        end)
+    end)
+
+    popup:SetScript("OnHide", function()
+        browse.key = nil
+        browse.opts = nil
+        search:SetText("")
+        placeholder:Show()
+    end)
+
+    browse.popup = popup
+    return popup
+end
+
+local function AcquireBrowseHeader(index)
+    local popup = browse.popup
+    local row = popup._headerRows[index]
+    if not row then
+        row = CreateFrame("Frame", nil, popup._scrollChild)
+        row.text = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        row.text:SetPoint("LEFT", 2, 0)
+        row.text:SetJustifyH("LEFT")
+        BrowseFont(row.text, popup._fontPath, 10, "")
+        local a = popup._accent
+        row.text:SetTextColor(a[1], a[2], a[3], 0.8)
+        popup._headerRows[index] = row
+    end
+    row:ClearAllPoints()
+    row:Show()
+    return row
+end
+
+local function AcquireBrowseSpellRow(index)
+    local popup = browse.popup
+    local row = popup._spellRows[index]
+    if not row then
+        row = CreateFrame("Button", nil, popup._scrollChild)
+        row.bg = row:CreateTexture(nil, "BACKGROUND")
+        row.bg:SetAllPoints()
+        row.bg:SetColorTexture(1, 1, 1, 0)
+        row.icon = row:CreateTexture(nil, "ARTWORK")
+        row.icon:SetSize(18, 18)
+        row.icon:SetPoint("LEFT", 4, 0)
+        row.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+        row.text = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        row.text:SetPoint("LEFT", row.icon, "RIGHT", 4, 0)
+        row.text:SetPoint("RIGHT", row, "RIGHT", -4, 0)
+        row.text:SetJustifyH("LEFT")
+        BrowseFont(row.text, popup._fontPath, 11, "")
+        local a = popup._accent
+        local hl = row:CreateTexture(nil, "HIGHLIGHT")
+        hl:SetAllPoints()
+        hl:SetColorTexture(a[1], a[2], a[3], 0.15)
+        row:SetScript("OnClick", function(self)
+            local opts = browse.opts
+            if self.spellId and opts and type(opts.onToggle) == "function" then
+                -- onToggle mutates the element and rebuilds the editor detail,
+                -- which re-binds opts and re-renders these rows; the extra
+                -- rebuild below covers callers that skip the detail rebuild.
+                opts.onToggle(self.spellId)
+                RebuildBrowseRows(browse.popup._search:GetText())
+            end
+        end)
+        popup._spellRows[index] = row
+    end
+    row:ClearAllPoints()
+    row:Show()
+    return row
+end
+
+RebuildBrowseRows = function(filter)
+    local popup = browse.popup
+    if not popup then return end
+    for _, row in ipairs(popup._headerRows) do row:Hide() end
+    for _, row in ipairs(popup._spellRows) do row:Hide() end
+
+    local opts = browse.opts
+    local accent = popup._accent
+    local text = popup._text
+    local lower = (type(filter) == "string" and filter ~= "" and filter:lower()) or nil
+    local headerIndex, spellIndex = 0, 0
+    local y = 0
+    local seen = {}
+
+    for _, preset in ipairs((opts and opts.presets) or {}) do
+        local headerPlaced = false
+        for _, spell in ipairs(preset.spells or {}) do
+            local id = spell.id or spell.spellID
+            if id and not seen[id] then
+                local name = spell.name or GetSpellName(id) or (ns.L["Spell"] .. " " .. tostring(id))
+                if not lower
+                    or name:lower():find(lower, 1, true)
+                    or tostring(id):find(lower, 1, true) then
+                    seen[id] = true
+                    if not headerPlaced then
+                        headerPlaced = true
+                        headerIndex = headerIndex + 1
+                        local header = AcquireBrowseHeader(headerIndex)
+                        header:SetHeight(BROWSE_ROW_H)
+                        header:SetPoint("TOPLEFT", 0, y)
+                        header:SetPoint("RIGHT", popup._scrollChild, "RIGHT", 0, 0)
+                        header.text:SetText(preset.name or "")
+                        y = y - BROWSE_ROW_H
+                    end
+                    spellIndex = spellIndex + 1
+                    local row = AcquireBrowseSpellRow(spellIndex)
+                    row:SetHeight(BROWSE_ROW_H)
+                    row:SetPoint("TOPLEFT", 0, y)
+                    row:SetPoint("RIGHT", popup._scrollChild, "RIGHT", 0, 0)
+                    row.spellId = id
+                    row.icon:SetTexture(spell.icon or GetSpellIcon(id))
+                    row.text:SetText(name .. "  |cFF888888(" .. tostring(id) .. ")|r")
+                    local selected = opts and type(opts.isSelected) == "function" and opts.isSelected(id)
+                    if selected then
+                        row.bg:SetColorTexture(accent[1], accent[2], accent[3], 0.12)
+                        row.text:SetTextColor(accent[1], accent[2], accent[3], 1)
+                    else
+                        row.bg:SetColorTexture(1, 1, 1, 0)
+                        row.text:SetTextColor(text[1], text[2], text[3], 1)
+                    end
+                    y = y - BROWSE_ROW_H
+                end
+            end
+        end
+    end
+
+    popup._empty:SetShown(spellIndex == 0)
+    popup._scrollChild:SetHeight(math.max(1, math.abs(y)))
+
+    -- Preserve the scroll position across the per-click re-render (only clamp
+    -- to the new range) so multi-adding deep in the list doesn't jump to top.
+    local scroll = popup._scroll
+    local okCur, cur = pcall(scroll.GetVerticalScroll, scroll)
+    local maxScroll = math.max(0, popup._scrollChild:GetHeight() - scroll:GetHeight())
+    pcall(scroll.SetVerticalScroll, scroll, math.min((okCur and cur) or 0, maxScroll))
+    if popup._updateThumb then
+        C_Timer.After(0, popup._updateThumb)
+    end
+end
+
+-- Open the popup for a spell list (or close it when already open for the same
+-- key). opts: title, presets (grouped { name, spells = { { id, name, icon } } }),
+-- isSelected(id), onToggle(id).
+function SpellList.ToggleBrowsePopup(key, opts)
+    local popup = EnsureBrowsePopup()
+    if not popup then return end
+    if popup:IsShown() and browse.key == key then
+        popup:Hide()
+        return
+    end
+    browse.key = key
+    browse.opts = opts
+    popup._title:SetText((opts and opts.title) or ns.L["Browse Spells"])
+    popup._search:SetText("")
+    popup._placeholder:Show()
+    pcall(popup._scroll.SetVerticalScroll, popup._scroll, 0)
+    RebuildBrowseRows(nil)
+    popup:Show()
+    popup:Raise()
+end
+
+-- Re-bind opts (fresh closures) for an already-open popup. Called on every
+-- detail render so popup clicks never mutate a stale map/array copy. Also
+-- marks the key as still-rendered for the enclosing browse scope.
+function SpellList.RefreshBrowsePopup(key, opts)
+    if browse.key ~= key then return end
+    browse.scopeKept = true
+    if not (browse.popup and browse.popup:IsShown()) then return end
+    browse.opts = opts
+    if opts and opts.title then
+        browse.popup._title:SetText(opts.title)
+    end
+    RebuildBrowseRows(browse.popup._search:GetText())
+end
+
+-- Scope guard around one editor list rebuild: if this editor instance owns the
+-- open popup (key prefix match) and the pass did not re-render its spell list
+-- (collapsed / deleted / selection moved), close the popup.
+function SpellList.BeginBrowseScope(prefix)
+    if type(prefix) ~= "string" or prefix == "" then return end
+    if type(browse.key) == "string" and browse.key:sub(1, #prefix) == prefix then
+        browse.scopeKept = false
+    end
+end
+
+function SpellList.EndBrowseScope(prefix)
+    if type(prefix) ~= "string" or prefix == "" then return end
+    if browse.popup and browse.popup:IsShown()
+        and type(browse.key) == "string"
+        and browse.key:sub(1, #prefix) == prefix
+        and not browse.scopeKept then
+        browse.popup:Hide()
+    end
+end
+
+-- Close the popup when it belongs to this editor instance (prefix match); a
+-- nil prefix closes unconditionally.
+function SpellList.CloseBrowsePopup(prefix)
+    if not (browse.popup and browse.popup:IsShown()) then return end
+    if prefix == nil
+        or (type(browse.key) == "string" and browse.key:sub(1, #prefix) == prefix) then
+        browse.popup:Hide()
+    end
+end
+
 local function RebuildSpellToggleRows(container, listTable, presets, onChange)
     if type(listTable) ~= "table" then
         container:SetHeight(1)
@@ -234,24 +642,28 @@ local function RebuildSpellToggleRows(container, listTable, presets, onChange)
     table.sort(extras)
 
     if #extras > 0 then
-        rowIndex = rowIndex + 1
-        local headerRow = container._rows[rowIndex]
-        if not headerRow then
-            headerRow = CreateFrame("Frame", nil, container)
-            headerRow:SetHeight(headerHeight)
-            headerRow.text = headerRow:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-            headerRow.text:SetPoint("LEFT", 2, 0)
-            headerRow.text:SetJustifyH("LEFT")
-            container._rows[rowIndex] = headerRow
-        end
+        -- The "Other" divider only makes sense when preset groups render above;
+        -- a preset-less list (the editor's current-spells view) is ALL extras.
+        if presets and #presets > 0 then
+            rowIndex = rowIndex + 1
+            local headerRow = container._rows[rowIndex]
+            if not headerRow then
+                headerRow = CreateFrame("Frame", nil, container)
+                headerRow:SetHeight(headerHeight)
+                headerRow.text = headerRow:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+                headerRow.text:SetPoint("LEFT", 2, 0)
+                headerRow.text:SetJustifyH("LEFT")
+                container._rows[rowIndex] = headerRow
+            end
 
-        if headerRow.toggle then headerRow.toggle:Hide() end
-        if headerRow.removeBtn then headerRow.removeBtn:Hide() end
-        headerRow.text:SetText("|cFF56D1FF" .. ns.L["Other"] .. "|r")
-        headerRow:SetPoint("TOPLEFT", 0, y)
-        headerRow:SetPoint("RIGHT", container, "RIGHT", 0, 0)
-        headerRow:Show()
-        y = y - headerHeight
+            if headerRow.toggle then headerRow.toggle:Hide() end
+            if headerRow.removeBtn then headerRow.removeBtn:Hide() end
+            headerRow.text:SetText("|cFF56D1FF" .. ns.L["Other"] .. "|r")
+            headerRow:SetPoint("TOPLEFT", 0, y)
+            headerRow:SetPoint("RIGHT", container, "RIGHT", 0, 0)
+            headerRow:Show()
+            y = y - headerHeight
+        end
 
         for _, spellId in ipairs(extras) do
             rowIndex = rowIndex + 1

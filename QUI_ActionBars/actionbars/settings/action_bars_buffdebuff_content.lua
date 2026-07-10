@@ -75,10 +75,14 @@ local function BuildSharedSection(tabContent, headerAt, sectionAt, closeSection,
     closeSection(card)
 end
 
+-- Returns the header frame + its build-time y offset and the card frame +
+-- its build-time y offset, so a caller that needs to re-anchor this section
+-- later (see the reflow wiring in BuildBuffDebuffTab) has stable originals
+-- to recompute absolute offsets from.
 local function BuildAuraSection(tabContent, headerAt, sectionAt, closeSection, settings, spec)
-    headerAt(spec.title)
+    local header, headerY = headerAt(spec.title)
 
-    local general = sectionAt()
+    local general, cardY = sectionAt()
     local enabled = GUI:CreateFormToggle(general.frame, nil, spec.enabledKey, settings, RefreshBuffBorders,
         { description = spec.enableDescription })
     local showBorders = GUI:CreateFormToggle(general.frame, nil, spec.showBordersKey, settings, RefreshBuffBorders,
@@ -97,6 +101,8 @@ local function BuildAuraSection(tabContent, headerAt, sectionAt, closeSection, s
         Opts.BuildSettingRow(general.frame, ns.L["Fade On Mouseover"], fadeFrame)
     )
     closeSection(general)
+
+    return header, headerY, general.frame, cardY
 end
 
 -- Mount the shared aura element editor (Task 8/9) for one BB zone. BB is
@@ -105,6 +111,7 @@ end
 -- "debuffAuras" (settings.<storeKey>, create-on-demand — AceDB never persists
 -- an array default, so the store must exist before the first mount). Right-
 -- click cancel is engine-owned and buff-only (cancelEligible gated by caller).
+-- BB is single-strip per zone; fixedAuraType pins the strip's polarity to the zone.
 --
 -- Unlike the card-based sections above, the embedded editor owns its own
 -- dynamic height (rows can be added/removed live), so it is anchored as a
@@ -113,7 +120,13 @@ end
 -- card purely from AddRow bookkeeping, which this content never calls, and
 -- would stomp the editor's real height back to 0. Takes/returns the y cursor
 -- like headerAt/sectionAt do internally, since this isn't a closure over it.
-local function BuildAuraEditorSection(tabContent, PAD, SECTION_GAP, y, settings, storeKey, defaultBucketFn, cancelEligible)
+-- Returns (nextY, editorHost, mountedHeight, SetOnLayoutChanged).
+-- mountedHeight is the height captured from this synchronous mount -- the
+-- caller's baseline for computing a delta on later resizes. SetOnLayoutChanged
+-- lets the caller wire the real reflow handler once it exists (see below);
+-- until then the editor's own initial rebuild fires onLayoutChanged straight
+-- into a no-op upvalue, since nothing below this section has been built yet.
+local function BuildAuraEditorSection(tabContent, PAD, SECTION_GAP, y, settings, storeKey, defaultBucketFn, cancelEligible, fixedAuraType)
     local AurasEditor = ns.QUI_AuraElementsEditor
     if not AurasEditor or type(AurasEditor.RenderAuras) ~= "function" then
         return y
@@ -127,19 +140,19 @@ local function BuildAuraEditorSection(tabContent, PAD, SECTION_GAP, y, settings,
     editorHost:SetPoint("TOPRIGHT", tabContent, "TOPRIGHT", -PAD, y)
     editorHost:SetHeight(1)
 
-    local contentWidth = editorHost.GetWidth and editorHost:GetWidth() or nil
-    if type(contentWidth) ~= "number" or contentWidth <= 0 then
-        contentWidth = nil
-    end
-
+    local onLayoutChangedHandler = function() end
     local height = AurasEditor.RenderAuras(editorHost, auras, "*", RefreshBuffBorders, {
-        contentWidth = contentWidth,
         capabilities = {
             elementTypes      = { filterStrip = true },
+            singleStrip       = true,
+            fixedAuraType     = fixedAuraType,
             cancelEligible    = cancelEligible,
             allowSpecOverride = false,
             defaultBucketFn   = defaultBucketFn,
         },
+        onLayoutChanged = function(newHeight)
+            onLayoutChangedHandler(newHeight)
+        end,
     })
     height = (type(height) == "number" and height > 0) and height
         or (editorHost.GetHeight and editorHost:GetHeight())
@@ -147,7 +160,11 @@ local function BuildAuraEditorSection(tabContent, PAD, SECTION_GAP, y, settings,
     height = math.max(1, height)
     editorHost:SetHeight(height)
 
-    return y - height - SECTION_GAP
+    local function SetOnLayoutChanged(fn)
+        onLayoutChangedHandler = fn
+    end
+
+    return y - height - SECTION_GAP, editorHost, height, SetOnLayoutChanged
 end
 
 local function BuildBuffDebuffTab(tabContent)
@@ -178,20 +195,26 @@ local function BuildBuffDebuffTab(tabContent)
         category = "frames",
     })
 
+    -- Both return the frame they built PLUS the y offset it was built at (the
+    -- caller may need that original offset later to recompute an absolute
+    -- re-anchor when a section above resizes -- see the reflow wiring below).
     local function headerAt(text)
+        local originY = y
         local header = Opts.CreateAccentDotLabel(tabContent, text, y)
         header:ClearAllPoints()
         header:SetPoint("TOPLEFT", tabContent, "TOPLEFT", PAD, y)
         header:SetPoint("TOPRIGHT", tabContent, "TOPRIGHT", -PAD, y)
         y = y - HEADER_GAP
+        return header, originY
     end
 
     local function sectionAt()
+        local originY = y
         local card = Opts.CreateSettingsCardGroup(tabContent, y)
         card.frame:ClearAllPoints()
         card.frame:SetPoint("TOPLEFT", tabContent, "TOPLEFT", PAD, y)
         card.frame:SetPoint("TOPRIGHT", tabContent, "TOPRIGHT", -PAD, y)
-        return card
+        return card, originY
     end
 
     local function closeSection(card)
@@ -213,10 +236,14 @@ local function BuildBuffDebuffTab(tabContent)
         fadeDescription = ns.L["Fade the buff frame out until you hover it."],
     })
     local BB = ns.QUI_BuffBorders
-    y = BuildAuraEditorSection(tabContent, PAD, SECTION_GAP, y, settings,
-        "buffAuras", BB and BB.DefaultBuffBucket, true)
+    -- The buff editor's own host never needs re-anchoring (nothing above it
+    -- resizes), so its host reference is intentionally unused (_).
+    local _buffEditorHost, buffOriginalHeight, buffSetOnLayoutChanged
+    y, _buffEditorHost, buffOriginalHeight, buffSetOnLayoutChanged = BuildAuraEditorSection(
+        tabContent, PAD, SECTION_GAP, y, settings, "buffAuras", BB and BB.DefaultBuffBucket, true, "HELPFUL")
 
-    BuildAuraSection(tabContent, headerAt, sectionAt, closeSection, settings, {
+    local debuffHeader, debuffHeaderY, debuffCardFrame, debuffCardY = BuildAuraSection(
+        tabContent, headerAt, sectionAt, closeSection, settings, {
         title = ns.L["Debuffs"],
         enabledKey = "enableDebuffs",
         showBordersKey = "showDebuffBorders",
@@ -227,12 +254,64 @@ local function BuildBuffDebuffTab(tabContent)
         hideDescription = ns.L["Hide the debuff frame entirely, even when hovering its anchor area."],
         fadeDescription = ns.L["Fade the debuff frame out until you hover it."],
     })
+
+    local debuffEditorY = y
     -- The engine can only cancel HELPFUL (buff) auras — cancelEligible = false
     -- here (AuraGlue.ElementGroups also gates this defensively).
-    y = BuildAuraEditorSection(tabContent, PAD, SECTION_GAP, y, settings,
-        "debuffAuras", BB and BB.DefaultDebuffBucket, false)
+    local debuffEditorHost, debuffOriginalHeight, debuffSetOnLayoutChanged
+    y, debuffEditorHost, debuffOriginalHeight, debuffSetOnLayoutChanged = BuildAuraEditorSection(
+        tabContent, PAD, SECTION_GAP, y, settings, "debuffAuras", BB and BB.DefaultDebuffBucket, false, "HARMFUL")
 
-    tabContent:SetHeight(math.abs(y) + 40)
+    local baseTabHeight = math.abs(y) + 40
+    tabContent:SetHeight(baseTabHeight)
+
+    -- Wire the reflow now that everything below the buff editor exists. The
+    -- embedded aura editor resizes itself in place (Filter Mode flips, Dispel
+    -- Type Filter include/exclude, whitelist/blacklist edits) and reports the
+    -- new height via onLayoutChanged; without this, frames below a resized
+    -- editor keep stale anchors (overlap on grow, gap on shrink) and
+    -- tabContent goes stale too. Deltas are always computed against each
+    -- editor's ORIGINAL mount height (never the previous fire), so repeated
+    -- resizes never drift.
+    if buffSetOnLayoutChanged or debuffSetOnLayoutChanged then
+        local buffDelta, debuffDelta = 0, 0
+
+        local function ApplyReflow()
+            local shift = buffDelta
+            if debuffHeader then
+                debuffHeader:ClearAllPoints()
+                debuffHeader:SetPoint("TOPLEFT", tabContent, "TOPLEFT", PAD, debuffHeaderY - shift)
+                debuffHeader:SetPoint("TOPRIGHT", tabContent, "TOPRIGHT", -PAD, debuffHeaderY - shift)
+            end
+            if debuffCardFrame then
+                debuffCardFrame:ClearAllPoints()
+                debuffCardFrame:SetPoint("TOPLEFT", tabContent, "TOPLEFT", PAD, debuffCardY - shift)
+                debuffCardFrame:SetPoint("TOPRIGHT", tabContent, "TOPRIGHT", -PAD, debuffCardY - shift)
+            end
+            if debuffEditorHost then
+                debuffEditorHost:ClearAllPoints()
+                debuffEditorHost:SetPoint("TOPLEFT", tabContent, "TOPLEFT", PAD, debuffEditorY - shift)
+                debuffEditorHost:SetPoint("TOPRIGHT", tabContent, "TOPRIGHT", -PAD, debuffEditorY - shift)
+            end
+            tabContent:SetHeight(baseTabHeight + buffDelta + debuffDelta)
+        end
+
+        if buffSetOnLayoutChanged then
+            buffSetOnLayoutChanged(function(height)
+                if type(height) ~= "number" or not buffOriginalHeight then return end
+                buffDelta = height - buffOriginalHeight
+                ApplyReflow()
+            end)
+        end
+
+        if debuffSetOnLayoutChanged then
+            debuffSetOnLayoutChanged(function(height)
+                if type(height) ~= "number" or not debuffOriginalHeight then return end
+                debuffDelta = height - debuffOriginalHeight
+                ApplyReflow()
+            end)
+        end
+    end
 end
 
 ns.QUI_BuffDebuffOptions = {

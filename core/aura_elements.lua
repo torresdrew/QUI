@@ -482,6 +482,54 @@ function E.EnsureSeeded(auras, defaultBucketFn)
     end
 end
 
+-- Enforce the single-strip invariant for surfaces whose buckets are
+-- polarity-scoped (buff borders: buffAuras/debuffAuras). Keeps the FIRST
+-- filterStrip in the shared "*" bucket, removes later filterStrips, forces
+-- the survivor's auraType (when given) and enabled=true — zone visibility on
+-- those surfaces is the settings-level toggle, not the element flag.
+-- Non-strip elements are left alone. Idempotent; mutates in place; returns
+-- true iff anything changed. Runs on the BB runtime resolve path every load
+-- (dev/hand-edited SVs may hold extra or cross-polarity strips from before
+-- the single-strip collapse; EnsureSeeded's latch means it never re-seeds).
+function E.NormalizeSingleStripBucket(store, auraType)
+    if type(store) ~= "table" or type(store.elements) ~= "table" then
+        return false
+    end
+    local bucket = store.elements["*"]
+    if type(bucket) ~= "table" then
+        return false
+    end
+    local firstIndex
+    for i = 1, #bucket do
+        local e = bucket[i]
+        if type(e) == "table" and e.mode == "filterStrip" then
+            firstIndex = i
+            break
+        end
+    end
+    if not firstIndex then
+        return false
+    end
+    local changed = false
+    for i = #bucket, firstIndex + 1, -1 do
+        local e = bucket[i]
+        if type(e) == "table" and e.mode == "filterStrip" then
+            table.remove(bucket, i)
+            changed = true
+        end
+    end
+    local strip = bucket[firstIndex]
+    if auraType and strip.auraType ~= auraType then
+        strip.auraType = auraType
+        changed = true
+    end
+    if strip.enabled ~= true then
+        strip.enabled = true
+        changed = true
+    end
+    return changed
+end
+
 -- OVERRIDE (either/or) semantics: a present spec bucket REPLACES "*" for that
 -- spec, never a union. `out` (optional) is a reusable scratch array for the
 -- zero-alloc render fan-out.

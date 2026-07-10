@@ -2593,15 +2593,6 @@ local function RenderAuraElementsSection(sectionHost, ctx)
         return nil
     end
 
-    -- Explicit content width from the section host: the embedded editor's
-    -- suggestion-grid column math needs a stable width on both the
-    -- synchronous tab render and any later in-place rebuild (mirrors the
-    -- group-frames mount).
-    local contentWidth = sectionHost.GetWidth and sectionHost:GetWidth() or nil
-    if type(contentWidth) ~= "number" or contentWidth <= 0 then
-        contentWidth = nil
-    end
-
     local refreshAuras = function()
         RefreshUnitAuras(unitKey)
     end
@@ -2617,7 +2608,6 @@ local function RenderAuraElementsSection(sectionHost, ctx)
     editorHost:SetHeight(1)
 
     local height = AurasEditor.RenderAuras(editorHost, auraDB, "*", refreshAuras, {
-        contentWidth = contentWidth,
         forceSelectedIndex = GetAuraSelectedElementIndex(ctx, unitKey),
         capabilities = {
             elementTypes        = { filterStrip = true, tracked = true },

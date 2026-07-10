@@ -2844,19 +2844,6 @@ local function RenderAurasSection(sectionHost, ctx)
         return nil
     end
 
-    -- CreateSectionBuilder -> PrepareSectionHost set an explicit width on
-    -- sectionHost, so reading it here is reliable and frame-independent. The
-    -- embedded editor's listArea inherits this width through anchors, but its
-    -- GetWidth() does not settle until the next frame -- so the suggestion-grid
-    -- column math read a fallback (480) on the synchronous tab render yet the
-    -- real width on the in-place add/remove rebuild, producing inconsistent
-    -- heights and the gap/overrun on the sections below. Thread the known width
-    -- down so every rebuild measures against the same value.
-    local contentWidth = sectionHost.GetWidth and sectionHost:GetWidth() or nil
-    if type(contentWidth) ~= "number" or contentWidth <= 0 then
-        contentWidth = nil
-    end
-
     -- Resolve the editing-spec bucket up front so the refresh closures below can
     -- bind the live preview to it (computed here, not just where the dropdown is
     -- built, because refreshAuras must capture it).
@@ -2985,7 +2972,6 @@ local function RenderAurasSection(sectionHost, ctx)
             -- per-tile restyle). The section reflow is driven by onLayoutChanged.
             refreshAuras()
         end, {
-            contentWidth = contentWidth,
             forceSelectedIndex = forcedIndex,
             capabilities = {
                 elementTypes        = { filterStrip = true, tracked = true, missingRaidBuff = true },
@@ -2994,7 +2980,6 @@ local function RenderAurasSection(sectionHost, ctx)
                 maxStripElements    = 4,   -- per-frame container cap: 40-man parse cost
                 allowSpecOverride   = true,
                 defaultBucketFn     = AuraDefaults and AuraDefaults.DefaultStripBucket,
-                suggestions         = AuraDefaults and AuraDefaults.GetSuggestionSpells,
             },
             onSelectionChanged = function(index)
                 SetSelectedElementIndex(ctx, groupFrames.contextMode, selectedBucket, index)

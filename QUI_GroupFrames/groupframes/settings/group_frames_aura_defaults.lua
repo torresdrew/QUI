@@ -3,8 +3,6 @@ local ADDON_NAME, ns = ...
 local AuraDefaults = ns.QUI_GroupFramesAuraDefaults or {}
 ns.QUI_GroupFramesAuraDefaults = AuraDefaults
 
-local FALLBACK_ICON = 134400
-
 -- The shipped default filter strips (debuffs + buffs) for the all-specs ("*")
 -- bucket. Ported byte-for-byte from the old groupframes_aura_model.lua
 -- The shipped default strip bucket DEFINITION lives in the always-loaded
@@ -156,81 +154,12 @@ local function GetPlayerSpecID()
     return nil
 end
 
-local function ResolveSpellName(spellID)
-    if C_Spell and C_Spell.GetSpellName then
-        local ok, name = pcall(C_Spell.GetSpellName, spellID)
-        if ok and type(name) == "string" and name ~= "" then
-            return name
-        end
-    end
-    if GetSpellInfo then
-        local ok, name = pcall(GetSpellInfo, spellID)
-        if ok and type(name) == "string" and name ~= "" then
-            return name
-        end
-    end
-    return nil
-end
-
-local function ResolveSpellIcon(spellID)
-    if C_Spell and C_Spell.GetSpellTexture then
-        local ok, icon = pcall(C_Spell.GetSpellTexture, spellID)
-        if ok and icon then
-            return icon
-        end
-    end
-    return nil
-end
-
 local function SpellKey(spellID)
     local numeric = tonumber(spellID)
     if numeric then
         return "n:" .. tostring(numeric)
     end
     return "s:" .. tostring(spellID)
-end
-
-local function CopySpell(spell, preset, sourceOverride)
-    local spellID = spell and (spell.id or spell.spellID)
-    if not spellID then
-        return nil
-    end
-
-    return {
-        id = spellID,
-        name = spell.name or ResolveSpellName(spellID) or ("Spell " .. tostring(spellID)),
-        icon = spell.icon or ResolveSpellIcon(spellID) or FALLBACK_ICON,
-        source = sourceOverride or spell.source or preset.source,
-        specID = spell.specID or preset.specID,
-        classFile = spell.classFile or preset.classFile,
-        secret = spell.secret == true,
-    }
-end
-
-local function AddSuggestion(result, added, assigned, spell, preset, sourceOverride)
-    local copied = CopySpell(spell, preset or {}, sourceOverride)
-    if not copied then
-        return
-    end
-
-    local key = SpellKey(copied.id)
-    if assigned[key] or added[key] then
-        return
-    end
-
-    result[#result + 1] = copied
-    added[key] = true
-end
-
-local function BuildAssignedSet(entries)
-    local assigned = {}
-    for _, entry in ipairs(entries or {}) do
-        local spellID = entry and (entry.spellID or entry.id)
-        if spellID then
-            assigned[SpellKey(spellID)] = true
-        end
-    end
-    return assigned
 end
 
 local function GetCDMAuraEntries()
@@ -323,38 +252,4 @@ function AuraDefaults.GetDefaultPresets(options)
     end
 
     return DeduplicatePresets(presets)
-end
-
-function AuraDefaults.BuildSuggestionList(options)
-    options = options or {}
-    local entries = options.existingEntries or options.entries or {}
-    local assigned = BuildAssignedSet(entries)
-    local added = {}
-    local suggestions = {}
-
-    local presets = options.staticPresets
-    if not presets then
-        presets = AuraDefaults.GetDefaultPresets({
-            specID = options.specID,
-            cdmAuraEntries = options.cdmAuraEntries,
-        })
-    end
-
-    for _, preset in ipairs(presets or {}) do
-        for _, spell in ipairs(preset.spells or {}) do
-            AddSuggestion(suggestions, added, assigned, spell, preset)
-        end
-    end
-
-    for _, spell in ipairs(options.staticEntries or {}) do
-        AddSuggestion(suggestions, added, assigned, spell, { source = ns.L["Static"] })
-    end
-
-    return suggestions
-end
-
-function AuraDefaults.GetSuggestionSpells(existingEntries)
-    return AuraDefaults.BuildSuggestionList({
-        existingEntries = existingEntries,
-    })
 end
