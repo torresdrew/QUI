@@ -265,7 +265,16 @@ end
 ---------------------------------------------------------------------------
 -- SHARED QUEUEING
 ---------------------------------------------------------------------------
+local canaccesstable = canaccesstable
+
 local function QueueAuraEvent(unit, updateInfo)
+    -- 12.1 restricted combat: the UNIT_AURA payload table (and its delta
+    -- arrays) can be fully SECRET — any field read or iteration errors.
+    -- Degrade a secret payload to a full-update sentinel; consumers already
+    -- handle nil-as-full-update.
+    if updateInfo ~= nil and canaccesstable and not canaccesstable(updateInfo) then
+        updateInfo = nil
+    end
     -- Store updateInfo; if any event for this unit is a full update, mark full.
     local existing = pendingUnits[unit]
     if existing == true then

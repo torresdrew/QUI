@@ -122,7 +122,7 @@ read_globals = {
     "wipe", "strsplit", "strjoin", "strtrim", "strconcat", "format",
     "tContains", "tInvert", "tDeleteItem", "Mixin", "CreateFromMixins",
     "hooksecurefunc", "issecure", "issecurevariable", "IsSecureCmd",
-    "securecallfunction", "tostringall", "issecretvalue", "Clamp",
+    "securecallfunction", "tostringall", "issecretvalue", "canaccesstable", "Clamp",
     "CopyTable", "debugprofilestop", "geterrorhandler", "seterrorhandler", "time", "tinsert",
 
     -- debug.upvaluejoin is a Blizzard backport (Lua 5.2+) used by the ActionBars

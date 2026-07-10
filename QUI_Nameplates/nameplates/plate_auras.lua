@@ -380,6 +380,14 @@ function NPAuras.ApplyAppearance(plate, settings)
         row.npTextSize = ch.textSize or 11
         row.npEnabled = ch.enabled ~= false
         local fontPath = UIKit.ResolveFontPath()
+        -- 12.1: creating aura frames IN COMBAT crashes the client — pre-build
+        -- the full row (up to the limit) here, at style time (out of combat),
+        -- so the render path never needs CreateFrame mid-pull.
+        if not InCombatLockdown() then
+            for i = #row.icons + 1, row.npLimit do
+                row.icons[i] = CreateAuraIcon(plate, row)
+            end
+        end
         for _, holder in ipairs(row.icons) do
             QUICore:ApplyFont(holder.stackText, nil, row.npTextSize, fontPath, "OUTLINE")
             ApplyDurationStyle(holder, auras)
@@ -562,6 +570,13 @@ local function RenderChannel(plate, channelKey, settings)
         shown = shown + 1
         local holder = row.icons[shown]
         if not holder then
+            -- 12.1: aura-frame creation in combat crashes the client. The
+            -- appearance pass preallocates to the limit; if a slot is still
+            -- missing mid-combat, drop the icon (reconciled next rebuild).
+            if InCombatLockdown() then
+                shown = shown - 1
+                return
+            end
             holder = CreateAuraIcon(plate, row)
             row.icons[shown] = holder
             QUICore:ApplyFont(holder.stackText, nil, row.npTextSize or 11, UIKit.ResolveFontPath(), "OUTLINE")
@@ -678,7 +693,8 @@ function NPAuras.FullRescan(plate)
                 local ok, ids = pcall(C_UnitAuras.GetUnitAuraInstanceIDs, unit, filter)
                 if ok and type(ids) == "table" then
                     for i = 1, #ids do
-                        local instanceID = ids[i]
+                        local instanceID = NP.Plain(ids[i], "number")
+                        if instanceID then
                         local spellId, icon
                         if C_UnitAuras.GetAuraDataByAuraInstanceID then
                             local okData, data = pcall(C_UnitAuras.GetAuraDataByAuraInstanceID, unit, instanceID)
@@ -694,6 +710,7 @@ function NPAuras.FullRescan(plate)
                             if icon ~= nil then
                                 plate.npAuraIconInfo[instanceID] = icon
                             end
+                        end
                         end
                     end
                 end
@@ -726,7 +743,7 @@ OnNameplateAura = function(unit, updateInfo)
     if added then
         for i = 1, #added do
             local aura = added[i]
-            if type(aura) == "table" and aura.auraInstanceID ~= nil then
+            if type(aura) == "table" and NP.Plain(aura.auraInstanceID, "number") then
                 local instanceID = aura.auraInstanceID
                 local spellId = CleanSpellId(aura)
                 plate.npAuraIconInfo = plate.npAuraIconInfo or {}
@@ -744,7 +761,8 @@ OnNameplateAura = function(unit, updateInfo)
     local removed = updateInfo.removedAuraInstanceIDs
     if removed then
         for i = 1, #removed do
-            local instanceID = removed[i]
+            local instanceID = NP.Plain(removed[i], "number")
+            if instanceID then
             for _, channelKey in ipairs(CHANNELS) do
                 if plate.npAuraSets[channelKey][instanceID] ~= nil then
                     plate.npAuraSets[channelKey][instanceID] = nil
@@ -756,6 +774,7 @@ OnNameplateAura = function(unit, updateInfo)
             if plate.npAuraIconInfo then
                 plate.npAuraIconInfo[instanceID] = nil
             end
+            end
         end
     end
 
@@ -764,8 +783,8 @@ OnNameplateAura = function(unit, updateInfo)
     local updated = updateInfo.updatedAuraInstanceIDs
     if updated then
         for i = 1, #updated do
-            local instanceID = updated[i]
-            local holder = plate.npAuraIconByID[instanceID]
+            local instanceID = NP.Plain(updated[i], "number")
+            local holder = instanceID and plate.npAuraIconByID[instanceID]
             if holder and holder.npInstanceID == instanceID and holder:IsShown() then
                 local cd = holder.cd
                 if C_UnitAuras and C_UnitAuras.GetAuraDuration then

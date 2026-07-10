@@ -59,6 +59,12 @@ local function NewFrame(parent)
     f.CreateTexture = function(self) return NewRegion(self) end
     f.CreateMaskTexture = function(self) return NewRegion(self) end
     f.CreateFontString = function(self) return NewRegion(self) end
+    f.SetDrawEdge = noop
+    f.SetHideCountdownNumbers = noop
+    f.SetCooldownFromDurationObject = noop
+    f.SetCountdownFormatter = noop
+    f.Clear = noop
+    f.GetRegions = function() return nil end
     f.SetStatusBarTexture = noop
     f.GetStatusBarTexture = function(self) return self._barTex or nil end
     f.SetStatusBarColor = function(self, r, g, b) self._color = { r, g, b } end
@@ -187,6 +193,13 @@ local ns = {
         UpdateBorderLines = noop,
         CreateText = function(parent) return NewRegion(parent) end,
         ResolveFontPath = function() return "font.ttf" end,
+        CreateIcon = function(parent)
+            local f = NewFrame(parent)
+            f.texture = NewRegion(f)
+            f.border = NewRegion(f)
+            return f
+        end,
+        UpdateIconLayout = noop,
     },
     Addon = {
         SetPixelPerfectSize = function(_, frame, w, h) frame:SetSize(w, h) end,

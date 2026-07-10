@@ -54,7 +54,8 @@ local alphaLock = setmetatable({}, { __mode = "k" })
 -- vendored snapshot for early warning at patch bumps).
 local SUPPRESS_CHILD_KEYS = {
     "HealthBarsContainer",
-    "castBar",
+    "castBar",            -- 12.0: bare StatusBar child
+    "CastBarsContainer",  -- 12.1: container wrapping .castBar
     "RaidTargetFrame",
     "ClassificationFrame",
     "AurasFrame",
@@ -95,7 +96,9 @@ local function SuppressBlizzardArt(base)
     end
 
     -- Blizzard castbar keeps ticking events while parked — silence it.
+    -- (12.0: unitFrame.castBar; 12.1: nested in CastBarsContainer)
     local castBar = unitFrame.castBar
+        or (unitFrame.CastBarsContainer and unitFrame.CastBarsContainer.castBar)
     if castBar and castBar.UnregisterAllEvents then
         pcall(castBar.UnregisterAllEvents, castBar)
     end
@@ -123,6 +126,7 @@ local function RestoreBlizzardArt(base)
     end
 
     local castBar = unitFrame.castBar
+        or (unitFrame.CastBarsContainer and unitFrame.CastBarsContainer.castBar)
     if castBar and castBar.OnLoad == nil and castBar.RegisterEvent then
         -- Event re-registration is owned by Blizzard's SetUnit on the next
         -- acquire; nothing to redo here.
