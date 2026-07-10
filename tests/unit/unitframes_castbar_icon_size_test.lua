@@ -301,6 +301,7 @@ function ns.Addon:ApplyFont(fontString, _, size, path, outline)
 end
 
 assert(loadfile("core/uikit.lua"))("QUI", ns)
+assert(loadfile("core/cast_engine.lua"))("QUI", ns)
 assert(loadfile("QUI_UnitFrames/unitframes/castbar.lua"))("QUI", ns)
 
 local settings = {

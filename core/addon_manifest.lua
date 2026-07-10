@@ -35,6 +35,11 @@ local MANIFEST = {
     { folder = "QUI_CDM",          class = "login",                                                  sources = { "modules/cdm" } },
     { folder = "QUI_Chat",         class = "login", legacyFlag = { "chat", "enabled" },              sources = { "modules/chat" } },
     { folder = "QUI_GroupFrames",  class = "login", legacyFlag = { "quiGroupFrames", "enabled" },    sources = { "modules/groupframes" } },
+    -- Opt-in, default-off (legacyFlag nameplates.enabled): full custom
+    -- nameplates. Login class — plates must exist the moment a loading
+    -- screen drops, and the Blizzard-art suppression hooks are
+    -- taint-load-bearing (must be installed before the first plate spawns).
+    { folder = "QUI_Nameplates",   class = "login", legacyFlag = { "nameplates", "enabled" },        sources = {} },
     { folder = "QUI_ResourceBars", class = "login",                                                  sources = { "modules/resourcebars" } },
     { folder = "QUI_UnitFrames",   class = "login",                                                  sources = { "modules/unitframes" } },
     -- lod class: loaded post-login in THIS order (cosmetics first).

@@ -1373,6 +1373,15 @@ StyleGameTooltip = function(tooltip)
         return
     end
 
+    -- AreaPOI/world quest tooltips register UI widget sets on GameTooltip and
+    -- Blizzard lays that widget container out again during Hide/Unregister.
+    -- Keep the whole cycle Blizzard-owned so LayoutFrame never sees addon-
+    -- tainted geometry or point counts on cleanup.
+    if HasActiveWidgetContainer(tooltip) then
+        FallbackToNineSlice(tooltip)
+        return
+    end
+
     -- Reused-chrome fast path: already shown with NineSlice hidden. Chrome is
     -- SetAllPoints so it already tracks the (re-sized) tooltip — nothing to redo.
     if IsChromeStable(tooltip) then

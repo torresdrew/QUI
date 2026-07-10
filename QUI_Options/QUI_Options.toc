@@ -7,7 +7,7 @@
 ## Category: User Interface
 ## Group: QUI
 ## RequiredDeps: QUI
-## OptionalDeps: QUI_ActionBars, QUI_CDM, QUI_Chat, QUI_GroupFrames, QUI_ResourceBars, QUI_UnitFrames
+## OptionalDeps: QUI_ActionBars, QUI_CDM, QUI_Chat, QUI_GroupFrames, QUI_Nameplates, QUI_ResourceBars, QUI_UnitFrames
 
 bootstrap.lua
 
@@ -26,6 +26,7 @@ search_synonyms.lua
 framework.lua
 border_control.lua
 shared.lua
+wizard.lua
 # Options-only settings framework, deferred out of the login path. Every
 # consumer reaches these lazily (inside a function) from UI-build code; none
 # is captured at file scope on the login path. Loaded here ahead of the
@@ -85,6 +86,11 @@ aura_elements_editor.lua
 ..\QUI_GroupFrames\groupframes\settings\group_frames_surface.lua
 ..\QUI_GroupFrames\groupframes\settings\click_cast_content.lua
 ..\QUI_GroupFrames\groupframes\settings\raid_buffs.lua
+..\QUI_Nameplates\nameplates\settings\nameplates_schema.lua
+..\QUI_Nameplates\nameplates\settings\nameplates_model.lua
+..\QUI_Nameplates\nameplates\settings\nameplates.lua
+..\QUI_Nameplates\nameplates\settings\nameplates_preview_driver.lua
+..\QUI_Nameplates\nameplates\settings\nameplates_surface.lua
 ..\QUI\modules\layout\settings\bonus_roll_provider.lua
 ..\QUI\modules\layout\settings\third_party_anchoring_content.lua
 ..\QUI\modules\minimap\settings\minimap.lua
@@ -141,6 +147,7 @@ tiles\minimap.lua
 tiles\infobar.lua
 tiles\unit_frames.lua
 tiles\group_frames.lua
+tiles\nameplates.lua
 tiles\action_bars.lua
 tiles\cooldown_manager.lua
 tiles\resource_bars.lua

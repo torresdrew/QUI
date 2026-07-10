@@ -104,7 +104,7 @@ read_globals = {
     -- C_* namespace tables (whitelisted whole — methods accessed via dot/colon)
     "C_ActionBar", "C_AddOnProfiler", "C_AddOns", "C_AssistedCombat",
     "C_PartyInfo", "C_Spell", "C_Timer", "C_UnitAuras", "C_TooltipInfo",
-    "C_NamePlate", "C_ItemCallbacks", "C_Secrets",
+    "C_NamePlate", "C_NamePlateManager", "C_ItemCallbacks", "C_Secrets",
     "C_ChallengeMode", "C_ClassTalents", "C_Container", "C_CooldownViewer",
     "C_CurveUtil", "C_DurationUtil", "C_Item", "C_ScenarioInfo",
     "C_SpellActivationOverlay",
@@ -153,7 +153,7 @@ BonusRollMoneyWonFrame BreakUpLargeNumbers BuffFrame CHAT_FRAME_FADE_TIME COMBAT
 CR_BLOCK_TOOLTIP CR_CRIT_PARRY_RATING_TOOLTIP CR_CRIT_SPELL CR_CRIT_TOOLTIP CR_DODGE CR_DODGE_BASE_STAT_TOOLTIP CR_DODGE_TOOLTIP CR_HASTE_SPELL
 CR_LIFESTEAL CR_LIFESTEAL_TOOLTIP CR_MASTERY CR_PARRY CR_PARRY_BASE_STAT_TOOLTIP CR_PARRY_TOOLTIP CR_SPEED CR_SPEED_TOOLTIP
 CR_VERSATILITY_DAMAGE_DONE CR_VERSATILITY_DAMAGE_TAKEN CR_VERSATILITY_TOOLTIP C_Bank C_BattleNet C_CVar C_Calendar C_ChatInfo
-C_ClassColor C_Club C_CreatureInfo C_CurrencyInfo C_Cursor C_DateAndTime C_EncodingUtil C_FriendList
+C_ClassColor C_Club C_CreatureInfo C_CurrencyInfo C_Cursor C_DateAndTime C_EditMode C_EncodingUtil C_FriendList
 C_GossipInfo C_GuildInfo C_IncomingSummon C_LevelLink C_MajorFactions C_Map C_MountJournal C_MythicPlus C_PaperDollInfo
 C_PetBattles C_PlayerInfo C_PvP C_QuestLog C_Reputation C_SpecializationInfo C_SummonInfo C_TaskQuest C_TransmogCollection
 C_Texture C_ToyBox C_UIWidgetManager C_WeeklyRewards C_WowTokenPublic CanExitVehicle CanGuildBankRepair CanInspect CanMerchantRepair CancelItemTempEnchantment CancelUnitBuff ChallengesFrame ChallengesKeystoneFrame
@@ -230,7 +230,7 @@ UnitAura UnitCanAssist UnitCastingDuration UnitChannelDuration UnitClassificatio
 UnitFullName UnitGUID UnitGetDetailedHealPrediction UnitGetIncomingHeals UnitGetTotalAbsorbs UnitGetTotalHealAbsorbs UnitGroupRolesAssigned UnitHPPerStamina
 UnitHasIncomingResurrection UnitHasVehicleUI UnitHealth UnitHealthMax UnitHealthMissing UnitInParty UnitInRaid UnitInRange
 UnitInVehicle UnitIsAFK UnitIsConnected UnitIsDeadOrGhost UnitIsFriend UnitIsGhost UnitIsGroupAssistant UnitIsGroupLeader UnitIsPlayer
-UnitIsUnit UnitLevel UnitPhaseReason UnitPower UnitPowerPercent UnitPowerType UnitReaction UnitSex
+UnitIsTapDenied UnitIsUnit UnitLevel UnitPhaseReason UnitPower UnitPowerPercent UnitPowerType UnitReaction UnitSex
 UnitShouldDisplaySpellTargetName UnitSpellHaste UnitStagger UnitStat UnitThreatSituation UnitXP UnitXPMax UnregisterStateDriver UpdateAddOnCPUUsage
 UpdateMicroButtons UpdateMicroButtonsParent WOW_PROJECT_ID WOW_PROJECT_MAINLINE WardrobeFrame WardrobeTransmogFrame WeeklyRewardsFrame WeeklyRewards_ShowUI WorldMapFrame
 WorldQuestCompleteAlertSystem ZoneAbilityFrame debugprofilestart gsub strupper tremove table.unpack table.wipe

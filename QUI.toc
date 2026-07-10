@@ -96,6 +96,7 @@ core\icon_skin.lua
 core\icon_glow.lua
 core\diagnostics_console.lua
 core\dumpspell.lua
+core\cast_engine.lua
 core\aura_events.lua
 core\registry.lua
 core\modules.lua

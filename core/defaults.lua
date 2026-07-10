@@ -2879,6 +2879,154 @@ local defaults = {
             },
         },
 
+        -- Custom nameplates (QUI_Nameplates suite; plans/009-nameplates.md).
+        -- Sizes are physical pixels. Color tables are plain {r,g,b} — the
+        -- color resolver returns profile values only (secret-safety contract:
+        -- every resolved color is verifiably non-secret).
+        nameplates = {
+            enabled = false,          -- master switch (Module Addons row / legacyFlag)
+
+            health = {
+                width = 210,          -- health bar width
+                height = 24,          -- health bar height
+                texture = "Quazii",
+                borderSize = 1,
+                bgColor = { 0.12, 0.12, 0.12 },
+                bgAlpha = 1.0,
+            },
+            healthText = {
+                enabled = true,
+                style = "percent",    -- percent | absolute | both | none
+                size = 10,
+                hidePercentSymbol = false,
+                -- Position: text point → health bar point + offsets.
+                point = "RIGHT",
+                relativePoint = "RIGHT",
+                offsetX = -2,
+                offsetY = 0,
+                justify = "RIGHT",
+            },
+            name = {
+                enabled = true,
+                size = 11,
+                classColorPlayers = true,
+                -- Position: text point → health bar point + offsets.
+                point = "BOTTOM",
+                relativePoint = "TOP",
+                offsetX = 0,
+                offsetY = 4,
+                justify = "CENTER",
+            },
+            castbar = {
+                enabled = true,
+                height = 17,
+                gap = 0,              -- castbar-to-health gap
+                showIcon = true,
+                showTimer = true,
+                showSpellName = true,
+                nameSize = 10,
+                timerSize = 10,
+                interruptedHoldTime = 1.0,
+                kickTick = true,      -- interrupt-ready marker on the cast timeline
+                liftOverlay = false,  -- lift the castbar above neighboring plates
+            },
+            absorbs = {
+                enabled = true,
+                color = { 1, 1, 1 },
+                opacity = 0.3,
+            },
+            colors = {
+                hostile  = { 0.39, 0.11, 0.09 },
+                neutral  = { 0.81, 0.72, 0.19 },
+                friendly = { 0.314, 0.800, 0.408 },
+                tapped   = { 0.50, 0.50, 0.50 },
+                questEnabled = true,
+                quest    = { 1.00, 0.82, 0.00 },
+                classColorEnemyPlayers = true,
+                castInterruptible   = { 0.70, 0.40, 0.90 },
+                castUninterruptible = { 0.45, 0.45, 0.45 },
+                castInterrupted     = { 0.80, 0.00, 0.00 },
+                targetEnabled = false,          -- recolor the target's bar
+                target = { 1, 1, 1 },
+                focusEnabled = true,
+                focus = { 0.051, 0.820, 0.620 },
+                threatEnabled = true,           -- instance-gated, role-aware
+                tankHasAggro = { 0.05, 0.82, 0.62 },
+                tankNoAggro  = { 1.00, 0.22, 0.17 },
+                offTankAggro = { 0.188, 0.761, 0.812 },
+                dpsHasAggro  = { 1.00, 0.50, 0.00 },
+                dpsNearAggro = { 0.81, 0.72, 0.19 },
+                oocDarken = true,               -- darken enemies out of combat
+                oocDarkenFactor = 0.75,
+                executeEnabled = false,
+                execute = { 1.00, 0.10, 0.10 },
+                executeThreshold = 35,          -- percent, encoded into a curve
+            },
+            highlight = {
+                targetGlow = true,
+                targetGlowColor = { 0.412, 0.667, 1.0 },
+                targetGlowAlpha = 1.0,
+                mouseover = true,
+                mouseoverAlpha = 0.3,
+            },
+            raidMarker = {
+                enabled = true,
+                size = 24,
+                position = "TOPRIGHT",
+            },
+            auras = {
+                enabled = true,
+                mineOnly = true,
+                enableWorld = true,
+                enableDungeon = true,
+                enableRaid = true,
+                pandemicGlow = true,
+                dispelBorders = true,
+                importantScale = 1.3,
+                -- Countdown numbers on aura icons (the Cooldown widget's
+                -- engine-driven text — styled, never computed in Lua).
+                duration = {
+                    enabled = true,
+                    size = 12,
+                    point = "CENTER",
+                    offsetX = 0,
+                    offsetY = 0,
+                    decimals = false,   -- show tenths under 3s
+                },
+                -- Spell lists are scalar maps [spellID]=true on purpose —
+                -- array defaults resurrect removed entries at login.
+                importantList = {},
+                -- Row anchoring: the row's `point` pins to the health bar's
+                -- `relativePoint` with pixel offsets.
+                debuffs = { enabled = true,  size = 26, limit = 5, growth = "RIGHT", point = "BOTTOM", relativePoint = "TOP", offsetX = 0, offsetY = 20, spacing = 2, textSize = 11, allowList = {}, blockList = {} },
+                buffs   = { enabled = true,  size = 24, limit = 4, growth = "RIGHT", point = "BOTTOM", relativePoint = "TOP", offsetX = 0, offsetY = 50, spacing = 2, textSize = 12, allowList = {}, blockList = {} },
+                cc      = { enabled = true,  size = 24, limit = 3, growth = "LEFT",  point = "RIGHT",  relativePoint = "LEFT", offsetX = -4, offsetY = 0, spacing = 2, textSize = 12, allowList = {}, blockList = {} },
+            },
+            friendly = {
+                mode = "nameonly",    -- nameonly | bars | off
+                nameSize = 12,
+                classColorNames = true,
+                barWidth = 150,
+                barHeight = 12,
+                showInWorld = true,
+                showInInstances = false,
+            },
+            -- Spec-linked presets: [specIndex] = deep snapshot of this tree
+            -- (minus enabled + the preset storage itself).
+            specPresets = {},
+            specAutoSwitch = false,
+
+            cvars = {
+                hitboxScaleX = 100,   -- percent of health bar width
+                hitboxScaleY = 100,
+                maxDistance = 60,
+                stackingEnemy = true,
+                stackingFriendly = false,
+                stackingSpacing = 1.0,
+                hitboxVisualizer = false,
+            },
+        },
+
         -- QUI Group Frames (party/raid)
         quiGroupFrames = {
             enabled = false,          -- Disabled by default (users enable explicitly)
@@ -4560,6 +4708,13 @@ local defaults = {
     },
     -- Account-wide storage (shared across all characters)
     global = {
+        -- Setup wizard (account-wide): completedAt = epoch when finished,
+        -- noticeShown = one-time "/qui install" pointer for upgrading users.
+        -- Factory Reset wipes db.global and deliberately re-arms both.
+        setupWizard = {
+            completedAt = false,
+            noticeShown = false,
+        },
         -- Gold tracking per character (realm-name = copper)
         goldData = {},
         pinnedSettings = {

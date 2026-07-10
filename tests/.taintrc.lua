@@ -12,6 +12,9 @@ return {
         "QUI_GroupFrames/groupframes/",
         "QUI_ActionBars/actionbars/",
         "QUI_DamageMeter/damage_meter/",
+        -- Strict from day one (greenfield; plates are the most secret-hostile
+        -- surface in 12.0 — see plans/009-nameplates.md).
+        "QUI_Nameplates/nameplates/",
     },
     strict_unwrap_paths = {
         -- Safe* unwrap helpers are stricter in CDM: cooldown-secret values

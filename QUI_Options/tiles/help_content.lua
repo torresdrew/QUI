@@ -14,7 +14,7 @@ local AssetPath = ns.Helpers.AssetPath
 ---------------------------------------------------------------------------
 QUI_HelpContent.GettingStarted = {
     {num = "1.", text = ns.L["Open |cff60A5FA/qui|r to access the options panel and explore available modules."]},
-    {num = "2.", text = ns.L["Import the QUI Edit Mode layout string from the |cff60A5FAWelcome|r tab into Blizzard Edit Mode to set up default frame positions."]},
+    {num = "2.", text = ns.L["Run |cff60A5FA/qui install|r — the guided setup applies the recommended scale, profile, and base frame layout."]},
     {num = "3.", text = ns.L["Import a QUI profile from the |cff60A5FAImport & Export Strings|r tab for a recommended starting layout, then |cff60A5FA/rl|r to apply."]},
     {num = "4.", text = ns.L["Customize individual modules — unit frames, action bars, cooldowns, and more — from their respective tabs."]},
     {num = "5.", text = ns.L["Use |cff60A5FA/kb|r to set up keybinds by hovering over action buttons and pressing a key."]},
@@ -176,6 +176,9 @@ QUI_HelpContent.Troubleshooting = {
 --   danger   = optional; true => red border + confirmation modal
 QUI_HelpContent.Diagnostics = {
     -- General
+    { label = ns.L["Setup Wizard"],         command = "/qui install",
+      tooltip = ns.L["Run the guided setup: recommended scale, profile, feature toggles, and base frame layout."],
+      run = function() QUI:SlashCommandOpen("install") end },
     { label = ns.L["Reload UI"],            command = "/rl",
       tooltip = ns.L["Reload the UI safely. If you're in combat, the reload defers until combat ends."],
       run = function() QUI:SafeReload() end },

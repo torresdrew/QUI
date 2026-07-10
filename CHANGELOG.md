@@ -483,6 +483,67 @@ forward from the 4.x beta line.
 - fixed flight map canvas hidden behind skinned backdrop
 - hardened skin button-font walk against bad-self GetObjectType
 
+
+
+## v4.1.0 - 2026-07-07
+
+### Added
+- feat(qol): add cursor trail, sound mute, loot curation + tooltip/bags extras
+- feat(qol): add five QoL modules - audio device lock, event sounds, extended ignore, friends class colors, no-target warning
+- feat(actionbars): add position options for the open-ticket icon
+
+### Fixed
+- perf(infobar): skip the mouseover-fade alpha work while settled
+- perf(options): debounce slider onChange during drags
+- perf(qol): park the cursor-follow watcher and gate repositioning on movement
+- perf(damagemeter): stop walking settings on every render frame of the ticker
+- perf(qol): run the pairs(_G) action-button sweep once per session
+- perf(cdm): stop allocating bar-frame snapshots in the mouseover poll and fade fallback
+- perf(cdm): make the buff-icon poll allocation-free and relax its cadence
+- perf(qol): throttle the tooltip visibility watcher's idle and shown paths
+- perf(cdm): gate alpha-enforcer work behind its throttle and child-count cache
+- fix(core): park profile changes during Mythic+ instead of dropping them
+- fix(core): detect cross-suite namespace export collisions
+- fix(options): skip tab strip for single sub-page tiles
+- fix(sounds): defer QoL whisper alert to chat when chat owns it
+- fix(tooltips): guard GameTooltip widget containers from tainted layout
+## v4.0.5 - 2026-07-06
+
+### Added
+- feat(groupframes): linear (horizontal/vertical) cooldown swipe option
+- feat(groupframes): detached mini-bar mode for health overlays
+- feat(groupframes): color debuff icon borders by dispel type
+- feat(groupframes): overlay bar texture, draw order, fill, spark + outline
+- feat(groupframes): expose party frames to external cooldown-tracker provider API
+- feat(groupframes): party target frames
+- feat(groupframes): ally-buff reminders + composer absorb texture
+- feat(qol): disable scrolling combat text toggle
+- feat(qol): merchant grid extender
+- feat(damagemeter): dark/light theme preset for native meter
+- feat(chat): scroll overflow for window tabs
+- feat(clickcast): reference-parity rewrite - per-frame proxies, click direction, friend/enemy
+- feat(qol): raid markers, lust timer, group/unit/CDM frames, chat, damage meter
+
+### Changed
+- refactor(unitframes): event-driven boss range alpha
+
+### Fixed
+- refresh HUD visibility on movement state changes
+- fix(actionbars): stop skyriding HUD-visibility show/hide flicker
+- fix(bags): merge bag→bank deposits into existing tab stacks
+- fix(cdm): gate override-child cooldown lane to real base cooldowns
+- fix(cdm): show mirror-child proc icon art when GetOverrideSpell stays on base
+- fix(chat): apply suppress synchronously on combat /reload
+- fix(chat): class-color guild senders on cold-login into combat
+- fix(chat): class-color prefix on plain body with secret sender
+- fix(chat): restore class colors on raid/party names in combat
+- fix(groupframes): strip events on pooled legacy party frames (12.x taint crash)
+- fix(groupframes,castbar): stop sticky name blanks + boss castbar persisting after wipe
+- fix(inspect): suppress queued tooltip NotifyInspect once InspectFrame opens
+- fix(qol): read AH expansion filter via GetFilters when available
+- fix(skinning): raise flight map canvas above skinned backdrop
+- fix(skinning): survive bad-self GetObjectType in button-font walk
+- fix(skinning): fix unreadable dark gossip text on skinned frame
 ## v4.0.4 - 2026-06-23
 
 ### Added

@@ -362,6 +362,15 @@ function QUI:SlashCommandOpen(input)
             print("|cff60A5FAQUI:|r " .. ns.L["Layout Mode not loaded yet."])
         end
         return
+    elseif input and input == "install" then
+        -- Guided setup wizard (re-runnable; lives in QUI_Options)
+        local ok, reason = self:EnsureOptionsLoaded()
+        if ok and ns.QUI_SetupWizard then
+            ns.QUI_SetupWizard:Show()
+        else
+            print("|cff60A5FAQUI:|r " .. ns.L["Setup wizard unavailable: "] .. tostring(reason or ns.L["unknown error"]))
+        end
+        return
     elseif input and input == "cdm" then
         if _G.QUI_OpenCDMComposer then
             _G.QUI_OpenCDMComposer()
@@ -702,16 +711,25 @@ function QUI:OnEnable()
     self:RegisterEvent("ADDON_LOADED")
     self:RegisterOptionalPullAlias()
 
-    -- Initialize QUICore (AceDB-based integration)
+    -- Setup wizard trigger (replaces the old 4-line login lecture, whose
+    -- claims had gone stale). Fresh installs auto-open the guided setup once
+    -- (account-wide completedAt flag; ns._freshInstall is sampled in
+    -- QUICore:OnInitialize BEFORE AceDB materialized QUIDB); existing
+    -- installs get a one-time chat pointer at /qui install instead.
     if self.QUICore then
-        -- Show intro message if enabled (defaults to true)
-        if self.db.profile.chat.showIntroMessage ~= false then
-            print("|cFF30D1FFQUI|r " .. ns.L["loaded. |cFFFFFF00/qui|r to setup."])
-            print("|cFF30D1FFQUI REMINDER:|r")
-            print("|cff60A5FA1.|r " .. ns.L["ENABLE |cFFFFFF00Cooldown Manager|r in Options > Gameplay Enhancement"])
-            print("|cff60A5FA2.|r " .. ns.L["Action Bars & Menu Bar |cFFFFFF00HIDDEN|r on mouseover |cFFFFFF00by default|r. Go to |cFFFFFF00'Actionbars'|r tab in |cFFFFFF00/qui|r to unhide."])
-            print("|cff60A5FA3.|r " .. ns.L["Use |cFFFFFF00100% Icon Size|r on CDM Essential & Utility bars for best results."])
-            print("|cff60A5FA4.|r " .. ns.L["Use |cFFFFFF00/qui layout|r to position frames, then click |cFFFFFF00Save|r."])
+        local sw = self.db and self.db.global and self.db.global.setupWizard
+        if sw and not sw.completedAt then
+            if ns._freshInstall then
+                ns.RunAfterFirstFrame(function()
+                    if sw.completedAt then return end
+                    if QUI:EnsureOptionsLoaded() and ns.QUI_SetupWizard then
+                        ns.QUI_SetupWizard:Show()
+                    end
+                end, 2)
+            elseif not sw.noticeShown then
+                sw.noticeShown = true
+                print("|cFF30D1FFQUI|r " .. ns.L["New: |cFFFFFF00/qui install|r opens the guided setup wizard."])
+            end
         end
     end
 end

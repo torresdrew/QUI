@@ -1088,6 +1088,13 @@ local PROFILE_IMPORT_CATEGORIES = {
         },
     },
     {
+        id = "nameplates",
+        label = "Nameplates",
+        description = "Custom enemy and friendly nameplate settings.",
+        recommended = true,
+        topLevelKeys = { "nameplates" },
+    },
+    {
         id = "groupFrames",
         label = "Group / Raid Frames",
         description = "Party, raid, click-cast, and raid buff settings.",
@@ -1331,6 +1338,7 @@ local PROFILE_IMPORT_CATEGORIES = {
         description = "Automation helpers, popup blocker, consumables, and utility toggles.",
         recommended = true,
         topLevelKeys = { "qol", "uiHider", "configPanelWidth", "configPanelAlpha", "configPanelScale", "optionsPanelCollapsibleStates", "merchantGrid" },
+        topLevelKeys = { "uiHider", "configPanelWidth", "configPanelAlpha", "configPanelScale", "optionsPanelCollapsibleStates", "merchantGrid" },
         generalKeys = PROFILE_QOL_GENERAL_KEYS,
     },
     {

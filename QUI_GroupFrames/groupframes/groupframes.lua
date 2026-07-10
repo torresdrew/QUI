@@ -2117,6 +2117,27 @@ local function UpdateDispelOverlay(frame)
     -- Glow can run standalone; if the border is disabled, stop here (glow shown).
     if not borderOn then
         overlay:Hide()
+        if glowFrame then glowFrame:Hide() end
+        return
+    end
+
+    -- Cleanse-ready glow: same non-secret playerDispellable membership, an
+    -- independent flat-color layer. Resolve it HERE (before the border color
+    -- paths, which early-return on success). Flat configured color only — no
+    -- secret dispel-type curve is forwarded, so this stays secret-safe.
+    if glowFrame then
+        if glowOn then
+            local gc = glowCfg and glowCfg.color
+            glowFrame.tex:SetVertexColor((gc and gc[1]) or 0.1, (gc and gc[2]) or 1.0, (gc and gc[3]) or 0.1, (gc and gc[4]) or 1.0)
+            glowFrame:Show()
+        else
+            glowFrame:Hide()
+        end
+    end
+
+    -- Glow can run standalone; if the border is disabled, stop here (glow shown).
+    if not borderOn then
+        overlay:Hide()
         return
     end
 

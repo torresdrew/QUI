@@ -76,6 +76,9 @@ function GUI:InitializeOptions()
     if ns.QUI_GroupFramesTile then
         ns.QUI_GroupFramesTile.Register(frame)
     end
+    if ns.QUI_NameplatesTile then
+        ns.QUI_NameplatesTile.Register(frame)
+    end
     if ns.QUI_ActionBarsTile then
         ns.QUI_ActionBarsTile.Register(frame)
     end

@@ -45,28 +45,10 @@ function QUI_Castbar:SetHelpers(helpers)
     Helpers = helpers or {}
 end
 
--- Timer-driven remaining-duration text update (non-player / engine-animated bars).
--- Reads remaining from the DurationObject and passes secret values directly to
--- C-side SetFormattedText (no SafeToNumber needed). Caches the getter method
--- lookup across OnUpdate ticks (same durationObj for the duration of a cast,
--- OnUpdate runs ~60 Hz — recomputing the `or` chain each frame is wasted
--- metatable work).
-local function UpdateTimerDrivenTimeText(self)
-    if self.timeText and self.durationObj then
-        local obj = self.durationObj
-        if self._durationGetterObj ~= obj then
-            self._durationGetter = obj.GetRemainingDuration or obj.GetRemaining
-            self._durationGetterObj = obj
-        end
-        local getter = self._durationGetter
-        if getter then
-            local ok, rem = pcall(getter, obj)
-            if ok and rem ~= nil then
-                self.timeText:SetFormattedText("%.1f", rem)
-            end
-        end
-    end
-end
+-- Timer-driven remaining-duration text update (non-player / engine-animated
+-- bars) — shared engine implementation (core/cast_engine.lua).
+local CastEngine = ns.CastEngine
+local UpdateTimerDrivenTimeText = CastEngine.UpdateTimerText
 
 -- Helper function wrappers (with fallbacks)
 local function GetUnitSettings(unit)
@@ -912,31 +894,7 @@ local function GetChannelTickSourcePolicy(castSettings)
     return CHANNEL_TICK_SOURCE_POLICY_AUTO
 end
 
-local function GetDurationSecondsFromDurationObject(durationObj)
-    if not durationObj then return nil end
-
-    local getters = {
-        "GetTotalDuration",
-        "GetDuration",
-        "GetMaxDuration",
-        "GetRemainingDuration",
-        "GetRemaining",
-    }
-
-    for _, methodName in ipairs(getters) do
-        local getter = durationObj[methodName]
-        if getter then
-            local ok, value = pcall(getter, durationObj)
-            if ok then
-                value = SafeToNumber(value)
-                if value and value > 0 then
-                    return value
-                end
-            end
-        end
-    end
-    return nil
-end
+local GetDurationSecondsFromDurationObject = CastEngine.GetDurationSeconds
 
 local function BuildEvenTickPositions(tickCount)
     if not tickCount or tickCount <= 1 then
@@ -2071,52 +2029,12 @@ end
 ---------------------------------------------------------------------------
 -- CAST FUNCTION HELPERS
 ---------------------------------------------------------------------------
--- Get cast information from UnitCastingInfo or UnitChannelInfo
+-- Get cast information from UnitCastingInfo or UnitChannelInfo — shared
+-- engine implementation (core/cast_engine.lua). Signature kept for call-site
+-- stability; the castbar argument is unused.
 -- Returns: spellName, text, texture, startTimeMS, endTimeMS, notInterruptible, unitSpellID, isChanneled, channelStages, durationObj, hasSecretTiming
 local function GetCastInfo(castbar, unit)
-    local spellName, text, texture, startTimeMS, endTimeMS, _, _, notInterruptible, unitSpellID = UnitCastingInfo(unit)
-    local isChanneled = false
-    local channelStages = 0
-    local channelSpellID = nil
-
-    if not spellName then
-        spellName, text, texture, startTimeMS, endTimeMS, _, notInterruptible, channelSpellID, _, channelStages = UnitChannelInfo(unit)
-        if spellName then
-            isChanneled = true
-            if channelSpellID and not unitSpellID then
-                unitSpellID = channelSpellID
-            end
-        end
-    end
-
-    -- Get duration object for engine-driven animation (Midnight 12.0+)
-    -- This is used for non-player units where timing values may be secret
-    local durationObj = nil
-    if spellName then
-        local getDurationFn = isChanneled and UnitChannelDuration or UnitCastingDuration
-        if type(getDurationFn) == "function" then
-            local ok, dur = pcall(getDurationFn, unit)
-            if ok then durationObj = dur end
-        end
-    end
-
-    -- Check for secret timing values (API restriction for target units in combat)
-    local hasSecretTiming = false
-    if spellName and startTimeMS and endTimeMS then
-        -- Check using issecretvalue if available (12.0+)
-        if IsSecretValue(startTimeMS) or IsSecretValue(endTimeMS) then
-            hasSecretTiming = true
-        end
-        -- Also validate with pcall (secret values pass type checks but fail arithmetic)
-        if not hasSecretTiming then
-            local ok = pcall(function() return startTimeMS + 0 end)
-            if not ok then hasSecretTiming = true end
-        end
-    end
-
-    -- Return all data - don't throw away usable info when timing is secret
-    -- Caller can check hasSecretTiming and use durationObj for engine-driven animation
-    return spellName, text, texture, startTimeMS, endTimeMS, notInterruptible, unitSpellID, isChanneled, channelStages, durationObj, hasSecretTiming
+    return CastEngine.GetCastInfo(unit)
 end
 
 -- Detect if cast is empowered (player only)
@@ -2700,23 +2618,10 @@ function QUI_Castbar:SetupCastbar(castbar, unit, unitKey, castSettings)
                     canShowCast = success
                 end
             else
-                -- Non-player (target/focus/boss): use engine-driven animation if timing is secret
-                if hasSecretTiming and durationObj and self.statusBar and self.statusBar.SetTimerDuration then
-                    -- Engine-driven mode: use SetTimerDuration
-                    useTimerDriven = true
-                    canShowCast = true
-                elseif startTimeMS and endTimeMS then
-                    -- Normal mode: timing values are accessible
-                    local success
-                    success, startTime, endTime = pcall(function()
-                        return startTimeMS / 1000, endTimeMS / 1000
-                    end)
-                    canShowCast = success
-                elseif durationObj and self.statusBar and self.statusBar.SetTimerDuration then
-                    -- Fallback: timing not explicitly secret but also not accessible, try engine-driven
-                    useTimerDriven = true
-                    canShowCast = true
-                end
+                -- Non-player (target/focus/boss): shared engine decision ladder
+                -- (engine-driven when timing is secret or unavailable)
+                canShowCast, useTimerDriven, startTime, endTime = CastEngine.ResolveNonPlayerTiming(
+                    spellName, startTimeMS, endTimeMS, durationObj, self.statusBar, hasSecretTiming)
             end
         end
 
@@ -2738,18 +2643,11 @@ function QUI_Castbar:SetupCastbar(castbar, unit, unitKey, castSettings)
             self.isGCD = false
 
             if useTimerDriven then
-                -- Engine-driven animation for non-player units with secret timing
-                -- Use SetTimerDuration to let the engine animate the bar
-                if self.statusBar and self.statusBar.SetTimerDuration then
-                    -- Determine direction: 0=fill (casts), 1=drain (channels that should drain)
-                    local channelFillForward = castSettings and castSettings.channelFillForward
-                    local direction = (isChanneled and not channelFillForward) and 1 or 0
-                    local ok = pcall(self.statusBar.SetTimerDuration, self.statusBar, durationObj, 0, direction)
-                    if not ok then
-                        -- Fallback: try without direction parameter
-                        pcall(self.statusBar.SetTimerDuration, self.statusBar, durationObj)
-                    end
-                end
+                -- Engine-driven animation for non-player units with secret timing.
+                -- direction: 0=fill (casts), 1=drain (channels that should drain)
+                local channelFillForward = castSettings and castSettings.channelFillForward
+                local direction = (isChanneled and not channelFillForward) and 1 or 0
+                CastEngine.ApplyTimerDriven(self.statusBar, durationObj, direction)
                 self.castStartTime = nil
                 self.castEndTime = nil
             else
@@ -3160,28 +3058,10 @@ function QUI_Castbar:CreateBossCastbar(unitFrame, unit, bossIndex)
         -- Use shared GetCastInfo for secret timing detection and duration objects
         local spellName, text, texture, startTimeMS, endTimeMS, notInterruptible, unitSpellID, isChanneled, _, durationObj, hasSecretTiming = GetCastInfo(self, self.unit)
 
-        -- Determine if we can show the cast
-        local canShowCast = false
-        local useTimerDriven = false
-        local startTime, endTime
-
-        if spellName then
-            if hasSecretTiming and durationObj and self.statusBar and self.statusBar.SetTimerDuration then
-                -- Engine-driven mode: use SetTimerDuration for secret timing
-                useTimerDriven = true
-                canShowCast = true
-            elseif startTimeMS and endTimeMS then
-                local success
-                success, startTime, endTime = pcall(function()
-                    return startTimeMS / 1000, endTimeMS / 1000
-                end)
-                canShowCast = success
-            elseif durationObj and self.statusBar and self.statusBar.SetTimerDuration then
-                -- Fallback: timing not explicitly secret but not accessible, try engine-driven
-                useTimerDriven = true
-                canShowCast = true
-            end
-        end
+        -- Determine if we can show the cast — shared engine decision ladder
+        -- (engine-driven when timing is secret or unavailable)
+        local canShowCast, useTimerDriven, startTime, endTime = CastEngine.ResolveNonPlayerTiming(
+            spellName, startTimeMS, endTimeMS, durationObj, self.statusBar, hasSecretTiming)
 
         if canShowCast then
             -- Clear preview simulation
@@ -3200,10 +3080,7 @@ function QUI_Castbar:CreateBossCastbar(unitFrame, unit, bossIndex)
                 -- Engine-driven animation for secret timing
                 local channelFillForward = castSettings and castSettings.channelFillForward
                 local direction = (isChanneled and not channelFillForward) and 1 or 0
-                local ok = pcall(self.statusBar.SetTimerDuration, self.statusBar, durationObj, 0, direction)
-                if not ok then
-                    pcall(self.statusBar.SetTimerDuration, self.statusBar, durationObj)
-                end
+                CastEngine.ApplyTimerDriven(self.statusBar, durationObj, direction)
                 self.startTime = nil
                 self.endTime = nil
             else

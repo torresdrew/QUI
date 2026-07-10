@@ -166,6 +166,11 @@ function QUICore:SeedNewProfile(event, db, profileKey)
 end
 
 function QUICore:OnInitialize()
+    -- Fresh-install signal for the setup wizard: the QUIDB saved variable is
+    -- absent only on the account's first login with QUI. Must be sampled
+    -- BEFORE AceDB:New materializes the table below.
+    ns._freshInstall = rawget(_G, "QUIDB") == nil
+
     self.db = LibStub("AceDB-3.0"):New("QUIDB", defaults, true)
     QUI.db = self.db  -- Make database accessible to other QUI modules
 
