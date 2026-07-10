@@ -320,6 +320,152 @@ local function GetRow(plate, channelKey)
 end
 
 ---------------------------------------------------------------------------
+-- 12.1 ENGINE CONTAINERS (CustomAuraContainer path)
+--
+-- On container-capable clients the ENGINE owns everything that reads secret
+-- aura data: filtering, expiration sort, visibility, duration text, stacks,
+-- dispel borders. QUI configures groups (our composed filter strings +
+-- candidate filters from the spell lists) and styles buttons via
+-- QUI.AuraSkin — the same adapter every other QUI aura surface uses.
+-- The legacy Lua path below stays as the capability fallback.
+--
+-- Container-path limitations (engine has no per-aura styling callback):
+-- important-aura emphasis (scale/glow) and the pandemic glow are legacy-only.
+---------------------------------------------------------------------------
+-- Fallback anchors reproducing the classic layout when a channel has no
+-- explicit position: debuffs above the bar (clearing the name), buffs above
+-- those, cc beside the bar.
+local ROW_ANCHOR_DEFAULTS = {
+    debuffs = { point = "BOTTOM", relativePoint = "TOP", offsetX = 0, offsetY = 20 },
+    buffs   = { point = "BOTTOM", relativePoint = "TOP", offsetX = 0, offsetY = 50 },
+    cc      = { point = "RIGHT", relativePoint = "LEFT", offsetX = -4, offsetY = 0 },
+}
+
+local function GetAuraSkin()
+    return _G.QUI and _G.QUI.AuraSkin
+end
+
+-- OOC-only probe: forbidden-object creation crashes in combat, and headless
+-- tests have no AuraContainer frame type — both fall back to legacy.
+local function CreatePlateContainer(parent)
+    if InCombatLockdown() then return nil end
+    if not GetAuraSkin() then return nil end
+    local ok, container = pcall(CreateFrame, "AuraContainer", nil, parent, "CustomAuraContainerTemplate")
+    if ok and container and container.AddAuraGroup and container.SetUnit then
+        return container
+    end
+    return nil
+end
+
+-- Channel settings → AuraSkin style profile.
+local function ChannelProfile(ch, auras)
+    local durS = auras.duration or {}
+    local growth = ch.growth or "RIGHT"
+    if growth == "CENTER" then growth = "RIGHT" end -- flow layouts have no center growth
+    return {
+        iconSize = ch.size or 24,
+        maxIcons = ch.limit or 4,
+        spacing = ch.spacing or 2,
+        grow = growth,
+        duration = {
+            fontSize = durS.size or 12,
+            anchor = durS.point or "CENTER",
+            offsetX = durS.offsetX or 0,
+            offsetY = durS.offsetY or 0,
+            show = durS.enabled ~= false,
+        },
+        stack = { fontSize = ch.textSize or 11 },
+        fontSize = ch.textSize or 11,
+    }
+end
+
+-- Channel settings → engine group descriptors. The spell lists ride as
+-- candidate filters (engine-side; allow/exclude maps are [spellID]=true).
+local function ChannelGroups(channelKey, auras, ch)
+    local filter = NPAuras.ComposeFilter(channelKey, auras)
+    if not filter then return nil end
+    local cf = nil
+    local block = ch.blockList
+    if block and next(block) then
+        cf = cf or {}
+        cf.excludeSpellIDs = block
+    end
+    local allow = ch.allowList
+    if allow and next(allow) then
+        cf = cf or {}
+        cf.includeSpellIDs = allow
+    end
+    local sort = _G.AuraContainerSortMethod
+    return { {
+        key = "np_" .. channelKey,
+        filter = filter,
+        maxFrameCount = ch.enabled ~= false and (ch.limit or 4) or 0,
+        sortMethod = sort and sort.Expiration or nil,
+        candidateFilters = cf,
+    } }
+end
+
+-- Configure (or reconfigure) one plate's channel containers for its unit.
+-- MUST run after container:SetUnit (group registration parses auras).
+local function ConfigureContainers(plate)
+    local unit = plate.unit
+    local containers = plate.npAuraContainers
+    if not unit or not containers then return end
+    local AuraSkin = GetAuraSkin()
+    local AuraGlue = ns.AuraGlue
+    if not AuraSkin then return end
+
+    local settings = NP.GetSettings()
+    local auras = settings.auras or {}
+    local context = NP.Extras.GetContext()
+    local active = plate.npAurasEnabled
+        and auras.enabled ~= false
+        and NPAuras.IsContextEnabled(auras, context.instanceKind)
+
+    for _, channelKey in ipairs(CHANNELS) do
+        local container = containers[channelKey]
+        if container then
+            if not active then
+                pcall(container.SetEnabled, container, false)
+                container:Hide()
+            else
+                local ch = auras[channelKey] or {}
+                local profile = ChannelProfile(ch, auras)
+                local groups = ChannelGroups(channelKey, auras, ch)
+                if groups then
+                    pcall(container.SetUnit, container, unit)
+                    if AuraGlue and AuraGlue.RunConfigPass then
+                        AuraGlue.RunConfigPass(container, profile, groups, not InCombatLockdown())
+                    else
+                        pcall(AuraSkin.Configure, container, profile, groups)
+                    end
+                    pcall(container.SetEnabled, container, ch.enabled ~= false)
+                    if ch.enabled ~= false then container:Show() else container:Hide() end
+                else
+                    pcall(container.SetEnabled, container, false)
+                    container:Hide()
+                end
+            end
+        end
+    end
+end
+
+-- Anchor a channel container: the engine auto-sizes the rect, so we pin the
+-- flow-origin corner at the user's configured attach point + offsets.
+local function AnchorContainer(plate, container, channelKey, ch, profile)
+    local AuraSkin = GetAuraSkin()
+    local fallback = ROW_ANCHOR_DEFAULTS[channelKey]
+    local pinCorner = (AuraSkin and AuraSkin.LayoutAnchor and AuraSkin.LayoutAnchor(profile)) or "BOTTOMLEFT"
+    container:ClearAllPoints()
+    container:SetPoint(
+        pinCorner,
+        plate.healthBar,
+        ch.relativePoint or fallback.relativePoint,
+        QUICore:Pixels(ch.offsetX or fallback.offsetX, plate),
+        QUICore:Pixels(ch.offsetY or fallback.offsetY, plate))
+end
+
+---------------------------------------------------------------------------
 -- BUILD / APPEARANCE
 ---------------------------------------------------------------------------
 local OnNameplateAura -- defined below (delta consumer)
@@ -334,6 +480,27 @@ local function EnsureSubscribed()
 end
 
 function NPAuras.Build(plate)
+    -- Container path (12.1 engine): one CustomAuraContainer per channel.
+    -- Falls back to the legacy Lua rows when the frame type is unavailable
+    -- (12.0 clients, headless tests) or the plate is built mid-combat.
+    local probe = CreatePlateContainer(plate)
+    if probe then
+        plate.npAuraMode = "container"
+        plate.npAuraContainers = { debuffs = probe }
+        for _, channelKey in ipairs(CHANNELS) do
+            if not plate.npAuraContainers[channelKey] then
+                plate.npAuraContainers[channelKey] = CreatePlateContainer(plate)
+            end
+            local c = plate.npAuraContainers[channelKey]
+            if c then
+                pcall(c.SetEnabled, c, false)
+                c:Hide()
+            end
+        end
+        return
+    end
+
+    plate.npAuraMode = "legacy"
     EnsureSubscribed()
     plate.npAuraSets = { debuffs = {}, buffs = {}, cc = {} }   -- [instanceID] = spellId|true
     plate.npAuraImportant = { debuffs = {}, buffs = {}, cc = {} } -- [instanceID] = true
@@ -343,15 +510,6 @@ function NPAuras.Build(plate)
         GetRow(plate, channelKey)
     end
 end
-
--- Fallback anchors reproducing the classic layout when a channel has no
--- explicit position: debuffs above the bar (clearing the name), buffs above
--- those, cc beside the bar.
-local ROW_ANCHOR_DEFAULTS = {
-    debuffs = { point = "BOTTOM", relativePoint = "TOP", offsetX = 0, offsetY = 20 },
-    buffs   = { point = "BOTTOM", relativePoint = "TOP", offsetX = 0, offsetY = 50 },
-    cc      = { point = "RIGHT", relativePoint = "LEFT", offsetX = -4, offsetY = 0 },
-}
 
 -- Every row anchors to the HEALTH BAR (the stable reference): the row's
 -- `point` pins to the bar's `relativePoint` with pixel-snapped offsets.
@@ -369,6 +527,30 @@ end
 function NPAuras.ApplyAppearance(plate, settings)
     local auras = settings.auras or {}
     plate.npAurasEnabled = auras.enabled ~= false
+
+    if plate.npAuraMode == "container" then
+        local AuraSkin = GetAuraSkin()
+        for _, channelKey in ipairs(CHANNELS) do
+            local container = plate.npAuraContainers and plate.npAuraContainers[channelKey]
+            if container then
+                local ch = auras[channelKey] or {}
+                local profile = ChannelProfile(ch, auras)
+                AnchorContainer(plate, container, channelKey, ch, profile)
+                -- Combat-legal restyle of live buttons; group/layout changes
+                -- land in the next ConfigureContainers pass (SetUnit-time).
+                if AuraSkin and AuraSkin.Restyle then
+                    pcall(AuraSkin.Restyle, container, profile)
+                end
+            end
+        end
+        -- A bound plate reconfigures immediately (settings change on a live
+        -- plate); unbound pooled plates configure on the next SetUnit.
+        if plate.unit then
+            ConfigureContainers(plate)
+        end
+        return
+    end
+
     for _, channelKey in ipairs(CHANNELS) do
         local ch = auras[channelKey] or {}
         local row = GetRow(plate, channelKey)
@@ -660,7 +842,12 @@ end
 ---------------------------------------------------------------------------
 function NPAuras.FullRescan(plate)
     local unit = plate.unit
-    if not unit or not plate.npAuraSets then return end
+    if not unit then return end
+    if plate.npAuraMode == "container" then
+        ConfigureContainers(plate)
+        return
+    end
+    if not plate.npAuraSets then return end
     local settings = NP.GetSettings()
     local auras = settings.auras or {}
 
@@ -725,7 +912,7 @@ end
 ---------------------------------------------------------------------------
 OnNameplateAura = function(unit, updateInfo)
     local plate = NP.plates[unit]
-    if not plate or not plate.npAuraSets then return end
+    if not plate or plate.npAuraMode == "container" or not plate.npAuraSets then return end
     if not plate.npAurasEnabled then return end
 
     -- Full update: rescan everything.
@@ -815,6 +1002,16 @@ end
 -- CLEAR (recycle hygiene, called from the driver's ClearUnit)
 ---------------------------------------------------------------------------
 function NPAuras.Clear(plate)
+    if plate.npAuraMode == "container" and plate.npAuraContainers then
+        for _, channelKey in ipairs(CHANNELS) do
+            local container = plate.npAuraContainers[channelKey]
+            if container then
+                pcall(container.SetEnabled, container, false)
+                container:Hide()
+            end
+        end
+        return
+    end
     if not plate.npAuraSets then return end
     for _, channelKey in ipairs(CHANNELS) do
         wipe(plate.npAuraSets[channelKey])
