@@ -55,7 +55,7 @@ function HouseEditorLayoutModeMixin:OnEvent(event, ...)
 	elseif event == "HOUSING_LAYOUT_DOOR_SELECTION_CHANGED" then
 		local hasSelection = ...;
 		if hasSelection then
-			self:GetParent():ExpandHouseStorage();
+			self:GetParent():TryShowHouseStorageTab(HousingFramesUtil.HouseChestTabs.Storage);
 		end
 		self:UpdateShownInstructions();
 	elseif event == "GLOBAL_MOUSE_UP" or event == "GLOBAL_MOUSE_DOWN" then
@@ -77,15 +77,27 @@ function HouseEditorLayoutModeMixin:OnEvent(event, ...)
 		end
 	elseif event == "UPDATE_BINDINGS" then
 		self:UpdateKeybinds();
-	elseif event == "HOUSING_LAYOUT_FLOORPLAN_SELECTION_CHANGED" or event == "HOUSING_LAYOUT_ROOM_SELECTION_CHANGED" or event == "HOUSING_LAYOUT_DRAG_TARGET_CHANGED" then
+	elseif event == "HOUSING_LAYOUT_FLOORPLAN_SELECTION_CHANGED" then
+		local anySelected, roomID, blueprintCode = ...;
+		if anySelected then
+			-- On selecting a floorplan, ensure the Storage UI is open to the proper tab
+			local tabEnum = blueprintCode and HousingFramesUtil.HouseChestTabs.Blueprints or HousingFramesUtil.HouseChestTabs.Storage;
+			self:GetParent():TryShowHouseStorageTab(tabEnum);
+		end
+		self:UpdateShownInstructions();
+	elseif event == "HOUSING_LAYOUT_ROOM_SELECTION_CHANGED" or event == "HOUSING_LAYOUT_DRAG_TARGET_CHANGED" then
 		self:UpdateShownInstructions();
 	elseif event == "HOUSING_LAYOUT_ROOM_RECEIVED" then
-		local prevNumFloors, currNumFloors, isUpStairs = ...;
-		if not isUpStairs and prevNumFloors >= currNumFloors then
-			--upstairs rooms don't play a sound because downstairs is playing a sound
-			--downstairs rooms that add a new floor play the floor added sound instead
-			--revisit this code if we add basements
-			PlaySound(SOUNDKIT.HOUSING_ROOM_ADDED);
+		-- Check that we haven't temporarily paused room add sounds, or that we're past the pause end time
+		if (not self.roomAddSoundPauseEnd) or (GetTime() > self.roomAddSoundPauseEnd) then
+			self.roomAddSoundPauseEnd = nil;
+			local prevNumFloors, currNumFloors, isUpStairs = ...;
+			if not isUpStairs and prevNumFloors >= currNumFloors then
+				--upstairs rooms don't play a sound because downstairs is playing a sound
+				--downstairs rooms that add a new floor play the floor added sound instead
+				--revisit this code if we add basements
+				PlaySound(SOUNDKIT.HOUSING_ROOM_ADDED);
+			end
 		end
 	elseif event == "HOUSING_LAYOUT_ROOM_REMOVED" then
 		-- TODO: Guessing this should have a remove-specific sound played here?
@@ -110,10 +122,17 @@ function HouseEditorLayoutModeMixin:OnShow()
 	self:GetParent():ShowHouseStorage();
 	C_KeyBindings.ActivateBindingContext(Enum.BindingContext.HousingEditorLayoutMode);
 	PlaySound(SOUNDKIT.HOUSING_ENTER_LAYOUT_MODE);
+
+	if C_HousingLayout.HasSelectedBlueprintFloorplan() then
+		self:GetParent():TryShowHouseStorageTab(HousingFramesUtil.HouseChestTabs.Blueprints);
+	elseif C_HousingLayout.HasSelectedDoor() or C_HousingLayout.HasSelectedFloorplan() then
+		self:GetParent():TryShowHouseStorageTab(HousingFramesUtil.HouseChestTabs.Storage);
+	end
 end
 
 function HouseEditorLayoutModeMixin:OnHide()
 	FrameUtil.UnregisterFrameForEvents(self, HouseEditorLayoutModeShownEvents);
+	self.roomAddSoundPauseEnd = nil;
 
 	local referenceKey = self;
 	if StaticPopup_IsCustomGenericConfirmationShown(referenceKey) then
@@ -132,6 +151,12 @@ function HouseEditorLayoutModeMixin:TryHandleEscape()
 		return true;
 	end
 	return false;
+end
+
+function HouseEditorLayoutModeMixin:StartRoomAddSoundPause()
+	-- Refrain from playing any room add sounds for the next 30 seconds
+	-- Useful in cases like Blueprint importing where room add sounds would overlap with any Blueprint import sounds
+	self.roomAddSoundPauseEnd = GetTime() + 30;
 end
 
 function HouseEditorLayoutModeMixin:UpdateShownInstructions()
@@ -218,8 +243,8 @@ function HouseEditorLayoutFloorLineMixin:Init(floorIndex)
 	local isTopFloor = floorIndex == (C_HousingLayout.GetNumFloors() - 1);
 	self.TopDivider:SetShown(isTopFloor);
 
-	local isFloorOne = floorIndex == 0;
-	self.DoorIcon:SetShown(isFloorOne);
+	local isBaseRoomFloor = floorIndex == C_HousingLayout.GetBaseRoomFloor();
+	self.DoorIcon:SetShown(isBaseRoomFloor);
 
 	local isActive = self:IsActive();
 	local color = isActive and HIGHLIGHT_FONT_COLOR or HOUSING_STORAGE_HEADER_COLOR;

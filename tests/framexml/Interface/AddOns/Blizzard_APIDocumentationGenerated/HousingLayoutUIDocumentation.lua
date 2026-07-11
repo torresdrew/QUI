@@ -60,6 +60,15 @@ local HousingLayoutUI =
 			Type = "Function",
 		},
 		{
+			Name = "GetBaseRoomFloor",
+			Type = "Function",
+
+			Returns =
+			{
+				{ Name = "floor", Type = "number", Nilable = false },
+			},
+		},
+		{
 			Name = "GetNumActiveRooms",
 			Type = "Function",
 
@@ -80,11 +89,33 @@ local HousingLayoutUI =
 		{
 			Name = "GetRoomPlacementBudget",
 			Type = "Function",
-			Documentation = { "Returns the max room placement budget for the current house interior; Can be increased via house level" },
+			Documentation = { "Returns the max room placement budget for the current owned house's interior; Can be increased via house level" },
 
 			Returns =
 			{
-				{ Name = "placementBudget", Type = "number", Nilable = false },
+				{ Name = "placementBudget", Type = "number", Nilable = true, Documentation = { "Will be nil if not in an owned House or Plot" } },
+			},
+		},
+		{
+			Name = "GetRoomPlayerIsIn",
+			Type = "Function",
+			MayReturnNothing = true,
+			Documentation = { "Returns the guid of the interior room the player is standing in, or nil if not currently standing in one" },
+
+			Returns =
+			{
+				{ Name = "roomGUID", Type = "WOWGUID", Nilable = false },
+			},
+		},
+		{
+			Name = "GetSelectedBlueprintFloorplan",
+			Type = "Function",
+			MayReturnNothing = true,
+
+			Returns =
+			{
+				{ Name = "roomID", Type = "number", Nilable = false },
+				{ Name = "shareCode", Type = "cstring", Nilable = false },
 			},
 		},
 		{
@@ -131,11 +162,11 @@ local HousingLayoutUI =
 		{
 			Name = "GetSpentPlacementBudget",
 			Type = "Function",
-			Documentation = { "Returns how much of the current house's room placement budget has been spent; Different kinds of rooms take up different budget amounts, so this value isn't an individual room count, see GetNumActiveRooms for that" },
+			Documentation = { "Returns how much of the current owned house's room placement budget has been spent; Different kinds of rooms take up different budget amounts, so this value isn't an individual room count, see GetNumActiveRooms for that" },
 
 			Returns =
 			{
-				{ Name = "spentPlacementBudget", Type = "number", Nilable = false },
+				{ Name = "spentPlacementBudget", Type = "number", Nilable = true, Documentation = { "Will be nil if not in an owned House" } },
 			},
 		},
 		{
@@ -160,11 +191,20 @@ local HousingLayoutUI =
 		{
 			Name = "HasRoomPlacementBudget",
 			Type = "Function",
-			Documentation = { "Returns whether there's a max room placement budget available and active for the current player, in the current house interior" },
+			Documentation = { "Returns whether there's a max room placement budget available and active for the current player, in the current house's interior" },
 
 			Returns =
 			{
 				{ Name = "hasBudget", Type = "bool", Nilable = false },
+			},
+		},
+		{
+			Name = "HasSelectedBlueprintFloorplan",
+			Type = "Function",
+
+			Returns =
+			{
+				{ Name = "hasSelectedBlueprintFloorplan", Type = "bool", Nilable = false },
 			},
 		},
 		{
@@ -406,6 +446,7 @@ local HousingLayoutUI =
 			{
 				{ Name = "hasSelection", Type = "bool", Nilable = false },
 				{ Name = "roomID", Type = "number", Nilable = false },
+				{ Name = "blueprintShareCode", Type = "cstring", Nilable = true },
 			},
 		},
 		{

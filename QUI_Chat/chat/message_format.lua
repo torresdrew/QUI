@@ -10,12 +10,21 @@
 -- Payload tables: formatter entry points take raw CHAT_MSG_* args or `p`, a
 -- table of probed CHAT_MSG_* args built by BuildPayloadFromArgs — every possibly-secret field is nil unless
 -- proven non-secret, EXCEPT p.text (BuildEventLine: non-secret string;
--- WrapSecretEventLine: secret), p.rawSender, and p.rawGuid (may be secret;
--- raw identity values are only ever passed to secret-allowed APIs or fixed
--- string.format templates, never Lua operators).
+-- WrapSecretEventLine: secret), p.rawSender, p.rawGuid, and p.discordInfo (may
+-- be secret/carry secret fields; raw identity values are only ever passed to
+-- secret-allowed APIs or fixed string.format templates, never Lua operators —
+-- discordInfo's own fields are additionally never string.sub/gsub'd, only
+-- forwarded whole or passed to string.format, per the kstring caution below).
 --   p = { text, rawSender, sender, language, channelFull, target, flags,
 --         zoneID, chNum, chBase, chName (registry-resolved display name),
---         lineID, guid, rawGuid, bnID, decorated (DecorateSender output) }
+--         lineID, guid, rawGuid, bnID, decorated (DecorateSender output),
+--         isSubtitle, hideSenderInLetterbox (12.1 arg15/arg16 — carried for
+--         completeness/nil-safety; inert, same as Blizzard's own handling:
+--         arg15 is never read past the unpack and arg16 already gates the
+--         message out of message_capture.lua before this payload is built),
+--         discordInfo (12.1 arg18, DiscordChatInfo — raw table, nil for
+--         non-Discord traffic), isFromDiscord (discordInfo.userID ~= 0 gate,
+--         ChatFrameOverrides.lua:294-295 parity) }
 --
 -- HARD CONSTRAINT: ChatTypeInfo is READ-ONLY here. Never assign into it and
 -- never call ChangeChatColor.
@@ -36,6 +45,27 @@ local function FormatString(fmt, ...)
     local ok, formatted = pcall(string.format, fmt, ...)
     if not ok then return nil end
     return formatted
+end
+
+-- Discord-origin gate (ChatFrameOverrides.lua:294-295 parity: `local
+-- discordInfo = arg18; local isFromDiscord = discordInfo.userID and
+-- discordInfo.userID ~= 0;`). Blizzard actually has TWO subtly different
+-- gates: the Overrides:295 form above (nil userID fails the first conjunct →
+-- NOT Discord) and GetDecoratedSenderName's `discordInfo and
+-- discordInfo.userID ~= 0` (ChatFrameUtil.lua:1018 — nil ~= 0 is true, so a
+-- nil userID PASSES there). QUI unifies on the stricter Overrides:295 form
+-- everywhere (sender decoration, player-link selection, content markers); the
+-- divergence is theoretical anyway — userID is Nilable=false in
+-- DiscordConstantsDocumentation.lua:46. Conservative on secrets: an
+-- unreadable discordInfo/userID never asserts "from Discord" —
+-- truthiness/equality on a value that might be secret is illegal (same rule
+-- as the `not guid` check in ColorizeSenderName below), so a secret
+-- discordInfo just degrades to the ordinary WoW-character path.
+local function IsFromDiscord(discordInfo)
+    if IsSecret(discordInfo) or type(discordInfo) ~= "table" then return false end
+    local userID = discordInfo.userID
+    if IsSecret(userID) or not userID or userID == 0 then return false end
+    return true
 end
 
 -- ---------------------------------------------------------------------------
@@ -363,6 +393,41 @@ local function ColorizeSenderName(guid, name, text)
     return text
 end
 
+-- Discord displayNameType enum value for "show the Discord global name"
+-- (DiscordConstantsDocumentation.lua:27: { Name = "GlobalName", Type =
+-- "DiscordDisplayNameType", EnumValue = 2 }). Read live when Enum is present
+-- (future-proof against a renumber); 2 is the documented fallback, never
+-- invented.
+local DISCORD_GLOBAL_NAME_TYPE =
+    (_G.Enum and _G.Enum.DiscordDisplayNameType and _G.Enum.DiscordDisplayNameType.GlobalName) or 2
+
+-- Discord author name color (ChatFrameUtil.lua:1049-1057 DiscordNameColorize
+-- parity). ChatAdditionalColors["DISCORD_PLAYER_NAME"] is seeded white
+-- (1,1,1) at login (ChatTypeInfoColors.lua:15-22) and synced from the server
+-- chat-color palette the same way every other chat-type color is — so
+-- C_ChatInfo.GetColorForChatType("DISCORD_PLAYER_NAME") returns a table in
+-- practice and Blizzard's own hardcoded fallback (CreateColor(224, 227, 255,
+-- 1) — raw 0-255 byte values fed to a 0-1-float color constructor, a genuine
+-- Blizzard bug) is effectively unreachable. NOT a literal mirror: Blizzard's
+-- buggy path would emit a garbled hex string; this sanitizes to the evident
+-- intent (0xE0E3FF via mod-256 clamp). Bug acknowledged, not replicated —
+-- dead branch in live play since the login seed makes the API path win.
+local function DiscordNameColorize(name)
+    local r255, g255, b255 = 224, 227, 255 -- ChatFrameUtil.lua:1056 literal fallback
+    local CI = _G.C_ChatInfo
+    if CI and CI.GetColorForChatType then
+        local ok, colorInfo = pcall(CI.GetColorForChatType, "DISCORD_PLAYER_NAME")
+        if ok and not IsSecret(colorInfo) and type(colorInfo) == "table"
+            and type(colorInfo.r) == "number" and type(colorInfo.g) == "number"
+            and type(colorInfo.b) == "number" then
+            r255, g255, b255 = colorInfo.r * 255, colorInfo.g * 255, colorInfo.b * 255
+        end
+    end
+    local hex = ("ff%02x%02x%02x"):format(
+        math.floor(r255 + 0.5) % 256, math.floor(g255 + 0.5) % 256, math.floor(b255 + 0.5) % 256)
+    return ("|c%s%s|r"):format(hex, name)
+end
+
 -- ---------------------------------------------------------------------------
 -- Sender decoration (ChatFrameUtil.GetDecoratedSenderName parity, vendored
 -- ChatFrameUtil.lua:977 — replicated so the class-color gate is QUI's setting,
@@ -373,6 +438,14 @@ end
 -- ProcessSenderNameFilters sees the same payload Blizzard hands it.
 -- Returns nil when the sender is secret/absent — callers fall back to the
 -- raw value through pcall'd formats.
+--
+-- discordInfo (12.1) rides as the 15th vararg slot — Blizzard's OWN calling
+-- convention: ChatFrameOverrides.lua:310 calls
+-- `ChatFrameUtil.GetDecoratedSenderName(event, arg1, ..., arg14, discordInfo)`,
+-- skipping arg15-arg17 entirely. Reading it via select(15, ...) here (instead
+-- of widening the whole positional signature) keeps every existing caller —
+-- including the unit test suite, which only ever supplies up to a12 (guid) —
+-- untouched when no discordInfo is supplied (select(15, ...) is simply nil).
 function Format.DecorateSender(event, ...)
     local _, sender = ...
     if IsSecret(sender) or type(sender) ~= "string" or sender == "" then return nil end
@@ -390,6 +463,50 @@ function Format.DecorateSender(event, ...)
         if ok and type(short) == "string" and short ~= "" then decorated = short end
     end
     local guid = select(12, ...)
+    -- classLookupName tracks whichever identity `decorated` currently reflects
+    -- (WoW sender, or the swapped Discord lastOnlineName below) — the name-cache
+    -- fallback key must match, or ResolveSenderClass seeds/reads the wrong slot.
+    local classLookupName = sender
+
+    -- Discord identity override (ChatFrameUtil.lua:1018-1026 parity). Runs
+    -- BEFORE the timerunning-icon and class-color steps below, exactly like
+    -- Blizzard, because both of those key off `guid`/`decorated`, which this
+    -- block may reassign.
+    local discordInfo = select(15, ...)
+    if IsFromDiscord(discordInfo) then
+        -- GlobalName display mode: Blizzard returns IMMEDIATELY here, skipping
+        -- both the timerunning-icon check AND ProcessSenderNameFilters below
+        -- entirely (ChatFrameUtil.lua:1019-1023) — a genuine quirk, mirrored
+        -- rather than "fixed" (filters simply never see a global-name Discord
+        -- sender).
+        local shouldShowGlobalName = not IsSecret(discordInfo.type) and discordInfo.type == DISCORD_GLOBAL_NAME_TYPE
+        local globalName = discordInfo.globalName
+        if shouldShowGlobalName and not IsSecret(globalName)
+            and type(globalName) == "string" and globalName ~= "" then
+            return DiscordNameColorize(globalName)
+        end
+        local lastOnlineGUID = discordInfo.lastOnlineGUID
+        if not IsSecret(lastOnlineGUID) and type(lastOnlineGUID) == "string" and lastOnlineGUID ~= "" then
+            guid = lastOnlineGUID
+            -- The class lookup below now resolves the LINKED character's class.
+            -- If lastOnlineName doesn't ALSO swap (absent/secret/empty — the
+            -- next block), the displayed name is still the raw Discord handle;
+            -- letting that handle key the name-cache would seed
+            -- nameClassCache[handle] = linked character's class, poisoning the
+            -- cold-GUID recovery path for an identity that isn't a character
+            -- name at all. Clear the key here; the name swap below
+            -- re-establishes it when both halves of the Discord identity are
+            -- usable. (CacheableName(nil) → nil, so ResolveSenderClass simply
+            -- skips all name-cache participation.)
+            classLookupName = nil
+        end
+        local lastOnlineName = discordInfo.lastOnlineName
+        if not IsSecret(lastOnlineName) and type(lastOnlineName) == "string" and lastOnlineName ~= "" then
+            decorated = lastOnlineName
+            classLookupName = lastOnlineName
+        end
+    end
+
     if not IsSecret(guid) and type(guid) == "string" and guid ~= ""
         and _G.C_ChatInfo and _G.C_ChatInfo.IsTimerunningPlayer
         and _G.TimerunningUtil and _G.TimerunningUtil.AddSmallIcon then
@@ -401,9 +518,10 @@ function Format.DecorateSender(event, ...)
     end
     -- Class-color the name. The GUID flows through even when secret
     -- (AllowedWhenTainted) and yields a (secret) class in combat that still
-    -- colors via the C_ClassColor chain; the non-secret `sender` is only the
-    -- name-cache fallback key for the rare cold-GUID (MayReturnNothing) case.
-    decorated = ColorizeSenderName(guid, sender, decorated)
+    -- colors via the C_ClassColor chain; the non-secret `classLookupName` is
+    -- only the name-cache fallback key for the rare cold-GUID
+    -- (MayReturnNothing) case.
+    decorated = ColorizeSenderName(guid, classLookupName, decorated)
     -- Cross-addon sender-name filters (same registry Blizzard consults).
     local util = _G.ChatFrameUtil
     if util and util.ProcessSenderNameFilters then
@@ -414,7 +532,7 @@ function Format.DecorateSender(event, ...)
 end
 
 function Format.BuildPayloadFromArgs(event, ...)
-    local a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, _, _, a17 = ...
+    local a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17, a18 = ...
     local p = {
         text = a1,
         rawSender = a2,
@@ -431,6 +549,23 @@ function Format.BuildPayloadFromArgs(event, ...)
         rawGuid = a12,
         bnID = (not IsSecret(a13)) and type(a13) == "number" and a13 or nil,
         suppressIcons = (not IsSecret(a17)) and a17 and true or nil,
+        -- 12.1 arg15/arg16 (ChatInfoDocumentation.lua CHAT_MSG_GUILD_DISCORD
+        -- payload, both NeverSecret=true): carried for completeness/nil-safety
+        -- only. isSubtitle is never read past Blizzard's own vararg unpack
+        -- (ChatFrameOverrides.lua:285); hideSenderInLetterbox is ALREADY the
+        -- early-return gate in message_capture.lua, so a true value here can
+        -- never actually reach this payload. Never dropped either way.
+        isSubtitle = a15 and true or nil,
+        hideSenderInLetterbox = a16 and true or nil,
+        -- 12.1 arg18 (DiscordChatInfo). Raw table, forwarded whole — never
+        -- string.sub/gsub'd (kstring caution: forward whole, like the copy-window
+        -- battleTag lesson). May itself be secret for CHAT_MSG_GUILD under combat
+        -- lockdown (SecretInChatMessagingLockdown=true there, no NeverSecret on
+        -- discordInfo); CHAT_MSG_GUILD_DISCORD carries no such flag, so it is
+        -- never secret for that event. isFromDiscord is the single conservative
+        -- gate every Discord-aware branch below consults.
+        discordInfo = a18,
+        isFromDiscord = IsFromDiscord(a18),
     }
     if p.chBase then
         local Registry = ns.QUI and ns.QUI.Chat and ns.QUI.Chat.ChannelRegistry
@@ -438,7 +573,7 @@ function Format.BuildPayloadFromArgs(event, ...)
             and Registry.ResolveName(p.chNum, p.chBase) or p.chBase
     end
     p.decorated = Format.DecorateSender(event, a1, a2, a3, a4, a5, a6, a7,
-        a8, a9, a10, a11, a12, a13, a14)
+        a8, a9, a10, a11, a12, a13, a14, a18)
     return p
 end
 
@@ -456,6 +591,10 @@ local BOSS_NOTICE_EVENTS = {
 -- render as "name: text" (SAY/CHANNEL) in short mode.
 local TYPE_PREFIX = {
     GUILD = "[G] ",
+    -- QUI-only shorten tag (channelShorten is a QUI feature; Blizzard has no
+    -- prefix abbreviations). Distinct from GUILD's [G] so Discord-bridged
+    -- guild lines stay distinguishable in short mode.
+    GUILD_DISCORD = "[GD] ",
     OFFICER = "[O] ",
     PARTY = "[P] ",
     PARTY_LEADER = "[PL] ",
@@ -671,6 +810,61 @@ local function CollapseSpaces(msg)
     return (msg:gsub("     +", "    "))
 end
 
+-- Discord content markers (ChatFrameUtil.lua:1079-1111 FormatDiscordMessage
+-- parity). Order matches Blizzard's if-chain exactly: attachment, poll, embed,
+-- sticker, emoji, forwardedMessage. Genuine Blizzard behavior, mirrored exactly
+-- though it reads like a bug — each flag OVERWRITES the previous marker rather
+-- than stacking (only the LAST true flag wins when several are set), every
+-- marker prefixes the ORIGINAL body (never a previously-marked one), and
+-- hasForwardedMessage swaps in discordInfo.forwardedMessage as the WHOLE body,
+-- discarding the actual message text entirely. Never "fixed" — parity means
+-- matching what ships.
+local DISCORD_MARKER_ORDER = {
+    { flag = "hasAttachment", gs = "DISCORD_MESSAGE_ATTACHMENT" },
+    { flag = "hasPoll", gs = "DISCORD_MESSAGE_POLL" },
+    { flag = "hasEmbed", gs = "DISCORD_MESSAGE_EMBED" },
+    { flag = "hasSticker", gs = "DISCORD_MESSAGE_STICKER" },
+    { flag = "hasEmoji", gs = "DISCORD_MESSAGE_EMOJI" },
+    { flag = "hasForwardedMessage", gs = "DISCORD_MESSAGE_FORWARD" },
+}
+
+-- YELLOW_FONT_COLOR:WrapTextInColorCode(label) .. " " .. body, degrading to
+-- plain (uncolored) label text when the global color object is unavailable
+-- (unit-test harness) rather than erroring.
+local function DiscordMarkerText(globalStringName, body)
+    local gs = _G[globalStringName]
+    if type(gs) ~= "string" or gs == "" then return body end
+    local label = gs
+    local color = _G.YELLOW_FONT_COLOR
+    if type(color) == "table" and color.WrapTextInColorCode then
+        local ok, wrapped = pcall(color.WrapTextInColorCode, color, gs)
+        if ok and type(wrapped) == "string" and wrapped ~= "" then label = wrapped end
+    end
+    return ("%s %s"):format(label, body)
+end
+
+local function FormatDiscordMessage(discordInfo, message)
+    if IsSecret(discordInfo) or type(discordInfo) ~= "table" then return message end
+    local fromDiscord = discordInfo.fromDiscord
+    if IsSecret(fromDiscord) or not fromDiscord then return message end
+    local modified = message
+    for i = 1, #DISCORD_MARKER_ORDER do
+        local entry = DISCORD_MARKER_ORDER[i]
+        local flagValue = discordInfo[entry.flag]
+        if not IsSecret(flagValue) and flagValue then
+            if entry.flag == "hasForwardedMessage" then
+                local forwarded = discordInfo.forwardedMessage
+                local body = (not IsSecret(forwarded) and type(forwarded) == "string" and forwarded ~= "")
+                    and forwarded or message
+                modified = DiscordMarkerText(entry.gs, body)
+            else
+                modified = DiscordMarkerText(entry.gs, message)
+            end
+        end
+    end
+    return modified
+end
+
 -- "2. Community:1234:1" -> "2. Club - Stream"; plain channels pass through.
 local function ResolvePrefixedChannelName(channelFull)
     local util = _G.ChatFrameUtil
@@ -820,6 +1014,20 @@ local function BuildPlayerLink(typeKey, chatGroup, p, linkDisplayText)
         -- click target for BN display names).
         return linkDisplayText
     end
+    if (typeKey == "GUILD_DISCORD" or typeKey == "GUILD") and p.isFromDiscord then
+        -- GetDiscordUserLink parity (ChatFrameOverrides.lua:594-595 calls it for
+        -- EITHER type when isFromDiscord; ItemRef.lua:122-124 + LinkUtil.lua:62
+        -- build the link: |Hdiscorduser:bnetIDAccount:discordUserID:lineID:
+        -- chatGroup:chatTarget|h<linkDisplayText>|h). p.isFromDiscord already
+        -- guarantees p.discordInfo is a non-secret table with a non-secret,
+        -- non-zero userID (IsFromDiscord's own gate) — userID is forwarded
+        -- whole via %s, never string-manipulated (kstring caution).
+        local lid = type(p.lineID) == "number" and p.lineID or 0
+        local target = ChatTargetFor(chatGroup, sender, p.chNum)
+        local bnID = type(p.bnID) == "number" and p.bnID or 0
+        return ("|Hdiscorduser:%s:%s:%d:%s:%s|h%s|h"):format(
+            bnID, p.discordInfo.userID, lid, chatGroup, target, linkDisplayText)
+    end
     if typeKey == "COMMUNITIES_CHANNEL" then
         -- Community message links carry club/stream/message coordinates
         -- (ChatFrameOverrides.lua:564-576). GetInfoFromLastCommunityChatLine
@@ -882,6 +1090,12 @@ local function FormatNormalLine(event, typeKey, p)
     end
     msg = ExpandIconExpressions(msg, p.suppressIcons, chatGroup)
     msg = CollapseSpaces(msg)
+    -- Discord content markers (ChatFrameOverrides.lua:611-613: `if isFromDiscord
+    -- then message = ChatFrameUtil.FormatDiscordMessage(discordInfo, message)
+    -- end`, unconditional on typeKey — mirrored the same way here).
+    if p.isFromDiscord then
+        msg = FormatDiscordMessage(p.discordInfo, msg)
+    end
 
     local pflag = PFlag(p.flags, p.zoneID, p.chNum)
     local sender = type(p.sender) == "string" and p.sender or ""
@@ -946,6 +1160,13 @@ local function FormatNormalLine(event, typeKey, p)
             elseif typeKey == "GUILD_ITEM_LOOTED" then
                 -- "$s has looted ..." — Blizzard substitutes a bare player link.
                 outMsg = (msg:gsub("%$s", ("|Hplayer:%s|h%s|h"):format(sender, linkDisplayText)))
+            elseif typeKey == "GUILD_DISCORD" and p.isFromDiscord then
+                -- ChatFrameOverrides.lua:637-638: an EXTRA space between pflag
+                -- and playerLink here, unlike every other branch (genuine
+                -- Blizzard quirk — mirrored, not "fixed"). GUILD-with-discordInfo
+                -- (as opposed to GUILD_DISCORD) does NOT get this quirk; it falls
+                -- to the plain `else` below, matching Blizzard's typeKey=="GUILD_DISCORD"-only gate.
+                outMsg = FormatString(fmt .. msg, pflag .. " " .. playerLink)
             else
                 outMsg = FormatString(fmt .. msg, pflag .. playerLink)
             end

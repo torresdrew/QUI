@@ -1325,6 +1325,33 @@ function CharacterSelectRewardsButtonMixin:OnClick()
 	end
 end
 
+CharSelectEnterWorldButtonMixin = {};
+
+function CharSelectEnterWorldButtonMixin:OnClick()
+	-- This should be disabled, but due to timing of events it may not be checked yet
+	if not CharacterSelect_AllowedToEnterWorld() then
+		CharacterSelect_UpdateButtonState();
+		return;
+	end
+
+	CharacterSelect_EnterWorld();
+end
+
+function CharSelectEnterWorldButtonMixin:NarrationGetName()
+	return NarrationUtil.MakeNarrationString(self:GetText(), CharSelectCharacterName:GetText());
+end
+
+CharacterSelectRotateButtonMixin = {};
+
+function CharacterSelectRotateButtonMixin:OnLoad()
+	IconButtonMixin.OnLoad(self);
+	self:SetScript("OnUpdate", self.rotationOnUpdate);
+end
+
+function CharacterSelectRotateButtonMixin:NarrationGetName()
+	return self.narrationName;
+end
+
 CharacterSelectBackButtonMixin = {};
 
 function CharacterSelectBackButtonMixin:OnLoad()
@@ -1944,6 +1971,37 @@ function CharacterVASMixin:OnLeave()
 	GetAppropriateTooltip():Hide();
 end
 
+function CharacterVASMixin:NarrationGetName()
+	if self.data then
+		if self.data.isExpansionTrial or self.data.isVAS then
+			return self.data.popupInfo and self.data.popupInfo.title or nil;
+		else
+			return self.data.flowTitle;
+		end
+	end
+
+	return nil;
+end
+
+function CharacterVASMixin:NarrationGetDescription()
+	if self.data then
+		local numberAvailable = self.upgradeInfo and self.upgradeInfo.amount and NARRATION_VAS_AVAILABLE_COUNT:format(self.upgradeInfo.amount) or nil;
+
+		if not self.data.isExpansionTrial and not self.data.isVAS then
+			return NarrationUtil.MakeNarrationString(BOOST_TOKEN_TOOLTIP_DESCRIPTION:format(self.data.level), numberAvailable);
+		elseif self.data.popupInfo then
+			local statusLine = GetVASTokenStatusTooltip(self.upgradeInfo);
+			return NarrationUtil.MakeNarrationString(self.data.popupInfo.description, statusLine, numberAvailable);
+		end
+	end
+
+	return nil;
+end
+
+function CharacterVASMixin:NarrationNavigationShouldSkipTooltips()
+	return true;
+end
+
 CharacterBoostMixin = {};
 
 function CharacterBoostMixin:OnClick()
@@ -2467,6 +2525,20 @@ end
 function CopyCharacterButtonMixin:UpdateButtonState()
 	local isShown = C_CharacterServices.IsLiveRegionCharacterListEnabled() or C_CharacterServices.IsLiveRegionCharacterCopyEnabled() or C_CharacterServices.IsLiveRegionAccountCopyEnabled() or C_CharacterServices.IsLiveRegionKeyBindingsCopyEnabled();
 	CharacterSelectUI.VisibilityFramesContainer.ToolTray:SetToolFrameShown(self, isShown);
+end
+
+CharacterSelectVisibilityToggleButtonMixin = {};
+
+function CharacterSelectVisibilityToggleButtonMixin:NarrationGetName()
+	return NARRATION_HIDE_INTERFACE_BUTTON;
+end
+
+function CharacterSelectVisibilityToggleButtonMixin:NarrationGetDescription()
+	return NARRATION_HIDE_INTERFACE_DESCRIPTION;
+end
+
+function CharacterSelectVisibilityToggleButtonMixin:NarrationNavigationShouldSkipTooltips()
+	return true;
 end
 
 function CopyCharacterSearch_OnClick(self)

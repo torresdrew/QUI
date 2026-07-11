@@ -982,22 +982,20 @@ local function IsSpellKnownForTickRule(spellID)
     return false
 end
 
-local function UnitHasAuraBySpellID(unit, auraSpellID, filter)
+local function UnitHasAuraBySpellID(unit, auraSpellID)
     if not unit or not auraSpellID then return false end
 
-    if C_UnitAuras and C_UnitAuras.GetAuraDataBySpellID then
-        local aura = C_UnitAuras.GetAuraDataBySpellID(unit, auraSpellID)
-        if aura then
-            return true
-        end
-    end
-
-    if AuraUtil and AuraUtil.FindAuraBySpellID then
-        local aura = AuraUtil.FindAuraBySpellID(auraSpellID, unit, filter)
-        return aura ~= nil
-    end
-
-    return false
+    -- 12.1: C_UnitAuras.GetAuraDataBySpellID and AuraUtil.FindAuraBySpellID were
+    -- removed. GetUnitAuraBySpellID is the surviving spell-ID getter — it does
+    -- NOT throw (RequiresNonSecretAura, not RequiresUnitAuraAccess) and returns
+    -- the first aura matching the spell, or nil. Guard the result against being a
+    -- secret value before truth-testing it.
+    local getAura = C_UnitAuras and C_UnitAuras.GetUnitAuraBySpellID
+    if not getAura then return false end
+    local ok, aura = pcall(getAura, unit, auraSpellID)
+    if not ok then return false end
+    if issecretvalue and issecretvalue(aura) then return false end
+    return aura ~= nil
 end
 
 local function ResolveRuleBasedTickModel(castbar, castContext)
@@ -1021,7 +1019,7 @@ local function ResolveRuleBasedTickModel(castbar, castContext)
 
     if rule.auraOptions and castContext and castContext.unit then
         for _, option in ipairs(rule.auraOptions) do
-            if option and UnitHasAuraBySpellID(castContext.unit, option.auraSpellID, option.filter) and option.ticks and option.ticks > 1 then
+            if option and UnitHasAuraBySpellID(castContext.unit, option.auraSpellID) and option.ticks and option.ticks > 1 then
                 tickCount = option.ticks
                 break
             end
@@ -1248,8 +1246,12 @@ end
 
 local function EnsureChannelTickEventRegistration()
     if CHANNEL_TICK_EVENT_REGISTERED then return end
-    if not EventRegistry or type(EventRegistry.RegisterCallback) ~= "function" then return end
-    EventRegistry:RegisterCallback("COMBAT_LOG_EVENT_UNFILTERED", OnChannelTickCombatLogEvent, CHANNEL_TICK_EVENT_FRAME)
+    if not EventRegistry or type(EventRegistry.RegisterFrameEventAndCallback) ~= "function" then return end
+    -- RegisterFrameEventAndCallback binds the game event (RegisterFrameEvent) AND the
+    -- callback; plain RegisterCallback never calls frameEventFrame:RegisterEvent, so CLEU
+    -- was never delivered and channel-tick detection was dead. 12.1: CLEU must be
+    -- registered explicitly (it is excluded from RegisterAllEvents).
+    EventRegistry:RegisterFrameEventAndCallback("COMBAT_LOG_EVENT_UNFILTERED", OnChannelTickCombatLogEvent, CHANNEL_TICK_EVENT_FRAME)
     CHANNEL_TICK_EVENT_REGISTERED = true
 end
 
@@ -2121,7 +2123,9 @@ local function GetCastInfo(castbar, unit)
     return spellName, text, texture, startTimeMS, endTimeMS, notInterruptible, unitSpellID, isChanneled, channelStages, durationObj, hasSecretTiming
 end
 
--- Detect if cast is empowered (player only)
+-- Detect if cast is empowered (player only). UnitChannelInfo already
+-- supplies isEmpowered/numEmpowerStages (via isEmpowerEvent/channelStages);
+-- no separate C_Spell probe exists on 12.1.
 local function DetectEmpoweredCast(isPlayer, spellID, unitSpellID, isEmpowerEvent, isChanneled, channelStages)
     if not isPlayer then
         return false, 0
@@ -2133,15 +2137,6 @@ local function DetectEmpoweredCast(isPlayer, spellID, unitSpellID, isEmpowerEven
     if isChanneled and isEmpowerEvent and channelStages and channelStages > 0 then
         numStages = channelStages
         isEmpowered = true
-    end
-
-    local checkSpellID = spellID or unitSpellID
-    if checkSpellID and C_Spell and C_Spell.GetSpellEmpowerInfo then
-        local empowerInfo = C_Spell.GetSpellEmpowerInfo(checkSpellID)
-        if empowerInfo and empowerInfo.numStages and empowerInfo.numStages > 0 then
-            isEmpowered = true
-            numStages = empowerInfo.numStages
-        end
     end
 
     return isEmpowered, numStages

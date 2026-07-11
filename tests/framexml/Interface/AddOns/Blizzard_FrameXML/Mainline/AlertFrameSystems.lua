@@ -282,7 +282,7 @@ function ScenarioLegionInvasionAlertFrame_SetUp(frame, rewardQuestID, name, show
 		DungeonCompletionAlertFrameReward_SetRewardMoney(rewardFrame, money);
 	end
 
-	if xp > 0 and not IsPlayerAtEffectiveMaxLevel() then
+	if xp > 0 and not GameRulesUtil.IsPlayerAtEffectiveMaxLevel() then
 		local rewardFrame = GetRewardFrame(frame, "InvasionAlertFrameRewardTemplate");
 		DungeonCompletionAlertFrameReward_SetRewardXP(rewardFrame, xp);
 	end
@@ -717,25 +717,37 @@ function EntitlementDelivered_OnClick(self, button, down)
 			end
 		end
 	elseif (self.type == Enum.WoWEntitlementType.Mount) then
-		ToggleCollectionsJournal(COLLECTIONS_JOURNAL_TAB_INDEX_MOUNTS);
+		if not DISALLOW_FRAME_TOGGLING then
+			ToggleCollectionsJournal(COLLECTIONS_JOURNAL_TAB_INDEX_MOUNTS);
+		end
 	elseif (self.type == Enum.WoWEntitlementType.Battlepet) then
-		ToggleCollectionsJournal(COLLECTIONS_JOURNAL_TAB_INDEX_PETS);
+		if not DISALLOW_FRAME_TOGGLING then
+			ToggleCollectionsJournal(COLLECTIONS_JOURNAL_TAB_INDEX_PETS);
+		end
 	elseif (self.type == Enum.WoWEntitlementType.Toy) then
-		ToggleToyCollection(self.payloadID);
+		if not DISALLOW_FRAME_TOGGLING then
+			ToggleToyCollection(self.payloadID);
+		end
 	elseif (self.type == Enum.WoWEntitlementType.AppearanceSet) then
 		if(self.payloadID) then
 			TransmogUtil.OpenCollectionToSet(self.payloadID);
 		else
-			ToggleCollectionsJournal(COLLECTIONS_JOURNAL_TAB_INDEX_APPEARANCES);
+			if not DISALLOW_FRAME_TOGGLING then
+				ToggleCollectionsJournal(COLLECTIONS_JOURNAL_TAB_INDEX_APPEARANCES);
+			end
 		end
 	elseif (self.type == Enum.WoWEntitlementType.Appearance) then
 		if(self.payloadID) then
 			TransmogUtil.OpenCollectionToItem(self.payloadID);
 		else
-			ToggleCollectionsJournal(COLLECTIONS_JOURNAL_TAB_INDEX_APPEARANCES);
+			if not DISALLOW_FRAME_TOGGLING then
+				ToggleCollectionsJournal(COLLECTIONS_JOURNAL_TAB_INDEX_APPEARANCES);
+			end
 		end
 	elseif (self.type == Enum.WoWEntitlementType.Illusion) then
-		ToggleCollectionsJournal(COLLECTIONS_JOURNAL_TAB_INDEX_APPEARANCES);
+		if not DISALLOW_FRAME_TOGGLING then
+			ToggleCollectionsJournal(COLLECTIONS_JOURNAL_TAB_INDEX_APPEARANCES);
+		end
 	end
 end
 
@@ -1092,7 +1104,7 @@ function WorldQuestCompleteAlertFrame_SetUp(frame, questData)
 		DungeonCompletionAlertFrameReward_SetRewardMoney(rewardFrame, questData.money);
 	end
 
-	if questData.xp > 0 and not IsPlayerAtEffectiveMaxLevel() then
+	if questData.xp > 0 and not GameRulesUtil.IsPlayerAtEffectiveMaxLevel() then
 		local rewardFrame = GetRewardFrame(frame, "WorldQuestFrameRewardTemplate");
 		DungeonCompletionAlertFrameReward_SetRewardXP(rewardFrame, questData.xp);
 	end
@@ -1206,6 +1218,10 @@ function NewPetAlertFrameMixin:OnClick(button, down)
 		return;
 	end
 
+	if DISALLOW_FRAME_TOGGLING then
+		return;
+	end
+
 	SetCollectionsJournalShown(true, COLLECTIONS_JOURNAL_TAB_INDEX_PETS);
 	if CollectionsJournal then
 		PetJournal_SelectPet(PetJournal, self.petID);
@@ -1230,6 +1246,10 @@ end
 
 function NewMountAlertFrameMixin:OnClick(button, down)
 	if AlertFrame_OnClick(self, button, down) then
+		return;
+	end
+
+	if DISALLOW_FRAME_TOGGLING then
 		return;
 	end
 
@@ -1259,6 +1279,10 @@ function NewToyAlertFrameMixin:OnClick(button, down)
 		return;
 	end
 
+	if DISALLOW_FRAME_TOGGLING then
+		return;
+	end
+
 	ToggleToyCollection(self.toyID);
 end
 
@@ -1280,6 +1304,10 @@ end
 
 function NewWarbandSceneAlertFrameMixin:OnClick(button, down)
 	if AlertFrame_OnClick(self, button, down) then
+		return;
+	end
+
+	if DISALLOW_FRAME_TOGGLING then
 		return;
 	end
 

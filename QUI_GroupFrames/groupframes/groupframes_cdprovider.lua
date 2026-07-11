@@ -32,7 +32,7 @@ local provider = {
 
     -- Flat array of the CURRENT party unit frames. Party only: empty while
     -- IsInRaid(), and raid* unit tokens are filtered out. The consumer reads
-    -- each frame's unit token itself (frame.unit / GetAttribute("unit")).
+    -- each frame's secure unit attribute itself (GetAttribute("unit")).
     GetFrames = function()
         local out = {}
         if not (QUI_GF and QUI_GF.IsEnabled and QUI_GF:IsEnabled()) then

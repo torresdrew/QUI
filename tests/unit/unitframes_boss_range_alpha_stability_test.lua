@@ -57,6 +57,9 @@ do
     }
     QUI_UF = {
         frames = { boss1 = bossFrame },
+        -- Live code keeps unit tokens in weak side state (ping-taint fix);
+        -- the stub mirrors the accessor over the mock's plain field.
+        GetFrameUnit = function(frame) return frame and frame.unit end,
     }
 
     function GetUnitSettings()
@@ -212,6 +215,12 @@ do
         return units[unit] ~= nil
     end
 
+    -- Aura setup runs its full OOC path so the engage-frame assertions below
+    -- exercise real event registration (not the deferred combat queue).
+    function InCombatLockdown()
+        return false
+    end
+
     local unitGuidCalls = 0
     local secretGUIDMT = {
         __eq = function()
@@ -254,6 +263,9 @@ do
         QUI_UnitFrames = {
             frames = {},
             auraPreviewMode = {},
+            -- Live code keeps unit tokens in weak side state (ping-taint fix);
+            -- the stub mirrors the accessor over the mock's plain field.
+            GetFrameUnit = function(frame) return frame and frame.unit end,
             _GetFontPath = function() return "Fonts\\FRIZQT__.TTF" end,
             _GetFontOutline = function() return "OUTLINE" end,
             _GetUnitSettings = function()

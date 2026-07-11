@@ -22,10 +22,10 @@ local fnStart = assert(source:find("\n", s)) + 1
 local nl = assert(source:find("\n%-%- <<< QUI_TEST_EXTRACT RefreshUpdatedIcons", fnStart), "end sentinel")
 local fnSource = source:sub(fnStart, nl - 1)
 
--- factory injects R (table), STATE_KEY (string constant), and a stubbed
--- C_UnitAuras as upvalues
+-- factory injects R (table), STATE_KEY (string constant), a unit accessor,
+-- and a stubbed C_UnitAuras as upvalues
 local factory = assert(loadstring(
-    "return function(_R, _STATE_KEY, _CUA)\nlocal R = _R\nlocal STATE_KEY = _STATE_KEY\nlocal C_UnitAuras = _CUA\n"
+    "return function(_R, _STATE_KEY, _GetFrameUnit, _CUA)\nlocal R = _R\nlocal STATE_KEY = _STATE_KEY\nlocal GetFrameUnit = _GetFrameUnit\nlocal C_UnitAuras = _CUA\n"
         .. fnSource .. "\nreturn R.RefreshUpdatedIcons\nend",
     "refreshUpdatedIcons"))()
 
@@ -33,7 +33,8 @@ local STATE_KEY = "_quiAuraRender" -- must match groupframes_aura_render.lua's `
 local durSentinel = { __dur = true }
 local CUA = { GetAuraDuration = function() return durSentinel end }
 local R = {}
-local RefreshUpdatedIcons = factory(R, STATE_KEY, CUA)
+local GetFrameUnit = function(frame) return frame.previewUnit end
+local RefreshUpdatedIcons = factory(R, STATE_KEY, GetFrameUnit, CUA)
 
 local function newIcon(instID, swipeShown)
     local icon = {
@@ -56,7 +57,7 @@ local icon = newIcon(7, true)
 -- radial icon: swipe bar not shown -> must NOT be reseated
 local icon2 = newIcon(7, false)
 
-local frame = { unit = "raid1", _shown = true }
+local frame = { previewUnit = "raid1", _shown = true }
 function frame:IsShown() return self._shown end
 frame[STATE_KEY] = { some = { icons = { icon, icon2 } } }
 

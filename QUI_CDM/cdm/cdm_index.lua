@@ -111,10 +111,17 @@ end
 ---------------------------------------------------------------------------
 
 local _spellIndex = {}      -- baseID -> entry (entry shared across aliases)
+local _equipSlotIndex = {}  -- equipSlot luaIndex -> entry (item-only cooldowns)
+local _categoryIndex = {}   -- spellCategoryID -> entry (consumable cooldowns)
 local _version = 0
 local _built = false
 local _orderedSpellMap = nil
-local _orderedSpellMapVersion = -1
+local _orderedEquipSlotMap = nil
+local _orderedCategoryMap = nil
+local _orderedSpellMapByCategory = nil
+local _orderedEquipSlotMapByCategory = nil
+local _orderedCategoryMapByCategory = nil
+local _orderedMapsVersion = -1
 
 function CDMIndex.Version() return _version end
 
@@ -133,6 +140,12 @@ local function GetIndexCategories()
         E.TrackedBar,
         E.Essential,
         E.Utility,
+        -- Equipped-item / spec-agnostic categories (12.x). nil on older clients;
+        -- the `if cat ~= nil` filter in Rebuild() drops any that are absent.
+        E.SpecAgnosticTracked,
+        E.SpecAgnosticEssential,
+        E.EquipSlotTracked,
+        E.EquipSlotEssential,
         E.HiddenSpell,
         E.HiddenAura,
     }
@@ -141,6 +154,8 @@ end
 
 function CDMIndex.Rebuild()
     wipe(_spellIndex)
+    wipe(_equipSlotIndex)
+    wipe(_categoryIndex)
     _built = true
     _version = _version + 1
 
@@ -166,24 +181,38 @@ function CDMIndex.Rebuild()
                         if info then
                             local primarySid = SelectPrimaryCooldownInfoID(info)
                             local primaryBase = CDMIndex.ToBaseSpellID(primarySid)
-                            if primaryBase then
+                            local equipSlot = info.equipSlot
+                            local spellCategoryID = info.spellCategoryID
+                            local hasEquipSlot = type(equipSlot) == "number"
+                                and not issecretvalue(equipSlot)
+                            local hasCategory = type(spellCategoryID) == "number"
+                                and not issecretvalue(spellCategoryID)
+                            if primaryBase or hasEquipSlot or hasCategory then
                                 local entry = {
                                     cooldownID     = cdID,
                                     category       = cat,
-                                    primarySpellID = primaryBase,
+                                    primarySpellID = primaryBase,  -- nil for pure item cooldowns
                                     aliases        = {},
                                 }
-                                local seenAlias = {}
-                                CDMIndex.ForEachCooldownInfoID(info, function(id)
-                                    local b = CDMIndex.ToBaseSpellID(id)
-                                    if b and not seenAlias[b] then
-                                        seenAlias[b] = true
-                                        entry.aliases[#entry.aliases + 1] = b
-                                        if not _spellIndex[b] then
-                                            _spellIndex[b] = entry
+                                if primaryBase then
+                                    local seenAlias = {}
+                                    CDMIndex.ForEachCooldownInfoID(info, function(id)
+                                        local b = CDMIndex.ToBaseSpellID(id)
+                                        if b and not seenAlias[b] then
+                                            seenAlias[b] = true
+                                            entry.aliases[#entry.aliases + 1] = b
+                                            if not _spellIndex[b] then
+                                                _spellIndex[b] = entry
+                                            end
                                         end
-                                    end
-                                end)
+                                    end)
+                                end
+                                if hasEquipSlot and _equipSlotIndex[equipSlot] == nil then
+                                    _equipSlotIndex[equipSlot] = entry
+                                end
+                                if hasCategory and _categoryIndex[spellCategoryID] == nil then
+                                    _categoryIndex[spellCategoryID] = entry
+                                end
                             end
                         end
                     end
@@ -198,6 +227,18 @@ function CDMIndex.Get(spellID)
     local base = CDMIndex.ToBaseSpellID(spellID)
     if not base then return nil end
     return _spellIndex[base]
+end
+
+function CDMIndex.GetByEquipSlot(equipSlot)
+    if not _built then CDMIndex.Rebuild() end
+    if type(equipSlot) ~= "number" or issecretvalue(equipSlot) then return nil end
+    return _equipSlotIndex[equipSlot]
+end
+
+function CDMIndex.GetByCategory(spellCategoryID)
+    if not _built then CDMIndex.Rebuild() end
+    if type(spellCategoryID) ~= "number" or issecretvalue(spellCategoryID) then return nil end
+    return _categoryIndex[spellCategoryID]
 end
 
 ---------------------------------------------------------------------------
@@ -287,12 +328,19 @@ end)
 -- routes go through CooldownViewerSettings:RefreshLayout. Hooking it
 -- closes the gap so the broker invalidates on those mutations the same
 -- as it does for hotfix / override events.
+-- securecall the hook body: RefreshLayout fires mid settings-mutation (drag-drop /
+-- SetCooldownToCategory), inside the same SettingsLayoutManager cascade that calls the
+-- protected SetHiddenGroupBuffs. A bare post-hook leaks this addon's taint into
+-- Blizzard's continuation -> secret-value throw + ADDON_ACTION_BLOCKED. Isolate it.
+local _securecall = securecallfunction or function(fn, ...) return fn(...) end
+local function _OnSettingsRefreshLayout() Notify("refresh_layout") end
+
 local _refreshLayoutHooked = false
 local function InstallRefreshLayoutHook()
     if _refreshLayoutHooked then return end
     if not (CooldownViewerSettings and CooldownViewerSettings.RefreshLayout) then return end
-    local ok = pcall(hooksecurefunc, CooldownViewerSettings, "RefreshLayout", function()
-        Notify("refresh_layout")
+    local ok = pcall(hooksecurefunc, CooldownViewerSettings, "RefreshLayout", function(...)
+        _securecall(_OnSettingsRefreshLayout, ...)
     end)
     if ok then _refreshLayoutHooked = true end
 end
@@ -317,30 +365,61 @@ end)
 -- visible to the user right now?"). Use the index for spell-metadata
 -- and override resolution ("does this cooldown exist at all?").
 --
--- Returned map: baseID -> { cooldownID, category }. Built fresh on each
--- call — callers can rebuild after a "refresh_layout" notification.
+-- Returned spell map: baseID -> { cooldownID, category }. Item maps key by
+-- equipSlot / spellCategoryID. Built fresh after each broker invalidation.
 ---------------------------------------------------------------------------
-function CDMIndex.GetOrderedSpellMap()
-    if _orderedSpellMap and _orderedSpellMapVersion == _version then
-        return _orderedSpellMap
+local function BuildOrderedMaps()
+    if _orderedSpellMap and _orderedMapsVersion == _version then
+        return
     end
 
-    local map = {}
-    _orderedSpellMap = map
-    _orderedSpellMapVersion = _version
+    -- Cold-boot taint gate: consume Blizzard's settings data provider only
+    -- AFTER one of its own secure consumers has built the lazy displayData
+    -- cache. Every provider getter routes through CheckBuildDisplayData; if
+    -- QUI is the first caller after COOLDOWN_VIEWER_DATA_LOADED (the viewers
+    -- are still hidden on a cold login, so none of them is listening), QUI
+    -- execution builds the shared cooldownInfo/order tables -- QUI-tainted --
+    -- and the viewer's later secure RefreshData/GetCooldownIDs read poisons
+    -- the whole item mint: aura reads go secret, the DisallowTaintedAccess
+    -- aura map rejects registration, and every buff item is born inactive
+    -- until /reload (a SHOWN viewer rebuilds the cache securely first, which
+    -- is why /reload always healed). Read the memo fields RAW -- never via
+    -- the getters, which build -- and bail WITHOUT latching the version so
+    -- the next call retries once a shown viewer has built the cache.
+    if CooldownViewerSettings and CooldownViewerSettings.GetDataProvider then
+        local provider = CooldownViewerSettings:GetDataProvider()
+        if provider and (provider.displayDataDirty or provider.displayData == nil) then
+            if not _orderedSpellMap then
+                _orderedSpellMap, _orderedEquipSlotMap, _orderedCategoryMap = {}, {}, {}
+                _orderedSpellMapByCategory, _orderedEquipSlotMapByCategory, _orderedCategoryMapByCategory =
+                    {}, {}, {}
+            end
+            return
+        end
+    end
+
+    local spellMap, equipSlotMap, categoryMap = {}, {}, {}
+    local spellMapByCategory, equipSlotMapByCategory, categoryMapByCategory = {}, {}, {}
+    _orderedSpellMap = spellMap
+    _orderedEquipSlotMap = equipSlotMap
+    _orderedCategoryMap = categoryMap
+    _orderedSpellMapByCategory = spellMapByCategory
+    _orderedEquipSlotMapByCategory = equipSlotMapByCategory
+    _orderedCategoryMapByCategory = categoryMapByCategory
+    _orderedMapsVersion = _version
 
     if not (CooldownViewerSettings and CooldownViewerSettings.GetDataProvider) then
-        return map
+        return
     end
     local api = GetCooldownViewerAPI()
     if not (api and api.GetCooldownViewerCooldownInfo) then
-        return map
+        return
     end
     local provider = CooldownViewerSettings:GetDataProvider()
     if not (provider and provider.GetOrderedCooldownIDsForCategory) then
-        return map
+        return
     end
-    if not (Enum and Enum.CooldownViewerCategory) then return map end
+    if not (Enum and Enum.CooldownViewerCategory) then return end
 
     local visibleCats = {
         Enum.CooldownViewerCategory.TrackedBuff,
@@ -350,16 +429,47 @@ function CDMIndex.GetOrderedSpellMap()
     }
     for _, cat in ipairs(visibleCats) do
         if cat ~= nil then
+            local catSpellMap = {}
+            local catEquipSlotMap = {}
+            local catCategoryMap = {}
+            spellMapByCategory[cat] = catSpellMap
+            equipSlotMapByCategory[cat] = catEquipSlotMap
+            categoryMapByCategory[cat] = catCategoryMap
             local ids = provider.GetOrderedCooldownIDsForCategory(provider, cat, true)
             if ids then
                 for _, cdID in ipairs(ids) do
                     local info = api.GetCooldownViewerCooldownInfo(cdID)
                     if info then
                         local entry = { cooldownID = cdID, category = cat }
+                        local equipSlot = info.equipSlot
+                        if type(equipSlot) == "number"
+                            and not issecretvalue(equipSlot)
+                            and not equipSlotMap[equipSlot] then
+                            equipSlotMap[equipSlot] = entry
+                        end
+                        if type(equipSlot) == "number"
+                            and not issecretvalue(equipSlot)
+                            and not catEquipSlotMap[equipSlot] then
+                            catEquipSlotMap[equipSlot] = entry
+                        end
+                        local spellCategoryID = info.spellCategoryID
+                        if type(spellCategoryID) == "number"
+                            and not issecretvalue(spellCategoryID)
+                            and not categoryMap[spellCategoryID] then
+                            categoryMap[spellCategoryID] = entry
+                        end
+                        if type(spellCategoryID) == "number"
+                            and not issecretvalue(spellCategoryID)
+                            and not catCategoryMap[spellCategoryID] then
+                            catCategoryMap[spellCategoryID] = entry
+                        end
                         CDMIndex.ForEachCooldownInfoID(info, function(id)
                             local b = CDMIndex.ToBaseSpellID(id)
-                            if b and not map[b] then
-                                map[b] = entry
+                            if b and not spellMap[b] then
+                                spellMap[b] = entry
+                            end
+                            if b and not catSpellMap[b] then
+                                catSpellMap[b] = entry
                             end
                         end)
                     end
@@ -367,7 +477,11 @@ function CDMIndex.GetOrderedSpellMap()
             end
         end
     end
-    return map
+end
+
+function CDMIndex.GetOrderedSpellMap()
+    BuildOrderedMaps()
+    return _orderedSpellMap
 end
 
 -- Convenience: return the ordered entry for a single spellID, or nil.
@@ -377,9 +491,59 @@ function CDMIndex.GetOrdered(spellID)
     return CDMIndex.GetOrderedSpellMap()[base]
 end
 
+local function GetCategoryForContainerKey(containerKey)
+    if not (Enum and Enum.CooldownViewerCategory) then return nil end
+    local E = Enum.CooldownViewerCategory
+    if containerKey == "essential" then return E.Essential end
+    if containerKey == "utility" then return E.Utility end
+    if containerKey == "buff" then return E.TrackedBuff end
+    if containerKey == "trackedBar" then return E.TrackedBar end
+    return nil
+end
+
+function CDMIndex.GetOrderedForContainer(containerKey, spellID)
+    local cat = GetCategoryForContainerKey(containerKey)
+    if cat == nil then return nil end
+    local base = CDMIndex.ToBaseSpellID(spellID)
+    if not base then return nil end
+    BuildOrderedMaps()
+    local byCategory = _orderedSpellMapByCategory and _orderedSpellMapByCategory[cat]
+    return byCategory and byCategory[base] or nil
+end
+
 -- Cheap "is this cooldown actually being rendered to the user right
 -- now?" check used by overlay/binding decisions that should not act on
 -- hidden cooldowns.
 function CDMIndex.IsRendered(spellID)
     return CDMIndex.GetOrdered(spellID) ~= nil
+end
+
+function CDMIndex.GetOrderedByEquipSlot(equipSlot)
+    if type(equipSlot) ~= "number" or issecretvalue(equipSlot) then return nil end
+    BuildOrderedMaps()
+    return _orderedEquipSlotMap[equipSlot]
+end
+
+function CDMIndex.GetOrderedByCategory(spellCategoryID)
+    if type(spellCategoryID) ~= "number" or issecretvalue(spellCategoryID) then return nil end
+    BuildOrderedMaps()
+    return _orderedCategoryMap[spellCategoryID]
+end
+
+function CDMIndex.GetOrderedByEquipSlotForContainer(containerKey, equipSlot)
+    if type(equipSlot) ~= "number" or issecretvalue(equipSlot) then return nil end
+    local cat = GetCategoryForContainerKey(containerKey)
+    if cat == nil then return nil end
+    BuildOrderedMaps()
+    local byCategory = _orderedEquipSlotMapByCategory and _orderedEquipSlotMapByCategory[cat]
+    return byCategory and byCategory[equipSlot] or nil
+end
+
+function CDMIndex.GetOrderedByCategoryForContainer(containerKey, spellCategoryID)
+    if type(spellCategoryID) ~= "number" or issecretvalue(spellCategoryID) then return nil end
+    local cat = GetCategoryForContainerKey(containerKey)
+    if cat == nil then return nil end
+    BuildOrderedMaps()
+    local byCategory = _orderedCategoryMapByCategory and _orderedCategoryMapByCategory[cat]
+    return byCategory and byCategory[spellCategoryID] or nil
 end

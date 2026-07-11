@@ -12,6 +12,14 @@ local Sources = ns.CDMSources
 local Shared = ns.CDMShared
 local Resolvers = ns.CDMResolvers
 
+-- A spellID sourced from a re-anchored Blizzard CDM frame (aura-phase GetSpellID
+-- in combat) or a secret-tracked resolver state can be a secret value. It must
+-- never be boolean-tested, compared, or used as a TABLE KEY: indexing a table
+-- with a secret key hard-errors AND poisons the table into a persistent tainted
+-- carrier that leaks QUI_CDM taint into Blizzard's CDM continuation and the
+-- shared QUI global namespace. Guard before any such op on a spellID.
+local _issecretvalue = issecretvalue or function() return false end
+
 local function IsCDMRuntimeEnabled()
     return not Shared or Shared.IsRuntimeEnabled()
 end
@@ -158,12 +166,12 @@ local function GatherIconSpellIDs(icon)
     local runtimeState = GetIconRuntimeState(icon)
     if runtimeState then
         VisitRawSpellID(runtimeState.spellID)
-        local mirrorState = runtimeState.mirrorState or runtimeState.state
-        if mirrorState then
-            VisitRawSpellID(mirrorState.overrideTooltipSpellID)
-            VisitRawSpellID(mirrorState.overrideSpellID)
-            VisitRawSpellID(mirrorState.spellID)
-            local linkedSpellIDs = mirrorState.linkedSpellIDs
+        local state = runtimeState.state
+        if state then
+            VisitRawSpellID(state.overrideTooltipSpellID)
+            VisitRawSpellID(state.overrideSpellID)
+            VisitRawSpellID(state.spellID)
+            local linkedSpellIDs = state.linkedSpellIDs
             if type(linkedSpellIDs) == "table" then
                 for _, linkedSpellID in ipairs(linkedSpellIDs) do
                     VisitRawSpellID(linkedSpellID)
@@ -352,6 +360,10 @@ local procOnUsableGlowMapReady = false
 -- eventFrame for QUI_PerfRegistry).
 
 local function AddGlowMapID(spellID, icon)
+    -- issecretvalue FIRST: `not spellID` boolean-coerces, and the index below
+    -- keys the map -- both illegal on a secret. A secret spellID has no usable
+    -- glow mapping, so drop it (the icon still glows via its non-secret feeds).
+    if _issecretvalue(spellID) then return end
     if not spellID then return end
     local list = spellIdToGlowIcons[spellID]
     if not list then
@@ -372,12 +384,12 @@ local function AddIconToGlowMaps(icon)
     local runtimeState = GetIconRuntimeState(icon)
     if runtimeState then
         AddGlowMapID(runtimeState.spellID, icon)
-        local mirrorState = runtimeState.mirrorState or runtimeState.state
-        if mirrorState then
-            AddGlowMapID(mirrorState.overrideTooltipSpellID, icon)
-            AddGlowMapID(mirrorState.overrideSpellID, icon)
-            AddGlowMapID(mirrorState.spellID, icon)
-            local linkedSpellIDs = mirrorState.linkedSpellIDs
+        local state = runtimeState.state
+        if state then
+            AddGlowMapID(state.overrideTooltipSpellID, icon)
+            AddGlowMapID(state.overrideSpellID, icon)
+            AddGlowMapID(state.spellID, icon)
+            local linkedSpellIDs = state.linkedSpellIDs
             if type(linkedSpellIDs) == "table" then
                 for _, linkedSpellID in ipairs(linkedSpellIDs) do
                     AddGlowMapID(linkedSpellID, icon)
@@ -798,6 +810,50 @@ ClearPandemicState = function(icon)
 end
 
 ---------------------------------------------------------------------------
+-- PANDEMIC BRIDGE HELPERS (re-anchored Blizzard CDM frames)
+-- Re-anchored live frames never carry _spellEntry/_auraActive/_lastAuraDurObj,
+-- so UpdatePandemicGlow can't drive them. Their pandemic signal is Blizzard's
+-- own state machine (ShowPandemicStateFrame/HidePandemicStateFrame hooks in
+-- CDMReanchorPandemic); these helpers supply the settings gate and the visual,
+-- painted on the QUI-OWNED overlay child -- never on the live frame itself.
+---------------------------------------------------------------------------
+-- Reusable probe: IsPandemicMirroringEnabled reads icon._spellEntry (+ the
+-- cached _auraIsHarmful, absent here -> "either toggle on" fallback, matching
+-- the owned path's combat-applied-aura case). Scratch table avoids a per-call
+-- allocation -- the Show hook re-fires every OnUpdate tick during pandemic.
+local _pandemicEntryProbe = {}
+
+local function IsPandemicEnabledForEntry(entry)
+    if not entry then return false end
+    _pandemicEntryProbe._spellEntry = entry
+    local enabled = IsPandemicMirroringEnabled(_pandemicEntryProbe)
+    _pandemicEntryProbe._spellEntry = nil
+    return enabled
+end
+
+-- Same flash sheet + tint as the owned-icon PandemicGlow frame. The overlay is
+-- a QUI-owned child, so writing a key on it is legal (never on the live frame).
+local function ApplyPandemicToOverlay(overlay)
+    if not overlay then return end
+    local tex = overlay._quiPandemicTex
+    if not tex and overlay.CreateTexture then
+        tex = overlay:CreateTexture(nil, "OVERLAY")
+        tex:SetTexture(PANDEMIC_TEXTURE)
+        tex:SetTexCoord(0, 1, 0, 1)
+        tex:SetBlendMode("ADD")
+        tex:SetAllPoints(overlay)
+        tex:SetVertexColor(1, 0.85, 0.2, 1)
+        overlay._quiPandemicTex = tex
+    end
+    if tex then tex:Show() end
+end
+
+local function ClearPandemicFromOverlay(overlay)
+    local tex = overlay and overlay._quiPandemicTex
+    if tex then tex:Hide() end
+end
+
+---------------------------------------------------------------------------
 -- GROW / POP on buff apply (opt-in: ncdm.buff.growOnApply; buff icons only).
 --
 -- When a tracked buff becomes ACTIVE (the renderer's false->true transition of
@@ -880,11 +936,13 @@ end
 -- CHECK OVERLAY STATE: query API + event-based tracking
 ---------------------------------------------------------------------------
 local function IsOverlayQueryActive(spellID)
+    if _issecretvalue(spellID) then return false end
     if not spellID or not IsSpellOverlayed then return false end
     return IsSpellOverlayed(spellID) and true or false
 end
 
 IsOverlayed = function(spellID)
+    if _issecretvalue(spellID) then return false end
     if not spellID then return false end
     -- The SPELL_ACTIVATION_OVERLAY_GLOW_SHOW/HIDE event is Blizzard's
     -- authoritative proc signal (ref-counted into overlayedSpells, cleared on
@@ -901,15 +959,6 @@ IsOverlayed = function(spellID)
         return IsOverlayQueryActive(spellID)
     end
     return false
-end
-
--- Hand the resolver our authoritative proc-overlay signal so it can tell a
--- genuine proc override (overlay active -> show ready) from a form/spec override
--- that shares the base cooldown (no overlay -> show the cooldown swipe). See
--- IsTransientProcOverrideReady in cdm_resolvers.lua. cdm_resolvers loads before
--- this file, so CDMResolvers is present.
-if ns.CDMResolvers and ns.CDMResolvers.SetProcOverlayProbe then
-    ns.CDMResolvers.SetProcOverlayProbe(IsOverlayed)
 end
 
 local function EvaluateGlowForIcon(icon)
@@ -1072,6 +1121,7 @@ local _scanGlowVisited = {}
 -- callback captured `visited`, `matched`, and `spellIdToGlowIcons`. State
 -- now lives on module locals; matched is signaled via the return value.
 local function _ProcessGlowIconsForCandidate(spellID, visited)
+    if _issecretvalue(spellID) then return false end
     local icons = spellIdToGlowIcons[spellID]
     if not icons then return false end
     for i = 1, #icons do
@@ -1299,12 +1349,38 @@ local function HandleUnitAuraChanged(_unit, _updateInfo)
 end
 
 ---------------------------------------------------------------------------
+-- RE-ANCHORED-FRAME GLOW CONFIG (Task C / G8)
+-- Re-anchored Blizzard CDM frames are NOT owned IconFactory icons, so the
+-- event-driven owned-icon glow path above never reaches them. The
+-- ActionButtonSpellAlertManager ShowAlert hook (CDMReanchorProcGlow) calls this
+-- to resolve the SAME per-viewer + per-spell glow config an owned icon would, then
+-- paints it via ApplyGlowWithKey on a QUI-OWNED overlay child of the live frame.
+-- Returns a viewerSettings table (glowType/color/...) or nil when the viewer's
+-- glow is disabled or the spell's per-spell override disables glow.
+---------------------------------------------------------------------------
+local function ResolveGlowForEntry(entry)
+    if not entry then return nil end
+    -- entry IS the same curated entry an owned icon carries as _spellEntry, so the
+    -- existing icon-centric resolvers work against a lightweight wrapper.
+    local fakeIcon = { _spellEntry = entry }
+    local viewerType = GetViewerType(fakeIcon)
+    if not viewerType then return nil end
+    local viewerSettings = GetViewerSettings(viewerType)
+    if not viewerSettings then return nil end
+    local spellOvr = GetSpellGlowOverride(fakeIcon)
+    if spellOvr and spellOvr.glowEnabled == false then return nil end
+    return ApplyGlowColorOverride(viewerSettings, spellOvr)
+end
+
+---------------------------------------------------------------------------
 -- EXPORTS
 ---------------------------------------------------------------------------
 -- Store on ns for engine init to wire
 ns._OwnedGlows = {
     StartGlow = StartGlow,
     StopGlow = StopGlow,
+    -- Re-anchored-frame glow config (Task C / G8). Used by CDMReanchorProcGlow.
+    ResolveGlowForEntry = ResolveGlowForEntry,
     RefreshAllGlows = RefreshAllGlows,
     ResyncAllGlows = ResyncAllGlows,
     RebuildGlowSpellMap = RebuildGlowSpellMap,
@@ -1326,6 +1402,10 @@ ns._OwnedGlows = {
     IsSpellCastable = IsSpellCastable,
     UpdatePandemicGlow = UpdatePandemicGlow,
     ClearPandemicState = ClearPandemicState,
+    -- Pandemic bridge for re-anchored Blizzard CDM frames (CDMReanchorPandemic).
+    IsPandemicEnabledForEntry = IsPandemicEnabledForEntry,
+    ApplyPandemicToOverlay = ApplyPandemicToOverlay,
+    ClearPandemicFromOverlay = ClearPandemicFromOverlay,
     PlayGrowPop = PlayGrowPop,
     StopGrowPop = StopGrowPop,
     HandleUnitAuraChanged = HandleUnitAuraChanged,
@@ -1597,6 +1677,40 @@ local function GetSettings()
 end
 
 ---------------------------------------------------------------------------
+-- HIDE COOLDOWN EFFECTS
+-- The per-container "Hide Cooldown Effects" checkbox writes
+-- profile.cooldownEffects.{hideEssential|hideUtility|hide_<customKey>}
+-- (settings/containers_page.lua ResolveEffectsContext, :911-921). When a
+-- container is hidden, the swipe applicator forces SetDrawSwipe(false) +
+-- SetDrawEdge(false) for its icons; the re-anchor boot re-assert consults the
+-- same predicate for reanchored Blizzard builtins. Buff has NO hide checkbox.
+---------------------------------------------------------------------------
+local EFFECTS_DEFAULTS = {
+    hideEssential = false,
+    hideUtility = false,
+}
+
+local function GetEffectsSettings()
+    return Helpers.GetModuleSettings("cooldownEffects", EFFECTS_DEFAULTS)
+end
+
+-- Container key -> profile.cooldownEffects key. MUST stay in lockstep with
+-- ResolveEffectsContext in settings/containers_page.lua (:911-921).
+local function ContainerHideKey(viewerType)
+    if viewerType == "essential" then return "hideEssential" end
+    if viewerType == "utility" then return "hideUtility" end
+    if viewerType == nil then return nil end
+    return "hide_" .. viewerType
+end
+
+local function IsContainerEffectsHidden(viewerType)
+    local key = ContainerHideKey(viewerType)
+    if not key then return false end
+    local effects = GetEffectsSettings()
+    return (effects and effects[key] == true) or false
+end
+
+---------------------------------------------------------------------------
 -- COLOR RESOLUTION
 ---------------------------------------------------------------------------
 local function GetClassColor()
@@ -1665,6 +1779,24 @@ function ns._CDM_ResolvePreviewSwipe(settings, mode)
         if not r then r, g, b, a = CDM_DEFAULT_R, CDM_DEFAULT_G, CDM_DEFAULT_B, CDM_DEFAULT_A end
     end
     return true, r, g, b, a or 1
+end
+
+-- Resolve ONLY the swipe colour (no show-gating) for a mode, with the same
+-- ResolveColor + default-fallback rules as the runtime path. Used by the
+-- re-anchor swipe owner, which does its own draw/visibility gating but needs the
+-- user's colour for both the aura ("aura") and cooldown ("cooldown") phases.
+-- Returns r, g, b, a.
+function ns._CDM_ResolveModeColor(settings, mode)
+    settings = settings or {}
+    local r, g, b, a
+    if mode == "aura" then
+        r, g, b, a = ResolveColor(settings.overlayColorMode or "default", settings.overlayColor)
+        if not r then r, g, b, a = BLIZZ_BUFF_R, BLIZZ_BUFF_G, BLIZZ_BUFF_B, BLIZZ_BUFF_A end
+    else
+        r, g, b, a = ResolveColor(settings.swipeColorMode or "default", settings.swipeColor)
+        if not r then r, g, b, a = CDM_DEFAULT_R, CDM_DEFAULT_G, CDM_DEFAULT_B, CDM_DEFAULT_A end
+    end
+    return r, g, b, a or 1
 end
 
 ---------------------------------------------------------------------------
@@ -1769,6 +1901,15 @@ local function ApplySwipeToIcon(icon, settings)
     local showEdge = showSwipe and ((mode == "aura" and SettingEnabled(settings.showBuffEdge, true))
         or (mode == "cooldown" and settings.showRechargeEdge))
 
+    -- Hide Cooldown Effects: a container flagged in profile.cooldownEffects
+    -- suppresses swipe + edge outright (bling is already forced off addon-wide
+    -- by SyncCooldownBling). Buff has no hide checkbox, so ContainerHideKey
+    -- returns a "hide_buff" key that never exists in the settings -> no-op.
+    if IsContainerEffectsHidden(entry.viewerType) then
+        showSwipe = false
+        showEdge = false
+    end
+
     local function applyToCooldown(cd)
         if not cd then return end
         -- Stash intended state on the cooldown frame for later style reapplies.
@@ -1854,6 +1995,24 @@ local function RefreshAllSwipes()
             ApplySwipeToIcon(icon, settings)
         end
     end
+
+    -- Custom icon containers: same applicator so hide_<customKey> applies. The
+    -- custom-container list lives at ncdm.containers (built-ins are direct
+    -- ncdm[key]); each created container carries builtIn = false
+    -- (cdm_containers.lua CreateContainer). GetIconPool returns {} for keys with
+    -- no live pool, so the loop is inert until a custom icon container renders.
+    local ncdm = Shared and Shared.GetNcdmDB and Shared.GetNcdmDB()
+    local customList = ncdm and ncdm.containers
+    if customList then
+        for containerKey, cfg in pairs(customList) do
+            if cfg and not cfg.builtIn then
+                local pool = IconFactory:GetIconPool(containerKey)
+                for _, icon in ipairs(pool) do
+                    ApplySwipeToIcon(icon, settings)
+                end
+            end
+        end
+    end
 end
 
 -- EXPORTS
@@ -1863,4 +2022,9 @@ ns._OwnedSwipe = {
     ApplyToIcon = ApplySwipeToIcon,
     ApplyToBuffChild = ApplySwipeToBuffChild,
     GetSettings = GetSettings,
+    -- Consulted by cdm_reanchor_boot's re-assert bodies so reanchored Blizzard
+    -- builtins honour the same per-container Hide Cooldown Effects flag.
+    IsContainerEffectsHidden = IsContainerEffectsHidden,
+    -- Test seam: pure container-key -> profile.cooldownEffects key mapping.
+    _TestContainerHideKey = ContainerHideKey,
 }

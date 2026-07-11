@@ -459,8 +459,8 @@ do
     function ActionBarsOwned.UpdateCooldown(button)
         -- Hot path: called every ~100ms for all active buttons. Every
         -- saved Lua op compounds to measurable ms/sec in raid combat.
-        -- `button.action` is always set by SafeSyncAction/state driver,
-        -- so the GetAttribute fallback is dead code and has been removed.
+        -- `button.action` is owned by Blizzard's UpdateAction lifecycle, so
+        -- the GetAttribute fallback is dead code and has been removed.
         if _abCooldownStats then _abCooldownStats.buttons = _abCooldownStats.buttons + 1 end
         local action = button.action
         if not action or action == 0 then return end

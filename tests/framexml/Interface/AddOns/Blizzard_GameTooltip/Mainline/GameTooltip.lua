@@ -378,6 +378,8 @@ GAME_TOOLTIP_TEXTUREKIT_BACKDROP_STYLES = {
 };
 
 function GameTooltip_OnShow(self)
+	NarratableTooltipMixin.OnShow(self);
+
 	-- Do not show HUD tooltips when in edit mode with the HUD tooltip section enabled, to prevent layering issues.
 	if (EditModeManagerFrame and GameTooltipDefaultContainer and EditModeManagerFrame:IsEditModeActive() and GameTooltipDefaultContainer:IsShown()) then
 		local relativeTo = select(2, self:GetPoint());
@@ -391,6 +393,8 @@ function GameTooltip_OnShow(self)
 end
 
 function GameTooltip_OnHide(self)
+	NarratableTooltipMixin.OnHide(self);
+
 	for i, info in ipairs(self.infoList or {}) do
 		local inventoryType = info.tooltipData.worldLootObjectInventoryType;
 		if inventoryType then

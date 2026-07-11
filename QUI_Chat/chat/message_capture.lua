@@ -522,12 +522,11 @@ local function OnCaptureEvent(_, event, ...)
     -- Letterbox/cinematic-hidden lines: Blizzard bails before filters when
     -- arg16 is set; mirror that. Probe before truth-testing (may be secret;
     -- if it is, we can't know — let the line through rather than risk an op).
-    local a16 = select(16, ...)
-    if not IsSecret(a16) and a16 then return end
-    -- arg17 (suppressRaidIcons) is not in the filter contract (filters see
-    -- args 1-14) — read it from the original payload.
-    local a17 = select(17, ...)
-
+    -- (Named a16Raw, not a16: the vararg unpack below also names a slot-16
+    -- local for the payload; that one may carry a FILTERED value, so the two
+    -- are kept distinct rather than shadowed.)
+    local a16Raw = select(16, ...)
+    if not IsSecret(a16Raw) and a16Raw then return end
     -- Cross-addon compat: honor ChatFrameUtil.AddMessageEventFilter consumers
     -- (spam blockers etc.). ChatFrame1 is the filter context — filters that
     -- act per-frame behave as they do for the default frame. While suppressed
@@ -536,20 +535,38 @@ local function OnCaptureEvent(_, event, ...)
     -- way the filter chain runs exactly once per message in steady state.
     -- (Blizzard's filter registry skips callbacks on secret payloads via
     -- canaccessvalue — we inherit that protection by calling the same API.)
-    local filtered, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14
+    --
+    -- Vararg width through the filter chain — DELIBERATE DEVIATION from
+    -- Blizzard. Blizzard's own dispatch still round-trips only arg1-arg14
+    -- through ProcessMessageEventFilters and reads discordInfo from the RAW
+    -- pre-filter arg18 (ChatFrameOverrides.lua:294-305);
+    -- ProcessMessageEventFilters itself is merely count-agnostic — it echoes
+    -- whatever varargs it is given (`return shouldDiscardMessage, ...` /
+    -- SafePack replacement, ChatFrameFilters.lua:138-168), it does not
+    -- guarantee 18 slots. QUI threads all 18 args through so a filter CAN see
+    -- and edit a15-a18 (isSubtitle, hideSenderInLetterbox, suppressRaidIcons,
+    -- discordInfo). Known consequence: a filter that replaces args with the
+    -- classic 14-value return list truncates a15-a18 — discordInfo is
+    -- stripped and the line degrades to a plain guild-style render
+    -- (isFromDiscord false), never an error. When no filter chain runs,
+    -- a15-a18 are unpacked from the original payload. discordInfo (arg18) is
+    -- non-nilable per 12.1's ChatInfoDocumentation.lua CHAT_MSG_GUILD_DISCORD
+    -- payload but IS nil for every other CHAT_MSG_* event — carried through
+    -- opaquely either way.
+    local filtered, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17, a18
     local isChatMessage = type(event) == "string" and event:sub(1, 9) == "CHAT_MSG_"
     if isChatMessage and _G.ChatFrameUtil and _G.ChatFrameUtil.ProcessMessageEventFilters and _G.ChatFrame1 then
-        filtered, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14 =
+        filtered, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17, a18 =
             _G.ChatFrameUtil.ProcessMessageEventFilters(_G.ChatFrame1, event, ...)
         if filtered then return end
     else
-        a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14 = ...
+        a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17, a18 = ...
     end
 
     local typeKey = Format.EventToTypeKey(event)
 
     local line, p, secretBody = Format.BuildEventLineFromArgs(event, a1, a2, a3, a4, a5, a6, a7,
-        a8, a9, a10, a11, a12, a13, a14, nil, nil, a17)
+        a8, a9, a10, a11, a12, a13, a14, a15, a16, a17, a18)
 
     MaybeAutoAddChannel(event, p)
 

@@ -25,6 +25,7 @@ local calls = {
     healAbsorb = 0,
     healPrediction = 0,
 }
+local scheduled = {}
 local now = 100
 local frame = {}
 
@@ -63,6 +64,9 @@ local ctx = {
         assert(seenFrame == frame, "UpdateHealPrediction should receive mapped frame")
         calls.healPrediction = calls.healPrediction + 1
     end,
+    ScheduleTrailingDrain = function(family, unit)
+        scheduled[#scheduled + 1] = family .. ":" .. unit
+    end,
     type = type,
     pairs = pairs,
     wipe = function(t) for k in pairs(t) do t[k] = nil end end,
@@ -83,6 +87,7 @@ local RebuildUnitFrameMap = RebuildUnitFrameMap
 local UpdateAbsorbs = UpdateAbsorbs
 local UpdateHealAbsorb = UpdateHealAbsorb
 local UpdateHealPrediction = UpdateHealPrediction
+local ScheduleTrailingDrain = ScheduleTrailingDrain
 ]]
 
 local loader = assert(loadstring(prelude .. onEventSource .. "\nreturn OnEvent"))
@@ -97,5 +102,7 @@ assert(calls.absorb == 1, "duplicate absorb event inside 100 ms should be thrott
 assert(calls.healAbsorb == 1,
     "heal-absorb event should not be suppressed by absorb event throttle")
 assert(calls.healPrediction == 0, "heal prediction should not run for absorb events")
+assert(#scheduled == 1 and scheduled[1] == "absorb:raid1",
+    "suppressed absorb event must schedule exactly one trailing drain for its unit")
 
 print("OK: groupframes_absorb_throttle_split_test")
