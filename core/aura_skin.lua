@@ -25,6 +25,17 @@ ns.Addon.AuraSkin = AuraSkin
 _G.QUI = _G.QUI or {}
 _G.QUI.AuraSkin = AuraSkin
 
+-- ns.AuraElements, resolved lazily: TOC order loads this file BEFORE
+-- core/aura_elements.lua (QUI.toc lists aura_skin.lua ahead of
+-- aura_elements.lua), so it must not be captured at file-load time — only
+-- read the first time Configure actually runs, by which point the whole
+-- core/ slice is loaded. Mirrors core/aura_glue.lua's ResolveE.
+local AuraElements
+local function ResolveAuraElements()
+    AuraElements = AuraElements or ns.AuraElements
+    return AuraElements
+end
+
 -- Profile field resolution (defaults match the task contract).  AuraTheme.Metrics
 -- supplies iconSize / spacing / grow / maxIcons; the grid extras (maxPerRow,
 -- offsetX, offsetY, anchor) are read straight off the profile here.
@@ -150,10 +161,18 @@ local function styleButton(button, profile)
     if size <= 0 then size = 22 end
     button:SetSize(size, size)
 
-    -- Static QUI border: theme-color fill, shown as a 1px ring around the inset icon.
+    -- Static QUI border: per-element override when set, else theme color.
+    -- borderColor is optional on the element (absent = theme) — the seeded
+    -- group-frames "defensives" strip ships green via this field.
     local border = button._quiBorder
     if border then
-        local r, g, b, a = AuraTheme.BorderColor()
+        local bc = profile.borderColor
+        local r, g, b, a
+        if type(bc) == "table" then
+            r, g, b, a = bc[1] or 1, bc[2] or 1, bc[3] or 1, bc[4]
+        else
+            r, g, b, a = AuraTheme.BorderColor()
+        end
         border:SetColorTexture(r, g, b, a or 1)
         if border.DisablePixelSnap then border:DisablePixelSnap() end
     end
@@ -179,12 +198,71 @@ local function styleButton(button, profile)
     styleText(button._quiCount, profile.stack, profile.fontSize, "BOTTOMRIGHT", -1, 1)
     if fontPath and button._quiSymbol then button._quiSymbol:SetFont(fontPath, (profile.fontSize and profile.fontSize > 0) and profile.fontSize or 11, fontFlags) end
 
-    -- Swipe (config on the Cooldown — appearance, not aura data).
+    -- Swipe (config on the Cooldown — appearance, not aura data). Linear
+    -- ("horizontal"/"vertical") ports StyleSlot's linear branch
+    -- (aura_slots.lua:93-134) onto group/strip buttons: group-created
+    -- buttons get CustomAuraButtonTemplate the same as slot frames
+    -- (Blizzard_CustomAuraContainer.lua AddAuraGroup and CreateAuraSlotFrame
+    -- both prepend it via CreateCustomFrameProvider,
+    -- Blizzard_AuraContainerFrameProviders.lua:34), which always inherits
+    -- CustomAuraButtonInboundMixin = CreateFromMixins(CustomAuraButtonSharedMixin)
+    -- (Blizzard_CustomAuraButton.xml:5-8) — the SAME mixin that defines
+    -- SetDurationBar (Blizzard_CustomAuraButton.lua:183) already relied on
+    -- for SetDurationCooldown above. So button:SetDurationBar is available
+    -- here exactly like it is on slot frames.
     local cd = button._quiCooldown
-    if cd then
-        cd:SetDrawSwipe(profile.hideSwipe ~= true)
-        cd:SetReverse(profile.reverseSwipe == true)
-        cd:SetHideCountdownNumbers(true)
+    local wantsLinear = profile.swipeStyle == "horizontal" or profile.swipeStyle == "vertical"
+    if wantsLinear and button.SetDurationBar then
+        if cd and cd.SetDrawSwipe then cd:SetDrawSwipe(false) end
+        local fill = button._quiDurationBar
+        if not fill and InCombatLockdown() then
+            -- StatusBar child creation on a forbidden button is OOC-only
+            -- (same principle as StyleSlot); Configure/Restyle's OOC replay
+            -- re-runs styleButton on every tracked button, so the next
+            -- regen-triggered pass lands the fill without a /reload.
+            return
+        end
+        if not fill then
+            fill = CreateFrame("StatusBar", nil, button)
+            fill:SetStatusBarTexture("Interface\\Buttons\\WHITE8x8")
+            -- Same footprint/level relationship as StyleSlot's linear fill
+            -- (aura_slots.lua:110-113, SetAllPoints(frame), default child
+            -- frame level = button level + 1 — no prior art exists for an
+            -- icon-preserving strip fill, so this mirrors the only existing
+            -- _quiDurationBar precedent). A child frame always draws above
+            -- ALL of its parent's own regions regardless of draw layer
+            -- (icon/border/dispel are button-owned ARTWORK/BACKGROUND/BORDER
+            -- regions, not separate frames), so the fill sits above the icon
+            -- the SAME way the native radial Cooldown swipe already does —
+            -- StatusBar only paints its FILLED portion, so the icon still
+            -- shows through the depleted portion exactly like a radial
+            -- swipe uncovers the icon as it drains. Unlike aura_slots.lua's
+            -- "bar" display type, the icon is never SetAlpha(0)'d here.
+            fill:SetAllPoints(button)
+            button._quiDurationBar = fill
+        end
+        -- Re-called EVERY style pass (Configure/Restyle), not just at
+        -- creation, so a Reverse Swipe / style toggle takes effect without a
+        -- reload — same as StyleSlot.
+        button:SetDurationBar(fill, {
+            direction = (profile.reverseSwipe and Enum.StatusBarTimerDirection.ElapsedTime)
+                or Enum.StatusBarTimerDirection.RemainingTime,
+            interpolation = Enum.StatusBarInterpolation.Immediate,
+        })
+        fill:SetOrientation(profile.swipeStyle == "vertical" and "VERTICAL" or "HORIZONTAL")
+        -- No per-strip color source exists on the ElementProfile contract
+        -- (aura_glue.lua G.ElementProfile has no `color` field — unlike
+        -- StyleSlot's `element.color`, which is a per-slot-element field
+        -- with no strip-art analogue) — leave the WHITE8x8 texture
+        -- untinted rather than inventing a source StyleSlot doesn't share.
+        fill:Show()
+    else
+        if button._quiDurationBar then button._quiDurationBar:Hide() end
+        if cd then
+            cd:SetDrawSwipe(profile.hideSwipe ~= true)
+            cd:SetReverse(profile.reverseSwipe == true)
+            cd:SetHideCountdownNumbers(true)
+        end
     end
 end
 
@@ -200,7 +278,11 @@ end
 -- default "DOWN" — buffborders sets wrap from its growUp toggle). The flow
 -- origin corner combines both.
 local function FlowFor(L)
-    local grow = L.grow
+    -- CENTER has no native flow direction (SetAuraLayoutAnchorPoint only
+    -- accepts corners) — it behaves as a RIGHT-growing row internally; the
+    -- container auto-sizes, and LayoutAnchor pins that auto-sized rect's
+    -- CENTER to the host so the row reads as centered overall.
+    local grow = L.grow == "CENTER" and "RIGHT" or L.grow
     local column = (grow == "UP" or grow == "DOWN")
     local left = (grow == "LEFT")
     local up
@@ -209,10 +291,18 @@ local function FlowFor(L)
     return anchor, left, up, column
 end
 
--- The container corner the grid flows from. Consumers pin THIS corner in
--- their SetPoint so the auto-sized rect grows away from the pinned spot.
+-- The point consumers pin in their SetPoint. Ordinarily this IS the container
+-- corner the grid flows from, so the auto-sized rect grows away from the
+-- pinned spot. CENTER grow is the one exception: the engine flow layout has
+-- no center flow, so FlowFor still derives a corner for the engine, but the
+-- consumer instead pins the auto-sized container's OWN center to the host —
+-- that centers the whole row without any engine-side center flow.
 function AuraSkin.LayoutAnchor(profile)
-    local anchor = FlowFor(ResolveLayout(profile))
+    local L = ResolveLayout(profile)
+    if L.grow == "CENTER" then
+        return "CENTER"
+    end
+    local anchor = FlowFor(L)
     return anchor
 end
 
@@ -244,19 +334,25 @@ local function GroupLayout(L)
 end
 
 -- Per-group initializeFrame: the engine securecallfunction()s this once per
--- button it creates (batches of 10; one batch pre-allocated at AddAuraGroup).
--- Style reads container._quiProfile at call time so buttons born after a
--- settings change pick up the current profile. cancelButtons is a STRING of
--- RegisterForClicks tokens (e.g. "RightButtonUp"); cancel itself runs in the
--- button intrinsic via C_UnitAuras.CancelAuraByInstanceID — combat-legal, no
--- secure header.
-local function MakeInitializer(container, groupDesc)
-    local cancel = groupDesc.cancelButtons
+-- button it creates (batches of 10; one batch pre-allocated at AddAuraGroup),
+-- and the SAME closure persists for the group's entire lifetime — addons can
+-- never replace it (groups are unremovable, PTR4 contract). So this must NOT
+-- close over groupDesc.cancelButtons as a frozen value: a later right-click-
+-- cancel toggle would never reach a batch-later button born from this stale
+-- closure. Instead read container._quiCancelButtons (latched by Configure,
+-- see below) at CALL time, so every button — however late it's born — picks
+-- up whatever is current. Style reads container._quiProfile the same way, for
+-- the same reason. cancelButtons is a STRING of RegisterForClicks tokens
+-- (e.g. "RightButtonUp"); nil clears click registration (Blizzard_AuraButton.lua
+-- SetCancelAuraButtons: nil -> RegisterForClicks() with no args). Cancel
+-- itself runs in the button intrinsic via C_UnitAuras.CancelAuraByInstanceID
+-- — combat-legal, no secure header.
+local function MakeInitializer(container, _groupDesc)
     return function(button)
         buildButtonArt(button)
         styleButton(button, container._quiProfile or {})
-        if cancel and button.SetCancelAuraButtons then
-            button:SetCancelAuraButtons(cancel)
+        if button.SetCancelAuraButtons then
+            button:SetCancelAuraButtons(container._quiCancelButtons)
         end
         local reg = container._quiButtons
         if not reg then
@@ -283,12 +379,28 @@ end
 function AuraSkin.Configure(container, profile, groups)
     local L = ResolveLayout(profile)
     container._quiProfile = profile
+    -- Latch the current right-click-cancel setting on the CONTAINER, not the
+    -- per-group descriptor: groups are unremovable and a group's
+    -- initializeFrame closure can't be swapped, so this is the only place a
+    -- later toggle can reach an existing group's buttons (MakeInitializer
+    -- reads this at button-birth time; the restyle loop below and Restyle
+    -- re-assert it on every button already born). AuraGlue.ElementGroups
+    -- gives every group in one element's array the SAME cancel value (single
+    -- `cancel` local closes over all of them) — "last non-nil wins" is just
+    -- defensive uniformity, not a real per-group split.
+    local cancel
+    for i = 1, #groups do
+        local c = groups[i].cancelButtons
+        if c then cancel = c end
+    end
+    container._quiCancelButtons = cancel
     local registered = container._quiGroups
     if not registered then
         registered = {}
         container._quiGroups = registered
     end
     local wanted = {}
+    local E = ResolveAuraElements()
     for i = 1, #groups do
         local g = groups[i]
         local gkey = g.key or ""
@@ -297,7 +409,18 @@ function AuraSkin.Configure(container, profile, groups)
         -- silently clobber each other's group.
         assert(not gkey:find("|", 1, true),
             "AuraSkin group key must not contain '|'")
-        local key = gkey .. "|" .. g.filter
+        -- Canonicalize the filter string HERE, at the composite-key choke
+        -- point, regardless of whether the caller already did (AuraGlue.
+        -- ElementGroups does — see its comment): this is the ONE place
+        -- named in the file header where "every DISTINCT string retains a
+        -- group until reload" bites, so it gets its own defensive pass.
+        -- CanonicalizeFilterString is idempotent — re-canonicalizing an
+        -- already-canonical string is a cheap no-op, never a bug. The
+        -- canonical form is what gets REGISTERED with the engine too (not
+        -- just hashed into the key), so a group's own immutable filter
+        -- string is always the canonical one.
+        local filter = (E and E.CanonicalizeFilterString) and E.CanonicalizeFilterString(g.filter) or g.filter
+        local key = gkey .. "|" .. filter
         wanted[key] = true
         local maxCount   = g.maxFrameCount or L.maxIcons
         local sortMethod = g.sortMethod or AuraContainerSortMethod.Default
@@ -311,7 +434,7 @@ function AuraSkin.Configure(container, profile, groups)
             container:SetAuraGroupLayout(key, GroupLayout(L))
             registered[key] = true
         elseif not InCombatLockdown() then
-            container:AddAuraGroup(key, g.filter, {
+            container:AddAuraGroup(key, filter, {
                 maxFrameCount    = maxCount,
                 sortMethod       = sortMethod,
                 sortDirection    = sortDir,
@@ -343,13 +466,21 @@ function AuraSkin.Configure(container, profile, groups)
             local button = reg[i]
             if button then
                 styleButton(button, profile)
+                if button.SetCancelAuraButtons then
+                    button:SetCancelAuraButtons(container._quiCancelButtons)
+                end
             end
         end
     end
 end
 
 -- Restyle: combat-legal subset — re-apply fonts/colors/swipe to every
--- engine-created button we've seen. No layout (engine-owned), no group changes.
+-- engine-created button we've seen. No layout (engine-owned), no group
+-- changes. Takes no groups argument, so it re-asserts whatever cancel state
+-- Configure last latched onto the container (_quiCancelButtons) rather than
+-- re-deriving it — this is the path a combat-blocked Configure falls back to
+-- (AuraGlue.RunConfigPass), so a right-click-cancel toggle still reaches
+-- live buttons even when the full reconcile is skipped.
 function AuraSkin.Restyle(container, profile)
     container._quiProfile = profile
     local reg = container._quiButtons
@@ -358,6 +489,9 @@ function AuraSkin.Restyle(container, profile)
         local button = reg[i]
         if button then
             styleButton(button, profile)
+            if button.SetCancelAuraButtons then
+                button:SetCancelAuraButtons(container._quiCancelButtons)
+            end
         end
     end
 end

@@ -41,7 +41,7 @@ local anchorGate = pass:find("if not InCombatLockdown() then", 1, true)
 local anchorCall = pass:find("AnchorElementContainer(container, frame, element)", 1, true)
 assert(anchorGate and anchorCall and anchorGate < anchorCall,
     "AnchorElementContainer (forbidden SetPoint) must be gated on not InCombatLockdown()")
-assert(pass:find("container:SetUnit(frame.unit)", 1, true),
+assert(pass:find("container:SetUnit(unit)", 1, true),
     "SetUnit is combat-legal mutation and runs unconditionally")
 
 -- Group / slot reconcile flows through the shared core glue; the combat
@@ -49,7 +49,7 @@ assert(pass:find("container:SetUnit(frame.unit)", 1, true),
 -- this file just threads allowCreate through — it never pcalls Configure itself.
 assert(pass:find("AuraGlue.RunConfigPass(container, profile, groups, allowCreate)", 1, true),
     "filter strips reconcile groups via AuraGlue.RunConfigPass(..., allowCreate)")
-assert(pass:find("AuraGlue.ElementGroups(frame.unit, element, profile, false)", 1, true),
+assert(pass:find("AuraGlue.ElementGroups(unit, element, profile, false)", 1, true),
     "filter strips build descriptors via AuraGlue.ElementGroups")
 assert(pass:find("AuraSlots.Sync(container, element, allowCreate)", 1, true),
     "tracked elements reconcile slots via AuraSlots.Sync(..., allowCreate)")

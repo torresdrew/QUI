@@ -11,8 +11,8 @@ ns.QUI_GroupFramesAuraDefaults = AuraDefaults
 -- install latch an EMPTY bucket and permanently lose the shipped strips.
 -- This delegate keeps the settings-side name (editor capability wiring
 -- passes AuraDefaults.DefaultStripBucket as defaultBucketFn).
-function AuraDefaults.DefaultStripBucket()
-    return ns.QUI_GroupFramesAuraModel.DefaultStripBucket()
+function AuraDefaults.DefaultStripBucket(frameType)
+    return ns.QUI_GroupFramesAuraModel.DefaultStripBucket(frameType)
 end
 
 local SPEC_AURA_PRESETS = {

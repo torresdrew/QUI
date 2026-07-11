@@ -620,6 +620,7 @@ end
 
 function CDMSources.QueryUnitAuras(unit, filter, maxCount)
     if not unit or not _C_GetUnitAuras then return nil end
+    if AreAurasSecret() then return nil end
     return _C_GetUnitAuras(unit, filter, maxCount)
 end
 
@@ -682,6 +683,25 @@ local function InvalidateAuraMemoForDelta(unit, updateInfo)
     local u = _auraMemo[unit]
     if not u then return end
 
+    -- 12.1: updateInfo itself can arrive whole-secret under aura restriction
+    -- (independent of the per-field secrecy handled below) — any field read
+    -- on it (.isFullUpdate, .removedAuraInstanceIDs, ...) would throw. Probe
+    -- once, up front, and fold to the same "no payload" full-wipe path a nil
+    -- delta already takes: a delta we can't read must WIPE the memo, not
+    -- silently skip it (a stale entry would otherwise survive undetected).
+    if updateInfo and WoW_IsSecretValue and WoW_IsSecretValue(updateInfo) then
+        updateInfo = nil
+    end
+
+    -- 12.1 live shape: the table itself reads fine but its scalar
+    -- isFullUpdate field is a secret boolean — the boolean test below throws
+    -- on it ("attempt to perform boolean test on field 'isFullUpdate'").
+    -- Probe the field first and fold to the same conservative full wipe: an
+    -- unreadable flag means the delta can't be trusted as partial.
+    if updateInfo and WoW_IsSecretValue and WoW_IsSecretValue(updateInfo.isFullUpdate) then
+        updateInfo = nil
+    end
+
     if not updateInfo or updateInfo.isFullUpdate then
         for _, b in pairs(u) do wipe(b) end
         if auraMemoStats then auraMemoStats.wipes = auraMemoStats.wipes + 1 end
@@ -692,8 +712,16 @@ local function InvalidateAuraMemoForDelta(unit, updateInfo)
     wipe(changed)
     local hasChanged, uncertainChanged = false, false
 
+    -- Each *AuraInstanceIDs / addedAuras field can independently be a whole
+    -- SecretValue (not just its elements) while updateInfo itself reads fine
+    -- -- cdm_spelldata.lua's own UNIT_AURA capture guards addedAuras and
+    -- removedAuraInstanceIDs the same way before indexing/length-ing them.
+    -- Mirror that idiom here: an unreadable whole array can't be walked, so
+    -- widen to the conservative sweep below instead of touching #array.
     local removed = updateInfo.removedAuraInstanceIDs
-    if removed then
+    if removed and WoW_IsSecretValue and WoW_IsSecretValue(removed) then
+        uncertainChanged = true
+    elseif removed then
         for i = 1, #removed do
             local iid = removed[i]
             if iid ~= nil then
@@ -706,7 +734,9 @@ local function InvalidateAuraMemoForDelta(unit, updateInfo)
         end
     end
     local updated = updateInfo.updatedAuraInstanceIDs
-    if updated then
+    if updated and WoW_IsSecretValue and WoW_IsSecretValue(updated) then
+        uncertainChanged = true
+    elseif updated then
         for i = 1, #updated do
             local iid = updated[i]
             if iid ~= nil then
@@ -723,7 +753,9 @@ local function InvalidateAuraMemoForDelta(unit, updateInfo)
     -- add we can't target widens to dropping all nil-sentinel entries.
     local dropAllNils = false
     local added = updateInfo.addedAuras
-    if added then
+    if added and WoW_IsSecretValue and WoW_IsSecretValue(added) then
+        dropAllNils = true
+    elseif added then
         for i = 1, #added do
             local ad = added[i]
             if ad then

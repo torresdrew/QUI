@@ -65,6 +65,9 @@ function QUICore.SafeSetBackdrop(frame, backdropInfo, borderColor, bgColor)
                 elapsed = elapsed + delta
                 if elapsed < 0.1 then return end  -- Check every 0.1s
                 elapsed = 0
+                -- Combat blocks SetBackdrop regardless of size; waiting out
+                -- combat must not consume the invalid-size retry budget.
+                if InCombatLockdown() then return end
 
                 -- Performance: reuse module-level scratch table instead of allocating per tick.
                 -- Track total vs processed count to avoid a second pairs() scan to check emptiness.

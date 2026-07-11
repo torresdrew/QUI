@@ -574,12 +574,9 @@ actionBars.UpdateAllCooldowns()
 assert(actionCooldownCalls - cooldownCallsBeforeInactiveCache == 2,
     "recently inactive cooldown buttons should skip source probes until the inactive TTL expires")
 
-assert(type(actionBars._sharedHandlers) == "table",
-    "shared action button handlers should be exported for all button instances")
-assert(type(actionBars._sharedHandlers.UpdateCooldown) == "function",
-    "cooldown updates should use one shared handler instead of per-button closures")
-assert(type(actionBars._sharedHandlers.UpdateCount) == "function",
-    "count updates should use one shared handler instead of per-button closures")
+-- (_sharedHandlers pins removed: ActionBarButtonTemplate adoption made the
+-- shared per-button handler table dead code — Blizzard's mixin owns the
+-- button lifecycle; QUI's presentation passes run through ActionBarsOwned.)
 
 actionBarsDB.global = {
     skinEnabled = true,

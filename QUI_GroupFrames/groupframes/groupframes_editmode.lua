@@ -80,7 +80,7 @@ local FAKE_DEBUFF_ICONS = {
 local PREVIEW_INDICATORS = {
     [1] = { leader = true, targetHighlight = true, threatBorder = true, buffs = 1 },
     [2] = { readyCheck = true, raidMarker = 1, debuffs = 2, buffs = 1 },
-    [3] = { phaseIcon = true, resurrection = true, debuffs = 1, defensiveIndicator = 2 },
+    [3] = { phaseIcon = true, resurrection = true, debuffs = 1 },
     [4] = { dispelOverlay = true, summonPending = true, debuffs = 3 },
     [5] = { raidMarker = 8, buffs = 2 },
 }
@@ -111,10 +111,10 @@ end
 -- Standalone preview of the unified aura element model: one representative
 -- visual per enabled element in the "*" + active-spec buckets, placed via the
 -- shared icon-layout helpers so it matches the live renderer's geometry.
-local function RenderAuraElementsPreview(frame, auras, auraLevel, powerHeight, px, texturePath)
+local function RenderAuraElementsPreview(frame, auras, auraLevel, powerHeight, px, texturePath, frameType)
     local Model = ns.QUI_GroupFramesAuraModel
     if not Model or not Model.ActiveElementsForSpec then return end
-    if Model.EnsureSeeded then Model.EnsureSeeded(auras) end
+    if Model.EnsureSeeded then Model.EnsureSeeded(auras, frameType) end
     local IconLayout = ns.QUI_GroupFrameIconLayout
     local elements = Model.ActiveElementsForSpec(auras, GetPreviewSpecID())
     if not elements or #elements == 0 then return end
@@ -618,58 +618,6 @@ local function CreateTestFrame(parent, index, totalCount, classToken, name, role
         end
     end
 
-    -- Defensive indicator preview (shows up to maxIcons)
-    if prev and prev.defensiveIndicator then
-        local defSettings = healerSettings and healerSettings.defensiveIndicator
-        if defSettings and defSettings.enabled ~= false then
-            local iconSize = defSettings.iconSize or 16
-            local position = defSettings.position or "CENTER"
-            local offsetX = defSettings.offsetX or 0
-            local offsetY = defSettings.offsetY or 0
-            local spacing = defSettings.spacing or 2
-            local growDir = defSettings.growDirection or "RIGHT"
-            local maxIcons = defSettings.maxIcons or 3
-
-            -- Growth direction offsets
-            local stepX, stepY = 0, 0
-            if growDir == "RIGHT" then stepX = iconSize + spacing
-            elseif growDir == "LEFT" then stepX = -(iconSize + spacing)
-            elseif growDir == "CENTER" then stepX = iconSize + spacing
-            elseif growDir == "UP" then stepY = iconSize + spacing
-            elseif growDir == "DOWN" then stepY = -(iconSize + spacing)
-            end
-
-            -- CENTER: centering offset
-            local defCenterOff = 0
-            if growDir == "CENTER" then
-                local totalSpan = maxIcons * iconSize + math.max(maxIcons - 1, 0) * spacing
-                defCenterOff = -totalSpan / 2
-            end
-
-            -- Lift above the power bar on BOTTOM* positions, mirroring the aura
-            -- element preview above and the live UpdateDefensiveIndicator fix.
-            if type(position) == "string" and position:find("BOTTOM") then
-                offsetY = offsetY + powerHeight
-            end
-
-            -- Sample defensive textures for preview
-            local previewTextures = { 135936, 135987, 136120, 135874, 236220 }
-
-            for i = 1, maxIcons do
-                local defIcon = CreateFrame("Frame", nil, frame, "BackdropTemplate")
-                defIcon:SetSize(iconSize, iconSize)
-                defIcon:SetPoint(position, frame, position, offsetX + defCenterOff + stepX * (i - 1), offsetY + stepY * (i - 1))
-                defIcon:SetFrameLevel(baseLevel + 10)
-                ns.SkinBase.ApplyPixelBackdrop(defIcon, 1, false, false, { 0, 0.8, 0, 1 })
-
-                local icon = defIcon:CreateTexture(nil, "ARTWORK")
-                icon:SetAllPoints()
-                icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-                icon:SetTexture(previewTextures[i] or previewTextures[1])
-            end
-        end
-    end
-
     -- Unified aura elements preview (v46 model). One loop over the active spec
     -- bucket + the "*" bucket draws a representative strip / icon / square / bar
     -- per element, honoring its anchor / grow / spacing / size, so Edit Mode
@@ -677,7 +625,8 @@ local function CreateTestFrame(parent, index, totalCount, classToken, name, role
     -- only; this is a standalone preview (no live renderer / no real unit).
     local auraSettings = vdb.auras
     if prev and auraSettings and auraSettings.enabled ~= false then
-        RenderAuraElementsPreview(frame, auraSettings, baseLevel + 8, powerHeight, px, texturePath)
+        RenderAuraElementsPreview(frame, auraSettings, baseLevel + 8, powerHeight, px, texturePath,
+            isRaid and "raid" or "party")
     end
 
     -- Absorb + Heal prediction overlays (clamped to remaining health bar space)

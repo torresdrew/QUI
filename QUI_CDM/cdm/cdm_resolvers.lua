@@ -107,13 +107,13 @@ function CDMResolvers.Unsubscribe(eventName, handler)
 end
 
 ---------------------------------------------------------------------------
--- Catalog publication
+-- Catalog rebuild
 --
--- Publishes CDM:CATALOG_REBUILT when the cdID<->spell catalog actually reshapes
--- (spec / talent / spell-list changes). Combat-deferred: these can fire inside
--- combat, so the rebuild waits for PLAYER_REGEN_ENABLED. Encounter / Mythic+ /
--- rated-PvP starts only re-randomize aura instance IDs (not the catalog), so no
--- catalog rebuild is needed for those boundaries.
+-- Bumps CDMResolvers._catalogVersion when the cdID<->spell catalog actually
+-- reshapes (spec / talent / spell-list changes). Combat-deferred: these can
+-- fire inside combat, so the rebuild waits for PLAYER_REGEN_ENABLED. Encounter
+-- / Mythic+ / rated-PvP starts only re-randomize aura instance IDs (not the
+-- catalog), so no catalog rebuild is needed for those boundaries.
 ---------------------------------------------------------------------------
 local _busEventFrame = CreateFrame("Frame")
 local _rebuildPending = false
@@ -125,7 +125,6 @@ local function RebuildCatalog()
     end
     _rebuildPending = false
     CDMResolvers._catalogVersion = (CDMResolvers._catalogVersion or 0) + 1
-    publish("CDM:CATALOG_REBUILT")
 end
 
 CDMResolvers._RebuildCatalog = RebuildCatalog
@@ -154,6 +153,20 @@ end)
 -- fresh state via the runtime query wrappers. UNIT_AURA is handled by
 -- cdm_spelldata.lua because its batched payload is the source of truth.
 ---------------------------------------------------------------------------
+
+-- Hoisted from its original position later in this file (kept as a single
+-- definition, not duplicated there) so _runtimeFrame's OnEvent handler below
+-- can call it: a function literal only resolves a name to an enclosing
+-- local if that local was declared textually before the literal, and the
+-- OnEvent handler needs it for the UNIT_SPELLCAST_SUCCEEDED branch.
+local WoW_IsSecretValue = issecretvalue
+local ResolverIsSecretValue = function(value)
+    if WoW_IsSecretValue then
+        return WoW_IsSecretValue(value)
+    end
+    return false
+end
+
 local _runtimeFrame = CreateFrame("Frame")
 _runtimeFrame:RegisterEvent("SPELL_UPDATE_COOLDOWN")
 _runtimeFrame:RegisterEvent("SPELL_UPDATE_CHARGES")
@@ -161,10 +174,11 @@ _runtimeFrame:RegisterEvent("SPELL_UPDATE_USES")
 _runtimeFrame:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
 _runtimeFrame:RegisterUnitEvent("UNIT_SPELLCAST_START", "player")
 
-local function IsPlayerUnitToken(value)
-    if issecretvalue and issecretvalue(value) then return false end
-    return value == "player"
-end
+-- _runtimeFrame's two unit events (UNIT_SPELLCAST_SUCCEEDED / _START,
+-- registered above) are RegisterUnitEvent("player")-bound, so the C-side
+-- filter already guarantees the unit. The token itself is documented
+-- SecretWhenUnitSpellCastRestricted — a secret token here is
+-- still the player; comparing it would throw, so neither branch inspects it.
 
 -- Debug trace hook slot. The debug addon populates this at load time
 -- so /cdmdebug spell <id> events can see SUC / SPELL_UPDATE_CHARGES /
@@ -194,18 +208,30 @@ _runtimeFrame:SetScript("OnEvent", function(_, evt, arg1, arg2, arg3, arg4)
     elseif evt == "SPELL_UPDATE_CHARGES" or evt == "SPELL_UPDATE_USES" then
         publish("CDM:CHARGES_CHANGED", arg1, arg2)
     elseif evt == "UNIT_SPELLCAST_START" then
-        if IsPlayerUnitToken(arg1) then
+        -- RegisterUnitEvent("player")-bound (see registration above): the
+        -- C-side filter guarantees identity, so arg1 is not inspected —
+        -- registered-token discipline, matching the SUCCEEDED branch below.
+        -- arg3 is independently secretizable (SecretWhenUnitSpellCastRestricted)
+        -- and lands in table keys downstream; skip publishing a secret one.
+        if not ResolverIsSecretValue(arg3) then
             publish("CDM:COOLDOWN_CHANGED", arg3, nil, "cast_start")
         end
     elseif evt == "UNIT_SPELLCAST_SUCCEEDED" then
-        if IsPlayerUnitToken(arg1) then
+        -- This frame is RegisterUnitEvent-bound to UNIT_SPELLCAST_SUCCEEDED("player")
+        -- only — the C-side unit filter already guarantees identity even
+        -- when the delivered unit token itself arrives opaque under
+        -- restriction, so arg1 is not inspected here (registered-token
+        -- discipline, same as the START branch above). Per UnitDocumentation.lua:4663-4674
+        -- (SecretWhenUnitSpellCastRestricted) spellID (arg3) is
+        -- independently secretizable; this dispatch is the single choke
+        -- point before CDM:COOLDOWN_CHANGED fans out to every subscriber,
+        -- so probe once here rather than in each consumer. A secret spellID
+        -- throws as a table key or in == downstream, so skip publishing it.
+        if not ResolverIsSecretValue(arg3) then
             publish("CDM:COOLDOWN_CHANGED", arg3, nil, "cast_succeeded")
         end
     end
 end)
-
-local WoW_IsSecretValue = issecretvalue
-local ResolverIsSecretValue
 
 local function IsSafeNumeric(val)
     if ResolverIsSecretValue and ResolverIsSecretValue(val) then
@@ -221,13 +247,6 @@ end
 
 local GCD_MAX_DURATION = 1.75
 local GCD_SPELL_ID = 61304
-
-ResolverIsSecretValue = function(value)
-    if WoW_IsSecretValue then
-        return WoW_IsSecretValue(value)
-    end
-    return false
-end
 
 local function DecodePotentialSecretBoolean(value)
     if ResolverIsSecretValue(value) then return nil end
@@ -574,6 +593,14 @@ end
 function CDMResolvers.GetSpellCastInfo(spellID)
     if not spellID or not UnitCastingInfo then return false end
     local _, _, _, startMS, endMS, _, _, _, castSpellID = UnitCastingInfo("player")
+    -- Per UnitDocumentation.lua SecretWhenUnitSpellCastRestricted, each return
+    -- can arrive secret while the player's cast is restricted; == and
+    -- arithmetic on a secret throw. nil = indeterminate, caller falls through.
+    if ResolverIsSecretValue(castSpellID)
+        or ResolverIsSecretValue(startMS)
+        or ResolverIsSecretValue(endMS) then
+        return nil
+    end
     if castSpellID and castSpellID == spellID and startMS and endMS then
         return true, startMS / 1000, (endMS - startMS) / 1000, "cast"
     end
@@ -583,6 +610,11 @@ end
 function CDMResolvers.GetSpellChannelInfo(spellID)
     if not spellID or not UnitChannelInfo then return false end
     local _, _, _, startMS, endMS, _, _, channelSpellID = UnitChannelInfo("player")
+    if ResolverIsSecretValue(channelSpellID)
+        or ResolverIsSecretValue(startMS)
+        or ResolverIsSecretValue(endMS) then
+        return nil
+    end
     if channelSpellID and channelSpellID == spellID and startMS and endMS then
         return true, startMS / 1000, (endMS - startMS) / 1000, "channel"
     end
@@ -875,10 +907,6 @@ local function ResolveCooldownActivityStateCore(icon, entry, containerDB, now, r
 end
 
 function CDMResolvers.ResolveCooldownActivityState(icon, entry, containerDB, now, runtimeOptions)
-    if icon and RuntimeQueries and RuntimeQueries.WithRuntimeQueryOwner then
-        return RuntimeQueries.WithRuntimeQueryOwner(
-            icon, ResolveCooldownActivityStateCore, icon, entry, containerDB, now, runtimeOptions)
-    end
     return ResolveCooldownActivityStateCore(icon, entry, containerDB, now, runtimeOptions)
 end
 
@@ -2181,10 +2209,6 @@ function CDMResolvers.ResolveCooldownState(context)
         local tag = currentResolveCallerTag or "other"
         local byTag = resolverStats.resolveBy
         byTag[tag] = (byTag[tag] or 0) + 1
-    end
-    local owner = context and context.owner
-    if owner and RuntimeQueries and RuntimeQueries.WithRuntimeQueryOwner then
-        return RuntimeQueries.WithRuntimeQueryOwner(owner, ResolveCooldownStateCore, context)
     end
     return ResolveCooldownStateCore(context)
 end

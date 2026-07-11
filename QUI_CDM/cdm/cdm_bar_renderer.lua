@@ -1461,8 +1461,8 @@ local function UpdateItemBarCooldown(bar, entry)
     end
     if not isActive and scanner and scanner.IsItemActive and itemID then
         local active, expiration, duration = scanner.IsItemActive(itemID)
-        local readableDuration = duration
-        local readableExpiration = expiration
+        local readableDuration = ReadNumber(duration, nil)
+        local readableExpiration = ReadNumber(expiration, nil)
         if active and readableDuration and readableDuration > 0 then
             isActive = true
             auraDur = readableDuration
@@ -1527,7 +1527,12 @@ local function UpdateItemBarCooldown(bar, entry)
        and r.isOnCooldown == true
        and r.numericCooldownActive == true
        and type(startTime) == "number"
-       and type(duration) == "number" then
+       and type(duration) == "number"
+       and not (issecretvalue and issecretvalue(startTime))
+       and not (issecretvalue and issecretvalue(duration)) then
+        -- Paired issecretvalue with the type() checks: the arithmetic below throws
+        -- on a secret value even though type() reports "number" (defense-in-depth;
+        -- the resolver already rejects secrets via IsSafeNumeric upstream).
         local remaining = (startTime + duration) - GetTime()
         if remaining > 0 then
             bar._active = true

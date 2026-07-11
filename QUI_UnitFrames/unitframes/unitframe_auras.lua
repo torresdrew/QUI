@@ -128,7 +128,7 @@ UnitFrameAuras.DefaultUnitAuraBucket = DefaultUnitAuraBucket
 -- element-model fields (elements / elementsSeeded). nil when the unit has none.
 local function GetFrameAuraSettings(frame)
     if not frame then return nil end
-    local unitKey = frame.unitKey or frame.unit
+    local unitKey = frame.unitKey or QUI_UF.GetFrameUnit(frame)
     local settings = GetUnitSettings and GetUnitSettings(unitKey)
     return settings and settings.auras or nil
 end
@@ -196,9 +196,9 @@ end
 -- keeps its element containers disabled + hidden so the fake preview icons render
 -- alone (until Task 10 rewires preview to feed the containers directly).
 local function ApplyElementPass(frame, allowCreate)
-    if not frame or not frame.unit then return end
+    if not frame or not QUI_UF.GetFrameUnit(frame) then return end
     if not ResolveAuraDeps() then return end
-    local unitKey = frame.unitKey or frame.unit
+    local unitKey = frame.unitKey or QUI_UF.GetFrameUnit(frame)
     local elems = ResolveContainerElements(frame)
     local pool = frame._quiAuraContainers
     if not pool then
@@ -225,6 +225,7 @@ local function ApplyElementPass(frame, allowCreate)
         if not container then
             if allowCreate and not InCombatLockdown() and CreateFrame then
                 container = CreateFrame("AuraContainer", nil, frame, "CustomAuraContainerTemplate")
+                container:SetSize(1, 1)  -- give the engine a renderable rect from the first dirty mark; it auto-sizes on layout
                 pool[i] = container
             else
                 incomplete = true
@@ -233,7 +234,7 @@ local function ApplyElementPass(frame, allowCreate)
         if container then
             -- SetUnit BEFORE group configuration so the container's eager group
             -- registration (inside AuraSkin.Configure) has a valid unit.
-            container:SetUnit(frame.unit)
+            container:SetUnit(QUI_UF.GetFrameUnit(frame))
             if not InCombatLockdown() then
                 AnchorElementContainer(container, frame, element)
             end
@@ -254,7 +255,7 @@ local function ApplyElementPass(frame, allowCreate)
                 container:Show()
             else
                 local profile = ElementProfileFor(element)
-                local groups = AuraGlue.ElementGroups(frame.unit, element, profile, cancelEligible)
+                local groups = AuraGlue.ElementGroups(QUI_UF.GetFrameUnit(frame), element, profile, cancelEligible)
                 if not AuraGlue.RunConfigPass(container, profile, groups, allowCreate) then incomplete = true end
                 AuraSlots.Park(container)
                 container:SetEnabled(true)
@@ -292,7 +293,7 @@ QUI_UF.ApplyContainerConfig = ApplyContainerConfig
 -- immediately (pcall-guarded) AND still queue the full pass (creation + reconcile)
 -- for PLAYER_REGEN_ENABLED so a wrong assumption self-heals.
 local function UpdateAuras(frame)
-    if not frame or not frame.unit then return end
+    if not frame or not QUI_UF.GetFrameUnit(frame) then return end
     if InCombatLockdown() then
         -- Mutation of pre-created containers is 12.1-PTR-legal (SetUnit / filters
         -- / enable); pcall-guard the whole mutable pass (a surprise combat
@@ -380,9 +381,9 @@ end
 --  C-side and never hands a secret value to QUI Lua.)
 
 local function RefreshBossFrameForEngage(frame)
-    if not frame or not frame.unit then return end
+    if not frame or not QUI_UF.GetFrameUnit(frame) then return end
 
-    if UnitExists(frame.unit) then
+    if UnitExists(QUI_UF.GetFrameUnit(frame)) then
         UpdateFrame(frame)
     end
     UpdateAuras(frame)
@@ -410,7 +411,7 @@ end
 local function SetupAuraTracking(frame)
     if not frame then return end
 
-    local unit = frame.unit
+    local unit = QUI_UF.GetFrameUnit(frame)
 
     -- Live aura display is now a secure CustomAuraContainer per element — it
     -- self-drives UNIT_AURA internally (see AuraContainerPrivateMixin), so QUI
@@ -441,15 +442,16 @@ local function SetupAuraTracking(frame)
             oldOnEvent(self, event, arg1, ...)
         end
 
+        local frameUnit = QUI_UF.GetFrameUnit(self)
         if event == "PLAYER_TARGET_CHANGED" then
-            if self.unit == "target" or self.unit == "targettarget" then
+            if frameUnit == "target" or frameUnit == "targettarget" then
                 UpdateAuras(self)
             end
-        elseif event == "PLAYER_FOCUS_CHANGED" and self.unit == "focus" then
+        elseif event == "PLAYER_FOCUS_CHANGED" and frameUnit == "focus" then
             UpdateAuras(self)
-        elseif event == "UNIT_PET" and self.unit == "pet" then
+        elseif event == "UNIT_PET" and frameUnit == "pet" then
             UpdateAuras(self)
-        elseif event == "UNIT_TARGET" and self.unit == "targettarget" then
+        elseif event == "UNIT_TARGET" and frameUnit == "targettarget" then
             UpdateAuras(self)
         end
     end)

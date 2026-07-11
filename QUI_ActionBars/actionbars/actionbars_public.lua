@@ -39,7 +39,7 @@ function ActionBarsOwned:Initialize()
     -- ACTIONBAR_SLOT_CHANGED not registered here — only registered during
     -- drag operations (ACTIONBAR_SHOWGRID).  Blizzard fires slot 0 constantly
     -- even while idle, and all non-drag scenarios are already covered by
-    -- SPELLS_CHANGED, SafeSyncAction, UPDATE_SHAPESHIFT_FORM, etc.
+    -- SPELLS_CHANGED, Blizzard action updates, UPDATE_SHAPESHIFT_FORM, etc.
     ownedEventFrame:RegisterEvent("ACTIONBAR_PAGE_CHANGED")
     ownedEventFrame:RegisterEvent("UPDATE_BONUS_ACTIONBAR")
     ownedEventFrame:RegisterEvent("UPDATE_SHAPESHIFT_FORM")
@@ -72,6 +72,10 @@ function ActionBarsOwned:Initialize()
     ownedEventFrame:RegisterEvent("ACTIONBAR_SHOWGRID")
     ownedEventFrame:RegisterEvent("ACTIONBAR_HIDEGRID")
     ownedEventFrame:RegisterEvent("SPELL_UPDATE_CHARGES")
+    -- Player-only registration; dispatch/guard logic for this event lives
+    -- in OnOwnedEvent (actionbars_events.lua, UNIT_AURA branch) — never
+    -- read the payload unit there since this registration already filters
+    -- delivery to "player" at the C level.
     ownedEventFrame:RegisterUnitEvent("UNIT_AURA", "player")
     ownedEventFrame:RegisterEvent("SPELL_UPDATE_ICON")
     ownedEventFrame:RegisterEvent("MODIFIER_STATE_CHANGED")

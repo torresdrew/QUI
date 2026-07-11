@@ -75,13 +75,16 @@ local function GetSkinBorderColor()
     return 0, 0, 0, 1
 end
 
-local function GetPixelSize(frame)
-    local C = ns.Addon
-    if C and C.GetPixelSize then return C:GetPixelSize(frame) end
-    return 1
-end
-
 local function SkinBase() return ns.SkinBase end
+
+-- Live GroupFrames keep their runtime unit token in weak side state so the
+-- PingableUnitFrameTemplate mixin can read the secure header-owned attribute
+-- without first touching an addon-written frame.unit field. Preview frames use
+-- the same accessor through their separate previewUnit field.
+local function GetFrameUnit(frame)
+    local GF = ns.QUI_GroupFrames
+    return GF and GF.GetFrameUnit and GF.GetFrameUnit(frame) or nil
+end
 
 local function GetFontPath(size)
     local sm = ns.LSM
@@ -893,7 +896,9 @@ end
 -- frame[STATE_KEY][element.id].icons; surplus is released.
 ---------------------------------------------------------------------------
 function R.RenderIcon(self, frame, element, matches)
-    if not frame or not frame.unit then return end
+    if not frame then return end
+    local unit = GetFrameUnit(frame)
+    if not unit then return end
     local state = GetElementState(frame, element)
 
     -- Build the ordered list of auras to show. For a tracked element we honor
@@ -1017,7 +1022,7 @@ function R.RenderIcon(self, frame, element, matches)
             icon:SetPoint(iconAnchor, frame, anchor, offX + slotX, offY + slotY)
         end
 
-        ApplyIconData(icon, frame.unit, element, ordered[idx], cfgGen, br, bg, bb, ba, borderCurve)
+        ApplyIconData(icon, unit, element, ordered[idx], cfgGen, br, bg, bb, ba, borderCurve)
         icon:Show()
     end
 
@@ -1035,6 +1040,8 @@ end
 ---------------------------------------------------------------------------
 function R.RenderSquare(self, frame, element, matches)
     if not frame then return end
+    local unit = GetFrameUnit(frame)
+    if not unit then return end
     local state = GetElementState(frame, element)
 
     local auraData
@@ -1089,7 +1096,7 @@ function R.RenderSquare(self, frame, element, matches)
     icon:SetAlpha(1)
     local br, bg, bb, ba = GetSkinBorderColor()
     local borderCurve = ns.QUI_GroupFrameAuraBorderCurve and ns.QUI_GroupFrameAuraBorderCurve(frame._isRaid)
-    if not ApplyDebuffTypeBorder(icon, frame.unit, element, auraData, borderCurve) then
+    if not ApplyDebuffTypeBorder(icon, unit, element, auraData, borderCurve) then
         HideTypeBorder(icon)
         icon:SetBackdropBorderColor(br, bg, bb, ba)
     end
@@ -1101,7 +1108,9 @@ end
 -- Single-spell duration bar; hidden when absent.
 ---------------------------------------------------------------------------
 function R.RenderBar(self, frame, element, matches)
-    if not frame or not frame.unit then return end
+    if not frame then return end
+    local unit = GetFrameUnit(frame)
+    if not unit then return end
     local state = GetElementState(frame, element)
 
     local auraData
@@ -1191,7 +1200,7 @@ function R.RenderBar(self, frame, element, matches)
         end
     end
 
-    bar._unit = frame.unit
+    bar._unit = unit
     bar._auraData = auraData
     bar._element = element
     bar._elapsed = 0
@@ -1270,7 +1279,7 @@ function R.RefreshUpdatedIcons(self, frames, nFrames, unit, updatedAuraInstanceI
     for f = 1, nFrames do
         local frame = frames[f]
         local store = frame and frame[STATE_KEY]
-        if frame and frame:IsShown() and frame.unit == unit and store then
+        if frame and frame:IsShown() and GetFrameUnit(frame) == unit and store then
             for _, st in pairs(store) do
                 local icons = st.icons
                 if icons then

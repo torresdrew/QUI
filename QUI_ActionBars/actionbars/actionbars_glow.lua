@@ -334,12 +334,18 @@ UpdateAssistedCombatRotationFrame = function(button)
         -- 12.1: the template's OnUpdate now calls actionButton:OnActionBarSlotChanged().
         -- QUI's owned buttons are built from ActionButtonTemplate +
         -- SecureActionButtonTemplate and do NOT inherit ActionBarActionButtonMixin,
-        -- so that method is nil and the OnUpdate errors every frame. Stub it: the
-        -- rotation glow is driven by ForceUpdateAction/UpdateState; we only need to
-        -- mirror the real method's new-action-highlight clear.
+        -- so that method is nil and the OnUpdate errors every frame. Stub it.
         if not button.OnActionBarSlotChanged then
             button.OnActionBarSlotChanged = function(self)
+                -- Mirror ActionBarActionButtonMixin:OnActionBarSlotChanged:
+                -- assisted combat suppresses regular events and drives slot
+                -- refresh through this method, so it must refresh the button,
+                -- not just clear the highlight. No guard here on purpose:
+                -- the template's own OnUpdate already time-throttles this call
+                -- (updateTimeLeft / assistedCombatIconUpdateRate), and
+                -- Blizzard's real handler runs UpdateAction(true) unguarded.
                 if ClearNewActionHighlight then ClearNewActionHighlight(self.action, true) end
+                if self.Update then self:Update() end
             end
         end
         -- The template OnLoad sets frame level relative to MainActionBar's
@@ -649,7 +655,7 @@ function ActionBarsOwned.UpdateAllButtonVisuals()
         _visualFirstRunDone = true
     else
         -- Fast path: iterate only buttons with actions. Active→empty
-        -- transitions are handled by SafeSyncAction/ACTIONBAR_SLOT_CHANGED
+        -- transitions are handled by Blizzard updates/ACTIONBAR_SLOT_CHANGED
         -- paths calling SafeUpdate directly on the affected button.
         for btn in pairs(ActionBarsOwned._activeButtons) do
             local barKey = btn._quiBarKey
@@ -678,4 +684,3 @@ function ActionBarsOwned.ForceFullVisualRescan()
     end
     if MarkSpellIdMapDirty then MarkSpellIdMapDirty() end
 end
-

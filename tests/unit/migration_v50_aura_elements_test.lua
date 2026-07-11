@@ -545,7 +545,7 @@ do
     M.RunOnProfile(profile)
     local snapshotBuff = deepCopy(profile.buffBorders.buffAuras)
     local snapshotDebuff = deepCopy(profile.buffBorders.debuffAuras)
-    -- Second RunOnProfile (stored now 50 -> version gate returns early).
+    -- Second RunOnProfile (stored now 51 -> version gate returns early).
     M.RunOnProfile(profile)
     -- Direct SeedAuraElements call (bypasses the version gate; must hit the
     -- elementsSeeded short-circuit and change nothing).

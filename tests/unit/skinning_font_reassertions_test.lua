@@ -232,13 +232,13 @@ assertContains(social, "SkinBase.LockFontObject(alert, { fontOnly = true })",
 local interaction = readFile("modules/skinning/frames/interaction.lua")
 local mail = readFile("modules/skinning/frames/mail.lua")
 -- The interaction window skins (Bank/Merchant/Gossip/Quest/GuildBank/Trainer/
--- Macro) route through the canonical SkinBase.SkinWindow, which BUNDLES the
--- durable font lock (LockFrameTextObjects) — that bundling is pinned by
--- skinbase_coverage_verbs_test. So "they lock descendant text" is now verified
--- by "they go through SkinWindow".
+-- Macro) route through the canonical SkinBase.SkinWindow for chrome. SkinWindow
+-- is chrome-only (skinbase_coverage_verbs_test pins that it must NOT call
+-- LockFrameTextObjects); static text durability is owned by the global
+-- font-object override.
 local skinWindowCount = select(2, interaction:gsub("SkinBase%.SkinWindow%(", ""))
 assert(skinWindowCount >= 5,
-    "interaction window skins must route through SkinBase.SkinWindow (which locks descendant text)")
+    "interaction window skins must route through SkinBase.SkinWindow for chrome")
 -- Mail drives interactive button font objects via ApplyButtonFontObjectsDeep (bespoke item-button
 -- skin); LockFrameTextObjects was removed — global override owns static text durability.
 local mailBtnFontCount = select(2, mail:gsub("SkinBase%.ApplyButtonFontObjectsDeep%(", ""))

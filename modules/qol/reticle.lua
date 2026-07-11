@@ -8,6 +8,7 @@ ns.QUI = QUI
 local Helpers = ns.Helpers
 local CreateTimeThrottle = Helpers and Helpers.CreateTimeThrottle
 local ApplyCooldownFromSpell = Helpers and Helpers.ApplyCooldownFromSpell
+local IsSecretValue = Helpers and Helpers.IsSecretValue
 
 -- Locals
 local UIParent = UIParent
@@ -401,7 +402,7 @@ eventFrame:RegisterEvent("SPELL_UPDATE_COOLDOWN")
 eventFrame:RegisterEvent("ACTIONBAR_UPDATE_COOLDOWN")
 eventFrame:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
 
-eventFrame:SetScript("OnEvent", function(self, event, unit, _, spellID)
+eventFrame:SetScript("OnEvent", function(self, event, _, _, spellID)
     if event == "PLAYER_ENTERING_WORLD" then
         UpdateReticle()
 
@@ -414,7 +415,14 @@ eventFrame:SetScript("OnEvent", function(self, event, unit, _, spellID)
     elseif event == "SPELL_UPDATE_COOLDOWN" or event == "ACTIONBAR_UPDATE_COOLDOWN" then
         ThrottledCooldownRefresh()
 
-    elseif event == "UNIT_SPELLCAST_SUCCEEDED" and unit == "player" then
+    elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
+        -- 68569: registered player-only above (RegisterUnitEvent), so unit is
+        -- already C-side filtered — no unit compare needed. spellID may still
+        -- be secret under combat/encounter restriction; probe before any
+        -- table index/== (a secret spellID throws on both). Here it's only
+        -- ever forwarded to ApplyCooldownFromSpell (an API call, safe) or
+        -- truthiness-checked, but the probe keeps this branch boundary-safe
+        -- if that changes and matches the wave's uniform pattern.
         local settings = GetSettings()
         if not settings or not settings.gcdEnabled then
             if gcdCooldown then gcdCooldown:Hide() end
@@ -422,7 +430,7 @@ eventFrame:SetScript("OnEvent", function(self, event, unit, _, spellID)
         end
 
         -- Check cooldown of cast spell, fall back to GCD spell
-        if spellID then
+        if spellID and not (IsSecretValue and IsSecretValue(spellID)) then
             if ApplyCooldownFromSpell and ApplyCooldownFromSpell(gcdCooldown, spellID) then
                 gcdCooldown:Show()
                 UpdateRingAppearance()

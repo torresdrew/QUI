@@ -108,15 +108,6 @@ local function IsSupportedPinnedValue(value)
     return IsColorValue(value)
 end
 
-local function EnsureTable(parent, key)
-    local child = parent[key]
-    if type(child) ~= "table" then
-        child = {}
-        parent[key] = child
-    end
-    return child
-end
-
 local function IsPathExactOrNested(path, candidate)
     if type(path) ~= "string" or path == "" or type(candidate) ~= "string" or candidate == "" then
         return false
@@ -227,7 +218,7 @@ local UNIT_FRAMES_FEATURE_ROUTE = {
     unitFramesFrameTab = { surfaceTabKey = "frame", subTabName = "Frame" },
     unitFramesBarsTab = { surfaceTabKey = "bars", subTabName = "Bars" },
     unitFramesTextTab = { surfaceTabKey = "text", subTabName = "Text" },
-    unitFramesIconsTab = { surfaceTabKey = "icons", subTabName = "Icons" },
+    unitFramesIconsTab = { surfaceTabKey = "icons", subTabName = "Auras" },
     unitFramesPortraitTab = { surfaceTabKey = "portrait", subTabName = "Portrait" },
     unitFramesIndicatorsTab = { surfaceTabKey = "indicators", subTabName = "Indicators" },
 }

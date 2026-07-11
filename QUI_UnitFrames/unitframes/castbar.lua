@@ -1204,8 +1204,12 @@ end
 
 local function EnsureChannelTickEventRegistration()
     if CHANNEL_TICK_EVENT_REGISTERED then return end
-    if not EventRegistry or type(EventRegistry.RegisterCallback) ~= "function" then return end
-    EventRegistry:RegisterCallback("COMBAT_LOG_EVENT_UNFILTERED", OnChannelTickCombatLogEvent, CHANNEL_TICK_EVENT_FRAME)
+    if not EventRegistry or type(EventRegistry.RegisterFrameEventAndCallback) ~= "function" then return end
+    -- RegisterFrameEventAndCallback binds the game event (RegisterFrameEvent) AND the
+    -- callback; plain RegisterCallback never calls frameEventFrame:RegisterEvent, so CLEU
+    -- was never delivered and channel-tick detection was dead. 12.1: CLEU must be
+    -- registered explicitly (it is excluded from RegisterAllEvents).
+    EventRegistry:RegisterFrameEventAndCallback("COMBAT_LOG_EVENT_UNFILTERED", OnChannelTickCombatLogEvent, CHANNEL_TICK_EVENT_FRAME)
     CHANNEL_TICK_EVENT_REGISTERED = true
 end
 
@@ -2037,7 +2041,9 @@ local function GetCastInfo(castbar, unit)
     return CastEngine.GetCastInfo(unit)
 end
 
--- Detect if cast is empowered (player only)
+-- Detect if cast is empowered (player only). UnitChannelInfo already
+-- supplies isEmpowered/numEmpowerStages (via isEmpowerEvent/channelStages);
+-- no separate C_Spell probe exists on 12.1.
 local function DetectEmpoweredCast(isPlayer, spellID, unitSpellID, isEmpowerEvent, isChanneled, channelStages)
     if not isPlayer then
         return false, 0
@@ -2049,15 +2055,6 @@ local function DetectEmpoweredCast(isPlayer, spellID, unitSpellID, isEmpowerEven
     if isChanneled and isEmpowerEvent and channelStages and channelStages > 0 then
         numStages = channelStages
         isEmpowered = true
-    end
-
-    local checkSpellID = spellID or unitSpellID
-    if checkSpellID and C_Spell and C_Spell.GetSpellEmpowerInfo then
-        local empowerInfo = C_Spell.GetSpellEmpowerInfo(checkSpellID)
-        if empowerInfo and empowerInfo.numStages and empowerInfo.numStages > 0 then
-            isEmpowered = true
-            numStages = empowerInfo.numStages
-        end
     end
 
     return isEmpowered, numStages

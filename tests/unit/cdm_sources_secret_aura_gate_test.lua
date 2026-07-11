@@ -24,7 +24,7 @@ C_Secrets = {
     ShouldAurasBeSecret = function() return aurasSecret end,
 }
 
-local calls = { duration = 0, data = 0, expiration = 0, filtered = 0, appCount = 0, bySpell = 0 }
+local calls = { duration = 0, data = 0, expiration = 0, filtered = 0, appCount = 0, unitAuras = 0, bySpell = 0 }
 
 local function instanceGetter(counterKey, result)
     return function(...)
@@ -45,6 +45,7 @@ C_UnitAuras = {
     DoesAuraHaveExpirationTime = instanceGetter("expiration", true),
     IsAuraFilteredOutByInstanceID = instanceGetter("filtered", false),
     GetAuraApplicationDisplayCount = instanceGetter("appCount", 3),
+    GetUnitAuras = instanceGetter("unitAuras", { auraDataToken }),
     GetUnitAuraBySpellID = function(_unit, _spellID, _filter)
         -- Spell getters never throw; they return (possibly secret) AuraData.
         calls.bySpell = calls.bySpell + 1
@@ -73,8 +74,11 @@ assert(S.QueryAuraDataByAuraInstanceID("player", 1685) == auraDataToken, "T2: da
 assert(S.QueryAuraHasExpirationTime("player", 1685) == true, "T2: expiration passes through")
 assert(S.QueryAuraFilteredOutByInstanceID("target", 1, "HARMFUL|PLAYER") == false, "T2: filter passes through")
 assert(S.QueryAuraApplicationDisplayCount("player", 1731, 0, 99) == 3, "T2: app count passes through")
+assert(S.QueryUnitAuras("target", "HARMFUL|PLAYER", 40)[1] == auraDataToken,
+    "T2: unit aura scan passes through")
 assert(calls.duration == 1 and calls.data == 1 and calls.expiration == 1
-    and calls.filtered == 1 and calls.appCount == 1, "T2: each C function called exactly once")
+    and calls.filtered == 1 and calls.appCount == 1 and calls.unitAuras == 1,
+    "T2: each C function called exactly once")
 
 ---------------------------------------------------------------------------
 -- T3: secret window — wrappers return nil and NEVER reach the C function
@@ -86,8 +90,10 @@ assert(S.QueryAuraDataByAuraInstanceID("player", 1685) == nil, "T3: data gated t
 assert(S.QueryAuraHasExpirationTime("player", 1685) == nil, "T3: expiration gated to nil")
 assert(S.QueryAuraFilteredOutByInstanceID("target", 1, "HARMFUL|PLAYER") == nil, "T3: filter gated to nil")
 assert(S.QueryAuraApplicationDisplayCount("player", 1731, 0, 99) == nil, "T3: app count gated to nil")
+assert(S.QueryUnitAuras("target", "HARMFUL|PLAYER", 40) == nil, "T3: unit aura scan gated to nil")
 assert(calls.duration == 1 and calls.data == 1 and calls.expiration == 1
-    and calls.filtered == 1 and calls.appCount == 1, "T3: no additional C calls while secret")
+    and calls.filtered == 1 and calls.appCount == 1 and calls.unitAuras == 1,
+    "T3: no additional C calls while secret")
 
 ---------------------------------------------------------------------------
 -- T4: spell-based getter is NOT gated — safe API, must keep resolving the
@@ -118,6 +124,8 @@ do
     assert(ns2.CDMSources.AreAurasSecret() == false, "T6: no C_Secrets -> never secret")
     assert(ns2.CDMSources.QueryAuraDuration("player", 1685) == durationToken,
         "T6: wrapper passes through without C_Secrets")
+    assert(ns2.CDMSources.QueryUnitAuras("target", "HARMFUL|PLAYER", 40)[1] == auraDataToken,
+        "T6: unit aura scan passes through without C_Secrets")
 end
 
 ---------------------------------------------------------------------------
@@ -161,6 +169,39 @@ do
     -- fires -> error. The guard must skip that compare and never throw.
     local ok, err = pcall(S.InvalidateAuraMemoForDelta, "player", { addedAuras = { secretAdd } })
     assert(ok, "T7: fully-secret addedAuras struct must not throw (guard the ~= compare): " .. tostring(err))
+end
+
+---------------------------------------------------------------------------
+-- T8: Wave 2 H2. `updateInfo` itself (not just fields inside it) can arrive
+-- whole-secret. Pre-guard, `updateInfo.isFullUpdate` is a field READ on the
+-- secret table -- Lua's __index metamethod fires unconditionally on any key,
+-- so a throwing sentinel proves the crash (unlike ==/~=, which only traps
+-- sentinel-vs-sentinel -- see tests/helpers/secret_sentinel.lua CAVEAT 1). A
+-- nil-shaped delta must WIPE the memo (not silently skip it), exactly like a
+-- literal nil updateInfo already does.
+---------------------------------------------------------------------------
+do
+    aurasSecret = false
+    local before = calls.bySpell
+    -- Prime the player memo so InvalidateAuraMemoForDelta proceeds past its
+    -- early "no memo table for this unit" return.
+    assert(S.QueryUnitAuraBySpellID("player", 9090) == auraDataToken, "T8: seed player memo")
+    assert(calls.bySpell == before + 1, "T8: seed call reached the C function once")
+
+    local secretUpdateInfo = setmetatable({}, {
+        __index = function() error("attempt to use a secret value") end,
+        __newindex = function() error("attempt to use a secret value") end,
+    })
+    secretValues[secretUpdateInfo] = true
+
+    local ok, err = pcall(S.InvalidateAuraMemoForDelta, "player", secretUpdateInfo)
+    assert(ok, "T8: whole-secret updateInfo must not throw (probe before any field read): " .. tostring(err))
+
+    -- A delta we couldn't read must mean "wipe", not "skip": the seeded
+    -- entry must be gone, forcing a fresh C call on the next query.
+    S.QueryUnitAuraBySpellID("player", 9090)
+    assert(calls.bySpell == before + 2, "T8: whole-secret updateInfo must wipe the memo like a literal nil delta (got "
+        .. (calls.bySpell - before) .. " calls)")
 end
 
 print("cdm_sources_secret_aura_gate_test: OK")

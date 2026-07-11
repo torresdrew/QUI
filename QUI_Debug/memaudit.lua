@@ -149,8 +149,12 @@ local function RegisterCDMCacheProbes()
     end)
 
     AddProbe("CDM_cache_runtimeStore", function()
+        -- Frame-owned store: GetStats() no longer returns a central
+        -- `states` count (see cdm_runtime_store.lua) -- report the write
+        -- version and whether the single compat slot is occupied instead,
+        -- matching the shape QUI_Debug/cdm_debug.lua's cache status line reads.
         local rt = CallFunction(ns.CDMRuntimeStore and ns.CDMRuntimeStore.GetStats)
-        return N(rt.states), 0
+        return N(rt.version), N(rt.compatState)
     end)
 
     AddProbe("CDM_cache_tickAura", function()

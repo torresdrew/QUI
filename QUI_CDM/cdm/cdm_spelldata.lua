@@ -710,31 +710,46 @@ local function NotifyAuraConsumers(unit, updateInfo)
     end
 end
 
-local auraCaptureFrame = CreateFrame("Frame")
-local function AuraCaptureFrameOnEvent(self, event, ...)
-    if not IsCDMRuntimeEnabled() then
-        return
-    end
+-- Units registered on auraCaptureFrame's UNIT_AURA (RegisterUnitEvent below).
+-- Reused by AuraCaptureFrameOnEvent's secret-unit fallback: when the payload's
+-- own `unit` arg arrives whole-secret we can't tell which of the three
+-- changed, so every registered unit is invalidated/rescanned instead of
+-- guessing.
+local REGISTERED_UNITS = { "player", "pet", "target" }
 
-    if event == "UNIT_SPELLCAST_SUCCEEDED" then
-        -- Args: (unit, castGUID, spellID, castBarID). Filtered to player
-        -- via RegisterUnitEvent; explicit unit check is belt-and-suspenders.
-        local unit, _, spellID = ...
-        if unit == "player" then
-            RecordPlayerCast(spellID)
-        end
-        return
+-- Shared UNIT_AURA body. Factored out of AuraCaptureFrameOnEvent so the
+-- secret-unit fallback there can drive it once per registered unit without
+-- duplicating the invalidate/capture/evict/notify sequence. `unit` here is
+-- ALWAYS a plain, non-secret string by the time this runs (verified by the
+-- caller before dispatch, or one of the REGISTERED_UNITS literals) — every
+-- `unit == "..."` compare and `unit` table-key use below is safe on that
+-- basis; do not call this with an unverified payload unit.
+local function HandleUnitAura(unit, updateInfo)
+    -- 12.1 live shape: updateInfo can be a READABLE table whose scalar
+    -- isFullUpdate field is itself a secret boolean ({ addedAuras=<secret
+    -- table>, isFullUpdate=<secret boolean> }) — distinct from the
+    -- whole-secret payload the caller already folds. The boolean test below
+    -- (and every downstream isFullUpdate test this payload fans out to:
+    -- InvalidateAuraMemoForDelta, HandleAuraRefresh/ApplyAuraInstances,
+    -- MarkBarAuraRefresh) throws on it. Probe the field once here, at the
+    -- single choke point, and fold to the same nil / full-rescan path: an
+    -- unreadable flag means the delta can't be trusted as partial.
+    if updateInfo and issecretvalue and issecretvalue(updateInfo.isFullUpdate) then
+        updateInfo = nil
     end
-    if event == "PLAYER_TARGET_CHANGED" then
-        -- Drop the per-target aura memo BEFORE consumers resolve: the target's
-        -- identity (and thus its aura set) changed wholesale with no UNIT_AURA.
-        if ns.CDMSources and ns.CDMSources.InvalidateAuraMemoForUnit then ns.CDMSources.InvalidateAuraMemoForUnit("target") end
-        ReleaseCapturedAurasForUnit("target")
-        NotifyAuraConsumers("target", nil)
-        return
+    -- 12.1: the delta arrays themselves can be secret while the scalar
+    -- isFullUpdate stays a readable false (restricted combat; see
+    -- core/aura_events.lua PayloadIsSecret for the documented shapes).
+    -- Downstream consumers (ApplyAuraInstances ipairs, listHasEntries #,
+    -- MarkBarAuraRefresh) run unguarded on these arrays by design — fold
+    -- the whole payload to the same full-rescan path here, at the single
+    -- choke point.
+    if updateInfo and issecretvalue
+        and (issecretvalue(updateInfo.addedAuras)
+            or issecretvalue(updateInfo.updatedAuraInstanceIDs)
+            or issecretvalue(updateInfo.removedAuraInstanceIDs)) then
+        updateInfo = nil
     end
-    if event ~= "UNIT_AURA" then return end
-    local unit, updateInfo = ...
     -- Drop the changed aura-memo entries synchronously, before the capture below
     -- and NotifyAuraConsumers fan out: the consumers (mirror, icons, glows)
     -- resolve inline and read ns.CDMSources aura queries, which must see
@@ -776,6 +791,65 @@ local function AuraCaptureFrameOnEvent(self, event, ...)
         end
     end
     NotifyAuraConsumers(unit, updateInfo)
+end
+
+local auraCaptureFrame = CreateFrame("Frame")
+local function AuraCaptureFrameOnEvent(self, event, ...)
+    if not IsCDMRuntimeEnabled() then
+        return
+    end
+
+    if event == "UNIT_SPELLCAST_SUCCEEDED" then
+        -- Args: (unit, castGUID, spellID, castBarID). This file registers the
+        -- frame for UNIT_SPELLCAST_SUCCEEDED("player") only — the C-side
+        -- unit filter already guarantees identity even when the delivered
+        -- unit token itself arrives opaque under restriction (68569:
+        -- UnitDocumentation.lua:4663-4674, SecretWhenUnitSpellCastRestricted),
+        -- so unit is not inspected here (registered-token discipline). The
+        -- prior `unit == "player"` compare was NOT belt-and-suspenders: on a
+        -- real client a probe-less compare against a secret token THROWS
+        -- (established secret semantics; the headless sentinel merely
+        -- cross-type-falses, see the test's CAVEAT) — and under the falsy
+        -- reading it dropped every cast made while restricted, exactly when
+        -- cast-correlation to a following aura matters most. Either way the
+        -- compare had to go. spellID reaches
+        -- RecordPlayerCast, which already gates it through
+        -- IsUsableSpellIDKey (:456) before using it as a table key.
+        local _, _, spellID = ...
+        RecordPlayerCast(spellID)
+        return
+    end
+    if event == "PLAYER_TARGET_CHANGED" then
+        -- Drop the per-target aura memo BEFORE consumers resolve: the target's
+        -- identity (and thus its aura set) changed wholesale with no UNIT_AURA.
+        if ns.CDMSources and ns.CDMSources.InvalidateAuraMemoForUnit then ns.CDMSources.InvalidateAuraMemoForUnit("target") end
+        ReleaseCapturedAurasForUnit("target")
+        NotifyAuraConsumers("target", nil)
+        return
+    end
+    if event ~= "UNIT_AURA" then return end
+    local unit, updateInfo = ...
+    -- 12.1 (68569): this frame is registered for all three of player/pet/
+    -- target via a single RegisterUnitEvent (below) — while aura data is
+    -- secret the delivered `unit` arg itself can arrive as an opaque
+    -- SecretValue, not just fields inside updateInfo. We cannot tell which
+    -- of the three changed, so treat it like an isFullUpdate for ALL of
+    -- them rather than guessing (or worse, table-keying caches with the
+    -- secret unit, which throws in-game).
+    if issecretvalue and issecretvalue(unit) then
+        for i = 1, #REGISTERED_UNITS do
+            HandleUnitAura(REGISTERED_UNITS[i], nil)
+        end
+        return
+    end
+    -- The payload can independently arrive whole-secret even when `unit` is
+    -- readable (e.g. .isFullUpdate / .addedAuras / .removedAuraInstanceIDs
+    -- would all throw on field access). Probe once and fold to the same
+    -- nil / full-rescan path HandleUnitAura already takes for isFullUpdate.
+    if updateInfo and issecretvalue and issecretvalue(updateInfo) then
+        updateInfo = nil
+    end
+    HandleUnitAura(unit, updateInfo)
 end
 
 local function RegisterAuraCaptureFrame()
@@ -1106,10 +1180,11 @@ end
 
 local function ScanOwnedTargetAuraBySpellID(spellID, filter)
     if not IsUsableSpellIDKey(spellID) then return nil end
-    -- Combat bail: walking target HARMFUL slots in combat would compare
-    -- ad.spellId (secret in combat for target debuffs) which taints, so this
-    -- lookup is OOC-only.
+    -- Walking target HARMFUL slots in combat would compare ad.spellId (secret
+    -- for target debuffs), and RequiresUnitAuraAccess scans throw whenever the
+    -- broader aura-secret predicate is active even outside combat lockdown.
     if InCombatLockdown() then return nil end
+    if Sources and Sources.AreAurasSecret and Sources.AreAurasSecret() then return nil end
     local scanFilter = GetOwnedTargetFilter(filter)
     if Sources and Sources.QueryUnitAuras then
         local auras = Sources.QueryUnitAuras("target", scanFilter, 40)
@@ -1145,6 +1220,7 @@ end
 local function ScanOwnedTargetAuraByName(spellName, filter)
     if not IsUsableAuraName(spellName) then return nil end
     if InCombatLockdown() then return nil end
+    if Sources and Sources.AreAurasSecret and Sources.AreAurasSecret() then return nil end
     local scanFilter = GetOwnedTargetFilter(filter)
     -- auraData.name can be a secret string in restricted-execution paths
     -- (e.g., Lua-side secure-template handlers like TargetUnit). Comparing
@@ -2863,10 +2939,15 @@ end
 -- callback in one pass without intermediate UI flicker.
 function CDMSpellData:RunColdLoadReconcile()
     local function runAttempt(attempt)
-        if not IsCDMRuntimeEnabled() then return end
+        if not IsCDMRuntimeEnabled() then
+            ns._cdmColdLoadActive = false
+            return
+        end
         if InCombatLockdown() then
-            -- Bail; cold-load-into-combat is rare. Once combat ends, post-grace
-            -- SPELLS_CHANGED / data_loaded events fire normal reconcile.
+            -- Bail; cold-load-into-combat is rare. Close the grace so the
+            -- post-combat SPELLS_CHANGED / data_loaded events run the normal
+            -- reconcile instead of being absorbed forever.
+            ns._cdmColdLoadActive = false
             return
         end
         -- Cold-load ordering contract: the catalog must be fresh before the
@@ -2877,6 +2958,9 @@ function CDMSpellData:RunColdLoadReconcile()
         end
         local _, snapshotReady = SnapshotUnsetBuiltinContainers()
         if not snapshotReady then
+            -- Keep the grace open across retries: committing against a
+            -- half-loaded viewer builds empty containers (alpha54 regression
+            -- in the original design notes).
             local delay = attempt < COLD_LOAD_SNAPSHOT_RETRY_MAX_ATTEMPTS
                 and COLD_LOAD_SNAPSHOT_RETRY_DELAY
                 or COLD_LOAD_SNAPSHOT_RETRY_SLOW_DELAY
@@ -2886,6 +2970,7 @@ function CDMSpellData:RunColdLoadReconcile()
             return
         end
         RunReconcileSequence()
+        ns._cdmColdLoadActive = false
     end
     runAttempt(1)
 end
@@ -3794,6 +3879,11 @@ function CDMSpellData:GetActiveAuras(filter)
 
     if not (AuraUtil and AuraUtil.ForEachAura) then return result end
 
+    -- ForEachAura is index/slot-based (12.1 RequiresUnitAuraAccess) and throws while
+    -- auras are secret. Bail like the sibling scans (RescanCapturedAurasForUnit et al.);
+    -- this path is only reached from the options aura-picker, so an empty list is fine.
+    if Sources and Sources.AreAurasSecret and Sources.AreAurasSecret() then return result end
+
     AuraUtil.ForEachAura("player", filter or "HELPFUL", nil, function(auraData)
         if not auraData then return false end
         local sid = GetCleanAuraSpellID(auraData)
@@ -4171,9 +4261,19 @@ function CDMSpellData:Initialize()
             refreshHooks(true)
         end
     end
+    -- Cold-load grace window: opened here (cold login and /reload), closed by
+    -- RunColdLoadReconcile on every terminal exit. While open, the
+    -- SPELLS_CHANGED / COOLDOWN_VIEWER_DATA_LOADED handlers below absorb
+    -- settle-in bursts instead of running per-event full rebuilds. The
+    -- original writer lived in the deleted blizz-mirror PLAYER_LOGIN path;
+    -- this restores the same contract with RunColdLoadReconcile as the
+    -- single closer.
+    ns._cdmColdLoadActive = true
+
     local eventFrame = CreateFrame("Frame")
     runtimeEventFrame = eventFrame
-    eventFrame:RegisterEvent("SPELL_UPDATE_COOLDOWN")
+    -- SPELL_UPDATE_COOLDOWN deliberately NOT registered: fires every GCD tick;
+    -- ScanAll's 0.5s ticker + ScheduleCDMUpdate cover it.
     eventFrame:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
     eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
     eventFrame:RegisterEvent("SPELLS_CHANGED")
@@ -4188,15 +4288,7 @@ function CDMSpellData:Initialize()
             return
         end
 
-        if event == "SPELL_UPDATE_COOLDOWN" then
-            -- No-op: ScanAll runs on its own 0.5s ticker (line 3178).
-            -- Calling it here on every SPELL_UPDATE_COOLDOWN was redundant —
-            -- this event fires every GCD tick (dozens of times per second OOC).
-            -- CDM icon/bar updates are driven by ScheduleCDMUpdate in cdm_icons,
-            -- which coalesces via C_Timer; the scan ticker catches viewer child
-            -- changes with acceptable latency.
-            do end
-        elseif event == "PLAYER_SPECIALIZATION_CHANGED" then
+        if event == "PLAYER_SPECIALIZATION_CHANGED" then
             -- Spec change is coordinated by cdm_containers.lua which calls
             -- CheckAllDormantSpells / ReconcileAllContainers at the right time
             -- (after loading the new spec profile). Only invalidate the
@@ -4369,6 +4461,16 @@ function CDMSpellData:Initialize()
                     end)
                 end
             end)
+        end
+    end)
+
+    -- Guaranteed grace closer: the DATA_LOADED debounce path also calls
+    -- RunColdLoadReconcile, but only conditionally — without this arm a
+    -- session where that event never fires would hold the grace open
+    -- forever and absorb every SPELLS_CHANGED.
+    C_Timer.After(2.0, function()
+        if ns._cdmColdLoadActive then
+            CDMSpellData:RunColdLoadReconcile()
         end
     end)
 

@@ -105,8 +105,6 @@ local function GetCustomBarVisibilityMode(containerDB)
 end
 
 local LCG = LibStub and LibStub("LibCustomGlow-1.0", true)
-local CDMCooldown = ns.CDMCooldown or {}
-ns.CDMCooldown = CDMCooldown
 
 function CDMIcons:IsRuntimeEnabled()
     return not Shared or Shared.IsRuntimeEnabled()
@@ -150,16 +148,6 @@ local function SafeBoolean(val)
         return Shared.SafeBoolean(val)
     end
     if type(val) == "boolean" then
-        return val
-    end
-    return nil
-end
-
-local function SafeRuntimeString(val)
-    if issecretvalue and issecretvalue(val) then
-        return nil
-    end
-    if type(val) == "string" and val ~= "" then
         return val
     end
     return nil
@@ -457,21 +445,6 @@ local function QueryItemVisualTexture(itemID)
     end
     return nil
 end
----------------------------------------------------------------------------
--- ITEM COOLDOWN RESOLUTION
----------------------------------------------------------------------------
-
-local function GetItemCooldown(itemID)
-    if not itemID or not (Sources and Sources.QueryItemCooldown) then return nil, nil, nil end
-    return Sources.QueryItemCooldown(itemID)
-end
-
-local function GetSlotCooldown(slotID)
-    if not slotID or not GetInventoryItemCooldown then return nil, nil, nil end
-    local ok, startTime, duration, enabled = pcall(GetInventoryItemCooldown, "player", slotID)
-    if not ok then return nil, nil, nil end
-    return startTime, duration, enabled
-end
 
 function _resolverRuntimePolicy.MarkGCDSwipe(icon)
     if cooldownPolicy then
@@ -484,10 +457,6 @@ function _resolverRuntimePolicy.ClearGCDSwipe(icon)
         cooldownPolicy:ClearGCDSwipe(icon)
     end
 end
-
--- Expose inventory cooldown adapters for cdm_resolvers.lua + cdm_bar_renderer.lua.
-CDMCooldown.GetItemCooldown = GetItemCooldown
-CDMCooldown.GetSlotCooldown = GetSlotCooldown
 
 ---------------------------------------------------------------------------
 -- SWIPE STYLING
@@ -1186,26 +1155,6 @@ function _resolverRuntimePolicy.StoreIconRuntimeState(icon, mode, sourceID, spel
 
     store.SetIconState(icon, state)
 end
-
-local function ClearIconDurationBinding(icon, addonCD)
-    icon._lastDurObjKey = nil
-    icon._lastDurObj = nil
-    icon._lastResolvedMode = nil
-    icon._lastResolvedSourceID = nil
-    icon._lastResolvedSpellID = nil
-    CancelCooldownExpiryRefresh(icon)
-    if addonCD then
-        if ns.CDMRenderers and ns.CDMRenderers.ClearCooldown then
-            ns.CDMRenderers.ClearCooldown(addonCD, false)
-        else
-            if addonCD.SetReverse then
-                addonCD.SetReverse(addonCD, false)
-            end
-            addonCD:Clear()
-        end
-    end
-end
-
 
 -- Single-writer cooldown apply: ask the resolver, bind icon.Cooldown to the
 -- returned DurationObject. Item entries may fall back to SetCooldown only
@@ -3169,9 +3118,9 @@ local function UpdateIconCooldownOwned(icon)
             if Sources and Sources.QueryScannedItemAuraInfo and _coerceItemID then
                 local scanned = Sources.QueryScannedItemAuraInfo(_coerceItemID)
                 if scanned and scanned.active == true then
-                    local readableDuration = type(scanned.duration) == "number"
+                    local readableDuration = IsSafeNumeric(scanned.duration)
                         and scanned.duration or nil
-                    local readableExpiration = type(scanned.expiration) == "number"
+                    local readableExpiration = IsSafeNumeric(scanned.expiration)
                         and scanned.expiration or nil
                     if readableDuration and readableDuration > 0
                        and readableExpiration
@@ -3494,9 +3443,6 @@ local function UpdateIconCooldownOwned(icon)
 end
 
 UpdateIconCooldown = function(icon)
-    if RuntimeQueries and RuntimeQueries.WithRuntimeQueryOwner then
-        return RuntimeQueries.WithRuntimeQueryOwner(icon, UpdateIconCooldownOwned, icon)
-    end
     return UpdateIconCooldownOwned(icon)
 end
 
@@ -4780,152 +4726,6 @@ function CDMIcons.OnContainerIconInteractionRestored(icon, viewerType)
     UpdateIconSecureAttributes(icon, icon._spellEntry, viewerType or icon._quiCdmClickViewerType)
 end
 
----------------------------------------------------------------------------
--- CUSTOM ENTRY MANAGEMENT (backward-compatible API surface)
--- These methods are called by the options panel via ns.CustomCDM
----------------------------------------------------------------------------
-function CustomCDM:GetEntryName(entry)
-    if not entry then return "Unknown" end
-    if entry.type == "macro" then
-        return entry.macroName or "Macro"
-    end
-    if entry.type == "trinket" then
-        local itemID = Sources and Sources.QueryInventoryItemID and Sources.QueryInventoryItemID("player", entry.id)
-        if itemID then
-            local itemName = Sources and Sources.QueryItemNameByID and Sources.QueryItemNameByID(itemID)
-            return itemName or "Trinket (Slot " .. tostring(entry.id) .. ")"
-        end
-        return "Trinket (Slot " .. tostring(entry.id) .. ")"
-    end
-    if entry.type == "item" then
-        local itemName = Sources and Sources.QueryItemNameByID and Sources.QueryItemNameByID(entry.id)
-        return itemName or "Item #" .. tostring(entry.id)
-    end
-    local info = Sources and Sources.QuerySpellInfo and Sources.QuerySpellInfo(entry.id)
-    return info and info.name or "Spell #" .. tostring(entry.id)
-end
-
-function CustomCDM:AddEntry(trackerKey, entryType, entryID)
-    if entryType == "macro" then
-        -- entryID is the macro name (string)
-        if not entryID or type(entryID) ~= "string" or entryID == "" then return false end
-        local macroIndex = GetMacroIndexByName(entryID)
-        if not macroIndex or macroIndex == 0 then return false end
-    else
-        if not entryID or type(entryID) ~= "number" then return false end
-    end
-    if entryType ~= "spell" and entryType ~= "item" and entryType ~= "trinket" and entryType ~= "macro" then return false end
-
-    -- Resolve the active profile/spec-aware bucket so the options UI, runtime
-    -- renderer, and mutations all operate on the same saved table.
-    local customData = GetCustomData(trackerKey)
-    if not customData then return false end
-    if customData.enabled == nil then customData.enabled = true end
-    if customData.placement ~= "before" and customData.placement ~= "after" then
-        customData.placement = "after"
-    end
-    if type(customData.entries) ~= "table" then
-        customData.entries = {}
-    end
-
-    -- Duplicate check
-    for _, entry in ipairs(customData.entries) do
-        if entryType == "macro" then
-            if entry.type == "macro" and entry.macroName == entryID then
-                return false
-            end
-        else
-            if entry.type == entryType and entry.id == entryID then
-                return false
-            end
-        end
-    end
-
-    local newEntry
-    if entryType == "macro" then
-        newEntry = { macroName = entryID, type = "macro", enabled = true }
-    else
-        newEntry = { id = entryID, type = entryType, enabled = true }
-    end
-    customData.entries[#customData.entries + 1] = newEntry
-
-    if _G.QUI_RefreshNCDM then _G.QUI_RefreshNCDM() end
-    return true
-end
-
-function CustomCDM:RemoveEntry(trackerKey, entryIndex)
-    local customData = GetCustomData(trackerKey)
-    if not customData or not customData.entries then return end
-    if entryIndex < 1 or entryIndex > #customData.entries then return end
-
-    table.remove(customData.entries, entryIndex)
-    if _G.QUI_RefreshNCDM then _G.QUI_RefreshNCDM() end
-end
-
-function CustomCDM:SetEntryEnabled(trackerKey, entryIndex, enabled)
-    local customData = GetCustomData(trackerKey)
-    if not customData or not customData.entries or not customData.entries[entryIndex] then return end
-
-    customData.entries[entryIndex].enabled = enabled
-    if _G.QUI_RefreshNCDM then _G.QUI_RefreshNCDM() end
-end
-
-function CustomCDM:SetEntryPosition(trackerKey, entryIndex, position)
-    local customData = GetCustomData(trackerKey)
-    if not customData or not customData.entries or not customData.entries[entryIndex] then return false end
-
-    if position ~= nil then
-        position = tonumber(position)
-        if not position or position < 1 then
-            return false
-        end
-        position = math.floor(position + 0.5)
-    end
-
-    customData.entries[entryIndex].position = position
-    if _G.QUI_RefreshNCDM then _G.QUI_RefreshNCDM() end
-    return true
-end
-
-function CustomCDM:MoveEntry(trackerKey, fromIndex, direction)
-    local customData = GetCustomData(trackerKey)
-    if not customData or not customData.entries then return end
-
-    local entries = customData.entries
-    local toIndex = fromIndex + direction
-    if toIndex < 1 or toIndex > #entries then return end
-
-    entries[fromIndex], entries[toIndex] = entries[toIndex], entries[fromIndex]
-    if _G.QUI_RefreshNCDM then _G.QUI_RefreshNCDM() end
-end
-
-function CustomCDM:TransferEntry(fromTrackerKey, entryIndex, toTrackerKey)
-    local fromData = GetCustomData(fromTrackerKey)
-    if not fromData or not fromData.entries then return end
-    if entryIndex < 1 or entryIndex > #fromData.entries then return end
-
-    local entry = fromData.entries[entryIndex]
-
-    local toData = GetCustomData(toTrackerKey)
-    if not toData then return end
-    if not toData.entries then toData.entries = {} end
-
-    -- Duplicate check in destination
-    for _, existing in ipairs(toData.entries) do
-        if entry.type == "macro" then
-            if existing.type == "macro" and existing.macroName == entry.macroName then return end
-        else
-            if existing.type == entry.type and existing.id == entry.id then return end
-        end
-    end
-
-    table.remove(fromData.entries, entryIndex)
-    toData.entries[#toData.entries + 1] = entry
-
-    if _G.QUI_RefreshNCDM then _G.QUI_RefreshNCDM() end
-end
-
-
 -- Legacy compat: GetIcons returns the pool for a viewer name.
 -- Return empty for unknown viewer names so external callers cannot adopt and
 -- reposition addon-owned icons onto the Blizzard viewers.
@@ -5062,7 +4862,7 @@ cdEventFrame:RegisterUnitEvent("UNIT_SPELLCAST_STOP", "player")
 cdEventFrame:RegisterUnitEvent("UNIT_SPELLCAST_CHANNEL_START", "player")
 cdEventFrame:RegisterUnitEvent("UNIT_SPELLCAST_CHANNEL_STOP", "player")
 -- Server-side cooldown table hotfix. User /cdm composer edits flow through
--- the resolver bus CATALOG_REBUILT path, not this event.
+-- CDMResolvers._RebuildCatalog() (composer.lua), not this event.
 cdEventFrame:RegisterEvent("COOLDOWN_VIEWER_TABLE_HOTFIXED")
 -- Scoped proc/override signal. Carries (baseSpellID, overrideSpellID) so only the
 -- affected icon re-resolves, instead of leaning on the payload-less SPELLS_CHANGED
@@ -5137,16 +4937,6 @@ local function ScheduleCDMUpdate(fast, mode, reason)
     if updateScheduler then
         updateScheduler:Schedule(fast, mode)
     end
-end
-
-local function GetCDMUpdateDelay(fast, mode)
-    if updateScheduler then
-        return updateScheduler:GetDelay(fast, mode)
-    end
-    if fast then
-        return 0
-    end
-    return 0.05
 end
 
 local function RunDirtyBarUpdate()
@@ -5234,10 +5024,10 @@ cdEventFrame:SetScript("OnEvent", function(self, event, arg1, arg2, arg3, arg4)
     end
 end)
 
--- /cdm spell add/remove now flows through the composer-driven CATALOG_REBUILT
--- bus event subscribed below; QUI no longer listens for Blizzard's standalone
--- CooldownManager settings callback because that path is unrelated to the
--- composer's owned catalog.
+-- /cdm spell add/remove now flows through the composer's direct call to
+-- CDMResolvers._RebuildCatalog() (composer.lua); QUI no longer listens for
+-- Blizzard's standalone CooldownManager settings callback because that path
+-- is unrelated to the composer's owned catalog.
 
 local function SetupDebugInstrumentation()
     durationBindingStats = { keyBuilds = 0, keyCacheHits = 0, resolvedStateReuses = 0,
@@ -5399,11 +5189,6 @@ do
         requestStackTextUpdate = function()
             RequestStackTextUpdate()
         end,
-        noteChargeDurationObjectsUpdated = function()
-            if RuntimeQueries and RuntimeQueries.NoteChargeDurationObjectsUpdated then
-                RuntimeQueries.NoteChargeDurationObjectsUpdated()
-            end
-        end,
         recordRecentPlayerSpellCast = function(spellID)
             if RecordRecentPlayerSpellCast then
                 RecordRecentPlayerSpellCast(spellID)
@@ -5458,6 +5243,17 @@ do
         end,
         getCombatQueueDelay = function()
             return updateScheduler and updateScheduler:GetCombatQueueDelay() or 0.3
+        end,
+        -- Target-change pass optimization (ApplyAuraScope skipSelfAuraIcons):
+        -- an icon whose active aura is proven to be on the player cannot be
+        -- changed by a target swap. Only the literal "player" token counts —
+        -- pet/vehicle/unknown fall through and re-resolve, so no target aura
+        -- is ever dropped. _auraUnit is only ever written from resolver
+        -- output (ApplyAuraStateToIcon) and cleared on unbind/recycle.
+        isDefinitivelySelfAuraIcon = function(icon)
+            return icon ~= nil
+                and icon._auraActive == true
+                and icon._auraUnit == "player"
         end,
     }
     runtimeRefresh = ns.CDMIconRuntimeRefresh and ns.CDMIconRuntimeRefresh.Create(callbacks)

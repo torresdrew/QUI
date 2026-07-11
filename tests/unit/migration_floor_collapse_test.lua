@@ -1,10 +1,11 @@
 -- tests/unit/migration_floor_collapse_test.lua
 -- Run: lua5.1 tests/unit/migration_floor_collapse_test.lua
--- Verifies the 47-floor + linear-gate collapse:
---   - stored < 47 → floored (wiped, _needsStarterReseed, stamped CURRENT=50)
---   - stored == 47 → NOT floored; gates run RestoreBuffDebuffSplit + PrunePrivateAuras
---                    + SeedAuraElements, stamped 50
---   - stored == 50 → no-op (already current)
+-- Verifies the 47-floor + v51 squash gate:
+--   - stored < 47 → floored (wiped, _needsStarterReseed, stamped CURRENT=51)
+--   - stored == 47 → NOT floored; the single v51 gate runs every squash step
+--                    (RestoreBuffDebuffSplit … PurgeOrphanContainerSatellites), stamped 51
+--   - stored == 48–50 (shipped alpha stamps) → re-enter the squash gate and heal
+--   - stored == 51 → no-op (already current)
 local ns = dofile("tools/_addon_env.lua").LoadCore()
 local M = ns.Migrations
 
@@ -23,9 +24,10 @@ do
     check("below-floor (46) stamped to CURRENT (51)", profile._schemaVersion == 51, tostring(profile._schemaVersion))
 end
 
--- 2) At-floor profile (47) is NOT floored; gates run RestoreBuffDebuffSplit +
--- PrunePrivateAuras + SeedAuraElements. The user's buffIconSize is not wiped —
--- v50 reshapes it into a buffAuras element (flat key pruned, value preserved).
+-- 2) At-floor profile (47) is NOT floored; the squash runs RestoreBuffDebuffSplit +
+-- PrunePrivateAuras + SeedAuraElements + the rest. The user's buffIconSize is not
+-- wiped — the aura-elements seed reshapes it into a buffAuras element (flat key
+-- pruned, value preserved).
 do
     local profile = { _schemaVersion = 47, buffBorders = { enableBuffs = true, buffIconSize = 35 }, frameAnchoring = { buffFrame = { parent = "minimap" } } }
     M.RunOnProfile(profile)
@@ -34,14 +36,16 @@ do
         and profile.buffBorders.buffAuras.elements["*"][1]
     check("at-floor (47) NOT wiped: buffIconSize reshaped to element iconSize=35",
         buffEl and buffEl.iconSize == 35, buffEl and tostring(buffEl.iconSize))
-    check("at-floor (47) flat buffIconSize pruned by v50", profile.buffBorders.buffIconSize == nil, tostring(profile.buffBorders.buffIconSize))
+    check("at-floor (47) flat buffIconSize pruned by the elements seed", profile.buffBorders.buffIconSize == nil, tostring(profile.buffBorders.buffIconSize))
     check("at-floor (47) NOT flagged for reseed", profile._needsStarterReseed == nil, tostring(profile._needsStarterReseed))
     check("at-floor (47) debuffFrame restored", profile.frameAnchoring.debuffFrame ~= nil, "debuffFrame nil")
     check("at-floor (47) stamped to 51", profile._schemaVersion == 51, tostring(profile._schemaVersion))
 end
 
--- 2b) v49 PrunePrivateAuras: seeded privateAuras subtables are stripped from
--- every tree the removed defaults carried them in; sibling keys survive.
+-- 2b) PrunePrivateAuras via a shipped-alpha stamp (48, from alpha14): seeded
+-- privateAuras subtables are stripped from every tree the removed defaults
+-- carried them in; sibling keys survive. Also proves the 48–50 alpha stamps
+-- re-enter the squash gate rather than being treated as current.
 do
     local profile = {
         _schemaVersion = 48,
@@ -56,25 +60,25 @@ do
         },
     }
     M.RunOnProfile(profile)
-    check("v49 prunes quiUnitFrames.player.privateAuras", profile.quiUnitFrames.player.privateAuras == nil,
+    check("prunes quiUnitFrames.player.privateAuras", profile.quiUnitFrames.player.privateAuras == nil,
         tostring(profile.quiUnitFrames.player.privateAuras))
-    check("v49 prunes quiUnitFrames.target.privateAuras", profile.quiUnitFrames.target.privateAuras == nil,
+    check("prunes quiUnitFrames.target.privateAuras", profile.quiUnitFrames.target.privateAuras == nil,
         tostring(profile.quiUnitFrames.target.privateAuras))
-    check("v49 prunes quiUnitFrames.focus.privateAuras", profile.quiUnitFrames.focus.privateAuras == nil,
+    check("prunes quiUnitFrames.focus.privateAuras", profile.quiUnitFrames.focus.privateAuras == nil,
         tostring(profile.quiUnitFrames.focus.privateAuras))
-    check("v49 prunes quiGroupFrames.party.privateAuras", profile.quiGroupFrames.party.privateAuras == nil,
+    check("prunes quiGroupFrames.party.privateAuras", profile.quiGroupFrames.party.privateAuras == nil,
         tostring(profile.quiGroupFrames.party.privateAuras))
-    check("v49 prunes quiGroupFrames.raid.privateAuras", profile.quiGroupFrames.raid.privateAuras == nil,
+    check("prunes quiGroupFrames.raid.privateAuras", profile.quiGroupFrames.raid.privateAuras == nil,
         tostring(profile.quiGroupFrames.raid.privateAuras))
-    check("v49 prune preserves sibling unit settings", profile.quiUnitFrames.player.portrait
+    check("prune preserves sibling unit settings", profile.quiUnitFrames.player.portrait
         and profile.quiUnitFrames.player.portrait.enabled == true, "portrait clobbered")
-    check("v49 prune preserves sibling group settings", profile.quiGroupFrames.party.frames
+    check("prune preserves sibling group settings", profile.quiGroupFrames.party.frames
         and profile.quiGroupFrames.party.frames.width == 90, "frames clobbered")
-    check("stored 48 stamps to CURRENT (51)", profile._schemaVersion == 51, tostring(profile._schemaVersion))
+    check("alpha stamp 48 re-enters squash, stamps to CURRENT (51)", profile._schemaVersion == 51, tostring(profile._schemaVersion))
 end
 
--- 3) Already-current profile (51) is a no-op: the v50 aura-unification gate does
--- NOT run, so a flat buffIconSize left in place is preserved untouched.
+-- 3) Already-current profile (51) is a no-op: the squash gate does NOT run, so
+-- a flat buffIconSize left in place is preserved untouched.
 do
     local profile = { _schemaVersion = 51, buffBorders = { buffIconSize = 35, debuffIconSize = 12 } }
     M.RunOnProfile(profile)

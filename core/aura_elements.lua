@@ -60,6 +60,67 @@ local DEBUFF_CLASSIFICATION_MAP = {
     crowdControl = "HARMFUL|CROWD_CONTROL",
 }
 
+-- Wave 4 Task 2b — classification EXCLUSIVITY. Before this, "classify" mode's
+-- OR fan-out built one group per ticked category with NO relationship between
+-- them: an aura matching two ticked categories (e.g. a big-defensive that is
+-- also cancelable) rendered in BOTH groups, each at the element's full
+-- maxIcons — an honesty gap alongside 2a's cap relabel. The fix: give the
+-- editor's checkbox lists (HELPFUL_CLASSIFICATIONS / HARMFUL_CLASSIFICATIONS,
+-- QUI_Options/aura_elements_editor.lua) a FIXED priority order — reusing that
+-- exact order, so "first ticked category (top of the list) wins the overlap"
+-- matches what the user sees top-to-bottom — and append `!TOKEN` negations of
+-- every HIGHER-priority ENABLED category to each lower one's compiled string.
+-- Negating a category is De Morgan on its single-component clause: a
+-- positive-token category ("RAID") negates to an exclusion ("!RAID"); an
+-- already-negated category (notCancelable, "!CANCELABLE") negates to the
+-- bare positive token ("CANCELABLE") — see NegateComponent below. Only the
+-- HIGHER-priority category's own negation is threaded forward (never
+-- backward), so a strictly-below category can never influence one above it.
+--
+-- Scope, deliberately narrow: restricted to the keys the editor actually
+-- exposes (HELPFUL_CLASSIFICATIONS / HARMFUL_CLASSIFICATIONS). The legacy
+-- master keys (`helpful`, `harmful`) and `dispellable` are NOT in these lists
+-- — grepped repo-wide, none of the three is ever set outside this map or a
+-- captured pre-merge profile shape the migration heals TO `helpful`/`harmful`
+-- (core/compatibility.lua); no live editor control writes them. They keep
+-- compiling through the UNCHANGED legacy path below (CompileFilters' second
+-- loop), so old profiles carrying them never regress. Extending exclusivity
+-- to them would also be unsound as a blanket rule: `helpful` fans out to TWO
+-- strings (RAID and RAID_IN_COMBAT) — De Morgan on an OR of two clauses needs
+-- BOTH negated components threaded together, which the single-component
+-- accumulator below doesn't model, and no live data ever exercises it.
+local BUFF_CLASSIFICATION_PRIORITY = {
+    "raid", "raidInCombat", "cancelable", "notCancelable", "bigDefensive", "externalDefensive",
+}
+local DEBUFF_CLASSIFICATION_PRIORITY = {
+    "raid", "crowdControl",
+}
+
+-- Pull the single non-polarity component out of a ranked classification's
+-- map entry, e.g. "HELPFUL|BIG_DEFENSIVE" -> "BIG_DEFENSIVE",
+-- "HELPFUL|!CANCELABLE" -> "!CANCELABLE". Every key referenced by the two
+-- PRIORITY lists above maps to exactly one such single-component string (not
+-- the two-string `helpful`/`harmful` shape) — verified by inspection of the
+-- two maps just above. Returns nil on anything else (defensive; the ranked
+-- loop below treats nil as "nothing to compile", never invents a token).
+local function ClassificationComponent(entry)
+    local fs = type(entry) == "string" and entry or nil
+    if not fs then return nil end
+    local comp = fs:match("^[A-Z_]+|(.+)$")
+    return comp
+end
+
+-- De Morgan on a single-literal clause: the negation of "has TOKEN"
+-- (required) is "lacks TOKEN" (excluded), and vice versa. Returns
+-- (token, becomesRequired) — becomesRequired is true when the NEGATED clause
+-- is a requirement (i.e. the source component was itself an exclusion).
+local function NegateComponent(comp)
+    if comp:sub(1, 1) == "!" then
+        return comp:sub(2), true
+    end
+    return comp, false
+end
+
 -- NOTE: unlike the pre-merge UF map (which had ONLY the helpful/harmful
 -- master keys and needed a raid/raidInCombat fallback read), the merged map
 -- carries the split keys alongside the masters — so no fallback: a legacy
@@ -103,7 +164,7 @@ function E.NewFilterStripElement(auraType)
         -- tokens on ONE string — the buffborders/UF legacy semantics) |
         -- "classify" (OR fan-out, one group per classification) | "whitelist".
         filterMode = "off", filterFlags = {},
-        onlyMine = false, hidePermanent = false, dedupeDefensives = true,
+        onlyMine = false, hidePermanent = false,
         classifications = defaultClassifications(auraType),
         whitelist = {}, blacklist = {},
         dispelFilterMode = "off", dispelTypes = {},
@@ -282,6 +343,118 @@ local VALID_FILTER_TOKENS = {
 }
 E.VALID_FILTER_TOKENS = VALID_FILTER_TOKENS
 
+-- Filter-string canonicalization (Wave 4 Task 4 — filter-group retention).
+-- PTR4 aura groups are addon-unremovable and core/aura_skin.lua Configure
+-- keys its registry entry on `gkey.."|"..filter` (see that file's header) —
+-- every DISTINCT filter string therefore retains its own orphaned group
+-- until reload. CanonicalizeFilterString is the ONE pure function that
+-- normalizes a filter string to a stable, deterministic form so
+-- semantically-equal strings collapse onto the same registry key, wired at
+-- BOTH ends: AuraGlue.ElementGroups (the string's producer / "storage") and
+-- AuraSkin.Configure's key derivation (the consumer choke point named
+-- above) — see core/aura_glue.lua and core/aura_skin.lua.
+--
+-- Grammar (Blizzard_FrameXMLUtil/AuraUtil.lua:291-313 IsValidFilterString,
+-- vendored tests/framexml/.../AuraUtil.lua): components are delimited by
+-- ANY of "|" or space (string.split("| ", filterString)), each optionally
+-- "!"-negated, each validated INDEPENDENTLY by exact-case membership in the
+-- fixed AuraFilters enum (EnumUtil.IsValid → tContains, case-sensitive).
+-- Position never affects validity — confirmed against the vendored source:
+-- "RAID|HELPFUL|!CANCELABLE" validates identically to
+-- "HELPFUL|RAID|!CANCELABLE". This is the SAME assumption CompileFilters
+-- above already relies on (table.sort on its req/exc arrays) — sorting
+-- within the two commutative scopes (required tokens, excluded tokens) is
+-- therefore safe and mirrors that existing, shipped convention exactly
+-- (polarity leads if present, then requires sorted, then !excludes sorted).
+-- Dual-polarity edge: a string carrying BOTH polarities keeps the first-seen
+-- polarity in the lead slot, so Canon("HELPFUL|HARMFUL") ~= Canon("HARMFUL|
+-- HELPFUL"). Unreachable from any QUI producer (auraType is single-valued);
+-- idempotence and validity still hold — documented, not defended.
+-- Caveat (honest scope of that proof): IsValidFilterString proves SYNTAX
+-- order-independence only; the C-side MATCHING behavior of a reordered
+-- string is unverifiable headless. It is well-founded — CompileFilters has
+-- shipped sorted output since the tri-state expansion, so every live group
+-- already runs on engine-sorted strings — but strictly in-game-confirmed
+-- only for the orderings CompileFilters itself emits.
+--
+-- Validity-preserving BY CONSTRUCTION, not by re-deriving IsValidFilterString
+-- from scratch: canonicalization only reorders/dedupes/case-folds a string
+-- that IsKnownFilterString already accepts as well-formed (every component
+-- an exact-case AuraFilters token, no bare "!"); anything it does NOT
+-- accept is returned UNCHANGED. So IsValidFilterString(canonical) ==
+-- IsValidFilterString(raw) holds in both directions:
+--   * raw well-formed -> canonical is a reordered/deduped set of the SAME
+--     already-uppercase tokens -> still valid (component validity is
+--     position- and duplicate-independent, proven above -> reordering/
+--     dedup can't newly invalidate it).
+--   * raw NOT well-formed (unknown token, bare "!") -> passthrough,
+--     output == input -> validity trivially unchanged.
+-- This is deliberately narrower than "case-fold anything typed": a
+-- case-only-invalid raw string (e.g. "helpful|raid" — invalid because the
+-- engine validator is exact-case) is left untouched rather than repaired,
+-- because repairing it would flip invalid -> valid and break the invariant
+-- above. In THIS codebase that narrowing costs nothing live: every
+-- filter-affecting editor control is a checkbox/dropdown that writes
+-- pre-validated uppercase tokens (QUI_Options/aura_elements_editor.lua
+-- FILTER_MODE_OPTIONS/TRI_STATE_OPTIONS/classification checkboxes) — there
+-- is no free-text filter-string input anywhere in the editor (verified: the
+-- only EditBox reachable from a filterStrip element is the whitelist/
+-- blacklist manual spell-ID field, which never touches a filter string).
+local function IsKnownFilterString(filterString)
+    if type(filterString) ~= "string" or filterString == "" then return false end
+    local any = false
+    -- Delimiter set is the engine's LITERAL pair — "|" and space ONLY
+    -- (string.split("| ", filterString) in the vendored validator), NOT the
+    -- %s class: the engine treats a tab/newline as part of a component, so
+    -- e.g. "HELPFUL\tRAID" is ONE unknown component (invalid). A %s split
+    -- here would accept it and re-emit it pipe-joined — flipping invalid
+    -- raw -> valid canonical and breaking the validity-preservation
+    -- invariant documented above.
+    for component in filterString:gmatch("[^| ]+") do
+        any = true
+        local negated = component:sub(1, 1) == "!"
+        local tok = negated and component:sub(2) or component
+        if tok == "" then return false end -- bare "!" — invalid (matches the engine)
+        if not VALID_FILTER_TOKENS[tok] then return false end
+    end
+    return any
+end
+E.IsKnownFilterString = IsKnownFilterString
+
+function E.CanonicalizeFilterString(filterString)
+    if not IsKnownFilterString(filterString) then
+        return filterString
+    end
+    local reqSeen, excSeen = {}, {}
+    local req, exc = {}, {}
+    local polarity
+    -- Same LITERAL "|"/space delimiter set as IsKnownFilterString above —
+    -- the two loops must tokenize identically or the guard proves nothing
+    -- about what this loop re-emits.
+    for component in filterString:gmatch("[^| ]+") do
+        local negated = component:sub(1, 1) == "!"
+        -- Case normalization: a no-op on this guarded path today (every
+        -- accepted token is already exact-case-valid, hence already
+        -- uppercase), kept explicit so the contract holds even if a future
+        -- token or caller relaxes that guarantee.
+        local tok = (negated and component:sub(2) or component):upper()
+        if negated then
+            if not excSeen[tok] then excSeen[tok] = true; exc[#exc + 1] = tok end
+        elseif (tok == "HELPFUL" or tok == "HARMFUL") and not polarity then
+            polarity = tok
+        elseif not reqSeen[tok] then
+            reqSeen[tok] = true; req[#req + 1] = tok
+        end
+    end
+    table.sort(req)
+    table.sort(exc)
+    local parts = {}
+    if polarity then parts[#parts + 1] = polarity end
+    for i = 1, #req do parts[#parts + 1] = req[i] end
+    for i = 1, #exc do parts[#parts + 1] = "!" .. exc[i] end
+    return table.concat(parts, "|")
+end
+
 function E.CompileFilters(element)
     local out = {}
     if element.filterMode == "flags" then
@@ -313,11 +486,85 @@ function E.CompileFilters(element)
         return out
     end
     if element.filterMode ~= "classify" then return out end
-    local map = (element.auraType == "HARMFUL") and DEBUFF_CLASSIFICATION_MAP or BUFF_CLASSIFICATION_MAP
+    local harmful = (element.auraType == "HARMFUL")
+    local map = harmful and DEBUFF_CLASSIFICATION_MAP or BUFF_CLASSIFICATION_MAP
+    local priority = harmful and DEBUFF_CLASSIFICATION_PRIORITY or BUFF_CLASSIFICATION_PRIORITY
     local classifications = element.classifications or {}
     local seen = {}
+    local handled = {}
+    -- Ranked pass (2b): the priority-ordered, editor-exposed categories.
+    -- requireAcc/excludeAcc accumulate the negation of every HIGHER-priority
+    -- ENABLED category as the loop walks down the list, so each category's
+    -- string carries the full set of exclusions needed to stay exclusive
+    -- against everything ranked above it.
+    local requireAcc, excludeAcc = {}, {}
+    for _, key in ipairs(priority) do
+        handled[key] = true
+        local comp = ClassificationComponent(map[key])
+        if comp and IsClassificationEnabled(classifications, key) then
+            local reqSeen, excSeen = {}, {}
+            local req, exc = {}, {}
+            local ownNegated = comp:sub(1, 1) == "!"
+            local ownTok = ownNegated and comp:sub(2) or comp
+            if ownNegated then
+                excSeen[ownTok] = true; exc[#exc + 1] = ownTok
+            else
+                reqSeen[ownTok] = true; req[#req + 1] = ownTok
+            end
+            for tok in pairs(requireAcc) do
+                if not reqSeen[tok] then reqSeen[tok] = true; req[#req + 1] = tok end
+            end
+            for tok in pairs(excludeAcc) do
+                if not excSeen[tok] then excSeen[tok] = true; exc[#exc + 1] = tok end
+            end
+            -- Unsatisfiability guard: a token landing in BOTH the require and
+            -- exclude sets means two ENABLED higher-priority categories are
+            -- literal complements (the only such pair in the maps today:
+            -- cancelable = CANCELABLE, notCancelable = !CANCELABLE). Together
+            -- they exhaust the domain — every aura matches exactly one of the
+            -- two — so any aura this category could show is ALREADY claimed
+            -- by one of those two higher groups. The merged string (e.g.
+            -- "HELPFUL|BIG_DEFENSIVE|CANCELABLE|!CANCELABLE") is syntactically
+            -- valid but can never match; emitting it would register a dead,
+            -- unremovable engine group that silently renders zero icons.
+            -- SKIPPING the group is therefore semantically exact, not lossy:
+            -- no aura exists that matches this category yet neither
+            -- complement. (The category still contributes its own negation
+            -- below — moot in practice, since the accumulators only grow and
+            -- every later category inherits the same contradictory pair and
+            -- skips too, but kept unconditional so the contribution rule
+            -- stays uniform.)
+            local unsatisfiable = false
+            for i = 1, #req do
+                if excSeen[req[i]] then unsatisfiable = true; break end
+            end
+            if not unsatisfiable then
+                table.sort(req)
+                table.sort(exc)
+                local parts = { element.auraType or "HELPFUL" }
+                for i = 1, #req do parts[#parts + 1] = req[i] end
+                for i = 1, #exc do parts[#parts + 1] = "!" .. exc[i] end
+                local fs = table.concat(parts, "|")
+                if not seen[fs] then seen[fs] = true; out[#out + 1] = fs end
+            end
+
+            -- Contribute THIS category's own negation forward, for every
+            -- lower-priority category processed after it.
+            local negTok, becomesRequired = NegateComponent(comp)
+            if becomesRequired then
+                requireAcc[negTok] = true
+            else
+                excludeAcc[negTok] = true
+            end
+        end
+    end
+    -- Legacy pass: any map key the ranked list above doesn't cover (the
+    -- `helpful`/`harmful` master keys, `dispellable` — none reachable via the
+    -- editor, see the priority-list comment above) compiles EXACTLY as before
+    -- 2b: bare, unnegated, no participation in the exclusivity scheme either
+    -- direction.
     for key, entry in pairs(map) do
-        if IsClassificationEnabled(classifications, key) then
+        if not handled[key] and IsClassificationEnabled(classifications, key) then
             if type(entry) == "table" then
                 for _, fs in ipairs(entry) do
                     if not seen[fs] then seen[fs] = true; out[#out + 1] = fs end

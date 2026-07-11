@@ -920,9 +920,9 @@ function M.functions.createHooks(root, entry)
 			M.variables.scaleUnderMouse[widget] = nil
 			M.functions.CheckScaleWheelCapture()
 		end)
-		if MouseIsOver and MouseIsOver(widget) then
+		if widget:IsMouseOver() then
 			local function bump()
-				if panelIsActive(panel) and MouseIsOver(widget) then
+				if panelIsActive(panel) and widget:IsMouseOver() then
 					M.variables.scaleUnderMouse[widget] = true
 					M.functions.CheckScaleWheelCapture()
 				end
@@ -1275,9 +1275,9 @@ function M.functions.createHooks(root, entry)
 			if c.stripChildren then
 				for _, strip in pairs(c.stripChildren) do M.variables.scaleUnderMouse[strip] = nil end
 			end
-		elseif MouseIsOver then
+		else
 			local function hover(w)
-				if w and MouseIsOver(w) then M.variables.scaleUnderMouse[w] = true end
+				if w and w:IsMouseOver() then M.variables.scaleUnderMouse[w] = true end
 			end
 			if not avoidRootHooks then
 				hover(root)

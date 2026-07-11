@@ -1,12 +1,23 @@
 ## Interface: 120100
-## Title: |cFF30D1FFQUI|r Options Search (itIT)
+## Title: |cFF30D1FFQUI|r Locale + Options Search itIT
 ## IconTexture: Interface\AddOns\QUI\assets\QUI
-## Notes: Load-on-demand localized settings search index for QUI (itIT)
+## Notes: Italian translations + settings search index for QUI
 ## Author: Zol
-## Version: 5.0.0-alpha16
+## Version: 5.0.0-alpha17
 ## Category: User Interface
 ## Group: QUI
-## RequiredDeps: QUI, QUI_Options
 ## LoadOnDemand: 1
 
+# Combined per-locale addon: UI-string overlay + generated settings search
+# index — ONE folder per locale instead of two.
+#
+# Loaded SYNCHRONOUSLY mid-QUI-load by core/locale/load_overlay.lua so the
+# overlay's ns.LocaleData.active lands before core/locale/locale.lua captures
+# it. NO RequiredDeps on purpose: a QUI_Options dep would drag the ~2.9 MB
+# options engine into the login path (bootstrap.lua hard-errors if the QUI
+# core is somehow absent). search_cache.lua's tail self-apply no-ops at login
+# (QUI_Options not loaded yet); the index parks on the shared ns and
+# GUI:EnsureSearchCacheLoaded applies it on first search.
+bootstrap.lua
+itIT.lua
 search_cache.lua

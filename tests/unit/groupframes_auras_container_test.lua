@@ -80,7 +80,7 @@ check("AuraSkin.Configure/Restyle no longer called directly here (moved to core)
     and src:find("pcall(AuraSkin.Configure", 1, true) == nil
     and src:find("AuraSkin.Restyle(", 1, true) == nil)
 check("SetUnit still precedes container configuration",
-    src:find("SetUnit(frame.unit)", 1, true) ~= nil)
+    src:find("SetUnit(unit)", 1, true) ~= nil)
 check("calls container:SetEnabled to self-drive UNIT_AURA",
     src:find("SetEnabled(true)", 1, true) ~= nil and src:find("SetEnabled(false)", 1, true) ~= nil)
 
@@ -124,7 +124,7 @@ check("EngineRendersElement gate defined + exported",
 check("BuildFilterStripMatches (strip Lua render path) removed",
     src:find("local function BuildFilterStripMatches", 1, true) == nil)
 check("RenderFrameElements no longer dispatches a filterStrip match build",
-    src:find("BuildFilterStripMatches(frame.unit", 1, true) == nil)
+    src:find("BuildFilterStripMatches(unit", 1, true) == nil)
 
 -- MRB + TINT STILL FLOW THROUGH THE ELEMENT RENDERER (kept this step) ---------
 check("missingRaidBuff handling still present in the render path",

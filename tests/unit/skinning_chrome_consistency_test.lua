@@ -12,7 +12,6 @@ local function assertContains(text, needle, why) assert(text:find(needle, 1, tru
 -- depth boost may remain. Add { file, why } entries here (never silence the test
 -- by weakening a pattern).
 local ALLOWLIST = {
-    ["modules/skinning/base.lua"] = "selected-tab +0.10 emphasis (canonical tab look)",
     ["modules/skinning/frames/character.lua"] = "selected-tab +0.10 emphasis (CharacterFrame tabs)",
 }
 

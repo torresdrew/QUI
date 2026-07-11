@@ -127,6 +127,10 @@ do
         "3rd legacyFlag entry must be QUI_GroupFrames, got " .. tostring(legacyFlagFolders[3]))
     assert(legacyFlagFolders[4] == "QUI_Nameplates",
         "4th legacyFlag entry must be QUI_Nameplates, got " .. tostring(legacyFlagFolders[4]))
+    table.sort(coreModules)
+    assert(table.concat(coreModules, ",") == "alts,datatexts,infobar,minimap,skinning",
+        "coreModule entries must be alts/datatexts/infobar/minimap/skinning, got " .. table.concat(coreModules, ","))
+    -- lateLoad: none today. The mechanism is retained for future use.
     assert(#lateLoadFolders == 0,
         "no lateLoad entries expected, got " .. #lateLoadFolders)
 end

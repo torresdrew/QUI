@@ -1022,12 +1022,6 @@ function CDMIconRuntimeRefresh.Create(callbacks)
         return true
     end
 
-    function controller:NoteChargeDurationObjectsUpdated()
-        if callbacks.noteChargeDurationObjectsUpdated then
-            callbacks.noteChargeDurationObjectsUpdated()
-        end
-    end
-
     function controller:ApplyTargetScope(event)
         if callbacks.chargeDebug then
             callbacks.chargeDebug(nil, "EVENT", event, "target-scope-refresh")
@@ -1093,8 +1087,17 @@ function CDMIconRuntimeRefresh.Create(callbacks)
         if event == "UNIT_SPELLCAST_STOP"
            or event == "UNIT_SPELLCAST_CHANNEL_START"
            or event == "UNIT_SPELLCAST_CHANNEL_STOP" then
-            local isPlayerUnit = not (callbacks.isSecretValue and callbacks.isSecretValue(arg1))
-                and arg1 == "player"
+            -- These three events are RegisterUnitEvent("player")-bound
+            -- (cdm_icon_renderer.lua cdEventFrame), so the C-side filter
+            -- already guarantees the unit. The token itself is documented
+            -- SecretWhenUnitSpellCastRestricted — a secret token here is
+            -- still the player; comparing it would throw.
+            local isPlayerUnit
+            if callbacks.isSecretValue and callbacks.isSecretValue(arg1) then
+                isPlayerUnit = true
+            else
+                isPlayerUnit = arg1 == "player"
+            end
             if isPlayerUnit then
                 if normalizeSpellIdentifier(callbacks, arg3) ~= nil then
                     if runtimeRefreshStats then runtimeRefreshStats.unitSpellcastCooldownSkips = runtimeRefreshStats.unitSpellcastCooldownSkips + 1 end
@@ -1300,7 +1303,6 @@ function CDMIconRuntimeRefresh.Create(callbacks)
 
     function controller:HandleChargesChanged(_, spellID)
         if not isRuntimeEnabled(callbacks) then return end
-        controller:NoteChargeDurationObjectsUpdated()
         if callbacks.requestStackTextUpdate then
             callbacks.requestStackTextUpdate()
         end
@@ -1308,10 +1310,15 @@ function CDMIconRuntimeRefresh.Create(callbacks)
             if runtimeRefreshStats then runtimeRefreshStats.chargeCooldownSkips = runtimeRefreshStats.chargeCooldownSkips + 1 end
             controller:QueueResolvedCooldownForSpellID(spellID, nil)
         else
+            -- SPELL_UPDATE_CHARGES carries no payload (SpellBookDocumentation:
+            -- no Payload table), so this branch IS the ordinary charge path,
+            -- not a rare fallback. A synchronous ApplySpellScope here walked
+            -- every icon per charge tick, unthrottled — the exact churn the
+            -- nil-spellID cooldown doctrine above forbids. The coalesced
+            -- scheduled update covers swipe/charge rebinding.
             if callbacks.scheduleUpdate then
-                callbacks.scheduleUpdate(nil, UPDATE_COOLDOWN)
+                callbacks.scheduleUpdate(true, UPDATE_COOLDOWN, "charges")
             end
-            controller:ApplySpellScope()
         end
     end
 

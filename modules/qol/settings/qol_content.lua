@@ -16,65 +16,9 @@ local Registry = Settings and Settings.Registry
 local Schema = Settings and Settings.Schema
 
 local PAD = (Opts and Opts.PADDING) or 15
-local HEADER_GAP = 26
-local SECTION_GAP = 14
 
 local function MakeLayout(content)
-    local y = -10
-    local L = {}
-    function L.headerAt(text)
-        local h = Opts.CreateAccentDotLabel(content, text, y)
-        h:ClearAllPoints()
-        h:SetPoint("TOPLEFT", content, "TOPLEFT", PAD, y)
-        h:SetPoint("TOPRIGHT", content, "TOPRIGHT", -PAD, y)
-        y = y - HEADER_GAP
-    end
-    function L.sectionAt()
-        local c = Opts.CreateSettingsCardGroup(content, y)
-        c.frame:ClearAllPoints()
-        c.frame:SetPoint("TOPLEFT", content, "TOPLEFT", PAD, y)
-        c.frame:SetPoint("TOPRIGHT", content, "TOPRIGHT", -PAD, y)
-        return c
-    end
-    function L.closeSection(c)
-        c.Finalize()
-        y = y - c.frame:GetHeight() - SECTION_GAP
-    end
-    function L.intro(text)
-        local frame = CreateFrame("Frame", nil, content)
-        frame:ClearAllPoints()
-        frame:SetPoint("TOPLEFT", content, "TOPLEFT", PAD, y)
-        frame:SetPoint("TOPRIGHT", content, "TOPRIGHT", -PAD, y)
-        local lbl = GUI:CreateLabel(frame, text, 11, C.textMuted)
-        lbl:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, 0)
-        lbl:SetPoint("RIGHT", frame, "RIGHT", 0, 0)
-        lbl:SetJustifyH("LEFT")
-        lbl:SetWordWrap(true)
-        local approxHeight = math.max(18, math.ceil(#text / 90) * 15)
-        frame:SetHeight(approxHeight)
-        y = y - approxHeight - 8
-        return lbl, frame
-    end
-    function L.placeCustom(frame, height)
-        -- Defensive reparent: callers sometimes create with nil parent and
-        -- rely on anchoring alone. SetParent ensures the frame is hidden /
-        -- garbage-collected with the settings page rather than orphaning to
-        -- UIParent and lingering on screen after the panel closes.
-        frame:SetParent(content)
-        frame:ClearAllPoints()
-        frame:SetPoint("TOPLEFT", content, "TOPLEFT", PAD, y)
-        frame:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
-        frame:SetHeight(height)
-        y = y - height - SECTION_GAP
-    end
-    function L.gap(n)
-        y = y - (n or 6)
-    end
-    function L.finish()
-        content:SetHeight(math.abs(y) + 10)
-        return content:GetHeight()
-    end
-    return L
+    return ns.QUI_SettingsLayoutShared.MakeLayout(content)
 end
 
 local function row(parent, label, widget, desc)

@@ -56,10 +56,24 @@ function SetCVar(name, value)
     cvars[name] = tostring(value)
 end
 
+-- All four builtin containers pre-snapshotted (ownedSpells ~= nil) so
+-- SnapshotUnsetBuiltinContainers reports ready. Without them, Initialize()'s
+-- guaranteed cold-load-grace closer (Task 7) drives RunColdLoadReconcile
+-- into its not-ready retry loop, which never terminates when drained against
+-- this test's capturing C_Timer.After stub (see DrainTimers below).
+local function ReadyDB()
+    return { builtIn = true, ownedSpells = {}, dormantSpells = {}, removedSpells = {} }
+end
+
 local ns = {
     Addon = {
         db = {
-            profile = { ncdm = {} },
+            profile = { ncdm = {
+                essential = ReadyDB(),
+                utility = ReadyDB(),
+                buff = ReadyDB(),
+                trackedBar = ReadyDB(),
+            } },
             global = {},
         },
     },

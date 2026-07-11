@@ -1159,15 +1159,6 @@ local function HideLiteDisplays()
     end
 end
 
--- Show detailed overlays (restore visibility)
-local function ShowDetailedOverlays()
-    for _, overlay in pairs(inspectOverlays) do
-        if overlay then
-            overlay:Show()
-        end
-    end
-end
-
 -- Hide detailed overlays
 local function HideDetailedOverlays()
     for _, overlay in pairs(inspectOverlays) do

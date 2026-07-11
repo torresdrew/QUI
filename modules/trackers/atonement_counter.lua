@@ -152,13 +152,6 @@ local function GetClassColor()
     return { r, g, b, 1 }
 end
 
-local function IsRelevantUnit(unit)
-    if type(unit) ~= "string" or unit == "" then
-        return false
-    end
-    return unit == "player" or unit:match("^party%d+$") or unit:match("^raid%d+$")
-end
-
 local function UnitAvailable(unit)
     if not unit then return false end
     local exists = SafeBoolean(UnitExists(unit))
@@ -249,14 +242,18 @@ local function UnitHasPlayerAtonement(unit)
     end
 
     if AuraUtil and AuraUtil.ForEachAura then
+        -- ForEachAura is index/slot-based (12.1 RequiresUnitAuraAccess) and throws while
+        -- auras are secret. The GetUnitAuras fast-paths above are pcall-guarded for the
+        -- same reason; wrap this one too so a restricted-combat scan degrades to false
+        -- instead of erroring the UNIT_AURA handler.
         local found = false
-        AuraUtil.ForEachAura(unit, PLAYER_HELPFUL_FILTER, nil, function(auraData)
+        local ok = pcall(AuraUtil.ForEachAura, unit, PLAYER_HELPFUL_FILTER, nil, function(auraData)
             if AuraMatchesAtonement(auraData) then
                 found = true
                 return true
             end
         end, true)
-        if found then
+        if ok and found then
             return true
         end
     end

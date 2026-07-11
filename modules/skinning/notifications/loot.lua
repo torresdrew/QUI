@@ -1141,11 +1141,10 @@ EnableBlizzardLoot = function()
         LootFrame:RegisterEvent("LOOT_CLOSED")
     end
 
-    -- Re-enable Blizzard Roll Frames
-    if not InCombatLockdown() then
-        UIParent:RegisterEvent("START_LOOT_ROLL")
-        UIParent:RegisterEvent("CANCEL_LOOT_ROLL")
-    end
+    -- 12.1 routes START_LOOT_ROLL/CANCEL_LOOT_ROLL through GameEvent
+    -- (Blizzard_Game/EventRouting.lua), not UIParent — there is no UIParent
+    -- registration to restore. Native roll frames are suppressed after their
+    -- lifecycle (hide + GroupLootContainer alpha), not at the event source.
     if GroupLootContainer then
         GroupLootContainer:SetAlpha(1)
     end
@@ -1258,13 +1257,11 @@ function Loot:Refresh()
             EnableBlizzardLoot()
         end
 
-        if db.lootRoll and db.lootRoll.enabled then
-            UIParent:UnregisterEvent("START_LOOT_ROLL")
-            UIParent:UnregisterEvent("CANCEL_LOOT_ROLL")
-        else
-            UIParent:RegisterEvent("START_LOOT_ROLL")
-            UIParent:RegisterEvent("CANCEL_LOOT_ROLL")
-        end
+        -- 12.1 routes START_LOOT_ROLL/CANCEL_LOOT_ROLL through GameEvent
+        -- (Blizzard_Game/EventRouting.lua), not UIParent — there is no
+        -- UIParent registration to toggle for lootRoll. Native roll frames
+        -- are suppressed after their lifecycle (hide + GroupLootContainer
+        -- alpha), not at the event source.
     else
         pendingRefreshBlizzard = true
     end

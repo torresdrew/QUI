@@ -2032,11 +2032,8 @@ function Helpers.ReadSpellCooldown(spellID)
         return a, b, d, nil, nil
     end
 
-    if GetSpellCooldown then
-        local start, duration = GetSpellCooldown(spellID)
-        return start, duration, nil, nil, nil
-    end
-
+    -- No bare GetSpellCooldown fallback: the global was removed in 12.x (C_Spell
+    -- is the only surviving API), so referencing it is dead code.
     return nil, nil, nil, nil, nil
 end
 

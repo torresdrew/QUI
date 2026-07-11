@@ -239,6 +239,11 @@ end
 -- fields can be secret in combat, and we don't read any.
 ---------------------------------------------------------------------------
 local function RefreshThrillOfTheSkiesBuffState()
+    -- Restricted auras return a gated nil from the lookup below (gated nil
+    -- ≠ buff faded); clearing first would drop the Thrill color mid-combat.
+    if C_Secrets and C_Secrets.ShouldAurasBeSecret and C_Secrets.ShouldAurasBeSecret() then
+        return hasThrillOfTheSkiesBuff
+    end
     hasThrillOfTheSkiesBuff = false
     if C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID then
         if C_UnitAuras.GetPlayerAuraBySpellID(THRILL_OF_THE_SKIES_BUFF_ID) then
@@ -1457,7 +1462,13 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
             lastMaxCharges = -1
             ApplySettings()
         end)
-    elseif event == "UNIT_AURA" and arg1 == "player" then
+    elseif event == "UNIT_AURA" then
+        -- Player-only registration (:1414) — never read the payload unit
+        -- (arg1 here); the C-level filter already restricts delivery to
+        -- "player". PTR 68569 marks UNIT_AURA event-wide
+        -- SecretWhenAurasRestricted, so arg1 may arrive as an opaque
+        -- secret value in combat; updateInfo is never consumed by this
+        -- branch so no probe is needed for it.
         local settings = GetSettings()
         if not settings or settings.enabled == false then
             return

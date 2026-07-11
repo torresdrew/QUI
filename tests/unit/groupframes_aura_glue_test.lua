@@ -26,8 +26,9 @@ check("parks unused slots via AuraSlots.Park", src:find("AuraSlots.Park", 1, tru
 -- EMPTY "*" bucket on Options-disabled installs (Task 4 review regression).
 check("seeds via the shim-owned default bucket, no Options-side dependency",
     src:find("QUI_GroupFramesAuraDefaults", 1, true) == nil
-    and src:find("AuraModel.DefaultStripBucket()", 1, true) ~= nil
-    and src:find("EnsureSeeded(auras, DefaultStripBucket)", 1, true) ~= nil)
+    and src:find('AuraModel.DefaultStripBucket("party")', 1, true) ~= nil
+    and src:find('AuraModel.DefaultStripBucket("raid")', 1, true) ~= nil
+    and src:find("EnsureSeeded(auras, BucketFnFor(frame))", 1, true) ~= nil)
 
 -- PTR4 UNIT_AURA fully-secret payload guards (Task 7) ------------------------
 -- groupframes_auras.lua needs real WoW frames + the AuraEvents subscription and

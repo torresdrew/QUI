@@ -714,22 +714,11 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
     end
 end)
 
--- LOD catch-up: first PEW already fired before this module loads. Also covers
--- Blizzard_GroupFinder having loaded before us (same hook/position calls).
--- ns.WhenLoggedIn is nil only in the headless test harness.
-if ns.WhenLoggedIn then
-    ns.WhenLoggedIn(function()
-        SetupPVEFrameHooks()
-        PositionKeyTracker()
-        ApplySkinColors()
-        UpdateAllButtonFonts()
-        C_Timer.After(INITIAL_REQUEST_DELAY, function()
-            if not InCombatLockdown() then
-                RequestKeystones()
-            end
-        end)
-    end)
-end
+-- No WhenLoggedIn catch-up: this file rides the root TOC (QUI_UI dissolve),
+-- so it loads before PLAYER_LOGIN and the initial PLAYER_ENTERING_WORLD
+-- branch above covers login (hooks, position, skin, fonts, request) — a
+-- PLAYER_LOGIN callback would double-run all of it. Blizzard_GroupFinder
+-- loading later is covered by the ADDON_LOADED branch.
 
 -- LibOpenRaid callback (with combat lockdown check)
 if openRaidLib then

@@ -1505,12 +1505,6 @@ if C_AddOns.IsAddOnLoaded("Blizzard_ProfessionsCustomerOrders") then
     C_Timer.After(0.1, SetupCraftingOrderFilter)
 end
 
--- LOD catch-up: first PEW already fired before this module loads.
--- ns.WhenLoggedIn is nil only in the headless test harness.
-if ns.WhenLoggedIn then
-    ns.WhenLoggedIn(function()
-        ScheduleMythicPlusUpdate(2)
-        C_Timer.After(2, UpdateRaidAutoLogging)
-        C_Timer.After(2, RefreshPopupBlocker)
-    end)
-end
+-- No WhenLoggedIn catch-up: this file rides the root TOC (QUI_UI dissolve),
+-- so it loads before PLAYER_LOGIN and the initial PLAYER_ENTERING_WORLD
+-- branch above covers login — a PLAYER_LOGIN callback would double-run it.

@@ -24,10 +24,11 @@ local MIN_HEADROOM = 10
 -- landed, with their measured free-slot floor. Each may only IMPROVE: dropping
 -- below its floor fails. Once a file reaches MIN_HEADROOM (via do-block
 -- scoping, state-table grouping, or a satellite split), remove its entry.
--- All four are candidates for the cdm_blizz_mirror-style satellite split.
+-- Both remaining are candidates for the cdm_blizz_mirror-style satellite split.
+-- (cdm_icon_renderer.lua graduated via the CDM dead-code deletions;
+-- cdm_spelldata.lua had already accumulated >=10 free slots in earlier
+-- rounds and its entry was simply stale — no split needed for either.)
 local GRANDFATHERED = {
-    ["QUI_CDM/cdm/cdm_icon_renderer.lua"] = 0,
-    ["QUI_CDM/cdm/cdm_spelldata.lua"] = 1,
     ["QUI_GroupFrames/groupframes/groupframes.lua"] = 0,
     ["modules/minimap/minimap.lua"] = 5,
 }

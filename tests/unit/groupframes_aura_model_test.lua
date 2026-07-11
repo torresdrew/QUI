@@ -41,9 +41,12 @@ test("legacy one-arg EnsureSeeded threads the GF default bucket", function()
     local auras = { enabled = true }
     Model.EnsureSeeded(auras)
     assert(auras.elementsSeeded == true)
-    assert(type(auras.elements) == "table" and #auras.elements["*"] == 2,
+    assert(type(auras.elements) == "table" and #auras.elements["*"] == 3,
         "one-arg EnsureSeeded must seed the GF default bucket, not an empty one")
-    assert(auras.elements["*"][1].id == "debuffs" and auras.elements["*"][2].id == "buffs")
+    assert(auras.elements["*"][1].id == "debuffs" and auras.elements["*"][2].id == "buffs"
+        and auras.elements["*"][3].id == "defensives")
+    -- One-arg = unknown surface: defensives seeds DISABLED (conservative).
+    assert(auras.elements["*"][3].enabled == false)
     -- Normalized shape (core schema) straight from the shim's bucket.
     assert(type(auras.elements["*"][1].duration) == "table"
         and auras.elements["*"][1].duration.anchor == "BOTTOM")
@@ -133,6 +136,15 @@ test("shim source: setmetatable delegate, PopulateElementMatches kept, model NOT
     assert(shimSrc:find("function Model.NewFilterStripElement", 1, true) == nil, "must NOT re-declare the moved model")
     assert(shimSrc:find("function Model.DefaultStripBucket", 1, true) ~= nil,
         "DefaultStripBucket must be SHIM-owned (always-loaded) so the runtime seed can never latch empty")
+end)
+
+-- Wave 4 Task 2d: dedupeDefensives had zero runtime consumers (re-verified
+-- repo-wide) and is removed from every LIVE seed, including this shim's
+-- shipped GF default strip bucket. Stores that already carry the stale key
+-- keep it (absent-key convention tolerates residue — no migration writes
+-- here), but nothing should mint a NEW instance of it going forward.
+test("shim source: DefaultStripBucket no longer seeds dedupeDefensives", function()
+    assert(shimSrc:find("dedupeDefensives", 1, true) == nil, "dedupeDefensives must not be re-seeded")
 end)
 
 print("ALL PASS")

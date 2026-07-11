@@ -9,6 +9,48 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v5.0.0-alpha17 - 2026-07-11
+
+> ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will
+> not load on the 12.0.x live client. Stay on the v4.x beta line for live realms.
+
+> 🔄 **Profile schema migrated to v51.** A single squashed migration repairs
+> aura filter data corrupted under alpha16, folds the group-frame defensive
+> indicator into the unified aura elements, and purges orphaned cooldown-viewer
+> settings. Your profile is backed up automatically before it runs.
+
+### Changed
+- The Unit Frames **Icons** tab is now named **Auras**, matching the unified
+  aura element system it configures.
+- The group-frame defensive indicator is now a standard **defensives** aura
+  element, gaining the element system's filters, sorting, layout, and placement.
+- Faster login and options window: the options engine (~2.9 MB) and the
+  new-profile seed data now load on demand instead of at login, the first
+  `/qui` open compiles the options UI, per-locale search indexes load when
+  needed, and startup runs its profile migration in a single pass.
+
+### Fixed
+- Aura filters saved under alpha16 are repaired. An alpha16 seeding bug wrote
+  invalid tokens into unit-frame aura filters, which hard-errored on 12.1 when
+  the filter string was compiled; the migration strips the bad tokens (a filter
+  left empty reverts to off).
+- A batch of 12.1 crash fixes around secret (protected) values — cooldown-viewer
+  cast/channel tracking, spell-cooldown map teleports, pet proc glows, consumable
+  and skyriding aura tracking, the castbar empower probe, and loot-frame
+  positioning no longer error when the game returns a protected value.
+
+### Performance
+- Reduced per-frame allocations across group frames, resource bars (shared
+  resource maps and zero-allocation rune tracking), and unit-frame power updates
+  (frequent-power events coalesced to ~5 Hz on non-player frames).
+- Trimmed ~448 KB of unused bundled cooldown data and removed dead bag storage
+  code.
+
+### Internal
+- Development history re-founded on the v4.1.0 fork base as a single linear
+  trunk; the packaged addon is unchanged from the prior alpha dev build.
+- Blizzard API reference (FrameXML + API docs) refreshed to 12.1.0.68629.
+
 ## v5.0.0-alpha16 - 2026-07-09
 
 > ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will
@@ -483,67 +525,6 @@ forward from the 4.x beta line.
 - fixed flight map canvas hidden behind skinned backdrop
 - hardened skin button-font walk against bad-self GetObjectType
 
-
-
-## v4.1.0 - 2026-07-07
-
-### Added
-- feat(qol): add cursor trail, sound mute, loot curation + tooltip/bags extras
-- feat(qol): add five QoL modules - audio device lock, event sounds, extended ignore, friends class colors, no-target warning
-- feat(actionbars): add position options for the open-ticket icon
-
-### Fixed
-- perf(infobar): skip the mouseover-fade alpha work while settled
-- perf(options): debounce slider onChange during drags
-- perf(qol): park the cursor-follow watcher and gate repositioning on movement
-- perf(damagemeter): stop walking settings on every render frame of the ticker
-- perf(qol): run the pairs(_G) action-button sweep once per session
-- perf(cdm): stop allocating bar-frame snapshots in the mouseover poll and fade fallback
-- perf(cdm): make the buff-icon poll allocation-free and relax its cadence
-- perf(qol): throttle the tooltip visibility watcher's idle and shown paths
-- perf(cdm): gate alpha-enforcer work behind its throttle and child-count cache
-- fix(core): park profile changes during Mythic+ instead of dropping them
-- fix(core): detect cross-suite namespace export collisions
-- fix(options): skip tab strip for single sub-page tiles
-- fix(sounds): defer QoL whisper alert to chat when chat owns it
-- fix(tooltips): guard GameTooltip widget containers from tainted layout
-## v4.0.5 - 2026-07-06
-
-### Added
-- feat(groupframes): linear (horizontal/vertical) cooldown swipe option
-- feat(groupframes): detached mini-bar mode for health overlays
-- feat(groupframes): color debuff icon borders by dispel type
-- feat(groupframes): overlay bar texture, draw order, fill, spark + outline
-- feat(groupframes): expose party frames to external cooldown-tracker provider API
-- feat(groupframes): party target frames
-- feat(groupframes): ally-buff reminders + composer absorb texture
-- feat(qol): disable scrolling combat text toggle
-- feat(qol): merchant grid extender
-- feat(damagemeter): dark/light theme preset for native meter
-- feat(chat): scroll overflow for window tabs
-- feat(clickcast): reference-parity rewrite - per-frame proxies, click direction, friend/enemy
-- feat(qol): raid markers, lust timer, group/unit/CDM frames, chat, damage meter
-
-### Changed
-- refactor(unitframes): event-driven boss range alpha
-
-### Fixed
-- refresh HUD visibility on movement state changes
-- fix(actionbars): stop skyriding HUD-visibility show/hide flicker
-- fix(bags): merge bag→bank deposits into existing tab stacks
-- fix(cdm): gate override-child cooldown lane to real base cooldowns
-- fix(cdm): show mirror-child proc icon art when GetOverrideSpell stays on base
-- fix(chat): apply suppress synchronously on combat /reload
-- fix(chat): class-color guild senders on cold-login into combat
-- fix(chat): class-color prefix on plain body with secret sender
-- fix(chat): restore class colors on raid/party names in combat
-- fix(groupframes): strip events on pooled legacy party frames (12.x taint crash)
-- fix(groupframes,castbar): stop sticky name blanks + boss castbar persisting after wipe
-- fix(inspect): suppress queued tooltip NotifyInspect once InspectFrame opens
-- fix(qol): read AH expansion filter via GetFilters when available
-- fix(skinning): raise flight map canvas above skinned backdrop
-- fix(skinning): survive bad-self GetObjectType in button-font walk
-- fix(skinning): fix unreadable dark gossip text on skinned frame
 ## v4.0.4 - 2026-06-23
 
 ### Added

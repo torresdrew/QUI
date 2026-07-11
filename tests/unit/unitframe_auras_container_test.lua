@@ -71,8 +71,8 @@ assert(not src:find("AddAuraFilter", 1, true),
     "AddAuraFilter replaced by the shared core glue")
 
 -- UNIT + ENABLE: container is told its unit and switched on --------------------
-assert(src:find("SetUnit(frame.unit)", 1, true),
-    "SetUnit must still precede group configuration")
+assert(src:find("SetUnit(QUI_UF.GetFrameUnit(frame))", 1, true),
+    "SetUnit must still precede group configuration (unit resolved from weak side state — ping-taint fix)")
 assert(src:find("SetEnabled(true)", 1, true) and src:find("SetEnabled(false)", 1, true),
     "live path must call container:SetEnabled to self-drive UNIT_AURA")
 

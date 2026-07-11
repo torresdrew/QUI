@@ -1731,6 +1731,38 @@ function CDMContainers_API:CreateContainer(name, containerType)
     return key
 end
 
+-- >>> QUI_TEST_EXTRACT PurgeContainerSatellites (sentinels used by
+-- tests/unit/cdm_delete_container_satellites_test.lua to load this pure
+-- function standalone -- cdm_containers.lua as a whole is too
+-- dependency-heavy to instantiate headlessly, see
+-- cdm_containers_combat_end_refresh_coalesce_test.lua).
+-- Purge per-container satellite settings keyed on the container name.
+-- Pure (profile-table in, mutations only) so the unit test can drive it
+-- without the frame runtime. Shared by DeleteContainer; the orphan
+-- migration (core/migrations.lua v53) can NOT reuse it (different addon
+-- load context) and carries its own suffix-list-based copy — this one
+-- needs no suffix list because the containerKey is known: any glow key
+-- with that prefix is this container's satellite.
+local function PurgeContainerSatellites(profile, containerKey)
+    if type(profile) ~= "table" or type(containerKey) ~= "string" then return end
+    local glow = profile.customGlow
+    if type(glow) == "table" then
+        for k in pairs(glow) do
+            if type(k) == "string" and k:sub(1, #containerKey) == containerKey then
+                glow[k] = nil
+            end
+        end
+    end
+    if type(profile.cooldownEffects) == "table" then
+        profile.cooldownEffects["hide_" .. containerKey] = nil
+    end
+    if type(profile.frameAnchoring) == "table" then
+        profile.frameAnchoring["cdmCustom_" .. containerKey] = nil
+    end
+end
+-- <<< QUI_TEST_EXTRACT PurgeContainerSatellites
+ns.CDMPurgeContainerSatellites = PurgeContainerSatellites -- test seam + migration reuse if loadable
+
 --- Delete a custom container. Returns true on success.
 function CDMContainers_API:DeleteContainer(containerKey)
     if InCombatLockdown() then return false end
@@ -1744,6 +1776,14 @@ function CDMContainers_API:DeleteContainer(containerKey)
     -- Remove from DB
     db.containers[containerKey] = nil
     db[containerKey] = nil
+
+    -- Satellite settings leak fix: effects/glow/anchor entries are keyed on
+    -- the container name by the settings page and layout mode; without this
+    -- they orphan forever (the shipped seed accumulated 15 dead anchors).
+    local profile = QUICore and QUICore.db and QUICore.db.profile
+    if profile then
+        PurgeContainerSatellites(profile, containerKey)
+    end
 
     -- Destroy the frame
     local frame = containers[containerKey]
@@ -3798,6 +3838,15 @@ function ownedEngine:BootstrapReanchorRuntime()
             end
             ns._cdmReanchorEditLock = el
         end
+    else
+        -- Legacy fallback is intentional, but it must never be silent: the
+        -- reanchor engine is the maintained 12.1 rendering path and a
+        -- swallowed bootstrap error here previously degraded CDM for the
+        -- whole session with no diagnostics.
+        ns._cdmBootError = (not ok and tostring(boot))
+            or "BuildRuntime returned nil"
+        print("|cffff4444QUI:|r " .. ns.L["CDM re-anchor bootstrap failed; using legacy rendering."]
+            .. " " .. ns._cdmBootError)
     end
 end
 
@@ -3825,13 +3874,15 @@ function ownedEngine:Initialize()
         -- called directly off ns._OwnedGlows (see RunPostLayoutRefresh) to avoid
         -- a second _G.QUI_* global.
         _G.QUI_RefreshCustomGlows = ns._OwnedGlows.RefreshAllGlows
-        -- No-op effects refresh (owned engine has no effects.lua)
-        ---@type fun(...)
-        _G.QUI_RefreshCooldownEffects = function() end
     end
     if ns._OwnedSwipe then
         QUI.CooldownSwipe = ns._OwnedSwipe
         _G.QUI_RefreshCooldownSwipe = ns._OwnedSwipe.Apply
+        -- Hide Cooldown Effects rides the swipe applicator: the per-icon apply
+        -- consults profile.cooldownEffects (cdm_effects.lua
+        -- IsContainerEffectsHidden) and forces swipe+edge off for hidden
+        -- containers, so a full swipe re-apply is exactly the effects refresh.
+        _G.QUI_RefreshCooldownEffects = ns._OwnedSwipe.Apply
     end
 
     if ns.Registry then

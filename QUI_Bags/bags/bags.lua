@@ -9,6 +9,7 @@ local ADDON_NAME, ns = ...
 -- Shared module namespace: sibling data-layer files (loaded before this in
 -- bags.xml) publish themselves onto ns.Bags.
 local Bags = ns.Bags or {}; ns.Bags = Bags
+local Storage = ns.Storage
 
 local Helpers = ns.Helpers
 local GetSettings = Helpers.CreateDBGetter("bags")
@@ -142,14 +143,14 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1)
         -- live lock/cooldown/equipment-set-mark dressing is the window's
         -- concern; cheap full re-render
         if Bags.BagWindow.IsShown() then
-            Bags.Bus.Publish("BagsChanged", Bags.Store.GetCurrentCharacterKey(), {})
+            Storage.Bus.Publish("BagsChanged", Storage.Store.GetCurrentCharacterKey(), {})
         end
         -- lock/cooldown re-dress ping
         if Bags.BankWindow.IsShown() then
-            Bags.Bus.Publish("BankChanged", Bags.Store.GetCurrentCharacterKey(), {})
+            Storage.Bus.Publish("BankChanged", Storage.Store.GetCurrentCharacterKey(), {})
             -- warband-scope lock edge: the sort executor's warband scope
             -- listens on WarbandChanged only (shape: eventName, changed)
-            Bags.Bus.Publish("WarbandChanged", {})
+            Storage.Bus.Publish("WarbandChanged", {})
         end
     elseif event == "PLAYER_REGEN_DISABLED" then
         -- Combat hard-stops bag-modifying ops (the moves aren't protected;

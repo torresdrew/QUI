@@ -136,11 +136,8 @@ local function GetSpellNameAndIcon(spellID)
         end
     end
 
-    if type(GetSpellInfo) == "function" then
-        local name, _, icon = GetSpellInfo(spellID)
-        return name, icon
-    end
-
+    -- No bare GetSpellInfo fallback: the global was removed in 12.x (C_Spell is the
+    -- only surviving API), so the type()-guarded branch was permanently dead.
     return nil, nil
 end
 
@@ -318,6 +315,15 @@ end
 local function ExtractCastGUIDAndSpellID(...)
     -- UNIT_SPELLCAST_SENT payload: unitTarget, target, castGUID, spellID
     local _, _, castGUID, spellID = ...
+    -- 68569: SENT is SecretWhenUnitSpellCastRestricted too (castGUID/spellID
+    -- carry no NeverSecret). type() reveals a secret's UNDERLYING type, so
+    -- the type checks below do NOT filter secrets — probe explicitly before
+    -- MarkSentCast indexes sentByGUID/sentBySpell with these. Secret = drop
+    -- the arg; the SUCCEEDED-side action-bar fallback still covers the cast.
+    if Helpers.IsSecretValue then
+        if Helpers.IsSecretValue(castGUID) then castGUID = nil end
+        if Helpers.IsSecretValue(spellID) then spellID = nil end
+    end
     if type(castGUID) ~= "string" then
         castGUID = nil
     end
@@ -1130,7 +1136,12 @@ eventFrame:RegisterEvent("SPELLS_CHANGED")
 eventFrame:RegisterUnitEvent("UNIT_SPELLCAST_START", "player")
 eventFrame:RegisterUnitEvent("UNIT_SPELLCAST_CHANNEL_START", "player")
 eventFrame:RegisterUnitEvent("UNIT_SPELLCAST_SENT", "player")
-eventFrame:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
+-- 68569: RegisterUnitEvent filters delivery to "player" only — that
+-- registration is the sole trusted unit identity for every UNIT_SPELLCAST_*
+-- event on this frame; the payload's own unit arg is dropped below rather
+-- than compared. The payload can still be whole-secret under restriction
+-- even though delivery is player-scoped — see the spellID probe below.
+eventFrame:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
 eventFrame:RegisterUnitEvent("UNIT_SPELLCAST_CHANNEL_STOP", "player")
 eventFrame:RegisterUnitEvent("UNIT_SPELLCAST_FAILED", "player")
 eventFrame:RegisterUnitEvent("UNIT_SPELLCAST_INTERRUPTED", "player")
@@ -1182,8 +1193,14 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         return
     end
 
-    local unit, castGUID, spellID = ...
-    if unit ~= "player" then
+    local _, castGUID, spellID = ...
+    -- SecretWhenUnitSpellCastRestricted covers spellID/castGUID/unit alike;
+    -- probe once here (choke point for every branch below) rather than at
+    -- each callee — a secret spellID throws as a table key or in a compare,
+    -- and a secret castGUID throws as a castByGUID/sentByGUID table key
+    -- (every branch below indexes those maps with it).
+    if Helpers.IsSecretValue
+        and (Helpers.IsSecretValue(spellID) or Helpers.IsSecretValue(castGUID)) then
         return
     end
 

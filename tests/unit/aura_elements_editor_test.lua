@@ -88,6 +88,27 @@ check("shared text-region widgets factored (AddTextRegionWidgets)",
 check("text region wires duration and stack sub-tables",
     editor:find('"duration"', 1, true) ~= nil and editor:find('"stack"', 1, true) ~= nil)
 
+-- Wave 4 Task 2: classification honesty trio + dedupeDefensives removal ----
+check("2a: classify-mode cap row relabels to 'Max Icons Per Category'",
+    editor:find('ns.L["Max Icons Per Category"]', 1, true) ~= nil)
+check("2a: relabel is gated on filterMode == classify (not a blanket rename)",
+    editor:find('element.filterMode == "classify"', 1, true) ~= nil)
+check("2b: exclusivity lives in core, not duplicated in the editor",
+    editor:find("PRIORITY", 1, true) == nil)
+check("2c: polarity hint gated on caps.unitPolarity",
+    editor:find("caps.unitPolarity", 1, true) ~= nil)
+check("2c: polarity hint covers both disabled-combo directions",
+    editor:find('unitPolarity == "friendly" and element.auraType == "HARMFUL"', 1, true) ~= nil
+    and editor:find('unitPolarity == "hostile" and element.auraType == "HELPFUL"', 1, true) ~= nil)
+check("2d: 'Deduplicate Defensives' row removed", editor:find("Deduplicate Defensives", 1, true) == nil)
+check("2d: dedupeDefensives no longer referenced anywhere in the editor",
+    editor:find("dedupeDefensives", 1, true) == nil)
+
+-- Defensives fold-in: optional per-element border color -----------------
+check("editor exposes borderColor", editor:find("\"borderColor\"", 1, true) ~= nil)
+check("editor gates borderColor behind a custom-border toggle",
+    editor:find("Custom Border Color", 1, true) ~= nil)
+
 -- Tracked editor restoration ----------------------------------------------
 check("tracked display type dropdown", editor:find('"displayType"', 1, true) ~= nil)
 check("tracked builds display options from capabilities.trackedDisplayTypes",
@@ -110,6 +131,8 @@ check("schema passes capabilities.maxStripElements = 4",
     schema and schema:find("maxStripElements", 1, true) ~= nil and schema:find("= 4", 1, true) ~= nil)
 check("schema passes defaultBucketFn = AuraDefaults.DefaultStripBucket",
     schema and schema:find("AuraDefaults.DefaultStripBucket", 1, true) ~= nil)
+check("2c: GF passes unitPolarity = friendly (party/raid are always assistable)",
+    schema and schema:find('unitPolarity        = "friendly"', 1, true) ~= nil)
 -- Suggestion grid removed: tracked elements are created empty via an "Add
 -- Tracked Aura" button; spell picking lives ONLY in the per-element detail
 -- (preset toggle list + manual spell ID).
@@ -181,6 +204,13 @@ check("UF mount threads defaultBucketFn = ns.QUI_UnitFrameAuras.DefaultUnitAuraB
 check("unitframe_auras.lua publishes ns.QUI_UnitFrameAuras.DefaultUnitAuraBucket",
     ufAuras and ufAuras:find("ns.QUI_UnitFrameAuras", 1, true) ~= nil
     and ufAuras:find("UnitFrameAuras.DefaultUnitAuraBucket = DefaultUnitAuraBucket", 1, true) ~= nil)
+check("2c: UF mount threads unitPolarity from a per-unit resolver",
+    ufSchema and ufSchema:find("unitPolarity        = UnitPolarity(unitKey)", 1, true) ~= nil)
+check("2c: UF polarity resolver pins player/pet friendly, boss hostile, target/focus ambiguous (nil)",
+    ufSchema and ufSchema:find('unitKey == "player" or unitKey == "pet"', 1, true) ~= nil
+    and ufSchema:find('return "friendly"', 1, true) ~= nil
+    and ufSchema:find('elseif unitKey == "boss" then', 1, true) ~= nil
+    and ufSchema:find('return "hostile"', 1, true) ~= nil)
 
 check("BB content mounts RenderAuras for buffAuras",
     bbContent and bbContent:find('AurasEditor.RenderAuras(editorHost, auras, "*"', 1, true) ~= nil
@@ -194,6 +224,8 @@ check("BB debuff mount is cancelEligible = false (engine cancel is buff-only)",
     bbContent and bbContent:find('BB.DefaultDebuffBucket, false, "HARMFUL")', 1, true) ~= nil)
 check("BB buff mount is cancelEligible = true",
     bbContent and bbContent:find('BB.DefaultBuffBucket, true, "HELPFUL")', 1, true) ~= nil)
+check("2c: BB passes unitPolarity = friendly (always the player's own auras)",
+    bbContent and bbContent:find('unitPolarity      = "friendly"', 1, true) ~= nil)
 check("buffborders.lua publishes ns.QUI_BuffBorders.DefaultBuffBucket/DefaultDebuffBucket",
     bbAuras and bbAuras:find("ns.QUI_BuffBorders", 1, true) ~= nil
     and bbAuras:find("BB.DefaultBuffBucket = DefaultBuffBucket", 1, true) ~= nil

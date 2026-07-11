@@ -92,6 +92,17 @@ function CDMReanchorBoot.BuildRuntime(env)
     local function swipeSettings()
         return (ns._OwnedSwipe and ns._OwnedSwipe.GetSettings and ns._OwnedSwipe.GetSettings()) or {}
     end
+    -- Hide Cooldown Effects: a container flagged in profile.cooldownEffects
+    -- suppresses swipe + edge on its icons. Reanchored Blizzard builtins ride
+    -- this via the existing re-assert bodies below (reassertColor / reassertEdge),
+    -- driving SetDrawSwipe(false)+SetDrawEdge(false) additively; both setters are
+    -- AllowedWhenTainted and the bodies already run under the aura-phase owner's
+    -- securecall. Lazily reads ns._OwnedSwipe so load order doesn't matter.
+    local function effectsHidden(containerKey)
+        local swipe = ns._OwnedSwipe
+        return swipe and swipe.IsContainerEffectsHidden
+            and swipe.IsContainerEffectsHidden(containerKey) or false
+    end
     local function modeColor(mode)
         if ns._CDM_ResolveModeColor then return ns._CDM_ResolveModeColor(swipeSettings(), mode) end
         if mode == "aura" then return 0.93, 0.77, 0.0, 0.45 end
@@ -211,6 +222,16 @@ function CDMReanchorBoot.BuildRuntime(env)
     -- geometry; the aura-off re-bind is the one deliberate timing write.
     local function reassertColor(frame, cd, containerKey)
         if not (cd and cd.SetSwipeColor) then return end
+        -- Hide Cooldown Effects wins over every colour/timing branch: alpha-0 the
+        -- swipe and drop draw swipe+edge so the reanchored builtin matches a hidden
+        -- owned icon. Same direct-method posture as the rest of this body (already
+        -- securecall-wrapped by the aura-phase owner's colorWork).
+        if effectsHidden(containerKey) then
+            cd:SetSwipeColor(0, 0, 0, 0)
+            if cd.SetDrawSwipe then cd:SetDrawSwipe(false) end
+            if cd.SetDrawEdge then cd:SetDrawEdge(false) end
+            return
+        end
         if isBuffIconFrameKey(containerKey) then
             if swipeSettings().showBuffIconSwipe == false then
                 cd:SetSwipeColor(0, 0, 0, 0)
@@ -265,6 +286,12 @@ function CDMReanchorBoot.BuildRuntime(env)
     -- SetDrawEdge is AllowedWhenTainted (taint-safe); no secret read, no timing write.
     local function reassertEdge(_frame, cd, containerKey)
         if not (cd and cd.SetDrawEdge) then return end
+        -- Hide Cooldown Effects: drop the recharge edge outright (the colour hook's
+        -- companion re-assert already alpha-0'd + un-drew the swipe).
+        if effectsHidden(containerKey) then
+            cd:SetDrawEdge(false)
+            return
+        end
         local s = swipeSettings()
         if isBuffIconFrameKey(containerKey) then
             -- Owned buff-child rule: edge rides the buff swipe toggles

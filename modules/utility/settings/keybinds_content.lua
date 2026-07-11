@@ -14,14 +14,6 @@ local UIKit = ns.UIKit
 
 local SECTION_GAP = 14
 
-local function GetPixelSize(frame)
-    if UIKit and UIKit.GetPixelSize then
-        return UIKit.GetPixelSize(frame)
-    end
-    local core = ns.Addon or (_G.QUI and _G.QUI.QUICore)
-    return (core and core.GetPixelSize and core:GetPixelSize(frame)) or 1
-end
-
 local itemInfoListener = CreateFrame("Frame")
 itemInfoListener:RegisterEvent("GET_ITEM_INFO_RECEIVED")
 local itemInfoListenerCallback = nil

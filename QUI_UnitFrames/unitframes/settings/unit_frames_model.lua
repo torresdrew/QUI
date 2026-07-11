@@ -74,7 +74,7 @@ end
 
 local function RenderIcons(host, state)
     local unitKey = state and state.selectedUnit or nil
-    RenderSchema("RenderIconsTab", host, unitKey, ns.L["Icons"])
+    RenderSchema("RenderIconsTab", host, unitKey, ns.L["Auras"])
 end
 
 local function RenderPortrait(host, state)
@@ -98,7 +98,7 @@ local TAB_DEFINITIONS = {
     { key = "bars", label = ns.L["Bars"], render = RenderBars },
     { key = "castbar", label = ns.L["Castbar"], render = RenderCastbar },
     { key = "text", label = ns.L["Text"], render = RenderText },
-    { key = "icons", label = ns.L["Icons"], render = RenderIcons },
+    { key = "icons", label = ns.L["Auras"], render = RenderIcons },
     { key = "indicators", label = ns.L["Indicators"], render = RenderIndicators },
     { key = "portrait", label = ns.L["Portrait"], render = RenderPortrait },
 }

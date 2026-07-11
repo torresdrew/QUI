@@ -76,6 +76,10 @@ function G.ElementProfile(element, overrides)
         swipeStyle   = element.swipeStyle or "radial",
         duration     = element.duration,
         stack        = element.stack,
+        -- Optional per-element static border override; absent = theme color
+        -- (aura_skin styleButton falls back to AuraTheme.BorderColor). The
+        -- seeded GF "defensives" strip ships green through this field.
+        borderColor  = element.borderColor,
     }
     if overrides then
         for k, v in pairs(overrides) do p[k] = v end
@@ -113,12 +117,23 @@ function G.ElementGroups(unit, element, profile, cancelEligible)
     local base = element.auraType or "HELPFUL"
     local strings = E.CompileFilters(element)
     local usable = {}
+    -- Canonicalize BEFORE the validity probe and BEFORE the string leaves
+    -- this function: this is the group descriptor's "storage" — every
+    -- caller (core/aura_skin.lua Configure) derives its registry key from
+    -- g.filter, so canonicalizing here guarantees semantically-equal
+    -- filters collapse onto the same key at the source, not just at the
+    -- key-derivation choke point (which ALSO canonicalizes defensively —
+    -- see AuraSkin.Configure). CanonicalizeFilterString is idempotent, so
+    -- double-canonicalizing here + there is a cheap no-op, never a bug.
     for i = 1, #strings do
-        if G.FilterStringUsable(unit, strings[i]) then
-            usable[#usable + 1] = strings[i]
+        local canonical = E.CanonicalizeFilterString and E.CanonicalizeFilterString(strings[i]) or strings[i]
+        if G.FilterStringUsable(unit, canonical) then
+            usable[#usable + 1] = canonical
         end
     end
-    if #usable == 0 then usable[1] = base end
+    if #usable == 0 then
+        usable[1] = (E.CanonicalizeFilterString and E.CanonicalizeFilterString(base)) or base
+    end
     local cf = E.CompileCandidateFilters(element)
     local sortMethod = SortMethodFor(element.sortRule)
     local sortDirection = SortDirectionFor(element.sortReverse == true)

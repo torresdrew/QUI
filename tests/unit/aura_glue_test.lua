@@ -53,7 +53,11 @@ do
     check("groups: one per compiled filter", #groups == 2)
     local filters = {}
     for _, g in ipairs(groups) do filters[g.filter] = g end
-    check("groups: filters carried", filters["HELPFUL|RAID"] ~= nil and filters["HELPFUL|CANCELABLE"] ~= nil)
+    -- Wave 4 Task 2b: raid outranks cancelable in the fixed priority order, so
+    -- cancelable's compiled (and canonicalized) string embeds a !RAID
+    -- negation to stay exclusive against the higher-priority raid group.
+    check("groups: filters carried (cancelable embeds the raid exclusivity negation)",
+        filters["HELPFUL|RAID"] ~= nil and filters["HELPFUL|CANCELABLE|!RAID"] ~= nil)
     check("groups: sort translated per element", groups[1].sortMethod == 4
         and groups[1].sortDirection == 1)
     check("groups: cancel on eligible HELPFUL", groups[1].cancelButtons == "RightButtonUp")

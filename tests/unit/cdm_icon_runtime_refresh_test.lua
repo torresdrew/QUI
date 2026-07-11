@@ -117,7 +117,6 @@ local barsDirty = false
 local dirtyBarRuns = 0
 local stackRequested = false
 local stackWriteStates = {}
-local chargeDurationNotes = 0
 local recentCasts = {}
 local highlighterCasts = {}
 local textureClears = 0
@@ -210,9 +209,6 @@ local controller = module.Create({
     end,
     requestStackTextUpdate = function()
         stackRequested = true
-    end,
-    noteChargeDurationObjectsUpdated = function()
-        chargeDurationNotes = chargeDurationNotes + 1
     end,
     recordRecentPlayerSpellCast = function(spellID)
         recentCasts[#recentCasts + 1] = spellID
@@ -573,16 +569,31 @@ reset(applied)
 reset(runtimeUpdated)
 reset(stackWriteStates)
 stackRequested = false
-chargeDurationNotes = 0
 local schedulesBeforeCharges = #schedules
 controller:HandleChargesChanged("CDM:CHARGES_CHANGED", 101)
-assert(chargeDurationNotes == 1, "charge changes should notify runtime query cache")
 assert(stackRequested == true, "charge changes should request stack text writes")
 assert(#schedules == schedulesBeforeCharges,
     "charge changes with a spell ID should stay on the targeted spell path")
 assert(runtimeUpdated.spell == 1, "charge changes with a spell ID should run the full matching spell update")
 assert(stackWriteStates[1] == true and stackWriteStates[2] == false,
     "charge scoped spell refresh should enable stack text writes")
+
+-- SPELL_UPDATE_CHARGES carries no payload, so the nil-spellID else-branch
+-- IS the ordinary charge path (see SpellBookDocumentation: no Payload
+-- table). It must coalesce into a single scheduled cooldown update and
+-- must NOT run a synchronous ApplySpellScope walk over every icon.
+reset(visibilityUpdated)
+reset(stackWriteStates)
+stackRequested = false
+local schedulesBeforeNilCharges = #schedules
+controller:HandleChargesChanged("CDM:CHARGES_CHANGED", nil)
+assert(stackRequested == true, "nil-spellID charge changes should still request stack text writes")
+assert(#schedules == schedulesBeforeNilCharges + 1,
+    "nil-spellID charge changes should schedule exactly one coalesced cooldown update")
+assert(schedules[#schedules].mode == "cooldown" and schedules[#schedules].reason == "charges",
+    "nil-spellID charge changes should schedule a cooldown update tagged with reason \"charges\"")
+assert(next(visibilityUpdated) == nil,
+    "nil-spellID charge changes must not run a synchronous full ApplySpellScope visibility walk")
 
 reset(applied)
 reset(runtimeUpdated)
@@ -615,10 +626,28 @@ assert(#schedules == schedulesBeforeSecretSpellcastStop + 1,
 assert(schedules[#schedules].reason == "unit_spellcast",
     "secret player spellcast fallback should be attributable in memaudit")
 
+-- UNIT_SPELLCAST_STOP/CHANNEL_START/CHANNEL_STOP are RegisterUnitEvent("player")-
+-- bound (cdm_icon_renderer.lua cdEventFrame); the C-side filter already
+-- guarantees the unit, so a secret unit token here is still the player and
+-- must not be compared (== on a secret throws) or silently dropped.
+reset(applied)
+reset(runtimeUpdated)
+reset(stackWriteStates)
 local schedulesBeforeSecretUnit = #schedules
 controller:Handle("UNIT_SPELLCAST_STOP", secretUnit, "cast-guid", 101)
 assert(#schedules == schedulesBeforeSecretUnit,
-    "secret unit spellcast payloads should not be compared or scheduled")
+    "secret unit spellcast stop with a spell ID should stay on the targeted spell path")
+assert(runtimeUpdated.spell == 1, "secret unit spellcast stop should still update the matching spell icon")
+assert(runtimeUpdated.otherSpell == nil, "secret unit spellcast stop should not update unrelated spell icons")
+
+reset(applied)
+reset(runtimeUpdated)
+local schedulesBeforeSecretUnitFallback = #schedules
+controller:Handle("UNIT_SPELLCAST_STOP", secretUnit, "cast-guid", nil)
+assert(#schedules == schedulesBeforeSecretUnitFallback + 1,
+    "secret unit spellcast stop with no spell ID should fall back to the broad cooldown refresh")
+assert(schedules[#schedules].reason == "unit_spellcast",
+    "secret unit spellcast fallback should be attributable in memaudit")
 
 reset(applied)
 reset(runtimeUpdated)

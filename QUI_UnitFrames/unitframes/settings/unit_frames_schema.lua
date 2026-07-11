@@ -189,6 +189,23 @@ local function UnitHasHostilityColors(unitKey)
         or unitKey == "boss"
 end
 
+-- Static reaction of this unit frame type toward the player, for the shared
+-- aura editor's polarity hint (Wave 4 Task 2c, QUI_Options/aura_elements_
+-- editor.lua caps.unitPolarity). Only unit types whose UnitCanAssist verdict
+-- can NEVER flip are given a value: player/pet are always the player's own
+-- (assistable); boss encounters are always enemies (non-assistable).
+-- target/focus/targettarget are deliberately omitted (nil) — their reaction
+-- depends entirely on the player's live target, so a static hint there would
+-- be wrong about half the time.
+local function UnitPolarity(unitKey)
+    if unitKey == "player" or unitKey == "pet" then
+        return "friendly"
+    elseif unitKey == "boss" then
+        return "hostile"
+    end
+    return nil
+end
+
 local function UnitHasHealPrediction(unitKey)
     return unitKey == "player" or unitKey == "target"
 end
@@ -2615,6 +2632,7 @@ local function RenderAuraElementsSection(sectionHost, ctx)
             cancelEligible      = (unitKey == "player"),
             allowSpecOverride   = false,
             defaultBucketFn     = UnitFrameAuras and UnitFrameAuras.DefaultUnitAuraBucket,
+            unitPolarity        = UnitPolarity(unitKey),
         },
         onSelectionChanged = function(index)
             SetAuraSelectedElementIndex(ctx, unitKey, index)

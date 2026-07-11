@@ -1677,6 +1677,40 @@ local function GetSettings()
 end
 
 ---------------------------------------------------------------------------
+-- HIDE COOLDOWN EFFECTS
+-- The per-container "Hide Cooldown Effects" checkbox writes
+-- profile.cooldownEffects.{hideEssential|hideUtility|hide_<customKey>}
+-- (settings/containers_page.lua ResolveEffectsContext, :911-921). When a
+-- container is hidden, the swipe applicator forces SetDrawSwipe(false) +
+-- SetDrawEdge(false) for its icons; the re-anchor boot re-assert consults the
+-- same predicate for reanchored Blizzard builtins. Buff has NO hide checkbox.
+---------------------------------------------------------------------------
+local EFFECTS_DEFAULTS = {
+    hideEssential = false,
+    hideUtility = false,
+}
+
+local function GetEffectsSettings()
+    return Helpers.GetModuleSettings("cooldownEffects", EFFECTS_DEFAULTS)
+end
+
+-- Container key -> profile.cooldownEffects key. MUST stay in lockstep with
+-- ResolveEffectsContext in settings/containers_page.lua (:911-921).
+local function ContainerHideKey(viewerType)
+    if viewerType == "essential" then return "hideEssential" end
+    if viewerType == "utility" then return "hideUtility" end
+    if viewerType == nil then return nil end
+    return "hide_" .. viewerType
+end
+
+local function IsContainerEffectsHidden(viewerType)
+    local key = ContainerHideKey(viewerType)
+    if not key then return false end
+    local effects = GetEffectsSettings()
+    return (effects and effects[key] == true) or false
+end
+
+---------------------------------------------------------------------------
 -- COLOR RESOLUTION
 ---------------------------------------------------------------------------
 local function GetClassColor()
@@ -1867,6 +1901,15 @@ local function ApplySwipeToIcon(icon, settings)
     local showEdge = showSwipe and ((mode == "aura" and SettingEnabled(settings.showBuffEdge, true))
         or (mode == "cooldown" and settings.showRechargeEdge))
 
+    -- Hide Cooldown Effects: a container flagged in profile.cooldownEffects
+    -- suppresses swipe + edge outright (bling is already forced off addon-wide
+    -- by SyncCooldownBling). Buff has no hide checkbox, so ContainerHideKey
+    -- returns a "hide_buff" key that never exists in the settings -> no-op.
+    if IsContainerEffectsHidden(entry.viewerType) then
+        showSwipe = false
+        showEdge = false
+    end
+
     local function applyToCooldown(cd)
         if not cd then return end
         -- Stash intended state on the cooldown frame for later style reapplies.
@@ -1952,6 +1995,24 @@ local function RefreshAllSwipes()
             ApplySwipeToIcon(icon, settings)
         end
     end
+
+    -- Custom icon containers: same applicator so hide_<customKey> applies. The
+    -- custom-container list lives at ncdm.containers (built-ins are direct
+    -- ncdm[key]); each created container carries builtIn = false
+    -- (cdm_containers.lua CreateContainer). GetIconPool returns {} for keys with
+    -- no live pool, so the loop is inert until a custom icon container renders.
+    local ncdm = Shared and Shared.GetNcdmDB and Shared.GetNcdmDB()
+    local customList = ncdm and ncdm.containers
+    if customList then
+        for containerKey, cfg in pairs(customList) do
+            if cfg and not cfg.builtIn then
+                local pool = IconFactory:GetIconPool(containerKey)
+                for _, icon in ipairs(pool) do
+                    ApplySwipeToIcon(icon, settings)
+                end
+            end
+        end
+    end
 end
 
 -- EXPORTS
@@ -1961,4 +2022,9 @@ ns._OwnedSwipe = {
     ApplyToIcon = ApplySwipeToIcon,
     ApplyToBuffChild = ApplySwipeToBuffChild,
     GetSettings = GetSettings,
+    -- Consulted by cdm_reanchor_boot's re-assert bodies so reanchored Blizzard
+    -- builtins honour the same per-container Hide Cooldown Effects flag.
+    IsContainerEffectsHidden = IsContainerEffectsHidden,
+    -- Test seam: pure container-key -> profile.cooldownEffects key mapping.
+    _TestContainerHideKey = ContainerHideKey,
 }

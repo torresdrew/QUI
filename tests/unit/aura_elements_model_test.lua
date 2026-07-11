@@ -18,6 +18,11 @@ do
         e.classifications.raid == true and e.classifications.raidInCombat == nil)
     check("strip: new sort fields", e.sortRule == "INDEX" and e.sortReverse == false)
     check("strip: rightClickCancel defaults true", e.rightClickCancel == true)
+    -- Wave 4 Task 2d: dedupeDefensives had zero runtime consumers (re-verified
+    -- repo-wide grep) and is removed from the constructor. Absent-key
+    -- convention: existing stores carrying the stale key are untouched, but
+    -- nothing new should seed it.
+    check("strip: no longer seeds dedupeDefensives", e.dedupeDefensives == nil)
     check("strip: duration sub-table", type(e.duration) == "table" and e.duration.show == true
         and e.duration.fontSize == 9 and e.duration.anchor == "CENTER")
     check("strip: stack sub-table", type(e.stack) == "table" and e.stack.show == true
@@ -42,21 +47,32 @@ end
 
 -- CompileFilters ---------------------------------------------------------
 do
+    -- Wave 4 Task 2b: classification EXCLUSIVITY. Priority order (fixed,
+    -- matches the editor's HELPFUL_CLASSIFICATIONS/HARMFUL_CLASSIFICATIONS
+    -- checkbox order): raid > raidInCombat > cancelable > notCancelable >
+    -- bigDefensive > externalDefensive (HELPFUL); raid > crowdControl
+    -- (HARMFUL). Every category ranked BELOW another ENABLED category gains
+    -- a `!TOKEN` negation of it, so the same aura can't double-render across
+    -- two ticked categories.
     local e = E.NewFilterStripElement("HELPFUL")
     e.filterMode = "classify"
     e.classifications = { raid = true, raidInCombat = true, cancelable = true }
     local fs = E.CompileFilters(e)
     table.sort(fs)
-    check("compile: helpful classifications", table.concat(fs, ",") ==
-        "HELPFUL|CANCELABLE,HELPFUL|RAID,HELPFUL|RAID_IN_COMBAT", table.concat(fs, ","))
+    check("compile: helpful classifications gain higher-priority negations",
+        table.concat(fs, ",") ==
+        "HELPFUL|CANCELABLE|!RAID|!RAID_IN_COMBAT,HELPFUL|RAID,HELPFUL|RAID_IN_COMBAT|!RAID",
+        table.concat(fs, ","))
 
     local d = E.NewFilterStripElement("HARMFUL")
     d.filterMode = "classify"
     d.classifications = { raid = true, dispellable = true, crowdControl = true }
     local dfs = E.CompileFilters(d)
     table.sort(dfs)
-    check("compile: harmful never emits RAID_IN_COMBAT (C API hard-errors on that combo)",
-        table.concat(dfs, ",") == "HARMFUL|CROWD_CONTROL,HARMFUL|RAID,HARMFUL|RAID_PLAYER_DISPELLABLE",
+    check("compile: harmful never emits RAID_IN_COMBAT (C API hard-errors on that combo); "
+        .. "crowdControl (ranked) negates raid, dispellable (legacy/unranked) stays bare",
+        table.concat(dfs, ",") ==
+        "HARMFUL|CROWD_CONTROL|!RAID,HARMFUL|RAID,HARMFUL|RAID_PLAYER_DISPELLABLE",
         table.concat(dfs, ","))
 
     local off = E.NewFilterStripElement("HELPFUL")

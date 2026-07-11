@@ -2064,7 +2064,7 @@ local UNIT_FRAMES_SEARCH_CAPTURE_TABS = {
     { key = "bars", label = "Bars", method = "RenderBarsTab" },
     { key = "castbar", label = "Castbar", method = "RenderCastbarTab" },
     { key = "text", label = "Text", method = "RenderTextTab" },
-    { key = "icons", label = "Icons", method = "RenderIconsTab" },
+    { key = "icons", label = "Auras", method = "RenderIconsTab" },
     { key = "indicators", label = "Indicators", method = "RenderIndicatorsTab" },
     { key = "portrait", label = "Portrait", method = "RenderPortraitTab" },
     { key = "privateAuras", label = "Priv. Auras", method = "RenderPrivateAurasTab" },

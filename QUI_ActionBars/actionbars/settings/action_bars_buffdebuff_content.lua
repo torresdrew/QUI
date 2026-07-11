@@ -149,6 +149,9 @@ local function BuildAuraEditorSection(tabContent, PAD, SECTION_GAP, y, settings,
             cancelEligible    = cancelEligible,
             allowSpecOverride = false,
             defaultBucketFn   = defaultBucketFn,
+            -- Buff borders always track the PLAYER's own buffs/debuffs —
+            -- always assistable (Wave 4 Task 2c polarity hint).
+            unitPolarity      = "friendly",
         },
         onLayoutChanged = function(newHeight)
             onLayoutChangedHandler(newHeight)

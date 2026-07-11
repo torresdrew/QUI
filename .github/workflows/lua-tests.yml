@@ -34,6 +34,10 @@ jobs:
           lua tools/test_i18n_locale.lua
           lua tools/test_i18n_extract.lua
           lua tools/test_i18n_format.lua
+      - name: Tooling unit tests
+        run: |
+          lua tests/api-docs/extract_test.lua
+          lua tools/lua_defs_gen_test.lua
       # NOTE: the locale base (core/locale/enUS.lua) is auto-regenerated and
       # committed back by .github/workflows/regen-i18n-base.yml on push to
       # qui-beta, so the old hard "git diff --exit-code" gate was removed to

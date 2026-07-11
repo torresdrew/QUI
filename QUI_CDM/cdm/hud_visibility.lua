@@ -174,6 +174,42 @@ local function IsCDMMasterEnabled()
 end
 
 ---------------------------------------------------------------------------
+-- RE-ANCHORED BLIZZARD VIEWER FADE
+-- The 12.1 re-anchor engine keeps live Blizzard CooldownViewer item frames
+-- parented to their native viewers (SetPoint bridge, never SetParent), so
+-- fading the QUI containers never reaches the icon art / cooldown swipe /
+-- charge count — those pixels inherit alpha from the viewer, not from the
+-- container the frame is anchored onto. Drive the four viewer frames' alpha
+-- alongside the containers.
+--
+-- Gated on ns._cdmBoot: nil during cold login until the re-anchor runtime
+-- owns the viewers, so this never touches a native viewer pre-boot (the
+-- UNIT_AURA disallow-tainted-access hazard the provider exclusion in
+-- GetCDMFrames protects against). Viewer references come from the boot
+-- wiring, never from Blizzard globals enumerated here. Writes go through a
+-- raw, unhooked SetAlpha under securecall — the bridge's taint-safe recipe.
+-- While the CDM master toggle is off the viewers are Blizzard's own UI
+-- again, so they are pinned to alpha 1 instead of following the fade.
+local _viewerAlphaProxy = CreateFrame and CreateFrame("Frame") or nil
+local _rawViewerSetAlpha = _viewerAlphaProxy and _viewerAlphaProxy.SetAlpha or nil
+local _securecall = securecallfunction or function(fn, ...) return fn(...) end
+local REANCHOR_VIEWER_KEYS = { "essential", "utility", "buff", "trackedBar" }
+
+local function ApplyReanchorViewerAlpha(alpha)
+    if not _rawViewerSetAlpha then return end
+    local boot = ns._cdmBoot
+    local wiring = boot and boot.wiring
+    if not (wiring and wiring.GetViewerForKey) then return end
+    if not IsCDMMasterEnabled() then alpha = 1 end
+    for i = 1, #REANCHOR_VIEWER_KEYS do
+        local viewer = wiring:GetViewerForKey(REANCHOR_VIEWER_KEYS[i])
+        if viewer and (not viewer.IsForbidden or not viewer:IsForbidden()) then
+            _securecall(_rawViewerSetAlpha, viewer, alpha)
+        end
+    end
+end
+
+---------------------------------------------------------------------------
 -- CDM VISIBILITY CONTROLLER
 ---------------------------------------------------------------------------
 local CDMVisibility = {
@@ -256,6 +292,7 @@ local function OnCDMFadeUpdate(self)
             table.remove(frames, i)
         end
     end
+    ApplyReanchorViewerAlpha(alpha)
 
     if progress >= 1 then
         CDMVisibility.isFading = false
@@ -277,6 +314,10 @@ local function StartCDMFade(targetAlpha)
         CDMVisibility.currentlyHidden = (targetAlpha < 1)
         CDMVisibility.fadeStartAlpha = targetAlpha
         CDMVisibility.fadeTargetAlpha = targetAlpha
+        -- Containers already at target (e.g. the init path pre-sets alpha on
+        -- /reload while mounted, then refreshes) — the viewers still need the
+        -- target applied or the re-anchored icons stay at their old alpha.
+        ApplyReanchorViewerAlpha(targetAlpha)
         return
     end
 
@@ -308,6 +349,7 @@ local function SnapCDMFadeToTarget()
             pcall(frame.SetAlpha, frame, target)
         end
     end
+    ApplyReanchorViewerAlpha(target)
     CDMVisibility.isFading = false
     CDMVisibility.currentlyHidden = (target < 1)
     CDMVisibility.fadeTargets = nil
@@ -352,6 +394,9 @@ UpdateCDMVisibility = function()
                 pcall(frame.SetAlpha, frame, damagedAlpha)
             end
         end
+        -- Secret curve-resolved alpha forwards straight into SetAlpha — the
+        -- sanctioned secret-forwarding path; it never enters Lua arithmetic.
+        ApplyReanchorViewerAlpha(damagedAlpha)
         if QUICore then
             if QUICore.UpdatePowerBar then QUICore:UpdatePowerBar() end
             if QUICore.UpdateSecondaryPowerBar then QUICore:UpdateSecondaryPowerBar() end

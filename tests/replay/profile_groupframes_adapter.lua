@@ -158,7 +158,13 @@ end
 -- Load the aura sub-modules
 -- -----------------------------------------------------------------------
 local function loadSubModules()
-    local ns = {}
+    local ns = {
+        -- Aura-only replay frames are preview-style synthetic objects. Keep the
+        -- same accessor contract as live GroupFrames without creating `.unit`.
+        QUI_GroupFrames = {
+            GetFrameUnit = function(frame) return frame and frame.previewUnit end,
+        },
+    }
     -- The GF model file is now a compatibility SHIM delegating to the shared
     -- core element model (ns.AuraElements) -- load core/aura_elements.lua
     -- (pure Lua, headless-safe) into the same ns FIRST so the shim's __index
@@ -177,7 +183,7 @@ end
 -- -----------------------------------------------------------------------
 -- Build a synthetic unit frame + aura cache
 -- The synthetic frame mimics the shape groupframes_aura_render.lua expects:
---   frame.unit       = "player"
+--   frame.previewUnit = "player"
 --   frame._bottomPad = 0
 --   frame:GetFrameLevel() => number
 --   frame:GetWidth()      => number
@@ -185,7 +191,20 @@ end
 local function buildSyntheticFrame(ns)
     -- Use the CreateFrame stub that was just installed
     local frame = CreateFrame("Frame") -- luacheck: ignore
-    frame.unit       = "player"
+    setmetatable(frame, {
+        __index = function(_, key)
+            if key == "unit" then
+                error("aura GroupFrames replay read the forbidden frame.unit field", 2)
+            end
+        end,
+        __newindex = function(t, key, value)
+            if key == "unit" then
+                error("aura GroupFrames replay wrote the forbidden frame.unit field", 2)
+            end
+            rawset(t, key, value)
+        end,
+    })
+    frame.previewUnit = "player"
     frame._bottomPad = 0
     -- ns.SkinBase must be a TABLE (render module does: SkinBase() -> ns.SkinBase)
     ns.SkinBase = { ApplyPixelBackdrop = function() end }
@@ -954,13 +973,25 @@ local function buildFullSyntheticFrame(opts)
         return t
     end
 
-    local frame = {
-        unit        = "raid1",
+    local frame = setmetatable({
+        _secureUnit = "raid1",
         _isRaid     = true,
         _shown      = false,
         _level      = 1,
         _w = 180, _h = 36,
-    }
+    }, {
+        __index = function(_, key)
+            if key == "unit" then
+                error("full GroupFrames replay read the forbidden frame.unit field", 2)
+            end
+        end,
+        __newindex = function(t, key, value)
+            if key == "unit" then
+                error("full GroupFrames replay wrote the forbidden frame.unit field", 2)
+            end
+            rawset(t, key, value)
+        end,
+    })
     -- Sub-regions that Update* functions read
     frame.healthBar         = makeBar("healthBar")
     frame.powerBar          = makeBar("powerBar")
@@ -983,6 +1014,9 @@ local function buildFullSyntheticFrame(opts)
     frame.SetFrameLevel     = function(self, l) self._level = l end
     frame.GetWidth          = function(self) return self._w end
     frame.GetHeight         = function(self) return self._h end
+    frame.GetAttribute      = function(self, key)
+        if key == "unit" then return self._secureUnit end
+    end
     return frame
 end
 
@@ -1045,7 +1079,8 @@ local function buildFullScope(opts)
 
     -- Build synthetic unit frame and inject into unitFrameMap
     local syntheticFrame = buildFullSyntheticFrame(opts)
-    QUI_GF.unitFrameMap["raid1"] = { syntheticFrame }
+    QUI_GF.SetFrameUnit(syntheticFrame, "raid1")
+    QUI_GF.AddFrameToMap("raid1", syntheticFrame)
 
     local onEvent    = mainHandler.fn
     local eventFrame = mainHandler.frame

@@ -18,7 +18,7 @@ ns.QUI_GroupFramesAuraModel = Model
 -- Single source of truth: seeded ONCE per profile context (never an AceDB
 -- array default — copyDefaults re-fills deleted indices). Fixed string ids
 -- ("debuffs"/"buffs") match the historical values. Fresh table each call.
-function Model.DefaultStripBucket()
+function Model.DefaultStripBucket(frameType)
     return {
         {
             id = "debuffs", enabled = true, mode = "filterStrip", auraType = "HARMFUL",
@@ -41,23 +41,45 @@ function Model.DefaultStripBucket()
             swipeStyle = "radial",
             duration = { show = true, fontSize = 9, anchor = "BOTTOM", offsetX = 0, offsetY = -6, color = { 1, 1, 1, 1 } },
             stack = { show = true, fontSize = 9, anchor = "BOTTOMRIGHT", offsetX = -1, offsetY = 1, color = { 1, 1, 1, 1 } },
-            filterMode = "off", filterFlags = {}, onlyMine = false, hidePermanent = false, dedupeDefensives = true,
+            filterMode = "off", filterFlags = {}, onlyMine = false, hidePermanent = false,
             classifications = { raid = false, raidInCombat = false, cancelable = false, notCancelable = false, bigDefensive = false, externalDefensive = false },
             whitelist = {}, blacklist = {},
             sortRule = "INDEX", sortReverse = false, rightClickCancel = true,
         },
+        {
+            -- The retired healer.defensiveIndicator as a shipped element:
+            -- classify-mode big/external defensives, engine-filtered. Party
+            -- shipped ON, raid OFF (parity with the old indicator defaults);
+            -- unknown surface seeds DISABLED (conservative — every GF caller
+            -- threads its frameType). Green border = the indicator's identity.
+            id = "defensives", enabled = (frameType == "party"), mode = "filterStrip", auraType = "HELPFUL",
+            anchor = "BOTTOMRIGHT", growDirection = "LEFT", spacing = 0,
+            offsetX = 0, offsetY = 4, iconSize = 15, maxIcons = 3,
+            hideSwipe = false, reverseSwipe = true,
+            swipeStyle = "radial",
+            duration = { show = true, fontSize = 9, anchor = "BOTTOM", offsetX = 0, offsetY = -6, color = { 1, 1, 1, 1 } },
+            stack = { show = true, fontSize = 9, anchor = "BOTTOMRIGHT", offsetX = -1, offsetY = 1, color = { 1, 1, 1, 1 } },
+            filterMode = "classify", filterFlags = {},
+            classifications = { bigDefensive = true, externalDefensive = true },
+            borderColor = { 0, 0.8, 0, 1 },
+            whitelist = {}, blacklist = {},
+            sortRule = "INDEX", sortReverse = false, rightClickCancel = false,
+        },
     }
 end
 
--- Legacy-signature seed shim: the old GF model's EnsureSeeded(auras) seeded the
--- shipped default strips with NO argument; core E.EnsureSeeded seeds whatever
--- defaultBucketFn returns (nil -> EMPTY bucket + latched elementsSeeded flag).
--- The editor/preview/schema still call the one-arg form and can run BEFORE the
--- runtime ever seeds (options opened on a fresh profile), so thread the GF
--- default bucket for them here. Callers passing their own defaultBucketFn
--- (the runtime) pass through unchanged. Deleted with the settings cutover.
-function Model.EnsureSeeded(auras, defaultBucketFn)
-    return E.EnsureSeeded(auras, defaultBucketFn or Model.DefaultStripBucket)
+-- Seed shim: second arg is either a defaultBucketFn (runtime callers pass
+-- their own closure) or a frameType string ("party"/"raid") from the
+-- editor/preview/schema paths — the bucket is surface-aware since the
+-- defensives fold-in (party seeds the defensives strip enabled, raid
+-- disabled). nil falls through to DefaultStripBucket(nil) = defensives
+-- disabled (conservative).
+function Model.EnsureSeeded(auras, defaultBucketFnOrFrameType)
+    local a = defaultBucketFnOrFrameType
+    if type(a) == "function" then
+        return E.EnsureSeeded(auras, a)
+    end
+    return E.EnsureSeeded(auras, function() return Model.DefaultStripBucket(a) end)
 end
 
 -- `out` (optional): reusable { [spellID] = auraData } map for the preview

@@ -54,6 +54,13 @@ local function has(list, v)
     return false
 end
 
+-- Wave 3 Task 3: STANDARD_GROUPS carries GUILD_DISCORD (Blizzard's
+-- ChatConfigFrame.lua CHAT_CONFIG_CHAT_LEFT[6] `type = "GUILD_DISCORD"`
+-- entry) so the settings UI's per-tab group checkboxes list it like every
+-- other standard message group.
+assert(has(TF.GetStandardGroups(), "GUILD_DISCORD"),
+    "STANDARD_GROUPS includes GUILD_DISCORD")
+
 assert(eventFrame and eventFrame.OnEvent, "event frame wired")
 eventFrame.OnEvent(eventFrame, "ADDON_LOADED", "QUI")
 

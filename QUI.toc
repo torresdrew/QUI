@@ -6,7 +6,7 @@
 ## AddonCompartmentFuncOnLeave: QUI_CompartmentOnLeave
 ## Notes: Comprehensive UI customization addon
 ## Author: Zol
-## Version: 5.0.0-alpha16
+## Version: 5.0.0-alpha17
 ## Category: User Interface
 ## SavedVariables: QUIDB, QUI_StorageDB
 ## LoadSavedVariablesFirst: 1
@@ -51,18 +51,13 @@ libs\LibKeyBound-1.0\Locale-ruRU.lua
 libs\LibKeyBound-1.0\LibKeyBound-1.0.lua
 
 # == libs/LibOpenRaid/lib.xml ==
+# Pre-12.x ThingsToMantain_* datasets are version-guarded to `return` on this
+# client and only cost login parse/compile (~448 KB) — the vendored files stay
+# on disk for lib upgrades; only the live Midnight dataset loads.
 libs\LibOpenRaid\LibOpenRaid.lua
 libs\LibOpenRaid\Functions.lua
 libs\LibOpenRaid\GetPlayerInformation.lua
 libs\LibOpenRaid\Deprecated.lua
-libs\LibOpenRaid\ThingsToMantain_WarWithin.lua
-libs\LibOpenRaid\ThingsToMantain_Dragonflight.lua
-libs\LibOpenRaid\ThingsToMantain_Shadowlands.lua
-libs\LibOpenRaid\ThingsToMantain_Wrath.lua
-libs\LibOpenRaid\ThingsToMantain_Era.lua
-libs\LibOpenRaid\ThingsToMantain_BurningCrusade.lua
-libs\LibOpenRaid\ThingsToMantain_Cata.lua
-libs\LibOpenRaid\ThingsToMantain_Pandaria.lua
 libs\LibOpenRaid\ThingsToMantain_Midnight.lua
 libs\LibRangeCheck-3.0\LibRangeCheck-3.0.lua
 
@@ -71,24 +66,20 @@ init.lua
 
 # == localization (must precede any string consumer) ==
 core\locale\enUS.lua
-core\locale\deDE.lua
-core\locale\esES.lua
-core\locale\esMX.lua
-core\locale\frFR.lua
-core\locale\itIT.lua
-core\locale\koKR.lua
-core\locale\ptBR.lua
-core\locale\ruRU.lua
-core\locale\zhCN.lua
-core\locale\zhTW.lua
+# Non-enUS translations live in QUI_Locale_<locale> LoadOnDemand sub-addons;
+# load_overlay.lua pulls in the active one synchronously, BEFORE locale.lua
+# captures ns.LocaleData and before any string consumer.
+core\locale\load_overlay.lua
 core\locale\locale.lua
 
 # == core/core.xml ==
 core\debug_gate.lua
 core\utils.lua
+core\theme.lua
 core\ns_export_guard.lua
 core\infobar_shared.lua
 core\settings_layout_shared.lua
+importstrings\starter_profile.lua
 core\new_profile_defaults.lua
 core\border_registry.lua
 core\external_skin_bridge.lua

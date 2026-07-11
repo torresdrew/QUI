@@ -286,8 +286,21 @@ local function ItemCooldownRecentlyStarted(itemID)
     return false
 end
 
-local function HandleUnitAura(unit, updateInfo)
-    if unit ~= "player" or not updateInfo or updateInfo.isFullUpdate then return end
+-- 68569: UNIT_AURA payload can be whole-secret under restriction. This frame
+-- registered for "player" only via RegisterUnitEvent — never trust the
+-- payload's own unit arg (not read here); probe updateInfo before any field
+-- access.
+local function HandleUnitAura(updateInfo)
+    if updateInfo and ScannerIsSecretValue(updateInfo) then
+        updateInfo = nil -- opaque invalidation → full-rescan path
+    end
+    -- 12.1 per-field secrecy: the table itself can read fine while its scalar
+    -- isFullUpdate field is a secret boolean — the boolean test below throws
+    -- on it. Probe the field and fold to the same bail path.
+    if updateInfo and ScannerIsSecretValue(updateInfo.isFullUpdate) then
+        updateInfo = nil
+    end
+    if not updateInfo or updateInfo.isFullUpdate then return end
     local added = updateInfo.addedAuras
     -- 12.1: addedAuras is a SecretValue while auras are restricted (combat); the
     -- length operator and ipairs over a secret value throw. Bail — item-buff
@@ -302,12 +315,12 @@ local function HandleUnitAura(unit, updateInfo)
 
     for _, auraData in ipairs(added) do
         local auraInstanceID, hasAuraInstanceID = GetRawAuraInstanceID(auraData)
-        if hasAuraInstanceID == true and AuraInstanceAllowsHelpful(unit, auraInstanceID) then
-            if pending and ActivateItemAuraInstance(pending.spellID, pending.itemID, unit, auraInstanceID, true) then
+        if hasAuraInstanceID == true and AuraInstanceAllowsHelpful("player", auraInstanceID) then
+            if pending and ActivateItemAuraInstance(pending.spellID, pending.itemID, "player", auraInstanceID, true) then
                 table.remove(SpellScanner.pendingItemAuraCasts)
                 return
             end
-            RecordRecentPlayerAura(unit, auraInstanceID, true)
+            RecordRecentPlayerAura("player", auraInstanceID, true)
         end
     end
 end
@@ -575,8 +588,13 @@ end
 -- SPELL CAST DETECTION
 ---------------------------------------------------------------------------
 
-local function OnSpellCastSucceeded(unit, castGUID, spellID)
-    if unit ~= "player" then return end
+-- 68569: UNIT_SPELLCAST_SUCCEEDED payload can be whole-secret under
+-- restriction (castBarID alone is NeverSecret) — SecretWhenUnitSpellCastRestricted
+-- applies regardless of which unit the frame is registered for. Registered
+-- for "player" only via RegisterUnitEvent above — never trust the payload's
+-- own unit arg (not read here); probe spellID before any compare/index.
+local function OnSpellCastSucceeded(_, castGUID, spellID)
+    if ScannerIsSecretValue(spellID) then return end
     if not spellID or spellID <= 0 then return end
 
     local registeredItemID = SpellScanner.registeredItemUseSpells[spellID]
@@ -803,9 +821,14 @@ end
 
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
-eventFrame:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
 eventFrame:RegisterEvent("BAG_UPDATE_COOLDOWN")
+-- 68569: RegisterUnitEvent filters delivery to "player" only — that
+-- registration is the sole trusted unit identity; the payload's own unit arg
+-- is never read (see HandleUnitAura / OnSpellCastSucceeded). Both frames'
+-- payloads can still be whole-secret under restriction even though delivery
+-- is player-scoped — see the secret probes inside each handler.
 eventFrame:RegisterUnitEvent("UNIT_AURA", "player")
+eventFrame:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
 
 -- Initialize the DB after login. ns.WhenLoggedIn runs now if already logged in
 -- (the post-login LOD case) rather than this addon's own ADDON_LOADED, which is
@@ -827,7 +850,7 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2, arg3)
         HandleBagUpdateCooldown()
 
     elseif event == "UNIT_AURA" then
-        HandleUnitAura(arg1, arg2)
+        HandleUnitAura(arg2)
     end
 end)
 

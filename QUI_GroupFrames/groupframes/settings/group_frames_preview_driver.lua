@@ -143,7 +143,6 @@ function Driver._ChipEnabledInConfig(vdb, chipKey)
         return false
     elseif chipKey == "highlights" then
         if healer.targetHighlight and healer.targetHighlight.enabled then return true end
-        if healer.defensiveIndicator and healer.defensiveIndicator.enabled then return true end
         if vdb.targetedSpells and vdb.targetedSpells.enabled ~= false then return true end
         if vdb.pets and vdb.pets.enabled then return true end
         if vdb.name and vdb.name.showName then return true end
@@ -305,10 +304,10 @@ end
 Driver._EnsureRoot = EnsureRoot
 
 -- Build ONE mock unit frame with the regions the preview styles + the members
--- the aura renderer reads (.unit/.healthBar/._healthPct/._isVerticalFill/._bottomPad).
+-- the aura renderer reads (previewUnit/healthBar/._healthPct/._isVerticalFill/._bottomPad).
 local function CreateMockFrame(parent, fakeUnitToken)
     local f = CreateFrame("Button", nil, parent, "BackdropTemplate")
-    f.unit = fakeUnitToken                  -- any non-nil string; the renderer needs .unit
+    f.previewUnit = fakeUnitToken           -- routed through QUI_GF.GetFrameUnit
     f._bottomPad = 0
 
     f.healthBar = CreateFrame("StatusBar", nil, f)
@@ -823,92 +822,6 @@ local function ApplyDispelOverlay(f, healer, dispelType)
     ov:Show()
 end
 
--- defensive (healer.defensiveIndicator.enabled/maxIcons/iconSize/reverseSwipe/
---   growDirection/spacing/position/offsetX/Y) — a small fake icon strip.
-local DEF_GROW = {
-    RIGHT  = function(s, sp) return s + sp, 0 end,
-    LEFT   = function(s, sp) return -(s + sp), 0 end,
-    CENTER = function(s, sp) return s + sp, 0 end,
-    UP     = function(s, sp) return 0, s + sp end,
-    DOWN   = function(s, sp) return 0, -(s + sp) end,
-}
-local function ApplyDefensive(f, healer, allowed, font)
-    if allowed == false then
-        if f._defIcons then for _, ic in ipairs(f._defIcons) do ic:Hide() end end
-        return
-    end
-    f._defIcons = f._defIcons or {}
-    local cfg = healer and healer.defensiveIndicator
-    -- Same as private auras: limit to the aura-preview frames so the strip isn't
-    -- repeated across all 40 raid frames.
-    if not cfg or not cfg.enabled or not f._isAuraPreview then
-        for _, ic in ipairs(f._defIcons) do ic:Hide() end
-        return
-    end
-    local maxIcons = tonumber(cfg.maxIcons) or 3
-    local iconSize = tonumber(cfg.iconSize) or 16
-    local spacing = tonumber(cfg.spacing) or 2
-    local position = cfg.position or "CENTER"
-    local offX = tonumber(cfg.offsetX) or 0
-    local offY = tonumber(cfg.offsetY) or 0
-    local growDir = cfg.growDirection or "RIGHT"
-    local growFn = DEF_GROW[growDir] or DEF_GROW.RIGHT
-    local stepX, stepY = growFn(iconSize, spacing)
-    local centerOffX = 0
-    if growDir == "CENTER" then
-        local totalSpan = maxIcons * iconSize + math.max(maxIcons - 1, 0) * spacing
-        centerOffX = -totalSpan / 2
-    end
-    local reverseSwipe = cfg.reverseSwipe ~= false
-    local samples = { 136120, 135936, 136097, 135940, 136112 }
-    for i = 1, math.max(maxIcons, #f._defIcons) do
-        local ic = f._defIcons[i]
-        if i <= maxIcons then
-            if not ic then
-                -- A Frame (not a bare texture) so a Cooldown swipe can demo reverseSwipe.
-                ic = CreateFrame("Frame", nil, f)
-                ic._icon = ic:CreateTexture(nil, "OVERLAY")
-                ic._icon:SetAllPoints()
-                ic._cd = CreateFrame("Cooldown", nil, ic, "CooldownFrameTemplate")
-                ic._cd:SetAllPoints()
-                f._defIcons[i] = ic
-            end
-            ic:SetFrameLevel(f:GetFrameLevel() + 10)
-            ic:SetSize(iconSize, iconSize)
-            ic._icon:SetTexture(samples[((i - 1) % #samples) + 1])
-            if ic._cd then
-                if ic._cd.SetReverse then ic._cd:SetReverse(reverseSwipe) end
-                if ic._cd.SetCooldown then ic._cd:SetCooldown(GetTime and GetTime() or 0, 12) end
-                -- Mirror the live frame's countdown-text sizing so the slider gives
-                -- immediate preview feedback. Same secret-safe reference pattern: show
-                -- the native count, then set the font on GetCountdownFontString(),
-                -- every pass. (Preview value isn't secret, but we keep the path
-                -- identical to live.)
-                local defFontSize = tonumber(cfg.durationTextSize) or 12
-                if ic._cd.GetCountdownFontString then
-                    if ic._cd.SetHideCountdownNumbers then
-                        pcall(ic._cd.SetHideCountdownNumbers, ic._cd, false)
-                    end
-                    local okT, cdText = pcall(ic._cd.GetCountdownFontString, ic._cd)
-                    if okT and cdText and cdText.SetFont then
-                        CJKFont(cdText, font, defFontSize, "OUTLINE")
-                    end
-                end
-            end
-            ic:ClearAllPoints()
-            -- Lift above the power bar on BOTTOM* positions, mirroring the live
-            -- UpdateDefensiveIndicator fix (groupframes.lua) and every other
-            -- preview element that routes its Y through BottomPadY.
-            ic:SetPoint(position, f, position,
-                offX + centerOffX + stepX * (i - 1),
-                BottomPadY(position, offY, f._bottomPad) + stepY * (i - 1))
-            ic:Show()
-        elseif ic then
-            ic:Hide()
-        end
-    end
-end
-
 -- targetedSpells (enabled/maxIcons/iconSize/reverseSwipe/growDirection/spacing/
 --   position/offsetX/Y) — representative enemy-cast markers on sampled frames.
 local TARGETED_SPELL_SAMPLES = { 135807, 136197, 136201, 135826, 135818 }
@@ -1043,7 +956,6 @@ local function ApplyFrameSettings(f, member, vdb, gfdb, contextMode)
     ApplyThreat(f, vdb.indicators or {}, member._sampleThreat == true and F.threat ~= false)
     ApplyTargetHighlight(f, vdb.healer, member._sampleTarget == true and F.highlights ~= false)
     ApplyDispelOverlay(f, vdb.healer, (F.dispel ~= false) and member._sampleDispel or nil)
-    ApplyDefensive(f, vdb.healer, F.highlights ~= false, font)
     ApplyTargetedSpells(f, vdb.targetedSpells, member._sampleTargetedSpells, F.highlights ~= false)
     ApplyPets(f, vdb.pets, member._samplePet == true and F.highlights ~= false)
     ApplyRangeFade(f, vdb.range, member._sampleOOR == true)
@@ -1087,7 +999,7 @@ local function RenderFrameAuras(f, auras, now)
     local Model   = ns.QUI_GroupFramesAuraModel
     local Preview = ns.AuraPreview
     if not Render or not Model or not Model.ActiveElementsForSpec then return end
-    if auras and Model.EnsureSeeded then Model.EnsureSeeded(auras) end
+    if auras and Model.EnsureSeeded then Model.EnsureSeeded(auras, state.contextMode) end
     if not auras or auras.enabled == false then
         if Render.ReleaseAll then Render:ReleaseAll(f) end
         if Preview then Preview.Hide(f) end
@@ -1415,7 +1327,6 @@ function Driver.Refresh(contextMode)
         elseif f:GetParent() ~= root then
             f:SetParent(root)
         end
-        f._isAuraPreview = (i <= AURA_PREVIEW_LIMIT)
         f._phase = (i - 1) * 0.7
         f:SetSize(w, h)
         f:ClearAllPoints()

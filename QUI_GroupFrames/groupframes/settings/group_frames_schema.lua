@@ -64,17 +64,7 @@ local HEALTH_FILL_OPTIONS = {
     { value = "HORIZONTAL", text = ns.L["Horizontal (Left to Right)"] },
     { value = "VERTICAL", text = ns.L["Vertical (Bottom to Top)"] },
 }
-local NINE_POINT_OPTIONS = {
-    { value = "TOPLEFT", text = ns.L["Top Left"] },
-    { value = "TOP", text = ns.L["Top"] },
-    { value = "TOPRIGHT", text = ns.L["Top Right"] },
-    { value = "LEFT", text = ns.L["Left"] },
-    { value = "CENTER", text = ns.L["Center"] },
-    { value = "RIGHT", text = ns.L["Right"] },
-    { value = "BOTTOMLEFT", text = ns.L["Bottom Left"] },
-    { value = "BOTTOM", text = ns.L["Bottom"] },
-    { value = "BOTTOMRIGHT", text = ns.L["Bottom Right"] },
-}
+local NINE_POINT_OPTIONS = ns.QUI_SettingsLayoutShared.BuildNinePointAnchorOptions()
 local TEXT_JUSTIFY_OPTIONS = {
     { value = "LEFT", text = ns.L["Left"] },
     { value = "CENTER", text = ns.L["Center"] },
@@ -296,99 +286,6 @@ local function GetFontListWithDefault(optionsAPI)
     end
     table.insert(fonts, 1, { value = "", text = ns.L["(Frame Font)"] })
     return fonts
-end
-
-local function AddAuraDurationTextRows(card, gui, optionsAPI, auras, prefix, labelPrefix, refresh, enabledCond)
-    local showKey = "show" .. labelPrefix .. "DurationText"
-    local fontKey = prefix .. "DurationFont"
-    local fontSizeKey = prefix .. "DurationFontSize"
-    local anchorKey = prefix .. "DurationAnchor"
-    local offsetXKey = prefix .. "DurationOffsetX"
-    local offsetYKey = prefix .. "DurationOffsetY"
-    local useTimeColorKey = prefix .. "DurationUseTimeColor"
-    local colorKey = prefix .. "DurationColor"
-    local controlledRows = {}
-    local colorRow
-
-    local function TextEnabled()
-        return enabledCond() and auras[showKey] ~= false
-    end
-
-    local function UsesStaticColor()
-        local useTimeColor = auras[useTimeColorKey]
-        if useTimeColor == nil then
-            useTimeColor = auras.showDurationColor ~= false
-        end
-        return TextEnabled() and not useTimeColor
-    end
-
-    local updateRows
-    local function onChange()
-        refresh()
-        if updateRows then
-            updateRows()
-        end
-    end
-
-    local showCheckbox = gui:CreateFormCheckbox(card.frame, nil, showKey, auras, onChange, {
-        description = string.format(ns.L["Show remaining-time text on %1$s icons."], string.lower(labelPrefix)),
-    })
-    local showRow = optionsAPI.BuildSettingRow(card.frame, string.format(ns.L["Show %1$s Duration Text"], labelPrefix), showCheckbox)
-
-    local fontDropdown = gui:CreateFormDropdown(card.frame, nil, GetFontListWithDefault(optionsAPI), fontKey, auras, onChange, nil, {
-        searchable = true,
-    })
-    local fontRow = optionsAPI.BuildSettingRow(card.frame, ns.L["Duration Font"], fontDropdown)
-    controlledRows[#controlledRows + 1] = fontRow
-    card.AddRow(showRow, fontRow)
-
-    local fontSizeSlider = gui:CreateFormSlider(card.frame, nil, 6, 24, 1, fontSizeKey, auras, onChange, { deferOnDrag = true }, {
-        description = ns.L["Font size used for the remaining-time text."],
-    })
-    local fontSizeRow = optionsAPI.BuildSettingRow(card.frame, ns.L["Duration Font Size"], fontSizeSlider)
-    controlledRows[#controlledRows + 1] = fontSizeRow
-    local anchorDropdown = gui:CreateFormDropdown(card.frame, nil, NINE_POINT_OPTIONS, anchorKey, auras, onChange, {
-        description = ns.L["Anchor point for the remaining-time text on each icon."],
-    })
-    local anchorRow = optionsAPI.BuildSettingRow(card.frame, ns.L["Duration Anchor"], anchorDropdown)
-    controlledRows[#controlledRows + 1] = anchorRow
-    card.AddRow(fontSizeRow, anchorRow)
-
-    local offsetXSlider = gui:CreateFormSlider(card.frame, nil, -40, 40, 1, offsetXKey, auras, onChange, { deferOnDrag = true }, {
-        description = ns.L["Horizontal pixel offset for duration text."],
-    })
-    local offsetXRow = optionsAPI.BuildSettingRow(card.frame, ns.L["Duration X Offset"], offsetXSlider)
-    controlledRows[#controlledRows + 1] = offsetXRow
-    local offsetYSlider = gui:CreateFormSlider(card.frame, nil, -40, 40, 1, offsetYKey, auras, onChange, { deferOnDrag = true }, {
-        description = ns.L["Vertical pixel offset for duration text."],
-    })
-    local offsetYRow = optionsAPI.BuildSettingRow(card.frame, ns.L["Duration Y Offset"], offsetYSlider)
-    controlledRows[#controlledRows + 1] = offsetYRow
-    card.AddRow(offsetXRow, offsetYRow)
-
-    local useTimeColorCheckbox = gui:CreateFormCheckbox(card.frame, nil, useTimeColorKey, auras, onChange, {
-        description = ns.L["Use green/yellow/red time-based duration colors instead of the static text color."],
-    })
-    local useTimeColorRow = optionsAPI.BuildSettingRow(card.frame, ns.L["Use Time-Based Duration Color"], useTimeColorCheckbox)
-    controlledRows[#controlledRows + 1] = useTimeColorRow
-    local colorPicker = gui:CreateFormColorPicker(card.frame, nil, colorKey, auras, onChange, nil, {
-        description = ns.L["Static duration text color when time-based coloring is off."],
-    })
-    colorRow = optionsAPI.BuildSettingRow(card.frame, ns.L["Duration Text Color"], colorPicker)
-    card.AddRow(useTimeColorRow, colorRow)
-
-    updateRows = function()
-        local showAlpha = enabledCond() and 1.0 or 0.4
-        local textAlpha = TextEnabled() and 1.0 or 0.4
-        showRow:SetAlpha(showAlpha)
-        for _, row in ipairs(controlledRows) do
-            row:SetAlpha(textAlpha)
-        end
-        colorRow:SetAlpha(UsesStaticColor() and 1.0 or 0.4)
-    end
-
-    updateRows()
-    return updateRows
 end
 
 local function RequestTabRepaint(ctx)
@@ -2294,119 +2191,6 @@ local function RenderHealerSection(sectionHost, ctx)
     return builder.Height()
 end
 
-local function RenderDefensiveSection(sectionHost, ctx)
-    local gui = GetGUI()
-    local optionsAPI = GetOptionsAPI()
-    local groupFrames = ResolveGroupFramesDB(ctx and ctx.options and ctx.options.contextMode)
-    if not gui or not optionsAPI or not groupFrames then
-        return nil
-    end
-
-    local healer = EnsureSubTable(groupFrames.contextDB, "healer")
-    if not healer then
-        return nil
-    end
-    local defensive = EnsureSubTable(healer, "defensiveIndicator")
-    if not defensive then
-        return nil
-    end
-
-    -- Defensives now lives under the Auras tab — tag search nav accordingly.
-    local builder = CreateSectionBuilder(sectionHost, ctx, CreateSearchContext("auras"))
-    if not builder then
-        return nil
-    end
-
-    local refresh = function()
-        RefreshGroupFrames(groupFrames.contextMode)
-    end
-
-    builder.Header(ns.L["Defensives"])
-    builder.Description(string.format(ns.L["Defensive-cooldown icon strip placement for %1$s group frames."], groupFrames.sourceLabel))
-
-    local card = builder.Card()
-    local controlledRows = {}
-    local function UpdateDefensiveRows()
-        local alpha = defensive.enabled and 1.0 or 0.4
-        for _, row in ipairs(controlledRows) do
-            row:SetAlpha(alpha)
-        end
-    end
-
-    local enableCheckbox = gui:CreateFormCheckbox(card.frame, nil, "enabled", defensive, function()
-        refresh()
-        UpdateDefensiveRows()
-    end, {
-        description = ns.L["Show a dedicated icon strip for active defensive cooldowns on this frame."],
-    })
-    local maxIconsSlider = gui:CreateFormSlider(card.frame, nil, 1, 5, 1, "maxIcons", defensive, refresh, { deferOnDrag = true }, {
-        description = ns.L["Hard cap on how many defensive icons this frame displays at once."],
-    })
-    local maxIconsRow = optionsAPI.BuildSettingRow(card.frame, ns.L["Max Icons"], maxIconsSlider)
-    controlledRows[#controlledRows + 1] = maxIconsRow
-    card.AddRow(
-        optionsAPI.BuildSettingRow(card.frame, ns.L["Enable Defensive Indicator"], enableCheckbox),
-        maxIconsRow
-    )
-
-    local iconSizeSlider = gui:CreateFormSlider(card.frame, nil, 8, 32, 1, "iconSize", defensive, refresh, { deferOnDrag = true }, {
-        description = ns.L["Pixel size of each defensive icon."],
-    })
-    local iconSizeRow = optionsAPI.BuildSettingRow(card.frame, ns.L["Icon Size"], iconSizeSlider)
-    controlledRows[#controlledRows + 1] = iconSizeRow
-    local reverseSwipeCheckbox = gui:CreateFormCheckbox(card.frame, nil, "reverseSwipe", defensive, refresh, {
-        description = ns.L["Reverse the swipe direction so the shaded portion grows instead of shrinks as the defensive ticks down."],
-    })
-    local reverseSwipeRow = optionsAPI.BuildSettingRow(card.frame, ns.L["Reverse Swipe"], reverseSwipeCheckbox)
-    controlledRows[#controlledRows + 1] = reverseSwipeRow
-    card.AddRow(iconSizeRow, reverseSwipeRow)
-
-    local growDirectionDropdown = gui:CreateFormDropdown(card.frame, nil, AURA_GROW_OPTIONS, "growDirection", defensive, refresh, {
-        description = ns.L["Direction additional defensive icons are added in after the first."],
-    })
-    local growDirectionRow = optionsAPI.BuildSettingRow(card.frame, ns.L["Grow Direction"], growDirectionDropdown)
-    controlledRows[#controlledRows + 1] = growDirectionRow
-    local spacingSlider = gui:CreateFormSlider(card.frame, nil, 0, 8, 1, "spacing", defensive, refresh, { deferOnDrag = true }, {
-        description = ns.L["Pixel gap between adjacent defensive icons."],
-    })
-    local spacingRow = optionsAPI.BuildSettingRow(card.frame, ns.L["Spacing"], spacingSlider)
-    controlledRows[#controlledRows + 1] = spacingRow
-    card.AddRow(growDirectionRow, spacingRow)
-
-    local positionDropdown = gui:CreateFormDropdown(card.frame, nil, NINE_POINT_OPTIONS, "position", defensive, refresh, {
-        description = ns.L["Where on the frame the defensive icon strip is anchored. X/Y Offset below nudges it from this anchor point."],
-    })
-    local positionRow = optionsAPI.BuildSettingRow(card.frame, ns.L["Position"], positionDropdown)
-    controlledRows[#controlledRows + 1] = positionRow
-    local xOffsetSlider = gui:CreateFormSlider(card.frame, nil, -100, 100, 1, "offsetX", defensive, refresh, { deferOnDrag = true }, {
-        description = ns.L["Horizontal pixel offset for the defensive icons from their anchor."],
-    })
-    local xOffsetRow = optionsAPI.BuildSettingRow(card.frame, ns.L["X Offset"], xOffsetSlider)
-    controlledRows[#controlledRows + 1] = xOffsetRow
-    card.AddRow(positionRow, xOffsetRow)
-
-    local yOffsetSlider = gui:CreateFormSlider(card.frame, nil, -100, 100, 1, "offsetY", defensive, refresh, { deferOnDrag = true }, {
-        description = ns.L["Vertical pixel offset for the defensive icons from their anchor."],
-    })
-    local yOffsetRow = optionsAPI.BuildSettingRow(card.frame, ns.L["Y Offset"], yOffsetSlider)
-    controlledRows[#controlledRows + 1] = yOffsetRow
-    card.AddRow(yOffsetRow)
-
-    -- Countdown text size: pixel size applied to the native cooldown countdown
-    -- number in UpdateDefensiveIndicator (the count stays the secret-safe native
-    -- C-side countdown; only its font is restyled).
-    local durationSizeSlider = gui:CreateFormSlider(card.frame, nil, 2, 24, 1, "durationTextSize", defensive, refresh, {}, {
-        description = ns.L["Pixel size of the defensive countdown number."],
-    })
-    local durationSizeRow = optionsAPI.BuildSettingRow(card.frame, ns.L["Duration Text Size"], durationSizeSlider)
-    controlledRows[#controlledRows + 1] = durationSizeRow
-    card.AddRow(durationSizeRow)
-
-    UpdateDefensiveRows()
-    builder.CloseCard(card)
-    return builder.Height()
-end
-
 local function RenderTargetedSpellsSection(sectionHost, ctx)
     local gui = GetGUI()
     local optionsAPI = GetOptionsAPI()
@@ -2833,7 +2617,7 @@ local function RenderAurasSection(sectionHost, ctx)
     -- table so a hand-edited/partial profile cannot nil-index the editor.
     local AuraModel = ns.QUI_GroupFramesAuraModel
     if AuraModel and AuraModel.EnsureSeeded then
-        AuraModel.EnsureSeeded(auras)
+        AuraModel.EnsureSeeded(auras, groupFrames.contextMode)
     end
     if type(auras.elements) ~= "table" then
         auras.elements = {}
@@ -2979,7 +2763,12 @@ local function RenderAurasSection(sectionHost, ctx)
                 cancelEligible      = false,
                 maxStripElements    = 4,   -- per-frame container cap: 40-man parse cost
                 allowSpecOverride   = true,
-                defaultBucketFn     = AuraDefaults and AuraDefaults.DefaultStripBucket,
+                defaultBucketFn     = AuraDefaults and function()
+                    return AuraDefaults.DefaultStripBucket(groupFrames.contextMode)
+                end or nil,
+                -- Group frames only ever show the player's own party/raid —
+                -- always assistable (Wave 4 Task 2c polarity hint).
+                unitPolarity        = "friendly",
             },
             onSelectionChanged = function(index)
                 SetSelectedElementIndex(ctx, groupFrames.contextMode, selectedBucket, index)
@@ -3136,7 +2925,6 @@ local INDICATORS_TAB_FEATURE = CreateSingleSectionTabFeature(
 
 local AURAS_TAB_FEATURE = CreateMultiSectionTabFeature("groupFramesAurasTab", {
     { id = "auras", minHeight = 180, render = RenderAurasSection },
-    { id = "defensive", minHeight = 140, render = RenderDefensiveSection },
     { id = "targetedSpells", minHeight = 160, render = RenderTargetedSpellsSection },
 })
 

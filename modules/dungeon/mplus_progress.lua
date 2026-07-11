@@ -184,6 +184,13 @@ local function AcquireNameplateFrame()
     frame = CreateFrame("Frame", nil, UIParent)
     frame:SetSize(120, 22)
     frame:SetFrameStrata("HIGH")
+    -- Pin the strata: this frame is reparented onto the nameplate in
+    -- UpdateNameplatePosition, and strata is inherited on reparent — without a fixed
+    -- strata the HIGH drops to the nameplate's low strata and the text renders behind
+    -- plate art. SetFixedFrameStrata(true) keeps HIGH across SetParent(nameplate).
+    if frame.SetFixedFrameStrata then
+        frame:SetFixedFrameStrata(true)
+    end
 
     local text = frame:CreateFontString(nil, "OVERLAY")
     text:SetAllPoints(frame)

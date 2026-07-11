@@ -264,13 +264,21 @@ local function ReseedStarterFlaggedProfiles(db)
 end
 
 function QUI:BackwardsCompat()
+    -- Consume the OnInitialize latch (core/main.lua): when set, the
+    -- all-profile Tier 0/1 walk already ran this login and raw SV is
+    -- unchanged since. One-shot — profile switches and imports that call
+    -- back in later always re-run the tiers. Tier 2 and the housekeeping
+    -- below are NOT skipped: reseed consumes flags the Tier 1 pass left.
+    local skipTierPass = ns._startupTierPassDone
+    ns._startupTierPassDone = nil
+
     -- Tier 0: Raw SV defaults stamp (must run before AceDB fills defaults)
-    if self.db then
+    if not skipTierPass and self.db then
         RunShippedDefaultsMaintenance(self.db)
     end
 
     -- Tier 1: All profile-level migrations (consolidated in migrations.lua)
-    if ns.Migrations and ns.Migrations.Run then
+    if not skipTierPass and ns.Migrations and ns.Migrations.Run then
         ns.Migrations.Run(self.db)
     end
 

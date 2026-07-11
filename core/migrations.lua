@@ -26,7 +26,12 @@ local _currentGlobalDB     = nil  -- db.global; for cross-profile reads (v32+)
 -- Schema version history
 ---------------------------------------------------------------------------
 -- v0–v46 = pre-5.0 history. All step-by-step migrations through v47 were
---       REMOVED in 5.0. v47 is the migration floor (MIN_SUPPORTED_SCHEMA):
+--       REMOVED in 5.0. NOTE: 4.x's header history stopped at v46, but its
+--       chain carried one more (undocumented) gate — v47 =
+--       ScrubRemovedImportantAuraFilter, dropping the Blizzard-removed
+--       "IMPORTANT" AuraFilters flag (12.0.7) from stored unit-frame filter
+--       state — so the last shipped release stamp is 47, not 46.
+--       v47 is the migration floor (MIN_SUPPORTED_SCHEMA):
 --       the last 4.x stable release and 5.0 alpha4 both shipped schema 47, so
 --       any profile at or above 47 upgrades incrementally, while a profile
 --       stored below 47 is backed up, wiped, and flagged for a starter-profile
@@ -34,40 +39,49 @@ local _currentGlobalDB     = nil  -- db.global; for cross-profile reads (v32+)
 --       profiles (stored==0) are NOT floored — they take the normal fresh-init
 --       path.
 --
--- v48 = RestoreBuffDebuffSplit — the single surviving migration. Player buffs
---       and debuffs use two independent CustomAuraContainers and two mover
---       targets; this seeds the debuff grid keys (from their buff equivalents)
---       and frameAnchoring.debuffFrame (below buffFrame) for any profile that
---       does not already carry them.
+-- v48–v50 = BURNED numbers. These shipped as separate steps in 5.0
+--       alpha14/15/16 (RestoreBuffDebuffSplit / PrunePrivateAuras /
+--       SeedAuraElements respectively), so alpha testers in the wild carry
+--       stamps 48–50. The steps were folded into the v51 squash below; never
+--       reuse these numbers for new migrations. (52 and 53 also existed
+--       briefly as dev-build stamps before the squash — treat them as burned
+--       too; the next free number is 54.)
 --
--- v49 = PrunePrivateAuras — the private-aura feature (Blizzard private-aura
---       anchoring on unit frames and group frames) was removed. Deletes any
---       stored privateAuras subtable under quiUnitFrames.player/target/focus
---       and quiGroupFrames.party/raid so no orphaned settings linger.
+-- v51 = the 5.0 squash. Every 5.0-alpha migration collapsed behind a single
+--       `stored < 51` gate: only schema 47 ever shipped on a stable release,
+--       so there is no point preserving intermediate step granularity. The
+--       gate deliberately catches the 48–50 stamps shipped by alphas — every
+--       step is idempotent/self-gating, so a partially-migrated profile is
+--       healed rather than double-migrated. Steps, in order (full detail at
+--       each Migrations.* definition below):
+--         (a) RestoreBuffDebuffSplit — restore the two-container player
+--             buff/debuff model: seed the debuff grid keys (from their buff
+--             equivalents) and frameAnchoring.debuffFrame when absent.
+--         (b) PrunePrivateAuras — private-aura feature removed; strip stored
+--             privateAuras subtables (UF player/target/focus, GF party/raid).
+--         (c) SeedAuraElements — the aura-surface unification. Flat
+--             buffborders / unit-frame per-strip settings become unified
+--             element-list stores (core/aura_elements.lua spec-bucket
+--             stores); group-frame elements normalized in place. Bucket
+--             elementsSeeded flag short-circuits re-entry; frame-level
+--             buffborders toggles SURVIVE as per-frame gates. Bails (no
+--             stamp, whole squash retries) if the element model isn't loaded.
+--         (d) RepairAuraFilterFlags — the alpha16 (v50) UF seed misread the
+--             NESTED legacy filter shape, stamping literal
+--             "modifiers"/"exclusive" keys as filter tokens; the compiled
+--             string hard-errors IsValidFilterString on 12.1. Strips
+--             out-of-set tokens; emptied flags-mode elements revert to "off".
+--         (e) FoldDefensiveIndicatorIntoElements — legacy GF defensive
+--             indicator becomes the shipped "defensives" filterStrip element;
+--             dead dedupeDefensives keys stripped from every element store.
+--         (f) PurgeOrphanContainerSatellites — purge CDM per-container
+--             satellite settings (customGlow.*, cooldownEffects.hide_*,
+--             frameAnchoring.cdmCustom_*) orphaned by DeleteContainer,
+--             including the shipped seed's own orphans — intended.
 --
--- v50 = SeedAuraElements — the aura-surface unification. Buffborders and
---       unit-frame flat per-strip settings (buff*/debuff* geometry, filter,
---       sort and text-position keys) become unified element-list stores
---       (spec-bucket stores backed by core/aura_elements.lua); group-frame
---       elements (already element-shaped) are normalized in place. Reproduces
---       the RESOLVED pre-migration render (sentinels resolved, not copied),
---       heals the UF legacy classification master keys, prunes only the known
---       migrated flat keys, and is idempotent (bucket elementsSeeded flag
---       short-circuits re-entry). Frame-level buffborders toggles
---       (enableBuffs/enableDebuffs/hide*/fade*/iconSkin/borderSize/font*)
---       SURVIVE — the runtime still reads them as per-frame gates.
---
--- v51 = RepairAuraFilterFlags — the shipped v50 UF seed misread the NESTED
---       legacy filter shape ({ modifiers = {TOKEN=bool}, exclusive =
---       "TOKEN"|nil }), stamping the literal "modifiers"/"exclusive" keys as
---       filter tokens; the compiled "HARMFUL|modifiers" string hard-errors
---       the container's IsValidFilterString assert on 12.1. Strips tokens
---       outside the engine AuraFilters set from every UF element's
---       filterFlags; flags-mode elements left empty revert to "off" (the
---       correct v50 outcome for the common all-false legacy shape).
---
--- When adding a new migration: bump CURRENT_SCHEMA_VERSION, add a single
--- linear gate in RunOnProfile, and document the version above.
+-- When adding a new migration: bump CURRENT_SCHEMA_VERSION (next free number
+-- is 54 — see the burned-numbers rule above), add a single linear gate in
+-- RunOnProfile, and document the version above.
 ---------------------------------------------------------------------------
 local CURRENT_SCHEMA_VERSION = 51
 
@@ -403,8 +417,8 @@ local function ResetCastbarPreviewModes(profile)
 end
 
 
--- v48: restore the two-container player buff/debuff model (the single
--- surviving migration). Defined as a Migrations.* method (not a local
+-- v51 squash step (a) (shipped alpha14 as v48): restore the two-container
+-- player buff/debuff model. Defined as a Migrations.* method (not a local
 -- function) so it adds no new upvalue to RunOnProfile.
 function Migrations.RestoreBuffDebuffSplit(profile)
     local bb = profile and profile.buffBorders
@@ -460,7 +474,8 @@ function Migrations.RestoreBuffDebuffSplit(profile)
     end
 end
 
--- v49: the private-aura feature is gone (runtime consumers, settings
+-- v51 squash step (b) (shipped alpha15 as v49): the private-aura feature is
+-- gone (runtime consumers, settings
 -- surfaces, and defaults all removed). Strip any stored privateAuras
 -- subtable left behind by an older profile so it doesn't linger as dead
 -- data. Mirrors the exact paths the removed defaults carried it under:
@@ -489,7 +504,8 @@ function Migrations.PrunePrivateAuras(profile)
     end
 end
 
--- v50: aura-surface unification. The three aura surfaces converge on ONE model
+-- v51 squash step (c) (shipped alpha16 as v50): aura-surface unification.
+-- The three aura surfaces converge on ONE model
 -- (core/aura_elements.lua): a spec-bucket store `auras.elements = { ["*"] = {
 -- element, ... } }` guarded by `elementsSeeded`.
 --   * buffborders: flat per-strip settings -> buffAuras / debuffAuras stores.
@@ -500,7 +516,7 @@ end
 -- elementsSeeded (idempotency + never clobbers a runtime-seeded fresh profile).
 -- Nil-guarded throughout; prunes ONLY known migrated keys.
 -- Returns false (without seeding) if the element model isn't loaded — the
--- caller must NOT stamp v50 in that case or the flat keys would strand
+-- caller must NOT stamp in that case or the flat keys would strand
 -- unmigrated behind the version gate. Unreachable in practice (migration
 -- fires at ADDON_LOADED after all TOC files; headless/import callers load
 -- core first); belt-and-braces only.
@@ -784,7 +800,8 @@ function Migrations.SeedAuraElements(profile)
     end
 end
 
--- v51: repair filterFlags corrupted by the shipped v50 UF seed. The legacy UF
+-- v51 squash step (d): repair filterFlags corrupted by the alpha16-shipped
+-- v50 UF seed. The legacy UF
 -- filter store was NESTED ({ modifiers = {TOKEN=bool}, exclusive =
 -- "TOKEN"|nil }, read by HEAD's BuildFilterString), but the shipped v50 seed
 -- iterated the OUTER table — stamping the literal container keys as filter
@@ -796,7 +813,7 @@ end
 -- the original intent is unrecoverable: strip out-of-set tokens; a flags-mode
 -- element left with none reverts to bare polarity ("off") — which is exactly
 -- what a correct v50 would have produced for the common all-false legacy
--- shape. Returns false (don't stamp v51) if the element model isn't loaded;
+-- shape. Returns false (don't stamp) if the element model isn't loaded;
 -- same belt-and-braces contract as SeedAuraElements.
 --
 -- NOT_CANCELABLE heal: this repair runs at ADDON_LOADED, directly on the raw
@@ -846,6 +863,186 @@ function Migrations.RepairAuraFilterFlags(profile)
             end
         end
     end
+    return true
+end
+
+-- v51 squash step (e) (briefly v52 in dev builds): fold the legacy GF
+-- defensive indicator into the unified element model.
+-- The indicator (healer.defensiveIndicator, its own renderer/classifier in
+-- groupframes.lua) is replaced by a shipped "defensives" filterStrip element
+-- (classify: bigDefensive + externalDefensive, engine-filtered). Injection
+-- targets LATCHED "*" buckets only — an unlatched store gets the strip from
+-- the surface-aware runtime seed (Model.DefaultStripBucket). `enabled`
+-- carries over ONLY when the raw SV stored enabled == true: migrations see
+-- RAW profiles (no AceDB defaults merged) and the AceDB default was false on
+-- BOTH surfaces, so an absent table/key means the user's effective value was
+-- false. Old geometry is discarded by design (fresh-seed decision, see
+-- docs/superpowers/specs/2026-07-10-defensives-fold-into-aura-elements-design.md).
+-- Also strips the dead dedupeDefensives key from EVERY element store (no
+-- runtime consumer since the pipeline unification) and deletes the old
+-- healer.defensiveIndicator table. Self-contained (no element-model
+-- dependency): plain-table injection, so no seed/repair-style bail. This literal
+-- must stay field-identical to Model.DefaultStripBucket's third strip
+-- (enabled excepted) — pinned by migration_v52_defensives_fold_test.lua.
+local function BuildShippedDefensivesElement(enabled)
+    return {
+        id = "defensives", enabled = enabled == true, mode = "filterStrip", auraType = "HELPFUL",
+        anchor = "BOTTOMRIGHT", growDirection = "LEFT", spacing = 0,
+        offsetX = 0, offsetY = 4, iconSize = 15, maxIcons = 3,
+        hideSwipe = false, reverseSwipe = true,
+        swipeStyle = "radial",
+        duration = { show = true, fontSize = 9, anchor = "BOTTOM", offsetX = 0, offsetY = -6, color = { 1, 1, 1, 1 } },
+        stack = { show = true, fontSize = 9, anchor = "BOTTOMRIGHT", offsetX = -1, offsetY = 1, color = { 1, 1, 1, 1 } },
+        filterMode = "classify", filterFlags = {},
+        classifications = { bigDefensive = true, externalDefensive = true },
+        borderColor = { 0, 0.8, 0, 1 },
+        whitelist = {}, blacklist = {},
+        sortRule = "INDEX", sortReverse = false, rightClickCancel = false,
+    }
+end
+
+local function StripDedupeFromStore(store)
+    local elements = type(store) == "table" and type(store.elements) == "table" and store.elements
+    if not elements then return end
+    for _, bucket in pairs(elements) do
+        if type(bucket) == "table" then
+            for _, e in ipairs(bucket) do
+                if type(e) == "table" then e.dedupeDefensives = nil end
+            end
+        end
+    end
+end
+
+function Migrations.FoldDefensiveIndicatorIntoElements(profile)
+    local gf = profile.quiGroupFrames
+    if type(gf) == "table" then
+        for _, key in ipairs({ "party", "raid" }) do
+            local surface = gf[key]
+            if type(surface) == "table" then
+                local healer = surface.healer
+                local di = type(healer) == "table" and healer.defensiveIndicator
+                local oldEnabled = type(di) == "table" and di.enabled == true
+
+                local a = surface.auras
+                local elements = type(a) == "table" and type(a.elements) == "table" and a.elements
+                if elements and a.elementsSeeded then
+                    local bucket = elements["*"]
+                    if type(bucket) == "table" then
+                        local present = false
+                        for _, e in ipairs(bucket) do
+                            if type(e) == "table" and e.id == "defensives" then present = true break end
+                        end
+                        if not present then
+                            bucket[#bucket + 1] = BuildShippedDefensivesElement(oldEnabled)
+                        end
+                    end
+                end
+
+                StripDedupeFromStore(a)
+                if type(healer) == "table" then healer.defensiveIndicator = nil end
+            end
+        end
+    end
+
+    local uf = profile.quiUnitFrames
+    if type(uf) == "table" then
+        for _, unit in pairs(uf) do
+            if type(unit) == "table" then StripDedupeFromStore(unit.auras) end
+        end
+    end
+
+    local bb = profile.buffBorders
+    if type(bb) == "table" then
+        StripDedupeFromStore(bb.buffAuras)
+        StripDedupeFromStore(bb.debuffAuras)
+    end
+    return true
+end
+
+---------------------------------------------------------------------------
+-- v51 squash step (f) (briefly v53 in dev builds): purge CDM per-container
+-- satellite settings orphaned by
+-- DeleteContainer (which historically never cleaned them). A satellite is
+-- orphaned when its derived container key no longer exists in
+-- profile.ncdm.containers. This is its own copy of the purge logic (NOT a
+-- shared call into QUI_CDM/cdm/cdm_containers.lua's PurgeContainerSatellites
+-- seam) — migrations run in contexts (profile import, addon startup before
+-- LOD modules load) where the CDM sub-addon may not be loaded yet. Keep the
+-- customGlow suffix list in lockstep with tools/gen_new_profile_seed.lua's
+-- copy. (cdm_containers.lua's PurgeContainerSatellites needs no list — it
+-- prefix-matches on a known containerKey.)
+---------------------------------------------------------------------------
+-- Ordered longest-suffix-first: several suffixes share a tail (every
+-- Pandemic*Enabled variant ends in "Enabled"), so a shorter generic suffix
+-- must never be tried before the longer specific one it is a tail of, or it
+-- mis-derives the container prefix (e.g. stripping bare "Enabled" from
+-- "<liveKey>PandemicBuffEnabled" yields "<liveKey>PandemicBuff", which is
+-- not a live container key, wrongly orphaning a LIVE key). The match loop
+-- below stops at the first suffix that matches the key's tail at all
+-- (break unconditionally on match, not only on delete) so this ordering is
+-- load-bearing, not cosmetic.
+local CDM_GLOW_SUFFIXES = {
+    "PandemicDebuffEnabled", "PandemicBuffEnabled", "PandemicEnabled",
+    "Thickness", "Frequency", "GlowType", "XOffset", "YOffset", "Enabled",
+    "Color", "Scale", "Lines",
+}
+
+function Migrations.PurgeOrphanContainerSatellites(profile)
+    local ncdm = profile.ncdm
+    local live = {}
+    if ncdm and type(ncdm.containers) == "table" then
+        for key in pairs(ncdm.containers) do live[key] = true end
+    end
+
+    local anchors = profile.frameAnchoring
+    if type(anchors) == "table" then
+        local toRemove = {}
+        for k in pairs(anchors) do
+            if type(k) == "string" then
+                local key = k:match("^cdmCustom_(.+)$")
+                if key and not live[key] then toRemove[#toRemove + 1] = k end
+            end
+        end
+        for _, k in ipairs(toRemove) do anchors[k] = nil end
+    end
+
+    local effects = profile.cooldownEffects
+    if type(effects) == "table" then
+        local toRemove = {}
+        for k in pairs(effects) do
+            if type(k) == "string" then
+                local key = k:match("^hide_(.+)$")
+                if key and not live[key] then toRemove[#toRemove + 1] = k end
+            end
+        end
+        for _, k in ipairs(toRemove) do effects[k] = nil end
+    end
+
+    local glow = profile.customGlow
+    if type(glow) == "table" then
+        local toRemove = {}
+        for k in pairs(glow) do
+            if type(k) == "string" then
+                for _, suffix in ipairs(CDM_GLOW_SUFFIXES) do
+                    local key = k:match("^(.+)" .. suffix .. "$")
+                    if key then
+                        -- First matching suffix wins and stops the search
+                        -- (see the ordering note on CDM_GLOW_SUFFIXES above).
+                        -- Only container-shaped prefixes; never touch the
+                        -- essential/utility builtin glow keys.
+                        if key ~= "essential" and key ~= "utility"
+                            and (key:find("^custom_") or key:find("^customBar_"))
+                            and not live[key] then
+                            toRemove[#toRemove + 1] = k
+                        end
+                        break
+                    end
+                end
+            end
+        end
+        for _, k in ipairs(toRemove) do glow[k] = nil end
+    end
+
     return true
 end
 
@@ -1817,45 +2014,45 @@ function Migrations.RunOnProfile(profile)
     -- MIN_SUPPORTED_SCHEMA (47) are floored at the top of this function (backed
     -- up, wiped, and flagged for a starter-profile reseed), so they never reach
     -- the gate below. Any profile that does reach here is at the v47 floor or
-    -- newer and needs at most the single surviving v48 migration.
-
-    -- v48: restore the two-container player buff/debuff model. This is the only
-    -- surviving migration: every profile at or above the v47 floor needs at most
-    -- this one step. Older profiles are floored (backed up + reseeded) at the top
-    -- of this function and never reach here. See
+    -- newer and needs at most the single squashed v51 migration. See
     -- docs/superpowers/specs/2026-06-26-migration-floor-47-collapse-design.md.
-    if stored < 48 then Migrations.RestoreBuffDebuffSplit(profile) end
 
-    -- v49: private-aura feature removed; strip any stored privateAuras
-    -- subtable left over from before the removal. See
-    -- Migrations.PrunePrivateAuras above.
-    if stored < 49 then Migrations.PrunePrivateAuras(profile) end
-
-    -- v50: aura-surface unification — flat buffborders / unit-frame strip
-    -- settings become unified element stores; group-frame elements are
-    -- normalized in place. See Migrations.SeedAuraElements above.
-    if stored < 50 then
-        if Migrations.SeedAuraElements(profile) == false then
-            -- Element model unavailable (belt-and-braces; see SeedAuraElements).
-            -- Stamp only through v49 so the flat keys aren't stranded behind
-            -- the version gate — the next RunOnProfile retries the v50 seed.
-            profile._schemaVersion = 49
-            return true
-        end
-    end
-
-    -- v51: strip out-of-set filter tokens the shipped v50 UF seed stamped
-    -- from the nested legacy filter shape ("modifiers"/"exclusive" literal
-    -- keys). See Migrations.RepairAuraFilterFlags above.
+    -- v51: the 5.0 squash — every 5.0-alpha migration behind one gate. The
+    -- gate deliberately catches stamps 48–50 (shipped by 5.0 alpha14/15/16 as
+    -- separate steps): every step is idempotent/self-gating, so a profile
+    -- that already ran some steps under its alpha stamp is healed, not
+    -- double-migrated. Steps in order; see each Migrations.* doc above.
     if stored < 51 then
-        if Migrations.RepairAuraFilterFlags(profile) == false then
-            -- Element model unavailable (belt-and-braces; mirrors the v50
-            -- contract). Stamp only through v50 so the corrupted flags aren't
-            -- stranded behind the version gate — the next RunOnProfile
-            -- retries the repair.
-            profile._schemaVersion = 50
+        -- (a) restore the two-container player buff/debuff model.
+        Migrations.RestoreBuffDebuffSplit(profile)
+
+        -- (b) private-aura feature removed; strip stored privateAuras.
+        Migrations.PrunePrivateAuras(profile)
+
+        -- (c) aura-surface unification — flat buffborders / unit-frame strip
+        -- settings become unified element stores; group-frame elements are
+        -- normalized in place. Belt-and-braces: if the element model isn't
+        -- loaded, bail WITHOUT stamping so nothing strands behind the gate —
+        -- the next RunOnProfile retries the whole squash (steps (a)/(b)
+        -- re-run as no-ops).
+        if Migrations.SeedAuraElements(profile) == false then
             return true
         end
+
+        -- (d) strip out-of-set filter tokens the alpha16 (v50) UF seed
+        -- stamped from the nested legacy filter shape ("modifiers"/
+        -- "exclusive" literal keys). Same bail contract as (c).
+        if Migrations.RepairAuraFilterFlags(profile) == false then
+            return true
+        end
+
+        -- (e) fold the legacy GF defensive indicator into the unified
+        -- element model.
+        Migrations.FoldDefensiveIndicatorIntoElements(profile)
+
+        -- (f) purge CDM per-container satellite settings orphaned by
+        -- DeleteContainer.
+        Migrations.PurgeOrphanContainerSatellites(profile)
     end
 
     profile._schemaVersion = CURRENT_SCHEMA_VERSION

@@ -966,8 +966,8 @@ return {
         configPanelScale = 1,
         configPanelWidth = 750,
         cooldownEffects = {
-          hideEssential = true,
-          hideUtility = true
+          hideEssential = false,
+          hideUtility = false
         },
         cooldownHighlighter = {
           color = {
@@ -4484,18 +4484,6 @@ return {
                 },
                 enabled = false
               },
-              defensiveIndicator = {
-                durationTextSize = 12,
-                enabled = false,
-                growDirection = "RIGHT",
-                iconSize = 16,
-                maxIcons = 3,
-                offsetX = 0,
-                offsetY = 0,
-                position = "CENTER",
-                reverseSwipe = true,
-                spacing = 2
-              },
               dispelOverlay = {
                 borderSize = 3,
                 colors = {
@@ -4871,18 +4859,6 @@ return {
                   [4] = 1
                 },
                 enabled = false
-              },
-              defensiveIndicator = {
-                durationTextSize = 12,
-                enabled = false,
-                growDirection = "RIGHT",
-                iconSize = 16,
-                maxIcons = 3,
-                offsetX = 0,
-                offsetY = 0,
-                position = "CENTER",
-                reverseSwipe = true,
-                spacing = 2
               },
               dispelOverlay = {
                 borderSize = 3,

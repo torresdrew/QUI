@@ -1388,6 +1388,14 @@ UpdateConsumables = function()
     local settings = GetSettings()
     if not settings then return end
 
+    -- Aura data secret (combat restriction): the buff scan below collapses to
+    -- nothing (AuraScanCount() == 0), so resetting first would wipe the
+    -- last-known display and repaint everything Not-Ready. Player consumable
+    -- buffs can't change while restricted; keep the last rendered state.
+    if C_Secrets and C_Secrets.ShouldAurasBeSecret and C_Secrets.ShouldAurasBeSecret() then
+        return
+    end
+
     local buttons = ConsumablesFrame.buttons
     local frameScale = GetConsumableScale()
     if not InCombatLockdown() then
@@ -1627,8 +1635,13 @@ local function CheckWeaponEnchantChanges()
     end
 end
 
-ConsumablesFrame:SetScript("OnEvent", function(self, event, unit)
-    if event == "UNIT_AURA" and unit == "player" then
+-- Player-only registration (:1637 below) — never read the payload unit;
+-- the C-level filter already restricts delivery to "player". PTR 68569
+-- marks UNIT_AURA event-wide SecretWhenAurasRestricted, so the payload
+-- unit may arrive as an opaque secret value in combat; updateInfo is
+-- never consumed here so no probe is needed for it.
+ConsumablesFrame:SetScript("OnEvent", function(self, event)
+    if event == "UNIT_AURA" then
         UpdateConsumables()
     end
 end)

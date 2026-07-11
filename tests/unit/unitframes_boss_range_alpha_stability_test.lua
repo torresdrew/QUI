@@ -57,6 +57,9 @@ do
     }
     QUI_UF = {
         frames = { boss1 = bossFrame },
+        -- Live code keeps unit tokens in weak side state (ping-taint fix);
+        -- the stub mirrors the accessor over the mock's plain field.
+        GetFrameUnit = function(frame) return frame and frame.unit end,
     }
 
     function GetUnitSettings()
@@ -260,6 +263,9 @@ do
         QUI_UnitFrames = {
             frames = {},
             auraPreviewMode = {},
+            -- Live code keeps unit tokens in weak side state (ping-taint fix);
+            -- the stub mirrors the accessor over the mock's plain field.
+            GetFrameUnit = function(frame) return frame and frame.unit end,
             _GetFontPath = function() return "Fonts\\FRIZQT__.TTF" end,
             _GetFontOutline = function() return "OUTLINE" end,
             _GetUnitSettings = function()

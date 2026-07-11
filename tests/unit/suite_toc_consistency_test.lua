@@ -89,13 +89,27 @@ for norm in pairs(coreSet) do
     end
 end
 
--- Group 1 guard: locale/search index addons stay index-only (engine lives in QUI_Options).
+-- Group 1 guard: search/locale addons stay data-only (engine lives in
+-- QUI_Options). Plain QUI_OptionsSearch = English index only. The
+-- locale-suffixed ones are COMBINED addons: namespace bootstrap + the
+-- UI-string overlay chunk + the search index, in that order (the chunk
+-- writes ns.LocaleData through the bootstrap proxy; the index parks on the
+-- shared ns until QUI_Options consumes it).
 do
     local p = io.popen('ls -d QUI_OptionsSearch* 2>/dev/null')
     for folder in p:lines() do
         local _, order = tocLuaEntries(folder .. "/" .. folder .. ".toc")
-        assert(#order == 1 and order[1] == "search_cache.lua",
-            folder .. ": must contain only search_cache.lua (one-of-N index)")
+        local loc = folder:match("^QUI_OptionsSearch_(%w+)$")
+        if loc then
+            assert(#order == 3
+                    and order[1] == "bootstrap.lua"
+                    and order[2] == loc .. ".lua"
+                    and order[3] == "search_cache.lua",
+                folder .. ": must be bootstrap.lua, " .. loc .. ".lua, search_cache.lua (combined locale addon)")
+        else
+            assert(#order == 1 and order[1] == "search_cache.lua",
+                folder .. ": must contain only search_cache.lua (English one-of-N index)")
+        end
     end
     p:close()
 end

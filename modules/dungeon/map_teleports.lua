@@ -41,13 +41,17 @@ end
 
 local function UpdateCooldowns()
     if not panel or not panel:IsShown() then return end
+    if not (C_Spell and C_Spell.GetSpellCooldownDuration) then return end
     for _, btn in ipairs(buttons) do
         if btn.spellID and btn.cooldown then
-            local info = C_Spell.GetSpellCooldown(btn.spellID) -- MayReturnNothing
-            if info and info.startTime and info.duration then
-                CooldownFrame_Set(btn.cooldown, info.startTime, info.duration, info.isEnabled)
+            -- Duration object is the secret-safe cooldown carrier; raw
+            -- GetSpellCooldown fields are SecretWhenCooldownsRestricted and
+            -- CooldownFrame_Set compares them.
+            local dur = C_Spell.GetSpellCooldownDuration(btn.spellID) -- MayReturnNothing
+            if dur then
+                btn.cooldown:SetCooldownFromDurationObject(dur)
             else
-                CooldownFrame_Set(btn.cooldown, 0, 0, false)
+                btn.cooldown:Clear()
             end
         end
     end

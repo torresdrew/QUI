@@ -209,17 +209,7 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         if mm.greatVault.offsetX == nil then mm.greatVault.offsetX = 1 end
         if mm.greatVault.offsetY == nil then mm.greatVault.offsetY = -1 end
         local vault = mm.greatVault
-        local vaultAnchorOptions = {
-            { value = "TOPLEFT", text = ns.L["Top Left"] },
-            { value = "TOP", text = ns.L["Top"] },
-            { value = "TOPRIGHT", text = ns.L["Top Right"] },
-            { value = "LEFT", text = ns.L["Left"] },
-            { value = "CENTER", text = ns.L["Center"] },
-            { value = "RIGHT", text = ns.L["Right"] },
-            { value = "BOTTOMLEFT", text = ns.L["Bottom Left"] },
-            { value = "BOTTOM", text = ns.L["Bottom"] },
-            { value = "BOTTOMRIGHT", text = ns.L["Bottom Right"] },
-        }
+        local vaultAnchorOptions = ns.QUI_SettingsLayoutShared.BuildNinePointAnchorOptions()
 
         layout.headerAt(ns.L["Great Vault"])
         local s6 = layout.sectionAt()

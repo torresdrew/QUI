@@ -38,17 +38,7 @@ local FALLBACK_ICON = 134400
 -- instance owns. Bumped once per RenderAuras call.
 local browseInstanceCounter = 0
 
-local NINE_POINT_OPTIONS = {
-    { value = "TOPLEFT", text = ns.L["Top Left"] },
-    { value = "TOP", text = ns.L["Top"] },
-    { value = "TOPRIGHT", text = ns.L["Top Right"] },
-    { value = "LEFT", text = ns.L["Left"] },
-    { value = "CENTER", text = ns.L["Center"] },
-    { value = "RIGHT", text = ns.L["Right"] },
-    { value = "BOTTOMLEFT", text = ns.L["Bottom Left"] },
-    { value = "BOTTOM", text = ns.L["Bottom"] },
-    { value = "BOTTOMRIGHT", text = ns.L["Bottom Right"] },
-}
+local NINE_POINT_OPTIONS = ns.QUI_SettingsLayoutShared.BuildNinePointAnchorOptions()
 
 local AURA_GROW_OPTIONS = {
     { value = "LEFT", text = ns.L["Left"] },
@@ -319,13 +309,28 @@ end
 
 local function AddPlacementWidgets(ctx, element, includeStrip)
     local GUI = ctx.GUI
+    local C = ctx.C
     local row = ctx.AddFormRow
+    local add = ctx.AddDetailWidget
     local onChange = ctx.onChange
 
     if includeStrip then
-        row(ns.L["Max Icons"], GUI:CreateFormSlider(ctx.detailArea, nil, 0, 10, 1, "maxIcons", element, onChange, { deferOnDrag = true }, {
-            description = ns.L["Hard cap on how many icons this element displays at once. 0 shows all matches."],
-        }))
+        -- 2a (classification honesty): in "classify" mode, AuraGlue.ElementGroups
+        -- (core/aura_glue.lua) applies maxIcons to EVERY compiled category group
+        -- independently (G.ElementProfile's maxIcons feeds each group's
+        -- maxFrameCount, once per usable classification string) — so this is NOT
+        -- a total cap on the strip, it is a per-category allowance. "Max Icons"
+        -- alone was silently dishonest about that; relabel + redescribe only for
+        -- the mode where it's actually true.
+        if element.filterMode == "classify" then
+            row(ns.L["Max Icons Per Category"], GUI:CreateFormSlider(ctx.detailArea, nil, 0, 40, 1, "maxIcons", element, onChange, { deferOnDrag = true }, {
+                description = ns.L["Hard cap on how many icons EACH ticked category shows at once — Classification mode builds one full-size group per category, so this limit applies separately to every one of them. 0 shows all matches in every category."],
+            }))
+        else
+            row(ns.L["Max Icons"], GUI:CreateFormSlider(ctx.detailArea, nil, 0, 40, 1, "maxIcons", element, onChange, { deferOnDrag = true }, {
+                description = ns.L["Hard cap on how many icons this element displays at once. 0 shows all matches."],
+            }))
+        end
     end
     row(ns.L["Icon Size"], GUI:CreateFormSlider(ctx.detailArea, nil, 4, 40, 1, "iconSize", element, onChange, { deferOnDrag = true }, {
         description = ns.L["Pixel size of each icon."],
@@ -344,12 +349,31 @@ local function AddPlacementWidgets(ctx, element, includeStrip)
             description = ns.L["Wrap icons onto a new row after this many. 0 keeps them on a single row. Extra rows stack away from the anchored frame edge."],
         }))
     end
-    row(ns.L["X Offset"], GUI:CreateFormSlider(ctx.detailArea, nil, -100, 100, 1, "offsetX", element, onChange, { deferOnDrag = true }, {
-        description = ns.L["Horizontal pixel offset from the anchor."],
-    }))
-    row(ns.L["Y Offset"], GUI:CreateFormSlider(ctx.detailArea, nil, -100, 100, 1, "offsetY", element, onChange, { deferOnDrag = true }, {
-        description = ns.L["Vertical pixel offset from the anchor."],
-    }))
+    -- Buff Borders single-strip zones (caps.singleStrip, action_bars_buffdebuff_
+    -- content.lua) render exactly one filterStrip element, and the runtime
+    -- always resolves it as strip 1 (buffborders.lua ApplyMoverElements i==1 /
+    -- ResolveStrips) -- the container the central anchoring system positions
+    -- directly (container-first anchoring; the `i > 1` gate at :486 is the ONLY
+    -- path that applies element.offsetX/Y, so strip 1's offsets are dead reads).
+    -- Hide the rows and explain why instead of offering a control that does
+    -- nothing; every other filterStrip/tracked surface (group frames, unit
+    -- frames, additional strips beyond the first) keeps them.
+    if ctx.caps.singleStrip then
+        local hint = GUI:CreateLabel(ctx.detailArea,
+            ns.L["Positioned by its mover — drag the frame in Layout mode. X/Y offsets apply to additional strips only."],
+            11, C.textMuted)
+        hint:SetJustifyH("LEFT")
+        hint:SetWordWrap(true)
+        hint:SetNonSpaceWrap(true)
+        add(hint, 34, true)
+    else
+        row(ns.L["X Offset"], GUI:CreateFormSlider(ctx.detailArea, nil, -100, 100, 1, "offsetX", element, onChange, { deferOnDrag = true }, {
+            description = ns.L["Horizontal pixel offset from the anchor."],
+        }))
+        row(ns.L["Y Offset"], GUI:CreateFormSlider(ctx.detailArea, nil, -100, 100, 1, "offsetY", element, onChange, { deferOnDrag = true }, {
+            description = ns.L["Vertical pixel offset from the anchor."],
+        }))
+    end
 end
 
 local function AddSwipeWidgets(ctx, element)
@@ -580,7 +604,9 @@ end
 
 local function AddFilterStripConfig(ctx, element)
     local GUI = ctx.GUI
+    local C = ctx.C
     local row = ctx.AddFormRow
+    local add = ctx.AddDetailWidget
     local onChange = ctx.onChange
     local rebuild = ctx.rebuild
     local caps = ctx.caps
@@ -669,9 +695,38 @@ local function AddFilterStripConfig(ctx, element)
     row(ns.L["Boss or Role Auras"], GUI:CreateFormCheckbox(ctx.detailArea, nil, "gateBossOrRoleAura", element, onChange, {
         description = ns.L["Only show auras that are boss-applied or role-relevant. Combines with the other filters."],
     }))
-    row(ns.L["Deduplicate Defensives"], GUI:CreateFormCheckbox(ctx.detailArea, nil, "dedupeDefensives", element, onChange, {
-        description = ns.L["Hide icons already shown by another tracked element."],
+
+    -- Custom border color: borderColor is OPTIONAL on the element -- absent
+    -- means "theme border" (aura_skin styleButton falls back to
+    -- AuraTheme.BorderColor). The checkbox is the explicit nil/stamped
+    -- switch: the picker widget itself can't express "unset", so checking
+    -- stamps a starting value and unchecking nils the key back to theme.
+    -- Bound to a throwaway state table (never element) so widget
+    -- CONSTRUCTION never writes the DB -- only the onChange callback
+    -- (fired on a real user click) stamps or clears element.borderColor.
+    -- _quiTransientOptionsProxy: framework marker for one-off state tables
+    -- (IsTransientOptionsBinding) -- keeps this row out of the widget-sync
+    -- registry and the search-cache descriptor path, which key on real DB
+    -- tables and would otherwise churn a fresh key every rebuild.
+    row(ns.L["Custom Border Color"], GUI:CreateFormCheckbox(ctx.detailArea, nil, "_customBorder", {
+        _customBorder = element.borderColor ~= nil,
+        _quiTransientOptionsProxy = true,
+    }, function(checked)
+        if checked and element.borderColor == nil then
+            element.borderColor = { 1, 1, 1, 1 }
+        elseif not checked then
+            element.borderColor = nil
+        end
+        ctx.NotifyChanged()
+        rebuild()
+    end, {
+        description = ns.L["Override the theme border color for icons in this strip."],
     }))
+    if element.borderColor ~= nil then
+        row(ns.L["Border Color"], GUI:CreateFormColorPicker(ctx.detailArea, nil, "borderColor", element, onChange, nil, {
+            description = ns.L["Border color for icons in this strip."],
+        }))
+    end
 
     local filterMode = element.filterMode or "off"
     if filterMode == "classify" then
@@ -718,6 +773,40 @@ local function AddFilterStripConfig(ctx, element)
                 title = ns.L["Add Whitelisted Spells"],
                 presets = BuildFilterBrowsePresets(element.auraType),
             })
+    end
+
+    -- 2c (classification honesty): Blizzard's engine drops identity-based
+    -- candidateFilters (includeSpellIDs/excludeSpellIDs — whitelist above,
+    -- blacklist below) whenever CanApplyIdentityCandidateFilters fails.
+    -- Quote (vendored tests/framexml/.../Blizzard_AuraContainerUtil.lua:11-28):
+    --   "if auraData.isHarmful and UnitCanAssist("player", unitToken) then
+    --      return false end
+    --    if auraData.isHelpful and not UnitCanAssist("player", unitToken) then
+    --      return false end"
+    -- i.e. a HARMFUL element's whitelist/blacklist is silently ignored on
+    -- assistable (friendly) units, and a HELPFUL element's on non-assistable
+    -- (hostile) units — runtime already degrades to "show everything" there
+    -- (E.CompileCandidateFilters still emits the candidateFilters; the ENGINE
+    -- is what ignores them — this hint changes nothing about that, it just
+    -- stops the editor from staying silent about it).
+    --
+    -- caps.unitPolarity ("friendly"/"hostile") is only set by callers whose
+    -- surface is STATICALLY one or the other every time (player/pet unit
+    -- frames, group frames, buff borders = always friendly; boss unit frames
+    -- = always hostile). Ambiguous surfaces (target/focus/targettarget, whose
+    -- reaction depends on the live target) leave it nil/absent and get no
+    -- hint — a static warning would be wrong about half the time there.
+    local unitPolarity = caps.unitPolarity
+    if (unitPolarity == "friendly" and element.auraType == "HARMFUL")
+        or (unitPolarity == "hostile" and element.auraType == "HELPFUL") then
+        local warnText = (element.auraType == "HARMFUL")
+            and ns.L["Blizzard disables per-spell debuff filtering on units you can assist, so critical incoming debuffs can't be hidden — the whitelist/blacklist below will not affect what shows here."]
+            or ns.L["Blizzard disables per-spell buff filtering on units you cannot assist, so buffs can't be faked on enemies — the whitelist/blacklist below will not affect what shows here."]
+        local warn = GUI:CreateLabel(ctx.detailArea, warnText, 11, C.warning)
+        warn:SetJustifyH("LEFT")
+        warn:SetWordWrap(true)
+        warn:SetNonSpaceWrap(true)
+        add(warn, 34, true)
     end
 
     -- Blacklist compiles in EVERY filter mode (excludeSpellIDs composes with

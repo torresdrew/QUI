@@ -16,76 +16,53 @@ local function assertNotContains(text, needle, reason)
     assert(not text:find(needle, 1, true), reason)
 end
 
-local function assertOrder(text, first, second, reason)
-    local firstIndex = assert(text:find(first, 1, true), "missing first marker: " .. first)
-    local secondIndex = assert(text:find(second, 1, true), "missing second marker: " .. second)
-    assert(firstIndex < secondIndex, reason)
-end
-
 local tooltipSkin = readFile("modules/skinning/system/tooltips.lua")
 local tooltipQOL = readFile("modules/qol/tooltip.lua")
+local auraContainerTOC = readFile(
+    "tests/framexml/Interface/AddOns/Blizzard_AuraContainer/Blizzard_AuraContainer.toc")
+local auraTooltipXML = readFile(
+    "tests/framexml/Interface/AddOns/Blizzard_AuraContainer/Mainline/Blizzard_AuraButtonTooltip.xml")
+local auraContainerInbound = readFile(
+    "tests/framexml/Interface/AddOns/Blizzard_AuraContainer/Blizzard_AuraContainerInbound.lua")
 
-assertContains(tooltipSkin, "local auraTooltipType = Enum.TooltipDataType.UnitAura or Enum.TooltipDataType.Aura",
+-- Blizzard contract: this tooltip is not in the add-on-visible environment.
+assertContains(auraContainerTOC, "## UseSecureEnvironment: 1",
+    "AuraContainer must be modeled as a secure-environment Blizzard add-on")
+assertContains(auraTooltipXML, '<ScopedModifier forbidden="true" hideFromGlobalEnv="true">',
+    "AuraButtonTooltip must be modeled as forbidden and hidden from _G")
+assertContains(auraContainerInbound, "GetDefaultAuraDurationFormatter",
+    "test fixture should expose AuraContainer's one public inbound helper")
+assertNotContains(auraContainerInbound, "Tooltip",
+    "AuraContainer must not be modeled as publishing a tooltip styling handle")
+assertNotContains(auraContainerTOC, "Outbound",
+    "a new AuraContainer secure-to-global outbound bridge must force this limitation to be re-audited")
+
+-- Normal, add-on-visible UnitAura tooltips still use the standard post-call path.
+assertContains(tooltipSkin,
+    "local auraTooltipType = Enum.TooltipDataType.UnitAura or Enum.TooltipDataType.Aura",
     "tooltip skinning must resolve the aura tooltip type with a client-version fallback")
+assertContains(tooltipSkin,
+    "TooltipDataProcessor.AddTooltipPostCall(auraTooltipType, RunHandlePostCall)",
+    "normal UnitAura tooltips must retain the standard QUI post-call")
 
-assertContains(tooltipSkin, "TooltipDataProcessor.AddTooltipPostCall(auraTooltipType, RunHandlePostCall)",
-    "tooltip skinning must subscribe to UnitAura post-calls so normal aura tooltips get QUI chrome")
-
-assertContains(tooltipSkin, "local function HandleForbiddenAuraTooltip(tooltip)",
-    "tooltip skinning must isolate forbidden AuraButtonTooltip probing in a dedicated helper")
-
-assertContains(tooltipSkin, "if IsProtectedTooltip(tooltip) then",
-    "tooltip post-call handling must check forbidden/protected tooltip owner chains")
-
-local postCallBody = assert(tooltipSkin:match("local function HandlePostCall%(tooltip%)%s*(.-)%s*local function RunHandlePostCall"),
-    "tooltip skinning must define HandlePostCall before RunHandlePostCall")
-
-assertOrder(
-    postCallBody,
-    "if tooltip == GameTooltip then",
-    "if IsProtectedTooltip(tooltip) then",
-    "GameTooltip must use its own protected-owner path before non-GameTooltip tooltip checks")
-
-assertContains(
-    postCallBody,
-    "if IsProtectedTooltip(tooltip) then\n            HandleForbiddenAuraTooltip(tooltip)\n            return\n        end\n        SafeHookTooltipOnShow(tooltip)",
-    "forbidden/protected non-GameTooltip aura checks must run before installing Show/NineSlice hooks")
-
-assertNotContains(tooltipSkin, "if not TooltipDebugAuraButtonTooltipProbe() then",
-    "AuraButtonTooltip skinning must not be suppressed behind the old debug-only probe gate")
-
-assertContains(tooltipSkin, "not IsEnabled() and not TooltipDebugAuraButtonTooltipProbe()",
-    "AuraButtonTooltip skinning must run by default when tooltip skinning is enabled")
-
-assertContains(tooltipSkin, "pcall(ApplyTooltipChrome, tooltip)",
-    "AuraButtonTooltip skinning attempts must be pcall-guarded")
-
-assertContains(tooltipSkin, "TooltipDebugCount(\"skin.auraButtonTooltipForbidden\")",
-    "forbidden AuraButtonTooltip encounters must be visible in tooltip debug counters")
-
-assertContains(tooltipQOL, "AppendCounter(parts, \"skin.auraButtonTooltipSkinOk\", \"auraTipOk\")",
-    "tooltip debug reports must surface successful AuraButtonTooltip skin attempts")
-
-assertContains(tooltipSkin, "PrivateAurasTooltipMixin",
-    "AuraButtonTooltip probing must hook the real PrivateAurasTooltipMixin boundary")
-
-assertContains(tooltipSkin, "hooksecurefunc(PrivateAurasTooltipMixin, \"ShowAuraTooltip\"",
-    "AuraButtonTooltip probing must observe ShowAuraTooltip directly when TooltipDataProcessor is silent")
-
-assertContains(tooltipSkin, "SetupAuraTooltipProbeHook()\n        QueueExtraTooltipDiscovery()",
-    "AuraButtonTooltip probe hook must retry on ADDON_LOADED in case Blizzard loads the mixin late")
-
-assertContains(tooltipSkin, "ns.QUI_GetAuraTooltipProbeStatus = function()",
-    "tooltip skinning must expose AuraButtonTooltip probe install status")
-
-assertContains(tooltipQOL, "subcmd == \"auratip\"",
-    "tooltip debug command must expose an AuraButtonTooltip probe toggle")
-
-assertContains(tooltipQOL, "ns.QUI_GetAuraTooltipProbeStatus",
-    "tooltip debug auratip command must print skin-module probe status")
-
-assertContains(tooltipQOL, "self.tryAuraButtonTooltipSkin = enabled",
-    "tooltip debug AuraButtonTooltip probe must set the shared debug flag used by the skinner")
+-- Do not recreate impossible globals in tests. PrivateAurasTooltipMixin,
+-- TooltipDataProcessor, and EventRegistry are separate inside the secure env.
+assertNotContains(tooltipSkin, "hooksecurefunc(PrivateAurasTooltipMixin",
+    "QUI must not hook a secure-environment-only mixin")
+assertNotContains(tooltipSkin, "SetupAuraTooltipEventHook",
+    "QUI must not install an aura-specific global EventRegistry hook that cannot see the secure tooltip")
+assertNotContains(tooltipSkin, "ApplyTooltipChrome(tooltip, true)",
+    "QUI must not bypass secret geometry guards for forbidden AuraButtonTooltip")
+assertContains(tooltipSkin, 'supported = false',
+    "the runtime probe status must report that native AuraButtonTooltip skinning is unsupported")
+assertContains(tooltipSkin, 'reason = "secure-environment"',
+    "the runtime probe status must explain the secure-environment boundary")
+assertContains(tooltipQOL, "auratip status skin=%s supported=%s reason=%s",
+    "tooltip debug must report the limitation instead of a dead hook status")
+assertContains(tooltipQOL, 'AppendCounter(parts, "skin.protectedTooltipSkipped", "protSkip")',
+    "protected tooltip skips must remain visible in periodic tooltip debug reports")
+assertNotContains(tooltipQOL, "tryAuraButtonTooltipSkin",
+    "tooltip debug must not expose a toggle for an impossible skin attempt")
 
 local function makeFrame(name)
     local frame = {
@@ -131,9 +108,7 @@ end
 
 local eventFrame
 local hookedShows = {}
-local methodHooks = {}
 local callbacks = {}
-local createdStyleFrames = {}
 local debugCounts = {}
 
 _G.UIParent = makeFrame("UIParent")
@@ -150,15 +125,10 @@ _G.CreateFrame = function(_, name, parent)
     local frame = makeFrame(name)
     frame.parent = parent
     if not eventFrame then eventFrame = frame end
-    createdStyleFrames[#createdStyleFrames + 1] = frame
     return frame
 end
 _G.C_Timer = { After = function(_, callback) callback() end }
-_G.hooksecurefunc = function(target, methodName, callback)
-    if type(target) == "table" and type(methodName) == "string" and type(callback) == "function" then
-        methodHooks[target] = methodHooks[target] or {}
-        methodHooks[target][methodName] = callback
-    end
+_G.hooksecurefunc = function(target, methodName)
     if methodName == "Show" then
         hookedShows[target] = (hookedShows[target] or 0) + 1
     end
@@ -173,9 +143,6 @@ _G.Enum = {
         Unit = 3,
         UnitAura = 4,
     },
-}
-_G.PrivateAurasTooltipMixin = {
-    ShowAuraTooltip = function() end,
 }
 _G.TooltipDataProcessor = {
     AddTooltipPostCall = function(tooltipType, callback)
@@ -211,9 +178,7 @@ local ns = {
         End = function() end,
     },
     SkinBase = {
-        CHROME = {
-            BG_FALLBACK = {0, 0, 0, 1},
-        },
+        CHROME = { BG_FALLBACK = {0, 0, 0, 1} },
         SkinFrameText = function() end,
     },
     UIKit = {
@@ -237,39 +202,22 @@ local protectedOwner = makeFrame("ProtectedOwner")
 protectedOwner.protected = true
 local protectedTooltip = makeFrame("ProtectedAuraTooltip")
 protectedTooltip.owner = protectedOwner
-
 auraPostCall(protectedTooltip)
 assert(hookedShows[protectedTooltip] == nil,
-    "protected-owner UnitAura tooltip must return before installing Show/NineSlice hooks")
+    "protected-owner UnitAura tooltip must return before installing hooks")
 
-local auraTooltipHook = assert(methodHooks[PrivateAurasTooltipMixin]
-        and methodHooks[PrivateAurasTooltipMixin].ShowAuraTooltip,
-    "tooltip skinning must hook PrivateAurasTooltipMixin:ShowAuraTooltip for AuraButtonTooltip diagnostics")
-
-local auraButtonTooltip = makeFrame("AuraButtonTooltip")
-auraButtonTooltip.forbidden = true
-local styleFrameCountBeforeAuraTip = #createdStyleFrames
-auraTooltipHook(auraButtonTooltip, "player", { auraInstanceID = 1 })
-
-assert(debugCounts["skin.auraButtonTooltipForbidden"] == 1,
-    "ShowAuraTooltip hook should count forbidden AuraButtonTooltip even when TooltipDataProcessor is silent")
-assert(debugCounts["skin.auraButtonTooltipSkinOk"] == 1,
-    "AuraButtonTooltip should attempt QUI chrome by default when tooltip skinning is enabled"
-        .. " (ok=" .. tostring(debugCounts["skin.auraButtonTooltipSkinOk"])
-        .. " fail=" .. tostring(debugCounts["skin.auraButtonTooltipSkinFail"]) .. ")")
-assert(#createdStyleFrames > styleFrameCountBeforeAuraTip,
-    "AuraButtonTooltip should receive a QUI-owned chrome frame by default")
-
-auraTooltipHook(auraButtonTooltip, "player", { auraInstanceID = 1 })
-assert(debugCounts["skin.auraButtonTooltipStableSkip"] == 1,
-    "AuraButtonTooltip should stable-skip repeated Blizzard refreshes after chrome is active")
+local forbiddenTooltip = makeFrame("AuraButtonTooltip")
+forbiddenTooltip.forbidden = true
+auraPostCall(forbiddenTooltip)
+assert(hookedShows[forbiddenTooltip] == nil,
+    "forbidden UnitAura tooltip must stay entirely Blizzard-owned")
+assert(debugCounts["skin.protectedTooltipSkipped"] == 2,
+    "protected and forbidden non-GameTooltip skips should remain observable")
 
 local status = assert(ns.QUI_GetAuraTooltipProbeStatus and ns.QUI_GetAuraTooltipProbeStatus(),
-    "tooltip skinning must expose AuraButtonTooltip probe status at runtime")
-assert(status.skinningLoaded == true, "probe status should report the skinning module as loaded")
-assert(status.mixinVisible == true, "probe status should report PrivateAurasTooltipMixin visibility")
-assert(status.showAuraTooltipVisible == true, "probe status should report ShowAuraTooltip visibility")
-assert(status.hookInstalled == true, "probe status should report the direct ShowAuraTooltip hook is installed")
-assert(status.observedTooltips == 2, "probe status should count observed AuraButtonTooltip invocations")
+    "tooltip skinning must expose the AuraButtonTooltip support status")
+assert(status.skinningLoaded == true, "status should report the skinning module as loaded")
+assert(status.supported == false, "status should report native AuraButtonTooltip skinning unsupported")
+assert(status.reason == "secure-environment", "status should report the exact boundary")
 
 print("OK: tooltip_unit_aura_forbidden_probe_test")

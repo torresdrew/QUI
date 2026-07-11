@@ -3324,6 +3324,9 @@ local function RunCDMDebugCache(msg)
             and ns.CDMRuntimeStore.GetStats() or {}
         local combat = InCombatLockdown() and "true" or "false"
         print(("|cff34D399[CDM-Cache]|r status (combat=%s)"):format(combat))
+        if ns._cdmBootError then
+            print(("  reanchor bootError:       %s"):format(tostring(ns._cdmBootError)))
+        end
         print(("  hud_visibility frames:    dirty=%s size=%d"):format(
             tostring(fr.dirty), tonumber(fr.size) or 0))
         print(("  child map (spellID->child): dirty=%s size=%d"):format(
@@ -3333,9 +3336,9 @@ local function RunCDMDebugCache(msg)
             tonumber(s.capturedAuraUnits) or 0,
             tonumber(s.capturedAuraSpellKeys) or 0,
             tonumber(s.capturedAuraNameKeys) or 0))
-        print(("  runtime store:            states=%d version=%d"):format(
-            tonumber(rt.states) or 0,
-            tonumber(rt.version) or 0))
+        print(("  runtime store:            frame-owned (no central count) version=%d compat=%d"):format(
+            tonumber(rt.version) or 0,
+            tonumber(rt.compatState) or 0))
         print(("  learned cooldowns:        dirty=%s size=%d"):format(
             tostring(s.learnedDirty), tonumber(s.learnedSize) or 0))
         print(("  tick aura caches:         data=%d dur=%d exp=%d app=%d"):format(

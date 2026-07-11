@@ -57,6 +57,23 @@ local inInitSafeWindow = false
 local QUI_UF = {}
 ns.QUI_UnitFrames = QUI_UF
 
+-- Keep the runtime unit token off the secure button itself. Blizzard's 12.1
+-- PingableType_UnitFrameMixin prefers the Lua field `self.unit` over the
+-- secure `unit` attribute; an addon-written field taints the target info the
+-- ping flow hands to C_PingSecure.SendUnitPing. QUI reads its own weak side
+-- state while the ping mixin falls through to the frame's unit attribute.
+-- (Mirrors QUI_GF.GetFrameUnit / SetFrameUnit in groupframes.lua.)
+local ufUnitState, GetUFUnitState = Helpers.CreateStateTable()
+function QUI_UF.GetFrameUnit(frame)
+    if not frame then return nil end
+    local state = ufUnitState[frame]
+    return state and state.unit or nil
+end
+function QUI_UF.SetFrameUnit(frame, unit)
+    if not frame then return end
+    GetUFUnitState(frame).unit = unit
+end
+
 -- Frame references
 QUI_UF.frames = {}
 QUI_UF.castbars = {}
@@ -438,7 +455,7 @@ local function ShowUnitTooltip(frame)
     end
 
     -- Determine the unit
-    local unit = frame.unit or (frame.GetAttribute and frame:GetAttribute("unit"))
+    local unit = QUI_UF.GetFrameUnit(frame) or (frame.GetAttribute and frame:GetAttribute("unit"))
     if not unit then
         -- Try parent for child frames (healthBar, powerBar, etc.)
         local parent = frame:GetParent()
@@ -809,8 +826,9 @@ end
 -- UPDATE: Health bar (no comparisons, just pass values directly)
 ---------------------------------------------------------------------------
 local function UpdateHealth(frame)
-    if not frame or not frame.unit or not frame.healthBar then return end
-    local unit = frame.unit
+    if not frame or not frame.healthBar then return end
+    local unit = QUI_UF.GetFrameUnit(frame)
+    if not unit then return end
     local settings = GetUnitSettings(frame.unitKey)
 
     -- Don't update if unit doesn't exist
@@ -918,7 +936,7 @@ local function UpdateHealth(frame)
         local c = general.darkModeHealthColor or { 0.15, 0.15, 0.15, 1 }
         frame.healthBar:SetStatusBarColor(c[1], c[2], c[3], c[4] or 1)
     else
-        local r, g, b, a = GetHealthBarColor(frame.unit, settings)
+        local r, g, b, a = GetHealthBarColor(unit, settings)
         frame.healthBar:SetStatusBarColor(r, g, b, a)
     end
 end
@@ -928,10 +946,11 @@ end
 -- Uses CreateUnitHealPredictionCalculator to detect when absorb would overflow
 ---------------------------------------------------------------------------
 local function UpdateAbsorbs(frame)
-    if not frame or not frame.unit or not frame.healthBar then return end
+    if not frame or not frame.healthBar then return end
     if not frame.absorbBar then return end
 
-    local unit = frame.unit
+    local unit = QUI_UF.GetFrameUnit(frame)
+    if not unit then return end
     local settings = GetUnitSettings(frame.unitKey)
     local healthReversed = ApplyHealthFillDirection(frame, settings)
 
@@ -1135,9 +1154,10 @@ end
 -- UPDATE: Incoming heal prediction (clamped to missing health)
 ---------------------------------------------------------------------------
 local function UpdateHealPrediction(frame)
-    if not frame or not frame.unit or not frame.healthBar or not frame.healPredictionBar then return end
+    if not frame or not frame.healthBar or not frame.healPredictionBar then return end
 
-    local unit = frame.unit
+    local unit = QUI_UF.GetFrameUnit(frame)
+    if not unit then return end
     local settings = GetUnitSettings(frame.unitKey)
     local predictionSettings = settings and settings.healPrediction
     local healthReversed = ApplyHealthFillDirection(frame, settings)
@@ -1242,8 +1262,9 @@ end
 -- UPDATE: Power bar (no comparisons, just pass values directly)
 ---------------------------------------------------------------------------
 local function UpdatePower(frame)
-    if not frame or not frame.unit or not frame.powerBar then return end
-    local unit = frame.unit
+    if not frame or not frame.powerBar then return end
+    local unit = QUI_UF.GetFrameUnit(frame)
+    if not unit then return end
 
     if not UnitExists(unit) then return end
 
@@ -1276,10 +1297,10 @@ end
 -- UPDATE: Power text (separate from power bar)
 ---------------------------------------------------------------------------
 local function UpdatePowerText(frame)
-    if not frame or not frame.unit then return end
-    if not frame.powerText then return end
+    if not frame or not frame.powerText then return end
 
-    local unit = frame.unit
+    local unit = QUI_UF.GetFrameUnit(frame)
+    if not unit then return end
     local settings = GetUnitSettings(frame.unitKey)
 
     -- Check if power text is enabled
@@ -1369,7 +1390,7 @@ local function UpdateIndicators(frame)
     -- bool so the target's combat state is safe to test directly)
     if frame.combatIndicator then
         local combat = indSettings.combat
-        if combat and combat.enabled and UnitAffectingCombat(frame.unit or "player") then
+        if combat and combat.enabled and UnitAffectingCombat(QUI_UF.GetFrameUnit(frame) or "player") then
             frame.combatIndicator:Show()
         else
             frame.combatIndicator:Hide()
@@ -1480,14 +1501,14 @@ end
 -- UPDATE: Target Marker (raid icons like skull, cross, diamond, etc.)
 ---------------------------------------------------------------------------
 local function UpdateTargetMarker(frame)
-    if not frame or not frame.unit or not frame.targetMarker then return end
+    if not frame or not QUI_UF.GetFrameUnit(frame) or not frame.targetMarker then return end
     local settings = GetUnitSettings(frame.unitKey)
     if not settings or not settings.targetMarker or not settings.targetMarker.enabled then
         frame.targetMarker:Hide()
         return
     end
 
-    local index = GetRaidTargetIndex(frame.unit)
+    local index = GetRaidTargetIndex(QUI_UF.GetFrameUnit(frame))
     if index then
         SetRaidTargetIconTexture(frame.targetMarker, index)
         frame.targetMarker:Show()
@@ -1500,7 +1521,7 @@ end
 -- UPDATE: Leader/Assistant Icon (crown for leader, flag for assistant)
 ---------------------------------------------------------------------------
 local function UpdateLeaderIcon(frame)
-    if not frame or not frame.unit or not frame.leaderIcon then return end
+    if not frame or not QUI_UF.GetFrameUnit(frame) or not frame.leaderIcon then return end
     local settings = GetUnitSettings(frame.unitKey)
     if not settings or not settings.leaderIcon or not settings.leaderIcon.enabled then
         frame.leaderIcon:Hide()
@@ -1515,11 +1536,11 @@ local function UpdateLeaderIcon(frame)
 
     -- Check if unit is leader or assistant
     -- Note: Assistants only exist in raids, not parties
-    if UnitIsGroupLeader(frame.unit) then
+    if UnitIsGroupLeader(QUI_UF.GetFrameUnit(frame)) then
         frame.leaderIcon:SetAtlas("groupfinder-icon-leader")
         frame.leaderIcon:SetAlpha(1)
         frame.leaderIcon:Show()
-    elseif IsInRaid() and UnitIsGroupAssistant(frame.unit) then
+    elseif IsInRaid() and UnitIsGroupAssistant(QUI_UF.GetFrameUnit(frame)) then
         frame.leaderIcon:SetAtlas("groupfinder-icon-leader")
         frame.leaderIcon:SetAlpha(0.6)
         frame.leaderIcon:Show()
@@ -1542,22 +1563,22 @@ local CLASSIFICATION_DATA = {
 }
 
 local function UpdateClassificationIcon(frame)
-    if not frame or not frame.unit or not frame.classificationIcon then return end
+    if not frame or not QUI_UF.GetFrameUnit(frame) or not frame.classificationIcon then return end
     local settings = GetUnitSettings(frame.unitKey)
     if not settings or not settings.classificationIcon or not settings.classificationIcon.enabled then
         if frame.classificationIcon then frame.classificationIcon:Hide() end
         return
     end
 
-    if not UnitExists(frame.unit) then
+    if not UnitExists(QUI_UF.GetFrameUnit(frame)) then
         frame.classificationIcon:Hide()
         return
     end
 
-    local classification = UnitClassification(frame.unit)
+    local classification = UnitClassification(QUI_UF.GetFrameUnit(frame))
     -- Boss-level mobs (skull, level -1) may return "normal" from UnitClassification
     if not CLASSIFICATION_DATA[classification] then
-        local level = UnitLevel(frame.unit)
+        local level = UnitLevel(QUI_UF.GetFrameUnit(frame))
         if level and level == -1 then
             classification = "worldboss"
         end
@@ -1577,7 +1598,7 @@ end
 -- UPDATE: Health text color (independent of name visibility)
 ---------------------------------------------------------------------------
 local function UpdateHealthTextColor(frame)
-    if not frame or not frame.healthText or not frame.unit then return end
+    if not frame or not frame.healthText or not QUI_UF.GetFrameUnit(frame) then return end
 
     local settings = GetUnitSettings(frame.unitKey)
     if not settings then return end
@@ -1585,16 +1606,16 @@ local function UpdateHealthTextColor(frame)
     local general = GetGeneralSettings()
 
     if general and general.masterColorHealthText then
-        local r, g, b = GetUnitClassColor(frame.unit)
+        local r, g, b = GetUnitClassColor(QUI_UF.GetFrameUnit(frame))
         frame.healthText:SetTextColor(r, g, b, 1)
     elseif settings.healthTextUseClassColor then
-        local r, g, b = GetUnitClassColor(frame.unit)
+        local r, g, b = GetUnitClassColor(QUI_UF.GetFrameUnit(frame))
         frame.healthText:SetTextColor(r, g, b, 1)
     elseif settings.healthTextColor then
         local c = settings.healthTextColor
         frame.healthText:SetTextColor(c[1] or 1, c[2] or 1, c[3] or 1, c[4] or 1)
     elseif general and general.classColorText then
-        local r, g, b = GetUnitClassColor(frame.unit)
+        local r, g, b = GetUnitClassColor(QUI_UF.GetFrameUnit(frame))
         frame.healthText:SetTextColor(r, g, b, 1)
     else
         frame.healthText:SetTextColor(1, 1, 1, 1)
@@ -1615,8 +1636,9 @@ end
 -- UPDATE: Name text (with truncation and inline ToT support)
 ---------------------------------------------------------------------------
 local function UpdateName(frame)
-    if not frame or not frame.unit or not frame.nameText then return end
-    local unit = frame.unit
+    if not frame or not frame.nameText then return end
+    local unit = QUI_UF.GetFrameUnit(frame)
+    if not unit then return end
 
     local settings = GetUnitSettings(frame.unitKey)
     local nameSettings = GetNameSettings(settings)
@@ -1636,11 +1658,12 @@ local function UpdateName(frame)
     -- Inline Target of Target — target frame + boss frames (the boss's own target).
     -- Boss-ToT refreshes on the boss frame's existing UpdateFrame cadence (health
     -- ticks etc.), so it stays current in combat without dedicated UNIT_TARGET
-    -- wiring. Names/colors are secret-safe (GetUnitClassColor returns plain numbers,
-    -- TruncateName C-side-formats secret names, UnitName feeds SetText which accepts
-    -- secrets) so an ally boss-target in restricted combat never errors.
+    -- wiring. A secret name must NOT be concatenated into the inline label: TruncateName
+    -- returns a viral-secret string for secret names, and `..` on a secret throws. The
+    -- build below detects a secret name/ToT-name and skips the concat, leaving the plain
+    -- base name to SetText (which accepts secrets) so restricted combat never errors.
     if (frame.unitKey == "target" or frame.unitKey == "boss") and settings.showInlineToT then
-        local totUnit = (frame.unitKey == "boss") and (frame.unit .. "target") or "targettarget"
+        local totUnit = (frame.unitKey == "boss") and (unit .. "target") or "targettarget"
         if UnitExists(totUnit) then
             local totName = UnitName(totUnit) or ""
             local totCharLimit = settings.totNameCharLimit
@@ -1666,21 +1689,26 @@ local function UpdateName(frame)
                 dividerColorHex = "|cFFFFFFFF"
             end
 
-            -- Build the inline text with class coloring for ToT (master override OR per-unit setting)
-            local general = GetGeneralSettings()
-            if general and general.masterColorToTText then
-                -- MASTER OVERRIDE: Color ToT name only
-                local totR, totG, totB = GetUnitClassColor(totUnit)
-                local totColorHex = string_format("|cff%02x%02x%02x", totR * 255, totG * 255, totB * 255)
-                name = name .. dividerColorHex .. separator .. "|r" .. totColorHex .. totName .. "|r"
-            elseif settings.totUseClassColor then
-                -- Per-unit: ToT name colored
-                local totR, totG, totB = GetUnitClassColor(totUnit)
-                local totColorHex = string_format("|cff%02x%02x%02x", totR * 255, totG * 255, totB * 255)
-                name = name .. dividerColorHex .. separator .. "|r" .. totColorHex .. totName .. "|r"
-            else
-                -- Default: Divider colored, ToT name uncolored
-                name = name .. dividerColorHex .. separator .. "|r" .. totName
+            -- Build the inline text with class coloring for ToT (master override OR per-unit
+            -- setting). Concatenating a secret name throws (TruncateName returns a viral-secret
+            -- string), so skip the inline ToT entirely when either name is secret — the base
+            -- name still renders via SetText below.
+            if not IsSecretValue(name) and not IsSecretValue(totName) then
+                local general = GetGeneralSettings()
+                if general and general.masterColorToTText then
+                    -- MASTER OVERRIDE: Color ToT name only
+                    local totR, totG, totB = GetUnitClassColor(totUnit)
+                    local totColorHex = string_format("|cff%02x%02x%02x", totR * 255, totG * 255, totB * 255)
+                    name = name .. dividerColorHex .. separator .. "|r" .. totColorHex .. totName .. "|r"
+                elseif settings.totUseClassColor then
+                    -- Per-unit: ToT name colored
+                    local totR, totG, totB = GetUnitClassColor(totUnit)
+                    local totColorHex = string_format("|cff%02x%02x%02x", totR * 255, totG * 255, totB * 255)
+                    name = name .. dividerColorHex .. separator .. "|r" .. totColorHex .. totName .. "|r"
+                else
+                    -- Default: Divider colored, ToT name uncolored
+                    name = name .. dividerColorHex .. separator .. "|r" .. totName
+                end
             end
         end
     end
@@ -1717,7 +1745,7 @@ end
 -- UPDATE: Level text
 ---------------------------------------------------------------------------
 local function UpdateLevelText(frame)
-    if not frame or not frame.unit or not frame.levelText then return end
+    if not frame or not QUI_UF.GetFrameUnit(frame) or not frame.levelText then return end
 
     local settings = GetUnitSettings(frame.unitKey)
     if not settings or settings.showLevel ~= true then
@@ -1725,13 +1753,13 @@ local function UpdateLevelText(frame)
         return
     end
 
-    if not UnitExists(frame.unit) then
+    if not UnitExists(QUI_UF.GetFrameUnit(frame)) then
         frame.levelText:SetText("")
         frame.levelText:Hide()
         return
     end
 
-    local text = FormatUnitLevelText(frame.unit)
+    local text = FormatUnitLevelText(QUI_UF.GetFrameUnit(frame))
     if text == "" then
         frame.levelText:SetText("")
         frame.levelText:Hide()
@@ -1761,7 +1789,7 @@ local function UpdateFrame(frame)
             frame.healthBar:SetStatusBarColor(c[1], c[2], c[3], c[4] or 1)
         else
             -- Use unit-specific color settings (class color → hostility color → custom color)
-            local r, g, b, a = GetHealthBarColor(frame.unit, settings)
+            local r, g, b, a = GetHealthBarColor(QUI_UF.GetFrameUnit(frame), settings)
             frame.healthBar:SetStatusBarColor(r, g, b, a)
         end
     end
@@ -1782,8 +1810,8 @@ local function UpdateFrame(frame)
 
     -- Update portrait texture (third param disables circular mask for square portrait)
     if frame.portraitTexture and frame.portrait and frame.portrait:IsShown() then
-        if UnitExists(frame.unit) then
-            SetPortraitTexture(frame.portraitTexture, frame.unit, true)
+        if UnitExists(QUI_UF.GetFrameUnit(frame)) then
+            SetPortraitTexture(frame.portraitTexture, QUI_UF.GetFrameUnit(frame), true)
             frame.portraitTexture:SetTexCoord(0.15, 0.85, 0.15, 0.85)  -- Crop to focus on face
         end
     end
@@ -1812,7 +1840,7 @@ local function CreateBossFrame(unit, frameKey, bossIndex)
     local frameName = "QUI_Boss" .. bossIndex
     local frame = CreateFrame("Button", frameName, UIParent, "SecureUnitButtonTemplate, BackdropTemplate, PingableUnitFrameTemplate")
 
-    frame.unit = unit  -- "boss1", "boss2", etc.
+    QUI_UF.SetFrameUnit(frame, unit)  -- "boss1", "boss2", etc.
     frame.unitKey = "boss"  -- Settings key
 
     -- Size and position (config values are virtual coords, snap to pixel grid)
@@ -2089,26 +2117,27 @@ local function CreateBossFrame(unit, frameKey, bossIndex)
     end
 
     frame:SetScript("OnEvent", function(self, event, ...)
+        local frameUnit = QUI_UF.GetFrameUnit(self)
         if event == "UNIT_HEALTH" or event == "UNIT_MAXHEALTH" then
             local eventUnit = ...
-            if eventUnit == self.unit then
+            if eventUnit == frameUnit then
                 UpdateHealth(self)
                 UpdateAbsorbs(self)
             end
         elseif event == "UNIT_ABSORB_AMOUNT_CHANGED" or event == "UNIT_HEAL_ABSORB_AMOUNT_CHANGED" then
             local eventUnit = ...
-            if eventUnit == self.unit then
+            if eventUnit == frameUnit then
                 UpdateAbsorbs(self)
             end
         elseif event == "UNIT_POWER_FREQUENT" then
             local eventUnit = ...
-            if eventUnit == self.unit then
+            if eventUnit == frameUnit then
                 _powerThrottleDirty = true
                 self:SetScript("OnUpdate", PowerThrottleOnUpdate)
             end
         elseif event == "UNIT_POWER_UPDATE" or event == "UNIT_MAXPOWER" then
             local eventUnit = ...
-            if eventUnit == self.unit then
+            if eventUnit == frameUnit then
                 UpdatePower(self)
                 UpdatePowerText(self)
                 _powerThrottleDirty = false  -- just did a full update
@@ -2117,25 +2146,25 @@ local function CreateBossFrame(unit, frameKey, bossIndex)
             end
         elseif event == "UNIT_NAME_UPDATE" then
             local eventUnit = ...
-            if eventUnit == self.unit then
+            if eventUnit == frameUnit then
                 UpdateName(self)
                 UpdateLevelText(self)
             end
         elseif event == "UNIT_LEVEL" then
             local eventUnit = ...
-            if eventUnit == self.unit then
+            if eventUnit == frameUnit then
                 UpdateLevelText(self)
             end
         elseif event == "UNIT_TARGET" then
             local eventUnit = ...
-            if eventUnit == self.unit then
+            if eventUnit == frameUnit then
                 UpdateName(self)
             end
         elseif event == "RAID_TARGET_UPDATE" then
             UpdateTargetMarker(self)
         elseif event == "UNIT_CLASSIFICATION_CHANGED" then
             local eventUnit = ...
-            if eventUnit == self.unit then
+            if eventUnit == frameUnit then
                 UpdateClassificationIcon(self)
                 UpdateLevelText(self)
             end
@@ -2222,12 +2251,19 @@ local function UpdateBossTargetHighlight()
     -- Find which boss frame (if any) is our current target
     for i = 1, 5 do
         local frame = QUI_UF.frames["boss" .. i]
-        if frame and frame.unit and frame.targetHighlight and UnitExists(frame.unit) and UnitIsUnit(frame.unit, "target") then
-            local c = hlSettings.color or { 1, 1, 1, 0.6 }
-            frame.targetHighlight:SetBackdropBorderColor(c[1], c[2], c[3], c[4] or 0.6)
-            frame.targetHighlight:Show()
-            _bossTargetHighlightFrame = frame
-            return
+        local frameUnit = QUI_UF.GetFrameUnit(frame)
+        if frame and frameUnit and frame.targetHighlight and UnitExists(frameUnit) then
+            -- UnitIsUnit is SecretWhenUnitComparisonRestricted; on restricted maps it
+            -- returns a secret boolean (opaque userdata, always truthy in Lua) that would
+            -- light every boss frame. Gate it so only a real, non-secret match highlights.
+            local isTarget = UnitIsUnit(frameUnit, "target")
+            if not IsSecretValue(isTarget) and isTarget then
+                local c = hlSettings.color or { 1, 1, 1, 0.6 }
+                frame.targetHighlight:SetBackdropBorderColor(c[1], c[2], c[3], c[4] or 0.6)
+                frame.targetHighlight:Show()
+                _bossTargetHighlightFrame = frame
+                return
+            end
         end
     end
 end
@@ -2340,7 +2376,8 @@ local function EnsureBossRangeEventFrame()
             if not range or range.enabled == false then return end
             if not ShouldApplyBossRangeAlpha() then return end
             local frame = QUI_UF.frames and QUI_UF.frames[unit]
-            if frame and frame.unit and UnitExists(frame.unit) then
+            local frameUnit = QUI_UF.GetFrameUnit(frame)
+            if frame and frameUnit and UnitExists(frameUnit) then
                 ApplyBossRangeAlpha(frame, isInRange, range.outOfRangeAlpha or 0.4)
             end
         else
@@ -2389,7 +2426,7 @@ local function CreateUnitFrame(unit, unitKey)
     local frameName = "QUI_" .. unitKey:gsub("^%l", string.upper)
     local frame = CreateFrame("Button", frameName, UIParent, "SecureUnitButtonTemplate, BackdropTemplate, PingableUnitFrameTemplate")
 
-    frame.unit = unit
+    QUI_UF.SetFrameUnit(frame, unit)
     frame.unitKey = unitKey
 
     -- Size and position (config values are virtual coords, snap to pixel grid)
@@ -2846,7 +2883,22 @@ local function CreateUnitFrame(unit, unitKey)
         frame:RegisterUnitEvent("UNIT_FLAGS", unit)
     end
 
+    -- Coalesce UNIT_POWER_FREQUENT (regen ticks, many/sec) to ~5 Hz.
+    -- UNIT_POWER_UPDATE / UNIT_MAXPOWER are discrete and stay immediate.
+    -- C_Timer drain instead of an OnUpdate script so the frame's OnUpdate
+    -- slot stays free; callbacks are uncancellable, so re-check on fire.
+    local _freqPowerQueued = false
+    local function DrainFrequentPower()
+        _freqPowerQueued = false
+        local u = QUI_UF.GetFrameUnit(frame)
+        if u and UnitExists(u) then
+            UpdatePower(frame)
+            UpdatePowerText(frame)
+        end
+    end
+
     frame:SetScript("OnEvent", function(self, event, arg1)
+        local frameUnit = QUI_UF.GetFrameUnit(self)
         if event == "PLAYER_ENTERING_WORLD" then
             -- Skip refresh if HUD visibility has this frame hidden — the
             -- visibility system will re-evaluate via its own PEW handler.
@@ -2860,13 +2912,13 @@ local function CreateUnitFrame(unit, unitKey)
         elseif event == "PLAYER_TARGET_CHANGED" then
             if self.unitKey == "target" then
                 -- State driver handles visibility, just update if unit exists
-                if UnitExists(self.unit) then
+                if UnitExists(frameUnit) then
                     UpdateFrame(self)
                 end
             elseif self.unitKey == "targettarget" then
                 -- ToT: update if exists, otherwise clear the display
                 -- NOTE: State driver handles Show/Hide - don't call manually to avoid taint
-                if UnitExists(self.unit) then
+                if UnitExists(frameUnit) then
                     UpdateFrame(self)
                 else
                     -- Clear the ToT display when target has no target
@@ -2880,7 +2932,7 @@ local function CreateUnitFrame(unit, unitKey)
                     UpdateName(self)  -- Refresh name text (includes inline ToT)
                 -- Update standalone ToT frame when target's target changes
                 elseif self.unitKey == "targettarget" then
-                    if UnitExists(self.unit) then
+                    if UnitExists(frameUnit) then
                         UpdateFrame(self)
                     else
                         -- Clear display when target has no target
@@ -2891,14 +2943,14 @@ local function CreateUnitFrame(unit, unitKey)
         elseif event == "PLAYER_FOCUS_CHANGED" then
             if self.unitKey == "focus" then
                 -- State driver handles visibility, just update if unit exists
-                if UnitExists(self.unit) then
+                if UnitExists(frameUnit) then
                     UpdateFrame(self)
                 end
             end
         elseif event == "UNIT_PET" then
             if self.unitKey == "pet" then
                 -- State driver handles visibility, just update if unit exists
-                if UnitExists(self.unit) then
+                if UnitExists(frameUnit) then
                     UpdateFrame(self)
                 end
             end
@@ -2926,11 +2978,11 @@ local function CreateUnitFrame(unit, unitKey)
             UpdateLeaderIcon(self)
         elseif event == "UNIT_CLASSIFICATION_CHANGED" then
             -- Classification changed (elite/rare/boss) - target, focus only
-            if arg1 == self.unit then
+            if arg1 == frameUnit then
                 UpdateClassificationIcon(self)
                 UpdateLevelText(self)
             end
-        elseif arg1 == self.unit then
+        elseif arg1 == frameUnit then
             if event == "UNIT_HEALTH" or event == "UNIT_MAXHEALTH" then
                 UpdateHealth(self)
                 UpdateAbsorbs(self)
@@ -2939,7 +2991,12 @@ local function CreateUnitFrame(unit, unitKey)
                 UpdateHealPrediction(self)
             elseif event == "UNIT_ABSORB_AMOUNT_CHANGED" or event == "UNIT_HEAL_ABSORB_AMOUNT_CHANGED" then
                 UpdateAbsorbs(self)
-            elseif event == "UNIT_POWER_UPDATE" or event == "UNIT_POWER_FREQUENT" or event == "UNIT_MAXPOWER" then
+            elseif event == "UNIT_POWER_FREQUENT" then
+                if not _freqPowerQueued then
+                    _freqPowerQueued = true
+                    C_Timer.After(0.2, DrainFrequentPower)
+                end
+            elseif event == "UNIT_POWER_UPDATE" or event == "UNIT_MAXPOWER" then
                 UpdatePower(self)
                 UpdatePowerText(self)
             elseif event == "UNIT_NAME_UPDATE" then
@@ -3337,7 +3394,7 @@ function QUI_UF:HidePreview(unitKey)
 
     -- Re-register state driver for non-player units
     if not InCombatLockdown() then
-        local unit = frame.unit
+        local unit = QUI_UF.GetFrameUnit(frame)
         if unit == "target" then
             RegisterStateDriver(frame, "visibility", "[@target,exists] show; hide")
         elseif unit == "focus" then
@@ -3355,7 +3412,7 @@ function QUI_UF:HidePreview(unitKey)
     end
 
     -- Restore real state
-    if UnitExists(frame.unit) or unitKey == "player" then
+    if UnitExists(QUI_UF.GetFrameUnit(frame)) or unitKey == "player" then
         UpdateFrame(frame)
         frame:Show()
     else
@@ -3637,7 +3694,7 @@ function QUI_UF:RefreshFrame(unitKey)
                         local classificationIcon = frame.indicatorFrame:CreateTexture(nil, "OVERLAY")
                         classificationIcon:Hide()
                         frame.classificationIcon = classificationIcon
-                        frame:RegisterUnitEvent("UNIT_CLASSIFICATION_CHANGED", frame.unit)
+                        frame:RegisterUnitEvent("UNIT_CLASSIFICATION_CHANGED", QUI_UF.GetFrameUnit(frame))
                     end
                     local ci = settings.classificationIcon
                     frame.classificationIcon:SetSize(ci.size or 16, ci.size or 16)
@@ -3764,8 +3821,8 @@ function QUI_UF:RefreshFrame(unitKey)
         bgOpacity = general and general.defaultBgOpacity or general and general.defaultOpacity or 1.0
     end
     -- Class-colored backdrop (player units only; class is safe to read).
-    if settings and settings.useClassColorBg and frame.unit and UnitIsPlayer(frame.unit) then
-        local cr, cg, cb = GetUnitClassColor(frame.unit)
+    if settings and settings.useClassColorBg and QUI_UF.GetFrameUnit(frame) and UnitIsPlayer(QUI_UF.GetFrameUnit(frame)) then
+        local cr, cg, cb = GetUnitClassColor(QUI_UF.GetFrameUnit(frame))
         if cr then bgColor = { cr, cg, cb, bgColor[4] or 1 } end
     end
     local bgAlpha = (bgColor[4] or 1) * bgOpacity
@@ -3861,7 +3918,7 @@ function QUI_UF:RefreshFrame(unitKey)
             frame.portrait = portrait
 
             -- Secure unit attributes for click targeting
-            portrait:SetAttribute("unit", frame.unit)
+            portrait:SetAttribute("unit", QUI_UF.GetFrameUnit(frame))
             portrait:SetAttribute("*type1", "target")
             portrait:SetAttribute("*type2", "togglemenu")
             portrait:RegisterForClicks("AnyUp")
@@ -3905,8 +3962,8 @@ function QUI_UF:RefreshFrame(unitKey)
         frame.portraitTexture:SetPoint("BOTTOMRIGHT", -portraitBorderSize, portraitBorderSize)
 
         -- Update portrait texture
-        if UnitExists(frame.unit) then
-            SetPortraitTexture(frame.portraitTexture, frame.unit, true)
+        if UnitExists(QUI_UF.GetFrameUnit(frame)) then
+            SetPortraitTexture(frame.portraitTexture, QUI_UF.GetFrameUnit(frame), true)
             frame.portraitTexture:SetTexCoord(0.15, 0.85, 0.15, 0.85)
         end
 
@@ -4080,7 +4137,7 @@ function QUI_UF:RefreshFrame(unitKey)
                 if unitKey == "target" or unitKey == "focus" then
                     frame:RegisterEvent("UNIT_CLASSIFICATION_CHANGED")
                 else
-                    frame:RegisterUnitEvent("UNIT_CLASSIFICATION_CHANGED", frame.unit)
+                    frame:RegisterUnitEvent("UNIT_CLASSIFICATION_CHANGED", QUI_UF.GetFrameUnit(frame))
                 end
             end
             -- Update size and position

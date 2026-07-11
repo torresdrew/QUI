@@ -123,7 +123,7 @@ do
 end
 
 ----------------------------------------------------------------------------
--- 4) Idempotency: a repaired (already-51) profile is untouched — an element
+-- 4) Idempotency: a repaired (already-current, 51) profile is untouched — an element
 --    hand-set back to a weird token after repair is NOT re-stripped (the gate
 --    ran once), and the stamp stays 51.
 ----------------------------------------------------------------------------

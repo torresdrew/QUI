@@ -242,10 +242,7 @@ if not TooltipDebug then
         AppendCounter(parts, "skin.postCall", "skinPost")
         AppendCounter(parts, "skin.postGameTooltip", "postGame")
         AppendCounter(parts, "skin.setOwnerDeferred", "ownerDef")
-        AppendCounter(parts, "skin.auraButtonTooltipForbidden", "auraTip")
-        AppendCounter(parts, "skin.auraButtonTooltipSkinOk", "auraTipOk")
-        AppendCounter(parts, "skin.auraButtonTooltipSkinFail", "auraTipFail")
-        AppendCounter(parts, "skin.auraButtonTooltipStableSkip", "auraTipStable")
+        AppendCounter(parts, "skin.protectedTooltipSkipped", "protSkip")
         AppendCounter(parts, "skin.restyleQueued", "restyleQ")
         AppendCounter(parts, "skin.restyleCoalesced", "restyleCo")
         AppendCounter(parts, "skin.restyleRun", "restyleRun")
@@ -396,49 +393,25 @@ if not TooltipDebug then
             return
         end
         if subcmd == "auratip" then
-            arg = arg or "on"
-            local enabled
-            local function PrintAuraTipStatus()
-                local statusFn = ns.QUI_GetAuraTooltipProbeStatus
-                if type(statusFn) ~= "function" then
-                    print("|cff60A5FAQUI tooltipdebug:|r auratip status skin=false statusProvider=false")
-                    return
-                end
-                local ok, status = pcall(statusFn)
-                if not ok or type(status) ~= "table" then
-                    print("|cff60A5FAQUI tooltipdebug:|r auratip status unavailable")
-                    return
-                end
-                print(string.format(
-                    "|cff60A5FAQUI tooltipdebug:|r auratip status skin=%s enabled=%s mixin=%s show=%s hook=%s observed=%s",
-                    tostring(status.skinningLoaded == true),
-                    tostring(status.probeEnabled == true),
-                    tostring(status.mixinVisible == true),
-                    tostring(status.showAuraTooltipVisible == true),
-                    tostring(status.hookInstalled == true),
-                    tostring(status.observedTooltips or 0)))
-            end
-
-            if arg == "status" or arg == "report" then
-                PrintAuraTipStatus()
-                return
-            elseif arg == "on" or arg == "1" or arg == "true" then
-                enabled = true
-            elseif arg == "off" or arg == "0" or arg == "false" then
-                enabled = false
-            else
-                print("|cff60A5FAQUI tooltipdebug:|r auratip expects on, off, or status")
+            local statusFn = ns.QUI_GetAuraTooltipProbeStatus
+            if type(statusFn) ~= "function" then
+                print("|cff60A5FAQUI tooltipdebug:|r auratip status skin=false supported=false reason=module-unavailable")
                 return
             end
-            self.tryAuraButtonTooltipSkin = enabled
+            local ok, status = pcall(statusFn)
+            if not ok or type(status) ~= "table" then
+                print("|cff60A5FAQUI tooltipdebug:|r auratip status unavailable")
+                return
+            end
             print(string.format(
-                "|cff60A5FAQUI tooltipdebug:|r AuraButtonTooltip skin probe %s",
-                enabled and "on" or "off"))
-            PrintAuraTipStatus()
+                "|cff60A5FAQUI tooltipdebug:|r auratip status skin=%s supported=%s reason=%s",
+                tostring(status.skinningLoaded == true),
+                tostring(status.supported == true),
+                tostring(status.reason or "unknown")))
             return
         end
         if subcmd == "help" then
-            print("|cff60A5FAQUI tooltipdebug:|r /qui tooltipdebug on [seconds], off, report, reset, slow [ms], bypass qol|skin|all|off, auratip on|off|status")
+            print("|cff60A5FAQUI tooltipdebug:|r /qui tooltipdebug on [seconds], off, report, reset, slow [ms], bypass qol|skin|all|off, auratip status")
             return
         end
         self:Report(false)

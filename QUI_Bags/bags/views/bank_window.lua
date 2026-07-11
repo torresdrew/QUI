@@ -22,6 +22,7 @@
 -- luacheck: read globals ACCEPT CANCEL StaticPopup_OnClick BANK QUESTION_MARK_ICON MenuUtil bit
 local ADDON_NAME, ns = ...
 local Bags = ns.Bags or {}; ns.Bags = Bags
+local Storage = ns.Storage
 local UIKit = ns.UIKit
 local Helpers = ns.Helpers
 local GetSettings = Helpers.CreateDBGetter("bags")
@@ -163,19 +164,19 @@ local ScheduleRefresh = Bags.Chassis.MakeScheduleRefresh(
 --- is account-wide and never per-character — callers fetch it separately.
 local function ViewedRecord()
     if viewedCharacter then
-        return Bags.Store.GetCharacter(viewedCharacter)
+        return Storage.Store.GetCharacter(viewedCharacter)
     end
-    return Bags.Store.GetCurrentCharacter()
+    return Storage.Store.GetCurrentCharacter()
 end
 
 local function GetTabRecord(bagID)
     -- "all" sentinel (and any other non-number) never maps to one tab
     if type(bagID) ~= "number" then return nil end
-    if Bags.ScanBank.IsCharTab(bagID) then
+    if Storage.ScanBank.IsCharTab(bagID) then
         local rec = ViewedRecord()
         return rec and rec.bankTabs and rec.bankTabs[bagID] or nil
     end
-    local warband = Bags.Store.GetWarband()
+    local warband = Storage.Store.GetWarband()
     return warband and warband.tabs and warband.tabs[bagID] or nil
 end
 
@@ -187,13 +188,13 @@ local function SetSelectedBagID(bagID)
     selectedByBankType[activeBankType] = bagID
     -- the bag window's targeted-deposit catchers track the selected tab
     -- (GetSelectedLiveTab); a synthetic ping re-dresses them on tab switch
-    Bags.Bus.Publish("BagsChanged", Bags.Store.GetCurrentCharacterKey(), {})
+    Storage.Bus.Publish("BagsChanged", Storage.Store.GetCurrentCharacterKey(), {})
 end
 
 local function SetActiveBankType(bankType)
     activeBankType = bankType or Enum.BankType.Character
     if win and win:IsShown() then BankWindow.Refresh() end
-    Bags.Bus.Publish("BagsChanged", Bags.Store.GetCurrentCharacterKey(), {})
+    Storage.Bus.Publish("BagsChanged", Storage.Store.GetCurrentCharacterKey(), {})
 end
 
 --- Bank type of the SELECTED tab (footer money/auto-deposit context).
@@ -683,10 +684,10 @@ local function EnsureWindow()
         tooltip = ns.L["View another character's bank"],
         listOwners = function()
             return Bags.OwnerSelect.BuildOwnerList(
-                Bags.Store.ListCharacters(), Bags.Store.GetCurrentCharacterKey())
+                Storage.Store.ListCharacters(), Storage.Store.GetCurrentCharacterKey())
         end,
         current = function()
-            return viewedCharacter or Bags.Store.GetCurrentCharacterKey()
+            return viewedCharacter or Storage.Store.GetCurrentCharacterKey()
         end,
         onSelect = function(key) BankWindow.SetViewedCharacter(key) end,
     })
@@ -915,7 +916,7 @@ function BankWindow.Refresh()
     -- rec follows the owner selector; the warband record is account-wide,
     -- so its tabs REMAIN visible while viewing another character offline.
     local rec = ViewedRecord()
-    local warband = Bags.Store.GetWarband()
+    local warband = Storage.Store.GetWarband()
     local opts = { bankType = activeBankType }
     if liveMode then
         -- Doc: CanViewBank(bankType) → bool (AllowedWhenUntainted). A
@@ -1097,7 +1098,7 @@ end
 --- session can only operate on the current character's items, so live
 --- buttons over an alt's cache would lie.
 function BankWindow.SetViewedCharacter(key)
-    if key == nil or key == Bags.Store.GetCurrentCharacterKey() then
+    if key == nil or key == Storage.Store.GetCurrentCharacterKey() then
         viewedCharacter = nil
         liveMode = Bags.BankTakeover ~= nil and Bags.BankTakeover.IsLive() or false
     else
@@ -1164,7 +1165,7 @@ function BankWindow.FocusItem(itemID, ownerKey, opts)
     if not BankWindow.IsShown() then
         if Bags.BankTakeover and Bags.BankTakeover.IsLive
             and Bags.BankTakeover.IsLive()
-            and (ownerKey == nil or ownerKey == Bags.Store.GetCurrentCharacterKey()) then
+            and (ownerKey == nil or ownerKey == Storage.Store.GetCurrentCharacterKey()) then
             BankWindow.ShowLive()
         else
             BankWindow.ShowCached()
@@ -1206,11 +1207,11 @@ end
 
 -- data refresh: coalesced re-render on bank cache changes (tab metadata
 -- changes — purchase, rename — also land here via the scanner's drain)
-Bags.Bus.Subscribe("BankChanged", function()
+Storage.Bus.Subscribe("BankChanged", function()
     ScheduleRefresh()
 end)
 
-Bags.Bus.Subscribe("WarbandChanged", function()
+Storage.Bus.Subscribe("WarbandChanged", function()
     ScheduleRefresh()
 end)
 
@@ -1218,6 +1219,6 @@ end)
 -- money event (PLAYER_MONEY / PLAYER_GUILD_UPDATE / ACCOUNT_MONEY). Cached
 -- mode renders no money row, so the ping is live-only; ScheduleRefresh
 -- already no-ops while hidden.
-Bags.Bus.Subscribe("MoneyChanged", function()
+Storage.Bus.Subscribe("MoneyChanged", function()
     if liveMode then ScheduleRefresh() end
 end)

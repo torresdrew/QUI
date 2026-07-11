@@ -195,6 +195,13 @@ function QUICore:OnInitialize()
         ns.Migrations.Run(self.db)
     end
 
+    -- One-shot latch: the all-profile Tier 0/1 pass above is the same work
+    -- QUI:BackwardsCompat() opens with, and nothing writes raw SV between
+    -- this OnInitialize and QUI:OnEnable (both inside ADDON_LOADED). The
+    -- OnEnable invocation consumes the latch and skips the second full
+    -- walk; profile switches and imports that call in later re-run tiers.
+    ns._startupTierPassDone = true
+
     -- Late migrations run at PLAYER_LOGIN once Blizzard runtime state
     -- (EditModeManagerFrame, live frame positions) is available. The
     -- handler unregisters itself after a successful pass.

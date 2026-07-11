@@ -16,11 +16,6 @@ local function TooltipDebugBypassSkin()
     return dbg and dbg.bypassSkin == true
 end
 
-local function TooltipDebugAuraButtonTooltipProbe()
-    local dbg = ns.QUI_TooltipDebug
-    return dbg and dbg.tryAuraButtonTooltipSkin == true
-end
-
 local function TooltipDebugBegin()
     local dbg = ns.QUI_TooltipDebug
     if dbg and dbg.enabled then
@@ -894,60 +889,6 @@ GetTooltipOwnerRestriction = function(tip)
     return nil
 end
 
-local function IsAuraButtonTooltip(tooltip)
-    if not tooltip then return false end
-    if tooltip.GetName then
-        local ok, name = pcall(tooltip.GetName, tooltip)
-        if ok and name == "AuraButtonTooltip" then
-            return true
-        end
-    end
-
-    local owner
-    if tooltip.GetOwner then
-        local ok, result = pcall(tooltip.GetOwner, tooltip)
-        if ok then owner = result end
-    end
-    if owner and owner.GetObjectType then
-        local ok, objectType = pcall(owner.GetObjectType, owner)
-        if ok and objectType == "AuraButton" then
-            return true
-        end
-    end
-
-    return false
-end
-
-local auraTooltipProbeHooked = false
-local auraTooltipProbeObserved = 0
-
-local function HandleForbiddenAuraTooltip(tooltip)
-    if not IsAuraButtonTooltip(tooltip) then
-        TooltipDebugCount("skin.protectedTooltipSkipped")
-        return
-    end
-
-    TooltipDebugCount("skin.auraButtonTooltipForbidden")
-    auraTooltipProbeObserved = auraTooltipProbeObserved + 1
-    if not IsEnabled() and not TooltipDebugAuraButtonTooltipProbe() then
-        return
-    end
-
-    local okStable, stable = pcall(IsChromeStable, tooltip)
-    if okStable and stable then
-        TooltipDebugCount("skin.auraButtonTooltipStableSkip")
-        return
-    end
-
-    -- AuraButtonTooltip is forbidden and hidden from the global environment.
-    -- Keep the skin attempt pcall-wrapped so unsupported clients fall back to
-    -- Blizzard chrome instead of breaking the secure AuraContainer path.
-    local ok = pcall(ApplyTooltipChrome, tooltip)
-    local okApplied, applied = pcall(IsChromeStable, tooltip)
-    TooltipDebugCount(ok and okApplied and applied
-        and "skin.auraButtonTooltipSkinOk" or "skin.auraButtonTooltipSkinFail")
-end
-
 HookTooltipOnShow = function(tooltip)
     if not tooltip or hookedTooltips[tooltip] then return end
     if IsInternalEmbeddedItemTooltipFrame(tooltip) then return end
@@ -1202,7 +1143,13 @@ local function SetupPostProcessor()
             return
         end
         if IsProtectedTooltip(tooltip) then
-            HandleForbiddenAuraTooltip(tooltip)
+            -- AuraButtonTooltip is defined in Blizzard_AuraContainer's secure
+            -- environment with forbidden=true and hideFromGlobalEnv=true.
+            -- PrivateAurasTooltipMixin, TooltipDataProcessor, and EventRegistry
+            -- are all environment-local there; AuraContainer publishes no
+            -- outbound tooltip or styling interface. Keep any protected or
+            -- forbidden non-GameTooltip entirely Blizzard-owned.
+            TooltipDebugCount("skin.protectedTooltipSkipped")
             return
         end
         SafeHookTooltipOnShow(tooltip)
@@ -1242,27 +1189,11 @@ local function SetupPostProcessor()
     end)
 end
 
-local function SetupAuraTooltipProbeHook()
-    if auraTooltipProbeHooked then return end
-    if not PrivateAurasTooltipMixin or not PrivateAurasTooltipMixin.ShowAuraTooltip then return end
-
-    hooksecurefunc(PrivateAurasTooltipMixin, "ShowAuraTooltip", function(tooltip)
-        -- AuraButtonTooltip can bypass addon-visible TooltipDataProcessor
-        -- callbacks. Observe this boundary without reading unit/aura payloads.
-        HandleForbiddenAuraTooltip(tooltip)
-    end)
-    auraTooltipProbeHooked = true
-end
-
 ns.QUI_GetAuraTooltipProbeStatus = function()
-    local mixin = PrivateAurasTooltipMixin
     return {
         skinningLoaded = true,
-        probeEnabled = TooltipDebugAuraButtonTooltipProbe() == true,
-        mixinVisible = mixin ~= nil,
-        showAuraTooltipVisible = mixin and type(mixin.ShowAuraTooltip) == "function" or false,
-        hookInstalled = auraTooltipProbeHooked == true,
-        observedTooltips = auraTooltipProbeObserved,
+        supported = false,
+        reason = "secure-environment",
     }
 end
 
@@ -1373,15 +1304,6 @@ StyleGameTooltip = function(tooltip)
         return
     end
 
-    -- AreaPOI/world quest tooltips register UI widget sets on GameTooltip and
-    -- Blizzard lays that widget container out again during Hide/Unregister.
-    -- Keep the whole cycle Blizzard-owned so LayoutFrame never sees addon-
-    -- tainted geometry or point counts on cleanup.
-    if HasActiveWidgetContainer(tooltip) then
-        FallbackToNineSlice(tooltip)
-        return
-    end
-
     -- Reused-chrome fast path: already shown with NineSlice hidden. Chrome is
     -- SetAllPoints so it already tracks the (re-sized) tooltip — nothing to redo.
     if IsChromeStable(tooltip) then
@@ -1423,7 +1345,6 @@ eventFrame:RegisterEvent("ADDON_LOADED")
 eventFrame:SetScript("OnEvent", function(self, event, arg1)
     -- After initialization, discover addon tooltips on each ADDON_LOADED
     if event == "ADDON_LOADED" and initialized then
-        SetupAuraTooltipProbeHook()
         QueueExtraTooltipDiscovery()
         return
     end
@@ -1489,7 +1410,6 @@ local function InitializeTooltipSkinning()
     SetupBackdropStyleHooks()
     SetupHealthBarHook()
     SetupPostProcessor()
-    SetupAuraTooltipProbeHook()
     DiscoverExtraTooltips()
     eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
     initialized = true

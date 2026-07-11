@@ -464,6 +464,7 @@ local function ApplyMoverElements(moverFrame, strips, isBuff, allowCreate)
         if not container then
             if allowCreate and not InCombatLockdown() and CreateFrame then
                 container = CreateFrame("AuraContainer", nil, moverFrame, "CustomAuraContainerTemplate")
+                container:SetSize(1, 1)  -- give the engine a renderable rect from the first dirty mark; it auto-sizes on layout
                 pool[i] = container
                 createdFresh = true
             else

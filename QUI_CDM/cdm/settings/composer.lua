@@ -2948,9 +2948,14 @@ local function BuildAddSection(parent)
     -- Auto-refresh the add list when the player's auras change AND the
     -- user is looking at the Active Buffs/Debuffs tab. Cheap guard so the
     -- event has zero cost on other tabs.
+    -- Player-only registration — never read the payload unit; the
+    -- C-level filter already restricts delivery to "player". PTR 68569
+    -- marks UNIT_AURA event-wide SecretWhenAurasRestricted, so the
+    -- payload unit may arrive as an opaque secret value in combat;
+    -- updateInfo is never consumed here so no probe is needed for it.
     container:RegisterUnitEvent("UNIT_AURA", "player")
-    container:SetScript("OnEvent", function(self, event, unit)
-        if event == "UNIT_AURA" and unit == "player"
+    container:SetScript("OnEvent", function(self, event)
+        if event == "UNIT_AURA"
            and (activeAddTab == "active_buffs" or activeAddTab == "active_debuffs")
            and self:IsVisible() then
             RefreshAddList()

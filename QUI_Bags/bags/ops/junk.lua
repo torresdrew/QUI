@@ -38,6 +38,7 @@
 ---------------------------------------------------------------------------
 local ADDON_NAME, ns = ...
 local Bags = ns.Bags or {}; ns.Bags = Bags
+local Storage = ns.Storage
 local Helpers = ns.Helpers
 
 local GetSettings = Helpers.CreateDBGetter("bags")
@@ -87,7 +88,7 @@ function Junk.OnMerchant(shown)
     if not merchantOpen and queue then
         queue:Cancel()  -- queue's onDone clears `queue` and reports (false, "cancel")
     end
-    if Bags.Bus then Bags.Bus.Publish("MerchantChanged", merchantOpen) end
+    if Storage.Bus then Storage.Bus.Publish("MerchantChanged", merchantOpen) end
 end
 
 --- True while a merchant window is open (consumed by the bag window's

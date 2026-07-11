@@ -68,7 +68,7 @@ read_globals = {
     "QuickKeybindFrame", "ShowUIPanel", "UIFrameFadeOut", "Settings",
     "CooldownViewerSettings", "CooldownViewerItemMixin", "CooldownViewerMixin", "EventRegistry", "AssistedCombatManager",
     "STANDARD_TEXT_FONT", "UIErrorsFrame", "UISpecialFrames",
-    "MouseIsOver", "StaticPopup_Show", "StopDrag",
+    "StaticPopup_Show", "StopDrag",
     "GENERAL", "MAX_TOTEMS", "NUM_CHAT_WINDOWS", "RAID_CLASS_COLORS",
     "CUSTOM_CLASS_COLORS", "SetPortraitTexture",
 

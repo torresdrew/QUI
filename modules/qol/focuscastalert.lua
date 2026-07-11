@@ -615,7 +615,11 @@ eventFrame:SetScript("OnEvent", function(self, event, unit, castGUID, spellID, .
     end
 
     -- Track player interrupt casts for internal CD tracking.
-    if event == "UNIT_SPELLCAST_SUCCEEDED" and unit == "player" then
+    -- 68569: registered player-only above (RegisterUnitEvent), so unit is
+    -- already C-side filtered — no unit compare needed (and unproven-safe
+    -- against a possibly-secret unit token anyway). spellID is probed for
+    -- secrecy inside OnPlayerInterruptCast before any table index/store.
+    if event == "UNIT_SPELLCAST_SUCCEEDED" then
         OnPlayerInterruptCast(spellID)
         UpdateAlert()
         return

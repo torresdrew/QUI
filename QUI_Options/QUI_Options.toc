@@ -3,11 +3,12 @@
 ## IconTexture: Interface\AddOns\QUI\assets\QUI
 ## Notes: Configuration UI for QUI
 ## Author: Zol
-## Version: 5.0.0-alpha16
+## Version: 5.0.0-alpha17
 ## Category: User Interface
 ## Group: QUI
 ## RequiredDeps: QUI
 ## OptionalDeps: QUI_ActionBars, QUI_CDM, QUI_Chat, QUI_GroupFrames, QUI_Nameplates, QUI_ResourceBars, QUI_UnitFrames
+## LoadOnDemand: 1
 
 bootstrap.lua
 
@@ -15,11 +16,15 @@ bootstrap.lua
 # Order is load-bearing. ..\QUI\ paths load files from the main addon
 # (parent-dir TOC entries are client-supported; Blizzard_PTRFeedbackGlue ships them).
 #
-# NOTE: this addon now loads at login (no LoadOnDemand) so opening the options
-# window never pays a compile cost — the window appears instantly. The OptionalDeps
-# above only order this addon after the login-class module addons (their settings
-# builders are loaded here); no builder captures a module symbol at file scope, so
-# the ordering is belt-and-suspenders (proven by the headless generator smoke test).
+# NOTE: LoadOnDemand — ~2.9 MB stays off the login path; the first options
+# open pays the compile cost (QUI:EnsureOptionsLoaded, every open path routes
+# through it). Login-time theme reads (accent color for layout mode, info bar,
+# datatexts) are served by core/theme.lua, which pre-creates QUI.GUI; the
+# framework merges into that table on load. The OptionalDeps above only order
+# this addon after the login-class module addons when both load (their settings
+# builders are loaded here); no builder captures a module symbol at file scope,
+# so the ordering is belt-and-suspenders (proven by the headless generator
+# smoke test).
 # The ~3MB generated search index lives in the QUI_OptionsSearch LoadOnDemand
 # addon and is pulled in on demand the first time the search box is used.
 search_synonyms.lua
@@ -48,7 +53,9 @@ wizard.lua
 # nothing in the gameplay/login path references these, so they load here.
 ..\QUI\core\profile_io.lua
 ..\QUI\importstrings\qui_editmode_base.lua
-..\QUI\importstrings\starter_profile.lua
+# starter_profile.lua moved to the root TOC: core/new_profile_defaults.lua
+# decodes it for the new-profile seed; the Profiles-tab preset reads the
+# same memoized QUI.imports entry.
 ..\QUI\core\settings\full_surface.lua
 ..\QUI\core\settings\pins_ui.lua
 ..\QUI\core\settings\content\anchoring_shared_content.lua

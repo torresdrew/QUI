@@ -748,54 +748,6 @@ local function GetTrackedBarRuntimeEntries()
     return entries
 end
 
-local trackedBarRuntimeFingerprint = ""
-local trackedBarRuntimeNotifyPending = false
-
-local function BuildTrackedBarRuntimeFingerprint(entries)
-    if type(entries) ~= "table" or #entries == 0 then
-        return ""
-    end
-
-    local parts = {}
-    for i, entry in ipairs(entries) do
-        parts[i] = table.concat({
-            tostring(entry.layoutIndex or 9999),
-            tostring(entry.spellID or 0),
-            tostring(entry.baseSpellID or 0),
-            tostring(entry.overrideSpellID or 0),
-            tostring(entry.cooldownID or 0),
-        }, ":")
-    end
-    return table.concat(parts, ",")
-end
-
-local function NotifyTrackedBarRuntimeChanged(force)
-    local callback = _G.QUI_RefreshTrackedBarColorOverrideList
-    if type(callback) ~= "function" then
-        return
-    end
-
-    local entries = GetTrackedBarRuntimeEntries()
-    local fingerprint = BuildTrackedBarRuntimeFingerprint(entries)
-    if not force and fingerprint == trackedBarRuntimeFingerprint then
-        return
-    end
-    trackedBarRuntimeFingerprint = fingerprint
-
-    if trackedBarRuntimeNotifyPending then
-        return
-    end
-    trackedBarRuntimeNotifyPending = true
-
-    C_Timer.After(0, function()
-        trackedBarRuntimeNotifyPending = false
-        local refreshCallback = _G.QUI_RefreshTrackedBarColorOverrideList
-        if type(refreshCallback) == "function" then
-            pcall(refreshCallback)
-        end
-    end)
-end
-
 ---------------------------------------------------------------------------
 -- FORWARD DECLARATIONS
 ---------------------------------------------------------------------------
@@ -1163,7 +1115,6 @@ LayoutBuffBars = function()
         if ns.CDMBlizzardBuffBarSuppressor then
             ns.CDMBlizzardBuffBarSuppressor:Apply(settings)
         end
-        NotifyTrackedBarRuntimeChanged()
         isBarLayoutRunning = false
         return
     end
@@ -1206,7 +1157,6 @@ LayoutBuffBars = function()
         ns.CDMBlizzardBuffBarSuppressor:Apply(settings)
     end
 
-    NotifyTrackedBarRuntimeChanged()
     isBarLayoutRunning = false
 end
 
@@ -1323,17 +1273,6 @@ local function BuffIconViewer_OnUpdate(self, elapsed)
     end
 end
 
--- FORCE POPULATE: Briefly trigger Edit Mode behavior to load all spells
--- This ensures the buff icons know what spells to display on first load
----------------------------------------------------------------------------
-
-local forcePopulateDone = false
-
-local function ForcePopulateBuffIcons()
-    if forcePopulateDone then return end
-    forcePopulateDone = true
-end
-
 ---------------------------------------------------------------------------
 -- INITIALIZATION
 ---------------------------------------------------------------------------
@@ -1371,9 +1310,6 @@ local function Initialize()
             vbs.goingUp = growFromBottom
         end
     end
-
-    -- Force populate buff icons first (teaches the viewer what spells to show)
-    ForcePopulateBuffIcons()
 
     -- TAINT SAFETY: OnUpdate hooks use module-level elapsed tracking instead of
     -- writing properties to Blizzard CDM viewer frames, to avoid tainting the
@@ -1522,7 +1458,6 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
             -- positioned before the safe window closes.
             inInitSafeWindow = true
             ns._inInitSafeWindow = true
-            ForcePopulateBuffIcons()
             do
                 local viewer = GetBuffIconViewer()
                 if viewer and viewerBuffState[viewer] then
@@ -1539,7 +1474,6 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
             -- safe window and respect combat lockdown; they're recovery,
             -- not the primary path.
             C_Timer.After(1.5, function()
-                ForcePopulateBuffIcons()
                 local viewer = GetBuffIconViewer()
                 if viewer and viewerBuffState[viewer] then
                     viewerBuffState[viewer].anchorCache = nil
@@ -1603,7 +1537,6 @@ function CDMBuffLayout.OnContainerReady()
             iconVbs.anchorCache = nil
 
             -- Force initial layout on the new container
-            ForcePopulateBuffIcons()
             C_Timer.After(0.3, LayoutBuffIcons)
         end
     end
