@@ -3,7 +3,7 @@
 ## IconTexture: Interface\AddOns\QUI\assets\QUI
 ## Notes: Portuguese (Brazil) translations + settings search index for QUI
 ## Author: Zol
-## Version: 5.0.0-alpha16
+## Version: 5.0.0-alpha17
 ## Category: User Interface
 ## Group: QUI
 ## LoadOnDemand: 1

@@ -9,6 +9,48 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v5.0.0-alpha17 - 2026-07-11
+
+> ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will
+> not load on the 12.0.x live client. Stay on the v4.x beta line for live realms.
+
+> 🔄 **Profile schema migrated to v51.** A single squashed migration repairs
+> aura filter data corrupted under alpha16, folds the group-frame defensive
+> indicator into the unified aura elements, and purges orphaned cooldown-viewer
+> settings. Your profile is backed up automatically before it runs.
+
+### Changed
+- The Unit Frames **Icons** tab is now named **Auras**, matching the unified
+  aura element system it configures.
+- The group-frame defensive indicator is now a standard **defensives** aura
+  element, gaining the element system's filters, sorting, layout, and placement.
+- Faster login and options window: the options engine (~2.9 MB) and the
+  new-profile seed data now load on demand instead of at login, the first
+  `/qui` open compiles the options UI, per-locale search indexes load when
+  needed, and startup runs its profile migration in a single pass.
+
+### Fixed
+- Aura filters saved under alpha16 are repaired. An alpha16 seeding bug wrote
+  invalid tokens into unit-frame aura filters, which hard-errored on 12.1 when
+  the filter string was compiled; the migration strips the bad tokens (a filter
+  left empty reverts to off).
+- A batch of 12.1 crash fixes around secret (protected) values — cooldown-viewer
+  cast/channel tracking, spell-cooldown map teleports, pet proc glows, consumable
+  and skyriding aura tracking, the castbar empower probe, and loot-frame
+  positioning no longer error when the game returns a protected value.
+
+### Performance
+- Reduced per-frame allocations across group frames, resource bars (shared
+  resource maps and zero-allocation rune tracking), and unit-frame power updates
+  (frequent-power events coalesced to ~5 Hz on non-player frames).
+- Trimmed ~448 KB of unused bundled cooldown data and removed dead bag storage
+  code.
+
+### Internal
+- Development history re-founded on the v4.1.0 fork base as a single linear
+  trunk; the packaged addon is unchanged from the prior alpha dev build.
+- Blizzard API reference (FrameXML + API docs) refreshed to 12.1.0.68629.
+
 ## v5.0.0-alpha16 - 2026-07-09
 
 > ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will
