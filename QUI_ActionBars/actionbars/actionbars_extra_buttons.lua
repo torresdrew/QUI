@@ -351,6 +351,20 @@ function ApplyExtraActionContainerAnchor(holder, offsetX, offsetY)
         pcall(container.SetIsLayoutFrame, container, false)
     end
 
+    -- Suppress the container's HorizontalLayout.  Left to run, LayoutChildren
+    -- does child:ClearAllPoints()+SetPoint("TOPLEFT", ...) on ExtraActionBarFrame
+    -- (LayoutFrame.lua) -- with our SetScale that pushes the button off-center --
+    -- and it re-runs on every grant (AddFrame -> UpdateLayoutIndicies ->
+    -- MarkDirty), including in combat where Blizzard's secure Layout would
+    -- overwrite our centering and we could not correct it.  We own the bar's
+    -- centering below instead, so the layout must not touch it.
+    if type(container.Layout) == "function" then
+        container.Layout = function() end
+    end
+    if type(container.MarkDirty) == "function" then
+        container.MarkDirty = function() end
+    end
+
     extraBtnState.hookingSetParent = true
     container:SetParent(holder)
     extraBtnState.hookingSetParent = false
@@ -361,12 +375,26 @@ function ApplyExtraActionContainerAnchor(holder, offsetX, offsetY)
     extraBtnState.hookingSetPoint = true
     if container.ClearAllPointsBase and container.SetPointBase then
         container:ClearAllPointsBase()
-        container:SetPointBase("CENTER", holder, "CENTER", offsetX, offsetY)
+        container:SetPointBase("CENTER", holder, "CENTER", 0, 0)
     else
         container:ClearAllPoints()
-        container:SetPoint("CENTER", holder, "CENTER", offsetX, offsetY)
+        container:SetPoint("CENTER", holder, "CENTER", 0, 0)
     end
     extraBtnState.hookingSetPoint = false
+
+    -- Explicitly center the bar on the mover (scale-invariant, unlike the
+    -- layout's TOPLEFT anchor).  With the container's layout suppressed this pin
+    -- persists through combat, so a button granted mid-combat -- where Blizzard
+    -- does SetParent(container) but we cannot touch the bar -- still shows
+    -- centered on the user's mover.  The user's offset applies here (to the
+    -- visible bar); the container itself stays at the mover center.
+    local bar = ExtraActionBarFrame
+    if bar then
+        extraBtnState.hookingSetPoint = true
+        bar:ClearAllPoints()
+        bar:SetPoint("CENTER", holder, "CENTER", offsetX, offsetY)
+        extraBtnState.hookingSetPoint = false
+    end
 end
 
 -- One-time neutralization of ExtraAbilityContainer's own layout/mouse/EditMode

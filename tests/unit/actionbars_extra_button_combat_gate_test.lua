@@ -77,6 +77,8 @@ local function recordingContainer(name)
     function c:SetIsLayoutFrame() end
     function c:SetScript() end
     function c:AddFrame() end
+    function c:Layout() end
+    function c:MarkDirty() end
     return c
 end
 
@@ -196,6 +198,8 @@ for _, expected in ipairs({
     "ExtraAbilityContainer:SetParent",    -- position owned via the CONTAINER
     "ExtraAbilityContainer:ClearAllPoints",
     "ExtraAbilityContainer:SetPoint",
+    "ExtraActionBarFrame:ClearAllPoints",  -- bar explicitly centered on the mover
+    "ExtraActionBarFrame:SetPoint",        -- (scale-invariant, not layout TOPLEFT)
 }) do
     assert(extraSeen[expected],
         "positive control (extra): out of combat must call " .. expected .. "; got: " .. geomSummary())
@@ -229,6 +233,10 @@ assert(source:find("function ApplyExtraActionContainerAnchor", 1, true),
     "extra path must anchor ExtraAbilityContainer via ApplyExtraActionContainerAnchor")
 assert(source:find("container:SetParent(holder)", 1, true),
     "ApplyExtraActionContainerAnchor must parent the container to the holder")
+assert(source:find('bar:SetPoint("CENTER", holder', 1, true),
+    "extra path must explicitly center the bar on the mover (scale-invariant)")
+assert(source:find("container.Layout = function() end", 1, true),
+    "extra path must suppress the container's layout so it cannot re-anchor the bar TOPLEFT")
 
 -- Never call the destructive ExtraAbilityContainer:RemoveFrame.
 assert(source:find("RemoveFrame", 1, true) and source:find("never call", 1, true),
