@@ -324,10 +324,15 @@ function GetExtraButtonHolderSize(buttonType, blizzFrame, settings, scale)
 end
 
 function ApplyExtraButtonSettings(buttonType)
-    if InCombatLockdown() and not inInitSafeWindow then
-        ActionBarsOwned.pendingExtraButtonRefresh = true
-        return
-    end
+    -- No combat gate.  Both surfaces are plain (unprotected) Frames:
+    -- ExtraActionBarFrame is a bare <Frame> whose lone secure child rides along;
+    -- ZoneAbilityFrame and its spell buttons inherit no secure template at all
+    -- (OnClick uses CastSpellByID).  We detach both from the managed
+    -- ExtraAbilityContainer (RemoveManagedFrame + ignoreFramePositionManager)
+    -- before repinning, so the reparent/reposition is combat-legal.  Deferring
+    -- would lose an extra action button granted mid-combat: its outro animation
+    -- RemoveFrames it before PLAYER_REGEN_ENABLED, leaving it stuck at Blizzard's
+    -- screen bottom.
 
     local settings = GetExtraButtonDB(buttonType)
     if not settings or not settings.enabled then return end
@@ -413,10 +418,8 @@ function QueueExtraButtonReanchor(buttonType)
     C_Timer.After(0, function()
         pendingExtraButtonReanchor[buttonType] = false
 
-        if InCombatLockdown() then
-            ActionBarsOwned.pendingExtraButtonRefresh = true
-            return
-        end
+        -- No combat gate: both surfaces are unprotected (see
+        -- ApplyExtraButtonSettings), so reclaim runs in combat.
 
         local settings = GetExtraButtonDB(buttonType)
         if settings and settings.enabled then
@@ -490,10 +493,9 @@ function HookExtraButtonPositioning()
                 if extraBtnState.hookingSetParent then return end
                 local settings = GetExtraButtonDB(buttonType)
                 if holder and settings and settings.enabled then
-                    if InCombatLockdown() then
-                        ActionBarsOwned.pendingExtraButtonRefresh = true
-                        return
-                    end
+                    -- No combat gate: both surfaces are unprotected (see
+                    -- ApplyExtraButtonSettings), so the reclaim reparent runs
+                    -- in combat.
                     extraBtnState.hookingSetParent = true
                     blizzFrame:SetParent(holder)
                     extraBtnState.hookingSetParent = false
@@ -584,10 +586,11 @@ end
 
 -- Assign to upvalue for forward declaration in event handler
 RefreshExtraButtons = function()
-    if InCombatLockdown() and not inInitSafeWindow then
-        ActionBarsOwned.pendingExtraButtonRefresh = true
-        return
-    end
+    -- No blanket combat gate: both surfaces reclaim to their movers in combat
+    -- (see ApplyExtraButtonSettings — both are unprotected).  The holder-anchor
+    -- passes (ApplyExtraButtonFrameAnchor -> PositionFrame) keep their own combat
+    -- deferral in anchoring.lua, which is fine: the holders already hold the
+    -- user's position, so only the Blizzard frame needs to re-pin in combat.
     ApplyExtraButtonSettings("extraActionButton")
     ApplyExtraButtonFrameAnchor("extraActionButton")
     ApplyExtraButtonSettings("zoneAbility")
