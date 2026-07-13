@@ -5,6 +5,12 @@ All notable changes to QUI will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
+## v4.1.1-beta4 - 2026-07-13
+
+### Fixed
+- fix(actionbars): the extra action button now stays centered on its mover regardless of your scale setting — the previous beta let the shared container's layout position the button, which pushed it off-center when scaled (and re-ran in combat where the correction couldn't stick); QUI now pins the bar to the mover center directly
+
+
 ## v4.1.1-beta3 - 2026-07-13
 
 ### Fixed
