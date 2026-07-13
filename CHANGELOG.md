@@ -5,6 +5,12 @@ All notable changes to QUI will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
+## v4.1.1-beta3 - 2026-07-13
+
+### Fixed
+- fix(actionbars): extra action buttons granted during combat now stay on your mover without tainting the UI — QUI anchors the shared ability container up front so a mid-combat grant lands already positioned (the previous beta's immediate reanchor could block the secure layout system)
+
+
 ## v4.1.1-beta2 - 2026-07-13
 
 ### Fixed
