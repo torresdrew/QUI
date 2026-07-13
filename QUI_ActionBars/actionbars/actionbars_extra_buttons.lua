@@ -323,19 +323,118 @@ function GetExtraButtonHolderSize(buttonType, blizzFrame, settings, scale)
     return math.max(width * scale, 64), math.max(height * scale, 64)
 end
 
+-- Anchor the shared ExtraAbilityContainer onto the extra-action holder.
+--
+-- ExtraActionBarFrame owns the secure ExtraActionButton1
+-- (SecureActionButtonTemplate) and therefore cannot be reparented or repinned
+-- in combat.  ExtraAbilityContainer, by contrast, is a stable Blizzard frame
+-- (EditMode + UIParent-managed layout container) that Blizzard NEVER reparents
+-- on a grant: ExtraActionBar_Update only calls ExtraAbilityContainer:AddFrame
+-- (which parents the button INTO the container).  So if we own the container's
+-- position, a button granted mid-combat lands in an already-anchored container
+-- and shows on the user's mover with zero in-combat protected calls.  We
+-- exclude the container from Blizzard's layout/position managers so nothing
+-- drags it back.  We never call ExtraAbilityContainer:RemoveFrame -- it does
+-- SetParent(nil)+Hide() on its child (ExtraAbilityContainer.lua) -- we only own
+-- the container's own parent/point.
+function ApplyExtraActionContainerAnchor(holder, offsetX, offsetY)
+    local container = ExtraAbilityContainer
+    if not container or not holder then return end
+
+    if not extraButtonOriginalParents["extraActionButton"] then
+        extraButtonOriginalParents["extraActionButton"] = container:GetParent()
+    end
+
+    container.ignoreInLayout = true
+    container.ignoreFramePositionManager = true
+    if container.SetIsLayoutFrame then
+        pcall(container.SetIsLayoutFrame, container, false)
+    end
+
+    extraBtnState.hookingSetParent = true
+    container:SetParent(holder)
+    extraBtnState.hookingSetParent = false
+
+    -- ExtraAbilityContainer is an EditMode system frame; use the *Base point
+    -- setters when present so we bypass the EditMode SetPoint override (writing
+    -- through the override from insecure code taints the EditMode layout system).
+    extraBtnState.hookingSetPoint = true
+    if container.ClearAllPointsBase and container.SetPointBase then
+        container:ClearAllPointsBase()
+        container:SetPointBase("CENTER", holder, "CENTER", offsetX, offsetY)
+    else
+        container:ClearAllPoints()
+        container:SetPoint("CENTER", holder, "CENTER", offsetX, offsetY)
+    end
+    extraBtnState.hookingSetPoint = false
+end
+
+-- One-time neutralization of ExtraAbilityContainer's own layout/mouse/EditMode
+-- behavior so it cannot fight our ownership.  Combat-guarded (the container owns
+-- a secure descendant); runs once, out of combat.
+function NeutralizeExtraAbilityContainer()
+    local container = ExtraAbilityContainer
+    if not container or extraBtnState.containerNeutralized then return end
+    if InCombatLockdown() then return end
+    extraBtnState.containerNeutralized = true
+
+    -- Stop Blizzard's OnShow/OnHide from re-running managed layout.  Our own
+    -- Show hooksecurefunc still fires to re-pin.
+    container:SetScript("OnShow", nil)
+    container:SetScript("OnHide", nil)
+
+    -- Hide the EditMode selection overlay (we own the position via our mover).
+    local sel = container.Selection
+    if sel then
+        sel:SetAlpha(0)
+        if sel.EnableMouse then sel:EnableMouse(false) end
+        if not extraBtnState.containerSelectionHooked then
+            extraBtnState.containerSelectionHooked = true
+            hooksecurefunc(sel, "Show", function(self)
+                self:SetAlpha(0)
+                if self.EnableMouse then self:EnableMouse(false) end
+            end)
+        end
+    end
+
+    -- Keep ExtraActionBarFrame from absorbing clicks when empty.
+    if ExtraActionBarFrame and ExtraActionBarFrame:IsMouseEnabled() then
+        ExtraActionBarFrame:EnableMouse(false)
+    end
+
+    -- Newly added ability buttons must stay clickable.
+    if container.AddFrame and not extraBtnState.containerAddFrameHooked then
+        extraBtnState.containerAddFrameHooked = true
+        hooksecurefunc(container, "AddFrame", function(_, frame)
+            if frame and frame.EnableMouse and not InCombatLockdown() then
+                frame:EnableMouse(true)
+            end
+        end)
+    end
+end
+
 function ApplyExtraButtonSettings(buttonType)
-    -- No combat gate.  Both surfaces are plain (unprotected) Frames:
-    -- ExtraActionBarFrame is a bare <Frame> whose lone secure child rides along;
-    -- ZoneAbilityFrame and its spell buttons inherit no secure template at all
-    -- (OnClick uses CastSpellByID).  We detach both from the managed
-    -- ExtraAbilityContainer (RemoveManagedFrame + ignoreFramePositionManager)
-    -- before repinning, so the reparent/reposition is combat-legal.  Deferring
-    -- would lose an extra action button granted mid-combat: its outro animation
-    -- RemoveFrames it before PLAYER_REGEN_ENABLED, leaving it stuck at Blizzard's
-    -- screen bottom.
+    -- COMBAT GATE (load-bearing).  ExtraActionBarFrame owns the secure
+    -- ExtraActionButton1, so it (and its ancestors) cannot be reparented or
+    -- repinned in combat -- SetScale/SetParent/ClearAllPoints/SetPoint would be
+    -- ADDON_ACTION_BLOCKED.  Ownership is established once, out of combat:
+    --   * extra -> anchor the shared ExtraAbilityContainer to the mover, so
+    --     Blizzard's in-combat AddFrame drops the button into a container that
+    --     already sits on the mover (no in-combat repin needed);
+    --   * zone  -> ZoneAbilityFrame has no secure descendant and is granted
+    --     only out of combat, so reparent it straight onto its own mover.
+    -- A refresh that lands mid-combat is deferred to PLAYER_REGEN_ENABLED.
+    if InCombatLockdown() and not inInitSafeWindow then
+        ActionBarsOwned.pendingExtraButtonRefresh = true
+        return
+    end
 
     local settings = GetExtraButtonDB(buttonType)
     if not settings or not settings.enabled then return end
+
+    local scale = settings.scale or 1.0
+    local offsetX = settings.offsetX or 0
+    local offsetY = settings.offsetY or 0
 
     local blizzFrame
     local holder
@@ -343,47 +442,30 @@ function ApplyExtraButtonSettings(buttonType)
     if buttonType == "extraActionButton" then
         blizzFrame = ExtraActionBarFrame
         holder = extraBtnState.extraActionHolder
+        if not blizzFrame or not holder then return end
+        blizzFrame:SetScale(scale)
+        -- Own the CONTAINER, not ExtraActionBarFrame (protected).
+        ApplyExtraActionContainerAnchor(holder, offsetX, offsetY)
     else
         blizzFrame = ZoneAbilityFrame
         holder = extraBtnState.zoneAbilityHolder
+        if not blizzFrame or not holder then return end
+        blizzFrame:SetScale(scale)
+        -- ZoneAbilityFrame is unprotected (its spell buttons inherit no secure
+        -- template); reparent it out of the shared container onto its own mover.
+        if not extraButtonOriginalParents[buttonType] then
+            extraButtonOriginalParents[buttonType] = blizzFrame:GetParent()
+        end
+        blizzFrame.ignoreInLayout = true
+        blizzFrame.ignoreFramePositionManager = true
+        extraBtnState.hookingSetParent = true
+        blizzFrame:SetParent(holder)
+        extraBtnState.hookingSetParent = false
+        extraBtnState.hookingSetPoint = true
+        blizzFrame:ClearAllPoints()
+        blizzFrame:SetPoint("CENTER", holder, "CENTER", offsetX, offsetY)
+        extraBtnState.hookingSetPoint = false
     end
-
-    if not blizzFrame or not holder then return end
-
-    local scale = settings.scale or 1.0
-    blizzFrame:SetScale(scale)
-
-    local offsetX = settings.offsetX or 0
-    local offsetY = settings.offsetY or 0
-
-    -- TAINT SAFETY: Reparent the Blizzard frame to our holder, removing it
-    -- from the UIParent managed frame container's layout chain.  Calling
-    -- ClearAllPoints/SetPoint on managed frames from addon code permanently
-    -- taints their position data; when Blizzard's secure UseAction chain
-    -- later calls UIParent_ManageFramePositions, the taint propagates to
-    -- all managed containers (including UIParentRightManagedFrameContainer),
-    -- causing ADDON_ACTION_BLOCKED.  Reparenting removes the frame from the
-    -- managed container entirely so its position is never read by the secure
-    -- layout system.
-    if not extraButtonOriginalParents[buttonType] then
-        extraButtonOriginalParents[buttonType] = blizzFrame:GetParent()
-    end
-    -- Deregister from the managed-container's layout chain BEFORE reparenting,
-    -- otherwise the container still iterates this frame during Layout passes
-    -- (e.g. cinematic start), runs our hooks, and taints the container's
-    -- SetSize call — ADDON_ACTION_BLOCKED on UIParentRightManagedFrameContainer.
-    local currentParent = blizzFrame:GetParent()
-    if currentParent and currentParent.RemoveManagedFrame then
-        pcall(currentParent.RemoveManagedFrame, currentParent, blizzFrame)
-    end
-    blizzFrame.ignoreFramePositionManager = true
-    extraBtnState.hookingSetParent = true
-    blizzFrame:SetParent(holder)
-    extraBtnState.hookingSetParent = false
-    extraBtnState.hookingSetPoint = true
-    blizzFrame:ClearAllPoints()
-    blizzFrame:SetPoint("CENTER", holder, "CENTER", offsetX, offsetY)
-    extraBtnState.hookingSetPoint = false
 
     local holderWidth, holderHeight = GetExtraButtonHolderSize(buttonType, blizzFrame, settings, scale)
     holder:SetSize(holderWidth, holderHeight)
@@ -418,8 +500,12 @@ function QueueExtraButtonReanchor(buttonType)
     C_Timer.After(0, function()
         pendingExtraButtonReanchor[buttonType] = false
 
-        -- No combat gate: both surfaces are unprotected (see
-        -- ApplyExtraButtonSettings), so reclaim runs in combat.
+        -- Combat gate: never repin the protected outer frames in combat (see
+        -- ApplyExtraButtonSettings).  Defer to PLAYER_REGEN_ENABLED.
+        if InCombatLockdown() then
+            ActionBarsOwned.pendingExtraButtonRefresh = true
+            return
+        end
 
         local settings = GetExtraButtonDB(buttonType)
         if settings and settings.enabled then
@@ -439,23 +525,82 @@ function QueueManagedExtraButtonReanchor(buttonType)
     end
 end
 
-function QueueAllExtraButtonReanchors()
-    QueueManagedExtraButtonReanchor("extraActionButton")
-    QueueManagedExtraButtonReanchor("zoneAbility")
-end
-
 -- Hook Blizzard frames to prevent them from repositioning.
 -- After reparenting, the managed container won't reposition these frames,
 -- but other Blizzard code (e.g. ability grant, zone transition) may call
 -- SetPoint directly.  The hooks re-anchor to our holder after each attempt.
 function HookExtraButtonPositioning()
-    if ExtraActionBarFrame and not extraBtnState.extraActionSetPointHooked then
-        extraBtnState.extraActionSetPointHooked = true
-        hooksecurefunc(ExtraActionBarFrame, "SetPoint", function(self)
+    -- EXTRA ACTION: we own ExtraAbilityContainer.  Re-pin is driven by the
+    -- container's own reposition/show and by ExtraActionBarFrame showing on a
+    -- grant.  We deliberately do NOT hook ExtraActionBarFrame:SetParent --
+    -- Blizzard must stay free to parent the bar INTO the container (that is how
+    -- a granted button ends up riding our mover).
+    if ExtraActionBarFrame and not extraBtnState.extraActionShowHooked then
+        extraBtnState.extraActionShowHooked = true
+        hooksecurefunc(ExtraActionBarFrame, "Show", function()
+            QueueExtraButtonReanchor("extraActionButton")
+        end)
+    end
+
+    if ExtraAbilityContainer and not extraBtnState.extraAbilityContainerSetPointHooked then
+        extraBtnState.extraAbilityContainerSetPointHooked = true
+        hooksecurefunc(ExtraAbilityContainer, "SetPoint", function()
             if extraBtnState.hookingSetPoint then return end
             C_Timer.After(0, function()
                 if extraBtnState.hookingSetPoint then return end
                 QueueManagedExtraButtonReanchor("extraActionButton")
+            end)
+        end)
+    end
+
+    if ExtraAbilityContainer and not extraBtnState.extraAbilityContainerSetParentHooked then
+        extraBtnState.extraAbilityContainerSetParentHooked = true
+        hooksecurefunc(ExtraAbilityContainer, "SetParent", function()
+            if extraBtnState.hookingSetParent then return end
+            C_Timer.After(0, function()
+                if extraBtnState.hookingSetParent then return end
+                QueueManagedExtraButtonReanchor("extraActionButton")
+            end)
+        end)
+    end
+
+    if ExtraAbilityContainer and not extraBtnState.extraAbilityContainerShowHooked then
+        extraBtnState.extraAbilityContainerShowHooked = true
+        hooksecurefunc(ExtraAbilityContainer, "Show", function()
+            QueueManagedExtraButtonReanchor("extraActionButton")
+        end)
+    end
+
+    -- Edit Mode re-applies its own anchor to the container; reclaim it.
+    if ExtraAbilityContainer and ExtraAbilityContainer.ApplySystemAnchor
+        and not extraBtnState.extraAbilityContainerAnchorHooked then
+        extraBtnState.extraAbilityContainerAnchorHooked = true
+        hooksecurefunc(ExtraAbilityContainer, "ApplySystemAnchor", function()
+            QueueManagedExtraButtonReanchor("extraActionButton")
+        end)
+    end
+
+    -- ZONE ABILITY: unprotected frame reparented straight onto its own mover.
+    -- Reclaim it if Blizzard re-adds it to the shared container.  Zone grants
+    -- fire out of combat, but keep the combat gate for safety.
+    local function HookSetParentForType(blizzFrame, buttonType, holder)
+        if not blizzFrame then return end
+        hooksecurefunc(blizzFrame, "SetParent", function(self, newParent)
+            if extraBtnState.hookingSetParent then return end
+            if newParent == holder then return end
+            C_Timer.After(0, function()
+                if extraBtnState.hookingSetParent then return end
+                local settings = GetExtraButtonDB(buttonType)
+                if holder and settings and settings.enabled then
+                    if InCombatLockdown() then
+                        ActionBarsOwned.pendingExtraButtonRefresh = true
+                        return
+                    end
+                    extraBtnState.hookingSetParent = true
+                    blizzFrame:SetParent(holder)
+                    extraBtnState.hookingSetParent = false
+                    QueueExtraButtonReanchor(buttonType)
+                end
             end)
         end)
     end
@@ -470,66 +615,9 @@ function HookExtraButtonPositioning()
             end)
         end)
     end
-
-    if ExtraAbilityContainer and not extraBtnState.extraAbilityContainerSetPointHooked then
-        extraBtnState.extraAbilityContainerSetPointHooked = true
-        hooksecurefunc(ExtraAbilityContainer, "SetPoint", function()
-            if extraBtnState.hookingSetPoint then return end
-            C_Timer.After(0, function()
-                if extraBtnState.hookingSetPoint then return end
-                QueueAllExtraButtonReanchors()
-            end)
-        end)
-    end
-
-    -- Hook SetParent to reclaim frames if Blizzard reparents them back to
-    -- a managed container (e.g. during Edit Mode layout recalculation).
-    local function HookSetParentForType(blizzFrame, buttonType, holder)
-        if not blizzFrame then return end
-        hooksecurefunc(blizzFrame, "SetParent", function(self, newParent)
-            if extraBtnState.hookingSetParent then return end
-            if newParent == holder then return end
-            C_Timer.After(0, function()
-                if extraBtnState.hookingSetParent then return end
-                local settings = GetExtraButtonDB(buttonType)
-                if holder and settings and settings.enabled then
-                    -- No combat gate: both surfaces are unprotected (see
-                    -- ApplyExtraButtonSettings), so the reclaim reparent runs
-                    -- in combat.
-                    extraBtnState.hookingSetParent = true
-                    blizzFrame:SetParent(holder)
-                    extraBtnState.hookingSetParent = false
-                    QueueExtraButtonReanchor(buttonType)
-                end
-            end)
-        end)
-    end
-    if ExtraActionBarFrame and not extraBtnState.extraActionSetParentHooked then
-        extraBtnState.extraActionSetParentHooked = true
-        HookSetParentForType(ExtraActionBarFrame, "extraActionButton", extraBtnState.extraActionHolder)
-    end
     if ZoneAbilityFrame and not extraBtnState.zoneAbilitySetParentHooked then
         extraBtnState.zoneAbilitySetParentHooked = true
         HookSetParentForType(ZoneAbilityFrame, "zoneAbility", extraBtnState.zoneAbilityHolder)
-    end
-    if ExtraAbilityContainer and not extraBtnState.extraAbilityContainerSetParentHooked then
-        extraBtnState.extraAbilityContainerSetParentHooked = true
-        hooksecurefunc(ExtraAbilityContainer, "SetParent", function()
-            if extraBtnState.hookingSetParent then return end
-            C_Timer.After(0, function()
-                if extraBtnState.hookingSetParent then return end
-                QueueAllExtraButtonReanchors()
-            end)
-        end)
-    end
-
-    -- Hook Show to recapture frames when Blizzard makes them visible
-    -- (e.g., zone ability appearing upon entering a new zone).
-    if ExtraActionBarFrame and not extraBtnState.extraActionShowHooked then
-        extraBtnState.extraActionShowHooked = true
-        hooksecurefunc(ExtraActionBarFrame, "Show", function()
-            QueueExtraButtonReanchor("extraActionButton")
-        end)
     end
     if ZoneAbilityFrame and not extraBtnState.zoneAbilityShowHooked then
         extraBtnState.zoneAbilityShowHooked = true
@@ -537,12 +625,9 @@ function HookExtraButtonPositioning()
             QueueExtraButtonReanchor("zoneAbility")
         end)
     end
-    if ExtraAbilityContainer and not extraBtnState.extraAbilityContainerShowHooked then
-        extraBtnState.extraAbilityContainerShowHooked = true
-        hooksecurefunc(ExtraAbilityContainer, "Show", function()
-            QueueAllExtraButtonReanchors()
-        end)
-    end
+
+    -- One-time container housekeeping (mouse, EditMode selection, layout scripts).
+    NeutralizeExtraAbilityContainer()
 end
 
 function ShowExtraButtonMovers()
@@ -586,11 +671,14 @@ end
 
 -- Assign to upvalue for forward declaration in event handler
 RefreshExtraButtons = function()
-    -- No blanket combat gate: both surfaces reclaim to their movers in combat
-    -- (see ApplyExtraButtonSettings — both are unprotected).  The holder-anchor
-    -- passes (ApplyExtraButtonFrameAnchor -> PositionFrame) keep their own combat
-    -- deferral in anchoring.lua, which is fine: the holders already hold the
-    -- user's position, so only the Blizzard frame needs to re-pin in combat.
+    -- Combat gate: the outer frames own a secure descendant and cannot be
+    -- repinned in combat (see ApplyExtraButtonSettings).  Ownership is already
+    -- established out of combat, so the buttons stay on their movers; a refresh
+    -- that lands mid-combat is deferred to PLAYER_REGEN_ENABLED.
+    if InCombatLockdown() and not inInitSafeWindow then
+        ActionBarsOwned.pendingExtraButtonRefresh = true
+        return
+    end
     ApplyExtraButtonSettings("extraActionButton")
     ApplyExtraButtonFrameAnchor("extraActionButton")
     ApplyExtraButtonSettings("zoneAbility")
