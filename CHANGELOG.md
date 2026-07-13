@@ -5,6 +5,10 @@ All notable changes to QUI will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
+## v4.1.1-beta2 - 2026-07-13
+
+### Fixed
+- fix(actionbars): extra action buttons granted during combat no longer get stuck at the bottom of the screen — the reclaim/reanchor now runs immediately instead of deferring past the button's removal
 
 
 
