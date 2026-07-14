@@ -481,7 +481,7 @@ local function ScanSpellFromBuffs(castSpellID, itemID)
     local bestMatch = nil
 
     for i = 1, AuraScanCount() do
-        local aura = C_UnitAuras.GetAuraDataByIndex("player", i, "HELPFUL")
+        local aura = C_UnitAuras.GetAuraDataByIndex("player", i, "HELPFUL") -- @secret-safe: AuraScanCount() collapses the bound to 0 under ShouldAurasBeSecret, so this never runs restricted
         if not aura then break end
 
         -- Secret values in Midnight: reading doesn't error, but comparisons/arithmetic do

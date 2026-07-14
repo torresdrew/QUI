@@ -72,6 +72,14 @@ local BUILTIN_UNWRAPS = {
 -- No defaults — populated entirely from the taint config's clean_fields.
 local BUILTIN_CLEAN_FIELDS = {}
 
+-- Restriction gates: predicates whose presence in a function scope marks
+-- calls to precondition-guarded APIs (RequiresUnitAuraAccess etc.,
+-- FailureMode=Error) as handled — the scope is restriction-aware. Config can
+-- extend via extra_restriction_gates.
+local BUILTIN_RESTRICTION_GATES = {
+    ["C_Secrets.ShouldAurasBeSecret"] = true,
+}
+
 local Registry = {}
 Registry.__index = Registry
 
@@ -84,6 +92,8 @@ function M.new()
     self.unwraps           = {}
     self.cleanFields       = {}
     self.secretReturning   = {}
+    self.preconditionAPIs  = {}
+    self.restrictionGates  = {}
     -- Seed built-ins (copy so two Registry.new() instances don't share mutation)
     for k, v in pairs(BUILTIN_SAFE_SINK_METHODS)    do self.safeSinkMethods[k]   = v end
     for k, v in pairs(BUILTIN_SAFE_SINK_FUNCTIONS)  do self.safeSinkFunctions[k] = v end
@@ -91,6 +101,7 @@ function M.new()
     for k, v in pairs(BUILTIN_UNWRAPS)              do self.unwraps[k]           = v end
     for k, v in pairs(BUILTIN_CLEAN_FIELDS)         do self.cleanFields[k]       = v end
     for k, v in pairs(BUILTIN_SECRET_RETURNING)     do self.secretReturning[k]   = v end
+    for k, v in pairs(BUILTIN_RESTRICTION_GATES)    do self.restrictionGates[k]  = v end
     return self
 end
 
@@ -114,5 +125,13 @@ function Registry:isCleanField(name)        return self.cleanFields[name]       
 
 function Registry:addSecretReturning(name)  self.secretReturning[name]   = true end
 function Registry:isSecretReturning(name)   return self.secretReturning[name]   == true end
+
+-- flags: the api-index `preconditions` array (e.g. {"RequiresUnitAuraAccess"});
+-- stored so the finding message can name the actual precondition.
+function Registry:addPreconditionAPI(name, flags) self.preconditionAPIs[name] = flags or true end
+function Registry:preconditionFlags(name)         return self.preconditionAPIs[name] end
+
+function Registry:addRestrictionGate(name)  self.restrictionGates[name]  = true end
+function Registry:isRestrictionGate(name)   return self.restrictionGates[name]  == true end
 
 return M

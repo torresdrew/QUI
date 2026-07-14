@@ -79,11 +79,18 @@ local _currentGlobalDB     = nil  -- db.global; for cross-profile reads (v32+)
 --             frameAnchoring.cdmCustom_*) orphaned by DeleteContainer,
 --             including the shipped seed's own orphans — intended.
 --
+--   v54: ExtendDefensivesToSpecBuckets — v51(e) injected the shipped
+--        "defensives" strip into "*" buckets only, then deleted the legacy
+--        healer.defensiveIndicator setting; spec-override buckets REPLACE
+--        "*", so pre-existing spec buckets silently lost the indicator.
+--        Injects a copy (mirroring the "*" element's enabled state) into
+--        every numeric spec bucket that lacks one. 52/53 burned.
+--
 -- When adding a new migration: bump CURRENT_SCHEMA_VERSION (next free number
--- is 54 — see the burned-numbers rule above), add a single linear gate in
+-- is 55 — see the burned-numbers rule above), add a single linear gate in
 -- RunOnProfile, and document the version above.
 ---------------------------------------------------------------------------
-local CURRENT_SCHEMA_VERSION = 51
+local CURRENT_SCHEMA_VERSION = 54
 
 -- The oldest schema we still carry forward. The last 4.x stable release and
 -- 5.0 alpha4 both shipped schema 47, and every step-by-step migration through
@@ -899,6 +906,53 @@ local function BuildShippedDefensivesElement(enabled)
         whitelist = {}, blacklist = {},
         sortRule = "INDEX", sortReverse = false, rightClickCancel = false,
     }
+end
+
+-- v54: see the version doc at the top of the file. The presence check
+-- mirrors the wizard's isDefensivesStrip (fixed id OR a hand-built
+-- classify-equivalent) so a user's own defensives strip in a spec bucket
+-- never gets a duplicate. Runs once — the schema stamp is the one-shot, so
+-- deletions made after this pass stick.
+function Migrations.ExtendDefensivesToSpecBuckets(profile)
+    local gf = profile.quiGroupFrames
+    if type(gf) ~= "table" then return true end
+    for _, key in ipairs({ "party", "raid" }) do
+        local surface = gf[key]
+        local a = type(surface) == "table" and surface.auras
+        local elements = type(a) == "table" and a.elementsSeeded
+            and type(a.elements) == "table" and a.elements
+        if elements then
+            local base
+            local star = elements["*"]
+            if type(star) == "table" then
+                for _, e in ipairs(star) do
+                    if type(e) == "table" and e.id == "defensives" then base = e break end
+                end
+            end
+            if base then
+                for bucketKey, bucket in pairs(elements) do
+                    -- Spec buckets are keyed by NUMERIC specID; "*" and the
+                    -- string context buckets ("i"..mapID / "e"..encounterID)
+                    -- are not spec overrides and must not be touched.
+                    if type(bucketKey) == "number" and type(bucket) == "table" then
+                        local present = false
+                        for _, e in ipairs(bucket) do
+                            if type(e) == "table" and (e.id == "defensives"
+                                or (e.filterMode == "classify" and type(e.classifications) == "table"
+                                    and e.classifications.bigDefensive and e.classifications.externalDefensive)) then
+                                present = true
+                                break
+                            end
+                        end
+                        if not present then
+                            bucket[#bucket + 1] = CloneValue(base)
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return true
 end
 
 local function StripDedupeFromStore(store)
@@ -2053,6 +2107,12 @@ function Migrations.RunOnProfile(profile)
         -- (f) purge CDM per-container satellite settings orphaned by
         -- DeleteContainer.
         Migrations.PurgeOrphanContainerSatellites(profile)
+    end
+
+    -- v54 (52/53 burned): backfill the defensives strip into spec-override
+    -- buckets that v51(e) skipped.
+    if stored < 54 then
+        Migrations.ExtendDefensivesToSpecBuckets(profile)
     end
 
     profile._schemaVersion = CURRENT_SCHEMA_VERSION

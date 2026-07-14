@@ -298,6 +298,16 @@ local function SetContextMode(key)
     ContextSelection:Set(key)
 end
 
+-- Read-only accessor for the shared context mode. Callers outside this
+-- surface (e.g. the Auras hub's Group Frames sub-page) must READ this
+-- module-level singleton rather than keeping their own defaulted copy --
+-- State.contextMode is also the value the real Group Frames settings tile
+-- displays and mutates, so any independent default overwrites it on cold
+-- entry.
+local function GetContextMode()
+    return State.contextMode
+end
+
 local function SetActiveTab(tabKey)
     if type(tabKey) ~= "string" or tabKey == "" then
         return false
@@ -396,10 +406,11 @@ end
 -- auto-registers each header as a section on any host that exposes
 -- RegisterSection, so we install one on the tab's content host before render.
 ---------------------------------------------------------------------------
+-- "auras" removed: the Auras tab-strip entry no longer exists on this
+-- surface (moved to the Auras hub tile), so activeTab can never be "auras".
 local SECTION_NAV_TABS = {
     appearance = true,
     indicators = true,
-    auras = true,
     layout = true,
 }
 
@@ -586,10 +597,41 @@ local function BuildTileBody(body, _, _, feature)
     return result
 end
 
+-- Reusable preview-panel accessors for non-surface bodies (e.g. the Auras
+-- hub's Group Frames sub-page). Factored out of the same OnShow/OnHide hook
+-- block BuildTileBody wires for its own body (see above, "Dock + show the
+-- detached preview panel"), so any page hosting RenderAurasTab can drive the
+-- same detached panel without going through BuildTileBody's tab strip.
+local function ShowPreviewOn(body)
+    if not body then return end
+    EnsurePreviewPanel()
+    if not body._gfPreviewHooked then
+        body._gfPreviewHooked = true
+        body:HookScript("OnShow", function()
+            if State.previewPanel then State.previewPanel.Show() end
+            RefreshPreviewPanel()
+        end)
+        body:HookScript("OnHide", function()
+            if State.previewPanel then State.previewPanel.Hide() end
+        end)
+    end
+    if State.previewPanel and body:IsShown() then
+        State.previewPanel.Show()
+        RefreshPreviewPanel()
+    end
+end
+
+local function HidePreview()
+    if State.previewPanel then State.previewPanel.Hide() end
+end
+
 ns.QUI_GroupFramesSettingsSurface = {
     SetContextMode = SetContextMode,
+    GetContextMode = GetContextMode,
     SetActiveTab = SetActiveTab,
     NavigateSearchEntry = NavigateSearchEntry,
     GetSearchRoot = GetSearchRoot,
     RenderPage = BuildTileBody,
+    ShowPreviewOn = ShowPreviewOn,
+    HidePreview = HidePreview,
 }

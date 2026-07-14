@@ -107,5 +107,46 @@ do
         groups[1].sortMethod == _G.AuraContainerSortMethod.UnitFrameDebuff)
 end
 
+-- FilterStringUsable: restriction-aware probe (review blocker 1) ------------
+-- GetUnitAuras is RequiresUnitAuraAccess-guarded (FailureMode=Error); under
+-- encounter/M+/PvP restrictions the probe throws for EVERY string. That must
+-- never be read as "invalid filter" (it retired live classified groups and
+-- broadened their fallbacks to bare polarity mid-pull). Contract:
+--   1. AuraUtil.IsValidFilterString rejection always wins.
+--   2. Unrestricted probe verdicts are cached per string.
+--   3. Restricted + cached  -> cached verdict, probe not re-run.
+--   4. Restricted + uncached -> fail OPEN (string already passed Lua check).
+do
+    local restricted = false
+    local calls = 0
+    _G.C_UnitAuras = { GetUnitAuras = function(_, filter)
+        calls = calls + 1
+        if restricted then error("Unit aura access denied") end
+        if filter == "BOGUS_COMBO" then error("invalid filter combo") end
+        return {}
+    end }
+    _G.AuraUtil = { IsValidFilterString = function(s) return s ~= "LUA_REJECT" end }
+    _G.C_Secrets = { ShouldAurasBeSecret = function() return restricted end }
+
+    check("probe: lua-side reject wins", G.FilterStringUsable("player", "LUA_REJECT") == false)
+    check("probe: valid string accepted", G.FilterStringUsable("player", "HELPFUL") == true)
+    local before = calls
+    check("probe: verdict cached (no second C call)",
+        G.FilterStringUsable("player", "HELPFUL") == true and calls == before, tostring(calls - before))
+    check("probe: invalid combo rejected + cached", G.FilterStringUsable("player", "BOGUS_COMBO") == false)
+
+    restricted = true
+    check("probe: restricted + cached true stays true", G.FilterStringUsable("player", "HELPFUL") == true)
+    check("probe: restricted + cached false stays false", G.FilterStringUsable("player", "BOGUS_COMBO") == false)
+    before = calls
+    check("probe: restricted + uncached fails OPEN, no C call",
+        G.FilterStringUsable("player", "HELPFUL|RAID") == true and calls == before, tostring(calls - before))
+    restricted = false
+
+    _G.C_UnitAuras = nil
+    _G.AuraUtil = nil
+    _G.C_Secrets = nil
+end
+
 print("aura_glue_test " .. (failures == 0 and "OK" or "FAILED"))
 os.exit(failures == 0 and 0 or 1)

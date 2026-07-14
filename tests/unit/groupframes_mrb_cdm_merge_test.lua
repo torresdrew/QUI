@@ -41,6 +41,57 @@ assert(byKey["cdm:100"].source == "cdm", "CDM entry tagged source=cdm")
 assert(byKey["cdm:1459"] == nil, "1459 deduped (already in built-in intellect ids)")
 assert(byKey["cdm:200"] == nil, "200 excluded (hidden)")
 
+-- HideByDefault precedence (mirrors Blizzard GroupBuffFilter.lua): the saved
+-- layout's hidden list is authoritative when readable — a user-un-hidden
+-- flagged buff must merge; the flag is only the no-layout fallback.
+_G.Enum = { GroupBuffItemFlags = { HideByDefault = 1 }, CDMLayoutMode = { AccessOnly = 1 } }
+-- plain lua5.1 has no `bit` library (the game client does); the module reads
+-- _G.bit at call time, so a stub is enough to exercise the flags path.
+_G.bit = { band = function(a, b)
+    local r, p = 0, 1
+    while a > 0 and b > 0 do
+        if a % 2 == 1 and b % 2 == 1 then r = r + p end
+        a = math.floor(a / 2); b = math.floor(b / 2); p = p * 2
+    end
+    return r
+end }
+_G.C_CooldownViewer = {
+    GetGroupBuffItems = function()
+        return {
+            { spellID = 300, name = "Flagged, user-unhid", flags = 1 },
+            { spellID = 400, name = "Flagged, layout-hidden", flags = 1 },
+        }
+    end,
+}
+_G.C_UnitAuras = { GetHiddenGroupBuffs = function() return { 400 } end }
+
+-- No layout readable -> flags enforced: both flagged buffs skipped.
+MRB:RebuildRaidBuffs()
+local byKey3 = {}
+for _, e in ipairs(MRB.RaidBuffs) do byKey3[e.key] = e end
+assert(byKey3["cdm:300"] == nil, "no layout: flagged buff skipped (fallback)")
+assert(byKey3["cdm:400"] == nil, "no layout: hidden buff skipped")
+
+-- Layout readable -> its hidden list wins: 300 (un-hidden by user) merges,
+-- 400 (still in the layout's hidden list) stays out.
+local layout = {}
+_G.CooldownViewerSettings = {
+    GetLayoutManager = function()
+        return { GetActiveLayout = function() return layout end }
+    end,
+}
+_G.CooldownManagerLayout_GetHiddenGroupBuffs = function(l)
+    assert(l == layout, "getter receives the active layout")
+    return { 400 }
+end
+MRB:RebuildRaidBuffs()
+local byKey4 = {}
+for _, e in ipairs(MRB.RaidBuffs) do byKey4[e.key] = e end
+assert(byKey4["cdm:300"], "layout read: user-un-hidden flagged buff merges")
+assert(byKey4["cdm:400"] == nil, "layout read: layout-hidden buff stays excluded")
+_G.CooldownViewerSettings = nil
+_G.CooldownManagerLayout_GetHiddenGroupBuffs = nil
+
 -- Idempotent + guard: APIs absent -> CDM entries dropped, built-in retained.
 _G.C_CooldownViewer = nil
 MRB:RebuildRaidBuffs()

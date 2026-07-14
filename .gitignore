@@ -39,3 +39,13 @@ encode_gse.py
 /.windsurf
 /node_modules
 /.tmp_debug
+
+# CASC datamining caches (online client data pulled by tools/encounter_aura_gen
+# — hundreds of MB, build-specific, auto-refetched by client.init(); never
+# commit. node_modules IS vendored (2.8 MB, offline regen) — only the cache
+# stays out.
+/cache/
+tools/encounter_aura_gen/cache/
+# the regen tool's lockfile IS tracked (line-1 global ignore exempted):
+# vendored node_modules + lockfile = reproducible offline regen
+!tools/encounter_aura_gen/package-lock.json

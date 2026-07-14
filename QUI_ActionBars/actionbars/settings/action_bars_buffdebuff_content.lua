@@ -148,6 +148,8 @@ local function BuildAuraEditorSection(tabContent, PAD, SECTION_GAP, y, settings,
             fixedAuraType     = fixedAuraType,
             cancelEligible    = cancelEligible,
             allowSpecOverride = false,
+            -- Self-only surface (player's own buff borders): no roster roles.
+            roleGate          = false,
             defaultBucketFn   = defaultBucketFn,
             -- Buff borders always track the PLAYER's own buffs/debuffs —
             -- always assistable (Wave 4 Task 2c polarity hint).

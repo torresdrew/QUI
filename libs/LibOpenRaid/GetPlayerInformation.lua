@@ -898,14 +898,24 @@ local getAuraDuration = function(spellId, unitId)
     --spellId = customBuffDuration or spellId --can't replace the spellId by customBuffDurationSpellId has it wount be found in LIB_OPEN_RAID_PLAYERCOOLDOWNS
 
     if (bIsNewUnitAuraAvailable) then
+        --QUI patch (12.1): aura reads are RequiresUnitAuraAccess-guarded
+        --(FailureMode=Error) under encounter/M+/PvP addon restrictions, and
+        --this runs synchronously from UNIT_SPELLCAST_SUCCEEDED on group
+        --members' casts — exactly when restrictions are active. Skip the
+        --live scan while restricted and fall back to the data file; pcall
+        --the walk as a belt-and-braces for partial restriction states.
+        if (C_Secrets and C_Secrets.ShouldAurasBeSecret and C_Secrets.ShouldAurasBeSecret()) then
+            return LIB_OPEN_RAID_PLAYERCOOLDOWNS[spellId].duration or 0
+        end
+
         local bUsePackedAura = true
         auraSpellID = customBuffDuration or spellId
         auraDurationTime = 0 --reset duration
         auraUnitId = unitId or "player"
 
-        AuraUtil.ForEachAura(auraUnitId, "HELPFUL", nil, handleBuffAura, bUsePackedAura) --check auras to find a buff for the spellId
+        local bScanOk = pcall(AuraUtil.ForEachAura, auraUnitId, "HELPFUL", nil, handleBuffAura, bUsePackedAura) --check auras to find a buff for the spellId
 
-        if (auraDurationTime == 0) then --if the buff wasn't found, attempt to get the duration from the file
+        if (not bScanOk or auraDurationTime == 0) then --if the buff wasn't found, attempt to get the duration from the file
             return LIB_OPEN_RAID_PLAYERCOOLDOWNS[spellId].duration or 0
         end
         return auraDurationTime
@@ -1003,6 +1013,14 @@ do
         end
 
         function openRaidLib.AuraTracker.ScanUnitAuras(unitId)
+            --QUI patch (12.1): see getAuraDuration — the aura walk is
+            --RequiresUnitAuraAccess-guarded (hard error) under encounter/M+/
+            --PvP restrictions. Bail BEFORE touching scan state so the next
+            --unrestricted scan still diffs removals correctly.
+            if (C_Secrets and C_Secrets.ShouldAurasBeSecret and C_Secrets.ShouldAurasBeSecret()) then
+                return
+            end
+
             local maxCount = nil
             local bUsePackedAura = true
             openRaidLib.AuraTracker.CurrentUnitId = unitId
@@ -1010,7 +1028,7 @@ do
             openRaidLib.AuraTracker.AurasFoundOnScan = {}
 
             --code of 'ForEachAura' has been updated to use the latest API available
-            AuraUtil.ForEachAura(unitId, "HELPFUL", maxCount, openRaidLib.AuraTracker.ScanCallback, bUsePackedAura)
+            pcall(AuraUtil.ForEachAura, unitId, "HELPFUL", maxCount, openRaidLib.AuraTracker.ScanCallback, bUsePackedAura)
 
             local thisUnitAuras = openRaidLib.AuraTracker.CurrentAuras[unitId]
             for spellId in pairs(thisUnitAuras) do
@@ -1072,8 +1090,16 @@ do
     ---@return auraduration|nil auraDuration
     ---@return number|nil expirationTime
     function openRaidLib.AuraTracker.FindBuffDuration(unitId, casterName, spellId)
-        local name, texture, count, buffType, duration, expirationTime = AuraUtil.FindAura(predicateFunc, unitId, "HELPFUL", spellId, casterName)
-        if (name) then
+        --QUI patch (12.1): AuraUtil.FindAura walks RequiresUnitAuraAccess-
+        --guarded getters (FailureMode=Error) under encounter/M+/PvP addon
+        --restrictions. Skip the scan while restricted and pcall the walk as
+        --a belt-and-braces for partial restriction states — this exported
+        --entry point must never hard-error a caller.
+        if (C_Secrets and C_Secrets.ShouldAurasBeSecret and C_Secrets.ShouldAurasBeSecret()) then
+            return
+        end
+        local ok, name, texture, count, buffType, duration, expirationTime = pcall(AuraUtil.FindAura, predicateFunc, unitId, "HELPFUL", spellId, casterName)
+        if (ok and name) then
             return duration, expirationTime
         end
     end

@@ -142,6 +142,12 @@ aura_elements_editor.lua
 ..\QUI\core\settings\content\modules_nonvisual_onboarding.lua
 ..\QUI\core\settings\content\module_addons_content.lua
 ..\QUI\core\settings\content\modules_page.lua
+..\QUI\core\settings\content\auras_group_page.lua
+..\QUI\core\settings\content\auras_unit_page.lua
+..\QUI\core\settings\content\auras_actionbar_page.lua
+..\QUI\core\settings\content\auras_dispel_page.lua
+..\QUI\core\settings\content\auras_wizard_page.lua
+..\QUI\core\settings\content\auras_encounters_page.lua
 init.lua
 tiles\related.lua
 tiles\minimap.lua
@@ -149,6 +155,7 @@ tiles\infobar.lua
 tiles\unit_frames.lua
 tiles\group_frames.lua
 tiles\action_bars.lua
+tiles\auras.lua
 tiles\cooldown_manager.lua
 tiles\resource_bars.lua
 tiles\appearance.lua

@@ -6479,7 +6479,7 @@ return {
     profiles = {
       Default = {
         _defaultsVersion = 3,
-        _schemaVersion = 51,
+        _schemaVersion = 54,
         cdm = {
           engine = "owned"
         },

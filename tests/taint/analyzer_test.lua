@@ -614,3 +614,115 @@ local fSR6 = Analyzer.analyze(srcSR6, "modules/foo.lua", rSR, cfg)
 assert_eq(#fSR6, 0, "guard untaints secret-returning result in then-branch")
 
 print("secret-returning test passed")
+
+-- ---------------------------------------------------------------------------
+-- Precondition-guarded API scan (<precondition>, review tier)
+-- ---------------------------------------------------------------------------
+local rPre = Registry.new()
+rPre:addPreconditionAPI("C_UnitAuras.GetUnitAuras", { "RequiresUnitAuraAccess" })
+
+local function preFindings(findings)
+    local out = {}
+    for _, f in ipairs(findings or {}) do
+        if f.sink == "<precondition>" then out[#out + 1] = f end
+    end
+    return out
+end
+
+-- Raw call in an ungated function -> one review finding
+local srcP1 = [[
+local function scan(unit)
+    local auras = C_UnitAuras.GetUnitAuras(unit, "HELPFUL")
+    return auras
+end
+return scan
+]]
+local fP1 = preFindings(Analyzer.analyze(srcP1, "modules/foo.lua", rPre, cfg))
+assert_eq(#fP1, 1, "raw guarded call flagged")
+assert_eq(fP1[1].severity, "review", "precondition finding is review tier")
+assert_eq(fP1[1].source_function, "C_UnitAuras.GetUnitAuras", "source names the API")
+
+-- pcall'd function REFERENCE -> no finding (not a CallExpr)
+local srcP2 = [[
+local function scan(unit)
+    local ok, auras = pcall(C_UnitAuras.GetUnitAuras, unit, "HELPFUL")
+    return ok and auras
+end
+return scan
+]]
+assert_eq(#preFindings(Analyzer.analyze(srcP2, "modules/foo.lua", rPre, cfg)), 0,
+    "pcall function-reference not flagged")
+
+-- Call inside a pcall'd closure -> protected, no finding
+local srcP3 = [[
+local function scan(unit)
+    local ok = pcall(function()
+        return C_UnitAuras.GetUnitAuras(unit, "HELPFUL")
+    end)
+    return ok
+end
+return scan
+]]
+assert_eq(#preFindings(Analyzer.analyze(srcP3, "modules/foo.lua", rPre, cfg)), 0,
+    "pcall-protected closure not flagged")
+
+-- Gate consulted in the same function scope -> no finding (order-insensitive)
+local srcP4 = [[
+local function scan(unit)
+    if C_Secrets.ShouldAurasBeSecret() then return nil end
+    return C_UnitAuras.GetUnitAuras(unit, "HELPFUL")
+end
+return scan
+]]
+assert_eq(#preFindings(Analyzer.analyze(srcP4, "modules/foo.lua", rPre, cfg)), 0,
+    "gate in same scope not flagged")
+
+-- Gate in an OUTER function scope covers nested closures (lexical inherit)
+local srcP5 = [[
+local function scan(unit)
+    if C_Secrets.ShouldAurasBeSecret() then return nil end
+    local function inner()
+        return C_UnitAuras.GetUnitAuras(unit, "HELPFUL")
+    end
+    return inner()
+end
+return scan
+]]
+assert_eq(#preFindings(Analyzer.analyze(srcP5, "modules/foo.lua", rPre, cfg)), 0,
+    "outer-scope gate covers nested closure")
+
+-- Gate in a SIBLING function does NOT cover (non-interprocedural)
+local srcP6 = [[
+local function gated()
+    return C_Secrets.ShouldAurasBeSecret()
+end
+local function scan(unit)
+    if gated() then return nil end
+    return C_UnitAuras.GetUnitAuras(unit, "HELPFUL")
+end
+return scan
+]]
+assert_eq(#preFindings(Analyzer.analyze(srcP6, "modules/foo.lua", rPre, cfg)), 1,
+    "sibling-function gate does not cover (needs @secret-safe annotation)")
+
+-- @secret-safe annotation suppresses the finding
+local srcP7 = [[
+local function scan(unit)
+    return C_UnitAuras.GetUnitAuras(unit, "HELPFUL") -- @secret-safe: caller gates
+end
+return scan
+]]
+assert_eq(#preFindings(Analyzer.analyze(srcP7, "modules/foo.lua", rPre, cfg)), 0,
+    "@secret-safe suppresses precondition finding")
+
+-- Unregistered API never flags
+local srcP8 = [[
+local function scan(unit)
+    return C_UnitAuras.GetAuraDataBySpellName(unit, "Rejuvenation")
+end
+return scan
+]]
+assert_eq(#preFindings(Analyzer.analyze(srcP8, "modules/foo.lua", rPre, cfg)), 0,
+    "unregistered API not flagged")
+
+print("precondition scan test passed")

@@ -6480,7 +6480,7 @@ return {
       Default = {
         _defaultsVersion = 3,
         _needsLateAbImport = true,
-        _schemaVersion = 51,
+        _schemaVersion = 54,
         ncdm = {
           buff = {
             ownedSpells = {

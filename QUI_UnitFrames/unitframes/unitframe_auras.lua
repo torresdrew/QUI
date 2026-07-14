@@ -135,10 +135,16 @@ end
 
 -- Resolve the active CONTAINER-RENDERED elements for a frame (enabled strips +
 -- tracked icon/square/bar, in bucket order). Unit frames never use per-spec
--- buckets, so the spec key is always nil. healthTint tracked elements are skipped
--- defensively (unit frames have no health-tint feeder; capabilities gate them at
--- the editor). Returns a SHARED module scratch — do not retain across a re-resolve.
+-- buckets, so the spec key is always nil. healthTint AND border tracked elements
+-- are skipped defensively (unit frames have neither feeder; capabilities gate
+-- them at the editor). Returns a SHARED module scratch — do not retain across a
+-- re-resolve.
 local _activeElems = {}
+-- Encounter/instance cascade key scratch (core/aura_context.lua). Unit frames
+-- have no spec buckets (allowSpecOverride=false), but the encounter/instance
+-- rungs still apply: a boss/zone delta overrides the base "*" bucket on the
+-- unit surface too. nil outside an encounter/instance → base bucket, unchanged.
+local _ckScratch = {}
 local function ResolveContainerElements(frame)
     for i = #_activeElems, 1, -1 do _activeElems[i] = nil end
     local auras = GetFrameAuraSettings(frame)
@@ -146,11 +152,12 @@ local function ResolveContainerElements(frame)
     AuraElements = AuraElements or ns.AuraElements
     if not AuraElements then return _activeElems end
     AuraElements.EnsureSeeded(auras, DefaultUnitAuraBucket)
-    local elements = AuraElements.ActiveElementsForSpec(auras, nil)
+    local ck = ns.QUI_AuraContext and ns.QUI_AuraContext.FillContextKeys(_ckScratch) or nil
+    local elements = AuraElements.ActiveElementsForSpec(auras, nil, nil, ck)
     for i = 1, #elements do
         local e = elements[i]
         if e.mode == "filterStrip"
-            or (e.mode == "tracked" and e.displayType ~= "healthTint") then
+            or (e.mode == "tracked" and e.displayType ~= "healthTint" and e.displayType ~= "border") then
             _activeElems[#_activeElems + 1] = e
         end
     end
@@ -309,6 +316,21 @@ local function UpdateAuras(frame)
     ApplyElementPass(frame, true)
 end
 QUI_UF.UpdateAuras = UpdateAuras
+
+-- Combat-SAFE aura-only refresh across every unit frame: re-resolves each
+-- frame's element list (picking up a changed encounter/instance cascade rung)
+-- and re-applies it through UpdateAuras' combat split (mutation live, creation
+-- queued to PLAYER_REGEN_ENABLED). Driven by core/aura_context.lua on
+-- ENCOUNTER_START/_END so a boss bucket goes live on the unit surface on pull.
+-- Exported on the shared suite `ns` (not _G) per the global-assignment ratchet.
+local function RefreshAllAuraContainers()
+    local frames = QUI_UF and QUI_UF.frames
+    if not frames then return end
+    for _, frame in pairs(frames) do
+        UpdateAuras(frame)
+    end
+end
+ns.QUI_RefreshUnitFrameAuras = RefreshAllAuraContainers
 
 -- Suppress the live containers of the previewed polarity around layout-mode
 -- preview. The preview flag for the polarity is already set by the caller, so a

@@ -67,7 +67,7 @@ local function EngineRendersElement(element)
     if not element then return false end
     local mode = element.mode
     if mode == "missingRaidBuff" then return true end
-    if mode == "tracked" and element.displayType == "healthTint" then return true end
+    if mode == "tracked" and (element.displayType == "healthTint" or element.displayType == "border") then return true end
     -- filterStrip + tracked icon/square/bar => secure CustomAuraContainer.
     return false
 end
@@ -996,6 +996,25 @@ end
 local _activeElementsScratch = {}
 local _trackedMatchesScratch = {}
 local _missingRaidBuffMatchesScratch = {}
+local _ckScratch = {}
+-- Separate cascade-key scratch for the container-resolve path (ResolveContainerElements
+-- runs in a different pass than RenderFrameElements' _ckScratch; keeping them
+-- distinct avoids any accidental cross-pass aliasing).
+local _ckScratchContainer = {}
+
+-- Resolve a frame's role gate inputs for AuraElements.ElementAppliesToRole:
+-- assigned group role ("TANK"/"HEALER"/"DAMAGER"/nil) + whether the frame is the
+-- player's own. Roles are stable within an encounter, so re-resolving per render
+-- is cheap and always current on roster/spec change. Guarded for the headless
+-- test harness (WoW role APIs absent there).
+local function FrameRoleGate(frame)
+    local unit = GetFrameUnit(frame)
+    if not unit then return nil, false end
+    local role = UnitGroupRolesAssigned and UnitGroupRolesAssigned(unit) or nil
+    if role == "NONE" then role = nil end
+    local isSelf = UnitIsUnit and UnitIsUnit(unit, "player") or false
+    return role, isSelf
+end
 
 -- Per-frame element render: dispatch the work list and release stale element
 -- frames. `cache` is the unit's shared aura cache entry (may be nil → only
@@ -1027,8 +1046,15 @@ local _relGeneration = 0
 QUI_GFA._configGeneration = 0  -- public mirror of _relGeneration for the renderer's icon-config gate
 local _relCache = setmetatable({}, { __mode = "k" })
 local function GetAuraRelevance(auras, specID)
+    -- Encounter + instance cascade rungs (core/aura_context.lua): nil outside a
+    -- boss pull / instance (or before the tracker's first event), in which case
+    -- the resolver falls through to spec/"*" exactly as before.
+    local AC = ns.QUI_AuraContext
+    local encKey = AC and AC.EncounterKey() or nil
+    local curKey = AC and AC.InstanceKey() or nil
     local rel = _relCache[auras]
-    if rel and rel.gen == _relGeneration and rel.specID == specID then
+    if rel and rel.gen == _relGeneration and rel.specID == specID
+        and rel.instanceKey == curKey and rel.encounterKey == encKey then
         return rel
     end
     if not rel then
@@ -1037,14 +1063,17 @@ local function GetAuraRelevance(auras, specID)
     end
     rel.gen = _relGeneration
     rel.specID = specID
+    rel.instanceKey = curKey
+    rel.encounterKey = encKey
     rel.hasMissingRaidBuff = false
     rel.hasTracked = false
     wipe(rel.trackedSpells)
     -- Rare path (only on spec/settings change): a plain alloc here is fine.
     -- Strips + tracked icon/square/bar are container-driven (self-drive
     -- UNIT_AURA), so the relevance descriptor only tracks the engine's remaining
-    -- emitters — MRB (helpful-dirty) and the healthTint tracked feeder (by spell).
-    local elements = AuraModel.ActiveElementsForSpec(auras, specID)
+    -- emitters — MRB (helpful-dirty), the healthTint + border tracked feeders.
+    local ck = AC and AC.FillContextKeys({}) or nil
+    local elements = AuraModel.ActiveElementsForSpec(auras, specID, nil, ck)
     for i = 1, #elements do
         local e = elements[i]
         if EngineRendersElement(e) then
@@ -1109,7 +1138,11 @@ local function RenderFrameElements(frame, cache, dirty)
     -- Zero-alloc render: iterate the active elements directly into reusable
     -- scratch tables. Render:Dispatch only reads matches synchronously and never
     -- retains them, so the scratch is safe to reuse across frames/events.
-    local elements = AuraModel.ActiveElementsForSpec(auras, specID, _activeElementsScratch)
+    -- Encounter + instance cascade rungs (core/aura_context.lua) -- see
+    -- GetAuraRelevance above. FillContextKeys compacts into the shared scratch
+    -- (no alloc) and returns nil when neither rung is active.
+    local ck = ns.QUI_AuraContext and ns.QUI_AuraContext.FillContextKeys(_ckScratch) or nil
+    local elements = AuraModel.ActiveElementsForSpec(auras, specID, _activeElementsScratch, ck)
 
     local rendered = frame._quiRenderedAuraElementIDs
     if not rendered then
@@ -1119,14 +1152,18 @@ local function RenderFrameElements(frame, cache, dirty)
 
     local current = _renderCurrentIDs
     wipe(current)
+    -- Role gate inputs for this frame (applyToRoles); stable within an encounter.
+    local frameRole, frameIsSelf = FrameRoleGate(frame)
     for i = 1, #elements do
         local element = elements[i]
-        -- The engine only renders MRB + the healthTint tracked feeder.
+        -- The engine only renders MRB + the healthTint/border tracked feeders.
         -- filterStrip AND tracked icon/square/bar are drawn by their own secure
         -- CustomAuraContainer — skip both entirely (no id recorded, so the
         -- release reconciliation tears down any lingering widgets from a
-        -- pre-cutover pass and never re-acquires them).
-        if EngineRendersElement(element) then
+        -- pre-cutover pass and never re-acquires them). A role-gated-out element
+        -- is likewise skipped (id not recorded → released if it rendered before).
+        if EngineRendersElement(element)
+            and AuraModel.ElementAppliesToRole(element, frameRole, frameIsSelf) then
             -- Per-element dirty gate: skip the (expensive) match build + Dispatch
             -- for elements the delta didn't touch, but still record the id so the
             -- release reconciliation below never drops a clean element.
@@ -1179,11 +1216,15 @@ local function RenderFrameElements(frame, cache, dirty)
     -- Snapshot the current set for the next pass (reuse the table).
     wipe(rendered)
     for id in pairs(current) do rendered[id] = true end
-    -- Health-tint owner that no element rendered this pass (e.g. its element was
-    -- removed) must be cleared too.
+    -- Health-tint / border owner that no element rendered this pass (e.g. its
+    -- element was removed or role-gated out) must be cleared too.
     local tintOwner = frame._quiAuraRenderHealthTintOwner
     if tintOwner and not current[tintOwner] then
         Render:Release(frame, tintOwner)
+    end
+    local borderOwner = frame._quiAuraRenderBorderOwner
+    if borderOwner and not current[borderOwner] then
+        Render:Release(frame, borderOwner)
     end
 end
 QUI_GFA.RenderFrameElements = RenderFrameElements
@@ -1287,11 +1328,19 @@ local function ResolveContainerElements(frame)
     if not auras or auras.enabled == false then return _activeElems end
     AuraModel.EnsureSeeded(auras, BucketFnFor(frame))
     local specID = GetPlayerSpecID()
-    local elements = AuraModel.ActiveElementsForSpec(auras, specID)
+    -- Instance-context cascade rung (core/aura_context.lua) -- this is the
+    -- container-render path (filterStrip + tracked icon/square/bar), the
+    -- primary visible-aura path, so it needs the same rung as GetAuraRelevance
+    -- and RenderFrameElements above; it already re-resolves every call
+    -- (no cache), so no extra invalidation is needed here.
+    local ck = ns.QUI_AuraContext and ns.QUI_AuraContext.FillContextKeys(_ckScratchContainer) or nil
+    local elements = AuraModel.ActiveElementsForSpec(auras, specID, nil, ck)
+    local role, isSelf = FrameRoleGate(frame)
     for i = 1, #elements do
         local e = elements[i]
-        if e.mode == "filterStrip"
-            or (e.mode == "tracked" and e.displayType ~= "healthTint") then
+        if (e.mode == "filterStrip"
+            or (e.mode == "tracked" and e.displayType ~= "healthTint" and e.displayType ~= "border"))
+            and AuraModel.ElementAppliesToRole(e, role, isSelf) then
             _activeElems[#_activeElems + 1] = e
         end
     end
@@ -1463,6 +1512,16 @@ function QUI_GFA.EnsureContainersForFrame(frame)
     if not ResolveAuraDeps() or not CreateFrame then return end
     local elems = ResolveContainerElements(frame)
     local want = #elems
+    -- Union pre-stage: size the pool to the LARGEST bucket in the store, not just
+    -- the currently-active one, so an encounter bucket that adds boss-ability
+    -- indicators finds its containers ALREADY created when it goes live on pull
+    -- (creation is combat-forbidden; the on-pull switch is then pure mutation).
+    -- Over-provisioned slots stay disabled until a bucket actually uses them.
+    local auras = GetFrameAuraSettings(frame)
+    if auras and AuraModel.MaxBucketElementCount then
+        local union = AuraModel.MaxBucketElementCount(auras)
+        if union > want then want = union end
+    end
     if want == 0 then return end
     local pool = frame._quiAuraContainers
     if not pool then
@@ -1474,7 +1533,12 @@ function QUI_GFA.EnsureContainersForFrame(frame)
         local container = CreateFrame("AuraContainer", nil, frame, "CustomAuraContainerTemplate")
         container:SetSize(1, 1)  -- give the engine a renderable rect from the first dirty mark; it auto-sizes on layout
         pool[i] = container
-        AnchorElementContainer(container, frame, elems[i])
+        -- Only the currently-active elements have a definite anchor; union
+        -- spares (i > #elems) are anchored by the config pass when a bucket
+        -- activates them (OOC), so skip anchoring them here.
+        if elems[i] then
+            AnchorElementContainer(container, frame, elems[i])
+        end
     end
 end
 

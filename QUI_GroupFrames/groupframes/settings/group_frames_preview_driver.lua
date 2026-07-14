@@ -1027,7 +1027,11 @@ local function RenderFrameAuras(f, auras, now)
             work[#work + 1] = { element = element, matches = matches }
             current[element.id] = true
             Render:Dispatch(f, element, matches)
-        elseif element.mode == "tracked" and element.displayType == "healthTint" then
+        elseif element.mode == "tracked"
+            and (element.displayType == "healthTint" or element.displayType == "border") then
+            -- Both are frame-level feeders drawn by the real renderer (healthTint
+            -- overlay / border outline); BuildHealthTintMatches supplies a fake
+            -- match keyed by spellID for either.
             local matches = BuildHealthTintMatches(element, now)
             work[#work + 1] = { element = element, matches = matches }
             current[element.id] = true

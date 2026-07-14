@@ -6483,7 +6483,7 @@ return {
       Default = {
         _defaultsVersion = 3,
         _needsLateAbImport = true,
-        _schemaVersion = 51,
+        _schemaVersion = 54,
         actionBars = {
           bars = {
             bags = {
@@ -7678,6 +7678,7 @@ return {
               ["*"] = {
                 [1] = {
                   anchor = "TOPRIGHT",
+                  applyToRoles = "all",
                   auraType = "HELPFUL",
                   blacklist = {},
                   classifications = {
@@ -7758,6 +7759,7 @@ return {
               ["*"] = {
                 [1] = {
                   anchor = "TOPRIGHT",
+                  applyToRoles = "all",
                   auraType = "HARMFUL",
                   blacklist = {},
                   classifications = {
@@ -10582,6 +10584,7 @@ return {
                 ["*"] = {
                   [1] = {
                     anchor = "BOTTOMLEFT",
+                    applyToRoles = "all",
                     auraType = "HARMFUL",
                     blacklist = {
                       [26013] = true,
@@ -10855,7 +10858,11 @@ return {
                 [250] = {
                   [1] = {
                     anchor = "TOP",
+                    applyToRoles = "all",
                     auraType = "HELPFUL",
+                    border = {
+                      thickness = 2
+                    },
                     color = {
                       [1] = 1,
                       [2] = 1,
@@ -10898,6 +10905,65 @@ return {
                       offsetY = 1,
                       show = true
                     }
+                  },
+                  [2] = {
+                    anchor = "BOTTOMRIGHT",
+                    auraType = "HELPFUL",
+                    blacklist = {},
+                    borderColor = {
+                      [1] = 0,
+                      [2] = 0.80000000000000004,
+                      [3] = 0,
+                      [4] = 1
+                    },
+                    classifications = {
+                      bigDefensive = true,
+                      externalDefensive = true
+                    },
+                    duration = {
+                      anchor = "BOTTOM",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 9,
+                      offsetX = 0,
+                      offsetY = -6,
+                      show = true
+                    },
+                    enabled = false,
+                    filterFlags = {},
+                    filterMode = "classify",
+                    growDirection = "LEFT",
+                    hideSwipe = false,
+                    iconSize = 15,
+                    id = "defensives",
+                    maxIcons = 3,
+                    mode = "filterStrip",
+                    offsetX = 0,
+                    offsetY = 4,
+                    reverseSwipe = true,
+                    rightClickCancel = false,
+                    sortReverse = false,
+                    sortRule = "INDEX",
+                    spacing = 0,
+                    stack = {
+                      anchor = "BOTTOMRIGHT",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 9,
+                      offsetX = -1,
+                      offsetY = 1,
+                      show = true
+                    },
+                    swipeStyle = "radial",
+                    whitelist = {}
                   }
                 },
                 ["*"] = {
@@ -11070,6 +11136,7 @@ return {
                 ["*"] = {
                   [1] = {
                     anchor = "TOPLEFT",
+                    applyToRoles = "all",
                     auraType = "HARMFUL",
                     blacklist = {},
                     classifications = {
@@ -11129,6 +11196,7 @@ return {
                   },
                   [2] = {
                     anchor = "BOTTOMLEFT",
+                    applyToRoles = "all",
                     auraType = "HELPFUL",
                     blacklist = {},
                     classifications = {
@@ -11355,6 +11423,7 @@ return {
                 ["*"] = {
                   [1] = {
                     anchor = "TOPLEFT",
+                    applyToRoles = "all",
                     auraType = "HARMFUL",
                     blacklist = {},
                     classifications = {
@@ -11414,6 +11483,7 @@ return {
                   },
                   [2] = {
                     anchor = "BOTTOMLEFT",
+                    applyToRoles = "all",
                     auraType = "HELPFUL",
                     blacklist = {},
                     classifications = {
@@ -11633,6 +11703,7 @@ return {
                 ["*"] = {
                   [1] = {
                     anchor = "TOPLEFT",
+                    applyToRoles = "all",
                     auraType = "HARMFUL",
                     blacklist = {},
                     classifications = {
@@ -11692,6 +11763,7 @@ return {
                   },
                   [2] = {
                     anchor = "BOTTOMLEFT",
+                    applyToRoles = "all",
                     auraType = "HELPFUL",
                     blacklist = {},
                     classifications = {
@@ -11770,6 +11842,7 @@ return {
                 ["*"] = {
                   [1] = {
                     anchor = "TOPLEFT",
+                    applyToRoles = "all",
                     auraType = "HARMFUL",
                     blacklist = {},
                     classifications = {
@@ -11829,6 +11902,7 @@ return {
                   },
                   [2] = {
                     anchor = "BOTTOMLEFT",
+                    applyToRoles = "all",
                     auraType = "HELPFUL",
                     blacklist = {},
                     classifications = {
@@ -12045,6 +12119,7 @@ return {
                 ["*"] = {
                   [1] = {
                     anchor = "TOPLEFT",
+                    applyToRoles = "all",
                     auraType = "HARMFUL",
                     blacklist = {},
                     classifications = {
@@ -12104,6 +12179,7 @@ return {
                   },
                   [2] = {
                     anchor = "BOTTOMLEFT",
+                    applyToRoles = "all",
                     auraType = "HELPFUL",
                     blacklist = {},
                     classifications = {
@@ -12324,6 +12400,7 @@ return {
                 ["*"] = {
                   [1] = {
                     anchor = "TOPLEFT",
+                    applyToRoles = "all",
                     auraType = "HARMFUL",
                     blacklist = {},
                     classifications = {
@@ -12383,6 +12460,7 @@ return {
                   },
                   [2] = {
                     anchor = "BOTTOMLEFT",
+                    applyToRoles = "all",
                     auraType = "HELPFUL",
                     blacklist = {},
                     classifications = {
@@ -12466,6 +12544,7 @@ return {
                 ["*"] = {
                   [1] = {
                     anchor = "TOPLEFT",
+                    applyToRoles = "all",
                     auraType = "HARMFUL",
                     blacklist = {},
                     classifications = {
@@ -12527,6 +12606,7 @@ return {
                   },
                   [2] = {
                     anchor = "TOPRIGHT",
+                    applyToRoles = "all",
                     auraType = "HELPFUL",
                     blacklist = {},
                     classifications = {
@@ -12728,6 +12808,7 @@ return {
                 ["*"] = {
                   [1] = {
                     anchor = "TOPRIGHT",
+                    applyToRoles = "all",
                     auraType = "HARMFUL",
                     blacklist = {},
                     classifications = {
@@ -12787,6 +12868,7 @@ return {
                   },
                   [2] = {
                     anchor = "BOTTOMLEFT",
+                    applyToRoles = "all",
                     auraType = "HELPFUL",
                     blacklist = {},
                     classifications = {

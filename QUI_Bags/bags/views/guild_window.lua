@@ -301,11 +301,14 @@ local function ColorName(name)
 end
 
 local function LogTimeSuffix(year, month, day, hour)
-    -- GUILD_BANK_LOG_TIME + RecentTimeDate (UIParent.lua:354) — the exact
-    -- pair Blizzard appends (Blizzard_GuildBankUI.lua:775); plain fallback
-    -- (no timestamp) when either global is missing.
-    if GUILD_BANK_LOG_TIME and RecentTimeDate then
-        return GUILD_BANK_LOG_TIME:format(RecentTimeDate(year, month, day, hour))
+    -- GUILD_BANK_LOG_TIME + the recent-time formatter Blizzard appends
+    -- (Blizzard_GuildBankUI.lua:775). 12.1 moved the global RecentTimeDate to
+    -- TimeUtil.GetRecentTimeDate (Blizzard_SharedXML/TimeUtil.lua:24); keep
+    -- the old global as a fallback for older clients, plain "" when both are
+    -- missing.
+    local recent = (TimeUtil and TimeUtil.GetRecentTimeDate) or RecentTimeDate
+    if GUILD_BANK_LOG_TIME and recent then
+        return GUILD_BANK_LOG_TIME:format(recent(year, month, day, hour))
     end
     return ""
 end

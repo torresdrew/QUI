@@ -156,7 +156,7 @@ function P.Show(hostFrame, elements, opts)
     for i = 1, #elements do
         local e = elements[i]
         local render = (e.mode == "filterStrip")
-            or (e.mode == "tracked" and e.displayType ~= "healthTint")
+            or (e.mode == "tracked" and e.displayType ~= "healthTint" and e.displayType ~= "border")
         if render and opts and opts.only then render = opts.only(e) end
         if render then
             cursor = LayoutElement(hostFrame, pool, cursor, e, resolve)

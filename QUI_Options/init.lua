@@ -79,6 +79,9 @@ function GUI:InitializeOptions()
     if ns.QUI_ActionBarsTile then
         ns.QUI_ActionBarsTile.Register(frame)
     end
+    if ns.QUI_AurasTile then
+        ns.QUI_AurasTile.Register(frame)
+    end
     if ns.QUI_CooldownManagerTile then
         ns.QUI_CooldownManagerTile.Register(frame)
     end

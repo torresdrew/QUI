@@ -810,6 +810,12 @@ _G.C_Timer = {
     end,
 }
 
+-- Published so page builds can skip work that's meaningless under the
+-- harvest — e.g. live preview-mock rendering, whose math reads numeric DB
+-- leaves that make_auto_table() vivifies as TABLES (math.max(0, table)
+-- errors, and the failed build knocks the page's labels out of the cache).
+_G.QUI_SEARCH_HARVEST = true
+
 local profile_db = make_auto_table()
 profile_db.general.showOptionTooltips = true
 profile_db.quiGroupFrames = {
@@ -1123,6 +1129,26 @@ do
         local ok, err = load_script(model_path)
         if not ok then
             failures[#failures + 1] = { path = model_path, error = err }
+        end
+    end
+end
+
+-- The setup-wizard page (core/settings/content/auras_wizard_page.lua) captures
+-- `local W = ns.QUI_AuraWizard` at file scope, and its build() calls W.WizardSteps
+-- / W.RoleDefaults / W.CommitTrackedHoTs etc. during the harvest. That module
+-- lives in QUI.toc (core/aura_wizard.lua), which should_load_script() does not
+-- pull into the main loop, so pre-load it here -- AFTER core/aura_elements.lua
+-- (loaded above), which it depends on via `local E = ns.AuraElements`. Without
+-- this the page's W upvalue is nil and the wizard page build errors, leaving
+-- only its nav entry (SetSearchContext) searchable and none of its labels.
+do
+    local wizard_path = "core/aura_wizard.lua"
+    local probe = io.open(wizard_path, "r")
+    if probe then
+        probe:close()
+        local ok, err = load_script(wizard_path)
+        if not ok then
+            failures[#failures + 1] = { path = wizard_path, error = err }
         end
     end
 end
@@ -2535,6 +2561,7 @@ local tile_order = {
     "QUI_GlobalTile",
     "QUI_UnitFramesTile",
     "QUI_GroupFramesTile",
+    "QUI_AurasTile",
     "QUI_ActionBarsTile",
     "QUI_CooldownManagerTile",
     "QUI_ResourceBarsTile",

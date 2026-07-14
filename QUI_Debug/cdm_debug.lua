@@ -281,7 +281,7 @@ local function EventTraceHasItemOrSlotCooldownIconForTarget(targetID)
     return false
 end
 
-function CDMIcons.EventTraceShouldPrintFrameEvent(event, arg1, arg2, arg3, arg4)
+function CDMIcons.EventTraceShouldPrintFrameEvent(event, arg1, arg2, arg3, arg4, arg5)
     local targetID = CDMIcons._eventTraceSpellID
     if not targetID then return false end
 
@@ -309,8 +309,12 @@ function CDMIcons.EventTraceShouldPrintFrameEvent(event, arg1, arg2, arg3, arg4)
             -- nil payload = "update all" sweep; let it through.
             return true
         end
+        -- arg5 is the payload's itemID (SpellBookDocumentation.lua:859) —
+        -- without it an item-targeted watch never matches item-driven SUC
+        -- fires (arg1/arg2 carry the spell identity only).
         return CDMIcons.EventTraceSpellIDMatches(targetID, arg1)
             or CDMIcons.EventTraceSpellIDMatches(targetID, arg2)
+            or CDMIcons.EventTraceSpellIDMatches(targetID, arg5)
     end
 
     if event == "BAG_UPDATE_COOLDOWN" then
@@ -328,11 +332,14 @@ end
 -- startRecoveryCategory + category + per-spell cdInfo.isActive /
 -- chargeInfo.isActive for both the spellID hint and the baseSpellID, so
 -- the trace can be cross-referenced against the resolver's lane choice.
-local function EventTraceBuildSpellUpdateCooldownExtra(arg1, arg2, arg3, arg4)
+local function EventTraceBuildSpellUpdateCooldownExtra(arg1, arg2, arg3, arg4, arg5)
     if not Sources then return nil end
     local parts = {}
     parts[#parts + 1] = "startRec=" .. CDMIcons.EventTraceValue(arg4)
     parts[#parts + 1] = "cat=" .. CDMIcons.EventTraceValue(arg3)
+    if arg5 ~= nil then
+        parts[#parts + 1] = "itemID=" .. CDMIcons.EventTraceValue(arg5)
+    end
 
     local function probeSpell(label, sid)
         if type(sid) ~= "number" then return end
@@ -744,7 +751,7 @@ local function EventTraceAppendExtra(extra, note)
     return note
 end
 
-function CDMIcons.EventTracePrint(source, event, arg1, arg2, arg3, arg4, extra)
+function CDMIcons.EventTracePrint(source, event, arg1, arg2, arg3, arg4, arg5, extra)
     local targetID = CDMIcons._eventTraceSpellID
     if not targetID then return end
     -- "runtime-pre" comes from cdm_resolvers.lua's runtime frame OnEvent.
@@ -754,7 +761,7 @@ function CDMIcons.EventTracePrint(source, event, arg1, arg2, arg3, arg4, extra)
     -- apply.
     local frameSource = source == "frame" or source == "frame-pre"
         or source == "frame-post" or source == "runtime-pre"
-    if frameSource and not CDMIcons.EventTraceShouldPrintFrameEvent(event, arg1, arg2, arg3, arg4) then
+    if frameSource and not CDMIcons.EventTraceShouldPrintFrameEvent(event, arg1, arg2, arg3, arg4, arg5) then
         return
     end
 
@@ -776,13 +783,13 @@ function CDMIcons.EventTracePrint(source, event, arg1, arg2, arg3, arg4, extra)
 
     if event == "SPELL_UPDATE_COOLDOWN" then
         extra = EventTraceAppendExtra(extra,
-            EventTraceBuildSpellUpdateCooldownExtra(arg1, arg2, arg3, arg4))
+            EventTraceBuildSpellUpdateCooldownExtra(arg1, arg2, arg3, arg4, arg5))
     end
     extra = EventTraceAppendExtra(extra, throttleNote)
 
     local start = CDMIcons._eventTraceStartedAt or now
     print(string.format(
-        "|cff34d399[cdmevents]|r +%.3f sid=%d %s:%s args=(%s,%s,%s,%s) %s %s %s %s",
+        "|cff34d399[cdmevents]|r +%.3f sid=%d %s:%s args=(%s,%s,%s,%s,%s) %s %s %s %s",
         now - start,
         targetID,
         tostring(source or "?"),
@@ -791,6 +798,7 @@ function CDMIcons.EventTracePrint(source, event, arg1, arg2, arg3, arg4, extra)
         CDMIcons.EventTraceValue(arg2),
         CDMIcons.EventTraceValue(arg3),
         CDMIcons.EventTraceValue(arg4),
+        CDMIcons.EventTraceValue(arg5),
         CDMIcons.EventTraceAPISummary(targetID),
         CDMIcons.EventTraceIconSummary(targetID),
         CDMIcons.EventTraceBarSummary(targetID),
@@ -803,8 +811,8 @@ end
 -- The runtime frame uses an indirection slot rather than referencing
 -- CDMIcons directly to satisfy the architectural contract enforced by
 -- cdm_fast_visual_refresh_contract_test.lua:1862.
-ns.CDMRuntimeEventTraceHook = function(source, event, arg1, arg2, arg3, arg4)
-    return CDMIcons.EventTracePrint(source, event, arg1, arg2, arg3, arg4)
+ns.CDMRuntimeEventTraceHook = function(source, event, arg1, arg2, arg3, arg4, arg5)
+    return CDMIcons.EventTracePrint(source, event, arg1, arg2, arg3, arg4, arg5)
 end
 
 ---------------------------------------------------------------------------

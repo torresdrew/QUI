@@ -799,7 +799,7 @@ local function ScanPlayerBuffs()
     local checkOHAura = ohConfig and ohConfig.checkType == "playerAura"
 
     for i = 1, AuraScanCount() do
-        local auraData = C_UnitAuras.GetAuraDataByIndex("player", i, "HELPFUL")
+        local auraData = C_UnitAuras.GetAuraDataByIndex("player", i, "HELPFUL") -- @secret-safe: AuraScanCount() collapses the bound to 0 under ShouldAurasBeSecret, so this never runs restricted
         if not auraData then break end
         local spellId = auraData.spellId
         local icon = auraData.icon
@@ -1287,7 +1287,7 @@ local function CheckEnhancementActive(slot, button, hasEnchant, enchantExpiratio
     if config and config.checkType == "playerAura" then
         -- Aura-based detection (rogues)
         for i = 1, AuraScanCount() do
-            local auraData = C_UnitAuras.GetAuraDataByIndex("player", i, "HELPFUL")
+            local auraData = C_UnitAuras.GetAuraDataByIndex("player", i, "HELPFUL") -- @secret-safe: AuraScanCount() collapses the bound to 0 under ShouldAurasBeSecret, so this never runs restricted
             if not auraData then break end
             local ok, match = pcall(function() return config.anyBuffIDs[auraData.spellId] end)
             if ok and match then

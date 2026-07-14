@@ -114,7 +114,7 @@ read_globals = {
     "DIFFICULTY_MYTHIC_PLUS",
 
     -- Enum and utility tables
-    "Enum", "AuraUtil", "TextureKitConstants", "AnchorUtil",
+    "Enum", "AuraUtil", "TextureKitConstants", "AnchorUtil", "TimeUtil",
     "AuraContainerSortMethod", "AuraContainerSortDirection",
     "AuraContainerItemEnchantmentSlot", "CustomAuraContainerItemEnchantmentPlacement",
 
@@ -143,7 +143,7 @@ BonusRollFrame BonusRollFrame_StartBonusRoll CLASS_ICON_TCOORDS LootWonAlertFram
 ADVENTURE_JOURNAL ARMOR ATTACK_POWER_MAGIC_NUMBER ATTACK_SPEED AbbreviateLargeNumbers AbbreviateNumbers AcceptGroup AcceptQuest CancelDuel CancelTrade CloseAllBags DeclineGroup RepopMe FRIENDS_BUTTON_TYPE_WOW FRIENDS_BUTTON_TYPE_BNET Sound_GameSystem_GetNumOutputDrivers Sound_GameSystem_GetOutputDriverNameByIndex MuteSoundFile UnmuteSoundFile
 MainMenuMicroButton_HideAlert CollectionsMicroButton_SetAlertShown LE_MOUNT_JOURNAL_FILTER_COLLECTED LE_MOUNT_JOURNAL_FILTER_UNUSABLE C_PetJournal C_ToyBoxInfo COLLECTION_UNOPENED_PLURAL COLLECTION_UNOPENED_SINGULAR
 C_AutoComplete FACTION_ALLIANCE FACTION_HORDE FACTION_NEUTRAL PVP_ENABLED PVP UnitIsInMyGuild
-GetSpecializationInfoForClassID GetNumClasses EJ_GetDifficulty EJ_SetLootFilter EJ_GetLootFilter EJ_GetNumLoot C_EncounterJournal ScrollBoxListMixin CommunitiesFrameMixin
+GetSpecializationInfoForClassID GetNumClasses EJ_GetDifficulty EJ_SetLootFilter EJ_GetLootFilter EJ_GetNumLoot EJ_GetEncounterInfo EJ_GetEncounterInfoByIndex EJ_SelectInstance EJ_GetInstanceInfo EJ_SelectTier EJ_GetCurrentTier EJ_GetInstanceByIndex EJ_GetNumTiers EncounterJournal_GetIconIndexFromFlag GetEJTierDataTableID GetExpansionLevel GetServerExpansionLevel C_EncounterJournal ScrollBoxListMixin CommunitiesFrameMixin
 MAX_TRADE_ITEMS TRADE_ENCHANT_SLOT GetTradePlayerItemInfo GetTradeTargetItemInfo GetTradePlayerItemLink GetTradeTargetItemLink GetPlayerTradeMoney GetTargetTradeMoney GetRealZoneText
 GetSendMailMoney GetSendMailCOD HasSendMailItem GetSendMailItem GetSendMailItemLink GetInboxHeaderInfo GetInboxItem GetInboxItemLink ATTACHMENTS_MAX_SEND ATTACHMENTS_MAX_RECEIVE MAX_ACCOUNT_MACROS UnitIsFeignDeath
 AchievementAlertSystem ActionBarController_UpdateAll ActionButtonSpellAlertManager ActionButton_ShowOverlayGlow ActionButton_StartFlash ActionButton_StopFlash ActionButton_Update ActionButton_UpdateCooldown
@@ -247,6 +247,7 @@ ChatEdit_InsertLink HandleModifiedItemClick IsModifiedClick GetDenominationsFrom
 ACCEPT CANCEL BANK QUESTION_MARK_ICON UNKNOWN NORMAL_FONT_COLOR_CODE bit debugstack
 AuraButtonBorderStyle PrivateAurasTooltipMixin
 ButtonFrameTemplate_ShowButtonBar WeeklyRewardsMixin
+GetBestMapForUnit
 ]]
 
 for name in additional_read_globals:gmatch("%S+") do

@@ -250,12 +250,30 @@ if fIdx then
     else
         local ok, indexTable = pcall(chunk)
         if ok and type(indexTable) == "table" then
+            -- Which precondition flags mark a RESTRICTION hazard (hard error
+            -- while encounter/M+/PvP addon restrictions are active). Most
+            -- Requires* flags are plain argument/state validation
+            -- (RequiresValidActionSlot, RequiresFriendList, ...) — flagging
+            -- those raw calls would drown the review tier. Extendable via
+            -- config restriction_preconditions.
+            local restrictionPre = { RequiresUnitAuraAccess = true }
+            for _, name in ipairs(cfg.restriction_preconditions or {}) do
+                restrictionPre[name] = true
+            end
+
+            -- Index meta keys that must NEVER make an entry a taint source:
+            -- preconditions = call-errors (separate track below); eventFlags/
+            -- secretPayload = event entries ("event:*" keys, never call sites).
+            local nonSourceKeys = {
+                preconditions = true, eventFlags = true, secretPayload = true,
+            }
+
             for funcName, meta in pairs(indexTable) do
                 -- Filter by coverage flags from config
                 local include = false
                 if type(meta) == "table" then
                     for coverageKey, _ in pairs(meta) do
-                        if cfg.coverage[coverageKey] then
+                        if cfg.coverage[coverageKey] and not nonSourceKeys[coverageKey] then
                             include = true
                             break
                         end
@@ -265,6 +283,24 @@ if fIdx then
                 end
                 if include then
                     registry:addSource(funcName)
+                end
+                -- Precondition-guarded APIs are NOT taint sources — the
+                -- hazard is a hard ERROR under restrictions, not a secret
+                -- return — so they register on a separate track feeding the
+                -- analyzer's precondition scan, filtered to the restriction
+                -- flags above.
+                if type(meta) == "table" and type(meta.preconditions) == "table"
+                    and cfg.coverage.preconditions then
+                    local relevant
+                    for _, flag in ipairs(meta.preconditions) do
+                        if restrictionPre[flag] then
+                            relevant = relevant or {}
+                            relevant[#relevant + 1] = flag
+                        end
+                    end
+                    if relevant then
+                        registry:addPreconditionAPI(funcName, relevant)
+                    end
                 end
             end
         else
@@ -292,6 +328,11 @@ end
 if cfg.clean_fields then
     for _, name in ipairs(cfg.clean_fields) do
         registry:addCleanField(name)
+    end
+end
+if cfg.extra_restriction_gates then
+    for _, name in ipairs(cfg.extra_restriction_gates) do
+        registry:addRestrictionGate(name)
     end
 end
 

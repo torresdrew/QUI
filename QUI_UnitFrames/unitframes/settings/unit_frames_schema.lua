@@ -622,6 +622,36 @@ local function RenderEnableSection(sectionHost, ctx)
     return builder.Height(0)
 end
 
+-- Pointer row: the Auras tab used to live on this surface (TAB_DEFINITIONS
+-- key "icons", unit_frames_model.lua); aura config now lives on the Auras
+-- hub tile (tiles/auras.lua, tabIndex 21, subTabIndex 2 = Unit Frames).
+-- RenderIconsTab itself is untouched -- the hub's Unit Frames sub-page
+-- (core/settings/content/auras_unit_page.lua) still calls it directly.
+local function RenderAurasHubPointerSection(sectionHost, ctx)
+    local gui = GetGUI()
+    local optionsAPI = GetOptionsAPI()
+    local db = ResolveGeneralDB()
+    if not gui or not optionsAPI or not db then
+        return nil
+    end
+
+    local builder = CreateSectionBuilder(sectionHost, ctx, GENERAL_SEARCH_CONTEXT)
+    if not builder then
+        return nil
+    end
+
+    local card = builder.Card()
+    local openButton = gui:CreateButton(card.frame, ns.L["Open Auras"], 140, 26, function()
+        if gui.NavigateTo then
+            gui:NavigateTo(21, 2)
+        end
+    end)
+    card.AddRow(optionsAPI.BuildSettingRow(card.frame, ns.L["Aura settings have moved to the Auras section."], openButton))
+    builder.CloseCard(card)
+
+    return builder.Height()
+end
+
 local function RenderDefaultColorsSection(sectionHost, ctx)
     local gui = GetGUI()
     local optionsAPI = GetOptionsAPI()
@@ -2631,6 +2661,8 @@ local function RenderAuraElementsSection(sectionHost, ctx)
             trackedDisplayTypes = { icon = true, square = true, bar = true },
             cancelEligible      = (unitKey == "player"),
             allowSpecOverride   = false,
+            -- Single-unit surface: no roster roles to gate on (applyToRoles hidden).
+            roleGate            = false,
             defaultBucketFn     = UnitFrameAuras and UnitFrameAuras.DefaultUnitAuraBucket,
             unitPolarity        = UnitPolarity(unitKey),
         },
@@ -3215,6 +3247,7 @@ local GENERAL_TAB_FEATURE = Schema.Feature({
         unitFrameTab = {
             sections = {
                 "enable",
+                "aurasHubPointer",
                 "defaultColors",
                 "darkMode",
                 "textColorOverrides",
@@ -3234,6 +3267,12 @@ local GENERAL_TAB_FEATURE = Schema.Feature({
             kind = "custom",
             minHeight = 42,
             render = RenderEnableSection,
+        }),
+        Schema.Section({
+            id = "aurasHubPointer",
+            kind = "custom",
+            minHeight = 70,
+            render = RenderAurasHubPointerSection,
         }),
         Schema.Section({
             id = "defaultColors",

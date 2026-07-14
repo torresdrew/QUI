@@ -34,6 +34,24 @@ assert_eq(index["C_Test.RestrictedReturn"].isSecretReturn, true,
 assert_eq(index["C_Test.RestrictedReturn"].secretArguments, "Restricted",
     "secretArguments captured")
 
+-- Precondition-guarded function (RequiresUnitAuraAccess hard-errors under
+-- restrictions) must be indexed even though its SecretArguments value is the
+-- ignored "AllowedWhenTainted"
+assert_true(index["C_Test.GuardedGetter"], "precondition-guarded function indexed")
+assert_eq(index["C_Test.GuardedGetter"].preconditions[1], "RequiresUnitAuraAccess",
+    "RequiresUnitAuraAccess precondition captured")
+assert_true(index["C_Test.GuardedGetter"].secretArguments == nil,
+    "AllowedWhenTainted still omitted")
+
+-- Events: event-level Secret* flag and secretizable payload fields
+assert_true(index["event:TEST_SECRET_EVENT"], "secret-flagged event indexed")
+assert_eq(index["event:TEST_SECRET_EVENT"].eventFlags[1], "SecretInActivePvPMatch",
+    "event-level flag captured")
+assert_true(index["event:TEST_SECRET_PAYLOAD_EVENT"], "secret-payload event indexed")
+assert_eq(index["event:TEST_SECRET_PAYLOAD_EVENT"].secretPayload, true,
+    "secretPayload captured")
+assert_true(not index["event:TEST_CLEAN_EVENT"], "clean event NOT indexed")
+
 -- ---------------------------------------------------------------------------
 -- renderLua round-trip
 -- ---------------------------------------------------------------------------

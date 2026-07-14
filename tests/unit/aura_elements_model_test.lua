@@ -204,6 +204,19 @@ do
         seen[e.id or ""] = true
     end
     check("seed: id backfill + dedupe", allUnique)
+
+    -- Fixed-id strips (defensives/encounterBoss) recur across spec buckets
+    -- by DESIGN — uniqueness is per bucket, so the backfill must not rename
+    -- a spec-bucket clone (a rename orphans FindBossStrip-style lookups and
+    -- spawns a duplicate strip on the next write).
+    local cross = { elementsSeeded = true, elements = {
+        ["*"]  = { { id = "encounterBoss", mode = "filterStrip", auraType = "HARMFUL" } },
+        [268]  = { { id = "encounterBoss", mode = "filterStrip", auraType = "HARMFUL" } },
+    } }
+    E.EnsureSeeded(cross, defaultBucket)
+    check("seed: cross-bucket fixed id preserved",
+        cross.elements["*"][1].id == "encounterBoss"
+        and cross.elements[268][1].id == "encounterBoss")
 end
 
 -- ActiveElementsForSpec ----------------------------------------------------
@@ -372,6 +385,42 @@ do
     e.dispelTypes = { Magic = false }
     cf = E.CompileCandidateFilters(e)
     check("cf: empty enabled dispel set is inert", cf == nil)
+
+    -- "mine" sentinel (legacy "dispellable" preset SVs + the manual
+    -- dispel-type UI): resolves player capability at compile time via
+    -- ns.QUI_DispelRoles. The preset itself now compiles to the engine's
+    -- HARMFUL|RAID_PLAYER_DISPELLABLE classification instead.
+    local m = E.NewFilterStripElement("HARMFUL")
+    m.dispelFilterMode = "include"
+    m.dispelTypes = "mine"
+    check("model: 'mine' sentinel stored", m.dispelTypes == "mine", tostring(m.dispelTypes))
+
+    local prevDR = ns.QUI_DispelRoles
+    ns.QUI_DispelRoles = { PlayerDispelSchools = function() return { Magic = true, Poison = true } end }
+    cf = E.CompileCandidateFilters(m)
+    check("cf: 'mine' sentinel resolves capability schools",
+        cf ~= nil and cf.includeDispelTypes ~= nil
+        and cf.includeDispelTypes.Magic == true and cf.includeDispelTypes.Poison == true
+        and cf.includeDispelTypes.Curse == nil and cf.includeDispelTypes.Disease == nil)
+
+    -- A dispel-less class (empty capability) must match NOTHING — an empty
+    -- include set would emit no filter at all and broaden to every debuff.
+    ns.QUI_DispelRoles = { PlayerDispelSchools = function() return {} end }
+    cf = E.CompileCandidateFilters(m)
+    local firstKey = cf and cf.includeDispelTypes and next(cf.includeDispelTypes)
+    check("cf: empty capability -> match-nothing include set",
+        firstKey == "QUI-none"
+        and next(cf.includeDispelTypes, firstKey) == nil,
+        tostring(firstKey))
+
+    -- Missing module (or a resolve error): fall back to the 4 base schools.
+    ns.QUI_DispelRoles = nil
+    cf = E.CompileCandidateFilters(m)
+    check("cf: missing module -> 4-school fallback",
+        cf ~= nil and cf.includeDispelTypes ~= nil
+        and cf.includeDispelTypes.Magic and cf.includeDispelTypes.Curse
+        and cf.includeDispelTypes.Disease and cf.includeDispelTypes.Poison)
+    ns.QUI_DispelRoles = prevDR
 
     local d = E.NewFilterStripElement("HELPFUL")
     d.maxDurationSec = 90

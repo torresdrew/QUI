@@ -612,6 +612,99 @@ walkStatements = function(stmts, taintSet, fieldTaintSet, findings, registry, fi
     end
 end
 
+-- ---------------------------------------------------------------------------
+-- Precondition-guarded API scan
+-- ---------------------------------------------------------------------------
+-- APIs whose api-index entry carries `preconditions` (RequiresUnitAuraAccess
+-- etc.) HARD-ERROR under encounter/M+/PvP addon restrictions
+-- (SecretPredicatesDocumentation: FailureMode = "Error"). A raw call is a
+-- live crash path the secret-flow checks above never see — the 2026-07
+-- external review found three shipped callers that way. This pass flags
+-- every direct call to such an API at REVIEW tier unless the call is
+-- "handled": lexically inside a scope that consults a restriction gate
+-- (C_Secrets.ShouldAurasBeSecret), inside a pcall/xpcall-protected closure,
+-- or the API is passed to pcall/xpcall as the protected function (that shape
+-- is a reference, not a CallExpr, so it never flags). Scope gating is
+-- order-insensitive and lexical — non-interprocedural, so a caller-side gate
+-- needs a `-- @secret-safe: <reason>` annotation like every other heuristic.
+
+-- Does this subtree contain a restriction-gate call? Stops at nested
+-- Function nodes — they form their own gate scope. `visited` guards against
+-- the parser's back-references (Scope/parent links make the AST a graph,
+-- not a tree — a naive pairs() walk recurses forever).
+local function containsGateCall(node, registry, visited)
+    if type(node) ~= "table" or visited[node] then return false end
+    visited[node] = true
+    if node.AstType == "Function" then return false end
+    if node.AstType == "CallExpr" then
+        local name = callTargetName(node.Base)
+        if name and registry:isRestrictionGate(name) then return true end
+    end
+    for k, v in pairs(node) do
+        if k ~= "Tokens" and type(v) == "table" then
+            if containsGateCall(v, registry, visited) then return true end
+        end
+    end
+    return false
+end
+
+local function preconditionScan(node, registry, filePath, findings, gated, visited)
+    if type(node) ~= "table" or visited[node] then return end
+    visited[node] = true
+
+    if node.AstType == "Function" then
+        -- New gate scope: lexically-inherited gating OR a gate call anywhere
+        -- in this body (order-insensitive).
+        local bodyGated = gated or containsGateCall(node.Body, registry, {})
+        for k, v in pairs(node) do
+            if k ~= "Tokens" then
+                preconditionScan(v, registry, filePath, findings, bodyGated, visited)
+            end
+        end
+        return
+    end
+
+    if node.AstType == "CallExpr" then
+        local name = callTargetName(node.Base)
+        if name == "pcall" or name == "xpcall" then
+            -- Everything under a pcall is protected: a closure argument scans
+            -- gated, and a function REFERENCE argument is not a CallExpr so it
+            -- never flags. (Conservatively treats every pcall argument as
+            -- protected; only argument 1 truly is, but a guarded CALL in an
+            -- outer argument position would still error before pcall runs —
+            -- rare enough to trade for simplicity at review tier.)
+            for k, v in pairs(node) do
+                if k ~= "Tokens" then
+                    preconditionScan(v, registry, filePath, findings, true, visited)
+                end
+            end
+            return
+        end
+        if name and not gated then
+            local flags = registry:preconditionFlags(name)
+            if flags then
+                local flagText = type(flags) == "table" and table.concat(flags, ",")
+                    or "precondition-guarded"
+                findings[#findings + 1] = {
+                    file = filePath, line = nodeLine(node) or 0, col = 1,
+                    severity = "review",
+                    source_function = name,
+                    sink = "<precondition>",
+                    message = flagText .. " API called without a restriction gate or pcall — hard-errors under encounter/M+/PvP restrictions",
+                    suppressed = false, suppression_reason = nil,
+                }
+            end
+        end
+        -- fall through: arguments/base still need scanning
+    end
+
+    for k, v in pairs(node) do
+        if k ~= "Tokens" then
+            preconditionScan(v, registry, filePath, findings, gated, visited)
+        end
+    end
+end
+
 --- Analyze a single Lua source string.
 --- @param source string  Lua source code.
 --- @param filePath string  File path for findings + severity classification.
@@ -636,6 +729,20 @@ function M.analyze(source, filePath, registry, config, opts)
     -- Walk the top-level chunk body
     local stmts = ast.Body or {}
     walkStatements(stmts, taintSet, fieldTaintSet, findings, registry, filePath, debugInfo)
+
+    -- Independent pass: raw calls to precondition-guarded APIs (review tier).
+    -- Textual pre-filter first: the generic graph walk is expensive, and most
+    -- files never mention a guarded API's name at all.
+    local runPreScan = false
+    for apiName in pairs(registry.preconditionAPIs or {}) do
+        if source:find(getMethodNameFromQualified(apiName), 1, true) then
+            runPreScan = true
+            break
+        end
+    end
+    if runPreScan then
+        preconditionScan(ast, registry, filePath, findings, false, {})
+    end
 
     -- Promote advisory → strict for files in strict_paths
     if Config.isStrictPath(config, filePath) then

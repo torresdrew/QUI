@@ -215,6 +215,7 @@ end
 -- any container a tracked element might otherwise have claimed. BB never uses
 -- spec buckets, so the specID is always nil. The polarity argument (auraType)
 -- ensures every load normalizes each zone's bucket to the invariant.
+local _ckScratch = {}
 local function ResolveStrips(store, defaultBucketFn, out, auraType)
     for i = #out, 1, -1 do out[i] = nil end
     if not store then return out end
@@ -224,7 +225,13 @@ local function ResolveStrips(store, defaultBucketFn, out, auraType)
     if E.NormalizeSingleStripBucket then
         E.NormalizeSingleStripBucket(store, auraType)
     end
-    local elements = E.ActiveElementsForSpec(store, nil)
+    -- Encounter/instance cascade rungs (core/aura_context.lua): an instance or
+    -- boss delta overrides the base "*" bucket for this self surface too. Buff
+    -- borders are CustomAuraContainer (not the removed SecureAuraHeader), so a
+    -- candidateFilter retarget mutates live on pull; nil outside an
+    -- encounter/instance → base "*", unchanged.
+    local ck = ns.QUI_AuraContext and ns.QUI_AuraContext.FillContextKeys(_ckScratch) or nil
+    local elements = E.ActiveElementsForSpec(store, nil, nil, ck)
     for i = 1, #elements do
         local e = elements[i]
         if e.mode == "filterStrip" then
@@ -966,6 +973,13 @@ QUI.BuffBorders = {
 
 -- Global function for config panel / layout mode to call
 _G.QUI_RefreshBuffBorders = RefreshBuffBorders
+
+-- Combat-SAFE aura-only refresh entry for core/aura_context.lua's cascade driver
+-- (ENCOUNTER_START/_END + zone). RefreshBuffBorders → FullRefresh → ApplyOrDefer
+-- is already combat-split (SetAuraGroupCandidateFilters mutates live; forbidden
+-- creation queues to PLAYER_REGEN_ENABLED via pendingContainerWork). Exported on
+-- the shared suite `ns` (not _G) per the global-assignment ratchet.
+ns.QUI_RefreshBuffBorderAuras = RefreshBuffBorders
 
 -- Layout mode preview hooks
 _G.QUI_BuffBordersShowPreview = ShowPreview

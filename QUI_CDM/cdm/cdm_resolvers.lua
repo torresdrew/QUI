@@ -190,15 +190,15 @@ _runtimeFrame:RegisterUnitEvent("UNIT_SPELLCAST_START", "player")
 -- isn't loaded; the OnEvent body skips the call.
 ns.CDMRuntimeEventTraceHook = nil
 
-_runtimeFrame:SetScript("OnEvent", function(_, evt, arg1, arg2, arg3, arg4)
+_runtimeFrame:SetScript("OnEvent", function(_, evt, arg1, arg2, arg3, arg4, arg5)
     -- Per SpellBookDocumentation.lua:859 the SPELL_UPDATE_COOLDOWN
-    -- payload is (spellID, baseSpellID, category, startRecoveryCategory)
-    -- — capture all four for the trace. The publish() calls below
+    -- payload is (spellID, baseSpellID, category, startRecoveryCategory,
+    -- itemID) — capture all five for the trace. The publish() calls below
     -- intentionally still forward only the fields existing subscribers
-    -- consume; arg3/arg4 propagate to the trace only.
+    -- consume; arg3/arg4/arg5 propagate to the trace only.
     local traceHook = ns.CDMRuntimeEventTraceHook
     if traceHook then
-        traceHook("runtime-pre", evt, arg1, arg2, arg3, arg4)
+        traceHook("runtime-pre", evt, arg1, arg2, arg3, arg4, arg5)
     end
 
     if evt == "SPELL_UPDATE_COOLDOWN" then

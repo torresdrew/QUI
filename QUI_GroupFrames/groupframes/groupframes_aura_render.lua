@@ -1357,6 +1357,45 @@ local function HideHealthTintOverlay(frame)
     overlay:Hide()
 end
 
+---------------------------------------------------------------------------
+-- BORDER INDICATOR: colored outline around the frame while a tracked spell
+-- is present. Frame-level like healthTint (one owner per frame), NOT a slot.
+-- SetBackdropBorderColor takes only plain numbers — element.color is config
+-- data (never secret), so it is safe here.
+---------------------------------------------------------------------------
+local BORDER_OVERLAY_TEXTURE = "Interface\\Buttons\\WHITE8x8"
+local function GetOrCreateBorderOverlay(frame, thickness)
+    if not frame then return nil end
+    local anchorTo = frame.healthBar or frame
+    local size = tonumber(thickness) or 2
+    if size < 1 then size = 1 end
+    local overlay = frame._quiAuraRenderBorderOverlay
+    if not overlay then
+        overlay = CreateFrame("Frame", nil, anchorTo, "BackdropTemplate")
+        overlay:EnableMouse(false)
+        overlay:Hide()
+        frame._quiAuraRenderBorderOverlay = overlay
+    end
+    -- Re-apply the backdrop only when the thickness actually changed (SetBackdrop
+    -- is comparatively heavy; the per-pass render calls this every match).
+    if overlay._quiBorderSize ~= size and overlay.SetBackdrop then
+        overlay._quiBorderSize = size
+        overlay:SetBackdrop({ edgeFile = BORDER_OVERLAY_TEXTURE, edgeSize = size })
+    end
+    overlay:ClearAllPoints()
+    -- Outset by the edge thickness so the outline hugs the frame's OUTER edge.
+    overlay:SetPoint("TOPLEFT", anchorTo, "TOPLEFT", -size, size)
+    overlay:SetPoint("BOTTOMRIGHT", anchorTo, "BOTTOMRIGHT", size, -size)
+    overlay:SetFrameLevel(anchorTo:GetFrameLevel() + 2)
+    return overlay
+end
+
+local function HideBorderOverlay(frame)
+    local overlay = frame and frame._quiAuraRenderBorderOverlay
+    if not overlay then return end
+    overlay:Hide()
+end
+
 function R.RenderHealthTint(self, frame, element, matches)
     if not frame then return end
 
@@ -1409,6 +1448,41 @@ function R.RenderHealthTint(self, frame, element, matches)
     end
 end
 
+function R.RenderBorder(self, frame, element, matches)
+    if not frame then return end
+
+    local auraData
+    if element.spells then
+        for _, sid in ipairs(element.spells) do
+            local data = matches and matches[sid]
+            if data then auraData = data; break end
+        end
+    end
+
+    if not auraData then
+        if frame._quiAuraRenderBorderOwner == element.id then
+            frame._quiAuraRenderBorderOwner = nil
+            HideBorderOverlay(frame)
+        end
+        return
+    end
+
+    local bcfg = element.border or nil
+    local thickness = (bcfg and bcfg.thickness) or 2
+    local color = element.color or DEFAULT_HEALTH_COLOR
+
+    frame._quiAuraRenderBorderOwner = element.id
+    local overlay = GetOrCreateBorderOverlay(frame, thickness)
+    if not overlay then return end
+
+    local r = color[1] or 0.2
+    local g = color[2] or 0.8
+    local b = color[3] or 0.2
+    local a = color[4] or 1
+    overlay:SetBackdropBorderColor(r, g, b, a)
+    overlay:Show()
+end
+
 -- Feed live health into an active tint overlay (called by the runtime on
 -- UNIT_HEALTH). `healthPct` may be secret; it is forwarded to SetValue and only
 -- tweened when non-secret.
@@ -1455,11 +1529,15 @@ function R.Release(self, frame, elementID)
     if not frame then return end
     local store = frame[STATE_KEY]
     if not store then
-        -- Health tint lives on the frame; clear if this element owned it.
+        -- Health tint / border live on the frame; clear if this element owned them.
         if elementID and frame._quiAuraRenderHealthTintOwner == elementID then
             frame._quiAuraRenderHealthTintOwner = nil
             frame._quiAuraRenderHealthTintColor = nil
             HideHealthTintOverlay(frame)
+        end
+        if elementID and frame._quiAuraRenderBorderOwner == elementID then
+            frame._quiAuraRenderBorderOwner = nil
+            HideBorderOverlay(frame)
         end
         return
     end
@@ -1487,6 +1565,11 @@ function R.Release(self, frame, elementID)
         frame._quiAuraRenderHealthTintColor = nil
         HideHealthTintOverlay(frame)
     end
+
+    if frame._quiAuraRenderBorderOwner == elementID then
+        frame._quiAuraRenderBorderOwner = nil
+        HideBorderOverlay(frame)
+    end
 end
 
 -- Release every element's frames on a unit frame (full teardown).
@@ -1503,6 +1586,10 @@ function R.ReleaseAll(self, frame)
         frame._quiAuraRenderHealthTintColor = nil
     end
     HideHealthTintOverlay(frame)
+    if frame._quiAuraRenderBorderOwner then
+        frame._quiAuraRenderBorderOwner = nil
+    end
+    HideBorderOverlay(frame)
 end
 
 ---------------------------------------------------------------------------
@@ -1514,6 +1601,7 @@ local DISPLAY_RENDERER = {
     square = "RenderSquare",
     bar = "RenderBar",
     healthTint = "RenderHealthTint",
+    border = "RenderBorder",
 }
 
 function R.Dispatch(self, frame, element, matches)

@@ -75,14 +75,26 @@ Registry:RegisterFeature(Schema.Feature({
     },
 }))
 
+-- The Buff/Debuff OPTIONS sub-page was removed from the action_bars tile
+-- (moved to the Auras hub, tabIndex 21 subTabIndex 4 -- see tiles/auras.lua
+-- and core/settings/content/auras_actionbar_page.lua, which calls
+-- BuildBuffDebuffTab directly). This Schema.Feature registration stays,
+-- though: Layout Mode's buffFrame/debuffFrame mover drawers resolve their
+-- inline position panel AND "Open full settings" link through
+-- moverKey/lookupKeys (Nav:GetLookupTarget -> layoutmode_settings.lua
+-- BuildContent / layoutmode_utils.lua BuildOpenFullSettingsLink), which is
+-- independent of the removed tile subPage. `nav` below is repointed at the
+-- hub so that link (and the Cooldown Manager tile's "Buff/Debuff" related-
+-- setting, tiles/cooldown_manager.lua) lands in the right place instead of
+-- a subPageIndex that no longer exists.
 Registry:RegisterFeature(Schema.Feature({
     id = "actionBarsBuffDebuff",
     moverKey = "buffDebuff",
     lookupKeys = { "buffFrame", "debuffFrame" },
     category = "frames",
     nav = {
-        tileId = "action_bars",
-        subPageIndex = 2,
+        tileId = "auras",
+        subPageIndex = 4,
     },
     sections = {
         Schema.Section({

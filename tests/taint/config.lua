@@ -16,6 +16,9 @@ local DEFAULT_COVERAGE = {
     secretWhenCooldownsRestricted = true,
     isSecretReturn = true,
     secretArguments_restricted = true,
+    -- Requires* precondition flags (FailureMode=Error) — feeds the analyzer's
+    -- review-tier raw-call scan, not the taint-source set.
+    preconditions = true,
 }
 
 local function defaults()
@@ -27,10 +30,13 @@ local function defaults()
             secretWhenCooldownsRestricted = DEFAULT_COVERAGE.secretWhenCooldownsRestricted,
             isSecretReturn = DEFAULT_COVERAGE.isSecretReturn,
             secretArguments_restricted = DEFAULT_COVERAGE.secretArguments_restricted,
+            preconditions = DEFAULT_COVERAGE.preconditions,
         },
         extra_safe_sinks = {},
         extra_unwraps = {},
         clean_fields = {},
+        extra_restriction_gates = {},
+        restriction_preconditions = {},
     }
 end
 

@@ -233,6 +233,20 @@ local function RenderAuraElementsPreview(frame, auras, auraLevel, powerHeight, p
                 tint:SetAllPoints(hb)
                 tint:SetColorTexture(color[1] or 0.2, color[2] or 0.8, color[3] or 0.2, (color[4] or 1) * 0.4)
             end
+
+        elseif mode == "tracked" and displayType == "border" then
+            -- Border preview: a colored outline hugging the frame's outer edge
+            -- (the live renderer draws this via SetBackdropBorderColor).
+            local anchorTo = frame.healthBar or frame
+            local color = element.color or { 0.2, 0.8, 0.2, 1 }
+            local size = math.max(1, (element.border and element.border.thickness) or 2)
+            local outline = CreateFrame("Frame", nil, frame, "BackdropTemplate")
+            outline:SetFrameLevel(auraLevel + 2)
+            outline:ClearAllPoints()
+            outline:SetPoint("TOPLEFT", anchorTo, "TOPLEFT", -size, size)
+            outline:SetPoint("BOTTOMRIGHT", anchorTo, "BOTTOMRIGHT", size, -size)
+            outline:SetBackdrop({ edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = size })
+            outline:SetBackdropBorderColor(color[1] or 0.2, color[2] or 0.8, color[3] or 0.2, color[4] or 1)
         end
     end
 end

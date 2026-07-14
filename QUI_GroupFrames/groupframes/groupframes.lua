@@ -6278,6 +6278,20 @@ _G.QUI_RefreshGroupFrames = function()
     if editMode and editMode.RefreshTestMode then
         editMode:RefreshTestMode()
     end
+end
+
+-- Combat-SAFE aura-only refresh: re-resolves + re-applies each frame's aura
+-- element list without going through RefreshSettings (which bails entirely in
+-- combat, line ~5959). RefreshAllFrames is the combat-split path already used
+-- by GROUP_ROSTER_UPDATE in combat — its container work self-defers (creation
+-- queues to PLAYER_REGEN_ENABLED) while candidateFilter changes to already-
+-- registered aura groups mutate live. core/aura_context.lua calls this on
+-- ENCOUNTER_START/_END (which fire IN combat) so a boss bucket goes live on pull.
+-- Exported on the shared suite `ns` (not _G) per the global-assignment ratchet.
+ns.QUI_RefreshGroupFrameAuras = function()
+    if QUI_GF and QUI_GF.RefreshAllFrames then
+        QUI_GF:RefreshAllFrames("auraContext")
+    end
     -- Keep the Group Frames tile's hoisted preview in sync with the same
     -- refresh path used by the layout/test frames.
     if _G.QUI_RefreshGroupFramePreview then

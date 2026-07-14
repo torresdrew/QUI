@@ -27,7 +27,10 @@ local function deepCopyTable(v)
     return t
 end
 
-local DISPLAY_TYPES = { icon = true, square = true, bar = true, healthTint = true }
+-- "border" is a frame-level indicator like "healthTint": presence of any matched
+-- tracked spell tints a colored outline around the unit frame (not a slot). It is
+-- an engine feeder (see EngineRendersElement / relevance), not a container group.
+local DISPLAY_TYPES = { icon = true, square = true, bar = true, healthTint = true, border = true }
 local DEFAULT_MISSING_RAID_BUFF_CHECKS = {
     intellect = true, stamina = true, attackPower = true,
     versatility = true, skyfury = true, bronze = true,
@@ -152,6 +155,7 @@ function E.NewFilterStripElement(auraType)
     return {
         id = nextId(), enabled = true, mode = "filterStrip",
         auraType = auraType or "HELPFUL",
+        applyToRoles = "all",
         anchor = (auraType == "HARMFUL") and "BOTTOMRIGHT" or "TOPLEFT",
         offsetX = 0, offsetY = 0,
         growDirection = (auraType == "HARMFUL") and "LEFT" or "RIGHT",
@@ -188,6 +192,10 @@ function E.NewTrackedElement(spells, displayType)
         auraType = "HELPFUL",
         spells = spells or {}, onlyMine = false, onlyMineSpells = {},
         displayType = displayType or "icon",
+        -- Per-frame role gate: "all" (every frame) | "tank" | "healer" | "dps" |
+        -- "me" (player's frame only). Resolved out of combat on roster events, so a
+        -- role-mismatched element is simply absent from the frame's active list.
+        applyToRoles = "all",
         anchor = "TOPLEFT", offsetX = 0, offsetY = 0,
         growDirection = "RIGHT", spacing = 2, iconSize = 16, iconsPerRow = 0,
         hideSwipe = false, reverseSwipe = false,
@@ -199,6 +207,9 @@ function E.NewTrackedElement(spells, displayType)
         -- Seed a visible bar config up front (a fresh tracked bar is otherwise
         -- near-invisible at renderer defaults).
         bar = { thickness = 12, length = 48 },
+        -- "border" displayType: outline thickness (px) drawn around the frame in
+        -- element.color when a matched spell is present.
+        border = { thickness = 2 },
     }
 end
 
@@ -207,6 +218,7 @@ function E.NewMissingRaidBuffElement()
     for key, value in pairs(DEFAULT_MISSING_RAID_BUFF_CHECKS) do checks[key] = value end
     return {
         id = nextId(), enabled = true, mode = "missingRaidBuff",
+        applyToRoles = "all",
         classDetection = true, buffChecks = checks,
         anchor = "CENTER", offsetX = 0, offsetY = 0,
         growDirection = "RIGHT", spacing = 2, iconSize = 16, maxIcons = 1, iconsPerRow = 0,
@@ -294,7 +306,7 @@ function E.NormalizeElement(e)
             e.filterFlags.NOT_CANCELABLE = nil
         end
         if e.dispelFilterMode == nil then e.dispelFilterMode = "off" end
-        if type(e.dispelTypes) ~= "table" then e.dispelTypes = {} end
+        if type(e.dispelTypes) ~= "table" and e.dispelTypes ~= "mine" then e.dispelTypes = {} end
         if type(e.maxDurationSec) ~= "number" then e.maxDurationSec = 0 end
         -- Legacy GF editor spelling: "classification" → canonical "classify"
         -- (CompileFilters keys on "classify"; unmapped, a classified strip
@@ -302,8 +314,116 @@ function E.NormalizeElement(e)
         if e.filterMode == "classification" then e.filterMode = "classify" end
     elseif e.mode == "tracked" then
         if e.auraType == nil then e.auraType = "HELPFUL" end
+        if type(e.border) ~= "table" then e.border = { thickness = 2 } end
     end
+    -- applyToRoles gate (all modes): absent legacy elements are unrestricted.
+    if e.applyToRoles == nil then e.applyToRoles = "all" end
     return e
+end
+
+-- Role-gate check: does an element apply to a frame whose unit resolves to
+-- `frameRole` ("TANK"/"HEALER"/"DAMAGER"/nil) and is-player `isSelf`? "all" and
+-- a nil/unknown gate always pass (backward-compatible). Roles are stable within
+-- an encounter, so this is only re-evaluated on roster/spec events (OOC).
+local ROLE_GATE_TO_ASSIGNED = { tank = "TANK", healer = "HEALER", dps = "DAMAGER" }
+function E.ElementAppliesToRole(element, frameRole, isSelf)
+    local gate = element and element.applyToRoles
+    if gate == nil or gate == "all" then return true end
+    if gate == "me" then return isSelf == true end
+    local want = ROLE_GATE_TO_ASSIGNED[gate]
+    if not want then return true end  -- unknown token: fail open, never hide
+    return frameRole == want
+end
+
+local WHAT_TO_SHOW_KEYS = {
+    HELPFUL = { "all", "mine", "defensives", "purgeable", "whitelist" },
+    HARMFUL = { "all", "dispellable", "crowdControl", "boss", "roleBoss", "whitelist" },
+}
+
+function E.WhatToShowKeys(auraType)
+    return WHAT_TO_SHOW_KEYS[auraType] or WHAT_TO_SHOW_KEYS.HELPFUL
+end
+
+local function clearShowFields(e)
+    e.filterMode = "off"
+    e.filterFlags = {}
+    e.classifications = defaultClassifications(e.auraType)
+    e.onlyMine = false
+    e.dispelFilterMode = "off"
+    e.dispelTypes = {}
+    e.gateStealable = nil
+    e.gateBossAura = nil
+    e.gatePriorityAura = nil
+    e.gateRoleAura = nil
+    e.gateBossOrRoleAura = nil
+end
+
+function E.ApplyWhatToShow(element, key)
+    clearShowFields(element)
+    if key == "mine" then
+        element.onlyMine = true
+    elseif key == "defensives" then
+        element.filterMode = "classify"
+        element.classifications = { bigDefensive = true, externalDefensive = true }
+    elseif key == "purgeable" then
+        element.gateStealable = true
+    elseif key == "dispellable" then
+        -- Engine-evaluated "player can dispel this" (HARMFUL|RAID_PLAYER_
+        -- DISPELLABLE, AuraUtil.AuraFilters.RaidPlayerDispellable): the C side
+        -- knows the player's ACTUAL dispel kit including talents, and tracks
+        -- respecs live — strictly better than our class/spec school table
+        -- (ns.QUI_DispelRoles), which stays only as the resolver for manual
+        -- dispel-TYPE filters ("mine" sentinel) and the dispel-roles page.
+        element.filterMode = "classify"
+        element.classifications = { dispellable = true }
+    elseif key == "crowdControl" then
+        element.filterMode = "classify"
+        element.classifications = { crowdControl = true }
+    elseif key == "boss" then
+        element.gateBossAura = true
+    elseif key == "roleBoss" then
+        element.gateBossOrRoleAura = true
+    elseif key == "whitelist" then
+        element.filterMode = "whitelist"
+    end
+    -- key == "all" (or unknown) leaves the cleared/default state
+    return element
+end
+
+-- true iff every listed key is true in tbl AND no other key in tbl is true
+local function onlyClassKeys(tbl, wanted)
+    local want = {}
+    for _, k in ipairs(wanted) do want[k] = true; if tbl[k] ~= true then return false end end
+    for k, v in pairs(tbl) do
+        if v == true and not want[k] then return false end
+    end
+    return true
+end
+
+function E.DeriveWhatToShow(element)
+    local mode = element.filterMode or "off"
+    if mode == "whitelist" then return "whitelist" end
+    if mode == "flags" then return "custom" end
+    if mode == "classify" then
+        local c = element.classifications or {}
+        if onlyClassKeys(c, { "bigDefensive", "externalDefensive" }) then return "defensives" end
+        if onlyClassKeys(c, { "crowdControl" }) then return "crowdControl" end
+        if onlyClassKeys(c, { "dispellable" }) then return "dispellable" end
+        return "custom"
+    end
+    -- mode == "off": any of these fields make it non-default and unrecognised -> custom
+    if next(element.filterFlags or {}) ~= nil then return "custom" end
+    if element.dispelFilterMode == "exclude" then return "custom" end
+    if element.gatePriorityAura == true or element.gateRoleAura == true then return "custom" end
+    local mods = {}
+    if element.onlyMine == true then mods[#mods + 1] = "mine" end
+    if element.gateStealable == true then mods[#mods + 1] = "purgeable" end
+    if element.gateBossAura == true then mods[#mods + 1] = "boss" end
+    if element.gateBossOrRoleAura == true then mods[#mods + 1] = "roleBoss" end
+    if element.dispelFilterMode == "include" then mods[#mods + 1] = "dispellable" end
+    if #mods == 0 then return "all" end
+    if #mods == 1 then return mods[1] end
+    return "custom"
 end
 
 -- Compile a filterStrip element's filter config into Blizzard filter strings.
@@ -621,16 +741,42 @@ function E.CompileCandidateFilters(element)
     -- Dispel-type filters are NOT identity-gated by the engine — they apply
     -- on every unit (Blizzard_AuraContainerUtil.lua:53-63).
     local dmode = element.dispelFilterMode
-    if (dmode == "include" or dmode == "exclude") and type(element.dispelTypes) == "table" then
-        local set = {}
-        for name, on in pairs(element.dispelTypes) do
-            if on then set[name] = true end
+    if dmode == "include" or dmode == "exclude" then
+        local types = element.dispelTypes
+        if types == "mine" then
+            -- Sentinel from ApplyWhatToShow("dispellable"): resolve to the
+            -- player's class/spec capability at compile time so respecs are
+            -- picked up on the next refresh (aura_context re-fires the
+            -- surface refresh on PLAYER_SPECIALIZATION_CHANGED). pcall: the
+            -- headless harness has no UnitClass — that (or a missing module)
+            -- falls back to the four base schools.
+            local DR = ns and ns.QUI_DispelRoles
+            local ok, mine = false, nil
+            if DR and type(DR.PlayerDispelSchools) == "function" then
+                ok, mine = pcall(DR.PlayerDispelSchools)
+            end
+            types = (ok and type(mine) == "table" and mine)
+                or { Magic = true, Curse = true, Disease = true, Poison = true }
+            if dmode == "include" and next(types) == nil then
+                -- A class with no dispel (e.g. Warrior) must match NOTHING,
+                -- not everything: an empty include set would emit no filter
+                -- at all and broaden the strip to every debuff. No real
+                -- dispelName ever matches this key (nil dispelName reads
+                -- tbl[nil] -> nil -> filtered).
+                types = { ["QUI-none"] = true }
+            end
         end
-        if next(set) then
-            if dmode == "include" then
-                ensure().includeDispelTypes = set
-            else
-                ensure().excludeDispelTypes = set
+        if type(types) == "table" then
+            local set = {}
+            for name, on in pairs(types) do
+                if on then set[name] = true end
+            end
+            if next(set) then
+                if dmode == "include" then
+                    ensure().includeDispelTypes = set
+                else
+                    ensure().excludeDispelTypes = set
+                end
             end
         end
     end
@@ -679,31 +825,38 @@ function E.EnsureSeeded(auras, defaultBucketFn)
 
     if not auras._elementIDsBackfilled and type(auras.elements) == "table" then
         auras._elementIDsBackfilled = true
-        local used = {}
+        local seen = {} -- every id in the store: fresh ids must collide with none
         for _, bucket in pairs(auras.elements) do
             if type(bucket) == "table" then
                 for _, e in ipairs(bucket) do
                     local id = type(e) == "table" and e.id
                     if id ~= nil then
-                        used[id] = (used[id] or 0) + 1
+                        seen[id] = true
                         local n = type(id) == "string" and tonumber(id:match("^e(%d+)$"))
                         if n and n > idCounter then idCounter = n end
                     end
                 end
             end
         end
+        -- Uniqueness is PER BUCKET: only one bucket is ever active on a
+        -- surface, so render reconciliation (frame state keyed on element.id)
+        -- never sees two live elements sharing an id. Fixed-id elements
+        -- (id = "defensives" / "encounterBoss") legitimately recur across
+        -- spec buckets — a cross-bucket rewrite would orphan a cloned strip
+        -- from its FindBossStrip-style lookup and spawn a duplicate on the
+        -- next write to that bucket.
         for _, bucket in pairs(auras.elements) do
             if type(bucket) == "table" then
+                local inBucket = {}
                 for _, e in ipairs(bucket) do
                     if type(e) == "table" then
-                        local id = e.id
-                        if id == nil or used[id] > 1 then
-                            if id ~= nil then used[id] = used[id] - 1 end
+                        if e.id == nil or inBucket[e.id] then
                             local newId = nextId()
-                            while used[newId] do newId = nextId() end
+                            while seen[newId] do newId = nextId() end
                             e.id = newId
-                            used[newId] = 1
+                            seen[newId] = true
                         end
+                        inBucket[e.id] = true
                     end
                 end
             end
@@ -779,8 +932,11 @@ end
 
 -- OVERRIDE (either/or) semantics: a present spec bucket REPLACES "*" for that
 -- spec, never a union. `out` (optional) is a reusable scratch array for the
--- zero-alloc render fan-out.
-function E.ActiveElementsForSpec(auras, specID, out)
+-- zero-alloc render fan-out. `contextKeys` (optional) is an array of string
+-- bucket keys tried in order BEFORE specID; the first present bucket wins
+-- and specID/"*" are skipped entirely. Behavior is identical to the 2/3-arg
+-- form when `contextKeys` is nil (or resolves to no match).
+function E.ActiveElementsForSpec(auras, specID, out, contextKeys)
     if out then
         for i = #out, 1, -1 do out[i] = nil end
     else
@@ -789,10 +945,14 @@ function E.ActiveElementsForSpec(auras, specID, out)
     local elements = auras and auras.elements
     if not elements then return out end
     local bucket
-    if specID ~= nil and elements[specID] ~= nil then
-        bucket = elements[specID]
-    else
-        bucket = elements["*"]
+    if type(contextKeys) == "table" then
+        for _, k in ipairs(contextKeys) do
+            if k ~= nil and elements[k] ~= nil then bucket = elements[k]; break end
+        end
+    end
+    if not bucket then
+        if specID ~= nil and elements[specID] ~= nil then bucket = elements[specID]
+        else bucket = elements["*"] end
     end
     if bucket then
         for _, e in ipairs(bucket) do
@@ -800,6 +960,44 @@ function E.ActiveElementsForSpec(auras, specID, out)
         end
     end
     return out
+end
+
+-- Largest element count across EVERY bucket in the store ("*", spec, instance,
+-- encounter). Callers size a per-frame container pool to this so a bucket switch
+-- that ADDS elements (e.g. an encounter's boss-ability indicators) never needs
+-- forbidden container CREATION mid-combat -- the union is pre-created out of
+-- combat and the switch is pure mutation on pull. Over-counts harmlessly:
+-- health-tint / border elements draw no container, so a pool sized to the raw
+-- max simply leaves a few slots disabled. Returns 0 for an empty/absent store.
+function E.MaxBucketElementCount(auras)
+    local elements = auras and auras.elements
+    if type(elements) ~= "table" then return 0 end
+    local max = 0
+    for _, bucket in pairs(elements) do
+        if type(bucket) == "table" and #bucket > max then max = #bucket end
+    end
+    return max
+end
+
+-- Builds the elements-table bucket key for an instance/context (e.g. a
+-- Journal mapID), used as an optional cascade rung tried before specID via
+-- `contextKeys`. Returns nil for anything that isn't a positive number so
+-- callers can pass it straight through without a guard.
+function E.InstanceBucketKey(mapID)
+    if type(mapID) == "number" and mapID > 0 then
+        return "i" .. mapID
+    end
+    return nil
+end
+
+-- Builds the elements-table bucket key for a specific encounter (Journal /
+-- ENCOUNTER_START encounterID). Tried BEFORE the instance key in the cascade so
+-- a boss delta overrides its instance's delta. Returns nil for non-positive ids.
+function E.EncounterBucketKey(encounterID)
+    if type(encounterID) == "number" and encounterID > 0 then
+        return "e" .. encounterID
+    end
+    return nil
 end
 
 function E.HasSpecOverride(elements, bucketKey)

@@ -150,7 +150,29 @@ local function BuildCDMGroupBuffEntries(out)
     local okItems, items = pcall(CV.GetGroupBuffItems)
     if not okItems or type(items) ~= "table" then return end
 
+    -- Hidden-set precedence mirrors Blizzard's GroupBuffFilter.lua
+    -- (GetCurrentHiddenGroupBuffSpellIDs): the saved layout's hidden list is
+    -- AUTHORITATIVE when readable — a user can un-hide a HideByDefault buff,
+    -- the flag is only the initial seed — and the static flags apply solely
+    -- when no layout list could be read. C_UnitAuras.GetHiddenGroupBuffs
+    -- (the synced copy of the same list) is merged in either way; empty
+    -- because not-yet-synced just adds nothing.
     local hidden = {}
+    local layoutListRead = false
+    local CVS = _G.CooldownViewerSettings
+    local layoutGetter = _G.CooldownManagerLayout_GetHiddenGroupBuffs
+    local layoutMode = _G.Enum and _G.Enum.CDMLayoutMode and _G.Enum.CDMLayoutMode.AccessOnly
+    if CVS and type(layoutGetter) == "function" and layoutMode ~= nil then
+        local okLayout, list = pcall(function()
+            local lm = CVS:GetLayoutManager()
+            local layout = lm and lm:GetActiveLayout(layoutMode)
+            return layout and layoutGetter(layout) or nil
+        end)
+        if okLayout and type(list) == "table" then
+            layoutListRead = true
+            for _, sid in ipairs(list) do hidden[sid] = true end
+        end
+    end
     local UA = _G.C_UnitAuras
     if UA and UA.GetHiddenGroupBuffs then
         local okHidden, hiddenIDs = pcall(UA.GetHiddenGroupBuffs)
@@ -168,10 +190,25 @@ local function BuildCDMGroupBuffEntries(out)
         end
     end
 
+    -- GroupBuffItemFlags.HideByDefault: Blizzard's own viewer doesn't show
+    -- these unless the user opts in; without honoring it (plus isKnown) every
+    -- curated entry generates missing-buff icons for buffs the player can't
+    -- even provide (GroupBuffItem carries isKnown per player,
+    -- CooldownViewerDocumentation.lua). FALLBACK ONLY: when the layout list
+    -- was read, it already reflects the user's final shown/hidden choices.
+    local hideByDefault = _G.Enum and _G.Enum.GroupBuffItemFlags
+        and _G.Enum.GroupBuffItemFlags.HideByDefault or 1
+    local band = bit and bit.band
+
     local seen = {}
     for _, item in ipairs(items) do
         local sid = item.spellID
+        local flaggedHidden = not layoutListRead
+            and type(item.flags) == "number" and band
+            and band(item.flags, hideByDefault) ~= 0
         if type(sid) == "number" and not IsSecretValue(sid)
+            and item.isKnown ~= false
+            and not flaggedHidden
             and not hidden[sid] and not builtinIDs[sid] and not seen[sid] then
             seen[sid] = true
             out[#out + 1] = {

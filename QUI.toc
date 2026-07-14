@@ -133,6 +133,11 @@ core\rangeutils.lua
 core\aura_theme.lua
 core\aura_skin.lua
 core\aura_elements.lua
+core\encounter_aura_data.lua
+core\encounter_catalog.lua
+core\aura_context.lua
+core\aura_wizard.lua
+core\dispel_roles.lua
 core\aura_glue.lua
 core\aura_slots.lua
 core\aura_preview.lua

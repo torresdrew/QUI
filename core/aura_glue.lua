@@ -96,13 +96,42 @@ end
 -- components (e.g. "HARMFUL|modifiers") that the container's Lua-side
 -- AuraUtil.IsValidFilterString assert rejects inside AddAuraGroup — check
 -- both.
+-- Probe verdicts are a property of the STRING (the unit only matters for
+-- access), so they're cached for the session. The cache is only written
+-- while aura access is unrestricted: GetUnitAuras carries
+-- RequiresUnitAuraAccess (FailureMode=Error), so under encounter/M+/PvP
+-- restrictions the pcall fails for EVERY string — reading that as "invalid
+-- filter" would retire valid classified groups mid-pull and broaden their
+-- replacements to bare polarity. When restricted with no cached verdict,
+-- fail OPEN: the string already passed IsValidFilterString above, and every
+-- QUI-compiled string is token-validated at compile time.
+local probeVerdict = {}
+
 function G.FilterStringUsable(unit, filterString)
     local AU = _G.AuraUtil
     if AU and AU.IsValidFilterString and not AU.IsValidFilterString(filterString) then
         return false
     end
     if not (C_UnitAuras and C_UnitAuras.GetUnitAuras) then return true end
-    return (pcall(C_UnitAuras.GetUnitAuras, unit, filterString))
+    local cached = probeVerdict[filterString]
+    if C_Secrets and C_Secrets.ShouldAurasBeSecret and C_Secrets.ShouldAurasBeSecret() then
+        -- Restricted: the probe can't run (every call fails), so trust any
+        -- cached verdict — including false: handing a C-rejected string to
+        -- AddAuraGroup would hard-error inside the secure dirty pass and
+        -- poison the group. Uncached fails OPEN (string already passed
+        -- IsValidFilterString above).
+        if cached ~= nil then return cached end
+        return true
+    end
+    -- Unrestricted: acceptance is permanent, but a cached REJECTION is
+    -- re-verified — a rejection should be a deterministic C-parser verdict,
+    -- yet a failure we can't positively attribute must not permanently
+    -- retire a string on the strength of one probe (compiles are OOC-rare,
+    -- so the re-probe is cheap).
+    if cached == true then return true end
+    local ok = (pcall(C_UnitAuras.GetUnitAuras, unit, filterString))
+    probeVerdict[filterString] = ok
+    return ok
 end
 
 -- One enabled filterStrip element → the group descriptor array for ITS OWN

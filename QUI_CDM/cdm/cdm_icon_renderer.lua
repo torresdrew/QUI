@@ -5002,16 +5002,16 @@ end
 -- event classification, scoped walks, and combat queues live in
 -- CDMIconRuntimeRefresh; CDMIcons supplies renderer mutations as callbacks.
 
-cdEventFrame:SetScript("OnEvent", function(self, event, arg1, arg2, arg3, arg4)
+cdEventFrame:SetScript("OnEvent", function(self, event, arg1, arg2, arg3, arg4, arg5)
     local profileStart = _resolverRuntimePolicy.eventProfilingActive and debugprofilestop and debugprofilestop()
-    -- arg4 is forwarded for the event trace only — SPELL_UPDATE_COOLDOWN
-    -- carries (spellID, baseSpellID, category, startRecoveryCategory) per
-    -- SpellBookDocumentation.lua:859. The runtime refresh path stays on
+    -- arg4/arg5 are forwarded for the event trace only — SPELL_UPDATE_COOLDOWN
+    -- carries (spellID, baseSpellID, category, startRecoveryCategory, itemID)
+    -- per SpellBookDocumentation.lua:859. The runtime refresh path stays on
     -- the 3-arg shape; only the debug trace needs startRecoveryCategory
-    -- (133 = GCD) to filter out GCD-only fires.
-    CDMIcons.EventTracePrint("frame-pre", event, arg1, arg2, arg3, arg4)
+    -- (133 = GCD) to filter out GCD-only fires, and itemID for item casts.
+    CDMIcons.EventTracePrint("frame-pre", event, arg1, arg2, arg3, arg4, arg5)
     _resolverRuntimePolicy.HandleRuntimeRefresh(event, arg1, arg2, arg3, self)
-    CDMIcons.EventTracePrint("frame-post", event, arg1, arg2, arg3, arg4)
+    CDMIcons.EventTracePrint("frame-post", event, arg1, arg2, arg3, arg4, arg5)
     -- Re-check the flag, not just profileStart: keeps the inactive path free
     -- of RecordEventProfile work; profileStart alone is falsy when
     -- debugprofilestop is unavailable (call counts still recorded then).

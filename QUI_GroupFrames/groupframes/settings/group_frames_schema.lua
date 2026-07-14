@@ -479,6 +479,35 @@ local function RenderGeneralEnableSection(sectionHost, ctx)
     return 142
 end
 
+-- Pointer row: the Auras tab used to live on this surface (TAB_DEFINITIONS
+-- key "auras", group_frames_model.lua); aura config now lives on the Auras
+-- hub tile (tiles/auras.lua, tabIndex 21, subTabIndex 1 = Group Frames).
+-- RenderAurasTab itself is untouched -- the hub's Group Frames sub-page
+-- (core/settings/content/auras_group_page.lua) still calls it directly.
+local function RenderAurasHubPointerSection(sectionHost, ctx)
+    local gui = GetGUI()
+    local optionsAPI = GetOptionsAPI()
+    local groupFrames = ResolveGroupFramesDB(ctx and ctx.options and ctx.options.contextMode)
+    if not gui or not optionsAPI or not groupFrames then
+        return nil
+    end
+
+    SetSearchContext(CreateSearchContext("general", groupFrames.contextMode))
+
+    local openButton = gui:CreateButton(sectionHost, ns.L["Open Auras"], 140, 26, function()
+        if gui.NavigateTo then
+            gui:NavigateTo(21, 1)
+        end
+    end)
+
+    local row = optionsAPI.BuildSettingRow(sectionHost, ns.L["Aura settings have moved to the Auras section."], openButton)
+    row:ClearAllPoints()
+    row:SetPoint("TOPLEFT", sectionHost, "TOPLEFT", 0, 0)
+    row:SetPoint("TOPRIGHT", sectionHost, "TOPRIGHT", 0, 0)
+
+    return 28
+end
+
 local function RenderGeneralCopySettingsSection(sectionHost, ctx)
     local gui = GetGUI()
     local optionsAPI = GetOptionsAPI()
@@ -2010,6 +2039,12 @@ local function EnsureDispelColors(dispel)
             Poison = { 0.0, 0.6, 0.0, 1 },
         }
     end
+    -- Backfill any school missing from the canonical palette (e.g. Bleed,
+    -- added after this profile's dispel.colors was first seeded) without
+    -- disturbing colors the user already customized.
+    if ns.QUI_GroupFrameIconLayout and ns.QUI_GroupFrameIconLayout.SeedDispelColors then
+        ns.QUI_GroupFrameIconLayout.SeedDispelColors(dispel.colors)
+    end
 end
 
 local function RenderDispelOverlaySection(sectionHost, ctx)
@@ -2103,6 +2138,13 @@ local function RenderDispelOverlaySection(sectionHost, ctx)
     local poisonColorRow = optionsAPI.BuildSettingRow(dispelCard.frame, ns.L["Poison Color"], poisonColorPicker)
     dispelRows[#dispelRows + 1] = poisonColorRow
     dispelCard.AddRow(diseaseColorRow, poisonColorRow)
+
+    local bleedColorPicker = gui:CreateFormColorPicker(dispelCard.frame, nil, "Bleed", dispel.colors, refresh, nil, {
+        description = ns.L["Bleed effects can't be dispelled — this color is for awareness only."],
+    })
+    local bleedColorRow = optionsAPI.BuildSettingRow(dispelCard.frame, ns.L["Bleed"], bleedColorPicker)
+    dispelRows[#dispelRows + 1] = bleedColorRow
+    dispelCard.AddRow(bleedColorRow)
 
     UpdateDispelRows()
     builder.CloseCard(dispelCard)
@@ -2860,6 +2902,7 @@ end
 
 local GENERAL_TAB_FEATURE = CreateMultiSectionTabFeature("groupFramesGeneralTab", {
     { id = "enable", minHeight = 42, render = RenderGeneralEnableSection },
+    { id = "aurasHubPointer", minHeight = 28, render = RenderAurasHubPointerSection },
     { id = "rangepet", minHeight = 140, render = RenderRangePetSection },
     { id = "healer", minHeight = 140, render = RenderHealerSection },
     { id = "copySettings", minHeight = 88, render = RenderGeneralCopySettingsSection },
@@ -2869,6 +2912,7 @@ local GENERAL_TAB_FEATURE = CreateMultiSectionTabFeature("groupFramesGeneralTab"
 -- raid would mean up to 40 extra secure frames).
 local GENERAL_PARTY_TAB_FEATURE = CreateMultiSectionTabFeature("groupFramesGeneralPartyTab", {
     { id = "enable", minHeight = 42, render = RenderGeneralEnableSection },
+    { id = "aurasHubPointer", minHeight = 28, render = RenderAurasHubPointerSection },
     { id = "rangepet", minHeight = 140, render = RenderRangePetSection },
     { id = "partyTargets", minHeight = 200, render = RenderPartyTargetsSection },
     { id = "healer", minHeight = 140, render = RenderHealerSection },
@@ -2928,6 +2972,14 @@ local AURAS_TAB_FEATURE = CreateMultiSectionTabFeature("groupFramesAurasTab", {
     { id = "targetedSpells", minHeight = 160, render = RenderTargetedSpellsSection },
 })
 
+-- Standalone one-section tab wrapping the same RenderDispelOverlaySection
+-- the Group Frames tile's Appearance tab folds in -- gives the Auras hub's
+-- Dispel Colors sub-page a self-contained mount seam without duplicating
+-- the card render.
+local DISPEL_TAB_FEATURE = CreateMultiSectionTabFeature("groupFramesDispelTab", {
+    { id = "dispelOverlay", minHeight = 140, render = RenderDispelOverlaySection },
+})
+
 local function RenderFeatureTab(feature, host, contextMode)
     if not host then
         return false
@@ -2980,4 +3032,8 @@ end
 
 function GroupFramesSchema.RenderAurasTab(host, contextMode)
     return RenderFeatureTab(AURAS_TAB_FEATURE, host, contextMode)
+end
+
+function GroupFramesSchema.RenderDispelTab(host, contextMode)
+    return RenderFeatureTab(DISPEL_TAB_FEATURE, host, contextMode)
 end
