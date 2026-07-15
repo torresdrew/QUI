@@ -323,6 +323,51 @@ function GetExtraButtonHolderSize(buttonType, blizzFrame, settings, scale)
     return math.max(width * scale, 64), math.max(height * scale, 64)
 end
 
+-- Blizzard's HorizontalLayout anchors ExtraActionBarFrame by TOPLEFT and sizes
+-- ExtraAbilityContainer from the unscaled child.  Offset the container so the
+-- scaled bar's visual center still lands on the holder without repinning the
+-- protected child or replacing Blizzard's layout methods.
+local function GetExtraActionContainerAnchorOffset(container, bar, scale, offsetX, offsetY)
+    scale = Helpers.SafeToNumber(scale, 1)
+    if scale <= 0 then scale = 1 end
+
+    offsetX = Helpers.SafeToNumber(offsetX, 0)
+    offsetY = Helpers.SafeToNumber(offsetY, 0)
+    if not container or not bar then return offsetX, offsetY end
+
+    local barWidth = Helpers.SafeToNumber(bar:GetWidth(), 0)
+    local barHeight = Helpers.SafeToNumber(bar:GetHeight(), 0)
+    if barWidth <= 0 or barHeight <= 0 then return offsetX, offsetY end
+
+    -- Match LayoutMixin:CalculateFrameSize for this template.  The local
+    -- ExtraAbilityContainer XML has no padding and uses minimumWidth/fixedHeight.
+    local childLayoutWidth = barWidth
+    local childLayoutHeight = barHeight
+    if container.respectChildScale then
+        childLayoutWidth = childLayoutWidth * scale
+        childLayoutHeight = childLayoutHeight * scale
+    end
+
+    local layoutWidth = Helpers.SafeToNumber(container.fixedWidth, 0)
+    if layoutWidth <= 0 then layoutWidth = childLayoutWidth end
+    local minimumWidth = Helpers.SafeToNumber(container.minimumWidth, 0)
+    local maximumWidth = Helpers.SafeToNumber(container.maximumWidth, 0)
+    if minimumWidth > 0 then layoutWidth = math.max(layoutWidth, minimumWidth) end
+    if maximumWidth > 0 then layoutWidth = math.min(layoutWidth, maximumWidth) end
+
+    local layoutHeight = Helpers.SafeToNumber(container.fixedHeight, 0)
+    if layoutHeight <= 0 then layoutHeight = childLayoutHeight end
+    local minimumHeight = Helpers.SafeToNumber(container.minimumHeight, 0)
+    local maximumHeight = Helpers.SafeToNumber(container.maximumHeight, 0)
+    if minimumHeight > 0 then layoutHeight = math.max(layoutHeight, minimumHeight) end
+    if maximumHeight > 0 then layoutHeight = math.min(layoutHeight, maximumHeight) end
+
+    local visualWidth = barWidth * scale
+    local visualHeight = barHeight * scale
+    return offsetX + (layoutWidth - visualWidth) / 2,
+        offsetY + (visualHeight - layoutHeight) / 2
+end
+
 -- Anchor the shared ExtraAbilityContainer onto the extra-action holder.
 --
 -- ExtraActionBarFrame owns the secure ExtraActionButton1
@@ -332,12 +377,13 @@ end
 -- on a grant: ExtraActionBar_Update only calls ExtraAbilityContainer:AddFrame
 -- (which parents the button INTO the container).  So if we own the container's
 -- position, a button granted mid-combat lands in an already-anchored container
--- and shows on the user's mover with zero in-combat protected calls.  We
+-- and shows on the user's mover with zero addon-originated in-combat protected
+-- calls.  Blizzard's secure AddFrame/layout path remains untouched.  We
 -- exclude the container from Blizzard's layout/position managers so nothing
 -- drags it back.  We never call ExtraAbilityContainer:RemoveFrame -- it does
 -- SetParent(nil)+Hide() on its child (ExtraAbilityContainer.lua) -- we only own
 -- the container's own parent/point.
-function ApplyExtraActionContainerAnchor(holder, offsetX, offsetY)
+function ApplyExtraActionContainerAnchor(holder, offsetX, offsetY, scale)
     local container = ExtraAbilityContainer
     if not container or not holder then return end
 
@@ -351,23 +397,12 @@ function ApplyExtraActionContainerAnchor(holder, offsetX, offsetY)
         pcall(container.SetIsLayoutFrame, container, false)
     end
 
-    -- Suppress the container's HorizontalLayout.  Left to run, LayoutChildren
-    -- does child:ClearAllPoints()+SetPoint("TOPLEFT", ...) on ExtraActionBarFrame
-    -- (LayoutFrame.lua) -- with our SetScale that pushes the button off-center --
-    -- and it re-runs on every grant (AddFrame -> UpdateLayoutIndicies ->
-    -- MarkDirty), including in combat where Blizzard's secure Layout would
-    -- overwrite our centering and we could not correct it.  We own the bar's
-    -- centering below instead, so the layout must not touch it.
-    if type(container.Layout) == "function" then
-        container.Layout = function() end
-    end
-    if type(container.MarkDirty) == "function" then
-        container.MarkDirty = function() end
-    end
-
     extraBtnState.hookingSetParent = true
     container:SetParent(holder)
     extraBtnState.hookingSetParent = false
+
+    local anchorX, anchorY = GetExtraActionContainerAnchorOffset(
+        container, ExtraActionBarFrame, scale, offsetX, offsetY)
 
     -- ExtraAbilityContainer is an EditMode system frame; use the *Base point
     -- setters when present so we bypass the EditMode SetPoint override (writing
@@ -375,26 +410,12 @@ function ApplyExtraActionContainerAnchor(holder, offsetX, offsetY)
     extraBtnState.hookingSetPoint = true
     if container.ClearAllPointsBase and container.SetPointBase then
         container:ClearAllPointsBase()
-        container:SetPointBase("CENTER", holder, "CENTER", 0, 0)
+        container:SetPointBase("CENTER", holder, "CENTER", anchorX, anchorY)
     else
         container:ClearAllPoints()
-        container:SetPoint("CENTER", holder, "CENTER", 0, 0)
+        container:SetPoint("CENTER", holder, "CENTER", anchorX, anchorY)
     end
     extraBtnState.hookingSetPoint = false
-
-    -- Explicitly center the bar on the mover (scale-invariant, unlike the
-    -- layout's TOPLEFT anchor).  With the container's layout suppressed this pin
-    -- persists through combat, so a button granted mid-combat -- where Blizzard
-    -- does SetParent(container) but we cannot touch the bar -- still shows
-    -- centered on the user's mover.  The user's offset applies here (to the
-    -- visible bar); the container itself stays at the mover center.
-    local bar = ExtraActionBarFrame
-    if bar then
-        extraBtnState.hookingSetPoint = true
-        bar:ClearAllPoints()
-        bar:SetPoint("CENTER", holder, "CENTER", offsetX, offsetY)
-        extraBtnState.hookingSetPoint = false
-    end
 end
 
 -- One-time neutralization of ExtraAbilityContainer's own layout/mouse/EditMode
@@ -448,7 +469,7 @@ function ApplyExtraButtonSettings(buttonType)
     -- ADDON_ACTION_BLOCKED.  Ownership is established once, out of combat:
     --   * extra -> anchor the shared ExtraAbilityContainer to the mover, so
     --     Blizzard's in-combat AddFrame drops the button into a container that
-    --     already sits on the mover (no in-combat repin needed);
+    --     already sits on the mover (no addon in-combat repin needed);
     --   * zone  -> ZoneAbilityFrame has no secure descendant and is granted
     --     only out of combat, so reparent it straight onto its own mover.
     -- A refresh that lands mid-combat is deferred to PLAYER_REGEN_ENABLED.
@@ -473,7 +494,7 @@ function ApplyExtraButtonSettings(buttonType)
         if not blizzFrame or not holder then return end
         blizzFrame:SetScale(scale)
         -- Own the CONTAINER, not ExtraActionBarFrame (protected).
-        ApplyExtraActionContainerAnchor(holder, offsetX, offsetY)
+        ApplyExtraActionContainerAnchor(holder, offsetX, offsetY, scale)
     else
         blizzFrame = ZoneAbilityFrame
         holder = extraBtnState.zoneAbilityHolder

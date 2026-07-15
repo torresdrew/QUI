@@ -14,7 +14,8 @@
 --   2. Container-anchor: the EXTRA path anchors the shared ExtraAbilityContainer
 --      (a stable Blizzard frame Blizzard never reparents on a grant), NOT
 --      ExtraActionBarFrame.  A button granted mid-combat lands in a container
---      that already sits on the user's mover -- zero in-combat protected calls.
+--      that already sits on the user's mover -- zero addon-originated in-combat
+--      protected calls; Blizzard's secure AddFrame/layout path remains native.
 --      The ZONE path reparents the unprotected ZoneAbilityFrame onto its own
 --      mover (two independent movers preserved).
 --
@@ -48,15 +49,15 @@ local function record(name)
 end
 
 -- Frame that scales/reparents/repins (ExtraActionBarFrame, ZoneAbilityFrame).
-local function recordingFrame(name)
+local function recordingFrame(name, width, height)
     local f = { __name = name, button = nil, Style = nil }
     function f:GetParent() return nil end
     function f:SetScale() record(name .. ":SetScale") end
     function f:SetParent() record(name .. ":SetParent") end
     function f:ClearAllPoints() record(name .. ":ClearAllPoints") end
     function f:SetPoint() record(name .. ":SetPoint") end
-    function f:GetWidth() return 64 end
-    function f:GetHeight() return 64 end
+    function f:GetWidth() return width or 64 end
+    function f:GetHeight() return height or 64 end
     function f:SetAlpha() end
     function f:IsMouseEnabled() return false end
     function f:EnableMouse() record(name .. ":EnableMouse") end
@@ -67,13 +68,24 @@ end
 -- Base and non-Base variants record under the same normalized name so the
 -- assertions do not care which path the code takes.
 local function recordingContainer(name)
-    local c = { __name = name, Selection = nil }
+    local c = {
+        __name = name,
+        Selection = nil,
+        minimumWidth = 250,
+        fixedHeight = 120,
+    }
     function c:GetParent() return nil end
     function c:SetParent() record(name .. ":SetParent") end
     function c:ClearAllPoints() record(name .. ":ClearAllPoints") end
-    function c:SetPoint() record(name .. ":SetPoint") end
+    function c:SetPoint(_, _, _, x, y)
+        self.lastPointX, self.lastPointY = x, y
+        record(name .. ":SetPoint")
+    end
     function c:ClearAllPointsBase() record(name .. ":ClearAllPoints") end
-    function c:SetPointBase() record(name .. ":SetPoint") end
+    function c:SetPointBase(_, _, _, x, y)
+        self.lastPointX, self.lastPointY = x, y
+        record(name .. ":SetPoint")
+    end
     function c:SetIsLayoutFrame() end
     function c:SetScript() end
     function c:AddFrame() end
@@ -82,9 +94,11 @@ local function recordingContainer(name)
     return c
 end
 
-local extraFrame = recordingFrame("ExtraActionBarFrame")
+local extraFrame = recordingFrame("ExtraActionBarFrame", 256, 128)
 local zoneFrame = recordingFrame("ZoneAbilityFrame")
 local container = recordingContainer("ExtraAbilityContainer")
+local originalContainerLayout = container.Layout
+local originalContainerMarkDirty = container.MarkDirty
 
 local function stubHolder()
     return { SetSize = function() end }
@@ -107,10 +121,11 @@ env.Helpers = {
         return n
     end,
 }
+local extraSettings = { enabled = true, scale = 1.0 }
 env.GetCore = function()
     return {
         db = { profile = { actionBars = { bars = {
-            extraActionButton = { enabled = true, scale = 1.0 },
+            extraActionButton = extraSettings,
             zoneAbility       = { enabled = true, scale = 1.0 },
         } } } },
     }
@@ -198,14 +213,27 @@ for _, expected in ipairs({
     "ExtraAbilityContainer:SetParent",    -- position owned via the CONTAINER
     "ExtraAbilityContainer:ClearAllPoints",
     "ExtraAbilityContainer:SetPoint",
-    "ExtraActionBarFrame:ClearAllPoints",  -- bar explicitly centered on the mover
-    "ExtraActionBarFrame:SetPoint",        -- (scale-invariant, not layout TOPLEFT)
 }) do
     assert(extraSeen[expected],
         "positive control (extra): out of combat must call " .. expected .. "; got: " .. geomSummary())
 end
 assert(not extraSeen["ExtraActionBarFrame:SetParent"],
     "extra path must NOT reparent ExtraActionBarFrame (Blizzard keeps it in the container); got: " .. geomSummary())
+assert(not extraSeen["ExtraActionBarFrame:ClearAllPoints"] and not extraSeen["ExtraActionBarFrame:SetPoint"],
+    "extra path must leave ExtraActionBarFrame anchoring to Blizzard's secure layout; got: " .. geomSummary())
+assert(container.Layout == originalContainerLayout and container.MarkDirty == originalContainerMarkDirty,
+    "extra path must not replace ExtraAbilityContainer Layout/MarkDirty methods")
+assert(container.lastPointX == 0 and container.lastPointY == 4,
+    ("native-scale container compensation must be (0, 4); got (%s, %s)")
+        :format(tostring(container.lastPointX), tostring(container.lastPointY)))
+
+resetGeom()
+extraSettings.scale = 1.5
+ApplyExtraButtonSettings("extraActionButton")
+assert(container.lastPointX == -64 and container.lastPointY == 36,
+    ("scaled container compensation must center the visual bar; got (%s, %s)")
+        :format(tostring(container.lastPointX), tostring(container.lastPointY)))
+extraSettings.scale = 1.0
 
 resetGeom()
 ApplyExtraButtonSettings("zoneAbility")
@@ -233,10 +261,12 @@ assert(source:find("function ApplyExtraActionContainerAnchor", 1, true),
     "extra path must anchor ExtraAbilityContainer via ApplyExtraActionContainerAnchor")
 assert(source:find("container:SetParent(holder)", 1, true),
     "ApplyExtraActionContainerAnchor must parent the container to the holder")
-assert(source:find('bar:SetPoint("CENTER", holder', 1, true),
-    "extra path must explicitly center the bar on the mover (scale-invariant)")
-assert(source:find("container.Layout = function() end", 1, true),
-    "extra path must suppress the container's layout so it cannot re-anchor the bar TOPLEFT")
+assert(not source:find("container.Layout =", 1, true),
+    "extra path must not replace ExtraAbilityContainer.Layout")
+assert(not source:find("container.MarkDirty =", 1, true),
+    "extra path must not replace ExtraAbilityContainer.MarkDirty")
+assert(not source:find('bar:SetPoint("CENTER", holder', 1, true),
+    "extra path must not fight Blizzard's secure child layout")
 
 -- Never call the destructive ExtraAbilityContainer:RemoveFrame.
 assert(source:find("RemoveFrame", 1, true) and source:find("never call", 1, true),
