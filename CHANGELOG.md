@@ -5,6 +5,12 @@ All notable changes to QUI will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
+## v4.1.1-beta6 - 2026-07-15
+
+### Fixed
+- fix(actionbars): the zone ability button (dragonriding, quest abilities) now moves onto its own mover even when granted mid-combat — previously it could sit at the default Blizzard position until combat ended; the zone ability and extra action button now always keep separate movers, and the zone ability's default position matches its stock on-screen spot
+
+
 ## v4.1.1-beta5 - 2026-07-14
 
 ### Fixed
