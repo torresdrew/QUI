@@ -5,6 +5,12 @@ All notable changes to QUI will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
+## v4.1.1-beta5 - 2026-07-14
+
+### Fixed
+- fix(actionbars): the extra action button centering no longer replaces the shared container's layout methods — QUI now offsets the container's anchor to compensate for your scale setting, leaving the secure layout path fully native (safer in combat)
+
+
 ## v4.1.1-beta4 - 2026-07-13
 
 ### Fixed
