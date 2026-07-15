@@ -86,8 +86,19 @@ NewSettings["12.0.1"] = {
 	"raidFramesDisplayLargerRoleSpecificDebuffs",
 	"raidFramesCenterBigDefensive",
 	"raidFramesDispelIndicatorType",
-	"raidFramesDispelIndicatorOverlay",
 }
+
+NewSettings["12.1.0"] = {
+	"pingTarget",
+	"showPingsOnRaidFrames",
+	"TOGGLEPINGTARGET",
+	"nameplateShowOnlyNameForFriendlyPlayerUnits",
+	"nameplateUseClassColorForFriendlyPlayerUnitNames",
+	"nameplateShowFriendlyRealmName",
+	"SOCIAL_ENABLE_DISCORD_FUNCTIONALITY",
+	"raidFramesDispelIndicatorOverlay",
+	"raidFramesDispelIndicatorOverlayAnimation",
+};
 
 NewSettingsPredicates["enableConnectToPhotoSharing"] = function()
 	return C_PhotoSharing.IsEnabled();

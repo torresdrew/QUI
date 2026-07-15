@@ -21,11 +21,10 @@ if not ProviderPanels or type(ProviderPanels.RegisterAfterLoad) ~= "function" th
     return
 end
 
--- NOTE: do NOT capture `ns.QUI_Options` as a local in this outer closure.
--- QUI_Options/shared.lua REPLACES the stub table installed by
--- core/gui_shell.lua, so any captured local would be stale. Re-resolve
--- ns.QUI_Options at call time inside MakeLayout / row / build bodies
--- (minimap_providers precedent).
+-- NOTE: ns.QUI_Options keeps ONE table identity for the whole session —
+-- core/gui_shell.lua installs the stub and QUI_Options/shared.lua ADOPTS it
+-- (`ns.QUI_Options or {}`), never replaces it. Call-time resolution inside
+-- MakeLayout / row / build bodies is convention, not a staleness guard.
 ProviderPanels:RegisterAfterLoad(function(ctx)
     local GUI = ctx.GUI
     local U = ctx.U
@@ -54,19 +53,9 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
     end
 
     ---------------------------------------------------------------------------
-    -- Label helpers. Both APIs MayReturnNothing; both are nil-guarded so the
+    -- Label helper. C_Item.GetItemInfo MayReturnNothing; nil-guarded so the
     -- headless search-cache harness (no C_* namespaces) renders fallbacks.
     ---------------------------------------------------------------------------
-    local function CurrencyLabel(id)
-        local info = C_CurrencyInfo and C_CurrencyInfo.GetCurrencyInfo
-            and C_CurrencyInfo.GetCurrencyInfo(id)
-        local name = info and info.name
-        if name and name ~= "" then
-            return string.format("%s (%d)", name, id)
-        end
-        return ns.L["Currency"] .. " " .. tostring(id)
-    end
-
     local function ItemLabel(itemID)
         local name = C_Item and C_Item.GetItemInfo and C_Item.GetItemInfo(itemID)
         if name and name ~= "" then
@@ -77,7 +66,7 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
 
     ---------------------------------------------------------------------------
     -- Dropdown option builders (sorted for deterministic order; the DBs are
-    -- unordered maps). Store access is build-time-guarded: ns.Bags.Store is
+    -- unordered maps). Store access is build-time-guarded: ns.Storage.Store is
     -- absent in the headless harness, and reads are re-resolved per call so
     -- delete refreshes see live data.
     ---------------------------------------------------------------------------
@@ -124,7 +113,7 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
     -- but only get a row/render while tracked.)
 
     local function BuildCharacterOptions()
-        local Store = ns.Bags and ns.Bags.Store
+        local Store = ns.Storage and ns.Storage.Store
         local opts = {}
         if Store and Store.ListCharacters then
             local current = Store.GetCurrentCharacterKey and Store.GetCurrentCharacterKey()
@@ -138,7 +127,7 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
     end
 
     local function BuildGuildOptions()
-        local Store = ns.Bags and ns.Bags.Store
+        local Store = ns.Storage and ns.Storage.Store
         local opts = {}
         if Store and Store.ListGuilds then
             for _, key in ipairs(Store.ListGuilds()) do
@@ -520,7 +509,7 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
                 warningText = ns.L["This cannot be undone. The cache rebuilds the next time that character logs in."],
                 acceptText = ns.L["Delete"], cancelText = ns.L["Cancel"], isDestructive = true,
                 onAccept = function()
-                    local Store = ns.Bags and ns.Bags.Store
+                    local Store = ns.Storage and ns.Storage.Store
                     if Store and Store.DeleteCharacter then
                         Store.DeleteCharacter(value)
                         print("|cff60A5FAQUI:|r " .. string.format(ns.L["Deleted cached character: %s"], value))
@@ -546,7 +535,7 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
                 warningText = ns.L["This cannot be undone. The cache rebuilds on the next guild bank visit."],
                 acceptText = ns.L["Delete"], cancelText = ns.L["Cancel"], isDestructive = true,
                 onAccept = function()
-                    local Store = ns.Bags and ns.Bags.Store
+                    local Store = ns.Storage and ns.Storage.Store
                     if Store and Store.DeleteGuild then
                         Store.DeleteGuild(value)
                         print("|cff60A5FAQUI:|r " .. string.format(ns.L["Deleted cached guild: %s"], value))

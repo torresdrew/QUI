@@ -17,14 +17,15 @@ local UNIT_LABELS = ns.QUI_UnitFramesUnitDisplayNames or {
     boss = ns.L["Boss"],
 }
 
+-- "icons" removed: the Auras tab-strip entry no longer exists on this
+-- surface (moved to the Auras hub tile, tabIndex 21 subTabIndex 2), so
+-- activeTab can never be "icons" any more.
 local PER_UNIT_TABS = {
     frame = true,
     bars = true,
     text = true,
-    icons = true,
     indicators = true,
     portrait = true,
-    privateAuras = true,
     castbar = true,
 }
 
@@ -75,7 +76,7 @@ end
 
 local function RenderIcons(host, state)
     local unitKey = state and state.selectedUnit or nil
-    RenderSchema("RenderIconsTab", host, unitKey, ns.L["Icons"])
+    RenderSchema("RenderIconsTab", host, unitKey, ns.L["Auras"])
 end
 
 local function RenderPortrait(host, state)
@@ -88,26 +89,24 @@ local function RenderIndicators(host, state)
     RenderSchema("RenderIndicatorsTab", host, unitKey, ns.L["Indicators"])
 end
 
-local function RenderPrivateAuras(host, state)
-    local unitKey = state and state.selectedUnit or nil
-    RenderSchema("RenderPrivateAurasTab", host, unitKey, ns.L["Priv. Auras"])
-end
-
 local function RenderCastbar(host, state)
     local unitKey = state and state.selectedUnit or nil
     RenderSchema("RenderCastbarTab", host, unitKey, ns.L["Castbar"])
 end
 
+-- Auras moved to the Auras hub tile (tiles/auras.lua subTabIndex 2) --
+-- RenderIcons/RenderIconsTab stay defined (the hub calls RenderIconsTab
+-- directly); only the surface tab-strip entry that duplicated it is gone.
+-- The General tab carries a pointer row to the hub (unit_frames_schema.lua
+-- RenderAurasHubPointerSection).
 local TAB_DEFINITIONS = {
     { key = "general", label = ns.L["General"], render = RenderGeneral },
     { key = "frame", label = ns.L["Frame"], render = RenderFrame },
     { key = "bars", label = ns.L["Bars"], render = RenderBars },
     { key = "castbar", label = ns.L["Castbar"], render = RenderCastbar },
     { key = "text", label = ns.L["Text"], render = RenderText },
-    { key = "icons", label = ns.L["Icons"], render = RenderIcons },
     { key = "indicators", label = ns.L["Indicators"], render = RenderIndicators },
     { key = "portrait", label = ns.L["Portrait"], render = RenderPortrait },
-    { key = "privateAuras", label = ns.L["Priv. Auras"], render = RenderPrivateAuras },
 }
 
 function Model.GetTabDefinitions()

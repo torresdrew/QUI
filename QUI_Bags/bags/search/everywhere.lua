@@ -25,6 +25,7 @@
 ---------------------------------------------------------------------------
 local ADDON_NAME, ns = ...
 local Bags = ns.Bags or {}; ns.Bags = Bags
+local Storage = ns.Storage
 
 local Everywhere = {}
 Bags.Everywhere = Everywhere
@@ -108,7 +109,7 @@ end
 function Everywhere.ResolveTarget(item, currentCharKey)
     local owners = item and item.owners
     if not owners then return nil end
-    local Summaries = Bags.Summaries
+    local Summaries = Storage.Summaries
     local best, bestRank = nil, math.huge
     for _, owner in ipairs(owners) do
         local key, loc = owner.ownerKey, owner.location
@@ -144,7 +145,7 @@ function Everywhere.Query(queryString, opts)
         results.blank = true
         return results
     end
-    local Store, Summaries = Bags.Store, Bags.Summaries
+    local Store, Summaries = Storage.Store, Storage.Summaries
     local state = {
         matcher = Bags.Search.Compile(queryString),
         byItem = {},

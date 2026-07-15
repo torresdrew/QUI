@@ -61,8 +61,23 @@ local essentialDB = {
     removedSpells = {},
 }
 
+-- The other builtin containers need a db with a non-nil ownedSpells so
+-- SnapshotBlizzardCDM reports "ready" (steady state, not cold-login).
+-- Without them, SnapshotUnsetBuiltinContainers reports not-ready and
+-- Initialize()'s guaranteed cold-load-grace closer (Task 7) falls into
+-- RunColdLoadReconcile's retry loop, which recurses forever against this
+-- test's synchronous C_Timer.After stub.
+local function ReadyDB()
+    return { builtIn = true, ownedSpells = {}, dormantSpells = {}, removedSpells = {} }
+end
+
 local ns = {
-    Addon = { db = { profile = { ncdm = { essential = essentialDB } }, global = {} } },
+    Addon = { db = { profile = { ncdm = {
+        essential = essentialDB,
+        utility = ReadyDB(),
+        buff = ReadyDB(),
+        trackedBar = ReadyDB(),
+    } }, global = {} } },
     Helpers = {
         IsSecretValue = function() return false end,
         SafeValue = function(v) return v end,

@@ -34,6 +34,42 @@ assert_eq(index["C_Test.RestrictedReturn"].isSecretReturn, true,
 assert_eq(index["C_Test.RestrictedReturn"].secretArguments, "Restricted",
     "secretArguments captured")
 
+-- Precondition-guarded function (RequiresUnitAuraAccess hard-errors under
+-- restrictions) must be indexed even though its SecretArguments value is the
+-- ignored "AllowedWhenTainted"
+assert_true(index["C_Test.GuardedGetter"], "precondition-guarded function indexed")
+assert_eq(index["C_Test.GuardedGetter"].preconditions[1], "RequiresUnitAuraAccess",
+    "RequiresUnitAuraAccess precondition captured")
+assert_true(index["C_Test.GuardedGetter"].secretArguments == nil,
+    "AllowedWhenTainted still omitted")
+
+-- Events: event-level Secret* flag and secretizable payload fields
+assert_true(index["event:TEST_SECRET_EVENT"], "secret-flagged event indexed")
+assert_eq(index["event:TEST_SECRET_EVENT"].eventFlags[1], "SecretInActivePvPMatch",
+    "event-level flag captured")
+assert_true(index["event:TEST_SECRET_PAYLOAD_EVENT"], "secret-payload event indexed")
+assert_eq(index["event:TEST_SECRET_PAYLOAD_EVENT"].secretPayload, true,
+    "secretPayload captured")
+assert_true(not index["event:TEST_CLEAN_EVENT"], "clean event NOT indexed")
+
+-- Doc files that reference Enum.* / Constants.* inside table constructors
+-- (12.1.0.68675+ aspect flags, e.g. SecretReturnsForAspect =
+-- { Enum.SecretAspect.Alpha }) must still load: a plain Lua host has neither
+-- global, and an indexing error would silently drop the whole file's tables.
+assert_true(index["C_TestEnumRefs.GetAspectValue"], "Enum-referencing file still indexed")
+assert_eq(index["C_TestEnumRefs.GetAspectValue"].secretWhenCooldownsRestricted, true,
+    "flags captured from Enum-referencing file")
+assert_eq(index["C_TestEnumRefs.SetAspectValue"].secretArguments, "AllowedWhenUntainted",
+    "secretArguments captured alongside SecretArgumentsAddAspect")
+assert_eq(index["C_TestEnumRefs.GetConstantsValue"].secretArguments, "NotAllowed",
+    "Constants.* reference does not abort file")
+
+-- Aspect flags themselves are captured as bare aspect-name lists
+assert_eq(index["C_TestEnumRefs.GetAspectValue"].secretReturnsForAspect[1], "Alpha",
+    "SecretReturnsForAspect captured as aspect name")
+assert_eq(index["C_TestEnumRefs.SetAspectValue"].secretArgumentsAddAspect[1], "Alpha",
+    "SecretArgumentsAddAspect captured as aspect name")
+
 -- ---------------------------------------------------------------------------
 -- renderLua round-trip
 -- ---------------------------------------------------------------------------

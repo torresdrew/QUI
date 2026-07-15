@@ -73,8 +73,14 @@ local function CustomTabSignature(t)
     if type(t) ~= "table" then return "" end
     local parts = { tostring(t.name or ""), t.invert and "1" or "0" }
     if type(t.groups) == "table" then
+        -- Group keys persist with explicit false on deselect (settings
+        -- groupsBinding, needed by the GUILD_DISCORD->GUILD family fallback);
+        -- encode the VALUE like channels below or a check->uncheck edit
+        -- (same key set) would never re-derive the active filter.
         local keys = {}
-        for k in pairs(t.groups) do keys[#keys + 1] = tostring(k) end
+        for k, v in pairs(t.groups) do
+            keys[#keys + 1] = tostring(k) .. (v and "=1" or "=0")
+        end
         table.sort(keys)
         parts[#parts + 1] = "g:" .. table.concat(keys, ",")
     end
@@ -91,6 +97,7 @@ local function CustomTabSignature(t)
     end
     return table.concat(parts, "|")
 end
+TabUI._CustomTabSignature = CustomTabSignature -- for unit tests
 
 -- Drag-reorder (custom tabs only).
 -- Drop slot for a release at cursorX, given the ordered custom buttons'
@@ -848,7 +855,7 @@ local function OpenChatSettings(subPageIndex)
     QUI:OpenOptions()
     -- A cold open LoadAddOns QUI_Options synchronously, but the shell builds
     -- over the first frame; navigate next frame (the infobar deep-link pattern,
-    -- QUI_InfoBar/infobar/contextmenu.lua:155).
+    -- modules/infobar/contextmenu.lua:155).
     C_Timer.After(0, function()
         local gui = _G.QUI and _G.QUI.GUI
         local frame = gui and gui.MainFrame

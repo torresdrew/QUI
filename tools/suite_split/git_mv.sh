@@ -74,67 +74,6 @@ fi
 cp tools/suite_split/QUI_UnitFrames/QUI_UnitFrames.toc QUI_UnitFrames/
 cp core/templates/subaddon_bootstrap.lua QUI_UnitFrames/bootstrap.lua
 
-mkdir -p QUI_Skinning
-if [ -d modules/skinning ]; then
-  [ -e QUI_Skinning/skinning ] && { echo "ERROR: QUI_Skinning/skinning exists" >&2; exit 1; }
-  git mv modules/skinning QUI_Skinning/skinning
-  echo "moved: modules/skinning -> QUI_Skinning/skinning"
-else
-  echo "skip: modules/skinning already moved"
-fi
-cp tools/suite_split/QUI_Skinning/QUI_Skinning.toc QUI_Skinning/
-cp core/templates/subaddon_bootstrap.lua QUI_Skinning/bootstrap.lua
-
-mkdir -p QUI_Minimap
-if [ -d modules/minimap ]; then
-  [ -e QUI_Minimap/minimap ] && { echo "ERROR: QUI_Minimap/minimap exists" >&2; exit 1; }
-  git mv modules/minimap QUI_Minimap/minimap
-  echo "moved: modules/minimap -> QUI_Minimap/minimap"
-else
-  echo "skip: modules/minimap already moved"
-fi
-cp tools/suite_split/QUI_Minimap/QUI_Minimap.toc QUI_Minimap/
-cp core/templates/subaddon_bootstrap.lua QUI_Minimap/bootstrap.lua
-
-mkdir -p QUI_QoL
-if [ -d modules/qol ]; then
-  [ -e QUI_QoL/qol ] && { echo "ERROR: QUI_QoL/qol exists" >&2; exit 1; }
-  git mv modules/qol QUI_QoL/qol
-  echo "moved: modules/qol -> QUI_QoL/qol"
-else
-  echo "skip: modules/qol already moved"
-fi
-if [ -d modules/dungeon ]; then
-  [ -e QUI_QoL/dungeon ] && { echo "ERROR: QUI_QoL/dungeon exists" >&2; exit 1; }
-  git mv modules/dungeon QUI_QoL/dungeon
-  echo "moved: modules/dungeon -> QUI_QoL/dungeon"
-else
-  echo "skip: modules/dungeon already moved"
-fi
-if [ -d modules/trackers ]; then
-  [ -e QUI_QoL/trackers ] && { echo "ERROR: QUI_QoL/trackers exists" >&2; exit 1; }
-  git mv modules/trackers QUI_QoL/trackers
-  echo "moved: modules/trackers -> QUI_QoL/trackers"
-else
-  echo "skip: modules/trackers already moved"
-fi
-if [ -d modules/combat ]; then
-  [ -e QUI_QoL/combat ] && { echo "ERROR: QUI_QoL/combat exists" >&2; exit 1; }
-  git mv modules/combat QUI_QoL/combat
-  echo "moved: modules/combat -> QUI_QoL/combat"
-else
-  echo "skip: modules/combat already moved"
-fi
-if [ -d modules/utility ]; then
-  [ -e QUI_QoL/utility ] && { echo "ERROR: QUI_QoL/utility exists" >&2; exit 1; }
-  git mv modules/utility QUI_QoL/utility
-  echo "moved: modules/utility -> QUI_QoL/utility"
-else
-  echo "skip: modules/utility already moved"
-fi
-cp tools/suite_split/QUI_QoL/QUI_QoL.toc QUI_QoL/
-cp core/templates/subaddon_bootstrap.lua QUI_QoL/bootstrap.lua
-
 mkdir -p QUI_DamageMeter
 if [ -d modules/damage_meter ]; then
   [ -e QUI_DamageMeter/damage_meter ] && { echo "ERROR: QUI_DamageMeter/damage_meter exists" >&2; exit 1; }

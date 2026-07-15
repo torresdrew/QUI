@@ -88,29 +88,40 @@ coalesceFrame:Hide()
 local nAll, nRoster, nPlayer, nGroup = 0, 0, 0, 0
 local subAll, subRoster, subPlayer, subGroup = subscribers.all, subscribers.roster, subscribers.player, subscribers.group
 
+-- One subscriber tier pass for a single unit. Named function so the
+-- protected call below is pcall(DispatchUnit, ...) — no closure allocation
+-- on the hot path.
+local function DispatchUnit(unit, info, isRoster)
+    -- Dispatch to "all" subscribers (every UNIT_AURA, including
+    -- nameplates/target/focus/boss/arena — use sparingly).
+    for i = 1, nAll do subAll[i](unit, info) end
+
+    if isRoster then
+        -- Roster tier: player + party1..4 + raid1..40.
+        for i = 1, nRoster do subRoster[i](unit, info) end
+
+        -- Player/group split is roster-scoped: "group" means
+        -- party+raid (not player). Non-roster units like nameplates,
+        -- target, focus, boss, arena never reach player/group
+        -- subscribers — they go through "all" if they need them.
+        if unit == "player" then
+            for i = 1, nPlayer do subPlayer[i](unit, info) end
+        else
+            for i = 1, nGroup do subGroup[i](unit, info) end
+        end
+    end
+end
+
 coalesceFrame:SetScript("OnUpdate", function(self)
     self:Hide()
     for unit, updateInfo in pairs(pendingUnits) do
         local info = updateInfo ~= true and updateInfo or nil
-        local isRoster = rosterUnits[unit]
 
-        -- Dispatch to "all" subscribers (every UNIT_AURA, including
-        -- nameplates/target/focus/boss/arena — use sparingly).
-        for i = 1, nAll do subAll[i](unit, info) end
-
-        if isRoster then
-            -- Roster tier: player + party1..4 + raid1..40.
-            for i = 1, nRoster do subRoster[i](unit, info) end
-
-            -- Player/group split is roster-scoped: "group" means
-            -- party+raid (not player). Non-roster units like nameplates,
-            -- target, focus, boss, arena never reach player/group
-            -- subscribers — they go through "all" if they need them.
-            if unit == "player" then
-                for i = 1, nPlayer do subPlayer[i](unit, info) end
-            else
-                for i = 1, nGroup do subGroup[i](unit, info) end
-            end
+        -- Protected per unit: a throwing subscriber must not starve the
+        -- remaining units or skip accumulator cleanup. Errors stay loud.
+        local ok, err = pcall(DispatchUnit, unit, info, rosterUnits[unit])
+        if not ok then
+            geterrorhandler()(err)
         end
 
         -- Clear merged accumulator so it's ready for reuse next frame.
@@ -156,7 +167,11 @@ end
 -- Copy delta arrays from updateInfo into the merged accumulator
 local function AppendDeltaField(merged, updateInfo, field)
     local src = updateInfo[field]
-    if src then
+    -- 12.1: UNIT_AURA delta arrays arrive as SecretValue while auras are
+    -- restricted. ipairs over a secret value throws (and would leak secrets
+    -- into the merged accumulator), so skip a secret field — QueueAuraEvent
+    -- promotes the whole event to a full update when the payload is secret.
+    if src and not (issecretvalue and issecretvalue(src)) then
         local dst = merged[field]
         for _, v in ipairs(src) do
             dst[#dst + 1] = v
@@ -170,13 +185,32 @@ local function AccumulateDelta(merged, updateInfo)
     AppendDeltaField(merged, updateInfo, "updatedAuraInstanceIDs")
 end
 
+-- 12.1: detect a secret UNIT_AURA payload. While auras are restricted the delta
+-- arrays (addedAuras / updated- / removedAuraInstanceIDs) come through as
+-- SecretValue and cannot be merged or iterated. QueueAuraEvent promotes such an
+-- event to a full-update sentinel; downstream consumers gate their own
+-- (now-restricted) rescans on C_Secrets.ShouldAurasBeSecret().
+local function PayloadIsSecret(updateInfo)
+    if not (updateInfo and issecretvalue) then return false end
+    -- isFullUpdate: 12.1 can deliver a READABLE table whose scalar
+    -- isFullUpdate field is itself a secret boolean (live shape:
+    -- { removedAuraInstanceIDs=<secret table>, isFullUpdate=<secret
+    -- boolean> } on raid units). Reading the field is fine; boolean-testing
+    -- it throws. Probe it here alongside the delta arrays.
+    return issecretvalue(updateInfo.isFullUpdate)
+        or issecretvalue(updateInfo.addedAuras)
+        or issecretvalue(updateInfo.updatedAuraInstanceIDs)
+        or issecretvalue(updateInfo.removedAuraInstanceIDs)
+end
+
 ---------------------------------------------------------------------------
 -- NON-ROSTER INTEREST PREDICATE
 --
 -- Non-roster units (nameplates, target, focus, boss, arena, pet, mouseover,
 -- targettarget, ...) only reach "all" subscribers. Current "all" consumers
 -- want at most two things:
---   1. `unit == "target"`  — cdm_icons target-debuff refresh
+--   1. `unit == "target"` — kept cheap for any future target consumer (CDM's
+--      target refresh registers UNIT_AURA directly, not through this router).
 --   2. The unit the GameTooltip is currently showing — tooltip.lua
 --      OnUnitAuraChanged, which refreshes that one tooltip's mount line.
 --
@@ -217,6 +251,19 @@ local function QueueAuraEvent(unit, updateInfo)
     local existing = pendingUnits[unit]
     if existing == true then
         -- Already marked as full update, nothing to do
+    elseif updateInfo and issecretvalue and issecretvalue(updateInfo) then
+        -- 68569: the whole updateInfo arg is secret while restricted (a plain
+        -- __index into it, e.g. .isFullUpdate below, throws). Opaque
+        -- invalidation; consumers gate their own rescans off
+        -- C_Secrets.ShouldAurasBeSecret() instead of reading this payload.
+        pendingUnits[unit] = true
+    elseif PayloadIsSecret(updateInfo) then
+        -- Secret delta (combat, restricted auras): the arrays can't be merged
+        -- or iterated, and/or the isFullUpdate flag itself is a secret boolean
+        -- that would throw under the boolean test below (which is why this
+        -- branch MUST run before that test). Promote to a full-update
+        -- sentinel; consumers gate their scans.
+        pendingUnits[unit] = true
     elseif updateInfo and updateInfo.isFullUpdate then
         pendingUnits[unit] = true
     elseif not updateInfo then
@@ -246,14 +293,16 @@ end
 -- ROSTER UNIT REGISTRATION
 ---------------------------------------------------------------------------
 local rosterFrames = {}
-local function OnRosterUnitAura(self, event, unit, updateInfo)
-    QueueAuraEvent(unit, updateInfo)
-end
-
 for unit in pairs(rosterUnits) do
     local f = CreateFrame("Frame")
     f:RegisterUnitEvent("UNIT_AURA", unit)
-    f:SetScript("OnEvent", OnRosterUnitAura)
+    -- 68569: the whole payload (including the unit arg itself) can be secret
+    -- while auras are restricted. RegisterUnitEvent already filters this
+    -- frame to fire only for `unit` -- that registered token is the only
+    -- trusted unit identity here. The payload's own unit arg is never read.
+    f:SetScript("OnEvent", function(_, _, _, updateInfo)
+        QueueAuraEvent(unit, updateInfo)
+    end)
     rosterFrames[unit] = f
 end
 
@@ -263,6 +312,14 @@ end
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("UNIT_AURA")
 eventFrame:SetScript("OnEvent", function(self, event, unit, updateInfo)
+    -- 68569: a secret unit token cannot be identified -- restricted
+    -- global-unit discovery is dropped by design; the post-restriction
+    -- rescan (Task 3) covers the gap. Probe FIRST, before any other check
+    -- (including IsNonRosterEventInteresting's InCombatLockdown/tooltip
+    -- work) touches the unit.
+    if issecretvalue and issecretvalue(unit) then
+        return
+    end
     if rosterUnits[unit] then
         return
     end
@@ -272,9 +329,50 @@ eventFrame:SetScript("OnEvent", function(self, event, unit, updateInfo)
     QueueAuraEvent(unit, updateInfo)
 end)
 
+---------------------------------------------------------------------------
+-- RESTRICTION LIFT: while auras are restricted the router intentionally
+-- drops non-roster discovery (NON-ROSTER REGISTRATION above) and delivers
+-- opaque full-update sentinels for roster units instead of deltas
+-- (QueueAuraEvent's issecretvalue/PayloadIsSecret branches). A unit whose
+-- auras don't change again while restricted never gets a follow-up
+-- UNIT_AURA to resync it once the restriction lifts. Poke every roster
+-- unit + target with a full-update sentinel on lift so consumers converge
+-- via their normal (unit, nil) full-rescan path -- no new consumer API.
+--
+-- 68569: no dedicated "aura restrictions changed" event exists in the local
+-- docs. ADDON_RESTRICTION_STATE_CHANGED (RestrictedActionsDocumentation.lua)
+-- is the closest thing to one and is used ALONE (no fallback stack needed):
+--   Name = "AddonRestrictionStateChanged", LiteralName = "ADDON_RESTRICTION_STATE_CHANGED"
+--   Documentation = { "Fired when the state of an addon restriction type is
+--     changing. This event is sequenced such that it will always be fired
+--     before a restriction becomes active, or after it is deactivated." }
+-- It fires for EVERY AddOnRestrictionType (Combat/Encounter/ChallengeMode/
+-- PvPMatch/Map/Chat), which is a superset of what can drive aura secrecy --
+-- SecretPredicatesDocumentation.lua's SecretWhenAurasRestricted: "Guarded
+-- APIs and events produce secret values when combat, encounter, challenge
+-- mode, or PvP match addon restrictions are in effect." One registration
+-- covers all of those transitions; C_Secrets.ShouldAurasBeSecret() (not the
+-- event payload) is the actual gate below, since the event only says
+-- something changed, not whether auras specifically are affected or which
+-- direction -- so every firing is treated as "maybe lifted" and the real
+-- answer is read live.
+---------------------------------------------------------------------------
+local liftFrame = CreateFrame("Frame")
+liftFrame:RegisterEvent("ADDON_RESTRICTION_STATE_CHANGED")
+liftFrame:SetScript("OnEvent", function()
+    local C_Secrets = _G.C_Secrets
+    if C_Secrets and C_Secrets.ShouldAurasBeSecret and C_Secrets.ShouldAurasBeSecret() then
+        return -- still restricted; a later lift event will land it
+    end
+    for unit in pairs(rosterUnits) do
+        QueueAuraEvent(unit, nil)
+    end
+    QueueAuraEvent("target", nil)
+end)
+
 -- Perf profiler opt-in: coalesceFrame.OnUpdate runs the aura subscriber fan-out
--- (group frames, CDM, raidbuffs, atonement, private auras, etc). Wrapping it
--- measures total aura dispatch cost as one "AuraDispatch" line.
+-- (group frames, CDM, raidbuffs, atonement, etc). Wrapping it measures total
+-- aura dispatch cost as one "AuraDispatch" line.
 local function SetupDebugInstrumentation()
     local mp = ns._memprobes or {}; ns._memprobes = mp
     mp[#mp + 1] = { name = "AuraEvt_mergedInfoPool", tbl = mergedInfoPool } -- AuraEvt_mergedInfoPool memprobe anchor

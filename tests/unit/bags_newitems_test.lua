@@ -80,7 +80,8 @@ local function busSubscriberCount(eventName)
 end
 
 local ns = {
-    Bags = { Bus = Bus },
+    Bags = {},
+    Storage = { Bus = Bus },
     Helpers = {
         CreateDBGetter = function() return function() return settings end end,
         GetCore = function() return nil end,

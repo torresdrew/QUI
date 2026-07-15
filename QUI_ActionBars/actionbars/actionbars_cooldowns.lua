@@ -403,6 +403,7 @@ do
             end
         end
         local chargeActive = chargeInfo and DecodePotentialSecretBoolean(chargeInfo.isActive)
+        -- @secret-safe: chargeInfo is C_ActionBar.GetActionCharges' return — table-or-nil per docs, so the and-falsy yield is nil, never a secret false; the truthy path routes through DecodePotentialSecretBoolean (IsSecretValue-guarded)
         if mayHaveCharges and chargeActive == true then
             if _abCooldownStats then _abCooldownStats.chargeInfoActive = _abCooldownStats.chargeInfoActive + 1 end
             if actionCanBeCached and _cooldownBatchActive then
@@ -459,8 +460,8 @@ do
     function ActionBarsOwned.UpdateCooldown(button)
         -- Hot path: called every ~100ms for all active buttons. Every
         -- saved Lua op compounds to measurable ms/sec in raid combat.
-        -- `button.action` is always set by SafeSyncAction/state driver,
-        -- so the GetAttribute fallback is dead code and has been removed.
+        -- `button.action` is owned by Blizzard's UpdateAction lifecycle, so
+        -- the GetAttribute fallback is dead code and has been removed.
         if _abCooldownStats then _abCooldownStats.buttons = _abCooldownStats.buttons + 1 end
         local action = button.action
         if not action or action == 0 then return end

@@ -109,18 +109,9 @@ function ns.PrintImportFeedback(ok, message, showReloadHint)
     end
 end
 
--- Nine-point anchor options (used for UI element positioning)
-local NINE_POINT_ANCHOR_OPTIONS = {
-    {value = "TOPLEFT", text = ns.L["Top Left"]},
-    {value = "TOP", text = ns.L["Top"]},
-    {value = "TOPRIGHT", text = ns.L["Top Right"]},
-    {value = "LEFT", text = ns.L["Left"]},
-    {value = "CENTER", text = ns.L["Center"]},
-    {value = "RIGHT", text = ns.L["Right"]},
-    {value = "BOTTOMLEFT", text = ns.L["Bottom Left"]},
-    {value = "BOTTOM", text = ns.L["Bottom"]},
-    {value = "BOTTOMRIGHT", text = ns.L["Bottom Right"]},
-}
+-- Nine-point anchor options (used for UI element positioning); single
+-- retained instance from the canonical core factory.
+local NINE_POINT_ANCHOR_OPTIONS = ns.QUI_SettingsLayoutShared.BuildNinePointAnchorOptions()
 
 ---------------------------------------------------------------------------
 -- QUAZII RECOMMENDED FPS SETTINGS (58 CVars)

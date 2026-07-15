@@ -7,6 +7,77 @@ local SimpleFrameScriptObjectAPI =
 	Functions =
 	{
 		{
+			Name = "AddAccessRestrictions",
+			Type = "Function",
+			HasRestrictions = true,
+			SecretArguments = "NotAllowed",
+			Documentation = { "Adds access restrictions to a script object, preventing it from being used in API calls when enforced." },
+
+			Arguments =
+			{
+				{ Name = "restrictions", Type = "ScriptObjectAccessRestriction", Nilable = false },
+			},
+		},
+		{
+			Name = "AddForbiddenAspects",
+			Type = "Function",
+			HasRestrictions = true,
+			SecretArguments = "NotAllowed",
+			Documentation = { "Adds forbidden aspects to a script object, restricting access to various functionalities such as script bindings." },
+
+			Arguments =
+			{
+				{ Name = "aspects", Type = "ForbiddenAspect", Nilable = false },
+			},
+		},
+		{
+			Name = "GetAccessRestrictions",
+			Type = "Function",
+			SecretReturnsForAspect = { Enum.SecretAspect.ObjectSecurity },
+			Documentation = { "Returns the mask of all access restrictions applied to this object." },
+
+			Arguments =
+			{
+			},
+
+			Returns =
+			{
+				{ Name = "restrictions", Type = "ScriptObjectAccessRestriction", Nilable = false },
+			},
+		},
+		{
+			Name = "GetForbiddenAspects",
+			Type = "Function",
+			SecretReturnsForAspect = { Enum.SecretAspect.ObjectSecurity },
+			Documentation = { "Returns the mask of all forbidden aspects applied to this object." },
+
+			Arguments =
+			{
+			},
+
+			Returns =
+			{
+				{ Name = "aspects", Type = "ForbiddenAspect", Nilable = false },
+			},
+		},
+		{
+			Name = "GetInheritableForbiddenAspects",
+			Type = "Function",
+			SecretReturnsForAspect = { Enum.SecretAspect.ObjectSecurity },
+			SecretArguments = "NotAllowed",
+			Documentation = { "Returns the mask of all forbidden aspects applied to this object that can propagate to others." },
+
+			Arguments =
+			{
+				{ Name = "path", Type = "ScriptObjectPropagationPath", Nilable = false },
+			},
+
+			Returns =
+			{
+				{ Name = "aspects", Type = "ForbiddenAspect", Nilable = false },
+			},
+		},
+		{
 			Name = "GetName",
 			Type = "Function",
 			SecretReturnsForAspect = { Enum.SecretAspect.ObjectName },
@@ -21,6 +92,19 @@ local SimpleFrameScriptObjectAPI =
 			},
 		},
 		{
+			Name = "GetObjectTable",
+			Type = "Function",
+
+			Arguments =
+			{
+			},
+
+			Returns =
+			{
+				{ Name = "objectTable", Type = "FrameScriptObject", Nilable = false },
+			},
+		},
+		{
 			Name = "GetObjectType",
 			Type = "Function",
 			SecretReturnsForAspect = { Enum.SecretAspect.ObjectType },
@@ -32,6 +116,40 @@ local SimpleFrameScriptObjectAPI =
 			Returns =
 			{
 				{ Name = "objectType", Type = "cstring", Nilable = false },
+			},
+		},
+		{
+			Name = "HasAnyAccessRestrictions",
+			Type = "Function",
+			SecretReturnsForAspect = { Enum.SecretAspect.ObjectSecurity },
+			SecretArguments = "AllowedWhenUntainted",
+			Documentation = { "Returns true if this object has any of the supplied access restrictions applied." },
+
+			Arguments =
+			{
+				{ Name = "restrictions", Type = "ScriptObjectAccessRestriction", Nilable = true },
+			},
+
+			Returns =
+			{
+				{ Name = "hasAnyAccessRestriction", Type = "bool", Nilable = false },
+			},
+		},
+		{
+			Name = "HasAnyForbiddenAspects",
+			Type = "Function",
+			SecretReturnsForAspect = { Enum.SecretAspect.ObjectSecurity },
+			SecretArguments = "AllowedWhenUntainted",
+			Documentation = { "Returns true if this object has any of the supplied forbidden aspects added." },
+
+			Arguments =
+			{
+				{ Name = "aspects", Type = "ForbiddenAspect", Nilable = true },
+			},
+
+			Returns =
+			{
+				{ Name = "hasAnyForbiddenAspect", Type = "bool", Nilable = false },
 			},
 		},
 		{
@@ -136,6 +254,7 @@ local SimpleFrameScriptObjectAPI =
 			Name = "SetToDefaults",
 			Type = "Function",
 			IsProtectedFunction = true,
+			ChecksForbiddenAspects = { { Argument = "self", Aspect = Enum.ForbiddenAspect.SetToDefaults } },
 			Documentation = { "Reset all script accessible values to their default values. If possible, clears secret states." },
 
 			Arguments =

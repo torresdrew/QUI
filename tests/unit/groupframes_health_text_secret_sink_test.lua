@@ -49,6 +49,7 @@ end
 local function loadUpdateHealth(ctx)
     local prelude = [[
 local ns = ns
+local QUI_GF = QUI_GF
 local COLORS = COLORS
 local UnitExists = UnitExists
 local UnitHealth = UnitHealth
@@ -72,6 +73,9 @@ local function render(style, healthValue, missingValue)
     local abbrCalls = {}
     local ctx = {
         ns = {},
+        QUI_GF = {
+            GetFrameUnit = function(frame) return frame.previewUnit end,
+        },
         COLORS = {
             WHITE = { 1, 1, 1, 1 },
             OFFLINE = { 0.5, 0.5, 0.5, 1 },
@@ -107,7 +111,7 @@ local function render(style, healthValue, missingValue)
     local UpdateHealth = loadUpdateHealth(ctx)
     local healthText, calls = newFontString()
     local frame = {
-        unit = "raid1",
+        previewUnit = "raid1",
         healthText = healthText,
         healthBar = {
             SetValue = function() end,

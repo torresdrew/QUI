@@ -20,10 +20,10 @@ ns.QUI_Anchoring = QUI_Anchoring
 local _forceRawPointMode = true
 C_Timer.After(0.5, function() _forceRawPointMode = false end)
 
--- Declared at module scope so the early writers (PositionFrame/RegisterAnchoredFrame
--- at lines ~457/492/715/727) and the PLAYER_REGEN_ENABLED reader share ONE upvalue.
--- Previously the `local` lived below those writers, so they assigned a stray global
--- and combat-deferred re-positioning was silently dropped after combat ended.
+-- Declared at module scope so the early writers (PositionFrame, the edit-mode
+-- anchor guards, ApplyFrameAnchor) and the PLAYER_REGEN_ENABLED reader share ONE
+-- upvalue. Previously the `local` lived below those writers, so they assigned a
+-- stray global and combat-deferred re-positioning was silently dropped.
 local pendingAnchoredFrameUpdateAfterCombat = false
 
 -- Anchor target registry: { name = { frame = frame, options = {...} } }
@@ -33,7 +33,6 @@ QUI_Anchoring.anchorTargets = {}
 QUI_Anchoring.categories = {}
 
 -- Anchored frame registry: { frame = { anchorTarget = name, anchorPoint = point, offsetX = x, offsetY = y, parentFrame = frame } }
-QUI_Anchoring.anchoredFrames = {}
 
 -- Frames with active anchoring overrides — module positioning is blocked for these
 QUI_Anchoring.layoutOwnedFrames = {}
@@ -366,51 +365,6 @@ function QUI_Anchoring:GetAnchorTargetList(include, exclude, excludeSelf)
 end
 
 ---------------------------------------------------------------------------
--- ANCHOR DIMENSIONS HELPER
----------------------------------------------------------------------------
--- Get anchor frame dimensions and position data
-function QUI_Anchoring:GetAnchorDimensions(anchorFrame, anchorTargetName)
-    if not anchorFrame then return nil end
-
-    local registered = self.anchorTargets[anchorTargetName]
-    local options = registered and registered.options or {}
-
-    local width, height
-    if options.customWidth then
-        width = type(options.customWidth) == "function" and options.customWidth(anchorFrame) or options.customWidth
-    else
-        width = anchorFrame:GetWidth()
-    end
-
-    if options.customHeight then
-        height = type(options.customHeight) == "function" and options.customHeight(anchorFrame) or options.customHeight
-    else
-        height = anchorFrame:GetHeight()
-    end
-
-    -- Special handling for CDM viewers (backward compatibility)
-    if anchorTargetName == "essential" or anchorTargetName == "utility" then
-        local vs = _G.QUI_GetCDMViewerState and _G.QUI_GetCDMViewerState(anchorFrame)
-        width = (vs and vs.row1Width) or width
-        height = (vs and vs.totalHeight) or height
-    end
-
-    local centerX, centerY = anchorFrame:GetCenter()
-    if not centerX or not centerY then return nil end
-
-    return {
-        width = width,
-        height = height,
-        centerX = centerX,
-        centerY = centerY,
-        top = centerY + (height / 2),
-        bottom = centerY - (height / 2),
-        left = centerX - (width / 2),
-        right = centerX + (width / 2),
-    }
-end
-
----------------------------------------------------------------------------
 -- BORDER HELPER
 ---------------------------------------------------------------------------
 -- Get border size from a frame's backdrop
@@ -593,216 +547,6 @@ function QUI_Anchoring:PositionFrame(frame, anchorTarget, anchorPoint, offsetX, 
     return true
 end
 
----------------------------------------------------------------------------
--- ANCHORED FRAME REGISTRATION
----------------------------------------------------------------------------
--- Get anchor target name for a given frame (reverse lookup)
-function QUI_Anchoring:GetAnchorTargetName(frame)
-    if not frame then return nil end
-
-    for name, data in pairs(self.anchorTargets) do
-        if data.frame == frame then
-            return name
-        end
-    end
-
-    return nil
-end
-
--- Check for circular anchoring dependencies
--- This works at registration time by checking the CURRENT state of already-registered frames.
--- Example: If Frame A → Frame B → Frame C are already registered, and Frame C tries to anchor to Frame A,
--- we follow the chain: Frame C → Frame A → Frame B → Frame C, detecting the cycle.
--- Returns true if circular dependency would be created, false otherwise
-function QUI_Anchoring:CheckCircularDependency(frame, anchorTarget)
-    if not frame or not anchorTarget then return false end
-
-    -- Skip check for special anchor targets
-    if anchorTarget == "disabled" or anchorTarget == "screen" or anchorTarget == "none" then
-        return false
-    end
-
-    -- Get the anchor target frame
-    local targetFrame = self:GetAnchorTarget(anchorTarget)
-    if not targetFrame then return false end
-
-    -- Check if the target frame is the same as the source frame (self-anchoring)
-    if targetFrame == frame then
-        return true -- Self-anchoring detected
-    end
-
-    -- Check if target frame is anchored to anything (must be already registered)
-    local targetConfig = self.anchoredFrames[targetFrame]
-    if not targetConfig then
-        -- Target frame is not yet anchored to anything, so no cycle possible
-        return false
-    end
-
-    -- Recursively follow the anchor chain to see if we eventually loop back to the starting frame
-    -- visited tracks frames we've seen to prevent infinite loops in case of malformed data
-    local visited = {}
-    local function CheckCycle(currentFrame, startFrame)
-        -- If we've reached the starting frame again, we have a cycle
-        if currentFrame == startFrame then
-            return true -- Cycle detected
-        end
-
-        -- If we've already visited this frame in this traversal, skip it (prevents infinite loops)
-        if visited[currentFrame] then
-            return false -- Already visited, no cycle through this path
-        end
-        visited[currentFrame] = true
-
-        -- Get the anchor configuration for the current frame
-        local config = self.anchoredFrames[currentFrame]
-        if not config then
-            -- This frame is not anchored to anything, chain ends here, no cycle
-            return false
-        end
-
-        -- Skip special anchor targets (they don't create cycles)
-        if config.anchorTarget == "disabled" or config.anchorTarget == "screen" or config.anchorTarget == "none" then
-            return false
-        end
-
-        -- Get the next frame in the chain
-        local nextTargetFrame = self:GetAnchorTarget(config.anchorTarget)
-        if not nextTargetFrame then
-            -- Anchor target doesn't exist or isn't registered, chain ends, no cycle
-            return false
-        end
-
-        -- Recursively check the next frame in the chain
-        return CheckCycle(nextTargetFrame, startFrame)
-    end
-
-    -- Start checking from the target frame, looking for a path back to the starting frame
-    return CheckCycle(targetFrame, frame)
-end
-
--- Register a frame for automatic updates when anchor targets move
-function QUI_Anchoring:RegisterAnchoredFrame(frame, config)
-    if not frame or not config then return false end
-
-    -- Check for circular dependencies
-    if config.anchorTarget and config.anchorTarget ~= "disabled" and config.anchorTarget ~= "screen" and config.anchorTarget ~= "none" then
-        if self:CheckCircularDependency(frame, config.anchorTarget) then
-            -- Circular dependency detected - don't register
-            return false
-        end
-    end
-
-    -- Store anchors array if provided, otherwise use legacy anchorPoint/targetAnchorPoint
-    local anchors = config.anchors
-    if not anchors or #anchors == 0 then
-        -- Backward compatibility: convert old format to new anchors array
-        local sourceAnchorPoint = config.anchorPoint or "CENTER"
-        local targetAnchorPoint = config.targetAnchorPoint or sourceAnchorPoint
-        anchors = {
-            {source = sourceAnchorPoint, target = targetAnchorPoint}
-        }
-    end
-
-    self.anchoredFrames[frame] = {
-        anchorTarget = config.anchorTarget,
-        anchors = anchors,
-        offsetX = config.offsetX or 0,  -- X offset (gap/padding) - maintains spacing when anchor target changes size
-        offsetY = config.offsetY or 0,  -- Y offset (gap/padding) - maintains spacing when anchor target changes size
-        parentFrame = config.parentFrame,
-    }
-
-    -- Skip immediate positioning if this frame has an active anchoring override
-    if self.layoutOwnedFrames[frame] then return true end
-
-    -- Position immediately using multi-anchor system.
-    -- Defer if in combat (unless in the ADDON_LOADED / PEW safe window).
-    if InCombatLockdown() and not ns._inInitSafeWindow then
-        pendingAnchoredFrameUpdateAfterCombat = true
-        return true
-    end
-
-    -- Safely clear points (use pcall to handle secure frames)
-    local success = pcall(function()
-        frame:ClearAllPoints()
-    end)
-    if not success then
-        -- Frame is secure/managed - defer the call
-        C_Timer.After(0, function()
-            if InCombatLockdown() then
-                pendingAnchoredFrameUpdateAfterCombat = true
-                return
-            end
-            if frame and frame.ClearAllPoints then
-                pcall(frame.ClearAllPoints, frame)
-                -- Retry registration after clearing
-                C_Timer.After(0.1, function()
-                    self:RegisterAnchoredFrame(frame, config)
-                end)
-            end
-        end)
-        return true
-    end
-
-    if #anchors == 1 then
-        -- Single anchor point
-        local anchorPair = anchors[1]
-        local source = anchorPair.source or "CENTER"
-        local target = anchorPair.target or "CENTER"
-
-        self:PositionFrame(
-            frame,
-            config.anchorTarget,
-            source,
-            config.offsetX or 0,
-            config.offsetY or 0,
-            config.parentFrame,
-            {
-                targetAnchorPoint = target,
-            }
-        )
-    elseif #anchors == 2 then
-        -- Dual anchor points
-        local anchorPair1 = anchors[1]
-        local anchorPair2 = anchors[2]
-        local source1 = anchorPair1.source or "CENTER"
-        local target1 = anchorPair1.target or "CENTER"
-        local source2 = anchorPair2.source or "CENTER"
-        local target2 = anchorPair2.target or "CENTER"
-
-        self:PositionFrame(
-            frame,
-            config.anchorTarget,
-            source1,
-            config.offsetX or 0,
-            config.offsetY or 0,
-            config.parentFrame,
-            {
-                targetAnchorPoint = target1,
-                sourceAnchorPoint2 = source2,
-                targetAnchorPoint2 = target2,
-            }
-        )
-    end
-
-    -- Re-register state drivers for unit frames after positioning (ClearAllPoints breaks them)
-    if frame._quiReRegisterStateDriver then
-        C_Timer.After(0, function()
-            if frame and frame._quiReRegisterStateDriver then
-                frame._quiReRegisterStateDriver()
-            end
-        end)
-    end
-
-    return true
-end
-
--- Unregister an anchored frame
-function QUI_Anchoring:UnregisterAnchoredFrame(frame)
-    if not frame then return false end
-    self.anchoredFrames[frame] = nil
-    return true
-end
-
 -- Snap a frame to an anchor target
 -- Parameters:
 --   frame: The frame to snap
@@ -878,118 +622,6 @@ function QUI_Anchoring:SnapTo(frame, anchorTarget, anchorPoint, offsetX, offsetY
     return success
 end
 
--- Update all registered anchored frames
-function QUI_Anchoring:UpdateAllAnchoredFrames()
-    if InCombatLockdown() and not ns._inInitSafeWindow then
-        -- Avoid hot-loop requeueing during combat; process once on PLAYER_REGEN_ENABLED.
-        pendingAnchoredFrameUpdateAfterCombat = true
-        return
-    end
-
-    pendingAnchoredFrameUpdateAfterCombat = false
-
-    local hasOverriddenFrames = false
-    for frame, config in pairs(self.anchoredFrames) do
-        -- Skip frames with active anchoring overrides — collect and reapply once after loop
-        if self.layoutOwnedFrames[frame] then
-            hasOverriddenFrames = true
-        elseif frame and frame:IsShown() then
-            local anchors = config.anchors
-            if not anchors or #anchors == 0 then
-                -- Backward compatibility: use old anchorPoint format
-                local sourceAnchorPoint = config.anchorPoint or "CENTER"
-                local targetAnchorPoint = config.targetAnchorPoint or sourceAnchorPoint
-                anchors = {
-                    {source = sourceAnchorPoint, target = targetAnchorPoint}
-                }
-            end
-
-            -- Safely clear points (use pcall to handle secure frames)
-            local success = pcall(function()
-                frame:ClearAllPoints()
-            end)
-            if not success then
-                -- Frame is secure/managed - skip this frame
-                C_Timer.After(0, function()
-                    if InCombatLockdown() then
-                        pendingAnchoredFrameUpdateAfterCombat = true
-                        return
-                    end
-                    if frame and frame:IsShown() then
-                        pcall(frame.ClearAllPoints, frame)
-                        -- Retry positioning after clearing
-                        local anchorPair = anchors[1]
-                        if anchorPair then
-                            local source = anchorPair.source or "CENTER"
-                            local target = anchorPair.target or "CENTER"
-                            self:PositionFrame(
-                                frame,
-                                config.anchorTarget,
-                                source,
-                                config.offsetX or 0,
-                                config.offsetY or 0,
-                                config.parentFrame,
-                                {
-                                    targetAnchorPoint = target,
-                                }
-                            )
-                        end
-                    end
-                end)
-                -- Skip to next frame - frame is secure/managed
-            else
-                -- Successfully cleared points, continue with positioning
-                if #anchors == 1 then
-                    -- Single anchor point
-                    local anchorPair = anchors[1]
-                    local source = anchorPair.source or "CENTER"
-                    local target = anchorPair.target or "CENTER"
-
-                    self:PositionFrame(
-                        frame,
-                        config.anchorTarget,
-                        source,
-                        config.offsetX or 0,
-                        config.offsetY or 0,
-                        config.parentFrame,
-                        {
-                            targetAnchorPoint = target,
-                        }
-                    )
-                elseif #anchors == 2 then
-                    -- Dual anchor points
-                    local anchorPair1 = anchors[1]
-                    local anchorPair2 = anchors[2]
-                    local source1 = anchorPair1.source or "CENTER"
-                    local target1 = anchorPair1.target or "CENTER"
-                    local source2 = anchorPair2.source or "CENTER"
-                    local target2 = anchorPair2.target or "CENTER"
-
-                    self:PositionFrame(
-                        frame,
-                        config.anchorTarget,
-                        source1,
-                        config.offsetX or 0,
-                        config.offsetY or 0,
-                        config.parentFrame,
-                        {
-                            targetAnchorPoint = target1,
-                            sourceAnchorPoint2 = source2,
-                            targetAnchorPoint2 = target2,
-                        }
-                    )
-                end
-            end
-        end
-    end
-
-    -- Reapply overrides once (not inside the loop) if any overridden frames were found
-    if hasOverriddenFrames then
-        self:ApplyAllFrameAnchors()
-    end
-end
-
--- If an anchoring update was requested during combat, apply it once combat ends.
 local anchoredFramesCombatFrame = CreateFrame("Frame")
 anchoredFramesCombatFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
 anchoredFramesCombatFrame:SetScript("OnEvent", function()
@@ -1002,7 +634,11 @@ anchoredFramesCombatFrame:SetScript("OnEvent", function()
             return
         end
         if QUI_Anchoring then
-            QUI_Anchoring:UpdateAllAnchoredFrames()
+            -- Every live writer of the pending flag (edit-mode layout swaps,
+            -- anchor guards, ApplyFrameAnchor, PositionFrame) deferred a
+            -- POSITION RE-STAMP; the retired legacy-registry walk that used
+            -- to sit here no-oped over an empty table and lost it.
+            QUI_Anchoring:ApplyAllFrameAnchors()
         end
     end)
 end)
@@ -1168,106 +804,6 @@ anchorGuardInitFrame:SetScript("OnEvent", function(f)
     -- Delay to ensure ApplyAllFrameAnchors has run at least once
     C_Timer.After(1, InstallAllAnchorGuards)
 end)
-
--- Update frames anchored to a specific anchor target
-function QUI_Anchoring:UpdateFramesForTarget(anchorTargetName)
-    if InCombatLockdown() then
-        -- Defer update after combat
-        pendingAnchoredFrameUpdateAfterCombat = true
-        return
-    end
-
-    for frame, config in pairs(self.anchoredFrames) do
-        if frame and frame:IsShown() and config.anchorTarget == anchorTargetName then
-            local anchors = config.anchors
-            if not anchors or #anchors == 0 then
-                -- Backward compatibility: use old anchorPoint format
-                local sourceAnchorPoint = config.anchorPoint or "CENTER"
-                local targetAnchorPoint = config.targetAnchorPoint or sourceAnchorPoint
-                anchors = {
-                    {source = sourceAnchorPoint, target = targetAnchorPoint}
-                }
-            end
-
-            -- Safely clear points (use pcall to handle secure frames)
-            local success = pcall(function()
-                frame:ClearAllPoints()
-            end)
-            if not success then
-                -- Frame is secure/managed - defer the call
-                C_Timer.After(0, function()
-                    if InCombatLockdown() then
-                        pendingAnchoredFrameUpdateAfterCombat = true
-                        return
-                    end
-                    if frame and frame:IsShown() then
-                        pcall(frame.ClearAllPoints, frame)
-                        -- Retry positioning after clearing
-                        local anchorPair = anchors[1]
-                        if anchorPair then
-                            local source = anchorPair.source or "CENTER"
-                            local target = anchorPair.target or "CENTER"
-                            self:PositionFrame(
-                                frame,
-                                config.anchorTarget,
-                                source,
-                                config.offsetX or 0,
-                                config.offsetY or 0,
-                                config.parentFrame,
-                                {
-                                    targetAnchorPoint = target,
-                                }
-                            )
-                        end
-                    end
-                end)
-                -- Skip to next frame - frame is secure/managed
-            else
-                -- Successfully cleared points, continue with positioning
-                if #anchors == 1 then
-                    -- Single anchor point
-                    local anchorPair = anchors[1]
-                    local source = anchorPair.source or "CENTER"
-                    local target = anchorPair.target or "CENTER"
-
-                    self:PositionFrame(
-                        frame,
-                        config.anchorTarget,
-                        source,
-                        config.offsetX or 0,
-                        config.offsetY or 0,
-                        config.parentFrame,
-                        {
-                            targetAnchorPoint = target,
-                        }
-                    )
-                elseif #anchors == 2 then
-                    -- Dual anchor points
-                    local anchorPair1 = anchors[1]
-                    local anchorPair2 = anchors[2]
-                    local source1 = anchorPair1.source or "CENTER"
-                    local target1 = anchorPair1.target or "CENTER"
-                    local source2 = anchorPair2.source or "CENTER"
-                    local target2 = anchorPair2.target or "CENTER"
-
-                    self:PositionFrame(
-                        frame,
-                        config.anchorTarget,
-                        source1,
-                        config.offsetX or 0,
-                        config.offsetY or 0,
-                        config.parentFrame,
-                        {
-                            targetAnchorPoint = target1,
-                            sourceAnchorPoint2 = source2,
-                            targetAnchorPoint2 = target2,
-                        }
-                    )
-                end
-            end
-        end
-    end
-end
 
 ---------------------------------------------------------------------------
 -- FRAME ANCHORING SYSTEM (centralized override positioning)
@@ -2366,6 +1902,57 @@ local function IsDynamicSizeAnchorKey(key)
     return false
 end
 
+-- Container-first aura keys: buffborders publishes its live forbidden
+-- strip-1 AuraContainer on the insecure mover (mover._quiLiveContainer,
+-- nil while the pool is empty or the host is gated off). The apply path
+-- positions THAT container directly — its rect is the real auto-sized
+-- display, so an aura container docked to it tracks live growth C-side.
+-- The mover stays the resolver result everywhere else: all geometry reads
+-- (GetPoint/GetWidth/_naturalW math) stay on insecure frames, and anything
+-- that is NOT itself a forbidden aura container keeps anchoring to the
+-- mover (forbidden aspects propagate through anchors; only
+-- forbidden→forbidden docking is aspect-safe).
+local FORBIDDEN_AURA_KEYS = { buffFrame = true, debuffFrame = true }
+
+local function LiveAuraContainerFor(key)
+    if not FORBIDDEN_AURA_KEYS[key] then return nil end
+    local resolver = FRAME_RESOLVERS[key]
+    local mover = resolver and resolver()
+    if not mover then return nil end
+    return mover._quiLiveContainer, mover
+end
+
+-- Aura→aura docking: when a forbidden-container key anchors to the OTHER
+-- forbidden-container key, hand back the live container so the C-side
+-- anchor system tracks its auto-sized rect (the whole point of
+-- container-first). Every other originKey keeps the insecure mover —
+-- forbidden aspects propagate to anchored frames.
+--
+-- Implemented as a post-hoc wrapper (capture + reassign) rather than an
+-- inline edit at ResolveParentFrame's own definition (~line 2086): that
+-- function is defined lexically BEFORE this file's FRAME_RESOLVERS-
+-- dependent aura-key helpers, so a literal inline reference to
+-- LiveAuraContainerFor there would resolve to a global (nil), not this
+-- local. Reassigning the already-declared top-level local here — after
+-- both dependencies exist and before any real call site (first call is at
+-- ApplyFrameAnchor, well below) — augments it safely without touching the
+-- original function's four internal return points. Extra return values
+-- (chainSettings) are preserved via tail-call passthrough on the
+-- non-swapped path; the swap path returns only the live container, since a
+-- chain walk never happened for it.
+do
+    local ResolveParentFrameBase = ResolveParentFrame
+    ResolveParentFrame = function(parentKey, originKey)
+        if FORBIDDEN_AURA_KEYS[parentKey] and originKey and FORBIDDEN_AURA_KEYS[originKey] then
+            local live = LiveAuraContainerFor(parentKey)
+            if live then
+                return live
+            end
+        end
+        return ResolveParentFrameBase(parentKey, originKey)
+    end
+end
+
 local function GetPointOffsetForRect(point, width, height)
     local halfW = (width or 0) * 0.5
     local halfH = (height or 0) * 0.5
@@ -2429,6 +2016,16 @@ end
 
 local function GetParentAnchorRect(frame, parentKey)
     if not frame then return 1, 1 end
+
+    -- Never geometry-read a forbidden live aura container (its rect encodes
+    -- the secret aura count): retarget to its insecure host mover, whose
+    -- mirrored position + worst-case natural extent is the right proxy.
+    -- Defense-in-depth: today this path is unreachable for those containers
+    -- (their keys force useSizeStable=false), but that relies on
+    -- FORBIDDEN_AURA_KEYS ⊆ DYNAMIC_SIZE_ANCHOR_KEYS staying in sync.
+    if frame._quiHostMover then
+        frame = frame._quiHostMover
+    end
 
     local width, height
 
@@ -2526,7 +2123,15 @@ local function ApplyAutoSizing(frame, settings, parentFrame, key)
     if not frame then return end
 
     -- Auto-width: match anchor target width
-    if settings.autoWidth and parentFrame and parentFrame ~= UIParent then
+    -- parentFrame may now be a live forbidden aura container (aura→aura
+    -- docking via ResolveParentFrame's Step 4 swap). GetWidth() on a
+    -- forbidden frame returns a secret value, not a throw — the pcall below
+    -- would not catch the later `parentWidth > 0` comparison exploding on
+    -- it. _quiHostMover only exists on a live container, so this exclusion
+    -- is a no-op until Task 4 stamps it.
+    if settings.autoWidth and parentFrame and parentFrame ~= UIParent
+        and not parentFrame._quiHostMover
+    then
         local ok, parentWidth = pcall(function() return parentFrame:GetWidth() end)
         if ok and parentWidth and parentWidth > 0 then
             -- Resource bars size to the actual source frame, not the proxy.
@@ -2668,6 +2273,35 @@ end
 -- with fresh rect coords.  No per-tick loop — protected Blizzard parents are
 -- repositioned out of combat (Edit Mode), covered by ApplyAllFrameAnchors.
 local function AnchorOrPin(key, frame, pt, parentFrame, relPt, x, y)
+    -- Container-first fan-out for buff/debuff: SetPoint the live forbidden
+    -- container at the stored anchor (raw pcall'd Clear+Set — GetPoint-style
+    -- reads on forbidden frames are not known-safe, so no SmoothSetPoint /
+    -- FrameAlreadyAtPosition on this branch) and mirror the insecure mover
+    -- to the same spot as the layout-mode handle. If the parent resolved to
+    -- a live container (aura→aura docking), the mover mirrors against that
+    -- container's insecure host mover instead — an insecure frame must
+    -- never anchor to a forbidden one.
+    local live, mover = LiveAuraContainerFor(key)
+    if live then
+        pcall(live.ClearAllPoints, live)
+        pcall(live.SetPoint, live, pt, parentFrame, relPt, x, y)
+        if mover then
+            local moverParent = parentFrame
+            if moverParent and moverParent._quiHostMover then
+                moverParent = moverParent._quiHostMover
+            end
+            SmoothSetPoint(mover, pt, moverParent, relPt, x, y)
+        end
+        return
+    end
+    -- Non-live fall-through (this key's own container pool is empty — e.g.
+    -- debuff host with no strips while docked to the buff host): the parent
+    -- may still be a live forbidden container from the aura→aura swap.
+    -- Retarget to its insecure host mover — an insecure frame must never
+    -- anchor to a forbidden one (aspects propagate through anchors).
+    if parentFrame and parentFrame._quiHostMover then
+        parentFrame = parentFrame._quiHostMover
+    end
     if IsDynamicSizeAnchorKey(key) and ParentRestricts(parentFrame)
         and not FrameSelfRestricts(frame)
     then
@@ -2837,6 +2471,21 @@ function QUI_Anchoring:ApplyFrameAnchor(key, settings)
         end
     end
 
+    -- Aura→aura docking swap, applied UNIFORMLY after every parent-resolution
+    -- branch above: the hideWithParent / keepInPlace / castbar branches
+    -- resolve via ResolveFrameForKey (mover), bypassing the swap inside
+    -- ResolveParentFrame — and debuffFrame ships keepInPlace=true by default,
+    -- so without this the default profile would never dock container→container.
+    -- Placed AFTER the branches so their IsShown/GetAlpha visibility reads
+    -- above always ran against the insecure mover. Idempotent when the chain
+    -- walk already swapped (LiveAuraContainerFor returns the same container).
+    if FORBIDDEN_AURA_KEYS[key] and parentKey and FORBIDDEN_AURA_KEYS[parentKey] then
+        local liveParent = LiveAuraContainerFor(parentKey)
+        if liveParent then
+            parentFrame = liveParent
+        end
+    end
+
     -- If parent is hidden, anchor directly to it — when it becomes visible
     -- and gets repositioned, the child follows automatically.
     -- (No chain walk needed without proxy system.)
@@ -2896,9 +2545,18 @@ function QUI_Anchoring:ApplyFrameAnchor(key, settings)
     local entryRelative = settings.relative or "CENTER"
     local isLegacyCenter = entryPoint == "CENTER" and entryRelative == "CENTER"
 
+    -- Excludes aura→aura docked parents: this branch reads parentFrame's
+    -- GetWidth/GetHeight directly below (no pcall-protected value gate), and
+    -- ResolveParentFrame's Step 4 swap can hand back a live forbidden
+    -- container as parentFrame when settings.parent is the OTHER aura key.
+    -- That combination is also semantically free-position-only per the
+    -- comment above (chain-anchored containers keep their own stable
+    -- corner and skip this self-heal), so falling through to the normal
+    -- AnchorOrPin path below is correct, not just safe.
     if isLegacyCenter
         and settings.growAnchor and CORNER_POINTS and CORNER_POINTS[settings.growAnchor]
         and (key == "buffFrame" or key == "debuffFrame")
+        and not (parentFrame and parentFrame._quiHostMover)
     then
         local corner = settings.growAnchor
         local fwRaw = (resolved.GetWidth and resolved:GetWidth()) or 0
@@ -3061,7 +2719,14 @@ function QUI_Anchoring:ApplyFrameAnchor(key, settings)
                 _editModeReapplyGuard = false
             end
         else
-            if not FrameAlreadyAtPosition(resolved, point, parentFrame, relative, offsetX, offsetY) then
+            -- The mover can already sit at the saved point (FrameAlreadyAtPosition
+            -- reads ITS geometry, always safe — resolved is the insecure mover)
+            -- while a live forbidden container needs its own SetPoint: never
+            -- observed by FrameAlreadyAtPosition, and pool-cycled/newly-claimed
+            -- containers must always be (re)anchored. Skip the short-circuit
+            -- whenever a live container is in play for this key.
+            local live = LiveAuraContainerFor(key)
+            if live or not FrameAlreadyAtPosition(resolved, point, parentFrame, relative, offsetX, offsetY) then
                 _editModeReapplyGuard = true
                 pcall(AnchorOrPin, key, resolved, point, parentFrame, relative, offsetX, offsetY)
                 _editModeReapplyGuard = false
@@ -3178,7 +2843,6 @@ function QUI_Anchoring:ApplyAllFrameAnchors(force)
     -- Prevents stale overrides and anchor relationships from a previous
     -- profile leaking across profile/spec switches.
     wipe(self.layoutOwnedFrames)
-    wipe(self.anchoredFrames)
 
     local sorted = ComputeAnchorApplyOrder(anchoringDB)
     for _, key in ipairs(sorted) do
@@ -3330,6 +2994,14 @@ _G.QUI_ReanchorFramePositionOnly = function(key)
 
     local parentFrame = ResolveParentFrame(settings.parent, key)
     if not parentFrame then return end
+    -- ResolveParentFrame can hand back a live forbidden aura container
+    -- (aura->aura docking). This path SetPoints `resolved` directly (no
+    -- AnchorOrPin fan-out) and `resolved` is always the insecure mover — an
+    -- insecure frame must never anchor to a forbidden one. Re-target to the
+    -- container's host-mover back-pointer; nil pre-Task 4, so a no-op today.
+    if parentFrame._quiHostMover then
+        parentFrame = parentFrame._quiHostMover
+    end
 
     local point = settings.point or "CENTER"
     local relative = settings.relative or "CENTER"
@@ -3371,6 +3043,14 @@ _G.QUI_AnchorOverlayToParent = function(overlayFrame, key, overlayW, overlayH)
 
     local parentFrame = ResolveParentFrame(settings.parent, key)
     if not parentFrame then return end
+    -- ResolveParentFrame can hand back a live forbidden aura container
+    -- (aura->aura docking). This path SetPoints an arbitrary insecure
+    -- overlay frame directly — an insecure frame must never anchor to a
+    -- forbidden one. Re-target to the container's host-mover back-pointer;
+    -- nil pre-Task 4, so a no-op today.
+    if parentFrame._quiHostMover then
+        parentFrame = parentFrame._quiHostMover
+    end
 
     local point = settings.point or "CENTER"
     local relative = settings.relative or "CENTER"
@@ -3488,9 +3168,6 @@ local previousUpdateAnchoredUnitFrames = _G.QUI_UpdateAnchoredUnitFrames
 local previousUpdateCDMAnchoredUnitFrames = _G.QUI_UpdateCDMAnchoredUnitFrames
 
 _G.QUI_UpdateAnchoredFrames = function(...)
-    if QUI_Anchoring then
-        QUI_Anchoring:UpdateAllAnchoredFrames()
-    end
     if previousUpdateAnchoredFrames and previousUpdateAnchoredFrames ~= _G.QUI_UpdateAnchoredFrames then
         previousUpdateAnchoredFrames(...)
     end
@@ -3559,12 +3236,7 @@ _G.QUI_UpdateFramesAnchoredTo = function(targetKeyOrFrame)
     while #queue > 0 do
         local currentTarget = table.remove(queue, 1)
 
-        -- 1. Update legacy anchored frames for this target
-        if QUI_Anchoring then
-            QUI_Anchoring:UpdateFramesForTarget(currentTarget)
-        end
-
-        -- 2. Reapply frame anchoring overrides whose parent matches this target
+        -- Reapply frame anchoring overrides whose parent matches this target
         -- and enqueue the updated keys so their dependents are also updated
         if anchoringDB and QUI_Anchoring then
             for key, settings in pairs(anchoringDB) do

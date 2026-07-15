@@ -272,8 +272,6 @@ local function buildController(ns, pools, wrap)
 
         requestStackTextUpdate = w("requestStackTextUpdate", function() end),
 
-        noteChargeDurationObjectsUpdated = w("noteChargeDurationObjectsUpdated", function() end),
-
         recordRecentPlayerSpellCast = w("recordRecentPlayerSpellCast", function() end),
 
         getHighlighter = w("getHighlighter", function()

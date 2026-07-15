@@ -10,8 +10,12 @@ ROLE_SELECTION_PROMPT_DEFAULT_HEIGHT = 160;
 QuickJoinMixin = CreateFromMixins();
 
 do
-	local dynamicEvents = {
+
+	local alwaysEvents = {
 		"SOCIAL_QUEUE_UPDATE",
+	};
+
+	local dynamicEvents = {
 		"GROUP_JOINED",
 		"GROUP_LEFT",
 		"LFG_LIST_SEARCH_RESULT_UPDATED",
@@ -20,9 +24,22 @@ do
 	};
 
 	function QuickJoinMixin:OnLoad()
-		local view = CreateScrollBoxListLinearView();
+		FrameUtil.RegisterFrameForEvents(self, alwaysEvents);
+
+		local topPadding, bottomPadding, leftPadding, rightPadding, elementSpacing = self:GetScrollBoxPadding();
+		local view = CreateScrollBoxListLinearView(topPadding, bottomPadding, leftPadding, rightPadding, elementSpacing);
 		view:SetElementInitializer("QuickJoinButtonTemplate", function(button, elementData)
-			button:Init(elementData);
+			button:Init(elementData, self);
+			if self.buttonBackgroundAtlas then
+				button.Background:SetTexCoord(0,1,0,1);
+				button.Background:SetAtlas(self.buttonBackgroundAtlas);
+			end
+			if self.buttonSelectedAtlas then
+				button.Selected:SetAtlas(self.buttonSelectedAtlas);
+			end
+			if self.buttonHighlightAtlas then
+				button.Highlight:SetAtlas(self.buttonHighlightAtlas);
+			end
 		end);
 
 		-- Scrollable text in the Quick Join List can be resized by the player so the extent may change during a session
@@ -38,6 +55,12 @@ do
 		self:UpdateScrollFrame();
 	end
 
+function QuickJoinMixin:GetScrollBoxPadding()
+	local topPadding, bottomPadding, leftPadding, rightPadding = 0, 0, 0, 0;
+	local elementSpacing = 0;
+	return topPadding, bottomPadding, leftPadding, rightPadding, elementSpacing;
+end
+
 	function QuickJoinMixin:OnShow()
 		EventRegistry:RegisterCallback("TextSizeManager.OnTextScaleUpdated", function()
 			self:UpdateScrollFrame();
@@ -48,7 +71,7 @@ do
 		self:SelectGroup(nil);
 		self:UpdateScrollFrame();
 
-		FriendsFrame_CloseQuickJoinHelpTip();
+		self:TryAcknowledgeQuickJoinHelpTip();
 	end
 
 	function QuickJoinMixin:OnHide()
@@ -57,10 +80,19 @@ do
 	end
 end
 
+function QuickJoinMixin:TryAcknowledgeQuickJoinHelpTip()
+	if HelpTip:IsShowingAnyInSystem("quickJoinIntroduction") or #C_SocialQueue.GetAllGroups(false) > 1 then
+		SetCVarBitfield("closedInfoFrames", LE_FRAME_TUTORIAL_FRIENDS_LIST_QUICK_JOIN, true);
+	end
+	HelpTip:HideAllSystem("quickJoinIntroduction");
+end
+
 function QuickJoinMixin:OnEvent(event, ...)
 	if ( event == "SOCIAL_QUEUE_UPDATE" ) then
 		local requester = ...;
-		self:UpdateEntry(requester);
+		if self:IsShown() then
+			self:UpdateEntry(requester);
+		end
 	elseif ( event == "LFG_LIST_SEARCH_RESULT_UPDATED" ) then
 		local lfgListID = ...;
 		local guid = self.entries:GetEntryGUIDByLFGListID(lfgListID);
@@ -119,7 +151,6 @@ end
 function QuickJoinMixin:SelectGroup(guid)
 	local oldSelectedGUID = self.selectedGUID;
 	self.selectedGUID = guid;
-
 	self:UpdateScrollFrame();
 	self:UpdateJoinButtonState();
 
@@ -155,23 +186,29 @@ function QuickJoinMixin:JoinQueue()
 	end
 end
 
+function QuickJoinMixin:GetJoinButton()
+	return self.JoinQueueButton;
+end
+
 function QuickJoinMixin:UpdateJoinButtonState()
+	local joinButton = self:GetJoinButton();
+
 	-- Request To Join as our default button text if nothing is selected.
-	self.JoinQueueButton:SetText(JOIN_QUEUE);
+	joinButton:SetText(JOIN_QUEUE);
 
 	if ( IsInGroup(LE_PARTY_CATEGORY_HOME) ) then
-		self.JoinQueueButton:Disable();
-		self.JoinQueueButton.tooltip = QUICK_JOIN_ALREADY_IN_PARTY;
+		joinButton:Disable();
+		joinButton.tooltip = QUICK_JOIN_ALREADY_IN_PARTY;
 	elseif ( self:GetSelectedGroup() == nil ) then
-		self.JoinQueueButton:Disable();
-		self.JoinQueueButton.tooltip = nil;
+		joinButton:Disable();
+		joinButton.tooltip = nil;
 	else
-		self.JoinQueueButton:Enable();
-		self.JoinQueueButton.tooltip = nil;
+		joinButton:Enable();
+		joinButton.tooltip = nil;
 
 		local queues = C_SocialQueue.GetGroupQueues(self:GetSelectedGroup());
 		if ( queues and queues[1] and queues[1].queueData.queueType == "lfglist" ) then
-			self.JoinQueueButton:SetText(SIGN_UP);
+			joinButton:SetText(SIGN_UP);
 		end
 	end
 end
@@ -202,10 +239,6 @@ function QuickJoinButtonMixin:OnLoad()
 	self:RegisterForClicks("LeftButtonUp", "RightButtonUp");
 end
 
-function QuickJoinButtonMixin:GetMainPanel()
-	return QuickJoinFrame;
-end
-
 function QuickJoinButtonMixin:SetEntry(entry)
 	entry:ApplyToFrame(self);
 	self.entry = entry;
@@ -215,10 +248,11 @@ function QuickJoinButtonMixin:GetEntry()
 	return self.entry;
 end
 
-function QuickJoinButtonMixin:Init(elementData)
+function QuickJoinButtonMixin:Init(elementData, mainPanel)
+	self.mainPanel = mainPanel;
 	self.fontObject = elementData.fontObject;
 	self:SetEntry(elementData);
-	local selected = self:GetEntry():GetGUID() == QuickJoinFrame.selectedGUID;
+	local selected = self:GetEntry():GetGUID() == self.mainPanel:GetSelectedGroup();
 	self:SetSelected(selected);
 end
 
@@ -245,7 +279,7 @@ function QuickJoinButtonMixin:OnClick(button)
 	if ( button == "LeftButton" ) then
 		if ( self:GetEntry():CanJoin() ) then
 			PlaySound(SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON);
-			self:GetMainPanel():SelectGroup(self:GetEntry():GetGUID());
+			self.mainPanel:SelectGroup(self:GetEntry():GetGUID());
 		end
 	elseif ( button == "RightButton" ) then
 		self:OpenContextMenu();
@@ -272,7 +306,7 @@ function QuickJoinButtonMixin:OnHyperlinkClick(link, text, button)
 end
 
 function QuickJoinButtonMixin:OpenContextMenu(overrideMemberInfo)
-	self:GetMainPanel():OpenContextMenu(self, overrideMemberInfo);
+	self.mainPanel:OpenContextMenu(self, overrideMemberInfo);
 end
 
 ----------------------------
@@ -339,7 +373,7 @@ QuickJoinEntryMixin = {}
 
 function QuickJoinEntryMixin:Init(partyGUID)
 	-- All scrollable text in the Quick Join List uses font that can be resized by the player
-	self.fontObject = UserScaledFontGameNormalSmall;
+	self.fontObject = UserScaledFontGameNormal;
 
 	self.guid = partyGUID;
 	self:UpdateAll();
@@ -501,7 +535,7 @@ function QuickJoinEntryMixin:ApplyToFrame(frame)
 
 	-- Queue Icon
 	local useGroupIcon = #self.displayedQueues > 0 and self.displayedQueues[1].queueData.queueType == "lfglist";
-	frame.Icon:SetAtlas(useGroupIcon and "socialqueuing-icon-group" or "socialqueuing-icon-eye");
+	frame.Icon:SetAtlas(useGroupIcon and "socialqueuing-icon-group" or "friends-icon-eye");
 	-- Set the height based on the size of the member names...
 	frame.Icon:SetHeight(math.max(17, frame.MemberName:GetHeight()));
 	-- ...then set the width based on that height
@@ -611,10 +645,21 @@ function QuickJoinRoleSelectionMixin:OnCancel()
 	StaticPopupSpecial_Hide(self);
 end
 
-----------------------------
---Things that don't need their own mixins
-----------------------------
-function QuickJoin_JoinQueueButtonOnClick(self)
+JoinQueueButtonMixin = {}
+
+function JoinQueueButtonMixin:OnClick()
 	local quickJoin = self:GetParent();
 	quickJoin:JoinQueue();
+end
+
+function JoinQueueButtonMixin:OnEnter()
+	if self.tooltip then
+		GameTooltip:SetOwner(self, "ANCHOR_RIGHT");
+		GameTooltip:SetText(self.tooltip, NORMAL_FONT_COLOR.r, NORMAL_FONT_COLOR.g, NORMAL_FONT_COLOR.b, 1, true);
+		GameTooltip:Show();
+	end
+end
+
+function JoinQueueButtonMixin:OnLeave()
+	GameTooltip:Hide();
 end

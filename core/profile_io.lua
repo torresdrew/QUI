@@ -469,6 +469,17 @@ local PROFILE_QOL_GENERAL_KEYS = {
     "merchantKnownPetMark",
     "lootToastFilter",
     "cursorTrail",
+    "ejLootSpecIcons",
+    "communitiesPrivacy",
+    "gemSocketPicker",
+    "mailContactsPanel",
+    "mailRememberRecipient",
+    "vendorRules",
+    "tradeMailLog",
+    "worldMapTeleports",
+    "focusMarker",
+    "healerMana",
+    "deathAlert",
     "popupBlocker",
     "petCombatWarning",
     "petWarningOffsetX",
@@ -1319,7 +1330,7 @@ local PROFILE_IMPORT_CATEGORIES = {
         label = "QoL / Automation",
         description = "Automation helpers, popup blocker, consumables, and utility toggles.",
         recommended = true,
-        topLevelKeys = { "uiHider", "configPanelWidth", "configPanelAlpha", "configPanelScale", "optionsPanelCollapsibleStates", "merchantGrid" },
+        topLevelKeys = { "qol", "uiHider", "configPanelWidth", "configPanelAlpha", "configPanelScale", "optionsPanelCollapsibleStates", "merchantGrid" },
         generalKeys = PROFILE_QOL_GENERAL_KEYS,
     },
     {
@@ -1327,7 +1338,7 @@ local PROFILE_IMPORT_CATEGORIES = {
         label = "Skinning / Blizzard UI",
         description = "Tooltip, alerts, character pane, and Blizzard skinning options.",
         recommended = true,
-        topLevelKeys = { "alerts", "tooltip", "character", "loot", "lootRoll", "lootResults" },
+        topLevelKeys = { "skinning", "alerts", "tooltip", "character", "loot", "lootRoll", "lootResults" },
         generalKeys = PROFILE_SKINNING_GENERAL_KEYS,
     },
     {
@@ -1638,15 +1649,16 @@ local function ParseProfileImportString(core, str)
         return false, payloadErr or "Import failed profile validation."
     end
 
-    -- Reject pre-3.5.11 exports. The incremental migrations that would upgrade
-    -- them (v2–v31) were removed in 4.0; if such an export reached the import
-    -- pipeline its RunOnProfile pass would hit the schema floor and wipe the
-    -- ACTIVE profile (it imports in place). A schemaless export (no version) is
-    -- left alone — it takes the normal fresh-data path, not the floor.
+    -- Reject exports below the migration floor (schema 47). The incremental
+    -- migrations that would upgrade them were removed in 5.0; if such an export
+    -- reached the import pipeline its RunOnProfile pass would hit the schema
+    -- floor and wipe the ACTIVE profile (it imports in place). A schemaless
+    -- export (no version) is left alone — it takes the normal fresh-data path,
+    -- not the floor.
     local floor = ns.Migrations and ns.Migrations.MIN_SUPPORTED_SCHEMA
     local importedSchema = tonumber(payload._schemaVersion)
     if floor and importedSchema and importedSchema > 0 and importedSchema < floor then
-        return false, ("This profile is too old to import (it predates 3.5.11). Minimum supported version is %d; this profile is %d.")
+        return false, ("This profile is too old to import. Minimum supported version is %d; this profile is %d.")
             :format(floor, importedSchema)
     end
 
@@ -2407,7 +2419,7 @@ function QUICore:ImportProfileFromValidatedPayload(payload, targetProfileName)
     return RunImportFullProfile(self, payload, targetProfileName)
 end
 
--- NOTE: the pre-3.5.11 floor reseed now lives in core/compatibility.lua
+-- NOTE: the below-floor reseed now lives in core/compatibility.lua
 -- (ReseedStarterFlaggedProfiles), seeding ns.NewProfileSeed onto floored
 -- profiles during BackwardsCompat -- no Starter Profile import, no reload.
 

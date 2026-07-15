@@ -22,6 +22,45 @@ local TestSpell =
             SecretArguments = "Restricted",
             Returns = { { Name = "value", Type = "number", IsSecret = true } },
         },
+        {
+            Name = "GuardedGetter",
+            Type = "Function",
+            RequiresUnitAuraAccess = true,
+            SecretArguments = "AllowedWhenTainted",
+            Returns = { { Name = "value", Type = "number", Nilable = false } },
+        },
+    },
+
+    Events =
+    {
+        {
+            Name = "TestSecretEvent",
+            Type = "Event",
+            LiteralName = "TEST_SECRET_EVENT",
+            SecretInActivePvPMatch = true,
+            Payload =
+            {
+                { Name = "unit", Type = "cstring", Nilable = false },
+            },
+        },
+        {
+            Name = "TestSecretPayloadEvent",
+            Type = "Event",
+            LiteralName = "TEST_SECRET_PAYLOAD_EVENT",
+            Payload =
+            {
+                { Name = "spellID", Type = "number", Nilable = false, SecretWhenUnitSpellCastRestricted = true },
+            },
+        },
+        {
+            Name = "TestCleanEvent",
+            Type = "Event",
+            LiteralName = "TEST_CLEAN_EVENT",
+            Payload =
+            {
+                { Name = "value", Type = "number", Nilable = false },
+            },
+        },
     },
 }
 

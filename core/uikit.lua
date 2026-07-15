@@ -8,6 +8,15 @@ local ADDON_NAME, ns = ...
 local UIKit = {}
 ns.UIKit = UIKit
 
+-- Skinning master gate. Default ON (absent table / nil -> enabled). Read at the
+-- top of each skinning file's hook/apply path so disabling + /reload installs
+-- no QUI skin hooks. Reload-required: live hooks cannot be removed mid-session.
+function ns.IsSkinningEnabled()
+    local p = _G.QUI and _G.QUI.db and _G.QUI.db.profile
+    if not (p and p.skinning) then return true end
+    return p.skinning.enabled ~= false
+end
+
 local LSM = ns.LSM
 local Helpers = ns.Helpers
 local DEFAULT_FONT = "Fonts\\FRIZQT__.TTF"

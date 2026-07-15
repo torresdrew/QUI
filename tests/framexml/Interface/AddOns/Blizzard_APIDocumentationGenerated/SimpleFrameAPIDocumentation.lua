@@ -15,6 +15,18 @@ local SimpleFrameAPI =
 			},
 		},
 		{
+			Name = "AddRoleset",
+			Type = "Function",
+			IsProtectedFunction = true,
+			SecretArguments = "AllowedWhenUntainted",
+			Documentation = { "Adds a roleset tag to this frame without removing existing ones." },
+
+			Arguments =
+			{
+				{ Name = "roleset", Type = "string", Nilable = false },
+			},
+		},
+		{
 			Name = "CanChangeAttribute",
 			Type = "Function",
 			SecretReturnsForAspect = { Enum.SecretAspect.ObjectSecurity },
@@ -131,6 +143,24 @@ local SimpleFrameAPI =
 			Returns =
 			{
 				{ Name = "texture", Type = "SimpleTexture", Nilable = false },
+			},
+		},
+		{
+			Name = "CreateVectorGraphics",
+			Type = "Function",
+			SecretArguments = "NotAllowed",
+
+			Arguments =
+			{
+				{ Name = "name", Type = "cstring", Nilable = true },
+				{ Name = "drawLayer", Type = "DrawLayer", Nilable = true },
+				{ Name = "templateName", Type = "cstring", Nilable = true },
+				{ Name = "subLevel", Type = "number", Nilable = true },
+			},
+
+			Returns =
+			{
+				{ Name = "vectorGraphics", Type = "SimpleVectorGraphics", Nilable = false },
 			},
 		},
 		{
@@ -503,6 +533,20 @@ local SimpleFrameAPI =
 			},
 		},
 		{
+			Name = "GetOnUpdateMode",
+			Type = "Function",
+			Documentation = { "Returns the currently configured OnUpdate script execution mode." },
+
+			Arguments =
+			{
+			},
+
+			Returns =
+			{
+				{ Name = "onUpdateMode", Type = "OnUpdateMode", Nilable = false },
+			},
+		},
+		{
 			Name = "GetPropagateKeyboardInput",
 			Type = "Function",
 
@@ -556,6 +600,20 @@ local SimpleFrameAPI =
 				{ Name = "minHeight", Type = "uiUnit", Nilable = false },
 				{ Name = "maxWidth", Type = "uiUnit", Nilable = false },
 				{ Name = "maxHeight", Type = "uiUnit", Nilable = false },
+			},
+		},
+		{
+			Name = "GetRolesetNames",
+			Type = "Function",
+			Documentation = { "Returns the roleset tags assigned to this frame. Returns a list containing 'roleless' if none are assigned." },
+
+			Arguments =
+			{
+			},
+
+			Returns =
+			{
+				{ Name = "rolesets", Type = "table", InnerType = "string", Nilable = false },
 			},
 		},
 		{
@@ -682,6 +740,7 @@ local SimpleFrameAPI =
 			Type = "Function",
 			ConstSecretAccessor = true,
 			SecretArguments = "AllowedWhenUntainted",
+			ChecksForbiddenAspects = { { Argument = "self", Aspect = Enum.ForbiddenAspect.EventRegistrations } },
 
 			Arguments =
 			{
@@ -934,6 +993,8 @@ local SimpleFrameAPI =
 		{
 			Name = "RegisterAllEvents",
 			Type = "Function",
+			ChecksForbiddenAspects = { { Argument = "self", Aspect = Enum.ForbiddenAspect.EventRegistrations } },
+			AddsForbiddenAspects = { { Argument = "self", Aspect = Enum.ForbiddenAspect.EventRegistrations } },
 
 			Arguments =
 			{
@@ -943,6 +1004,8 @@ local SimpleFrameAPI =
 			Name = "RegisterEvent",
 			Type = "Function",
 			SecretArguments = "AllowedWhenUntainted",
+			ChecksForbiddenAspects = { { Argument = "self", Aspect = Enum.ForbiddenAspect.EventRegistrations } },
+			AddsForbiddenAspects = { { Argument = "self", Aspect = Enum.ForbiddenAspect.EventRegistrations } },
 
 			Arguments =
 			{
@@ -958,6 +1021,8 @@ local SimpleFrameAPI =
 			Name = "RegisterEventCallback",
 			Type = "Function",
 			SecretArguments = "AllowedWhenUntainted",
+			ChecksForbiddenAspects = { { Argument = "self", Aspect = Enum.ForbiddenAspect.EventRegistrations } },
+			AddsForbiddenAspects = { { Argument = "self", Aspect = Enum.ForbiddenAspect.EventRegistrations } },
 
 			Arguments =
 			{
@@ -984,6 +1049,8 @@ local SimpleFrameAPI =
 			Name = "RegisterUnitEvent",
 			Type = "Function",
 			SecretArguments = "AllowedWhenUntainted",
+			ChecksForbiddenAspects = { { Argument = "self", Aspect = Enum.ForbiddenAspect.EventRegistrations } },
+			AddsForbiddenAspects = { { Argument = "self", Aspect = Enum.ForbiddenAspect.EventRegistrations } },
 
 			Arguments =
 			{
@@ -1000,6 +1067,8 @@ local SimpleFrameAPI =
 			Name = "RegisterUnitEventCallback",
 			Type = "Function",
 			SecretArguments = "AllowedWhenUntainted",
+			ChecksForbiddenAspects = { { Argument = "self", Aspect = Enum.ForbiddenAspect.EventRegistrations } },
+			AddsForbiddenAspects = { { Argument = "self", Aspect = Enum.ForbiddenAspect.EventRegistrations } },
 
 			Arguments =
 			{
@@ -1011,6 +1080,18 @@ local SimpleFrameAPI =
 			Returns =
 			{
 				{ Name = "registered", Type = "bool", Nilable = false },
+			},
+		},
+		{
+			Name = "RemoveRoleset",
+			Type = "Function",
+			IsProtectedFunction = true,
+			SecretArguments = "AllowedWhenUntainted",
+			Documentation = { "Removes a roleset tag from this frame." },
+
+			Arguments =
+			{
+				{ Name = "roleset", Type = "string", Nilable = false },
 			},
 		},
 		{
@@ -1223,6 +1304,7 @@ local SimpleFrameAPI =
 			Name = "SetHyperlinkPropagateToParent",
 			Type = "Function",
 			SecretArguments = "AllowedWhenUntainted",
+			ChecksForbiddenAspects = { { Argument = "self", Aspect = Enum.ForbiddenAspect.UntrustedScriptExecution } },
 			Documentation = { "Enables or disables propagating hyperlink events (ex. OnHyperlinkEnter, OnHyperlinkLeave, OnHyperlinkClick) to this frame's parent." },
 
 			Arguments =
@@ -1305,6 +1387,17 @@ local SimpleFrameAPI =
 			},
 		},
 		{
+			Name = "SetOnUpdateMode",
+			Type = "Function",
+			SecretArguments = "AllowedWhenUntainted",
+			Documentation = { "Changes when OnUpdate scripts are executed for this object." },
+
+			Arguments =
+			{
+				{ Name = "onUpdateMode", Type = "OnUpdateMode", Nilable = false },
+			},
+		},
+		{
 			Name = "SetPropagateKeyboardInput",
 			Type = "Function",
 			HasRestrictions = true,
@@ -1336,6 +1429,18 @@ local SimpleFrameAPI =
 				{ Name = "minHeight", Type = "uiUnit", Nilable = false },
 				{ Name = "maxWidth", Type = "uiUnit", Nilable = true },
 				{ Name = "maxHeight", Type = "uiUnit", Nilable = true },
+			},
+		},
+		{
+			Name = "SetRolesets",
+			Type = "Function",
+			IsProtectedFunction = true,
+			SecretArguments = "AllowedWhenUntainted",
+			Documentation = { "Sets the roleset tags for this frame, used by the UI mode system to gate visibility. Supports comma-separated names to assign multiple rolesets. Pass nil to clear." },
+
+			Arguments =
+			{
+				{ Name = "rolesetsString", Type = "cstring", Nilable = true },
 			},
 		},
 		{
@@ -1457,6 +1562,8 @@ local SimpleFrameAPI =
 		{
 			Name = "UnregisterAllEvents",
 			Type = "Function",
+			ChecksForbiddenAspects = { { Argument = "self", Aspect = Enum.ForbiddenAspect.EventRegistrations } },
+			AddsForbiddenAspects = { { Argument = "self", Aspect = Enum.ForbiddenAspect.EventRegistrations } },
 
 			Arguments =
 			{
@@ -1466,6 +1573,8 @@ local SimpleFrameAPI =
 			Name = "UnregisterEvent",
 			Type = "Function",
 			SecretArguments = "AllowedWhenUntainted",
+			ChecksForbiddenAspects = { { Argument = "self", Aspect = Enum.ForbiddenAspect.EventRegistrations } },
+			AddsForbiddenAspects = { { Argument = "self", Aspect = Enum.ForbiddenAspect.EventRegistrations } },
 
 			Arguments =
 			{

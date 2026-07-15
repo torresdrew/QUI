@@ -11,9 +11,28 @@ local SafeValue = Helpers.SafeValue
 local SafeToNumber = Helpers.SafeToNumber
 local GetDB = Helpers.CreateDBGetter("quiGroupFrames")
 local AuraModel = ns.QUI_GroupFramesAuraModel
+local function GetFrameUnit(frame)
+    local GF = ns.QUI_GroupFrames
+    return GF and GF.GetFrameUnit and GF.GetFrameUnit(frame) or nil
+end
 -- Unified element renderer (groupframes_aura_render.lua). Resolved lazily at
 -- render time via GetRender() so file load order can't matter.
 local function GetRender() return ns.QUI_GroupFrameAuraRender end
+
+-- The shipped default strip bucket lives in the model shim (always loaded,
+-- TOC line above this file) — NOT Options-side: E.EnsureSeeded LATCHES
+-- elementsSeeded after seeding, so an Options-only bucket would let an
+-- Options-disabled install latch an EMPTY "*" bucket and permanently lose
+-- the shipped strips.
+--
+-- Surface-aware shipped bucket: the defensives strip defaults enabled on
+-- party, disabled on raid. Two static closures so the hot render path never
+-- allocates one per call.
+local _bucketFnParty = function() return AuraModel.DefaultStripBucket("party") end
+local _bucketFnRaid  = function() return AuraModel.DefaultStripBucket("raid") end
+local function BucketFnFor(frame)
+    return (frame and frame._isRaid) and _bucketFnRaid or _bucketFnParty
+end
 
 -- Upvalue hot-path globals
 local pairs = pairs
@@ -30,24 +49,50 @@ local QUI_GFA = {}
 ns.QUI_GroupFrameAuras = QUI_GFA
 
 ---------------------------------------------------------------------------
--- ELEMENT-MODEL GLUE (inert — wired in a later flip task)
+-- ELEMENT-MODEL GLUE
 ---------------------------------------------------------------------------
+
+-- CONTAINER CUTOVER: the generic buff/debuff STRIP display AND the tracked
+-- ICON/SQUARE/BAR display render on Blizzard's secure per-unit
+-- CustomAuraContainer — one container PER active element (see the LIVE AURA
+-- CONTAINERS section below; tracked rides AddAuraSlot via core/aura_slots.lua).
+-- The v46 element engine renderer now emits ONLY:
+--   * `missingRaidBuff` — Missing Raid Buffs synthetic icons (unchanged), and
+--   * `tracked` with displayType == "healthTint" — the health-bar tint feeder
+--     consumed by R.RenderHealthTint / R.SyncHealthBarTint (unchanged).
+-- EngineRendersElement is the single gate every engine consumer below routes
+-- through, so the container/renderer split stays in one place and MRB + tint
+-- keep flowing through the (untouched) renderer.
+local function EngineRendersElement(element)
+    if not element then return false end
+    local mode = element.mode
+    if mode == "missingRaidBuff" then return true end
+    if mode == "tracked" and (element.displayType == "healthTint" or element.displayType == "border") then return true end
+    -- filterStrip + tracked icon/square/bar => secure CustomAuraContainer.
+    return false
+end
+QUI_GFA.EngineRendersElement = EngineRendersElement
 
 -- Build render work for one unit frame from the unified element model.
 -- specID: the unit's active spec (or nil). cache: that unit's unitAuraCache entry.
+-- frame: the owning unit frame (used to pick the surface-aware default bucket).
 -- Returns a list of { element = <element>, matches = <table|nil> } for the renderer.
-local function BuildElementRenderList(auras, specID, cache)
+local function BuildElementRenderList(auras, specID, cache, frame)
     local work = {}
     if not auras then return work end
-    if AuraModel.EnsureSeeded then AuraModel.EnsureSeeded(auras) end
+    if AuraModel.EnsureSeeded then AuraModel.EnsureSeeded(auras, BucketFnFor(frame)) end
     if auras.enabled == false then return work end
     local elements = AuraModel.ActiveElementsForSpec(auras, specID)
     for _, element in ipairs(elements) do
-        local matches
-        if element.mode == "tracked" then
-            matches = AuraModel.PopulateElementMatches(element, cache)
+        -- Strips (now container-driven) and dropped tracked displays are skipped;
+        -- only MRB + the healthTint feeder reach the renderer.
+        if EngineRendersElement(element) then
+            local matches
+            if element.mode == "tracked" then
+                matches = AuraModel.PopulateElementMatches(element, cache)
+            end
+            work[#work + 1] = { element = element, matches = matches }
         end
-        work[#work + 1] = { element = element, matches = matches }
     end
     return work
 end
@@ -77,8 +122,6 @@ QUI_GFA.BuildElementRenderList = BuildElementRenderList
 --     playerDispellable      = { [instID] = true },     -- player can dispel
 --     playerDispellableOrder = { instID, ... },
 --     allDispellable         = { [instID] = true },     -- anyone can dispel (any dispelName)
---     defensives             = { [instID] = true },     -- matches defensive classifier
---     defensiveOrder         = { instID, ... },
 --     -- Bookkeeping
 --     hasFullScan            = boolean,
 -- }
@@ -111,7 +154,6 @@ local function SetupDebugInstrumentation()
         panelBuffIncrementalFilterSkip = 0,
         panelBuffIncrementalChanged = 0,
         panelBuffIncrementalNoop = 0,
-        defensiveSetChanges = 0,
         curatedMatchRefreshes = 0,
         indicatorMatchChanges = 0,
         pinnedMatchChanges = 0,
@@ -158,7 +200,6 @@ local function SetupDebugInstrumentation()
     mp[#mp + 1] = { name = "GF_auraPanelBuffIncFilterSkip", fn = function() return auraStats.panelBuffIncrementalFilterSkip end, counter = true }
     mp[#mp + 1] = { name = "GF_auraPanelBuffChanges", fn = function() return auraStats.panelBuffIncrementalChanged end, counter = true }
     mp[#mp + 1] = { name = "GF_auraPanelBuffNoops", fn = function() return auraStats.panelBuffIncrementalNoop end, counter = true }
-    mp[#mp + 1] = { name = "GF_auraDefensiveSetChanges", fn = function() return auraStats.defensiveSetChanges end, counter = true }
     mp[#mp + 1] = { name = "GF_auraCuratedRefreshes", fn = function() return auraStats.curatedMatchRefreshes end, counter = true }
     mp[#mp + 1] = { name = "GF_auraIndicatorMatchChanges", fn = function() return auraStats.indicatorMatchChanges end, counter = true }
     mp[#mp + 1] = { name = "GF_auraPinnedMatchChanges", fn = function() return auraStats.pinnedMatchChanges end, counter = true }
@@ -187,7 +228,11 @@ else
     SetupDebugInstrumentation() -- standalone test harness: no gate, run eagerly
 end
 
-local DISPEL_FILTER = "HARMFUL|RAID_PLAYER_DISPELLABLE"
+-- 68675: RAID on HARMFUL = "the PLAYER can dispel" — the personal cleanse
+-- classifier this feeds (playerDispellable overlay). RAID_PLAYER_DISPELLABLE
+-- widened to "anyone in the raid can dispel" and would light the overlay for
+-- dispels the player cannot touch.
+local DISPEL_FILTER = "HARMFUL|RAID"
 local MAX_SCAN_AURAS = 40
 
 -- Classify a single harmful aura as dispellable by the current player.
@@ -197,21 +242,21 @@ local IsAuraFilteredOut = C_UnitAuras and C_UnitAuras.IsAuraFilteredOutByInstanc
 local GetAuraSlots = C_UnitAuras and C_UnitAuras.GetAuraSlots
 local GetAuraDataBySlot = C_UnitAuras and C_UnitAuras.GetAuraDataBySlot
 
+-- 12.1: the index/slot aura getters above (GetAuraSlots/GetAuraDataBySlot) and
+-- C_UnitAuras.GetUnitAuras all THROW while aura data is secret. ShouldAurasBeSecret
+-- is the global gate — true in combat when auras are restricted — so the full scan
+-- skips (cache freezes) rather than erroring.
+local C_Secrets = C_Secrets
+local function AurasAreSecret()
+    return C_Secrets and C_Secrets.ShouldAurasBeSecret and C_Secrets.ShouldAurasBeSecret()
+end
+
 local function ClassifyDispellable(unit, instID)
     if not instID or IsSecretValue(instID) then return nil end
     if not IsAuraFilteredOut then return nil end
-    local filteredOut = IsAuraFilteredOut(unit, instID, DISPEL_FILTER)
+    local filteredOut = IsAuraFilteredOut(unit, instID, DISPEL_FILTER) -- @secret-safe: caller-gated: ClassifyDispellable runs only from the full-scan (703) / delta (766) paths behind AurasAreSecret
     if filteredOut == nil or IsSecretValue(filteredOut) then return nil end
     return filteredOut == false
-end
-
--- Classify a single helpful aura as a verified defensive (big or external).
--- Delegates to the groupframes.lua classifier which owns the spell-ID fast
--- path and the BigDefensive/ExternalDefensive filter cache.
-local function ClassifyDefensive(unit, auraData)
-    local GF = ns.QUI_GroupFrames
-    if not GF or not GF.IsVerifiedDefensiveAura then return false end
-    return GF.IsVerifiedDefensiveAura(unit, auraData) == true
 end
 
 local function CreateAuraCacheEntry()
@@ -232,10 +277,7 @@ local function CreateAuraCacheEntry()
         playerDispellable = {},
         playerDispellableOrder = {},
         allDispellable = {},
-        defensives = {},
-        defensiveOrder = {},
         -- Bookkeeping
-        defensiveSetChanged = true,
         hasFullScan = false,
     }
 end
@@ -264,27 +306,20 @@ local function ResetAuraCache(cache)
     wipe(cache.playerDispellable)
     wipe(cache.playerDispellableOrder)
     wipe(cache.allDispellable)
-    wipe(cache.defensives)
-    wipe(cache.defensiveOrder)
-    cache.defensiveSetChanged = true
     cache.hasFullScan = false
 end
 
-local function RebuildBuffMaps(unit, cache)
+local function RebuildBuffMaps(_unit, cache)
     wipe(cache.buffsByID)
     wipe(cache.buffsIndexByID)
     wipe(cache.buffsBySpellID)
     wipe(cache.buffsByName)
-    wipe(cache.defensives)
-    wipe(cache.defensiveOrder)
 
     local buffs = cache.buffs
     local buffsByID = cache.buffsByID
     local buffsIndexByID = cache.buffsIndexByID
     local buffsBySpellID = cache.buffsBySpellID
     local buffsByName = cache.buffsByName
-    local defensives = cache.defensives
-    local defensiveOrder = cache.defensiveOrder
 
     for i = 1, #buffs do
         local auraData = buffs[i]
@@ -292,10 +327,6 @@ local function RebuildBuffMaps(unit, cache)
         if instID then
             buffsByID[instID] = auraData
             buffsIndexByID[instID] = i
-            if ClassifyDefensive(unit, auraData) then
-                defensives[instID] = true
-                defensiveOrder[#defensiveOrder + 1] = instID
-            end
         end
 
         local spellID = SafeValue(auraData and auraData.spellId, nil)
@@ -365,12 +396,12 @@ local function ResolveAuraBucket(unit, auraData)
 
     local instID = auraData.auraInstanceID
     if instID and IsAuraFilteredOut then
-        local buffFiltered = IsAuraFilteredOut(unit, instID, "HELPFUL")
+        local buffFiltered = IsAuraFilteredOut(unit, instID, "HELPFUL") -- @secret-safe: caller-gated: ResolveAuraBucket runs only from the delta path behind the 766 AurasAreSecret gate
         if buffFiltered ~= nil and not IsSecretValue(buffFiltered) then
             if buffFiltered == false then
                 return "buffs"
             end
-            local debuffFiltered = IsAuraFilteredOut(unit, instID, "HARMFUL")
+            local debuffFiltered = IsAuraFilteredOut(unit, instID, "HARMFUL") -- @secret-safe: caller-gated: same delta-path AurasAreSecret gate as the HELPFUL probe above
             if debuffFiltered ~= nil and not IsSecretValue(debuffFiltered) then
                 if debuffFiltered == false then
                     return "debuffs"
@@ -424,7 +455,7 @@ local function RemoveIDFromOrder(order, instID)
     end
 end
 
-local function AddBuffDerivedData(unit, cache, auraData)
+local function AddBuffDerivedData(_unit, cache, auraData)
     local instID = auraData and auraData.auraInstanceID
     if not instID then return end
 
@@ -437,24 +468,10 @@ local function AddBuffDerivedData(unit, cache, auraData)
     if spellName then
         cache.buffsByName[spellName] = auraData
     end
-
-    if ClassifyDefensive(unit, auraData) then
-        -- Append to the order array only when the set didn't already hold the
-        -- instID, so defensiveOrder stays a faithful dedup mirror of defensives.
-        -- An unconditional append could push a second copy whose single
-        -- RemoveIDFromOrder on removal leaves a phantom (see UpdateDispelOverlay).
-        if not cache.defensives[instID] then
-            cache.defensiveOrder[#cache.defensiveOrder + 1] = instID
-        end
-        cache.defensives[instID] = true
-        return true
-    end
-    return false
 end
 
 local function RemoveBuffDerivedData(cache, auraData, instID)
-    if not auraData or not instID then return false end
-    local defensiveChanged = cache.defensives[instID] == true
+    if not auraData or not instID then return end
 
     local spellID = SafeValue(auraData.spellId, nil)
     if spellID and cache.buffsBySpellID[spellID] == auraData then
@@ -465,10 +482,6 @@ local function RemoveBuffDerivedData(cache, auraData, instID)
     if spellName and cache.buffsByName[spellName] == auraData then
         RefreshSpellNameLookupAfterRemoval(cache.buffs, cache.buffsByName, spellName)
     end
-
-    cache.defensives[instID] = nil
-    RemoveIDFromOrder(cache.defensiveOrder, instID)
-    return defensiveChanged
 end
 
 local function AddDebuffDerivedData(unit, cache, auraData)
@@ -531,10 +544,10 @@ local function AppendAuraToBucket(unit, cache, bucketName, auraData)
     -- Idempotent re-add: a duplicate addedAuras entry (or an add for an
     -- already-cached instance with no intervening remove) must overwrite in
     -- place, NOT append. Re-appending would push a second copy of instID into
-    -- the dedup ORDER arrays (playerDispellableOrder / defensiveOrder) whose
-    -- set guards already hold it; a single RemoveIDFromOrder on removal then
-    -- strips only one, leaving a phantom that keeps the dispel overlay /
-    -- defensive indicator lit after the aura is gone.
+    -- the dedup ORDER array (playerDispellableOrder) whose set guard already
+    -- holds it; a single RemoveIDFromOrder on removal then strips only one,
+    -- leaving a phantom that keeps the dispel overlay lit after the aura is
+    -- gone.
     if instID and byID[instID] then
         local idx = indexByID[instID]
         if idx then bucket[idx] = auraData end
@@ -550,7 +563,7 @@ local function AppendAuraToBucket(unit, cache, bucketName, auraData)
     if bucketName == "buffs" then
         cache.buffsByID[instID] = auraData
         cache.buffsIndexByID[instID] = #bucket
-        return AddBuffDerivedData(unit, cache, auraData)
+        AddBuffDerivedData(unit, cache, auraData)
     else
         cache.debuffsByID[instID] = auraData
         cache.debuffsIndexByID[instID] = #bucket
@@ -589,7 +602,7 @@ local function RemoveAuraFromBucket(cache, bucketName, instID)
     end
 
     if bucketName == "buffs" then
-        return true, RemoveBuffDerivedData(cache, oldAura, instID)
+        RemoveBuffDerivedData(cache, oldAura, instID)
     else
         RemoveDebuffDerivedData(cache, oldAura, instID)
     end
@@ -597,7 +610,7 @@ local function RemoveAuraFromBucket(cache, bucketName, instID)
     return true
 end
 
-local function ReplaceAuraInBucket(unit, cache, bucketName, instID, auraData)
+local function ReplaceAuraInBucket(_unit, cache, bucketName, instID, auraData)
     local bucket, indexMap, byInstanceID, bySpellID, byName
     if bucketName == "buffs" then
         bucket = cache.buffs
@@ -637,28 +650,7 @@ local function ReplaceAuraInBucket(unit, cache, bucketName, instID, auraData)
     local newName = SafeValue(auraData.name, nil)
     if newName then byName[newName] = auraData end
 
-    -- Defensive flip detection (buffs only): report a change only when membership
-    -- actually moves, instead of forcing a defensive re-eval on every buff tick.
-    local defensiveChanged = false
-    if bucketName == "buffs" then
-        local was = cache.defensives[instID] == true
-        local isDef = ClassifyDefensive(unit, auraData) == true
-        if isDef ~= was then
-            defensiveChanged = true
-            if isDef then
-                cache.defensives[instID] = true
-                cache.defensiveOrder[#cache.defensiveOrder + 1] = instID
-            else
-                cache.defensives[instID] = nil
-                local order = cache.defensiveOrder
-                for i = #order, 1, -1 do
-                    if order[i] == instID then table.remove(order, i); break end
-                end
-            end
-        end
-    end
-
-    return true, defensiveChanged
+    return true
 end
 
 local function AppendSlotAuras(unit, dst, ...)
@@ -666,7 +658,7 @@ local function AppendSlotAuras(unit, dst, ...)
     for i = 2, n do
         local slot = select(i, ...)
         if slot then
-            local auraData = GetAuraDataBySlot(unit, slot)
+            local auraData = GetAuraDataBySlot(unit, slot) -- @secret-safe: caller-gated: AppendSlotAuras is only reached via ScanUnitAuras, which bails at its AurasAreSecret gate
             if auraData and auraData.auraInstanceID then
                 dst[#dst + 1] = auraData
             end
@@ -679,8 +671,8 @@ local function ScanUnitAurasBySlot(unit, cache)
         return false
     end
 
-    AppendSlotAuras(unit, cache.debuffs, GetAuraSlots(unit, "HARMFUL", MAX_SCAN_AURAS))
-    AppendSlotAuras(unit, cache.buffs, GetAuraSlots(unit, "HELPFUL", MAX_SCAN_AURAS))
+    AppendSlotAuras(unit, cache.debuffs, GetAuraSlots(unit, "HARMFUL", MAX_SCAN_AURAS)) -- @secret-safe: caller-gated: ScanUnitAurasBySlot is only reached via ScanUnitAuras, which bails at its AurasAreSecret gate
+    AppendSlotAuras(unit, cache.buffs, GetAuraSlots(unit, "HELPFUL", MAX_SCAN_AURAS)) -- @secret-safe: caller-gated: same ScanUnitAuras AurasAreSecret gate as the HARMFUL scan above
     return true
 end
 
@@ -688,7 +680,7 @@ local function ScanUnitAurasLegacy(unit, cache)
     local GetUnitAuras = C_UnitAuras and C_UnitAuras.GetUnitAuras
     if not GetUnitAuras then return false end
 
-    local debuffs = GetUnitAuras(unit, "HARMFUL", MAX_SCAN_AURAS)
+    local debuffs = GetUnitAuras(unit, "HARMFUL", MAX_SCAN_AURAS) -- @secret-safe: caller-gated: ScanUnitAurasLegacy is only reached via ScanUnitAuras, which bails at its AurasAreSecret gate
     if debuffs then
         local dst = cache.debuffs
         for i = 1, #debuffs do
@@ -696,7 +688,7 @@ local function ScanUnitAurasLegacy(unit, cache)
         end
     end
 
-    local buffs = GetUnitAuras(unit, "HELPFUL", MAX_SCAN_AURAS)
+    local buffs = GetUnitAuras(unit, "HELPFUL", MAX_SCAN_AURAS) -- @secret-safe: caller-gated: same ScanUnitAuras AurasAreSecret gate as the HARMFUL scan above
     if buffs then
         local dst = cache.buffs
         for i = 1, #buffs do
@@ -708,6 +700,14 @@ end
 
 local function ScanUnitAuras(unit)
     local cache = EnsureAuraCache(unit)
+    -- 12.1: GetAuraSlots/GetUnitAuras throw while auras are secret (combat). We
+    -- can't rescan then — keep the previous cache (frozen) instead of erroring.
+    -- The render fan-out still runs: MRB resolves live via DirectAuraLookup
+    -- (GetUnitAura/PlayerAuraBySpellID); the healthTint feeder holds its last
+    -- state until combat ends and a full scan repopulates the cache.
+    if AurasAreSecret() then
+        return cache
+    end
     ResetAuraCache(cache)
 
     if auraStats then auraStats.fullScans = auraStats.fullScans + 1 end
@@ -726,20 +726,19 @@ local function ScanUnitAuras(unit)
 end
 
 -- DELTA DIRTY SUMMARY ------------------------------------------------------
--- ApplyAuraDelta publishes which aura BUCKETS changed (helpful/harmful), whether
--- the defensive set moved, and the set of spellIDs added/removed/updated, into a
--- single reusable table. The render fan-out reads it to dirty-flag frames and
--- individual elements: a frame/element whose tracked auras the delta never
--- touched skips re-dispatch entirely. Only valid when ApplyAuraDelta returns
--- true (an incremental patch); a full scan / fallback sets dirty = nil (render
--- everything). spellsUncertain = a changed aura's spellId was secret/unreadable,
--- so tracked elements must be treated as dirty (conservative, never stale).
-local _deltaSummary = { helpful = false, harmful = false, defensive = false,
+-- ApplyAuraDelta publishes which aura BUCKETS changed (helpful/harmful) and the
+-- set of spellIDs added/removed/updated, into a single reusable table. The
+-- render fan-out reads it to dirty-flag frames and individual elements: a
+-- frame/element whose tracked auras the delta never touched skips re-dispatch
+-- entirely. Only valid when ApplyAuraDelta returns true (an incremental
+-- patch); a full scan / fallback sets dirty = nil (render everything).
+-- spellsUncertain = a changed aura's spellId was secret/unreadable, so tracked
+-- elements must be treated as dirty (conservative, never stale).
+local _deltaSummary = { helpful = false, harmful = false,
                         spellsUncertain = false, spells = {} }
 local function ResetDeltaSummary()
     _deltaSummary.helpful = false
     _deltaSummary.harmful = false
-    _deltaSummary.defensive = false
     _deltaSummary.spellsUncertain = false
     wipe(_deltaSummary.spells)
 end
@@ -759,10 +758,22 @@ local function ApplyAuraDelta(unit, updateInfo)
         return false
     end
 
+    -- 12.1 PTR4: while auras are secret the UNIT_AURA payload is fully secret --
+    -- addedAuras structs and the updated/removed instanceID arrays carry secret
+    -- values (auraInstanceID/spellId/name). This delta path keys the cache maps
+    -- by auraInstanceID and compares instanceIDs; a secret TABLE KEY poisons the
+    -- whole map (assertsafe hard-error, per Blizzard_AuraContainerGroups
+    -- CreateSecureAuraInstanceMap) and a secret == throws. We can't patch the
+    -- cache safely then -- and ScanUnitAuras also freezes while secret -- so bail
+    -- to the full-scan/frozen fallback (return false). No scan storm: the
+    -- fallback ScanUnitAuras returns immediately at its own AurasAreSecret gate.
+    if AurasAreSecret() then
+        return false
+    end
+
     ResetDeltaSummary()
     local buffsDirty = false
     local debuffsDirty = false
-    cache.defensiveSetChanged = false
     local GetAuraByInstanceID = C_UnitAuras and C_UnitAuras.GetAuraDataByAuraInstanceID
     local nAdded = updateInfo.addedAuras and #updateInfo.addedAuras or 0
     local nRemoved = updateInfo.removedAuraInstanceIDs and #updateInfo.removedAuraInstanceIDs or 0
@@ -791,13 +802,10 @@ local function ApplyAuraDelta(unit, updateInfo)
             if not bucketName then
                 return false
             end
-            local defensiveChanged = AppendAuraToBucket(unit, cache, bucketName, auraData)
+            AppendAuraToBucket(unit, cache, bucketName, auraData)
             SummaryAddSpell(auraData)
             if bucketName == "buffs" then
                 buffsDirty = true
-                if defensiveChanged then
-                    cache.defensiveSetChanged = true
-                end
             else
                 debuffsDirty = true
             end
@@ -831,14 +839,13 @@ local function ApplyAuraDelta(unit, updateInfo)
                     if not freshAura then
                         return false
                     end
-                    local replaced, defChanged = ReplaceAuraInBucket(unit, cache, bucketName, instID, freshAura)
+                    local replaced = ReplaceAuraInBucket(unit, cache, bucketName, instID, freshAura)
                     if not replaced then
                         return false
                     end
                     SummaryAddSpell(freshAura)
                     if bucketName == "buffs" then
                         buffsDirty = true
-                        if defChanged then cache.defensiveSetChanged = true end
                     else
                         debuffsDirty = true
                     end
@@ -853,18 +860,15 @@ local function ApplyAuraDelta(unit, updateInfo)
             -- A removed instID should live in exactly ONE bucket, but a
             -- ResolveAuraBucket flip across events (secret isHelpful/isHarmful in
             -- combat) can leave a stale copy in the other bucket. Clean BOTH so
-            -- derived data (playerDispellable / defensives) can never linger and
-            -- strand the dispel / defensive overlay lit after the aura is gone.
+            -- derived data (playerDispellable) can never linger and strand the
+            -- dispel overlay lit after the aura is gone.
             -- Separate `if`s (not else): an instID present in both is fully purged.
             local rb = cache.buffsByID[instID]
             if rb then
-                local removed, defensiveChanged = RemoveAuraFromBucket(cache, "buffs", instID)
+                local removed = RemoveAuraFromBucket(cache, "buffs", instID)
                 if removed then
                     buffsDirty = true
                     SummaryAddSpell(rb)
-                    if defensiveChanged then
-                        cache.defensiveSetChanged = true
-                    end
                 end
             end
             local rd = cache.debuffsByID[instID]
@@ -876,18 +880,14 @@ local function ApplyAuraDelta(unit, updateInfo)
     end
 
     -- No full RebuildBuffMaps/RebuildDebuffMaps on the updated path: ReplaceAuraInBucket
-    -- now maintains the spellID/name/instance maps and the defensive set incrementally.
-    -- Dispel/defensive classification is spell-fixed, so a stack/duration update can't
-    -- change it -- the add/remove paths already keep playerDispellable/allDispellable current.
-    if cache.defensiveSetChanged then
-        if auraStats then auraStats.defensiveSetChanges = auraStats.defensiveSetChanges + 1 end
-    end
+    -- now maintains the spellID/name/instance maps incrementally. Dispel
+    -- classification is spell-fixed, so a stack/duration update can't change it
+    -- -- the add/remove paths already keep playerDispellable/allDispellable current.
 
     -- Publish the dirty summary for the render fan-out (valid only on this true
     -- return; a false return falls back to a full scan + full render).
     _deltaSummary.helpful = buffsDirty
     _deltaSummary.harmful = debuffsDirty
-    _deltaSummary.defensive = cache.defensiveSetChanged
     return true
 end
 
@@ -903,7 +903,7 @@ local function PruneAuraCache()
     end
 end
 
--- Expose cache for other modules (dispel overlay, defensive indicator)
+-- Expose cache for other modules (dispel overlay)
 QUI_GFA.unitAuraCache = unitAuraCache
 -- QUI_GFA.auraStats is exported by SetupDebugInstrumentation (debug gate)
 QUI_GFA.ScanUnitAuras = ScanUnitAuras
@@ -924,88 +924,15 @@ end
 -- consumer lookup tables on every roster aura change.
 
 ---------------------------------------------------------------------------
--- CLASSIFICATION FILTER: Build filter strings and check auras
+-- CLASSIFICATION FILTER
 ---------------------------------------------------------------------------
--- Maps DB toggle keys to Blizzard classification filter strings
-local BUFF_CLASSIFICATION_MAP = {
-    raid              = "HELPFUL|RAID",
-    raidInCombat      = "HELPFUL|RAID_IN_COMBAT",
-    cancelable        = "HELPFUL|CANCELABLE",
-    notCancelable     = "HELPFUL|NOT_CANCELABLE",
-    bigDefensive      = "HELPFUL|BIG_DEFENSIVE",
-    externalDefensive = "HELPFUL|EXTERNAL_DEFENSIVE",
-}
-
-local DEBUFF_CLASSIFICATION_MAP = {
-    raid         = "HARMFUL|RAID",
-    raidInCombat = "HARMFUL|RAID_IN_COMBAT",
-    crowdControl = "HARMFUL|CROWD_CONTROL",
-}
-
--- Check if an aura passes whitelist/blacklist filter by spellID.
--- Returns true if aura should be shown.
--- Fail-open: if spellID is secret, show the aura.
-local function AuraPassesSpellFilter(auraData, whitelist, blacklist)
-    local spellId = auraData and auraData.spellId
-    if not spellId or IsSecretValue(spellId) then
-        return true -- fail-open
-    end
-    if whitelist then
-        return whitelist[spellId] == true
-    end
-    if blacklist then
-        return blacklist[spellId] ~= true
-    end
-    return true
-end
-
--- Check if an aura passes classification filter (OR logic, inline query).
--- Returns true if aura should be shown.
--- Fail-open: if API fails or returns secret, show the aura.
--- No per-auraInstanceID caching — classify inline during each scan.
--- IsAuraFilteredOutByInstanceID is C-side and fast.
-local function AuraPassesFilter(unit, auraInstanceID, filterStrings)
-    if not filterStrings or #filterStrings == 0 then
-        return false
-    end
-
-    if not auraInstanceID or IsSecretValue(auraInstanceID) then
-        return true -- fail-open
-    end
-
-    if not C_UnitAuras or not C_UnitAuras.IsAuraFilteredOutByInstanceID then
-        return true
-    end
-
-    for _, filterStr in ipairs(filterStrings) do
-        local filteredOut = IsAuraFilteredOut(unit, auraInstanceID, filterStr)
-        if filteredOut == nil or IsSecretValue(filteredOut) then
-            return true -- fail-open on error/secret
-        end
-        if not filteredOut then
-            return true -- aura matches this classification
-        end
-    end
-
-    return false
-end
-
----------------------------------------------------------------------------
--- AURA PRIORITY: Sort auras by importance
----------------------------------------------------------------------------
-local PRIORITY_DISPELLABLE = 3
-local PRIORITY_BOSS = 2
-local PRIORITY_NORMAL = 1
-
-local function GetAuraPriority(auraData)
-    if not auraData then return 0 end
-    local isDispellable = SafeValue(auraData.dispelName, nil)
-    local isBoss = SafeValue(auraData.isBossAura, false)
-
-    if isDispellable then return PRIORITY_DISPELLABLE end
-    if isBoss then return PRIORITY_BOSS end
-    return PRIORITY_NORMAL
-end
+-- The DB-toggle to Blizzard filter-string maps, the per-spell
+-- whitelist/blacklist, the inline classification query, and the dispel/boss
+-- priority sort all moved to the shared core modules: the element filter
+-- compiler now lives in core/aura_elements.lua (E.CompileFilters /
+-- E.CompileCandidateFilters) and the container glue in core/aura_glue.lua
+-- (AuraGlue.ElementGroups). This file no longer owns any Lua-side strip filter
+-- primitive -- the per-element containers filter C-side on secret-safe data.
 
 ---------------------------------------------------------------------------
 -- UNIFIED ELEMENT RENDER (groupframes_aura_render.lua is the sole consumer)
@@ -1055,137 +982,42 @@ do
     end)
 end
 
--- Build the ordered, capped match set for a filterStrip element from the shared
--- cache. Reuses the same filter primitives the legacy buff/debuff panels used:
---   auraType HELPFUL/HARMFUL bucket, filterMode (off|classification|whitelist),
---   onlyMine (HELPFUL|PLAYER / HARMFUL|PLAYER probe), hidePermanent,
---   classification OR-match, whitelist/blacklist by spellID, priority sort
---   (debuffs), dedupeDefensives, capped at maxIcons.
--- Returns a fresh ORDERED array { auraData, ... } in the priority order the
--- strip computed (debuffs: dispellable > boss > normal; helpful: scan order),
--- already capped at maxIcons. RenderIcon iterates this verbatim — it does NOT
--- re-sort by spellID — so the consumer's priority order reaches the screen.
-local _stripPrioMap = {}
-local function StripPrioritySort(a, b)
-    return (_stripPrioMap[a] or 0) > (_stripPrioMap[b] or 0)
-end
+-- The legacy Lua-side strip match builder (BuildFilterStripMatches), its
+-- `_strip*` scratch + priority-sort helper, and the orphaned strip-filter
+-- primitives (AuraPassesFilter / AuraPassesSpellFilter / GetAuraPriority) were
+-- all REMOVED. Every container-rendered element is now drawn by its own secure
+-- per-unit CustomAuraContainer (LIVE AURA CONTAINERS section), which filters
+-- C-side on secret-safe data via the shared core glue (AuraGlue / AuraSlots).
+-- No classification map survives in this file -- the filter compiler moved to
+-- core/aura_elements.lua.
 
--- Reusable scratch for the zero-alloc render path. Each is filled and fully
--- consumed within a single RenderFrameElements pass (Render:Dispatch only reads
--- the match tables synchronously and never retains them), so sharing across
--- frames in the UNIT_AURA combat fan-out is safe and eliminates per-frame GC
--- churn. _activeElementsScratch / _trackedMatchesScratch feed RenderFrameElements;
--- the _strip* set feeds BuildFilterStripMatches.
+-- Reusable scratch for the zero-alloc engine render path. Each is filled and
+-- fully consumed within a single RenderFrameElements pass (Render:Dispatch only
+-- reads the match tables synchronously and never retains them), so sharing
+-- across frames in the UNIT_AURA combat fan-out is safe and eliminates per-frame
+-- GC churn. _trackedMatchesScratch feeds the healthTint feeder;
+-- _missingRaidBuffMatchesScratch feeds MRB.
 local _activeElementsScratch = {}
 local _trackedMatchesScratch = {}
 local _missingRaidBuffMatchesScratch = {}
-local _stripOutScratch = {}
-local _stripOrderedScratch = {}
-local _stripSeenScratch = {}
-local _stripClassFiltersScratch = {}
+local _ckScratch = {}
+-- Separate cascade-key scratch for the container-resolve path (ResolveContainerElements
+-- runs in a different pass than RenderFrameElements' _ckScratch; keeping them
+-- distinct avoids any accidental cross-pass aliasing).
+local _ckScratchContainer = {}
 
-local function BuildFilterStripMatches(unit, cache, element, dedupSet)
-    local out = _stripOutScratch
-    wipe(out)
-    if not cache then return out end
-    local harmful = element.auraType == "HARMFUL"
-    local list = harmful and cache.debuffs or cache.buffs
-    if not list or #list == 0 then return out end
-
-    local filterMode = element.filterMode or "off"
-    local classifications = element.classifications
-    local whitelist = element.whitelist
-    local blacklist = element.blacklist
-    if whitelist and not next(whitelist) then whitelist = nil end
-    if blacklist and not next(blacklist) then blacklist = nil end
-    local onlyMine = element.onlyMine == true
-    local hidePermanent = element.hidePermanent == true
-    local dedupeDefensives = element.dedupeDefensives ~= false
-
-    -- Build the classification filter-string list for this element (OR logic).
-    local classFilters
-    if filterMode == "classification" and classifications then
-        classFilters = _stripClassFiltersScratch
-        wipe(classFilters)
-        local map = harmful and DEBUFF_CLASSIFICATION_MAP or BUFF_CLASSIFICATION_MAP
-        for key, filterStr in pairs(map) do
-            if classifications[key] then classFilters[#classFilters + 1] = filterStr end
-        end
-        if #classFilters == 0 then classFilters = nil end
-    end
-    local useWhitelist = filterMode == "whitelist" and whitelist
-
-    local onlyMineFilter = harmful and "HARMFUL|PLAYER" or "HELPFUL|PLAYER"
-    local ordered = _stripOrderedScratch
-    wipe(ordered)
-    for i = 1, #list do
-        local auraData = list[i]
-        local instID = auraData and auraData.auraInstanceID
-        if instID then
-            local passes = true
-
-            -- dedupeDefensives: skip auras already shown by the defensive
-            -- indicator (the only surviving external dedup source).
-            if passes and dedupeDefensives and dedupSet and dedupSet[instID] then
-                passes = false
-            end
-
-            if passes and hidePermanent then
-                local dur = SafeToNumber(auraData.duration, -1)
-                if dur == 0 then passes = false end
-            end
-
-            if passes and onlyMine and IsAuraFilteredOut and not IsSecretValue(instID) then
-                local fo = IsAuraFilteredOut(unit, instID, onlyMineFilter)
-                if fo and not IsSecretValue(fo) then passes = false end
-            end
-
-            if passes and classFilters then
-                if not AuraPassesFilter(unit, instID, classFilters) then passes = false end
-            elseif passes and useWhitelist then
-                if not AuraPassesSpellFilter(auraData, whitelist, nil) then passes = false end
-            end
-
-            if passes and blacklist then
-                if not AuraPassesSpellFilter(auraData, nil, blacklist) then passes = false end
-            end
-
-            if passes then ordered[#ordered + 1] = auraData end
-        end
-    end
-
-    -- Priority-sort harmful strips (matches legacy debuff panel ordering);
-    -- helpful strips kept in scan order (matches legacy buff panel behavior).
-    if harmful and #ordered > 1 then
-        wipe(_stripPrioMap)
-        for i = 1, #ordered do _stripPrioMap[ordered[i]] = GetAuraPriority(ordered[i]) end
-        table.sort(ordered, StripPrioritySort)
-    end
-
-    -- Cap at maxIcons (0 / nil = unlimited) and emit an ORDERED array in the
-    -- priority order computed above (RenderIcon iterates it verbatim — it no
-    -- longer re-sorts by spellID). The cap window enforces both the visible
-    -- count and (for debuffs) the priority selection. Per-spellID dedup is kept
-    -- so two instances of the same spell collapse to one icon, exactly as the
-    -- old { [spellID] = auraData } map did.
-    local maxIcons = SafeToNumber(element.maxIcons, 0)
-    local n = #ordered
-    if maxIcons > 0 and maxIcons < n then n = maxIcons end
-    local seen = _stripSeenScratch
-    wipe(seen)
-    for i = 1, n do
-        local auraData = ordered[i]
-        local spellID = SafeValue(auraData.spellId, nil) or auraData.auraInstanceID
-        if spellID then
-            if seen[spellID] == nil then
-                seen[spellID] = true
-                out[#out + 1] = auraData
-            end
-        else
-            out[#out + 1] = auraData
-        end
-    end
-    return out
+-- Resolve a frame's role gate inputs for AuraElements.ElementAppliesToRole:
+-- assigned group role ("TANK"/"HEALER"/"DAMAGER"/nil) + whether the frame is the
+-- player's own. Roles are stable within an encounter, so re-resolving per render
+-- is cheap and always current on roster/spec change. Guarded for the headless
+-- test harness (WoW role APIs absent there).
+local function FrameRoleGate(frame)
+    local unit = GetFrameUnit(frame)
+    if not unit then return nil, false end
+    local role = UnitGroupRolesAssigned and UnitGroupRolesAssigned(unit) or nil
+    if role == "NONE" then role = nil end
+    local isSelf = UnitIsUnit and UnitIsUnit(unit, "player") or false
+    return role, isSelf
 end
 
 -- Per-frame element render: dispatch the work list and release stale element
@@ -1218,8 +1050,15 @@ local _relGeneration = 0
 QUI_GFA._configGeneration = 0  -- public mirror of _relGeneration for the renderer's icon-config gate
 local _relCache = setmetatable({}, { __mode = "k" })
 local function GetAuraRelevance(auras, specID)
+    -- Encounter + instance cascade rungs (core/aura_context.lua): nil outside a
+    -- boss pull / instance (or before the tracker's first event), in which case
+    -- the resolver falls through to spec/"*" exactly as before.
+    local AC = ns.QUI_AuraContext
+    local encKey = AC and AC.EncounterKey() or nil
+    local curKey = AC and AC.InstanceKey() or nil
     local rel = _relCache[auras]
-    if rel and rel.gen == _relGeneration and rel.specID == specID then
+    if rel and rel.gen == _relGeneration and rel.specID == specID
+        and rel.instanceKey == curKey and rel.encounterKey == encKey then
         return rel
     end
     if not rel then
@@ -1228,39 +1067,38 @@ local function GetAuraRelevance(auras, specID)
     end
     rel.gen = _relGeneration
     rel.specID = specID
-    rel.hasHelpfulStrip = false
-    rel.hasHarmfulStrip = false
+    rel.instanceKey = curKey
+    rel.encounterKey = encKey
     rel.hasMissingRaidBuff = false
     rel.hasTracked = false
     wipe(rel.trackedSpells)
     -- Rare path (only on spec/settings change): a plain alloc here is fine.
-    local elements = AuraModel.ActiveElementsForSpec(auras, specID)
+    -- Strips + tracked icon/square/bar are container-driven (self-drive
+    -- UNIT_AURA), so the relevance descriptor only tracks the engine's remaining
+    -- emitters — MRB (helpful-dirty), the healthTint + border tracked feeders.
+    local ck = AC and AC.FillContextKeys({}) or nil
+    local elements = AuraModel.ActiveElementsForSpec(auras, specID, nil, ck)
     for i = 1, #elements do
         local e = elements[i]
-        if e.mode == "filterStrip" then
-            if e.auraType == "HARMFUL" then
-                rel.hasHarmfulStrip = true
-            else
-                rel.hasHelpfulStrip = true
-            end
-        elseif e.mode == "missingRaidBuff" then
-            rel.hasMissingRaidBuff = true
-        elseif e.mode == "tracked" then
-            rel.hasTracked = true
-            local spells = e.spells
-            if spells then
-                for j = 1, #spells do rel.trackedSpells[spells[j]] = true end
+        if EngineRendersElement(e) then
+            if e.mode == "missingRaidBuff" then
+                rel.hasMissingRaidBuff = true
+            elseif e.mode == "tracked" then
+                rel.hasTracked = true
+                local spells = e.spells
+                if spells then
+                    for j = 1, #spells do rel.trackedSpells[spells[j]] = true end
+                end
             end
         end
     end
     return rel
 end
 
--- True if this delta could change anything the frame's elements render.
+-- True if this delta could change anything the frame's engine elements render
+-- (MRB + the healthTint feeder; container-rendered elements self-drive).
 local function DeltaTouchesFrame(rel, dirty)
-    if dirty.helpful and rel.hasHelpfulStrip then return true end
     if dirty.helpful and rel.hasMissingRaidBuff then return true end
-    if dirty.harmful and rel.hasHarmfulStrip then return true end
     if rel.hasTracked then
         if dirty.spellsUncertain then return true end
         for sid in pairs(dirty.spells) do
@@ -1274,7 +1112,9 @@ end
 -- and elements the delta never touched skip re-dispatch (their widgets stay as
 -- they are). nil = full render (settings refresh / full scan / cold) → all.
 local function RenderFrameElements(frame, cache, dirty)
-    if not frame or not frame.unit then return end
+    if not frame then return end
+    local unit = GetFrameUnit(frame)
+    if not unit then return end
     local pf = ns.QUI_PerfFlags  -- dev A/B harness; nil in normal play
     if pf and pf.disabled and pf.disabled.auras then return end
     local Render = GetRender()
@@ -1289,7 +1129,7 @@ local function RenderFrameElements(frame, cache, dirty)
     end
 
     local specID = GetPlayerSpecID()
-    if AuraModel.EnsureSeeded then AuraModel.EnsureSeeded(auras) end
+    if AuraModel.EnsureSeeded then AuraModel.EnsureSeeded(auras, BucketFnFor(frame)) end
 
     -- Frame-level dirty skip: if this delta can't touch any element this frame
     -- shows, leave every widget exactly as-is (no element rebuild, no release).
@@ -1302,7 +1142,11 @@ local function RenderFrameElements(frame, cache, dirty)
     -- Zero-alloc render: iterate the active elements directly into reusable
     -- scratch tables. Render:Dispatch only reads matches synchronously and never
     -- retains them, so the scratch is safe to reuse across frames/events.
-    local elements = AuraModel.ActiveElementsForSpec(auras, specID, _activeElementsScratch)
+    -- Encounter + instance cascade rungs (core/aura_context.lua) -- see
+    -- GetAuraRelevance above. FillContextKeys compacts into the shared scratch
+    -- (no alloc) and returns nil when neither rung is active.
+    local ck = ns.QUI_AuraContext and ns.QUI_AuraContext.FillContextKeys(_ckScratch) or nil
+    local elements = AuraModel.ActiveElementsForSpec(auras, specID, _activeElementsScratch, ck)
 
     local rendered = frame._quiRenderedAuraElementIDs
     if not rendered then
@@ -1312,52 +1156,89 @@ local function RenderFrameElements(frame, cache, dirty)
 
     local current = _renderCurrentIDs
     wipe(current)
-    local dedupSet = frame._defensiveAuraIDs
-    for i = 1, #elements do
-        local element = elements[i]
-        -- Per-element dirty gate: skip the (expensive) match build + Dispatch for
-        -- elements the delta didn't touch, but still record the id so the release
-        -- reconciliation below never drops a clean element.
-        local elementDirty = (dirty == nil)
-        if not elementDirty then
-            if element.mode == "filterStrip" then
-                if element.auraType == "HARMFUL" then
-                    elementDirty = dirty.harmful
-                else
-                    elementDirty = dirty.helpful
-                end
-            elseif element.mode == "missingRaidBuff" then
-                elementDirty = dirty.helpful
-            elseif element.mode == "tracked" then
-                if dirty.spellsUncertain then
-                    elementDirty = true
-                else
-                    local spells = element.spells
-                    if spells then
-                        for j = 1, #spells do
-                            if dirty.spells[spells[j]] then elementDirty = true; break end
+    -- Role gate inputs for this frame (applyToRoles); stable within an encounter.
+    local frameRole, frameIsSelf = FrameRoleGate(frame)
+    -- Shared-overlay families: border / healthTint draw ONE per-frame overlay
+    -- owned by whichever element matched last (R.RenderBorder /
+    -- R.RenderHealthTint owner field). If ANY element of a family is dirty,
+    -- EVERY element of that family must dispatch this pass: when the owner's
+    -- aura drops, a clean sibling with a live match has to re-claim the
+    -- overlay — the per-element dirty skip below would otherwise leave the
+    -- indicator hidden while its aura is still active.
+    local borderFamilyDirty, tintFamilyDirty = false, false
+    if dirty then
+        if dirty.spellsUncertain then
+            borderFamilyDirty, tintFamilyDirty = true, true
+        else
+            for i = 1, #elements do
+                local e = elements[i]
+                if e.mode == "tracked"
+                    and (e.displayType == "border" or e.displayType == "healthTint")
+                    and type(e.spells) == "table" then
+                    for j = 1, #e.spells do
+                        if dirty.spells[e.spells[j]] then
+                            if e.displayType == "border" then
+                                borderFamilyDirty = true
+                            else
+                                tintFamilyDirty = true
+                            end
+                            break
                         end
                     end
                 end
             end
         end
-        current[element.id] = true
-        if elementDirty then
-            if auraStats then auraStats.elementsDispatched = auraStats.elementsDispatched + 1 end
-            local matches
-            if element.mode == "filterStrip" then
-                matches = BuildFilterStripMatches(frame.unit, cache, element, dedupSet)
-            elseif element.mode == "missingRaidBuff" then
-                local MRB = ns.QUI_GroupFrameMissingRaidBuffs
-                if MRB and MRB.BuildMatches then
-                    matches = MRB:BuildMatches(frame.unit, element, _missingRaidBuffMatchesScratch)
+    end
+    for i = 1, #elements do
+        local element = elements[i]
+        -- The engine only renders MRB + the healthTint/border tracked feeders.
+        -- filterStrip AND tracked icon/square/bar are drawn by their own secure
+        -- CustomAuraContainer — skip both entirely (no id recorded, so the
+        -- release reconciliation tears down any lingering widgets from a
+        -- pre-cutover pass and never re-acquires them). A role-gated-out element
+        -- is likewise skipped (id not recorded → released if it rendered before).
+        if EngineRendersElement(element)
+            and AuraModel.ElementAppliesToRole(element, frameRole, frameIsSelf) then
+            -- Per-element dirty gate: skip the (expensive) match build + Dispatch
+            -- for elements the delta didn't touch, but still record the id so the
+            -- release reconciliation below never drops a clean element.
+            local elementDirty = (dirty == nil)
+            if not elementDirty then
+                if element.mode == "missingRaidBuff" then
+                    elementDirty = dirty.helpful
+                elseif element.mode == "tracked" then
+                    if dirty.spellsUncertain then
+                        elementDirty = true
+                    elseif element.displayType == "border" then
+                        elementDirty = borderFamilyDirty
+                    elseif element.displayType == "healthTint" then
+                        elementDirty = tintFamilyDirty
+                    else
+                        local spells = element.spells
+                        if spells then
+                            for j = 1, #spells do
+                                if dirty.spells[spells[j]] then elementDirty = true; break end
+                            end
+                        end
+                    end
                 end
-            elseif element.mode == "tracked" then
-                matches = AuraModel.PopulateElementMatches(element, cache, _trackedMatchesScratch)
             end
-            Render:Dispatch(frame, element, matches)
-        elseif auraStats then
-            auraStats.elementSkips = auraStats.elementSkips + 1
+            current[element.id] = true
+            if elementDirty then
+                if auraStats then auraStats.elementsDispatched = auraStats.elementsDispatched + 1 end
+                local matches
+                if element.mode == "missingRaidBuff" then
+                    local MRB = ns.QUI_GroupFrameMissingRaidBuffs
+                    if MRB and MRB.BuildMatches then
+                        matches = MRB:BuildMatches(unit, element, _missingRaidBuffMatchesScratch)
+                    end
+                elseif element.mode == "tracked" then
+                    matches = AuraModel.PopulateElementMatches(element, cache, _trackedMatchesScratch)
+                end
+                Render:Dispatch(frame, element, matches)
+            elseif auraStats then
+                auraStats.elementSkips = auraStats.elementSkips + 1
+            end
         end
     end
 
@@ -1374,11 +1255,15 @@ local function RenderFrameElements(frame, cache, dirty)
     -- Snapshot the current set for the next pass (reuse the table).
     wipe(rendered)
     for id in pairs(current) do rendered[id] = true end
-    -- Health-tint owner that no element rendered this pass (e.g. its element was
-    -- removed) must be cleared too.
+    -- Health-tint / border owner that no element rendered this pass (e.g. its
+    -- element was removed or role-gated out) must be cleared too.
     local tintOwner = frame._quiAuraRenderHealthTintOwner
     if tintOwner and not current[tintOwner] then
         Render:Release(frame, tintOwner)
+    end
+    local borderOwner = frame._quiAuraRenderBorderOwner
+    if borderOwner and not current[borderOwner] then
+        Render:Release(frame, borderOwner)
     end
 end
 QUI_GFA.RenderFrameElements = RenderFrameElements
@@ -1405,6 +1290,366 @@ end
 function GetFrameAuraSettings(frame)
     local vdb = GetVisualDBForFrame(frame)
     return vdb and vdb.auras or nil
+end
+
+---------------------------------------------------------------------------
+-- LIVE AURA CONTAINERS — one secure CustomAuraContainer PER active element
+---------------------------------------------------------------------------
+-- Every container-rendered element (filterStrip + tracked icon/square/bar) gets
+-- its OWN secure CustomAuraContainer, themed by the shared core glue: element →
+-- AuraGlue.ElementProfile + AuraGlue.ElementGroups → AuraGlue.RunConfigPass
+-- (AuraSkin.Configure OOC / Restyle in combat), tracked slots via AuraSlots.Sync
+-- (AddAuraSlot). The container self-drives UNIT_AURA and reads aura data C-side,
+-- so no QUI Lua ever reads a secret aura field on this path.
+--
+-- Containers pool on the frame by ORDINAL (frame._quiAuraContainers[i]) — they
+-- are engine objects that can't be destroyed, so a changing element list
+-- re-purposes them (group retire inside AuraSkin.Configure, slot park via
+-- AuraSlots.Park). CREATION (CreateFrame + AddAuraGroup/AddAuraSlot button
+-- pooling) is combat-restricted (crashes the 12.1 client) and stays queued on
+-- the restriction-aware AuraGlue.QueueRegenWork (regen event + restriction
+-- poll). MUTATION of a pre-created container (anchor / filters /
+-- SetUnit / enable) is combat-legal, so the update path applies that subset live
+-- in combat and STILL queues the full pass so a wrong assumption self-heals.
+--
+-- MRB synthetic icons + the health-bar tint feeder remain on the v46 element
+-- engine (RenderFrameElements above) — only container-rendered elements live here.
+
+-- ONE lazy resolver for the three shared deps. AuraGlue/AuraSlots live in the
+-- QUI core addon (a dependency, loaded before this file); AuraSkin needs the
+-- live secure button template so it may bind slightly later — resolve all lazily
+-- following the file's existing `AuraSkin = AuraSkin or ...` idiom.
+local AuraSkin = (ns.Addon and ns.Addon.AuraSkin) or (_G.QUI and _G.QUI.AuraSkin)
+local AuraGlue = ns.AuraGlue
+local AuraSlots = ns.AuraSlots
+local function ResolveAuraDeps()
+    AuraSkin  = AuraSkin  or (ns.Addon and ns.Addon.AuraSkin) or (_G.QUI and _G.QUI.AuraSkin)
+    AuraGlue  = AuraGlue  or ns.AuraGlue
+    AuraSlots = AuraSlots or ns.AuraSlots
+    return AuraSkin and AuraGlue and AuraSlots
+end
+
+-- Combat/restriction-deferral: route skipped forbidden work through the shared
+-- restriction-aware replay queue (core/aura_glue.lua QueueRegenWork), the same
+-- path Unit Frames use. It fires only when BOTH combat lockdown AND the 12.1
+-- aura restriction are clear, and POLLS while a restriction is up outside
+-- combat — a PLAYER_REGEN_ENABLED-only flush left tracked slots stale when
+-- secrecy began and ended without a combat-lockdown window (regen never fires).
+
+-- Forward decl: the replay closure calls ApplyStripContainers, defined below.
+local ApplyStripContainers
+
+local function QueueContainerCombatWork(frame)
+    AuraGlue = AuraGlue or ns.AuraGlue
+    if not AuraGlue then return end
+    AuraGlue.QueueRegenWork(frame, function(f)
+        if ApplyStripContainers then ApplyStripContainers(f) end
+    end)
+end
+
+-- Resolve the active CONTAINER-RENDERED elements for a frame: filterStrips +
+-- tracked (icon/square/bar) in bucket order. healthTint tracked elements and
+-- missingRaidBuff stay on the element-renderer path (EngineRendersElement).
+-- Returns a SHARED module scratch (do not retain across a re-resolve).
+local _activeElems = {}
+local function ResolveContainerElements(frame)
+    for i = #_activeElems, 1, -1 do _activeElems[i] = nil end
+    local auras = GetFrameAuraSettings(frame)
+    if not auras or auras.enabled == false then return _activeElems end
+    AuraModel.EnsureSeeded(auras, BucketFnFor(frame))
+    local specID = GetPlayerSpecID()
+    -- Instance-context cascade rung (core/aura_context.lua) -- this is the
+    -- container-render path (filterStrip + tracked icon/square/bar), the
+    -- primary visible-aura path, so it needs the same rung as GetAuraRelevance
+    -- and RenderFrameElements above; it already re-resolves every call
+    -- (no cache), so no extra invalidation is needed here.
+    local ck = ns.QUI_AuraContext and ns.QUI_AuraContext.FillContextKeys(_ckScratchContainer) or nil
+    local elements = AuraModel.ActiveElementsForSpec(auras, specID, nil, ck)
+    local role, isSelf = FrameRoleGate(frame)
+    for i = 1, #elements do
+        local e = elements[i]
+        if (e.mode == "filterStrip"
+            or (e.mode == "tracked" and e.displayType ~= "healthTint" and e.displayType ~= "border"))
+            and AuraModel.ElementAppliesToRole(e, role, isSelf) then
+            _activeElems[#_activeElems + 1] = e
+        end
+    end
+    return _activeElems
+end
+
+-- Anchor a container OOC relative to its unit frame at the element's anchor
+-- corner. AuraSkin.LayoutAnchor(profile) returns the flow-origin corner
+-- (grow + profile.wrap); pinning THAT corner to the frame's matching anchor
+-- point makes the auto-sized container hang off the frame edge, with multi-row
+-- growth extending AWAY from the frame. The per-element offset is folded in
+-- here (the engine, not QUI, positions buttons/slots). The container is
+-- forbidden → SetPoint is NEVER called in combat (callers gate on
+-- InCombatLockdown / QueueContainerCombatWork).
+local function AnchorElementContainer(container, frame, element)
+    local profile = AuraGlue.ElementProfile(element)
+    container:ClearAllPoints()
+    container:SetPoint(AuraSkin.LayoutAnchor(profile), frame, element.anchor or "TOPLEFT",
+        (element.offsetX or 0), (element.offsetY or 0))
+end
+
+-- One container per active element, pooled by ORDINAL on the frame. Containers
+-- are engine objects that can't be destroyed; a changing element list
+-- re-purposes them (group retire inside AuraSkin.Configure via RunConfigPass,
+-- slot park via AuraSlots.Park). allowCreate=false (combat) NEVER creates
+-- containers or slots and never SetPoints; it only mutates pre-created
+-- containers (pcall-guarded group reconcile with a Restyle fallback, inside
+-- AuraGlue.RunConfigPass). Any forbidden work skipped in combat (or under the
+-- 12.1 aura restriction) sets `incomplete`, which queues a full replay via the
+-- restriction-aware AuraGlue.QueueRegenWork.
+local function ApplyElementPass(frame, allowCreate)
+    if not frame then return end
+    local unit = GetFrameUnit(frame)
+    if not unit then return end
+    if not ResolveAuraDeps() then return end
+    local elems = ResolveContainerElements(frame)
+    local pool = frame._quiAuraContainers
+    if not pool then
+        pool = {}
+        frame._quiAuraContainers = pool
+    end
+    local incomplete = false
+    for i = 1, #elems do
+        local element = elems[i]
+        local container = pool[i]
+        if not container then
+            if allowCreate and not InCombatLockdown() and CreateFrame then
+                container = CreateFrame("AuraContainer", nil, frame, "CustomAuraContainerTemplate")
+                container:SetSize(1, 1)  -- give the engine a renderable rect from the first dirty mark; it auto-sizes on layout
+                pool[i] = container
+            else
+                incomplete = true
+            end
+        end
+        if container then
+            -- SetUnit BEFORE group configuration so the container's eager group
+            -- registration (inside AuraSkin.Configure) has a valid unit.
+            container:SetUnit(unit)
+            if not InCombatLockdown() then
+                AnchorElementContainer(container, frame, element)
+            end
+            if element.mode == "tracked" then
+                -- Retire any strip groups a re-purposed container carries, then
+                -- reconcile the tracked slots (AddAuraSlot) onto it.
+                if not AuraGlue.RunConfigPass(container, AuraGlue.ElementProfile(element), {}, allowCreate) then incomplete = true end
+                if not AuraSlots.Sync(container, element, allowCreate) then incomplete = true end
+            else
+                local profile = AuraGlue.ElementProfile(element)
+                local groups = AuraGlue.ElementGroups(unit, element, profile, false)
+                if not AuraGlue.RunConfigPass(container, profile, groups, allowCreate) then incomplete = true end
+                AuraSlots.Park(container)
+            end
+            container:SetEnabled(true)
+            container:Show()
+        end
+    end
+    -- Retire pooled containers beyond the active element count: empty groups +
+    -- park slots + disable + hide (all combat-legal on a pre-created container).
+    for i = #elems + 1, #pool do
+        local container = pool[i]
+        if not AuraGlue.RunConfigPass(container, container._quiProfile or {}, {}, allowCreate) then incomplete = true end
+        AuraSlots.Park(container)
+        container:SetEnabled(false)
+        container:Hide()
+    end
+    if incomplete then
+        QueueContainerCombatWork(frame)
+    end
+end
+
+-- Full pass entry (the forward-declared name + the QUI_GFA export; also what
+-- the QueueRegenWork closure replays once combat AND the aura restriction
+-- clear — always OOC there).
+function ApplyStripContainers(frame)
+    ApplyElementPass(frame, not InCombatLockdown())
+end
+QUI_GFA.ApplyStripContainers = ApplyStripContainers
+
+-- Public entry: (re)apply the per-element container config for one frame. In
+-- combat, mutation of pre-created containers is legal (SetUnit / filters /
+-- enable), so run the mutation-only pass immediately AND queue the full pass
+-- (creation + reconcile) for regen so any skipped forbidden work self-heals.
+-- The containers self-drive UNIT_AURA, so this is config-only — not a per-event
+-- render loop.
+local function UpdateStripContainers(frame)
+    if not frame or not GetFrameUnit(frame) then return end
+    if InCombatLockdown() then
+        -- Mutation of pre-created containers is 12.1-PTR-legal (SetUnit /
+        -- filters / enable); pcall-guard the whole mutable pass (a surprise
+        -- combat restriction must not error out of the event handler) and
+        -- STILL queue the full pass (creation + reconcile) for regen.
+        pcall(ApplyElementPass, frame, false)
+        QueueContainerCombatWork(frame)
+        return
+    end
+    ApplyElementPass(frame, true)
+end
+QUI_GFA.UpdateStripContainers = UpdateStripContainers
+
+-- Disable + hide every aura container on a frame (unit cleared / frame hidden):
+-- retire each (empty groups + park slots + disable + hide). Group/slot mutation
+-- and SetEnabled/Hide on a pre-created container are combat-legal; RunConfigPass
+-- pcall-guards Configure in combat. Forbidden work skipped in combat queues a
+-- regen replay.
+local function RetireContainer(container, allowCreate)
+    local ok = AuraGlue.RunConfigPass(container, container._quiProfile or {}, {}, allowCreate)
+    AuraSlots.Park(container)
+    container:SetEnabled(false)
+    container:Hide()
+    return ok
+end
+
+local function DisableStripContainers(frame)
+    if not frame then return end
+    local pool = frame._quiAuraContainers
+    if not pool or #pool == 0 then return end
+    if not ResolveAuraDeps() then return end
+    local inCombat = InCombatLockdown()
+    local incomplete = false
+    for i = 1, #pool do
+        local container = pool[i]
+        if container then
+            if inCombat then
+                -- SetEnabled/Hide/park on a pre-created container is combat-
+                -- legal mutation: hide the cleared unit's auras NOW instead of
+                -- showing stale icons all fight; pcall-guard so a surprise
+                -- restriction can't error out, and reconcile at regen.
+                local ok, complete = pcall(RetireContainer, container, false)
+                if not ok or not complete then incomplete = true end
+            else
+                if not RetireContainer(container, true) then incomplete = true end
+            end
+        end
+    end
+    if incomplete or inCombat then
+        QueueContainerCombatWork(frame)
+    end
+end
+QUI_GFA.DisableStripContainers = DisableStripContainers
+
+-- Pre-create (OOC) one container per active element for a header child, even a
+-- unitless padding child (ResolveContainerElements keys on frame._isRaid,
+-- stamped at child birth by the decorate bridge — no unit needed). Called by
+-- the header preallocator so a member joining MID-COMBAT lands on a child whose
+-- forbidden containers already exist + are anchored: creation is combat-forbidden
+-- (crashes the 12.1 client), but SetUnit/filter/enable on a pre-created
+-- container is combat-legal mutation. Cheap re-entry: skips when the pool
+-- already holds enough containers (config-time RunConfigPass handles growth).
+function QUI_GFA.EnsureContainersForFrame(frame)
+    if not frame or InCombatLockdown() then return end
+    if not ResolveAuraDeps() or not CreateFrame then return end
+    local elems = ResolveContainerElements(frame)
+    local want = #elems
+    -- Union pre-stage: size the pool to the LARGEST bucket in the store, not just
+    -- the currently-active one, so an encounter bucket that adds boss-ability
+    -- indicators finds its containers ALREADY created when it goes live on pull
+    -- (creation is combat-forbidden; the on-pull switch is then pure mutation).
+    -- Over-provisioned slots stay disabled until a bucket actually uses them.
+    local auras = GetFrameAuraSettings(frame)
+    if auras and AuraModel.MaxBucketElementCount then
+        local union = AuraModel.MaxBucketElementCount(auras)
+        if union > want then want = union end
+    end
+    if want == 0 then return end
+    local pool = frame._quiAuraContainers
+    if not pool then
+        pool = {}
+        frame._quiAuraContainers = pool
+    end
+    if #pool >= want then return end
+    for i = #pool + 1, want do
+        local container = CreateFrame("AuraContainer", nil, frame, "CustomAuraContainerTemplate")
+        container:SetSize(1, 1)  -- give the engine a renderable rect from the first dirty mark; it auto-sizes on layout
+        pool[i] = container
+        -- Only the currently-active elements have a definite anchor; union
+        -- spares (i > #elems) are anchored by the config pass when a bucket
+        -- activates them (OOC), so skip anchoring them here.
+        if elems[i] then
+            AnchorElementContainer(container, frame, elems[i])
+        end
+    end
+end
+
+-- Spare header children (beyond the live roster) to fully build OOC: shells
+-- get containers on every allocated child cheaply (EnsureContainersForFrame
+-- above), but the GROUP config (AddAuraGroup/AddAuraSlot, which allocates the
+-- engine's real secure button batches) is comparatively expensive, so only
+-- roster + this many spares get it eagerly. QUI_GF:PreallocateAuraContainers
+-- reads this to size the headroom window; exported (not a file local) so it
+-- is mutation-verifiable and a single source of truth across both files.
+QUI_GFA.PREALLOC_HEADROOM = 5
+
+-- Fully build (containers + AddAuraGroup/AddAuraSlot) the aura pipeline on a
+-- header child that has NO roster occupant yet (a headroom/padding slot) —
+-- OOC only, called from QUI_GF:PreallocateAuraContainers for the roster +
+-- PREALLOC_HEADROOM window. Without this, EnsureContainersForFrame's bare
+-- shells never get AddAuraGroup'd until the child's normal per-unit config
+-- pass runs (UpdateStripContainers, only ever called with a real side-state unit
+-- — see ApplyElementPass's guard below), so a raid member joining MID-COMBAT
+-- into a shell-only slot binds a container with zero registered groups: the
+-- combat mutation path (ApplyElementPass allowCreate=false -> AuraGlue.
+-- RunConfigPass -> AuraSkin.Configure) never calls AddAuraGroup in combat
+-- (Configure's own "elseif not InCombatLockdown() then container:
+-- AddAuraGroup(...)" guard, core/aura_skin.lua) — it just skips, leaving the
+-- member with no auras until PLAYER_REGEN_ENABLED replays. Pre-registering
+-- the groups here (OOC, before the join) means the real join's SetUnit lands
+-- on an ALREADY-REGISTERED key (Configure's "if registered[key] or
+-- container:HasAuraGroup(key)" branch — mutators only, no AddAuraGroup call
+-- needed), which IS combat-legal and already unconditional in ApplyElementPass
+-- (`container:SetUnit(unit)` runs outside any allowCreate/combat gate;
+-- see groupframes_auras_combat_mutable_test.lua's "SetUnit is combat-legal
+-- mutation and runs unconditionally" pin).
+--
+-- Blizzard_AuraContainer.lua's AuraContainerSharedMixin:SetUnit asserts
+-- `type(unitToken) == "string"` (no nil tolerance), so a genuinely unitless
+-- container can't be probed with a nil side-state unit — bind it to a stand-in
+-- token instead. FilterStringUsable's C-side probe (AuraGlue.
+-- ElementGroups -> C_UnitAuras.GetUnitAuras(unit, filterString)) only checks
+-- whether the call EXECUTES without erroring — it validates the filter
+-- STRING's syntax, not the probed unit's actual aura state — so any
+-- always-valid unit token yields the identical usable-filter set a real
+-- roster member would get; "player" always exists, in or out of a group.
+-- The container is left disabled + hidden: SetEnabled(true)/Show() only ever
+-- happens on the REAL join (inside ApplyElementPass via UpdateStripContainers),
+-- which unconditionally re-runs SetUnit(unit) first, overwriting this
+-- probe binding before anything is ever shown.
+--
+-- Guard: only ever touches a container that truly has no roster occupant —
+-- calling this on an already-assigned frame would wrongly re-hide/re-disable
+-- a live strip, so it bails immediately if the side-state unit is already set.
+local PREALLOC_PROBE_UNIT = "player"
+function QUI_GFA.PrebuildHeadroomGroups(frame)
+    if not frame or GetFrameUnit(frame) or InCombatLockdown() then return end
+    if not ResolveAuraDeps() then return end
+    QUI_GFA.EnsureContainersForFrame(frame)
+    local elems = ResolveContainerElements(frame)
+    local pool = frame._quiAuraContainers
+    if not pool then return end
+    for i = 1, #elems do
+        local element = elems[i]
+        local container = pool[i]
+        if container then
+            -- SetUnit BEFORE group configuration — same ordering requirement
+            -- as ApplyElementPass (eager group registration needs a valid unit).
+            container:SetUnit(PREALLOC_PROBE_UNIT)
+            if element.mode == "tracked" then
+                AuraGlue.RunConfigPass(container, AuraGlue.ElementProfile(element), {}, true)
+                AuraSlots.Sync(container, element, true)
+            else
+                local profile = AuraGlue.ElementProfile(element)
+                local groups = AuraGlue.ElementGroups(PREALLOC_PROBE_UNIT, element, profile, false)
+                AuraGlue.RunConfigPass(container, profile, groups, true)
+                AuraSlots.Park(container)
+            end
+            -- Stay dormant: this slot has no real occupant yet.
+            container:SetEnabled(false)
+            container:Hide()
+        end
+    end
 end
 
 -- True when the unit's context has at least one enabled aura element.
@@ -1434,22 +1679,15 @@ local function HasDispelOverlay(vdb)
     return dispel and dispel.enabled ~= false
 end
 
-local function HasDefensiveIndicator(vdb)
-    local healer = vdb and vdb.healer
-    local defensive = healer and healer.defensiveIndicator
-    return defensive and defensive.enabled == true
-end
-
 -- A context has active aura consumers when it has any enabled aura element
--- (the unified model — strips + tracked auras) OR a healer dispel/defensive
--- overlay (those still consume the shared cache for classification subsets).
+-- (the unified model — strips + tracked auras) OR a healer dispel overlay
+-- (that still consumes the shared cache for classification subsets).
 local function HasActiveAuraConsumers(isRaid)
     local vdb = GetVisualDBForContext(isRaid)
     if not vdb then return false end
 
     if HasActiveAuraElements(vdb) then return true end
     if HasDispelOverlay(vdb) then return true end
-    if HasDefensiveIndicator(vdb) then return true end
 
     return false
 end
@@ -1491,7 +1729,7 @@ end
 -- The legacy buff/debuff panel renderer (UpdateFrameAuras) and its refresh gate
 -- (PanelRefreshNeededForFrame) were retired by the unified element renderer.
 -- RenderFrameElements (above) is now the sole per-frame aura render path; the
--- shared cache still feeds it, plus the dispel/defensive overlays.
+-- shared cache still feeds it, plus the dispel overlay.
 
 ---------------------------------------------------------------------------
 -- EVENT HOOKUP: Listen to UNIT_AURA via the group frame event system
@@ -1579,22 +1817,20 @@ local function ProcessUnitAuraSetChange(unit, updateInfo)
             -- only runs for add/remove/full events — pure stack/duration updates
             -- return on the fast path in the subscriber and never reach here — so
             -- the unconditional re-check matches the set-change cadence without
-            -- re-running on refresh ticks. The previous `dirty.harmful` /
-            -- `dirty.defensive` gate could SKIP the clear: the flag reports which
-            -- bucket the delta mutated, but a lingering dispel/defensive set entry
-            -- can survive a delta whose summary flags the OTHER bucket (or whose
-            -- shape the summary under-reports), leaving the overlay lit after the
-            -- debuff is gone. The overlay readers are a cheap pre-classified set
-            -- walk, so re-checking each set-change is effectively free.
+            -- re-running on refresh ticks. The previous `dirty.harmful` gate
+            -- could SKIP the clear: the flag reports which bucket the delta
+            -- mutated, but a lingering dispel set entry can survive a delta
+            -- whose summary flags the OTHER bucket (or whose shape the summary
+            -- under-reports), leaving the overlay lit after the debuff is gone.
+            -- The overlay readers are a cheap pre-classified set walk, so
+            -- re-checking each set-change is effectively free.
             if GF.UpdateDispelOverlay then
                 GF:UpdateDispelOverlay(frame)
             end
-            if GF.UpdateDefensiveIndicator then
-                GF:UpdateDefensiveIndicator(frame)
-            end
-            -- Unified element pass. The defensive overlay above refreshed
-            -- frame._defensiveAuraIDs first so a filterStrip's dedupeDefensives
-            -- sees the current set.
+            -- Engine element pass (MRB synthetic icons + the healthTint feeder).
+            -- Strips + tracked icon/square/bar self-draw on their secure
+            -- CustomAuraContainers — so the dispel overlay above no longer
+            -- gates or feeds this call.
             RenderFrameElements(frame, cache, dirty)
         end
     end
@@ -1663,6 +1899,12 @@ if ns.AuraEvents then
             local updated = updateInfo.updatedAuraInstanceIDs
             local nUpdated = #updated
             if nUpdated == 0 then return end
+            -- 12.1 PTR4: updatedAuraInstanceIDs are secret while auras are secret;
+            -- the icon/bar reseat (RefreshUpdatedIcons/Bars) matches them with ==,
+            -- which throws on a secret value. Skip the reseat during secret windows
+            -- -- swipes hold their last C-side SetCooldown, and skipping keeps this
+            -- zero-alloc hot path storm-free (no fall-through to a full scan).
+            if AurasAreSecret() then return end
             if auraStats then auraStats.fastUpdates = auraStats.fastUpdates + 1 end
 
             -- Reseat only the C-side swipes/bars on element visuals whose aura
@@ -1696,8 +1938,8 @@ end
 ---------------------------------------------------------------------------
 -- PUBLIC: Invalidate aura layout (call when aura settings change in options)
 ---------------------------------------------------------------------------
--- The shared cache drives the dispel/defensive subsets and the unified renderer
--- resolves filterStrip matches at render time, so settings changes need no cache
+-- The shared cache drives the dispel subset and the unified renderer resolves
+-- filterStrip matches at render time, so settings changes need no cache
 -- mutation here. It MUST bump the relevance generation, though: a config edit
 -- (add/remove/retarget an element) changes which spells/buckets each frame cares
 -- about, invalidating the cached dirty-skip descriptors.
@@ -1733,12 +1975,14 @@ function QUI_GFA:RefreshAll()
 end
 
 function QUI_GFA:RefreshFrame(frame)
-    if frame and frame.unit and FrameHasActiveAuraConsumers(frame) then
-        ScanUnitAuras(frame.unit)
+    local unit = GetFrameUnit(frame)
+    if unit and FrameHasActiveAuraConsumers(frame) then
+        ScanUnitAuras(unit)
     end
-    RenderFrameElements(frame, frame and frame.unit and unitAuraCache[frame.unit] or nil)
+    RenderFrameElements(frame, unit and unitAuraCache[unit] or nil)
 end
 
 function QUI_GFA:RenderFrame(frame)
-    RenderFrameElements(frame, frame and frame.unit and unitAuraCache[frame.unit] or nil)
+    local unit = GetFrameUnit(frame)
+    RenderFrameElements(frame, unit and unitAuraCache[unit] or nil)
 end
