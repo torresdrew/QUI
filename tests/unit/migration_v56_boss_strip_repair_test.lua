@@ -1,12 +1,14 @@
--- tests/unit/migration_v55_boss_strip_repair_test.lua
--- Run: lua5.1 tests/unit/migration_v55_boss_strip_repair_test.lua
+-- tests/unit/migration_v56_boss_strip_repair_test.lua
+-- Run: lua5.1 tests/unit/migration_v56_boss_strip_repair_test.lua
 --
--- v55 = Migrations.RepairSpecBucketBossStrips: pre-fix EnableSpecOverride
--- re-keyed the fixed-id "encounterBoss" strip when cloning "*" into an
--- override bucket (dev-build exposure only). Repair, matched by exact
--- structural equality (ignoring id/enabled) against "*"'s boss strip:
+-- v56 (55 burned) = Migrations.RepairSpecBucketBossStrips: pre-fix
+-- EnableSpecOverride re-keyed the fixed-id "encounterBoss" strip when
+-- cloning "*" into an override bucket (dev-build exposure only). Repair,
+-- matched by exact structural equality (ignoring id/enabled) against "*"'s
+-- boss strip:
 --   * bucket lacks the fixed id -> promote the equal orphan TO the fixed id
 --   * bucket already has the fixed id -> remove equal orphans (duplicates)
+--     regardless of enabled — the page-owned fixed strip is authoritative
 --   * diverged orphans (user-edited) are untouched — user data
 --   * gate flags alone must NOT match (editor exposes them on user strips)
 
@@ -62,8 +64,10 @@ do
         bucket[1].id == "encounterBoss" and bucket[1].gateBossOrRoleAura == true)
 end
 
--- (2b) enabled mismatch: enabled orphan beside DISABLED fixed strip is what
--- the user currently sees rendering — both kept (2026-07 round-3 review)
+-- (2b) enabled mismatch: enabled orphan beside DISABLED fixed strip is the
+-- bug itself (page says Off, orphan keeps rendering, no UI can remove it) —
+-- orphan removed, fixed strip's enabled is authoritative (the v55 first cut
+-- kept both; that's why 55 is burned)
 do
     local fixed = bossStrip("encounterBoss", false)
     local profile = { quiGroupFrames = { raid = { auras = { elements = {
@@ -72,8 +76,9 @@ do
     } } } } }
     M.RepairSpecBucketBossStrips(profile)
     local bucket = profile.quiGroupFrames.raid.auras.elements[66]
-    check("enabled mismatch: both strips kept", #bucket == 2, tostring(#bucket))
-    check("enabled mismatch: orphan id untouched", bucket[1].id == "e9", tostring(bucket[1].id))
+    check("enabled mismatch: orphan removed", #bucket == 1, tostring(#bucket))
+    check("enabled mismatch: fixed strip kept disabled",
+        bucket[1].id == "encounterBoss" and bucket[1].enabled == false)
 end
 
 -- (3) diverged orphan untouched (user edited the clone = user data)
@@ -141,5 +146,5 @@ do
         profile.quiUnitFrames.player.auras.elements[63][1].id == "e5")
 end
 
-print("migration_v55_boss_strip_repair_test " .. (failures == 0 and "OK" or "FAILED"))
+print("migration_v56_boss_strip_repair_test " .. (failures == 0 and "OK" or "FAILED"))
 os.exit(failures == 0 and 0 or 1)

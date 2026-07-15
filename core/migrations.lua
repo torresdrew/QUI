@@ -86,23 +86,31 @@ local _currentGlobalDB     = nil  -- db.global; for cross-profile reads (v32+)
 --        Injects a copy (mirroring the "*" element's enabled state) into
 --        every numeric spec bucket that lacks one. 52/53 burned.
 --
---   v55: RepairSpecBucketBossStrips — EnableSpecOverride briefly (pre-fix
+--   v55 = BURNED. Shipped briefly as a dev-build stamp with a buggy first
+--        cut of RepairSpecBucketBossStrips (kept an enabled orphan beside a
+--        disabled fixed strip — the exact "page says Off but it still
+--        renders" state the repair exists to fix). Never a tagged release;
+--        the corrected repair runs under the v56 gate, which also catches
+--        55-stamped profiles.
+--
+--   v56: RepairSpecBucketBossStrips — EnableSpecOverride briefly (pre-fix
 --        dev builds on the 5.0 branch, never a tagged release) re-keyed the
 --        fixed-id "encounterBoss" strip when cloning "*" into an override
 --        bucket. The orphaned clone is invisible to the encounters page
 --        (FindBossStrip keys on the fixed id), which reported Off and
 --        spawned a DUPLICATE strip on the next write. Adopts orphans back
---        to the fixed id (or drops enabled-matching duplicates when the
---        fixed strip already exists), matched by exact structural equality
---        against "*"'s strip. Scope: GF party/raid numeric spec buckets
---        ONLY. (v54's classify-equivalence presence check already prevented
---        the analogous "defensives" duplicate.)
+--        to the fixed id (or drops duplicates when the fixed strip already
+--        exists — the page-owned fixed strip is authoritative for enabled),
+--        matched by exact structural equality against "*"'s strip. Scope:
+--        GF party/raid numeric spec buckets ONLY. (v54's
+--        classify-equivalence presence check already prevented the
+--        analogous "defensives" duplicate.)
 --
 -- When adding a new migration: bump CURRENT_SCHEMA_VERSION (next free number
--- is 56 — see the burned-numbers rule above), add a single linear gate in
+-- is 57 — see the burned-numbers rule above), add a single linear gate in
 -- RunOnProfile, and document the version above.
 ---------------------------------------------------------------------------
-local CURRENT_SCHEMA_VERSION = 55
+local CURRENT_SCHEMA_VERSION = 56
 
 -- The oldest schema we still carry forward. The last 4.x stable release and
 -- 5.0 alpha4 both shipped schema 47, and every step-by-step migration through
@@ -1033,15 +1041,14 @@ function Migrations.RepairSpecBucketBossStrips(profile)
                         and EqualIgnoringIdentity(e, base, true) then
                         if fixedStrip then
                             -- Duplicate beside the fixed strip: remove it
-                            -- ONLY when both agree on enabled — an enabled
-                            -- orphan next to a disabled fixed strip is what
-                            -- the user currently SEES rendering; deleting it
-                            -- would change visible behavior. Mismatches keep
-                            -- both (the pre-existing state; the user resolves
-                            -- it in the editor).
-                            if (e.enabled ~= false) == (fixedStrip.enabled ~= false) then
-                                table.remove(bucket, i)
-                            end
+                            -- regardless of enabled. The fixed strip is the
+                            -- only one the encounters page can address, so
+                            -- its enabled state is the user's expressed
+                            -- intent; an enabled orphan beside a disabled
+                            -- fixed strip is the bug itself (page says Off,
+                            -- strip keeps rendering, and no UI can ever
+                            -- remove it).
+                            table.remove(bucket, i)
                         else
                             e.id = "encounterBoss"
                             fixedStrip = e
@@ -2221,9 +2228,11 @@ function Migrations.RunOnProfile(profile)
         Migrations.ExtendDefensivesToSpecBuckets(profile)
     end
 
-    -- v55: adopt/dedup pre-fix re-keyed "encounterBoss" clones in override
-    -- buckets (dev-build exposure only; see the version doc).
-    if stored < 55 then
+    -- v56 (55 burned): adopt/dedup pre-fix re-keyed "encounterBoss" clones
+    -- in override buckets (dev-build exposure only; see the version doc).
+    -- The < 56 gate deliberately catches 55-stamped dev profiles, whose
+    -- buggy first-cut repair kept enabled-mismatched duplicates.
+    if stored < 56 then
         Migrations.RepairSpecBucketBossStrips(profile)
     end
 

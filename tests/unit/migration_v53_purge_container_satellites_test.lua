@@ -119,7 +119,7 @@ do
     check("utilityFrequency survives", profile.customGlow.utilityFrequency == 0.25)
     check("utilityEnabled survives", profile.customGlow.utilityEnabled == true)
 
-    check("stamped to current (55)", profile._schemaVersion == 55, tostring(profile._schemaVersion))
+    check("stamped to current (56)", profile._schemaVersion == 56, tostring(profile._schemaVersion))
 end
 
 ----------------------------------------------------------------------------
@@ -158,7 +158,7 @@ do
     M.RunOnProfile(profile)
     check("idempotent: live anchor still present", profile.frameAnchoring["cdmCustom_" .. liveKey] ~= nil)
     check("idempotent: live glow still present", profile.customGlow[liveKey .. "Scale"] == 0.5)
-    check("idempotent: stays at current (51)", profile._schemaVersion == 55, tostring(profile._schemaVersion))
+    check("idempotent: stays at current (51)", profile._schemaVersion == 56, tostring(profile._schemaVersion))
 end
 
 ----------------------------------------------------------------------------
@@ -174,7 +174,7 @@ do
     }
     M.RunOnProfile(profile)
     check("already-51: gate does not re-run", profile.frameAnchoring["cdmCustom_custom_9_9"] ~= nil)
-    check("already-51: stamped to 55 (v55 gate)", profile._schemaVersion == 55, tostring(profile._schemaVersion))
+    check("already-51: stamped to 56 (v56 gate)", profile._schemaVersion == 56, tostring(profile._schemaVersion))
 end
 
 if failures > 0 then os.exit(1) end

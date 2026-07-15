@@ -56,7 +56,7 @@ do -- spec bucket backfilled, context bucket untouched, stamp moves
     end
     check("context bucket untouched", #elements["i2810"] == 1 and elements["i2810"][1].id == 9)
     check("'*' still has exactly one", countDefensives(elements["*"]) == 1)
-    check("stamped 55", p._schemaVersion == 55, tostring(p._schemaVersion))
+    check("stamped 56", p._schemaVersion == 56, tostring(p._schemaVersion))
 end
 
 do -- disabled "*" defensives mirrors as disabled
