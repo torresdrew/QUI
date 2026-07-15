@@ -9,6 +9,39 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v5.0.0-alpha18 - 2026-07-14
+
+> ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will
+> not load on the 12.0.x live client. Stay on the v4.x beta line for live realms.
+
+> 🔄 **Profile schema migrated to v56.** Repairs boss-debuff strips that
+> earlier alpha dev builds could duplicate or orphan in spec-override buckets,
+> so the Encounters page toggle always addresses the strip that actually
+> renders. Your profile is backed up automatically before it runs.
+
+### Added
+- New **Auras** configuration hub unifying aura setup across unit frames,
+  group frames, and buff/debuff frames, with a guided **Setup Wizard** as its
+  first page.
+- **Encounters** page: a journal-sourced encounter catalog with per-encounter
+  boss aura settings and spec-specific overrides (spec × encounter cascade).
+- **Dispel Colors** page with role-based dispel and bleed seeding.
+
+### Changed
+- "Action Bar Auras" is now named **Buff/Debuff Frames**; cross-links updated.
+- The Setup Wizard replaces a tracked HoT wherever it appears in multi-spell
+  elements, and corner placement now spaces indicators by their real pixel
+  footprint — stacked HoTs on the same corner no longer overlap.
+- The legacy "dispellable by me" debuff filter checkbox is ported to the 12.1
+  filter token that preserves its meaning.
+
+### Fixed
+- Boss-debuff strips duplicated or orphaned by earlier alpha builds are
+  repaired by the v56 migration; the strip the Encounters page controls is
+  the one that renders.
+- A raid-cooldown library no longer scans aura data unguarded while the 12.1
+  client restricts it.
+
 ## v5.0.0-alpha17 - 2026-07-11
 
 > ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will
