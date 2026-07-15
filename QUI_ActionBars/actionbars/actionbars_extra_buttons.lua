@@ -31,6 +31,11 @@ extraBtnState = {
     pageArrowRetryAttempts = 0,
     PAGE_ARROW_RETRY_MAX_ATTEMPTS = 15,
     PAGE_ARROW_RETRY_DELAY = 0.2,
+    -- Ownership is monotonic for the session.  A /reload is the only safe
+    -- hand-back after either surface has taken the shared Blizzard container.
+    containerOwned = false,
+    containerNeutralized = false,
+    zoneOwned = false,
 }
 
 function GetExtraButtonDB(buttonType)
@@ -397,6 +402,22 @@ function ApplyExtraActionContainerAnchor(holder, offsetX, offsetY, scale)
         pcall(container.SetIsLayoutFrame, container, false)
     end
 
+    -- The managed-frame system honors ignoreFramePositionManager only at
+    -- AddManagedFrame time; a container that was already visible before this
+    -- takeover is already registered in the manager's showingFrames, and
+    -- UpdateManagedFrames (cinematic end, Alt-Z UI re-show) still
+    -- ClearAllPoints+SetParent's it despite the flag.  NEVER deregister it
+    -- ourselves: an insecure write into the manager's showingFrames table
+    -- (raw key removal included) taints the table, and the manager's secure
+    -- pairs() walk over it then blocks the protected ClearAllPoints on the
+    -- OTHER managed frames (live ADDON_ACTION_BLOCKED).  RemoveManagedFrame
+    -- is no better -- it re-runs the whole manager Layout from insecure code.
+    -- Accept the transient clobber instead: the container SetParent /
+    -- SetPoint / Show / ApplySystemAnchor hooks re-pin right after it
+    -- (deferred to PLAYER_REGEN_ENABLED when the clobber lands in combat).
+
+    extraBtnState.containerOwned = true
+
     extraBtnState.hookingSetParent = true
     container:SetParent(holder)
     extraBtnState.hookingSetParent = false
@@ -419,12 +440,14 @@ function ApplyExtraActionContainerAnchor(holder, offsetX, offsetY, scale)
 end
 
 -- One-time neutralization of ExtraAbilityContainer's own layout/mouse/EditMode
--- behavior so it cannot fight our ownership.  Combat-guarded (the container owns
--- a secure descendant); runs once, out of combat.
+-- behavior so it cannot fight our ownership.  Ownership is session-long: once
+-- either extra or zone management acquires the shared container, a /reload is
+-- the only hand-back.  Live restoration would re-enter Blizzard's protected
+-- managed-layout path from insecure code.
 function NeutralizeExtraAbilityContainer()
     local container = ExtraAbilityContainer
     if not container or extraBtnState.containerNeutralized then return end
-    if InCombatLockdown() then return end
+    if InCombatLockdown() and not inInitSafeWindow then return end
     extraBtnState.containerNeutralized = true
 
     -- Stop Blizzard's OnShow/OnHide from re-running managed layout.  Our own
@@ -441,7 +464,10 @@ function NeutralizeExtraAbilityContainer()
             extraBtnState.containerSelectionHooked = true
             hooksecurefunc(sel, "Show", function(self)
                 self:SetAlpha(0)
-                if self.EnableMouse then self:EnableMouse(false) end
+                -- EnableMouse is protected on this frame (secure descendant).
+                if self.EnableMouse and not InCombatLockdown() then
+                    self:EnableMouse(false)
+                end
             end)
         end
     end
@@ -462,64 +488,152 @@ function NeutralizeExtraAbilityContainer()
     end
 end
 
-function ApplyExtraButtonSettings(buttonType)
-    -- COMBAT GATE (load-bearing).  ExtraActionBarFrame owns the secure
-    -- ExtraActionButton1, so it (and its ancestors) cannot be reparented or
-    -- repinned in combat -- SetScale/SetParent/ClearAllPoints/SetPoint would be
-    -- ADDON_ACTION_BLOCKED.  Ownership is established once, out of combat:
-    --   * extra -> anchor the shared ExtraAbilityContainer to the mover, so
-    --     Blizzard's in-combat AddFrame drops the button into a container that
-    --     already sits on the mover (no addon in-combat repin needed);
-    --   * zone  -> ZoneAbilityFrame has no secure descendant and is granted
-    --     only out of combat, so reparent it straight onto its own mover.
-    -- A refresh that lands mid-combat is deferred to PLAYER_REGEN_ENABLED.
-    if InCombatLockdown() and not inInitSafeWindow then
-        ActionBarsOwned.pendingExtraButtonRefresh = true
-        return
+-- In-combat mutation probe for the zone path.  ZoneAbilityFrame is expected
+-- unprotected (its spell buttons inherit no secure template) and nothing
+-- protected anchors to it (the shared container's layout anchors every child
+-- to the container itself, and the secure extra-action frame sorts FIRST by
+-- priority), so the zone reclaim normally runs even in combat.  Trust the
+-- client over that static expectation: if the frame reports protected or
+-- anchoring-restricted (future FrameXML churn, a foreign anchor), defer the
+-- mutation to PLAYER_REGEN_ENABLED instead of drawing ADDON_ACTION_BLOCKED.
+-- Both getters' returns are secret-capable (ObjectSecurity aspect) -- probe
+-- before ANY truth-test; an unreadable answer counts as restricted.
+local function ZoneFrameCombatMutable(frame)
+    if not InCombatLockdown() or inInitSafeWindow then return true end
+    local protectedNow = frame.IsProtected and frame:IsProtected()
+    if issecretvalue(protectedNow) or protectedNow then return false end
+    if frame.IsAnchoringRestricted then
+        local restricted = frame:IsAnchoringRestricted()
+        if issecretvalue(restricted) or restricted then return false end
     end
+    return true
+end
 
+local function IsExtraButtonEnabled(buttonType)
     local settings = GetExtraButtonDB(buttonType)
-    if not settings or not settings.enabled then return end
+    return (settings and settings.enabled) == true
+end
 
-    local scale = settings.scale or 1.0
-    local offsetX = settings.offsetX or 0
-    local offsetY = settings.offsetY or 0
+-- SESSION-LONG OWNERSHIP: either enabled surface acquires the shared
+-- ExtraAbilityContainer.  Once acquired, ownership remains until /reload.
+-- This keeps the extracted zone entry from leaving an empty 250x120 managed
+-- layout participant and avoids an insecure live hand-back through Blizzard's
+-- protected managed-frame path.
+function ShouldOwnExtraAbilityContainer()
+    return extraBtnState.containerOwned
+        or extraBtnState.zoneOwned
+        or IsExtraButtonEnabled("extraActionButton")
+        or IsExtraButtonEnabled("zoneAbility")
+end
+
+-- DUAL-MOVER INVARIANT (user requirement): the zone ability NEVER rides the
+-- extra-action mover; extra action and zone ability each keep their OWN
+-- mover.  Once extracted, it stays on the zone holder for the session.  A
+-- disabled setting resets stock appearance; /reload with both surfaces disabled
+-- is the safe full hand-back to Blizzard.
+function IsZoneAbilityManaged()
+    return extraBtnState.zoneOwned or ShouldOwnExtraAbilityContainer()
+end
+
+-- Reparent the (unprotected) ZoneAbilityFrame onto its own holder.  Enabled
+-- settings apply styling; disabled settings keep stock appearance on the same
+-- session-owned holder.  Combat-legal in the expected topology (no
+-- secure descendant, nothing protected anchored to it); the probe defers to
+-- regen if the client disagrees.
+local function EvictZoneAbilityFrame(scale, offsetX, offsetY)
+    local blizzFrame = ZoneAbilityFrame
+    local holder = extraBtnState.zoneAbilityHolder
+    if not blizzFrame or not holder then return nil, nil end
+    if not ZoneFrameCombatMutable(blizzFrame) then
+        ActionBarsOwned.pendingExtraButtonRefresh = true
+        return nil, nil
+    end
+    blizzFrame:SetScale(scale)
+    blizzFrame.ignoreInLayout = true
+    blizzFrame.ignoreFramePositionManager = true
+    extraBtnState.hookingSetParent = true
+    blizzFrame:SetParent(holder)
+    extraBtnState.hookingSetParent = false
+    extraBtnState.hookingSetPoint = true
+    blizzFrame:ClearAllPoints()
+    blizzFrame:SetPoint("CENTER", holder, "CENTER", offsetX, offsetY)
+    extraBtnState.hookingSetPoint = false
+    extraBtnState.zoneOwned = true
+    -- The zone entry stays in container.frames (RemoveFrame would
+    -- SetParent(nil)+Hide the frame, and insecure writes into Blizzard's
+    -- tables taint them).  ignoreInLayout makes the next Layout pass skip
+    -- the evicted frame, but that pass only runs once something marks the
+    -- container dirty -- do it here or the container keeps its stale
+    -- two-child width.  Out of combat only: MarkDirty SetScripts OnUpdate
+    -- (protected on this container -- secure descendant) and the insecure
+    -- layout pass would SetPoint the protected extra bar; the deferred
+    -- regen refresh re-runs the eviction and marks dirty then.
+    local container = ExtraAbilityContainer
+    if container and container.MarkDirty then
+        if not InCombatLockdown() or inInitSafeWindow then
+            pcall(container.MarkDirty, container)
+        else
+            ActionBarsOwned.pendingExtraButtonRefresh = true
+        end
+    end
+    return blizzFrame, holder
+end
+
+function ApplyExtraButtonSettings(buttonType)
+    local settings = GetExtraButtonDB(buttonType)
+    local enabled = (settings and settings.enabled) == true
+    local effectiveSettings = settings or {}
+    local scale = enabled and (effectiveSettings.scale or 1.0) or 1.0
+    local offsetX = enabled and (effectiveSettings.offsetX or 0) or 0
+    local offsetY = enabled and (effectiveSettings.offsetY or 0) or 0
 
     local blizzFrame
     local holder
 
     if buttonType == "extraActionButton" then
+        if not ShouldOwnExtraAbilityContainer() then return end
+        -- COMBAT GATE (load-bearing).  ExtraActionBarFrame owns the secure
+        -- ExtraActionButton1, so it (and its ancestors, the container
+        -- included) cannot be rescaled/reparented/repinned in combat --
+        -- SetScale/SetParent/ClearAllPoints/SetPoint would be
+        -- ADDON_ACTION_BLOCKED.  Ownership is established once, out of combat:
+        -- anchor the shared ExtraAbilityContainer to the mover, so Blizzard's
+        -- in-combat AddFrame drops the button into a container that already
+        -- sits on the mover (no addon in-combat repin needed).  A refresh that
+        -- lands mid-combat is deferred to PLAYER_REGEN_ENABLED.
+        if InCombatLockdown() and not inInitSafeWindow then
+            ActionBarsOwned.pendingExtraButtonRefresh = true
+            return
+        end
         blizzFrame = ExtraActionBarFrame
         holder = extraBtnState.extraActionHolder
         if not blizzFrame or not holder then return end
         blizzFrame:SetScale(scale)
-        -- Own the CONTAINER, not ExtraActionBarFrame (protected).
+        -- Own the CONTAINER, not ExtraActionBarFrame (protected).  Zone-only
+        -- management also takes shell ownership so its extracted entry cannot
+        -- leave an empty managed-layout participant.
         ApplyExtraActionContainerAnchor(holder, offsetX, offsetY, scale)
+        NeutralizeExtraAbilityContainer()
     else
-        blizzFrame = ZoneAbilityFrame
-        holder = extraBtnState.zoneAbilityHolder
+        if not IsZoneAbilityManaged() then return end
+        -- NO blanket combat gate: ZoneAbilityFrame is unprotected (its spell
+        -- buttons inherit no secure template; OnClick is insecure
+        -- CastSpellByID), and Blizzard re-adds it to the shared container
+        -- from UNIT_AURA / SPELLS_CHANGED / ACTIONBAR_SLOT_CHANGED / vehicle
+        -- events; all fire mid-combat, so the reclaim must run in
+        -- combat too or a mid-fight grant strands the button at the Blizzard
+        -- position until regen.  EvictZoneAbilityFrame still probes the live
+        -- protection/anchoring state and self-defers to regen if the client
+        -- reports the frame restricted.
+        blizzFrame, holder = EvictZoneAbilityFrame(scale, offsetX, offsetY)
         if not blizzFrame or not holder then return end
-        blizzFrame:SetScale(scale)
-        -- ZoneAbilityFrame is unprotected (its spell buttons inherit no secure
-        -- template); reparent it out of the shared container onto its own mover.
-        if not extraButtonOriginalParents[buttonType] then
-            extraButtonOriginalParents[buttonType] = blizzFrame:GetParent()
-        end
-        blizzFrame.ignoreInLayout = true
-        blizzFrame.ignoreFramePositionManager = true
-        extraBtnState.hookingSetParent = true
-        blizzFrame:SetParent(holder)
-        extraBtnState.hookingSetParent = false
-        extraBtnState.hookingSetPoint = true
-        blizzFrame:ClearAllPoints()
-        blizzFrame:SetPoint("CENTER", holder, "CENTER", offsetX, offsetY)
-        extraBtnState.hookingSetPoint = false
     end
 
-    local holderWidth, holderHeight = GetExtraButtonHolderSize(buttonType, blizzFrame, settings, scale)
+    local holderWidth, holderHeight = GetExtraButtonHolderSize(
+        buttonType, blizzFrame, effectiveSettings, scale)
     holder:SetSize(holderWidth, holderHeight)
 
-    if settings.hideArtwork then
+    if enabled and effectiveSettings.hideArtwork then
         if buttonType == "extraActionButton" and blizzFrame.button and blizzFrame.button.style then
             blizzFrame.button.style:SetAlpha(0)
         end
@@ -535,8 +649,14 @@ function ApplyExtraButtonSettings(buttonType)
         end
     end
 
-    if not settings.fadeEnabled then
+    if not enabled or not effectiveSettings.fadeEnabled then
         blizzFrame:SetAlpha(1)
+    end
+
+    -- Disabled means stock appearance now, not unsafe live ownership restore.
+    -- A /reload with both surfaces disabled returns full ownership to Blizzard.
+    if not enabled and type(SetupBarMouseover) == "function" then
+        SetupBarMouseover(buttonType)
     end
 end
 
@@ -549,15 +669,20 @@ function QueueExtraButtonReanchor(buttonType)
     C_Timer.After(0, function()
         pendingExtraButtonReanchor[buttonType] = false
 
-        -- Combat gate: never repin the protected outer frames in combat (see
-        -- ApplyExtraButtonSettings).  Defer to PLAYER_REGEN_ENABLED.
-        if InCombatLockdown() then
-            ActionBarsOwned.pendingExtraButtonRefresh = true
-            return
+        -- Per-path combat handling lives in ApplyExtraButtonSettings: the
+        -- protected extra path defers itself to PLAYER_REGEN_ENABLED; the
+        -- unprotected zone path applies even in combat (mid-fight grants).
+        -- The holder moved by ApplyExtraButtonFrameAnchor is a QUI frame with
+        -- no secure descendant, so repositioning it in combat is legal.
+        -- The zone path is also active when only EXTRA is enabled (dual-mover
+        -- invariant: the disabled zone frame still holds its own mover).
+        local active
+        if buttonType == "zoneAbility" then
+            active = IsZoneAbilityManaged()
+        else
+            active = ShouldOwnExtraAbilityContainer()
         end
-
-        local settings = GetExtraButtonDB(buttonType)
-        if settings and settings.enabled then
+        if active then
             ApplyExtraButtonSettings(buttonType)
             ApplyExtraButtonFrameAnchor(buttonType)
         end
@@ -568,8 +693,13 @@ function QueueManagedExtraButtonReanchor(buttonType)
     local holder = buttonType == "extraActionButton"
         and extraBtnState.extraActionHolder
         or extraBtnState.zoneAbilityHolder
-    local settings = GetExtraButtonDB(buttonType)
-    if holder and settings and settings.enabled then
+    local active
+    if buttonType == "zoneAbility" then
+        active = IsZoneAbilityManaged()
+    else
+        active = ShouldOwnExtraAbilityContainer()
+    end
+    if holder and active then
         QueueExtraButtonReanchor(buttonType)
     end
 end
@@ -630,8 +760,13 @@ function HookExtraButtonPositioning()
     end
 
     -- ZONE ABILITY: unprotected frame reparented straight onto its own mover.
-    -- Reclaim it if Blizzard re-adds it to the shared container.  Zone grants
-    -- fire out of combat, but keep the combat gate for safety.
+    -- Reclaim it if Blizzard re-adds it to the shared container.  Blizzard
+    -- updates it from UNIT_AURA / SPELLS_CHANGED / ACTIONBAR_SLOT_CHANGED /
+    -- vehicle events, which fire mid-combat, and AddFrame reparents it into
+    -- the container each time — so the reclaim runs in combat too.  That is
+    -- legal: the frame has no secure descendant.  The C_Timer.After(0) hop
+    -- stays load-bearing — it exits the secure execution context of the
+    -- Blizzard event dispatch that triggered the reparent.
     local function HookSetParentForType(blizzFrame, buttonType, holder)
         if not blizzFrame then return end
         hooksecurefunc(blizzFrame, "SetParent", function(self, newParent)
@@ -639,9 +774,11 @@ function HookExtraButtonPositioning()
             if newParent == holder then return end
             C_Timer.After(0, function()
                 if extraBtnState.hookingSetParent then return end
-                local settings = GetExtraButtonDB(buttonType)
-                if holder and settings and settings.enabled then
-                    if InCombatLockdown() then
+                -- Dual-mover invariant: the zone frame is reclaimed whenever
+                -- EITHER surface is managed (extra ownership of the shared
+                -- container implies zone eviction to its own holder).
+                if holder and IsZoneAbilityManaged() then
+                    if not ZoneFrameCombatMutable(blizzFrame) then
                         ActionBarsOwned.pendingExtraButtonRefresh = true
                         return
                     end
@@ -675,8 +812,9 @@ function HookExtraButtonPositioning()
         end)
     end
 
-    -- One-time container housekeeping (mouse, EditMode selection, layout scripts).
-    NeutralizeExtraAbilityContainer()
+    -- Container housekeeping runs from the extra branch for either enabled
+    -- surface.  Once acquired, ownership stays session-long; /reload with both
+    -- surfaces disabled is the full Blizzard hand-back.
 end
 
 function ShowExtraButtonMovers()
@@ -706,28 +844,43 @@ InitializeExtraButtons = function()
         return
     end
 
-    extraBtnState.extraActionHolder, extraBtnState.extraActionMover = CreateExtraButtonHolder("extraActionButton", "Extra Action Button")
-    extraBtnState.zoneAbilityHolder, extraBtnState.zoneAbilityMover = CreateExtraButtonHolder("zoneAbility", "Zone Ability")
+    -- Idempotent: a deferred re-init (pendingExtraButtonInit) must not create
+    -- a second set of named holder frames.
+    if not extraBtnState.extraActionHolder then
+        extraBtnState.extraActionHolder, extraBtnState.extraActionMover =
+            CreateExtraButtonHolder("extraActionButton", "Extra Action Button")
+    end
+    if not extraBtnState.zoneAbilityHolder then
+        extraBtnState.zoneAbilityHolder, extraBtnState.zoneAbilityMover =
+            CreateExtraButtonHolder("zoneAbility", "Zone Ability")
+    end
 
-    C_Timer.After(0.5, function()
+    local function applyAll()
         ApplyExtraButtonSettings("extraActionButton")
         ApplyExtraButtonFrameAnchor("extraActionButton")
         ApplyExtraButtonSettings("zoneAbility")
         ApplyExtraButtonFrameAnchor("zoneAbility")
         HookExtraButtonPositioning()
-    end)
+    end
+
+    -- Combat /reload: protected calls are only allowed while the PEW init
+    -- safe window is open.  A 0.5s timer lands after the window closes, so
+    -- the extra path would defer to PLAYER_REGEN_ENABLED and active buttons
+    -- would sit at Blizzard positions for the rest of that combat.  Take
+    -- ownership synchronously inside the window; the delayed pass stays as a
+    -- reconcile for Blizzard frames that settle late.
+    if inInitSafeWindow then
+        applyAll()
+    end
+    C_Timer.After(0.5, applyAll)
 end
 
 -- Assign to upvalue for forward declaration in event handler
 RefreshExtraButtons = function()
-    -- Combat gate: the outer frames own a secure descendant and cannot be
-    -- repinned in combat (see ApplyExtraButtonSettings).  Ownership is already
-    -- established out of combat, so the buttons stay on their movers; a refresh
-    -- that lands mid-combat is deferred to PLAYER_REGEN_ENABLED.
-    if InCombatLockdown() and not inInitSafeWindow then
-        ActionBarsOwned.pendingExtraButtonRefresh = true
-        return
-    end
+    -- No blanket combat gate: per-path handling lives in
+    -- ApplyExtraButtonSettings.  The protected extra path defers itself to
+    -- PLAYER_REGEN_ENABLED; the unprotected zone path applies live so
+    -- mid-combat grants and refreshes track the mover.
     ApplyExtraButtonSettings("extraActionButton")
     ApplyExtraButtonFrameAnchor("extraActionButton")
     ApplyExtraButtonSettings("zoneAbility")
