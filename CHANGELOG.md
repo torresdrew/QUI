@@ -5,6 +5,34 @@ All notable changes to QUI will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
+## v4.1.1-beta6 - 2026-07-15
+
+### Fixed
+- fix(actionbars): the zone ability button (dragonriding, quest abilities) now moves onto its own mover even when granted mid-combat — previously it could sit at the default Blizzard position until combat ended; the zone ability and extra action button now always keep separate movers, and the zone ability's default position matches its stock on-screen spot
+
+
+## v4.1.1-beta5 - 2026-07-14
+
+### Fixed
+- fix(actionbars): the extra action button centering no longer replaces the shared container's layout methods — QUI now offsets the container's anchor to compensate for your scale setting, leaving the secure layout path fully native (safer in combat)
+
+
+## v4.1.1-beta4 - 2026-07-13
+
+### Fixed
+- fix(actionbars): the extra action button now stays centered on its mover regardless of your scale setting — the previous beta let the shared container's layout position the button, which pushed it off-center when scaled (and re-ran in combat where the correction couldn't stick); QUI now pins the bar to the mover center directly
+
+
+## v4.1.1-beta3 - 2026-07-13
+
+### Fixed
+- fix(actionbars): extra action buttons granted during combat now stay on your mover without tainting the UI — QUI anchors the shared ability container up front so a mid-combat grant lands already positioned (the previous beta's immediate reanchor could block the secure layout system)
+
+
+## v4.1.1-beta2 - 2026-07-13
+
+### Fixed
+- fix(actionbars): extra action buttons granted during combat no longer get stuck at the bottom of the screen — the reclaim/reanchor now runs immediately instead of deferring past the button's removal
 
 
 
@@ -12,6 +40,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+
+## v4.1.1-beta1 - 2026-07-07
+
+Beta channel rebased onto the v4.1.0 release base. Localization is re-enabled on beta — stable ships English-only; beta runs fully localized (deDE, esES, esMX, frFR, itIT, koKR, ptBR, ruRU, zhCN, zhTW).
+
+All new modules below are opt-in (off by default).
+
+### Added
+- feat(qol): vendor sell rules — rule-based auto-sell for equippable gear by quality/item level with force-sell/never-sell lists; runs in preview-only mode until you disable the safety
+- feat(qol): gem socket picker — panel listing the gems in your bags below the item socketing window; click to insert
+- feat(qol): mail contacts — address book side panel on the mail send tab (your alts + past recipients) with a remember-last-recipient toggle
+- feat(qol): trade & mail log — account-wide history of trades and sent/received mail, browsable via /quilog
+- feat(qol): encounter journal loot specs — spec-eligibility icons on Encounter Journal loot rows
+- feat(qol): communities privacy — click-to-reveal cover over community chat and roster (for streaming)
+- feat(qol): group death alert — on-screen text and optional sound when a party/raid member dies (feign-death filtered)
+- feat(qol): healer mana watcher — small movable frame with a mana bar for each healer in your group
+- feat(qol): focus + raid marker button — one click to set focus and put a raid marker on it (mouseover-aware; character macro or clickable button)
+- feat(qol): world map M+ teleports — panel on the world map listing the current season's dungeon teleports as click-to-cast buttons with cooldowns
 
 ## v4.1.0 - 2026-07-07
 
