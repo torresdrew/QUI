@@ -2801,7 +2801,11 @@ local function RenderAurasSection(sectionHost, ctx)
             forceSelectedIndex = forcedIndex,
             capabilities = {
                 elementTypes        = { filterStrip = true, tracked = true, missingRaidBuff = true },
-                trackedDisplayTypes = { icon = true, square = true, bar = true, healthTint = true },
+                -- border included: the wizard commits border elements onto
+                -- group-frame surfaces and the GF engine renders them
+                -- (R.RenderBorder) — omitting it here stranded wizard-created
+                -- border elements with no editor access to their display type.
+                trackedDisplayTypes = { icon = true, square = true, bar = true, healthTint = true, border = true },
                 cancelEligible      = false,
                 maxStripElements    = 4,   -- per-frame container cap: 40-man parse cost
                 allowSpecOverride   = true,

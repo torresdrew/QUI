@@ -403,6 +403,7 @@ do
             end
         end
         local chargeActive = chargeInfo and DecodePotentialSecretBoolean(chargeInfo.isActive)
+        -- @secret-safe: chargeInfo is C_ActionBar.GetActionCharges' return — table-or-nil per docs, so the and-falsy yield is nil, never a secret false; the truthy path routes through DecodePotentialSecretBoolean (IsSecretValue-guarded)
         if mayHaveCharges and chargeActive == true then
             if _abCooldownStats then _abCooldownStats.chargeInfoActive = _abCooldownStats.chargeInfoActive + 1 end
             if actionCanBeCached and _cooldownBatchActive then

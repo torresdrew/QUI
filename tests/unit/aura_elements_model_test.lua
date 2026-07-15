@@ -69,10 +69,13 @@ do
     d.classifications = { raid = true, dispellable = true, crowdControl = true }
     local dfs = E.CompileFilters(d)
     table.sort(dfs)
+    -- 68675: "dispellable by me" = HARMFUL|RAID (RAID_PLAYER_DISPELLABLE
+    -- widened to anyone-in-raid), so raid + dispellable now compile to the
+    -- SAME string and dedup onto one group.
     check("compile: harmful never emits RAID_IN_COMBAT (C API hard-errors on that combo); "
-        .. "crowdControl (ranked) negates raid, dispellable (legacy/unranked) stays bare",
+        .. "crowdControl (ranked) negates raid; dispellable dedups onto raid (both HARMFUL|RAID)",
         table.concat(dfs, ",") ==
-        "HARMFUL|CROWD_CONTROL|!RAID,HARMFUL|RAID,HARMFUL|RAID_PLAYER_DISPELLABLE",
+        "HARMFUL|CROWD_CONTROL|!RAID,HARMFUL|RAID",
         table.concat(dfs, ","))
 
     local off = E.NewFilterStripElement("HELPFUL")
@@ -102,6 +105,33 @@ do
     flags.filterFlags = { modifiers = true, exclusive = true }
     check("compile: flags mode with ONLY out-of-set tokens → empty (bare polarity fallback)",
         #E.CompileFilters(flags) == 0)
+
+    -- 68675 tokens: IMPORTANT and DISPELLABLE are engine-valid now — they
+    -- must compile, not silently drop.
+    flags.filterFlags = { IMPORTANT = true }
+    local imp = E.CompileFilters(flags)
+    check("compile: 68675 IMPORTANT token accepted",
+        #imp == 1 and imp[1] == "HELPFUL|IMPORTANT", tostring(imp[1]))
+    local harm = E.NewFilterStripElement("HARMFUL")
+    harm.filterMode = "flags"
+    harm.filterFlags = { DISPELLABLE = true }
+    local disp = E.CompileFilters(harm)
+    check("compile: 68675 DISPELLABLE token accepted",
+        #disp == 1 and disp[1] == "HARMFUL|DISPELLABLE", tostring(disp[1]))
+    check("valid tokens: new 68675 entries known to the canonicalizer",
+        E.IsKnownFilterString("HELPFUL|IMPORTANT") and E.IsKnownFilterString("HARMFUL|DISPELLABLE"))
+
+    -- Non-negatable tokens (engine ignores their "!" form; absence already
+    -- excludes the category): an "exclude" tri-state compiles to OMISSION,
+    -- never to a dead "!INCLUDE_NAME_PLATE_ONLY" component.
+    harm.filterFlags = { PLAYER = true, INCLUDE_NAME_PLATE_ONLY = "exclude" }
+    local nneg = E.CompileFilters(harm)
+    check("compile: excluded non-negatable token omitted (not emitted as !TOKEN)",
+        #nneg == 1 and nneg[1] == "HARMFUL|PLAYER", tostring(nneg[1]))
+    harm.filterFlags = { INCLUDE_NAME_PLATE_ONLY = true }
+    local npReq = E.CompileFilters(harm)
+    check("compile: non-negatable token still REQUIRABLE",
+        #npReq == 1 and npReq[1] == "HARMFUL|INCLUDE_NAME_PLATE_ONLY", tostring(npReq[1]))
 
     -- Legacy UF fallback: helpful/harmful master toggles stored as raid/raidInCombat.
     local legacy = E.NewFilterStripElement("HELPFUL")
@@ -236,8 +266,10 @@ end
 
 -- Spec-override engine (load-bearing for GF; deep-copy contract) ------------
 do
+    -- generated-form id ("e<N>") — the clone re-keys these; fixed semantic
+    -- ids are covered in the next block.
     local auras = { elements = { ["*"] = {
-        { id = "a", mode = "filterStrip", auraType = "HELPFUL", enabled = true,
+        { id = "e9", mode = "filterStrip", auraType = "HELPFUL", enabled = true,
           classifications = { raid = true }, whitelist = { [7] = true } },
     } } }
     E.EnableSpecOverride(auras, 268)
@@ -245,7 +277,7 @@ do
     check("override: HasSpecOverride true", E.HasSpecOverride(auras.elements, 268) == true)
     check("override: '*' key never overrides", E.HasSpecOverride(auras.elements, "*") == false)
     local src, copy = auras.elements["*"][1], auras.elements[268][1]
-    check("override: fresh element id", copy.id ~= src.id)
+    check("override: generated id re-keyed fresh", copy.id ~= src.id)
     check("override: DEEP copy — no table aliasing",
         copy.classifications ~= src.classifications and copy.whitelist ~= src.whitelist)
     copy.classifications.raid = false
@@ -256,6 +288,28 @@ do
     check("override: disable deletes the bucket (inherits '*')", auras.elements[268] == nil)
     E.DisableSpecOverride(auras, "*")
     check("override: disable('*') is a guarded no-op", auras.elements["*"] ~= nil)
+end
+
+-- Spec-override clone: fixed semantic ids survive (2026-07 re-review). The
+-- encounters page looks strips up by id ("encounterBoss"/"defensives") PER
+-- BUCKET — re-keying the clone orphans it from that lookup (page reports
+-- "Off") and the next write spawns a duplicate strip.
+do
+    local auras = { elements = { ["*"] = {
+        { id = "encounterBoss", mode = "filterStrip", auraType = "HARMFUL", enabled = true },
+        { id = "defensives", mode = "filterStrip", auraType = "HELPFUL", enabled = true },
+        { id = "e7", mode = "tracked", displayType = "icon", spells = { 774 }, enabled = true },
+    } } }
+    E.EnableSpecOverride(auras, 268)
+    local bucket = auras.elements[268]
+    local byId = {}
+    for _, e in ipairs(bucket) do byId[e.id] = e end
+    check("override clone: encounterBoss id preserved", byId.encounterBoss ~= nil)
+    check("override clone: defensives id preserved", byId.defensives ~= nil)
+    check("override clone: generated id re-keyed", byId.e7 == nil)
+    check("override clone: still 3 elements", #bucket == 3, tostring(#bucket))
+    check("override clone: fixed-id element is a deep copy",
+        byId.encounterBoss ~= auras.elements["*"][1])
 end
 
 -- EffectiveOnlyMine: per-spell override beats the element default, including
@@ -389,7 +443,7 @@ do
     -- "mine" sentinel (legacy "dispellable" preset SVs + the manual
     -- dispel-type UI): resolves player capability at compile time via
     -- ns.QUI_DispelRoles. The preset itself now compiles to the engine's
-    -- HARMFUL|RAID_PLAYER_DISPELLABLE classification instead.
+    -- HARMFUL|RAID classification instead (68675 player-dispellable).
     local m = E.NewFilterStripElement("HARMFUL")
     m.dispelFilterMode = "include"
     m.dispelTypes = "mine"

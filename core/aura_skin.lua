@@ -25,6 +25,43 @@ ns.Addon.AuraSkin = AuraSkin
 _G.QUI = _G.QUI or {}
 _G.QUI.AuraSkin = AuraSkin
 
+-- 68675: the frame provider applies DenyTaintedAccessWhenAurasAreSecret to
+-- every AuraButton child IMMEDIATELY AFTER initializeFrame
+-- (Blizzard_AuraContainerFrameProviders.lua CreateFrame). Birth styling
+-- inside initializeFrame is therefore always safe; any LATER tainted call
+-- on a button (restyle, SetCancelAuraButtons) hard-errors while
+-- ShouldAurasBeSecret() is true. Every post-birth button pass below gates
+-- on this and reschedules via ScheduleRestrictedRestyle — there is NO
+-- restriction-end event, so a short poll re-checks until it clears.
+local function AurasAreSecret()
+    return C_Secrets and C_Secrets.ShouldAurasBeSecret and C_Secrets.ShouldAurasBeSecret()
+end
+
+local _restrictedRestyle = {}   -- container -> true
+local _restrictedPollArmed = false
+local function ScheduleRestrictedRestyle(container)
+    _restrictedRestyle[container] = true
+    if _restrictedPollArmed then return end
+    local After = C_Timer and C_Timer.After
+    if not After then return end
+    _restrictedPollArmed = true
+    local function tick()
+        if AurasAreSecret() then
+            After(0.5, tick)
+            return
+        end
+        _restrictedPollArmed = false
+        local run = _restrictedRestyle
+        _restrictedRestyle = {}
+        for c in pairs(run) do
+            if c._quiProfile then
+                AuraSkin.Restyle(c, c._quiProfile)
+            end
+        end
+    end
+    After(0.5, tick)
+end
+
 -- ns.AuraElements, resolved lazily: TOC order loads this file BEFORE
 -- core/aura_elements.lua (QUI.toc lists aura_skin.lua ahead of
 -- aura_elements.lua), so it must not be captured at file-load time — only
@@ -459,7 +496,13 @@ function AuraSkin.Configure(container, profile, groups)
 
     -- Re-style every button we've seen so an OOC config change (border,
     -- font, swipe, icon size) propagates without a /reload — initializeFrame
-    -- only styles a button at birth.
+    -- only styles a button at birth. Skipped while auras are secret (68675
+    -- restricted children, see AurasAreSecret above); buttons keep their
+    -- birth styling and the pass replays once the restriction clears.
+    if AurasAreSecret() then
+        ScheduleRestrictedRestyle(container)
+        return
+    end
     local reg = container._quiButtons
     if reg then
         for i = 1, #reg do
@@ -483,6 +526,14 @@ end
 -- live buttons even when the full reconcile is skipped.
 function AuraSkin.Restyle(container, profile)
     container._quiProfile = profile
+    -- 68675: button writes hard-error on restricted children while auras
+    -- are secret — defer to the restriction-clear poll instead. (This was
+    -- the "combat-legal" fallback path; combat legality no longer implies
+    -- child-access legality.)
+    if AurasAreSecret() then
+        ScheduleRestrictedRestyle(container)
+        return
+    end
     local reg = container._quiButtons
     if not reg then return end
     for i = 1, #reg do

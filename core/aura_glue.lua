@@ -130,6 +130,28 @@ function G.FilterStringUsable(unit, filterString)
     -- so the re-probe is cheap).
     if cached == true then return true end
     local ok = (pcall(C_UnitAuras.GetUnitAuras, unit, filterString))
+    if ok then
+        probeVerdict[filterString] = true
+        return true
+    end
+    -- Failure attribution: GetUnitAuras can fail for reasons other than the
+    -- filter string (a restriction racing in after the ShouldAurasBeSecret
+    -- check above, a transient unit problem). Re-probe with the bare
+    -- polarity baseline — always C-valid — as the discriminator: if the
+    -- baseline ALSO fails, the environment is unusable, so fail OPEN
+    -- WITHOUT caching (the string already passed IsValidFilterString, and
+    -- an uncached miss gets a clean re-probe later — caching false here
+    -- would retire a valid group if restrictions begin before the next
+    -- unrestricted probe).
+    local baselineOk = (pcall(C_UnitAuras.GetUnitAuras, unit, "HELPFUL"))
+    if not baselineOk then return true end
+    -- Baseline healthy: retry the candidate ONCE before caching a rejection.
+    -- The environment can recover between the two probes (a restriction
+    -- window closing after the candidate failed but before the baseline
+    -- ran) — a one-shot failure in that gap must not become a cached false
+    -- that the restricted branch later trusts for the whole encounter. A
+    -- deterministic C-parser rejection fails the retry identically.
+    ok = (pcall(C_UnitAuras.GetUnitAuras, unit, filterString))
     probeVerdict[filterString] = ok
     return ok
 end
@@ -202,35 +224,74 @@ function G.RunConfigPass(container, profile, groups, allowCreate)
     return ok
 end
 
--- Shared combat-regen replay queue. Owners (frames/hosts) register a
+-- Shared combat/restriction replay queue. Owners (frames/hosts) register a
 -- replay closure; each owner holds at most ONE pending closure (last write
 -- wins — the closure re-derives everything from settings at fire time).
--- Fires once at PLAYER_REGEN_ENABLED; immediate execution when OOC.
+-- Fires only when BOTH blockers are clear: combat lockdown
+-- (PLAYER_REGEN_ENABLED) AND the 12.1 aura restriction. 68675 AuraButton
+-- children carry DenyTaintedAccessWhenAurasAreSecret (the provider applies
+-- it immediately after initializeFrame), so a replay that styles children
+-- while ShouldAurasBeSecret() hard-errors — regen alone is NOT a
+-- sufficient fire signal: restrictions have no end event and are not
+-- combat-lockdown-coupled. While work is pending and the restriction is
+-- up, a short C_Timer poll re-checks until it clears (poll runs ONLY while
+-- something is queued).
 local _pending = {}
 local _regenFrame
+local _pollArmed = false
+
+local function AurasAreSecret()
+    return C_Secrets and C_Secrets.ShouldAurasBeSecret and C_Secrets.ShouldAurasBeSecret()
+end
+
+local FlushPending
+
+local function ArmRestrictionPoll()
+    if _pollArmed then return end
+    local After = C_Timer and C_Timer.After
+    if not After then return end
+    _pollArmed = true
+    After(0.5, function()
+        _pollArmed = false
+        FlushPending()
+    end)
+end
+
+FlushPending = function()
+    if next(_pending) == nil then return end
+    if (InCombatLockdown and InCombatLockdown()) or AurasAreSecret() then
+        ArmRestrictionPoll()
+        return
+    end
+    local run = _pending
+    _pending = {}
+    for owner, fn in pairs(run) do
+        local ok, err = pcall(fn, owner)
+        if not ok then
+            (ns.DebugPrint or print)("QUI AuraGlue regen replay error: " .. tostring(err))
+        end
+    end
+end
+
 local function EnsureRegenFrame()
     if _regenFrame or not CreateFrame then return end
     _regenFrame = CreateFrame("Frame")
     _regenFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
-    _regenFrame:SetScript("OnEvent", function()
-        local run = _pending
-        _pending = {}
-        for owner, fn in pairs(run) do
-            local ok, err = pcall(fn, owner)
-            if not ok then
-                (ns.DebugPrint or print)("QUI AuraGlue regen replay error: " .. tostring(err))
-            end
-        end
-    end)
+    _regenFrame:SetScript("OnEvent", FlushPending)
 end
 
 function G.QueueRegenWork(owner, fn)
-    if not InCombatLockdown or not InCombatLockdown() then
+    if (not InCombatLockdown or not InCombatLockdown()) and not AurasAreSecret() then
         fn(owner)
         return
     end
     EnsureRegenFrame()
     _pending[owner] = fn
+    -- Combat end fires the regen event; a restriction active WITHOUT combat
+    -- lockdown (or outliving it) has no event — poll until it clears.
+    if not (InCombatLockdown and InCombatLockdown()) then
+        ArmRestrictionPoll()
+    end
 end
 
 return G

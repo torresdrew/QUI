@@ -126,6 +126,197 @@ do -- CommitTrackedHoTs
     end)())
 end
 
+do -- CommitTrackedHoTs: staged ids inside multi-spell elements (2026-07
+    -- re-review). A staged id must be removed from EVERY position of an
+    -- existing element — not just spells[1] — and the element survives with
+    -- its remaining spells; it is only deleted when nothing is left.
+    local function count(bucket, sid)
+        local n = 0
+        for _, e in ipairs(bucket) do
+            for _, s in ipairs(e.spells or {}) do
+                if s == sid then n = n + 1 end
+            end
+        end
+        return n
+    end
+    -- staged id at spells[2]: {774,8936} keeps 774, 8936 moves to the new
+    -- element (the old code left it in place AND added a duplicate).
+    local bucket = { { id = "m1", enabled = true, mode = "tracked",
+        displayType = "icon", spells = { 774, 8936 }, anchor = "TOPLEFT" } }
+    W.CommitTrackedHoTs(bucket, { [8936] = { corner = "TOPRIGHT", displayType = "icon" } })
+    check("multi: 8936 tracked exactly once", count(bucket, 8936) == 1, tostring(count(bucket, 8936)))
+    check("multi: 774 survives in old element", count(bucket, 774) == 1, tostring(count(bucket, 774)))
+    check("multi: old element kept (spells remain)", bucket[1].id == "m1" and #bucket == 2, tostring(#bucket))
+
+    -- staged id at spells[1]: {774,8936} must NOT be deleted whole — the old
+    -- code dropped 8936 entirely here.
+    local bucket2 = { { id = "m2", enabled = true, mode = "tracked",
+        displayType = "icon", spells = { 774, 8936 }, anchor = "TOPLEFT" } }
+    W.CommitTrackedHoTs(bucket2, { [774] = { corner = "BOTTOMLEFT", displayType = "bar" } })
+    check("multi head: 8936 not lost", count(bucket2, 8936) == 1, tostring(count(bucket2, 8936)))
+    check("multi head: 774 tracked exactly once", count(bucket2, 774) == 1, tostring(count(bucket2, 774)))
+
+    -- every spell staged: the emptied element is removed.
+    local bucket3 = { { id = "m3", enabled = true, mode = "tracked",
+        displayType = "icon", spells = { 774, 8936 }, anchor = "TOPLEFT" } }
+    W.CommitTrackedHoTs(bucket3, {
+        [774]  = { corner = "TOPLEFT", displayType = "icon" },
+        [8936] = { corner = "TOPRIGHT", displayType = "icon" },
+    })
+    for _, e in ipairs(bucket3) do
+        check("emptied element removed", e.id ~= "m3")
+    end
+    check("both spells re-committed", count(bucket3, 774) == 1 and count(bucket3, 8936) == 1)
+end
+
+do -- CommitTrackedHoTs: slot occupancy (2026-07 re-review round 2). An icon
+    -- element renders one indicator PER SPELL (R.RenderIcon), so a surviving
+    -- multi-spell element spans #spells slots — the new element must step
+    -- past its LAST icon, not its first.
+    local bucket = { { id = "m1", enabled = true, mode = "tracked",
+        displayType = "icon", spells = { 111, 222, 333 }, anchor = "TOPLEFT", iconSize = 16 } }
+    W.CommitTrackedHoTs(bucket, { [222] = { corner = "TOPLEFT", displayType = "icon" } })
+    local new222
+    for _, e in ipairs(bucket) do
+        if e.id ~= "m1" and e.spells and e.spells[1] == 222 then new222 = e end
+    end
+    check("span: survivor keeps {111,333}", #bucket[1].spells == 2)
+    check("span: new element steps past BOTH surviving icons",
+        new222 and new222.offsetX == 36, tostring(new222 and new222.offsetX))
+
+    -- Hole reuse: three singles at slots 0/1/2; re-staging the middle one
+    -- frees slot 1, and the recommit lands back in the hole instead of
+    -- stacking past slot 2 onto the third icon.
+    local b2 = {}
+    W.CommitTrackedHoTs(b2, {
+        [100] = { corner = "TOPLEFT", displayType = "icon" },
+        [200] = { corner = "TOPLEFT", displayType = "icon" },
+        [300] = { corner = "TOPLEFT", displayType = "icon" },
+    })
+    W.CommitTrackedHoTs(b2, { [200] = { corner = "TOPLEFT", displayType = "icon" } })
+    local by = {}
+    for _, e in ipairs(b2) do by[e.spells[1]] = e end
+    check("hole: re-staged element reuses the freed slot",
+        (by[200].offsetX or 0) == 18, tostring(by[200].offsetX))
+    check("hole: third element untouched", by[300].offsetX == 36, tostring(by[300].offsetX))
+
+    -- Squares span #spells too: EVERY tracked container element gets one
+    -- slot per spell (core/aura_slots.lua Sync — displayType only affects
+    -- the skin). 2026-07 round-3 review reproduced the square collision.
+    local b3 = { { id = "sq", enabled = true, mode = "tracked",
+        displayType = "square", spells = { 111, 222, 333 }, anchor = "TOPLEFT", iconSize = 16 } }
+    W.CommitTrackedHoTs(b3, { [222] = { corner = "TOPLEFT", displayType = "square" } })
+    local newSq
+    for _, e in ipairs(b3) do
+        if e.id ~= "sq" and e.spells and e.spells[1] == 222 then newSq = e end
+    end
+    check("square span: new square steps past both survivors",
+        newSq and newSq.offsetX == 36, tostring(newSq and newSq.offsetX))
+
+    -- Mixed sizes are PIXEL intervals, not ordinal slots: a retained 30px
+    -- two-spell icon spans [0,64); a new 16px icon must start at 64, not at
+    -- ordinal slot 2 (= 36px, inside the survivor's second icon).
+    local b4 = { { id = "big", enabled = true, mode = "tracked",
+        displayType = "icon", spells = { 111, 333 }, anchor = "TOPLEFT", iconSize = 30 } }
+    W.CommitTrackedHoTs(b4, { [222] = { corner = "TOPLEFT", displayType = "icon" } })
+    local new16
+    for _, e in ipairs(b4) do
+        if e.id ~= "big" and e.spells and e.spells[1] == 222 then new16 = e end
+    end
+    check("mixed sizes: new icon clears the 30px survivor in pixels",
+        new16 and new16.offsetX == 64, tostring(new16 and new16.offsetX))
+
+    -- maxIcons caps the reserved span: 3 spells capped to 2 rendered icons
+    -- occupy [0,36), so the next element lands at 36.
+    local b5 = { { id = "cap", enabled = true, mode = "tracked", maxIcons = 2,
+        displayType = "icon", spells = { 111, 333, 444 }, anchor = "TOPLEFT", iconSize = 16 } }
+    W.CommitTrackedHoTs(b5, { [222] = { corner = "TOPLEFT", displayType = "icon" } })
+    local capped
+    for _, e in ipairs(b5) do
+        if e.id ~= "cap" and e.spells and e.spells[1] == 222 then capped = e end
+    end
+    check("maxIcons: span capped to rendered icons",
+        capped and capped.offsetX == 36, tostring(capped and capped.offsetX))
+
+    -- Geometry mirrors the runtime (2026-07 round-4): per-element SPACING is
+    -- part of the step (AnchorSlot: size + profile.spacing) — a retained
+    -- 16px icon with spacing 10 occupies [0,26), so the new icon starts at
+    -- 26 (the hardcoded +2 put it at 18, overlapping by 6px)...
+    local b6 = { { id = "sp", enabled = true, mode = "tracked",
+        displayType = "icon", spells = { 111 }, anchor = "TOPLEFT",
+        iconSize = 16, spacing = 10 } }
+    W.CommitTrackedHoTs(b6, { [222] = { corner = "TOPLEFT", displayType = "icon" } })
+    local spNew
+    for _, e in ipairs(b6) do
+        if e.id ~= "sp" and e.spells and e.spells[1] == 222 then spNew = e end
+    end
+    check("spacing: survivor's spacing widens its occupied cell",
+        spNew and spNew.offsetX == 26, tostring(spNew and spNew.offsetX))
+
+    -- ...an element with NO iconSize uses the ElementProfile fallback 22
+    -- (not the NewTrackedElement seed 16)...
+    local b7 = { { id = "prof", enabled = true, mode = "tracked",
+        displayType = "icon", spells = { 111 }, anchor = "TOPLEFT" } }
+    W.CommitTrackedHoTs(b7, { [222] = { corner = "TOPLEFT", displayType = "icon" } })
+    local profNew
+    for _, e in ipairs(b7) do
+        if e.id ~= "prof" and e.spells and e.spells[1] == 222 then profNew = e end
+    end
+    check("profile default: sizeless icon occupies 22+2",
+        profNew and profNew.offsetX == 24, tostring(profNew and profNew.offsetX))
+
+    -- ...and a bar with no bar config renders at the runtime 12px fallback,
+    -- not a 4px guess (the guess produced overlapping bars).
+    local b8 = { { id = "bar0", enabled = true, mode = "tracked",
+        displayType = "bar", spells = { 111 }, anchor = "BOTTOMLEFT" } }
+    W.CommitTrackedHoTs(b8, { [222] = { corner = "BOTTOMLEFT", displayType = "bar" } })
+    local barNew
+    for _, e in ipairs(b8) do
+        if e.id ~= "bar0" and e.spells and e.spells[1] == 222 then barNew = e end
+    end
+    check("bar fallback: config-less bar occupies 12+2",
+        barNew and barNew.offsetY == 14, tostring(barNew and barNew.offsetY))
+
+    -- Round-5 grow-direction probes: spans follow the element's OWN
+    -- growDirection (AnchorSlot), not an |offset|+forward assumption.
+    local function newFor(bucket)
+        for _, e in ipairs(bucket) do
+            if e.spells and e.spells[1] == 222 and e.id ~= "g" then return e end
+        end
+    end
+    -- LEFT-growing survivor {111,333} at off 0 occupies [-18, 18) — the new
+    -- icon fits at +18, NOT at 36 (the forward model double-reserved).
+    local gL = { { id = "g", enabled = true, mode = "tracked", displayType = "icon",
+        spells = { 111, 333 }, anchor = "TOPLEFT", iconSize = 16, growDirection = "LEFT" } }
+    W.CommitTrackedHoTs(gL, { [222] = { corner = "TOPLEFT", displayType = "icon" } })
+    check("grow LEFT: span extends negative, new icon at +18",
+        newFor(gL).offsetX == 18, tostring(newFor(gL).offsetX))
+
+    -- UP-growing survivor occupies the Y axis; its cross-cell blocks the
+    -- corner, so the new icon steps sideways past ONE cell only.
+    local gU = { { id = "g", enabled = true, mode = "tracked", displayType = "icon",
+        spells = { 111, 333 }, anchor = "BOTTOMLEFT", iconSize = 16, growDirection = "UP" } }
+    W.CommitTrackedHoTs(gU, { [222] = { corner = "BOTTOMLEFT", displayType = "icon" } })
+    check("grow UP: vertical strip blocks one X cell, new icon at +18",
+        newFor(gU).offsetX == 18, tostring(newFor(gU).offsetX))
+
+    -- CENTER-growing 3-spell survivor anchors cells at -18/0/+18, each
+    -- extending +18 → span [-18, 36); the new icon clears the +edge at 36.
+    local gC = { { id = "g", enabled = true, mode = "tracked", displayType = "icon",
+        spells = { 111, 333, 444 }, anchor = "TOPLEFT", iconSize = 16, growDirection = "CENTER" } }
+    W.CommitTrackedHoTs(gC, { [222] = { corner = "TOPLEFT", displayType = "icon" } })
+    check("grow CENTER: symmetric span [-18,36), new icon at 36",
+        newFor(gC).offsetX == 36, tostring(newFor(gC).offsetX))
+
+    -- Horizontal-grow BAR stacks along X with length-sized cells; a new
+    -- wizard bar at the same corner clears its thickness row vertically.
+    local gB = { { id = "g", enabled = true, mode = "tracked", displayType = "bar",
+        spells = { 111, 333 }, anchor = "BOTTOMLEFT", growDirection = "RIGHT" } }
+    W.CommitTrackedHoTs(gB, { [222] = { corner = "BOTTOMLEFT", displayType = "bar" } })
+    check("horizontal bar row: new bar steps above its thickness cell",
+        newFor(gB).offsetY == 14, tostring(newFor(gB).offsetY))
+end
+
 do -- CommitTrackedHoTs: same-corner HoTs step sideways (matches step-4 preview)
     local bucket = {}
     W.CommitTrackedHoTs(bucket, {
@@ -167,13 +358,19 @@ do -- CommitTrackedHoTs: same-corner BARS step vertically (they're wide — a
     local by = {}
     for _, e in ipairs(bucket) do by[e.spells[1]] = e end
     -- Step derives from the element's own bar thickness (whatever
-    -- NewTrackedElement seeds) + 2px gap.
+    -- NewTrackedElement seeds) + 2px gap. Staged ids commit in sorted order,
+    -- so the icon (200) claims the corner cell first; round-5 cross-axis
+    -- occupancy then pushes BOTH bars below the icon's row (previously the
+    -- first bar sat directly on top of the icon) — the first bar lands one
+    -- ICON row down, the second one bar-step below that.
     local step = ((by[8936].bar and by[8936].bar.thickness) or 4) + 2
-    check("first TOPLEFT bar unshifted", (by[774].offsetY or 0) == 0, tostring(by[774].offsetY))
-    check("second TOPLEFT bar steps down (thickness+2)", by[8936].offsetY == -step,
-        tostring(by[8936].offsetY) .. " vs -" .. tostring(step))
+    local iconRow = 16 + 2 -- staged icon: NewTrackedElement iconSize 16 + spacing 2
+    check("icon claims the corner cell", (by[200].offsetX or 0) == 0 and (by[200].offsetY or 0) == 0)
+    check("first TOPLEFT bar steps below the icon row", by[774].offsetY == -iconRow,
+        tostring(by[774].offsetY) .. " vs -" .. tostring(iconRow))
+    check("second TOPLEFT bar one bar-step further down", by[8936].offsetY == -(iconRow + step),
+        tostring(by[8936].offsetY) .. " vs -" .. tostring(iconRow + step))
     check("bars don't shift sideways", (by[8936].offsetX or 0) == 0, tostring(by[8936].offsetX))
-    check("icon slot independent of bar slot", (by[200].offsetX or 0) == 0 and (by[200].offsetY or 0) == 0)
 
     local b2 = {}
     W.CommitTrackedHoTs(b2, {
@@ -243,6 +440,42 @@ do -- PARTY intent menus exist and use valid WhatToShow keys
         for _, e in ipairs(W.PARTY_DEBUFF_INTENTS) do if e.key == "boss" then return true end end
         return false
     end)())
+end
+
+do -- Round-6 wrapped-occupancy: retained elements block their FULL wrapped
+   -- rectangle (widest row × row count), not just the first row/column.
+    local function newFor(bucket)
+        for _, e in ipairs(bucket) do
+            if e.spells and e.spells[1] == 222 and e.id ~= "w" then return e end
+        end
+    end
+    -- 4-spell icon element wrapped at 2/row on TOPLEFT: rows stack DOWN, so
+    -- Y-occupancy is 2 cells = [-36, 0). A new BAR (stacking down from the
+    -- TOP corner) must clear BOTH rows: offsetY -36, not -18 (inside row 2).
+    local wA = { { id = "w", enabled = true, mode = "tracked", displayType = "icon",
+        spells = { 111, 333, 444, 555 }, anchor = "TOPLEFT", iconSize = 16,
+        iconsPerRow = 2 } }
+    W.CommitTrackedHoTs(wA, { [222] = { corner = "TOPLEFT", displayType = "bar" } })
+    check("wrap: new bar clears BOTH wrapped rows",
+        newFor(wA).offsetY == -36, tostring(newFor(wA).offsetY))
+    -- Same element, new ICON: X-occupancy is the widest ROW (2 cells =
+    -- [0, 36)), so the icon lands at 36 — the round-5 model already had the
+    -- first row right; guard it stays capped at iconsPerRow, not #spells.
+    local wB = { { id = "w", enabled = true, mode = "tracked", displayType = "icon",
+        spells = { 111, 333, 444, 555 }, anchor = "TOPLEFT", iconSize = 16,
+        iconsPerRow = 2 } }
+    W.CommitTrackedHoTs(wB, { [222] = { corner = "TOPLEFT", displayType = "icon" } })
+    check("wrap: main axis stays capped at the widest row",
+        newFor(wB).offsetX == 36, tostring(newFor(wB).offsetX))
+    -- Vertical (DOWN) 4-spell element wrapped at 2/column on TOPLEFT: extra
+    -- COLUMNS advance rightward, X-occupancy 2 cells = [0, 36); a new icon
+    -- must clear both columns: offsetX 36, not 18 (inside column 2).
+    local wC = { { id = "w", enabled = true, mode = "tracked", displayType = "icon",
+        spells = { 111, 333, 444, 555 }, anchor = "TOPLEFT", iconSize = 16,
+        iconsPerRow = 2, growDirection = "DOWN" } }
+    W.CommitTrackedHoTs(wC, { [222] = { corner = "TOPLEFT", displayType = "icon" } })
+    check("wrap: new icon clears BOTH wrapped columns of a vertical element",
+        newFor(wC).offsetX == 36, tostring(newFor(wC).offsetX))
 end
 
 print("aura_wizard_test "..(failures==0 and "OK" or "FAILED")); os.exit(failures==0 and 0 or 1)

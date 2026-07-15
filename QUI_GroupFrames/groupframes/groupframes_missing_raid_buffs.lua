@@ -154,9 +154,12 @@ local function BuildCDMGroupBuffEntries(out)
     -- (GetCurrentHiddenGroupBuffSpellIDs): the saved layout's hidden list is
     -- AUTHORITATIVE when readable — a user can un-hide a HideByDefault buff,
     -- the flag is only the initial seed — and the static flags apply solely
-    -- when no layout list could be read. C_UnitAuras.GetHiddenGroupBuffs
-    -- (the synced copy of the same list) is merged in either way; empty
-    -- because not-yet-synced just adds nothing.
+    -- when no layout list could be read. C_UnitAuras.GetHiddenGroupBuffs is
+    -- the C-side sync TARGET of that same list (SyncHiddenGroupBuffs writes
+    -- it; Blizzard never reads it back) — it is consulted ONLY as a fallback
+    -- when the layout list is unreadable: merging it on top of a read layout
+    -- list would let a stale not-yet-resynced copy re-hide a buff the user
+    -- just un-hid.
     local hidden = {}
     local layoutListRead = false
     local CVS = _G.CooldownViewerSettings
@@ -173,11 +176,13 @@ local function BuildCDMGroupBuffEntries(out)
             for _, sid in ipairs(list) do hidden[sid] = true end
         end
     end
-    local UA = _G.C_UnitAuras
-    if UA and UA.GetHiddenGroupBuffs then
-        local okHidden, hiddenIDs = pcall(UA.GetHiddenGroupBuffs)
-        if okHidden and type(hiddenIDs) == "table" then
-            for _, sid in ipairs(hiddenIDs) do hidden[sid] = true end
+    if not layoutListRead then
+        local UA = _G.C_UnitAuras
+        if UA and UA.GetHiddenGroupBuffs then
+            local okHidden, hiddenIDs = pcall(UA.GetHiddenGroupBuffs)
+            if okHidden and type(hiddenIDs) == "table" then
+                for _, sid in ipairs(hiddenIDs) do hidden[sid] = true end
+            end
         end
     end
 

@@ -1292,7 +1292,7 @@ function R.RefreshUpdatedIcons(self, frames, nFrames, unit, updatedAuraInstanceI
                                 if updatedAuraInstanceIDs[j] == instID then hit = true; break end
                             end
                             if hit then
-                                local dObj = GetDuration(unit, instID)
+                                local dObj = GetDuration(unit, instID) -- @secret-safe: caller-gated — the fast-update (1910) and mixed-delta (cacheUpdated) paths both bail behind AurasAreSecret before reseating
                                 local cd = icon.cooldown
                                 if cd and cd.SetCooldownFromDurationObject and dObj then
                                     pcall(cd.SetCooldownFromDurationObject, cd, dObj, true)

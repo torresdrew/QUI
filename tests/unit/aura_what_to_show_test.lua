@@ -20,8 +20,9 @@ do -- ApplyWhatToShow sets the canonical combo and clears prior modifiers
     local e = E.NewFilterStripElement("HARMFUL")
     e.onlyMine = true; e.gateBossAura = true            -- pre-existing noise
     E.ApplyWhatToShow(e, "dispellable")
-    -- Engine-evaluated capability: classify -> HARMFUL|RAID_PLAYER_DISPELLABLE
-    -- (talent-aware, live on respec) instead of the class/spec school table.
+    -- Engine-evaluated capability: classify -> HARMFUL|RAID (68675
+    -- player-dispellable; talent-aware, live on respec) instead of the
+    -- class/spec school table.
     check("dispellable classify", e.filterMode == "classify")
     local nKeys = 0
     for _ in pairs(e.classifications or {}) do nKeys = nKeys + 1 end

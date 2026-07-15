@@ -317,7 +317,7 @@ local function BuildAurasEncountersContent(host, ctx, section)
         ctx.state.selectedSurfaceValue = SURFACES[1].value
     end
 
-    local noteText = ns.L["Boss abilities are debuffs on YOU and your group, and 12.1 hides their exact spell identities from addons, so per-ability picks aren't possible. Use the boss-debuff strip — it shows boss-applied debuffs (optionally only role-relevant ones), appears on pull and self-hides after the fight. The ability list below is a reference catalog."]
+    local noteText = ns.L["Boss abilities are debuffs on YOU and your group, and 12.1 hides their exact spell identities from addons, so per-ability picks aren't possible. Use the boss-debuff strip — it shows boss-applied debuffs (optionally widened to include debuffs Blizzard tags for a role), appears on pull and self-hides after the fight. The ability list below is a reference catalog."]
     local note = GUI:CreateLabel(host, noteText, 12, C.textMuted)
     note:SetPoint("TOPLEFT", host, "TOPLEFT", 0, -y)
     note:SetWidth(math.max((ctx and ctx.width or 700) - 16, 200))
@@ -364,7 +364,7 @@ local function BuildAurasEncountersContent(host, ctx, section)
             options = {
                 { value = "off",  text = ns.L["Off"] },
                 { value = "all",  text = ns.L["All boss debuffs"] },
-                { value = "role", text = ns.L["Role-relevant boss debuffs"] },
+                { value = "role", text = ns.L["Boss + role-tagged debuffs"] },
             },
             meta = { description = ns.L["Shows debuffs Blizzard marks as boss debuffs — or boss plus role-tagged debuffs — in a dedicated strip on this surface. Configure its placement in the element editor."] },
             height = 30,

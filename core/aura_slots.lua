@@ -27,6 +27,13 @@
 --     from a manual timestamp read.
 local ADDON_NAME, ns = ...
 local S = ns.AuraSlots or {}
+
+-- 68675: slot frames carry DenyTaintedAccessWhenAurasAreSecret (applied by
+-- the frame provider right after initializeFrame) — tainted child access
+-- while auras are secret hard-errors. Gate every post-birth child write.
+local function AurasAreSecret()
+    return C_Secrets and C_Secrets.ShouldAurasBeSecret and C_Secrets.ShouldAurasBeSecret()
+end
 ns.AuraSlots = S
 _G.QUI = _G.QUI or {}
 _G.QUI.AuraSlots = S
@@ -236,8 +243,19 @@ function S.Sync(container, element, allowCreate)
                     slot.parked = false
                 elseif allowCreate and not InCombatLockdown() then
                     local key = "t" .. tostring(want)
+                    -- Style + anchor at BIRTH via initializeFrame: the frame
+                    -- provider runs it BEFORE applying the 68675 access
+                    -- restrictions (Blizzard_AuraContainerFrameProviders
+                    -- CreateFrame), so a slot created while auras are secret
+                    -- still comes up fully styled — the post-birth pass
+                    -- below is restriction-gated and would skip it.
+                    local slotIndex, slotTotal = want, total
                     local frame = container:AddAuraSlot(key, base, {
                         candidateFilters = SlotCandidateFilters(element, spellID),
+                        initializeFrame = function(f)
+                            StyleSlot(f, element, slotIndex)
+                            AnchorSlot(f, container, element, slotIndex, slotTotal)
+                        end,
                     })
                     slot = { key = key, frame = frame, parked = false }
                     pool[want] = slot
@@ -247,13 +265,26 @@ function S.Sync(container, element, allowCreate)
                     complete = false
                 end
                 if slot and slot.frame then
-                    if StyleSlot(slot.frame, element, want) == false then
+                    -- 68675: slot frames are AuraButton children carrying
+                    -- DenyTaintedAccessWhenAurasAreSecret — StyleSlot/
+                    -- AnchorSlot (SetSize/SetPoint on the child) hard-error
+                    -- while auras are secret. Report incomplete instead; the
+                    -- caller's QueueRegenWork replay is restriction-aware
+                    -- (core/aura_glue.lua) and re-runs Sync once both combat
+                    -- and the restriction clear. The container-level
+                    -- SetAuraSlot* rewrites above stay live — only CHILD
+                    -- access is restricted.
+                    if AurasAreSecret() then
                         complete = false
-                    end
-                    if not InCombatLockdown() then
-                        AnchorSlot(slot.frame, container, element, want, total)
                     else
-                        complete = false
+                        if StyleSlot(slot.frame, element, want) == false then
+                            complete = false
+                        end
+                        if not InCombatLockdown() then
+                            AnchorSlot(slot.frame, container, element, want, total)
+                        else
+                            complete = false
+                        end
                     end
                 end
             end

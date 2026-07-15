@@ -6480,7 +6480,7 @@ return {
       Default = {
         _defaultsVersion = 3,
         _needsLateAbImport = true,
-        _schemaVersion = 54,
+        _schemaVersion = 55,
         damageMeter = {
           appearance = {
             global = {

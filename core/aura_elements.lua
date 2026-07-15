@@ -56,10 +56,18 @@ local BUFF_CLASSIFICATION_MAP = {
     bigDefensive      = "HELPFUL|BIG_DEFENSIVE",
     externalDefensive = "HELPFUL|EXTERNAL_DEFENSIVE",
 }
+-- 12.1.0.68675 dispel-filter semantics (Blizzard_FrameXMLUtil/AuraUtil.lua
+-- AuraFilters): RAID on HARMFUL = "harmful auras the PLAYER can dispel";
+-- RAID_PLAYER_DISPELLABLE = "auras SOMEONE in the player's raid can dispel
+-- (including helpful enrages on enemies)". The "dispellable" intent is
+-- labeled "Dispellable by me" in the editor, so it compiles to HARMFUL|RAID
+-- — RAID_PLAYER_DISPELLABLE would show raid-wide dispels the player cannot
+-- touch. (Pre-68675 both strings behaved close enough that the distinction
+-- never surfaced; the 68675 corpus made it explicit.)
 local DEBUFF_CLASSIFICATION_MAP = {
     harmful      = { "HARMFUL|RAID" },
     raid         = "HARMFUL|RAID",
-    dispellable  = "HARMFUL|RAID_PLAYER_DISPELLABLE",
+    dispellable  = "HARMFUL|RAID",
     crowdControl = "HARMFUL|CROWD_CONTROL",
 }
 
@@ -368,12 +376,14 @@ function E.ApplyWhatToShow(element, key)
     elseif key == "purgeable" then
         element.gateStealable = true
     elseif key == "dispellable" then
-        -- Engine-evaluated "player can dispel this" (HARMFUL|RAID_PLAYER_
-        -- DISPELLABLE, AuraUtil.AuraFilters.RaidPlayerDispellable): the C side
-        -- knows the player's ACTUAL dispel kit including talents, and tracks
-        -- respecs live — strictly better than our class/spec school table
-        -- (ns.QUI_DispelRoles), which stays only as the resolver for manual
-        -- dispel-TYPE filters ("mine" sentinel) and the dispel-roles page.
+        -- Engine-evaluated "player can dispel this" (HARMFUL|RAID — 68675
+        -- semantics; RAID_PLAYER_DISPELLABLE means "anyone in the raid can
+        -- dispel" and is the wrong filter for a personal cleanse view): the
+        -- C side knows the player's ACTUAL dispel kit including talents, and
+        -- tracks respecs live — strictly better than our class/spec school
+        -- table (ns.QUI_DispelRoles), which stays only as the resolver for
+        -- manual dispel-TYPE filters ("mine" sentinel) and the dispel-roles
+        -- page.
         element.filterMode = "classify"
         element.classifications = { dispellable = true }
     elseif key == "crowdControl" then
@@ -460,8 +470,20 @@ local VALID_FILTER_TOKENS = {
     PLAYER = true, CANCELABLE = true, MAW = true,
     EXTERNAL_DEFENSIVE = true, CROWD_CONTROL = true, RAID_IN_COMBAT = true,
     RAID_PLAYER_DISPELLABLE = true, BIG_DEFENSIVE = true,
+    -- 68675 additions: IMPORTANT (helpful auras shown on enemy nameplates
+    -- even when non-stealable), DISPELLABLE (dispellable by ANY source,
+    -- regardless of the player's raid).
+    IMPORTANT = true, DISPELLABLE = true,
 }
 E.VALID_FILTER_TOKENS = VALID_FILTER_TOKENS
+
+-- Tokens whose NEGATION the engine silently ignores (AuraUtil.lua:
+-- "IncludeNameplateOnly and Maw filters are not negatable (negation will be
+-- ignored if applied)"). !INCLUDE_NAME_PLATE_ONLY still VALIDATES but means
+-- nothing — and since ABSENCE of these tokens already filters the category
+-- out, an "exclude" tri-state compiles to simply omitting the token: same
+-- matching behavior, no dead component in the string.
+local NON_NEGATABLE_TOKENS = { INCLUDE_NAME_PLATE_ONLY = true, MAW = true }
 
 -- Filter-string canonicalization (Wave 4 Task 4 — filter-group retention).
 -- PTR4 aura groups are addon-unremovable and core/aura_skin.lua Configure
@@ -590,7 +612,10 @@ function E.CompileFilters(element)
             if VALID_FILTER_TOKENS[tok] and not (harmful and HELPFUL_ONLY_TOKENS[tok]) then
                 if v == true then
                     req[#req + 1] = tok
-                elseif v == "exclude" then
+                elseif v == "exclude" and not NON_NEGATABLE_TOKENS[tok] then
+                    -- Non-negatable tokens (nameplate-only / Maw): the engine
+                    -- ignores their "!" form, and absence already excludes
+                    -- the category — omit instead of emitting a dead token.
                     exc[#exc + 1] = "!" .. tok
                 end
             end
@@ -1013,7 +1038,15 @@ function E.EnableSpecOverride(auras, bucketKey)
     local copy = {}
     for _, e in ipairs(src) do
         local c = deepCopyTable(e)
-        c.id = nextId()
+        -- Fixed semantic ids ("defensives"/"encounterBoss") must survive the
+        -- clone: FindBossStrip-style lookups key on them PER BUCKET, and the
+        -- normalize pass explicitly lets them recur across buckets (only one
+        -- bucket is ever active). Re-keying one would orphan the cloned strip
+        -- from its lookup and spawn a duplicate on the next write. Only
+        -- generated "e<N>" ids are re-keyed.
+        if type(c.id) ~= "string" or c.id:match("^e%d+$") then
+            c.id = nextId()
+        end
         copy[#copy + 1] = c
     end
     auras.elements[bucketKey] = copy

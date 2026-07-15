@@ -18,7 +18,9 @@ not downloaded in a local install):
 ```
 cd tools/encounter_aura_gen
 npm install            # once: pulls @rhyster/wow-casc-dbc
-PRODUCT=wow node gen_encounter_aura_data.mjs ../../core/encounter_aura_data.lua
+PRODUCT=wowt node gen_encounter_aura_data.mjs ../../core/encounter_aura_data.lua
 ```
-`PRODUCT=wow` = live retail; use `wowt` for PTR. Requires network to
-`*.patch.battle.net` + `*.cdn.blizzard.com`.
+`PRODUCT=wowt` (PTR, the script default) is what the shipped 12.1 dataset
+tracks; `PRODUCT=wow` selects live retail (12.0.x) — wrong product for this
+dataset until 12.1 goes live. Requires network to `*.patch.battle.net` +
+`*.cdn.blizzard.com`.

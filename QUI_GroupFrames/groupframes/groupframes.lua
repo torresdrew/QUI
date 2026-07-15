@@ -2052,10 +2052,10 @@ local function UpdateDispelOverlay(frame)
     local overlay = frame.dispelOverlay
 
     -- Fast path: the aura scan already classified every harmful aura against
-    -- HARMFUL|RAID_PLAYER_DISPELLABLE and stashed the matching instance IDs
-    -- in cache.playerDispellable. Probe the set directly — this replaces a
-    -- per-aura pcall+filter-check loop with a single next() call, which is
-    -- the biggest raid-perf win on this path.
+    -- HARMFUL|RAID (68675: player-dispellable) and stashed the matching
+    -- instance IDs in cache.playerDispellable. Probe the set directly — this
+    -- replaces a per-aura pcall+filter-check loop with a single next() call,
+    -- which is the biggest raid-perf win on this path.
     local GFA = ns.QUI_GroupFrameAuras
     local cache = GFA and GFA.unitAuraCache and GFA.unitAuraCache[unit]
     local hasDispellable = false
@@ -2073,18 +2073,26 @@ local function UpdateDispelOverlay(frame)
         -- the SET *and* still live on the unit. GetAuraDataByAuraInstanceID is the
         -- cache-independent authority — if the shared cache ever desyncs (a removal
         -- that failed to clear the derived set), a gone aura returns nil here and
-        -- the overlay clears instead of sticking. IsSecretValue guards the nil
-        -- compare: in restricted combat the return is a secret (aura present), so
-        -- we keep it lit; only a genuine nil means the aura is gone.
+        -- the overlay clears instead of sticking; only a genuine nil means the
+        -- aura is gone.
         local order = cache.playerDispellableOrder
         local set = cache.playerDispellable
         local GetAuraByInstanceID = C_UnitAuras and C_UnitAuras.GetAuraDataByAuraInstanceID
+        -- 12.1: the re-probe carries RequiresUnitAuraAccess — it THROWS while
+        -- auras are restricted (execution is tainted; a plain-number instID
+        -- does not exempt the call, see cdm_sources' wrapper rationale). Skip
+        -- the probe under restriction and keep the overlay lit until the next
+        -- unrestricted pass — the cache-driven membership above still governs.
+        if GetAuraByInstanceID and C_Secrets and C_Secrets.ShouldAurasBeSecret
+            and C_Secrets.ShouldAurasBeSecret() then
+            GetAuraByInstanceID = nil
+        end
         for i = 1, #order do
             local instID = order[i]
             if instID and (not set or set[instID]) then
                 local stillLive = true
                 if GetAuraByInstanceID and not IsSecretValue(instID) then
-                    local live = GetAuraByInstanceID(unit, instID)
+                    local live = GetAuraByInstanceID(unit, instID) -- @secret-safe: the AurasAreSecret check above nils GetAuraByInstanceID under restriction, so this call only runs unrestricted
                     if not IsSecretValue(live) and live == nil then
                         stillLive = false
                     end

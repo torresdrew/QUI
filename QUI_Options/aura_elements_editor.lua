@@ -186,19 +186,24 @@ local HARMFUL_CLASSIFICATIONS = {
 -- Raw AuraFilters tokens offered in "flags" mode, per aura type. HELPFUL-only
 -- tokens are never offered on HARMFUL (a "HARMFUL|RAID_IN_COMBAT"-class combo
 -- hard-errors in C_UnitAuras; the model also drops them defensively).
+-- Labels follow the 68675 AuraFilters semantics: RAID = the PLAYER can
+-- apply (helpful) / dispel (harmful); RAID_PLAYER_DISPELLABLE = ANYONE in
+-- the raid can dispel; DISPELLABLE = dispellable by any source at all.
 local HELPFUL_FLAG_TOKENS = {
     { token = "PLAYER", label = ns.L["Player"] },
-    { token = "RAID", label = ns.L["Raid"] },
+    { token = "RAID", label = ns.L["Castable by Me"] },
     { token = "CANCELABLE", label = ns.L["Cancelable"] },
     { token = "BIG_DEFENSIVE", label = ns.L["Big Defensive"] },
     { token = "EXTERNAL_DEFENSIVE", label = ns.L["External Defensive"] },
+    { token = "IMPORTANT", label = ns.L["Important"] },
 }
 
 local HARMFUL_FLAG_TOKENS = {
     { token = "PLAYER", label = ns.L["Player"] },
-    { token = "RAID", label = ns.L["Raid"] },
+    { token = "RAID", label = ns.L["Dispellable by Me"] },
     { token = "INCLUDE_NAME_PLATE_ONLY", label = ns.L["Nameplate Auras Only"] },
-    { token = "RAID_PLAYER_DISPELLABLE", label = ns.L["Dispellable by Me"] },
+    { token = "RAID_PLAYER_DISPELLABLE", label = ns.L["Raid-Dispellable (Anyone)"] },
+    { token = "DISPELLABLE", label = ns.L["Dispellable (Any Source)"] },
     { token = "CROWD_CONTROL", label = ns.L["Crowd Control"] },
 }
 
@@ -782,9 +787,10 @@ local function AddFilterStripConfig(ctx, element)
         -- element.dispelFilterMode ("include"/"exclude"), i.e. the MANUAL
         -- raw "Dispel Type Filter" dropdown (and legacy pre-engine-token
         -- "dispellable" SVs). The "dispellable" what-to-show preset itself
-        -- now compiles to the engine's HARMFUL|RAID_PLAYER_DISPELLABLE
-        -- classification (talent-aware, live on respec), so it neither sets
-        -- dispelFilterMode nor surfaces those checkboxes.
+        -- now compiles to the engine's HARMFUL|RAID classification (68675:
+        -- RAID on HARMFUL = player-dispellable; talent-aware, live on
+        -- respec), so it neither sets dispelFilterMode nor surfaces those
+        -- checkboxes.
 
         -- 2c (classification honesty): Blizzard's engine drops identity-based
         -- candidateFilters (includeSpellIDs/excludeSpellIDs — whitelist lives

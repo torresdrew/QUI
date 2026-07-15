@@ -228,7 +228,11 @@ else
     SetupDebugInstrumentation() -- standalone test harness: no gate, run eagerly
 end
 
-local DISPEL_FILTER = "HARMFUL|RAID_PLAYER_DISPELLABLE"
+-- 68675: RAID on HARMFUL = "the PLAYER can dispel" — the personal cleanse
+-- classifier this feeds (playerDispellable overlay). RAID_PLAYER_DISPELLABLE
+-- widened to "anyone in the raid can dispel" and would light the overlay for
+-- dispels the player cannot touch.
+local DISPEL_FILTER = "HARMFUL|RAID"
 local MAX_SCAN_AURAS = 40
 
 -- Classify a single harmful aura as dispellable by the current player.
@@ -250,7 +254,7 @@ end
 local function ClassifyDispellable(unit, instID)
     if not instID or IsSecretValue(instID) then return nil end
     if not IsAuraFilteredOut then return nil end
-    local filteredOut = IsAuraFilteredOut(unit, instID, DISPEL_FILTER)
+    local filteredOut = IsAuraFilteredOut(unit, instID, DISPEL_FILTER) -- @secret-safe: caller-gated: ClassifyDispellable runs only from the full-scan (703) / delta (766) paths behind AurasAreSecret
     if filteredOut == nil or IsSecretValue(filteredOut) then return nil end
     return filteredOut == false
 end
@@ -392,12 +396,12 @@ local function ResolveAuraBucket(unit, auraData)
 
     local instID = auraData.auraInstanceID
     if instID and IsAuraFilteredOut then
-        local buffFiltered = IsAuraFilteredOut(unit, instID, "HELPFUL")
+        local buffFiltered = IsAuraFilteredOut(unit, instID, "HELPFUL") -- @secret-safe: caller-gated: ResolveAuraBucket runs only from the delta path behind the 766 AurasAreSecret gate
         if buffFiltered ~= nil and not IsSecretValue(buffFiltered) then
             if buffFiltered == false then
                 return "buffs"
             end
-            local debuffFiltered = IsAuraFilteredOut(unit, instID, "HARMFUL")
+            local debuffFiltered = IsAuraFilteredOut(unit, instID, "HARMFUL") -- @secret-safe: caller-gated: same delta-path AurasAreSecret gate as the HELPFUL probe above
             if debuffFiltered ~= nil and not IsSecretValue(debuffFiltered) then
                 if debuffFiltered == false then
                     return "debuffs"
@@ -654,7 +658,7 @@ local function AppendSlotAuras(unit, dst, ...)
     for i = 2, n do
         local slot = select(i, ...)
         if slot then
-            local auraData = GetAuraDataBySlot(unit, slot)
+            local auraData = GetAuraDataBySlot(unit, slot) -- @secret-safe: caller-gated: AppendSlotAuras is only reached via ScanUnitAuras, which bails at its AurasAreSecret gate
             if auraData and auraData.auraInstanceID then
                 dst[#dst + 1] = auraData
             end
@@ -667,8 +671,8 @@ local function ScanUnitAurasBySlot(unit, cache)
         return false
     end
 
-    AppendSlotAuras(unit, cache.debuffs, GetAuraSlots(unit, "HARMFUL", MAX_SCAN_AURAS))
-    AppendSlotAuras(unit, cache.buffs, GetAuraSlots(unit, "HELPFUL", MAX_SCAN_AURAS))
+    AppendSlotAuras(unit, cache.debuffs, GetAuraSlots(unit, "HARMFUL", MAX_SCAN_AURAS)) -- @secret-safe: caller-gated: ScanUnitAurasBySlot is only reached via ScanUnitAuras, which bails at its AurasAreSecret gate
+    AppendSlotAuras(unit, cache.buffs, GetAuraSlots(unit, "HELPFUL", MAX_SCAN_AURAS)) -- @secret-safe: caller-gated: same ScanUnitAuras AurasAreSecret gate as the HARMFUL scan above
     return true
 end
 
@@ -676,7 +680,7 @@ local function ScanUnitAurasLegacy(unit, cache)
     local GetUnitAuras = C_UnitAuras and C_UnitAuras.GetUnitAuras
     if not GetUnitAuras then return false end
 
-    local debuffs = GetUnitAuras(unit, "HARMFUL", MAX_SCAN_AURAS)
+    local debuffs = GetUnitAuras(unit, "HARMFUL", MAX_SCAN_AURAS) -- @secret-safe: caller-gated: ScanUnitAurasLegacy is only reached via ScanUnitAuras, which bails at its AurasAreSecret gate
     if debuffs then
         local dst = cache.debuffs
         for i = 1, #debuffs do
@@ -684,7 +688,7 @@ local function ScanUnitAurasLegacy(unit, cache)
         end
     end
 
-    local buffs = GetUnitAuras(unit, "HELPFUL", MAX_SCAN_AURAS)
+    local buffs = GetUnitAuras(unit, "HELPFUL", MAX_SCAN_AURAS) -- @secret-safe: caller-gated: same ScanUnitAuras AurasAreSecret gate as the HARMFUL scan above
     if buffs then
         local dst = cache.buffs
         for i = 1, #buffs do
@@ -1154,6 +1158,37 @@ local function RenderFrameElements(frame, cache, dirty)
     wipe(current)
     -- Role gate inputs for this frame (applyToRoles); stable within an encounter.
     local frameRole, frameIsSelf = FrameRoleGate(frame)
+    -- Shared-overlay families: border / healthTint draw ONE per-frame overlay
+    -- owned by whichever element matched last (R.RenderBorder /
+    -- R.RenderHealthTint owner field). If ANY element of a family is dirty,
+    -- EVERY element of that family must dispatch this pass: when the owner's
+    -- aura drops, a clean sibling with a live match has to re-claim the
+    -- overlay — the per-element dirty skip below would otherwise leave the
+    -- indicator hidden while its aura is still active.
+    local borderFamilyDirty, tintFamilyDirty = false, false
+    if dirty then
+        if dirty.spellsUncertain then
+            borderFamilyDirty, tintFamilyDirty = true, true
+        else
+            for i = 1, #elements do
+                local e = elements[i]
+                if e.mode == "tracked"
+                    and (e.displayType == "border" or e.displayType == "healthTint")
+                    and type(e.spells) == "table" then
+                    for j = 1, #e.spells do
+                        if dirty.spells[e.spells[j]] then
+                            if e.displayType == "border" then
+                                borderFamilyDirty = true
+                            else
+                                tintFamilyDirty = true
+                            end
+                            break
+                        end
+                    end
+                end
+            end
+        end
+    end
     for i = 1, #elements do
         local element = elements[i]
         -- The engine only renders MRB + the healthTint/border tracked feeders.
@@ -1174,6 +1209,10 @@ local function RenderFrameElements(frame, cache, dirty)
                 elseif element.mode == "tracked" then
                     if dirty.spellsUncertain then
                         elementDirty = true
+                    elseif element.displayType == "border" then
+                        elementDirty = borderFamilyDirty
+                    elseif element.displayType == "healthTint" then
+                        elementDirty = tintFamilyDirty
                     else
                         local spells = element.spells
                         if spells then
@@ -1267,8 +1306,9 @@ end
 -- are engine objects that can't be destroyed, so a changing element list
 -- re-purposes them (group retire inside AuraSkin.Configure, slot park via
 -- AuraSlots.Park). CREATION (CreateFrame + AddAuraGroup/AddAuraSlot button
--- pooling) is combat-restricted (crashes the 12.1 client) and stays queued for
--- PLAYER_REGEN_ENABLED. MUTATION of a pre-created container (anchor / filters /
+-- pooling) is combat-restricted (crashes the 12.1 client) and stays queued on
+-- the restriction-aware AuraGlue.QueueRegenWork (regen event + restriction
+-- poll). MUTATION of a pre-created container (anchor / filters /
 -- SetUnit / enable) is combat-legal, so the update path applies that subset live
 -- in combat and STILL queues the full pass so a wrong assumption self-heals.
 --
@@ -1289,32 +1329,22 @@ local function ResolveAuraDeps()
     return AuraSkin and AuraGlue and AuraSlots
 end
 
--- Combat-deferral queue. [frame] = true → re-apply config OOC.
-local _containerPendingCombatWork = {}
-local _containerCombatDeferFrame
+-- Combat/restriction-deferral: route skipped forbidden work through the shared
+-- restriction-aware replay queue (core/aura_glue.lua QueueRegenWork), the same
+-- path Unit Frames use. It fires only when BOTH combat lockdown AND the 12.1
+-- aura restriction are clear, and POLLS while a restriction is up outside
+-- combat — a PLAYER_REGEN_ENABLED-only flush left tracked slots stale when
+-- secrecy began and ended without a combat-lockdown window (regen never fires).
 
--- Forward decl: FlushContainerCombatWork calls ApplyStripContainers, defined below.
+-- Forward decl: the replay closure calls ApplyStripContainers, defined below.
 local ApplyStripContainers
 
-local function FlushContainerCombatWork()
-    for frame in pairs(_containerPendingCombatWork) do
-        _containerPendingCombatWork[frame] = nil
-        if frame and ApplyStripContainers then
-            ApplyStripContainers(frame)
-        end
-    end
-end
-
-local function EnsureContainerCombatDeferFrame()
-    if _containerCombatDeferFrame then return end
-    _containerCombatDeferFrame = CreateFrame("Frame")
-    _containerCombatDeferFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
-    _containerCombatDeferFrame:SetScript("OnEvent", FlushContainerCombatWork)
-end
-
 local function QueueContainerCombatWork(frame)
-    EnsureContainerCombatDeferFrame()
-    _containerPendingCombatWork[frame] = true
+    AuraGlue = AuraGlue or ns.AuraGlue
+    if not AuraGlue then return end
+    AuraGlue.QueueRegenWork(frame, function(f)
+        if ApplyStripContainers then ApplyStripContainers(f) end
+    end)
 end
 
 -- Resolve the active CONTAINER-RENDERED elements for a frame: filterStrips +
@@ -1368,8 +1398,9 @@ end
 -- slot park via AuraSlots.Park). allowCreate=false (combat) NEVER creates
 -- containers or slots and never SetPoints; it only mutates pre-created
 -- containers (pcall-guarded group reconcile with a Restyle fallback, inside
--- AuraGlue.RunConfigPass). Any forbidden work skipped in combat sets
--- `incomplete`, which queues a full replay for PLAYER_REGEN_ENABLED.
+-- AuraGlue.RunConfigPass). Any forbidden work skipped in combat (or under the
+-- 12.1 aura restriction) sets `incomplete`, which queues a full replay via the
+-- restriction-aware AuraGlue.QueueRegenWork.
 local function ApplyElementPass(frame, allowCreate)
     if not frame then return end
     local unit = GetFrameUnit(frame)
@@ -1431,7 +1462,8 @@ local function ApplyElementPass(frame, allowCreate)
 end
 
 -- Full pass entry (the forward-declared name + the QUI_GFA export; also what
--- the combat-flush closure replays at PLAYER_REGEN_ENABLED, always OOC there).
+-- the QueueRegenWork closure replays once combat AND the aura restriction
+-- clear — always OOC there).
 function ApplyStripContainers(frame)
     ApplyElementPass(frame, not InCombatLockdown())
 end

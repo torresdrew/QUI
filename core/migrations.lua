@@ -86,11 +86,23 @@ local _currentGlobalDB     = nil  -- db.global; for cross-profile reads (v32+)
 --        Injects a copy (mirroring the "*" element's enabled state) into
 --        every numeric spec bucket that lacks one. 52/53 burned.
 --
+--   v55: RepairSpecBucketBossStrips — EnableSpecOverride briefly (pre-fix
+--        dev builds on the 5.0 branch, never a tagged release) re-keyed the
+--        fixed-id "encounterBoss" strip when cloning "*" into an override
+--        bucket. The orphaned clone is invisible to the encounters page
+--        (FindBossStrip keys on the fixed id), which reported Off and
+--        spawned a DUPLICATE strip on the next write. Adopts orphans back
+--        to the fixed id (or drops enabled-matching duplicates when the
+--        fixed strip already exists), matched by exact structural equality
+--        against "*"'s strip. Scope: GF party/raid numeric spec buckets
+--        ONLY. (v54's classify-equivalence presence check already prevented
+--        the analogous "defensives" duplicate.)
+--
 -- When adding a new migration: bump CURRENT_SCHEMA_VERSION (next free number
--- is 55 — see the burned-numbers rule above), add a single linear gate in
+-- is 56 — see the burned-numbers rule above), add a single linear gate in
 -- RunOnProfile, and document the version above.
 ---------------------------------------------------------------------------
-local CURRENT_SCHEMA_VERSION = 54
+local CURRENT_SCHEMA_VERSION = 55
 
 -- The oldest schema we still carry forward. The last 4.x stable release and
 -- 5.0 alpha4 both shipped schema 47, and every step-by-step migration through
@@ -540,7 +552,11 @@ function Migrations.SeedAuraElements(profile)
                      buffFilterBigDefensive = "BIG_DEFENSIVE" },
             debuff = { debuffFilterPlayer = "PLAYER", debuffFilterRaid = "RAID",
                        debuffFilterIncludeNameplateOnly = "INCLUDE_NAME_PLATE_ONLY",
-                       debuffFilterRaidPlayerDispellable = "RAID_PLAYER_DISPELLABLE",
+                       -- Legacy checkbox meant "dispellable by me"; 68675
+                       -- moved that semantic to RAID (RAID_PLAYER_DISPELLABLE
+                       -- now means anyone-in-raid). Port to the token that
+                       -- preserves the user's intent.
+                       debuffFilterRaidPlayerDispellable = "RAID",
                        debuffFilterCrowdControl = "CROWD_CONTROL" },
         }
         local function seedZone(prefix, storeKey, auraType, enableKey, cancelable)
@@ -950,6 +966,96 @@ function Migrations.ExtendDefensivesToSpecBuckets(profile)
                     end
                 end
             end
+        end
+    end
+    return true
+end
+
+-- v55 helper: structural equality ignoring the identity/state keys that
+-- legitimately differ between "*"'s boss strip and its pre-fix clone (the
+-- re-keyed id; enabled, which the page toggles). Gate flags alone are NOT a
+-- safe discriminator — the editor exposes gateBossAura/gateBossOrRoleAura
+-- checkboxes, so user-authored strips can carry them. Exact equality is the
+-- only signal that costs nothing when wrong: removing or re-identifying a
+-- strip identical to the fixed one is semantically a no-op.
+local BOSS_STRIP_EQUAL_IGNORE = { id = true, enabled = true }
+local function EqualIgnoringIdentity(a, b, isTop)
+    if a == b then return true end
+    if type(a) ~= "table" or type(b) ~= "table" then return false end
+    for k, v in pairs(a) do
+        if not (isTop and BOSS_STRIP_EQUAL_IGNORE[k]) then
+            if not EqualIgnoringIdentity(v, b[k]) then return false end
+        end
+    end
+    for k in pairs(b) do
+        if not (isTop and BOSS_STRIP_EQUAL_IGNORE[k]) and a[k] == nil then
+            return false
+        end
+    end
+    return true
+end
+
+-- v55: see the version doc at the top of the file. Scope is deliberately
+-- MINIMAL for a data-rewriting migration (2026-07 round-3 review): only
+-- group-frame party/raid stores and only NUMERIC spec buckets — the spec
+-- editor (the only spec-override UI) and the encounters page's spec-ACTIVE
+-- writes are the sole producers of the duplicate. Dormant string context
+-- buckets ("i"/"e") may carry orphaned clones from dev builds, but nothing
+-- looks those up by id (the page reads the spec-active bucket only, render
+-- ignores ids), so they are left alone. Diverged clones (user edited the
+-- orphan after cloning) are likewise untouched — equality is the only safe
+-- signal, and a diverged orphan is user data.
+function Migrations.RepairSpecBucketBossStrips(profile)
+    local function repairStore(a)
+        local elements = type(a) == "table" and type(a.elements) == "table" and a.elements
+        if not elements then return end
+        local base
+        local star = elements["*"]
+        if type(star) == "table" then
+            for _, e in ipairs(star) do
+                if type(e) == "table" and e.id == "encounterBoss" then base = e break end
+            end
+        end
+        if not base then return end
+        for bucketKey, bucket in pairs(elements) do
+            if type(bucketKey) == "number" and type(bucket) == "table" then
+                local fixedStrip
+                for _, e in ipairs(bucket) do
+                    if type(e) == "table" and e.id == "encounterBoss" then
+                        fixedStrip = e
+                        break
+                    end
+                end
+                for i = #bucket, 1, -1 do
+                    local e = bucket[i]
+                    if type(e) == "table" and e.id ~= "encounterBoss"
+                        and e.mode == "filterStrip"
+                        and EqualIgnoringIdentity(e, base, true) then
+                        if fixedStrip then
+                            -- Duplicate beside the fixed strip: remove it
+                            -- ONLY when both agree on enabled — an enabled
+                            -- orphan next to a disabled fixed strip is what
+                            -- the user currently SEES rendering; deleting it
+                            -- would change visible behavior. Mismatches keep
+                            -- both (the pre-existing state; the user resolves
+                            -- it in the editor).
+                            if (e.enabled ~= false) == (fixedStrip.enabled ~= false) then
+                                table.remove(bucket, i)
+                            end
+                        else
+                            e.id = "encounterBoss"
+                            fixedStrip = e
+                        end
+                    end
+                end
+            end
+        end
+    end
+    local gf = profile.quiGroupFrames
+    if type(gf) == "table" then
+        for _, key in ipairs({ "party", "raid" }) do
+            local surface = gf[key]
+            if type(surface) == "table" then repairStore(surface.auras) end
         end
     end
     return true
@@ -2113,6 +2219,12 @@ function Migrations.RunOnProfile(profile)
     -- buckets that v51(e) skipped.
     if stored < 54 then
         Migrations.ExtendDefensivesToSpecBuckets(profile)
+    end
+
+    -- v55: adopt/dedup pre-fix re-keyed "encounterBoss" clones in override
+    -- buckets (dev-build exposure only; see the version doc).
+    if stored < 55 then
+        Migrations.RepairSpecBucketBossStrips(profile)
     end
 
     profile._schemaVersion = CURRENT_SCHEMA_VERSION

@@ -14,6 +14,26 @@ local M = {}
 -- Sandbox helpers
 -- ---------------------------------------------------------------------------
 
+-- Doc files reference Enum.* / Constants.* values inside table constructors
+-- (12.1.0.68675+ aspect flags, e.g. SecretReturnsForAspect =
+-- { Enum.SecretAspect.Alpha }); a plain Lua host has neither global, so the
+-- nil index would abort the chunk and silently drop every table in the file.
+-- Auto-vivify with stable string placeholders — none of the extracted flags
+-- carry these values, they just have to be indexable without erroring.
+local function makeAutoTable(prefix)
+    return setmetatable({}, {
+        __index = function(t, k)
+            local v = setmetatable({}, {
+                __index = function(_, k2)
+                    return prefix .. "." .. tostring(k) .. "." .. tostring(k2)
+                end,
+            })
+            rawset(t, k, v)
+            return v
+        end,
+    })
+end
+
 local function makeSandbox()
     local captured = {}
     local APIDocumentation = {}
@@ -21,6 +41,22 @@ local function makeSandbox()
         captured[#captured + 1] = tbl
     end
     return APIDocumentation, captured
+end
+
+-- SecretReturnsForAspect / SecretArgumentsAddAspect (12.1.0.68675+) carry
+-- lists of Enum.SecretAspect.* values. The sandbox auto-vivifies Enum into
+-- placeholder strings ("Enum.SecretAspect.Alpha"); strip the prefix so the
+-- index stores bare aspect names ({"Alpha"}).
+local function collectAspects(v)
+    if type(v) ~= "table" then return nil end
+    local names = {}
+    for _, item in ipairs(v) do
+        local s = tostring(item)
+        names[#names + 1] = s:match("^Enum%.SecretAspect%.(.+)$") or s
+    end
+    if #names == 0 then return nil end
+    table.sort(names)
+    return names
 end
 
 local function returnsFlaggedSecret(returns)
@@ -70,6 +106,16 @@ local function processTable(tbl, index)
             end
             if returnsFlaggedSecret(fn.Returns) then
                 entry.isSecretReturn = true
+                hasFlag = true
+            end
+            local retAspects = collectAspects(fn.SecretReturnsForAspect)
+            if retAspects then
+                entry.secretReturnsForAspect = retAspects
+                hasFlag = true
+            end
+            local argAspects = collectAspects(fn.SecretArgumentsAddAspect)
+            if argAspects then
+                entry.secretArgumentsAddAspect = argAspects
                 hasFlag = true
             end
             local pre = collectPreconditions(fn)
@@ -173,6 +219,8 @@ end
 --   secretWhenCooldownsRestricted = true
 --   secretArguments               = string  (omitted when "AllowedWhenTainted")
 --   isSecretReturn                = true
+--   secretReturnsForAspect        = { "Alpha", ... }  (aspect names, sorted)
+--   secretArgumentsAddAspect      = { "Alpha", ... }  (aspect names, sorted)
 --   preconditions                 = { "RequiresUnitAuraAccess", ... }
 --   eventFlags                    = { "SecretInActivePvPMatch", ... }
 --   secretPayload                 = true
@@ -185,8 +233,11 @@ function M.fromCorpus(corpusDir)
         if f then
             local source = f:read("*a")
             f:close()
-            local env = setmetatable({ APIDocumentation = APIDocumentation },
-                { __index = _G })
+            local env = setmetatable({
+                APIDocumentation = APIDocumentation,
+                Enum = makeAutoTable("Enum"),
+                Constants = makeAutoTable("Constants"),
+            }, { __index = _G })
             local chunk
             if setfenv then
                 -- Lua 5.1
@@ -244,6 +295,14 @@ function M.renderLua(index)
         end
         if entry.isSecretReturn then
             fields[#fields + 1] = "isSecretReturn = true"
+        end
+        if entry.secretReturnsForAspect then
+            fields[#fields + 1] = "secretReturnsForAspect = "
+                .. renderNameList(entry.secretReturnsForAspect)
+        end
+        if entry.secretArgumentsAddAspect then
+            fields[#fields + 1] = "secretArgumentsAddAspect = "
+                .. renderNameList(entry.secretArgumentsAddAspect)
         end
         if entry.preconditions then
             fields[#fields + 1] = "preconditions = " .. renderNameList(entry.preconditions)

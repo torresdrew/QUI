@@ -192,11 +192,17 @@ do
     d.filterMode = "classify"
     d.classifications = { raid = true, dispellable = true }
     local dfs = E.CompileFilters(d)
-    local hasBareDispellable = false
+    -- 68675: "dispellable by me" compiles to HARMFUL|RAID (same string as
+    -- the raid key — see aura_elements DEBUFF_CLASSIFICATION_MAP), so the
+    -- unranked key still contributes bare and UNNEGATED, deduping onto the
+    -- raid group rather than emitting a second string.
+    local hasBareRaid, hasNegated = false, false
     for _, s in ipairs(dfs) do
-        if s == "HARMFUL|RAID_PLAYER_DISPELLABLE" then hasBareDispellable = true end
+        if s == "HARMFUL|RAID" then hasBareRaid = true end
+        if s:find("!", 1, true) then hasNegated = true end
     end
-    check("legacy key: dispellable compiles bare (no negation of/from raid)", hasBareDispellable)
+    check("legacy key: dispellable compiles bare (no negation of/from raid)",
+        hasBareRaid and not hasNegated, table.concat(dfs, ","))
 end
 
 ----------------------------------------------------------------------------

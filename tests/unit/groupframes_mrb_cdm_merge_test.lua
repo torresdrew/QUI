@@ -89,6 +89,18 @@ local byKey4 = {}
 for _, e in ipairs(MRB.RaidBuffs) do byKey4[e.key] = e end
 assert(byKey4["cdm:300"], "layout read: user-un-hidden flagged buff merges")
 assert(byKey4["cdm:400"] == nil, "layout read: layout-hidden buff stays excluded")
+
+-- Adversarial (2026-07 re-review): a stale C-side sync copy
+-- (C_UnitAuras.GetHiddenGroupBuffs — the sync TARGET Blizzard writes but
+-- never reads back) still lists a buff the user just un-hid from the layout.
+-- The layout list is authoritative; the stale copy must NOT re-hide 300.
+_G.C_UnitAuras = { GetHiddenGroupBuffs = function() return { 300, 400 } end }
+MRB:RebuildRaidBuffs()
+local byKey5 = {}
+for _, e in ipairs(MRB.RaidBuffs) do byKey5[e.key] = e end
+assert(byKey5["cdm:300"], "stale C-side copy does not re-hide a layout-un-hidden buff")
+assert(byKey5["cdm:400"] == nil, "layout-hidden buff still excluded with stale copy present")
+_G.C_UnitAuras = { GetHiddenGroupBuffs = function() return { 400 } end }
 _G.CooldownViewerSettings = nil
 _G.CooldownManagerLayout_GetHiddenGroupBuffs = nil
 

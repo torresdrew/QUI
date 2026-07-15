@@ -28,7 +28,7 @@ return {
     {
         name = "_schemaVersion stamped at current value after seed",
         assert = function(sv, ctx)
-            return sv.QUI_DB.profiles.Default._schemaVersion == 54
+            return sv.QUI_DB.profiles.Default._schemaVersion == 55
         end,
     },
 }

@@ -875,7 +875,10 @@ local auraDurationTime
 local auraUnitId
 
 local handleBuffAura = function(aura)
-    local auraInfo = C_UnitAuras.GetAuraDataByAuraInstanceID(auraUnitId, aura.auraInstanceID)
+    --QUI patch (12.1): sole caller is the pcall'd AuraUtil.ForEachAura in
+    --getAuraDuration below, which runs behind a ShouldAurasBeSecret gate —
+    --this callback executes inside that protected+gated scope.
+    local auraInfo = C_UnitAuras.GetAuraDataByAuraInstanceID(auraUnitId, aura.auraInstanceID) -- @secret-safe: callback of the gated+pcall'd ForEachAura at getAuraDuration
     if (auraInfo) then
         local spellId = auraInfo.spellId
         if (auraSpellID == spellId) then

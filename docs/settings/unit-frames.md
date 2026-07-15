@@ -187,7 +187,7 @@ Settings at `quiUnitFrames.player`. The Player frame is the most feature-rich un
 | `player.auras.debuffFilterMode` | string | `"off"` | Debuff type filter mode: `"off"` or `"classification"` |
 | `player.auras.buffFilterOnlyMine` | boolean | `true` | Only show player/vehicle-cast buffs |
 | `player.auras.buffClassifications` | table | all `false` | Buff classification toggles: `helpful`, `cancelable`, `notCancelable`, `important`, `bigDefensive`, `externalDefensive`. `helpful` matches Blizzard `HELPFUL|RAID` or `HELPFUL|RAID_IN_COMBAT`. |
-| `player.auras.debuffClassifications` | table | all `false` | Debuff classification toggles: `harmful`, `dispellable`, `crowdControl`, `important`. `harmful` matches Blizzard `HARMFUL|RAID` or `HARMFUL|RAID_IN_COMBAT`; `dispellable` matches `HARMFUL|RAID_PLAYER_DISPELLABLE`. |
+| `player.auras.debuffClassifications` | table | all `false` | Debuff classification toggles: `harmful`, `dispellable`, `crowdControl`, `important`. `harmful` matches Blizzard `HARMFUL|RAID` or `HARMFUL|RAID_IN_COMBAT`; `dispellable` ("Dispellable by me") matches `HARMFUL|RAID` — 68675 semantics; `RAID_PLAYER_DISPELLABLE` means "anyone in the raid can dispel", not the player. |
 | `player.auras.iconSize` | number | `22` | Debuff icon size |
 | `player.auras.debuffAnchor` | string | `"TOPLEFT"` | Debuff row anchor point |
 | `player.auras.debuffGrow` | string | `"RIGHT"` | Debuff growth direction |

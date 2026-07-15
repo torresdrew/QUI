@@ -53,6 +53,9 @@ local BUILTIN_GUARDS = {
     HasSecretValue             = true,
     ["Helpers.IsSecretValue"]  = true,
     ["Helpers.HasSecretValue"] = true,
+    -- 12.1 engine globals (lowercase): the canonical probe primitives.
+    issecretvalue              = true,
+    issecrettable              = true,
 }
 
 -- Unwraps: return non-secret value (or nil) regardless of input.
@@ -92,8 +95,14 @@ function M.new()
     self.unwraps           = {}
     self.cleanFields       = {}
     self.secretReturning   = {}
+    self.aspectReturningMethods = {}
     self.preconditionAPIs  = {}
     self.restrictionGates  = {}
+    self.secretEventParams = {}
+    -- First dotted component of every guarded API / gate name ("C_UnitAuras",
+    -- "C_Secrets") — feeds the analyzer's namespace-alias detection
+    -- (`local UA = C_UnitAuras`).
+    self.preconditionNamespaces = {}
     -- Seed built-ins (copy so two Registry.new() instances don't share mutation)
     for k, v in pairs(BUILTIN_SAFE_SINK_METHODS)    do self.safeSinkMethods[k]   = v end
     for k, v in pairs(BUILTIN_SAFE_SINK_FUNCTIONS)  do self.safeSinkFunctions[k] = v end
@@ -102,6 +111,10 @@ function M.new()
     for k, v in pairs(BUILTIN_CLEAN_FIELDS)         do self.cleanFields[k]       = v end
     for k, v in pairs(BUILTIN_SECRET_RETURNING)     do self.secretReturning[k]   = v end
     for k, v in pairs(BUILTIN_RESTRICTION_GATES)    do self.restrictionGates[k]  = v end
+    for k in pairs(self.restrictionGates) do
+        local ns = k:match("^([%w_]+)%.")
+        if ns then self.preconditionNamespaces[ns] = true end
+    end
     return self
 end
 
@@ -126,12 +139,55 @@ function Registry:isCleanField(name)        return self.cleanFields[name]       
 function Registry:addSecretReturning(name)  self.secretReturning[name]   = true end
 function Registry:isSecretReturning(name)   return self.secretReturning[name]   == true end
 
+-- Aspect-returning widget getters (api-index secretReturnsForAspect, 12.1
+-- aspect system): keyed by BARE method name — call sites are `obj:GetAlpha()`
+-- on plain locals, so the doc's namespace never appears. `aspects` is the
+-- aspect-name list from the index ({"Alpha"}), kept for finding messages.
+function Registry:addAspectReturningMethod(name, aspects)
+    self.aspectReturningMethods[name] = aspects or true
+end
+function Registry:isAspectReturningMethod(name)
+    return self.aspectReturningMethods[name] ~= nil
+end
+
+-- View of this registry with aspect-returning methods hidden. The analyzer
+-- swaps to this for files outside config aspect_paths: aspect getters
+-- (GetText, IsShown, GetAlpha, …) are ubiquitous, and tainting them repo-wide
+-- would flood the tiers. Method lookups chain proxy → real instance →
+-- Registry metatable, so every other registry facility stays live.
+function Registry:aspectStripped()
+    if not self._aspectStripped then
+        self._aspectStripped = setmetatable(
+            { aspectReturningMethods = {} }, { __index = self })
+    end
+    return self._aspectStripped
+end
+
 -- flags: the api-index `preconditions` array (e.g. {"RequiresUnitAuraAccess"});
 -- stored so the finding message can name the actual precondition.
-function Registry:addPreconditionAPI(name, flags) self.preconditionAPIs[name] = flags or true end
+local function noteNamespace(self, name)
+    local ns = type(name) == "string" and name:match("^([%w_]+)%.")
+    if ns then self.preconditionNamespaces[ns] = true end
+end
+
+function Registry:addPreconditionAPI(name, flags)
+    self.preconditionAPIs[name] = flags or true
+    noteNamespace(self, name)
+end
 function Registry:preconditionFlags(name)         return self.preconditionAPIs[name] end
 
-function Registry:addRestrictionGate(name)  self.restrictionGates[name]  = true end
+function Registry:addRestrictionGate(name)
+    self.restrictionGates[name] = true
+    noteNamespace(self, name)
+end
 function Registry:isRestrictionGate(name)   return self.restrictionGates[name]  == true end
+
+-- Secret event payloads (config event_payload_params): event name → array of
+-- handler parameter POSITIONS that carry secret payload values. A function
+-- whose body compares against the event-name literal gets those parameters
+-- seeded as taint sources (analyzer walkFunctionBody).
+function Registry:addSecretPayloadEvent(name, params) self.secretEventParams[name] = params end
+function Registry:secretPayloadParams(name)           return self.secretEventParams[name] end
+function Registry:hasSecretPayloadEvents()            return next(self.secretEventParams) ~= nil end
 
 return M
