@@ -9,6 +9,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v5.0.0-alpha19 - 2026-07-18
+
+> ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will
+> not load on the 12.0.x live client. Stay on the v4.x beta line for live realms.
+
+### Changed
+- Extra action button and zone ability takeover reworked for 12.1's secure
+  layout: QUI now owns the shared container for the whole session, so
+  disabling the takeover asks for a `/reload` to hand the frames back to
+  Blizzard instead of risking a protected-layout error mid-session.
+- The zone ability mover now defaults to its own screen position instead of
+  riding the extra action button's anchor.
+
+### Fixed
+- In-combat frame moves are now gated behind secret-safe protection probes,
+  fixing errors the 12.1 client could throw when QUI checked whether a frame
+  was movable during combat; blocked moves retry automatically after combat.
+- Action bar cooldown reads no longer risk a secret-value error when the
+  12.1 client hides cooldown data during combat.
+- Cooldown viewer icons whose text or values are hidden by the 12.1 client
+  now count as present and stay visible instead of disappearing.
+- The mail window position is re-asserted when Blizzard's panel manager
+  re-stamps it while open.
+- Frame anchoring resolves retries per consumer, so one frame's pending
+  retry can no longer suppress or hijack another's; anchor work blocked by
+  combat is replayed reliably once combat ends.
+
 ## v5.0.0-alpha18 - 2026-07-14
 
 > ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will
