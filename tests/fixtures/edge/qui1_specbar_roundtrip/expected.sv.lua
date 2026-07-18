@@ -2294,9 +2294,9 @@ return {
             heightAdjust = 0,
             hideWithParent = false,
             keepInPlace = true,
-            offsetX = 0,
-            offsetY = 0,
-            parent = "extraActionButton",
+            offsetX = 150,
+            offsetY = -27.5,
+            parent = "screen",
             point = "CENTER",
             relative = "CENTER",
             sizeStable = true,
@@ -2376,6 +2376,7 @@ return {
           autoTurnInQuest = true,
           autoUnwrapCollections = false,
           closeBagsOnKeystoneInsert = false,
+          communitiesPrivacy = false,
           consumableAnchorMode = true,
           consumableCheckEnabled = true,
           consumableExpirationThreshold = 300,
@@ -2437,6 +2438,13 @@ return {
           },
           darkModeHealthOpacity = 0.69999999999999996,
           darkModeOpacity = 0.69999999999999996,
+          deathAlert = {
+            enabled = false,
+            fontSize = 24,
+            offsetX = 0,
+            offsetY = 220,
+            sound = "None"
+          },
           defaultBgColor = {
             [1] = 0,
             [2] = 0,
@@ -2454,6 +2462,7 @@ return {
           defaultOpacity = 1,
           defaultUseClassColor = true,
           disableScrollingCombatText = false,
+          ejLootSpecIcons = false,
           eventSounds = {
             enabled = false,
             lfgProposal = "None",
@@ -2490,11 +2499,24 @@ return {
             },
             useClassColor = false
           },
+          focusMarker = {
+            enabled = false,
+            marker = 8,
+            useMouseover = true,
+            writeMacro = true
+          },
           font = "Quazii",
           fontOutline = "OUTLINE",
           friendsClassColor = true,
           gameMenuDim = true,
           gameMenuFontSize = 12,
+          gemSocketPicker = false,
+          healerMana = {
+            enabled = false,
+            instanceOnly = true,
+            offsetX = 0,
+            offsetY = -260
+          },
           hideObjectiveTrackerBorder = true,
           hostilityColorFriendly = {
             [1] = 0.20000000000000001,
@@ -2535,6 +2557,8 @@ return {
             minKeepIlvl = 0,
             minQuality = 0
           },
+          mailContactsPanel = false,
+          mailRememberRecipient = false,
           masterColorCastbarText = false,
           masterColorHealthText = false,
           masterColorNameText = false,
@@ -2665,7 +2689,22 @@ return {
           statusTrackingBarsShowBarText = true,
           statusTrackingBarsShowBorder = true,
           texture = "Quazii v5",
-          uiScale = 0.64000000000000001
+          tradeMailLog = {
+            enabled = false,
+            logReceivedMail = true,
+            logSentMail = true,
+            logTrades = true
+          },
+          uiScale = 0.64000000000000001,
+          vendorRules = {
+            enabled = false,
+            forceSell = "",
+            maxIlvl = 0,
+            maxQuality = 1,
+            neverSell = "",
+            previewOnly = true
+          },
+          worldMapTeleports = false
         },
         hudLayering = {
           bossFrames = 4,
