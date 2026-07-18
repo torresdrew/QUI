@@ -41,6 +41,7 @@
 ---------------------------------------------------------------------------
 local ADDON_NAME, ns = ...
 local Bags = ns.Bags or {}; ns.Bags = Bags
+local Storage = ns.Storage
 local Helpers = ns.Helpers
 local GetSettings = Helpers.CreateDBGetter("bags")
 
@@ -155,8 +156,8 @@ local function OnBagsChangedPrePrime()
 end
 
 local function UnhookBus()
-    if busHooked and Bags.Bus and Bags.Bus.Unsubscribe then
-        Bags.Bus.Unsubscribe("BagsChanged", OnBagsChangedPrePrime)
+    if busHooked and Storage.Bus and Storage.Bus.Unsubscribe then
+        Storage.Bus.Unsubscribe("BagsChanged", OnBagsChangedPrePrime)
         busHooked = false
     end
 end
@@ -199,8 +200,8 @@ function NewItems.OnLogin()
     WipeStore()
     primed = false
     BaselineLiveBags()
-    if Bags.Bus and Bags.Bus.Subscribe and not busHooked then
-        Bags.Bus.Subscribe("BagsChanged", OnBagsChangedPrePrime)
+    if Storage.Bus and Storage.Bus.Subscribe and not busHooked then
+        Storage.Bus.Subscribe("BagsChanged", OnBagsChangedPrePrime)
         busHooked = true
     end
     local token = {}
@@ -227,7 +228,7 @@ end
 --- everything and re-dress the bag window so the glows drop immediately.
 function NewItems.ClearAllNew()
     NewItems.SeenAll(sessionStore)
-    if Bags.Bus then Bags.Bus.Publish("BagsChanged") end
+    if Storage.Bus then Storage.Bus.Publish("BagsChanged") end
 end
 
 --- Test-only: expose the session store so the headless suite can assert

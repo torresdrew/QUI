@@ -152,6 +152,11 @@ function __WowWidget:ClearPoints(...) end
 ---@param ... any
 function __WowWidget:ClearPointsOffset(...) end
 ---@param ... any
+function __WowWidget:ClearSVG(...) end
+--- Clears the text color curve used by this binding.
+---@param ... any
+function __WowWidget:ClearTextColorCurve(...) end
+---@param ... any
 function __WowWidget:ClearTransform(...) end
 ---@param ... any
 function __WowWidget:ClearUnits(...) end
@@ -656,9 +661,16 @@ function __WowWidget:GetFontStringByID(messageID, ...) end
 ---@param ... any
 ---@return string text
 function __WowWidget:GetFormattedText(...) end
+--- Returns the text color that would currently be assigned to the configured font string.
+---@param ... any
+---@return any color
+function __WowWidget:GetFormattedTextColor(...) end
 ---@param ... any
 ---@return number normalizedAlpha
 function __WowWidget:GetFromAlpha(...) end
+---@param ... any
+---@return number percent
+function __WowWidget:GetFromPercent(...) end
 --- Returns the configured heal absorb clamping mode.
 ---@param ... any
 ---@return any healAbsorbClampMode
@@ -960,6 +972,9 @@ function __WowWidget:GetRoomGUID(...) end
 ---@return string name
 function __WowWidget:GetRoomName(...) end
 ---@param ... any
+---@return number svgFile
+function __WowWidget:GetSVGFileID(...) end
+---@param ... any
 ---@return number scale
 function __WowWidget:GetScale(...) end
 ---@param ... any
@@ -1032,6 +1047,11 @@ function __WowWidget:GetStripIntervalWhitespace(...) end
 ---@return number colorB
 ---@return number colorA
 function __WowWidget:GetTextColor(...) end
+--- Returns the text color curve used by this binding.
+---@param ... any
+---@return any curve
+---@return any property
+function __WowWidget:GetTextColorCurve(...) end
 ---@param ... any
 ---@return number thickness
 function __WowWidget:GetThickness(...) end
@@ -1052,6 +1072,9 @@ function __WowWidget:GetTimeVisible(...) end
 ---@param ... any
 ---@return number normalizedAlpha
 function __WowWidget:GetToAlpha(...) end
+---@param ... any
+---@return number percent
+function __WowWidget:GetToPercent(...) end
 ---@param index? number
 ---@param ... any
 ---@return number objectiveIndex
@@ -1157,6 +1180,9 @@ function __WowWidget:HasExpired(modifier, ...) end
 ---@param ... any
 ---@return boolean hasMessage
 function __WowWidget:HasMessageByID(messageID, ...) end
+---@param ... any
+---@return boolean hasSVG
+function __WowWidget:HasSVG(...) end
 --- Returns true if the duration text binding has been configured with any secret values.
 ---@param ... any
 ---@return boolean hasSecretValues
@@ -1753,6 +1779,9 @@ function __WowWidget:SetFormatter(formatter, ...) end
 ---@param normalizedAlpha? number
 ---@param ... any
 function __WowWidget:SetFromAlpha(normalizedAlpha, ...) end
+---@param percent? number
+---@param ... any
+function __WowWidget:SetFromPercent(percent, ...) end
 ---@param characterIndex? number
 ---@param ... any
 ---@return boolean success
@@ -1792,6 +1821,9 @@ function __WowWidget:SetHitRectThickness(thickness, ...) end
 ---@param anchors? table
 ---@param ... any
 function __WowWidget:SetHitTestPoints(anchors, ...) end
+---@param scale? number
+---@param ... any
+function __WowWidget:SetIconScale(scale, ...) end
 --- Changes the clamping mode used when calculating incoming heal amounts.
 ---@param incomingHealClampMode? any
 ---@param ... any
@@ -2077,6 +2109,10 @@ function __WowWidget:SetRoll(roll, ...) end
 ---@param animate? boolean
 ---@param ... any
 function __WowWidget:SetRotation(radians, animate, ...) end
+---@param svgAsset? any
+---@param ... any
+---@return boolean success
+function __WowWidget:SetSVG(svgAsset, ...) end
 ---@param scale? number
 ---@param ... any
 function __WowWidget:SetScale(scale, ...) end
@@ -2189,6 +2225,11 @@ function __WowWidget:SetTaskBlobRingTexture(asset, ...) end
 ---@param a? any
 ---@param ... any
 function __WowWidget:SetTextColor(colorR, colorG, colorB, a, ...) end
+--- Configures this duration text binding to adjust fontstring text color by evaluating a duration property through a curve.
+---@param curve? any
+---@param property? any
+---@param ... any
+function __WowWidget:SetTextColorCurve(curve, property, ...) end
 --- Configures the text format used by this duration text binding. The format string may contain '{}' placeholders, each of which is substituted by the corresponding component in the supplied array.
 ---@param format? string
 ---@param components? table
@@ -2234,6 +2275,9 @@ function __WowWidget:SetToAlpha(normalizedAlpha, ...) end
 --- Resets this duration text binding to its default state, clearing the configured font string, duration, format, formatter, and fallback text.
 ---@param ... any
 function __WowWidget:SetToDefaults(...) end
+---@param percent? number
+---@param ... any
+function __WowWidget:SetToPercent(percent, ...) end
 ---@param translation? any
 ---@param rotation? any
 ---@param scale? number

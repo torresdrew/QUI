@@ -70,7 +70,8 @@ function ActionBarsOwned.UpdatePetButton(btn)
         btn.AutoCastOverlay:ShowAutoCastEnabled(autoCastEnabled and true or false)
     end
     if btn.SpellHighlightTexture then
-        if spellID and C_Spell and C_Spell.IsSpellOverlayed and C_Spell.IsSpellOverlayed(spellID) then
+        if spellID and C_SpellActivationOverlay and C_SpellActivationOverlay.IsSpellOverlayed
+            and C_SpellActivationOverlay.IsSpellOverlayed(spellID) then
             btn.SpellHighlightTexture:Show()
         else
             btn.SpellHighlightTexture:Hide()

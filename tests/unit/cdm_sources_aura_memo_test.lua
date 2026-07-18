@@ -21,7 +21,13 @@ _G.wipe = function(tbl)
     return tbl
 end
 
-function issecretvalue(value) return secretValues[value] == true end
+-- probedValues: spy for T16's probe-discipline pin. Must exist before load —
+-- the module latches issecretvalue as a file-local at load time.
+local probedValues = {}
+function issecretvalue(value)
+    if value ~= nil then probedValues[value] = true end
+    return secretValues[value] == true
+end
 
 -- Returns scripted from these tables; a nil entry models "no such aura".
 -- auraInstanceID lets the delta-invalidation tests match cached AuraData.
@@ -230,5 +236,29 @@ S.InvalidateAuraMemoForDelta("player", { removedAuraInstanceIDs = { secretIID } 
 S.QueryUnitAuraBySpellID("player", 300) -- unverifiable -> dropped -> re-probe
 assert(calls.unit == 2, "secret changed instanceID forces a conservative re-probe (got " .. calls.unit .. ")")
 secretValues[secretIID] = nil
+
+---------------------------------------------------------------------------
+-- T16: 12.1 per-field secrecy -- updateInfo is a READABLE table whose scalar
+-- isFullUpdate field is itself secret (live shape: { addedAuras=<secret
+-- table>, isFullUpdate=<secret boolean> }, 222x on target). In-game the
+-- boolean test on it THROWS; this harness cannot trap truthiness (the token
+-- is an ordinary table here), so pin both:
+--   (1) behavior: the unreadable flag folds to the conservative full wipe;
+--   (2) probe discipline: the flag passed through issecretvalue BEFORE any
+--       boolean test (probedValues spy installed at the top of this file).
+---------------------------------------------------------------------------
+local secretFull = { token = "secret-isFullUpdate" }
+secretValues[secretFull] = true
+S.InvalidateAllAuraMemo()
+calls.unit = 0
+S.QueryUnitAuraBySpellID("player", 100)
+S.QueryUnitAuraBySpellID("player", 200)
+S.InvalidateAuraMemoForDelta("player", { isFullUpdate = secretFull })
+S.QueryUnitAuraBySpellID("player", 100)
+S.QueryUnitAuraBySpellID("player", 200)
+assert(calls.unit == 4, "secret isFullUpdate must fold to the conservative full wipe (got " .. calls.unit .. ")")
+assert(probedValues[secretFull] == true,
+    "isFullUpdate must be probed via issecretvalue before any boolean test")
+secretValues[secretFull] = nil
 
 print("OK: cdm_sources_aura_memo_test")

@@ -1,5 +1,7 @@
 GameDialogAlertTextureName = "Interface\\DialogFrame\\UI-Dialog-Icon-AlertNew";
 
+RegisterGameMenuEscHandler(GameMenuEscPriority.Dialog, StaticPopup_EscapePressed);
+
 local function ShouldHideButton(dialog, buttonText, canShowButtonFunc)
 	return not (buttonText and (not canShowButtonFunc or canShowButtonFunc(dialog, dialog.data)));
 end

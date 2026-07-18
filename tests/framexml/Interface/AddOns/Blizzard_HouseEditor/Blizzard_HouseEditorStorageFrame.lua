@@ -1,4 +1,3 @@
-
 local FIXED_BUNDLE_WIDTH = 521;
 local STORAGE_ICON_STRING = CreateAtlasMarkup("house-chest-icon", 16, 16);
 local STORAGE_COUNT_FORMAT = STORAGE_ICON_STRING .. " %s / %d";
@@ -146,6 +145,14 @@ function HouseEditorStorageFrameMixin:OnLoad()
 	self.marketTabID = self:AddNamedTab(HOUSE_EDITOR_CATALOG_MARKET_TAB);
 	self:SetTabCallback(self.marketTabID, function(isUserAction) self:OnMarketTabSelected(isUserAction); end);
 	self:SetTabDeselectCallback(self.marketTabID, function() self:OnMarketTabDeselected(); end);
+	self.blueprintsTabID = self:AddNamedTab(HOUSE_EDITOR_CATALOG_BLUEPRINTS_TAB);
+	self:SetTabCallback(self.blueprintsTabID, function(isUserAction) self:OnBlueprintsTabSelected(isUserAction); end);
+
+	self.tabsByEnum = {
+		[HousingFramesUtil.HouseChestTabs.Storage] = self.storageTabID,
+		[HousingFramesUtil.HouseChestTabs.Market] = self.marketTabID,
+		[HousingFramesUtil.HouseChestTabs.Blueprints] = self.blueprintsTabID,
+	};
 
 	--add a dialog confirming that you want to switch tabs, as doing so will delete your preview decor.
 	self.TabSystem:SetTabSelectedCallback(function(tabID, isUserAction)
@@ -163,7 +170,7 @@ function HouseEditorStorageFrameMixin:OnLoad()
 	end);
 
 	self:SetTab(self.storageTabID);
-	self:UpdateMarketTabVisibility();
+	self:UpdateTabVisibilities();
 
 	self.hasMarketData = false;
 
@@ -183,7 +190,7 @@ function HouseEditorStorageFrameMixin:OnEvent(event, ...)
 		local newMode = ...;
 		self:UpdateEditorMode(newMode);
 	elseif event == "HOUSING_MARKET_AVAILABILITY_UPDATED" then
-		self:UpdateMarketTabVisibility();
+		self:UpdateTabVisibilities();
 	elseif event == "PLAYER_LEAVING_WORLD" then
 		-- We're going to use leaving world as a "good enough" point for refreshing data from the catalog shop.
 		self:CheckCloseMarketInteraction();
@@ -220,7 +227,7 @@ function HouseEditorStorageFrameMixin:OnShow()
 	FrameUtil.RegisterFrameForEvents(self, StorageWhileVisibleEvents);
 	self:UpdateEditorMode(C_HouseEditor.GetActiveHouseEditorMode());
 
-	self:UpdateMarketTabVisibility();
+	self:UpdateTabVisibilities();
 
 	if self.catalogSearcher then
 		self.catalogSearcher:SetAutoUpdateOnParamChanges(true);
@@ -246,11 +253,7 @@ function HouseEditorStorageFrameMixin:OnShow()
 	end
 
 	-- Forces an update upon showing, reselecting the tab
-	if self:IsInMarketTab() then
-		self:SetTab(self.marketTabID);
-	else
-		self:SetTab(self.storageTabID);
-	end
+	self:SetTab(self:GetTab());
 end
 
 function HouseEditorStorageFrameMixin:OnHide()
@@ -314,12 +317,13 @@ function HouseEditorStorageFrameMixin:OnEntryResultsUpdated()
 end
 
 function HouseEditorStorageFrameMixin:OnTabChanged()
+	self:UpdateTabContentVisibility();
 	self:RestoreFilterAndFocusState();
 	self:UpdateMarketTabNotification();
 	self:UpdateCategoryText();
 	self:UpdateCategoryTotal();
 
-	EventRegistry:TriggerEvent("HouseEditorStorage.TabChanged");
+	EventRegistry:TriggerEvent("HouseEditorStorage.TabChanged", self:GetTab());
 end
 
 function HouseEditorStorageFrameMixin:GetCurrentSavedStateKey()
@@ -389,6 +393,10 @@ function HouseEditorStorageFrameMixin:OnMarketTabSelected(isUserAction)
 	SetCartFrameShown(self:ShouldShowMarketShop());
 end
 
+function HouseEditorStorageFrameMixin:OnBlueprintsTabSelected(isUserAction)
+	self:OnTabChanged();
+end
+
 function HouseEditorStorageFrameMixin:OnMarketTabDeselected()
 	C_HousingDecor.ExitPreviewState();
 	SetCartFrameShown(false);
@@ -431,20 +439,60 @@ function HouseEditorStorageFrameMixin:CheckCloseMarketInteraction()
 	end
 end
 
-function HouseEditorStorageFrameMixin:UpdateMarketTabVisibility()
-	local marketEnabled = self:ShouldShowMarketTab();
-	local showingDecor = self.catalogSearcher:GetEditorModeContext() ~= Enum.HouseEditorMode.Layout;
-	local showMarketTab = marketEnabled and showingDecor;
+-- Expects a HousingFramesUtil.HouseChestTabs value
+function HouseEditorStorageFrameMixin:TrySetTab(tabEnum)
+	local tabID = self.tabsByEnum[tabEnum];
+	if not tabID or not self:IsTabAvailable(tabID) then
+		return false;
+	end
+
+	self:SetTab(tabID);
+	return true;
+end
+
+function HouseEditorStorageFrameMixin:IsTabAvailable(tabID)
+	if tabID == self.storageTabID then
+		return true;
+	end
+
+	local showingRooms = self.catalogSearcher:GetEditorModeContext() == Enum.HouseEditorMode.Layout;
+	if tabID == self.marketTabID then
+		local marketEnabled = self:ShouldShowMarketTab();
+		return marketEnabled and not showingRooms;
+	elseif tabID == self.blueprintsTabID then
+		local blueprintsEnabled = C_HousingBlueprint.GetFeatureAvailability() == Enum.HousingResult.Success;
+		return blueprintsEnabled and showingRooms;
+	end
+end
+
+function HouseEditorStorageFrameMixin:UpdateTabVisibilities()
+	local isBlueprintTabAvailable = self:IsTabAvailable(self.blueprintsTabID);
+	self.TabSystem:SetTabShown(self.blueprintsTabID, isBlueprintTabAvailable);
+
+	local showMarketTab = self:IsTabAvailable(self.marketTabID);
 	self.TabSystem:SetTabShown(self.marketTabID, showMarketTab);
 
 	if showMarketTab then
 		self:UpdateMarketTabNotification();
-	elseif self:IsInMarketTab() then
-		-- We shouldn't be showing the market tab any more but we're in it, so switch to storage.
+	end
+
+	if not self:IsTabAvailable(self:GetTab()) then
 		self:SetTab(self.storageTabID);
 	end
 
 	EventRegistry:TriggerEvent("HousingMarketTab.VisibilityUpdated");
+end
+
+function HouseEditorStorageFrameMixin:UpdateTabContentVisibility()
+	local activeTab = self:GetTab();
+	local isCatalogContentActive = activeTab == self.marketTabID or activeTab == self.storageTabID;
+	for _, element in ipairs(self.CatalogElements) do
+		element:SetShown(isCatalogContentActive);
+	end
+	local blueprintContentActive = activeTab == self.blueprintsTabID;
+	for _, element in ipairs(self.BlueprintElements) do
+		element:SetShown(blueprintContentActive);
+	end
 end
 
 function HouseEditorStorageFrameMixin:IsMarketTabShown()
@@ -641,8 +689,8 @@ function HouseEditorStorageFrameMixin:UpdateLoadingSpinner()
 		self.OptionsContainer:SetShown(self.hasMarketData);
 		self.LoadingSpinner:SetShown(not self.hasMarketData);
 	else
-		self.OptionsContainer:Show();
 		self.LoadingSpinner:Hide();
+		self:UpdateTabContentVisibility();
 	end
 end
 
@@ -685,7 +733,7 @@ function HouseEditorStorageFrameMixin:UpdateEditorMode(newEditorMode)
 			end
 		end
 
-		self:UpdateMarketTabVisibility();
+		self:UpdateTabVisibilities();
 
 		self.lastEditorMode = newEditorMode;
 	end

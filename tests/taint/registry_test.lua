@@ -77,3 +77,19 @@ assert_false(r2:isSecretReturning("MyHelpers.WrapSecret"),
     "second instance has clean secretReturning")
 
 print("registry test passed")
+
+-- Aspect-returning method track + stripped view
+local rA = Registry.new()
+assert_false(rA:isAspectReturningMethod("GetAlpha"), "clean instance has no aspect methods")
+rA:addAspectReturningMethod("GetAlpha", { "Alpha" })
+assert_true(rA:isAspectReturningMethod("GetAlpha"), "aspect method registered")
+
+local stripped = rA:aspectStripped()
+assert_false(stripped:isAspectReturningMethod("GetAlpha"),
+    "stripped view hides aspect methods")
+rA:addSource("C_Spell.GetSpellCharges")
+assert_true(stripped:isSource("C_Spell.GetSpellCharges"),
+    "stripped view still sees every other registry facility")
+assert_true(rA:aspectStripped() == stripped, "stripped view is cached")
+
+print("registry aspect test passed")

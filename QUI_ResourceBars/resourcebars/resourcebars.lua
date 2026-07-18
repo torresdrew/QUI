@@ -37,6 +37,7 @@ local GetTime = GetTime
 local UnitCanAttack = UnitCanAttack
 local tostring = tostring
 local wipe = wipe
+local issecretvalue = issecretvalue -- nil-safe: absent on pre-12.1 clients
 local table_insert = table.insert
 local table_remove = table.remove
 local string_format = string.format
@@ -65,14 +66,6 @@ if not _G["QUIResourceBars"] then
     if proxy.SetMouseClickEnabled then proxy:SetMouseClickEnabled(false) end
     if proxy.SetMouseMotionEnabled then proxy:SetMouseMotionEnabled(false) end
     proxy:Show()
-end
-
--- Pixel-perfect scaling helper
-local function Scale(x, frame)
-    if QUICore and QUICore.Scale then
-        return QUICore:Scale(x, frame)
-    end
-    return x
 end
 
 -- QUI_GetCDMViewerFrame lives in the CDM sub-addon; nil-safe wrapper so
@@ -255,6 +248,40 @@ Enum.PowerType.TipOfTheSpear = 103   -- Survival Hunter Tip of the Spear stacks
 Enum.PowerType.RenewingMistCharges = 104 -- Mistweaver Monk Renewing Mist charges
 
 ---------------------------------------------------------------------------
+-- UNIT_SPELLCAST_SUCCEEDED SECRET-BOUNDARY PROBE (shared, Wave 2b Task E)
+--
+-- tests/api-docs/blizzard/UnitDocumentation.lua:4663-4674:
+-- UnitSpellcastSucceeded carries SecretWhenUnitSpellCastRestricted = true;
+-- payload unitTarget/castGUID/spellID are all secretizable (only castBarID
+-- is NeverSecret, and this file never reads castBarID). A secret spellID
+-- or castGUID throws as a table key and in `==` against a number
+-- (cdm-auraphase-secret-spellid-table-index rule) - every tracker below
+-- indexes GENERATORS/SPENDERS[spellID] and/or compares spellID with `==`,
+-- and WhirlwindTracker additionally indexes seenGUID[castGUID].
+--
+-- Four separate frames (wwFrame/tipFrame/mwFrame/powerEventFrame) each own
+-- their own UNIT_SPELLCAST_SUCCEEDED dispatch below - there is no single
+-- physical choke point in this file's structure to place one probe at, so
+-- this shared helper is reused at each of the four call sites instead of
+-- hand-rolling the same check four times. All four registrations already
+-- use RegisterUnitEvent(..., "player") (C-level filtered), so the payload's
+-- `unit` token is trusted by registration (registered-token discipline,
+-- matching Wave 2b Tasks A-D) and not re-compared here; only the values
+-- actually indexed/compared downstream (spellID, and castGUID where used)
+-- are probed. Secret cast = skip; each tracker's own drift/resync semantics
+-- (documented in the MaelstromWeaponTracker header below, and equivalently
+-- via WhirlwindTracker/TipOfTheSpearTracker's timed stack decay) already
+-- cover the resulting undercount - no new recovery path invented here.
+local function IsSecretSpellcastPayload(spellID, castGUID)
+    if not issecretvalue then return false end
+    if issecretvalue(spellID) then return true end
+    -- No nil pre-check: issecretvalue(nil) is safe, and a `~= nil` compare
+    -- on a possibly-secret value is exactly the operation being guarded.
+    if issecretvalue(castGUID) then return true end
+    return false
+end
+
+---------------------------------------------------------------------------
 -- WHIRLWIND STACK TRACKER (event-driven)
 --
 -- C_UnitAuras.GetPlayerAuraBySpellID(85739) is unreliable during combat.
@@ -390,8 +417,11 @@ do
                 WhirlwindTracker:Reset()
             end
         elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
-            local unit, castGUID, spellID = ...
-            if unit == "player" then
+            -- unit trusted via registration (:416 RegisterUnitEvent player-only);
+            -- spellID/castGUID probed before OnSpellCast's GENERATORS/SPENDERS[spellID]
+            -- and seenGUID[castGUID] table indexing (:358, :381, :354-355 below).
+            local _, castGUID, spellID = ...
+            if not IsSecretSpellcastPayload(spellID, castGUID) then
                 WhirlwindTracker:OnSpellCast(spellID, castGUID)
             end
         elseif event == "PLAYER_DEAD" then
@@ -527,8 +557,11 @@ do
                 TipOfTheSpearTracker:Reset()
             end
         elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
-            local unit, _, spellID = ...
-            if unit == "player" then
+            -- unit trusted via registration (:558 RegisterUnitEvent player-only);
+            -- spellID probed before OnSpellCast's == compares and SPENDERS[spellID]
+            -- indexing (:511, :522, :532 below).
+            local _, _, spellID = ...
+            if not IsSecretSpellcastPayload(spellID) then
                 TipOfTheSpearTracker:OnSpellCast(spellID)
             end
         elseif event == "PLAYER_DEAD" then
@@ -537,6 +570,156 @@ do
     end)
     tipFrame:RegisterEvent("ACTIVE_PLAYER_SPECIALIZATION_CHANGED")
     tipFrame:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
+end
+
+---------------------------------------------------------------------------
+-- MAELSTROM WEAPON STACK TRACKER (event-driven, safe-resync)
+--
+-- Enum.PowerType.MaelstromWeapon (=100, defined above) is a synthetic ID this
+-- addon invents; Blizzard's real PowerType enum has no such member (see
+-- tests/api-docs/blizzard/PowerTypeConstantsDocumentation.lua: the PowerType
+-- table lists exactly 30 fields, values 0-29, and "Maelstrom"=11 is the
+-- *Elemental* resource bar - a different mechanic. Nothing in tests/framexml/
+-- reads Maelstrom Weapon via UnitPower either.). So Maelstrom Weapon stacks
+-- are only observable as an aura application count (spell 344179), and every
+-- aura-by-spellID getter is SecretWhenUnitAuraRestricted - GetPlayerAuraBySpellID
+-- (tests/api-docs/blizzard/UnitAuraDocumentation.lua:376) and GetUnitAuraBySpellID
+-- (same file:414) both carry the tag, so there is no unrestricted aura read to
+-- fall back to. Track it manually via UNIT_SPELLCAST_SUCCEEDED instead.
+--
+-- Unlike Whirlwind/Tip of the Spear (decrement-by-one spenders, timed decay),
+-- Maelstrom Weapon has no duration and its spenders consume ALL current
+-- stacks on cast, not one. The GENERATORS list below intentionally covers
+-- only the long-standing, high-confidence core builders (Stormstrike/
+-- Windstrike/Lava Lash) - this repo has no local doc naming every talent that
+-- can also grant a stack, and guessing extra spell IDs risks a wrong ID
+-- colliding with an unrelated cast. Known-partial coverage: the tracker can
+-- therefore undercount mid-combat; to bound that drift it resyncs from the
+-- real aura value whenever it's actually safe to read it:
+-- C_Secrets.ShouldAurasBeSecret() "Returns true if queries for aura data
+-- will generally produce secret values." (SecretPredicateAPIDocumentation
+-- .lua:121).
+---------------------------------------------------------------------------
+local MaelstromWeaponTracker = {}
+do
+    local MW_MAX_STACKS = 10
+    local MAELSTROM_WEAPON_SPELL_ID = 344179
+
+    -- Generators: +1 stack. Core, high-confidence builders only (see header).
+    local GENERATORS = {
+        [17364]  = true, -- Stormstrike
+        [115356] = true, -- Windstrike (Stormbringer-empowered Stormstrike)
+        [60103]  = true, -- Lava Lash
+    }
+
+    -- Spenders: consume ALL current stacks (not one) on cast.
+    -- 188196 and 8004 are grounded in the local FrameXML snapshot
+    -- (Blizzard_TutorialData.lua SHAMAN block: "188196, -- Start with
+    -- Lightning Bolt" / "8004, -- Healing Surge, level 4"); 188443 and 1064
+    -- have no local doc entry and are long-standing baseline IDs pending
+    -- in-game confirm. Talent spenders (e.g. Elemental Blast) deliberately
+    -- omitted pending in-game ID verification.
+    local SPENDERS = {
+        [188196] = true, -- Lightning Bolt
+        [188443] = true, -- Chain Lightning
+        [8004]   = true, -- Healing Surge
+        [1064]   = true, -- Chain Heal
+    }
+
+    local stacks = 0
+
+    function MaelstromWeaponTracker:GetStacks()
+        return MW_MAX_STACKS, stacks
+    end
+
+    function MaelstromWeaponTracker:Reset()
+        stacks = 0
+    end
+
+    -- Resync from the live aura value when it's safe to read it (i.e. not
+    -- SecretWhenUnitAuraRestricted right now). No-ops otherwise, leaving the
+    -- event-tracked estimate in place rather than touching restricted data.
+    function MaelstromWeaponTracker:Resync()
+        if not (C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID) then return end
+        if C_Secrets and C_Secrets.ShouldAurasBeSecret and C_Secrets.ShouldAurasBeSecret() then
+            return
+        end
+        local ok, aura = pcall(C_UnitAuras.GetPlayerAuraBySpellID, MAELSTROM_WEAPON_SPELL_ID)
+        if not ok then return end
+        if aura and type(aura.applications) == "number" then
+            stacks = math_min(MW_MAX_STACKS, aura.applications)
+        else
+            stacks = 0
+        end
+    end
+
+    function MaelstromWeaponTracker:OnSpellCast(spellID)
+        if GENERATORS[spellID] then
+            if stacks < MW_MAX_STACKS then
+                stacks = stacks + 1
+                if QUICore and QUICore.UpdateSecondaryPowerBar then
+                    QUICore:UpdateSecondaryPowerBar()
+                end
+            end
+            return
+        end
+
+        if SPENDERS[spellID] then
+            if stacks > 0 then
+                stacks = 0
+                if QUICore and QUICore.UpdateSecondaryPowerBar then
+                    QUICore:UpdateSecondaryPowerBar()
+                end
+            end
+            return
+        end
+    end
+
+    -- Event frame: only active for Enhancement Shamans.
+    local mwFrame = CreateFrame("Frame")
+    mwFrame:RegisterEvent("ADDON_LOADED")
+    mwFrame:SetScript("OnEvent", function(self, event, ...)
+        if event == "ADDON_LOADED" then
+            local addonName = ...
+            if addonName ~= ADDON_NAME then return end
+            self:UnregisterEvent("ADDON_LOADED")
+        end
+        if event == "ADDON_LOADED" or event == "ACTIVE_PLAYER_SPECIALIZATION_CHANGED"
+            or event == "PLAYER_SPECIALIZATION_CHANGED" then
+            local _, class = UnitClass("player")
+            local spec = GetSpecialization()
+            -- Enhancement = spec 2
+            if class == "SHAMAN" and spec == 2 then
+                self:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
+                self:RegisterEvent("PLAYER_DEAD")
+                self:RegisterEvent("PLAYER_REGEN_ENABLED")
+                MaelstromWeaponTracker:Resync()
+            else
+                self:UnregisterEvent("UNIT_SPELLCAST_SUCCEEDED")
+                self:UnregisterEvent("PLAYER_DEAD")
+                self:UnregisterEvent("PLAYER_REGEN_ENABLED")
+                MaelstromWeaponTracker:Reset()
+            end
+        elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
+            -- unit trusted via registration (:699 RegisterUnitEvent player-only);
+            -- spellID probed before OnSpellCast's GENERATORS/SPENDERS[spellID]
+            -- indexing (:663, :673 below).
+            local _, _, spellID = ...
+            if not IsSecretSpellcastPayload(spellID) then
+                MaelstromWeaponTracker:OnSpellCast(spellID)
+            end
+        elseif event == "PLAYER_DEAD" then
+            MaelstromWeaponTracker:Reset()
+        elseif event == "PLAYER_REGEN_ENABLED" then
+            -- Combat ended: TRY a resync. Resync gates on ShouldAurasBeSecret,
+            -- which also covers encounter/challenge-mode/PvP restrictions —
+            -- inside M+ or an encounter this may stay true past regen, so the
+            -- tracker's undercount can persist until the restriction lifts.
+            MaelstromWeaponTracker:Resync()
+        end
+    end)
+    mwFrame:RegisterEvent("ACTIVE_PLAYER_SPECIALIZATION_CHANGED")
+    mwFrame:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
 end
 
 local VDH_SOUL_FRAGMENTS_POWER = (Enum.PowerType and type(Enum.PowerType.SoulFragments) == "number") and Enum.PowerType.SoulFragments or nil
@@ -773,10 +956,56 @@ local renewingMistUpdateRunning = false
 local _lastRuneRounded = {}    -- [runeIndex] = last math_floor(remaining * 10) value
 local _lastRuneFormatted = {}  -- [runeIndex] = last formatted string
 
+-- Rune display scratch: pooled records + order array, rewritten in place on
+-- every refresh (RUNE_POWER_UPDATE fires continuously for DKs).
+local runeScratch = {}
+local runeOrder = {}
+-- Total order: ready runes first (stable by rune index), then recharging by
+-- ascending remaining, index tiebreak (table.sort is not stable).
+local function RuneDisplayLess(a, b)
+    if a.ready ~= b.ready then return a.ready end
+    if a.ready then return a.index < b.index end
+    if a.remaining ~= b.remaining then return a.remaining < b.remaining end
+    return a.index < b.index
+end
+
 -- Event throttle (16ms = ~60 FPS, smooth updates while managing CPU)
 local UPDATE_THROTTLE = 0.016
 local lastPrimaryUpdate = 0
 local lastSecondaryUpdate = 0
+
+-- Trailing drain: the leading-edge throttle drops events inside the 16ms
+-- window; one queued C_Timer.After per burst re-renders the final state.
+-- Static closures — no per-event allocation. C_Timer.After callbacks are
+-- uncancellable, so each drain re-checks state when it fires.
+local primaryDrainQueued = false
+local secondaryDrainQueued = false
+
+local function DrainPrimaryPowerUpdate()
+    primaryDrainQueued = false
+    if not (QUICore and QUICore.db) then return end
+    lastPrimaryUpdate = GetTime()
+    QUICore:UpdatePowerBar()
+end
+
+local function DrainSecondaryPowerUpdate()
+    secondaryDrainQueued = false
+    if not (QUICore and QUICore.db) then return end
+    lastSecondaryUpdate = GetTime()
+    QUICore:UpdateSecondaryPowerBar()
+end
+
+local function QueuePrimaryTrailingUpdate()
+    if primaryDrainQueued then return end
+    primaryDrainQueued = true
+    C_Timer.After(UPDATE_THROTTLE, DrainPrimaryPowerUpdate)
+end
+
+local function QueueSecondaryTrailingUpdate()
+    if secondaryDrainQueued then return end
+    secondaryDrainQueued = true
+    C_Timer.After(UPDATE_THROTTLE, DrainSecondaryPowerUpdate)
+end
 
 -- Discrete resources that need instant feedback (no throttle)
 -- These change infrequently and users expect immediate visual response
@@ -1540,9 +1769,9 @@ end
 
 -- RESOURCE DETECTION
 
-local function GetPrimaryResource()
-    local playerClass = select(2, UnitClass("player"))
-    local primaryResources = {
+-- Immutable class/spec resource maps. The getters below run on every power
+-- event; these tables must stay file-scope, never rebuilt per call.
+local primaryResources = {
         ["DEATHKNIGHT"] = Enum.PowerType.RunicPower,
         ["DEMONHUNTER"] = Enum.PowerType.Fury,
         ["DRUID"]       = {
@@ -1576,8 +1805,10 @@ local function GetPrimaryResource()
         },
         ["WARLOCK"]     = Enum.PowerType.Mana,
         ["WARRIOR"]     = Enum.PowerType.Rage,
-    }
+}
 
+local function GetPrimaryResource()
+    local playerClass = select(2, UnitClass("player"))
     local spec = GetSpecialization()
     if not spec then return Enum.PowerType.Mana end
     local specID = GetSpecializationInfo(spec)
@@ -1602,9 +1833,7 @@ local function GetPrimaryResource()
     end
 end
 
-local function GetSecondaryResource()
-    local playerClass = select(2, UnitClass("player"))
-    local secondaryResources = {
+local secondaryResources = {
         ["DEATHKNIGHT"] = Enum.PowerType.Runes,
         ["DEMONHUNTER"] = {
             [581] = VDH_SOUL_FRAGMENTS_POWER or Enum.PowerType.VengSoulFragments, -- Vengeance
@@ -1639,8 +1868,10 @@ local function GetSecondaryResource()
         ["WARRIOR"]     = {
             [72] = Enum.PowerType.Whirlwind, -- Fury
         },
-    }
+}
 
+local function GetSecondaryResource()
+    local playerClass = select(2, UnitClass("player"))
     local spec = GetSpecialization()
     if not spec then return nil end
     local specID = GetSpecializationInfo(spec)
@@ -1869,10 +2100,15 @@ local function GetSecondaryResourceValue(resource)
     end
 
     if resource == Enum.PowerType.MaelstromWeapon then
-        -- Enhancement Shaman Maelstrom Weapon stacks (aura-based, spell ID 344179)
-        local aura = C_UnitAuras.GetPlayerAuraBySpellID(344179)
-        local current = aura and aura.applications or 0
-        return 10, current, current, "number"
+        -- Enhancement Shaman Maelstrom Weapon stacks.
+        -- GetPlayerAuraBySpellID(344179) is SecretWhenUnitAuraRestricted and
+        -- returns stale/secret data while restricted (RequiresNonSecretAura
+        -- returns no values, no error); there's no UnitPower path either (this
+        -- power ID is a synthetic constant this addon defines, not a real
+        -- Blizzard PowerType - see MaelstromWeaponTracker header comment).
+        -- Manual tracker (UNIT_SPELLCAST_SUCCEEDED) with safe resync instead.
+        local max, current = MaelstromWeaponTracker:GetStacks()
+        return max, current, current, "number"
     end
 
     if resource == Enum.PowerType.Whirlwind then
@@ -3182,49 +3418,44 @@ function QUICore:UpdateFragmentedPowerDisplay(bar, resource, isVertical)
 
 
     if resource == Enum.PowerType.Runes then
-        -- Collect rune states: ready and recharging
-        local readyList = {}
-        local cdList = {}
+        -- Pooled rune records: rewritten in place each refresh, no per-event
+        -- allocation.
         local now = GetTime()
-
         for i = 1, maxPower do
+            local rec = runeScratch[i]
+            if not rec then
+                rec = {}
+                runeScratch[i] = rec
+            end
             local start, duration, runeReady = GetRuneCooldown(i)
+            rec.index = i
             if runeReady then
-                table_insert(readyList, { index = i })
+                rec.ready = true
+                rec.remaining = 0
+                rec.frac = 1
             else
+                rec.ready = false
                 if start and duration and duration > 0 then
                     local elapsed = now - start
-                    local remaining = math_max(0, duration - elapsed)
-                    local frac = math_max(0, math_min(1, elapsed / duration))
-                    table_insert(cdList, { index = i, remaining = remaining, frac = frac })
+                    rec.remaining = math_max(0, duration - elapsed)
+                    rec.frac = math_max(0, math_min(1, elapsed / duration))
                 else
-                    table_insert(cdList, { index = i, remaining = math.huge, frac = 0 })
+                    rec.remaining = math.huge
+                    rec.frac = 0
                 end
             end
+            runeOrder[i] = rec
+        end
+        for i = maxPower + 1, #runeOrder do
+            runeOrder[i] = nil
         end
 
-        -- Sort cdList by ascending remaining time
-        table.sort(cdList, function(a, b)
-            return a.remaining < b.remaining
-        end)
+        -- Ready runes first, then recharging by ascending remaining time
+        table.sort(runeOrder, RuneDisplayLess)
 
-        -- Build final display order: ready runes first, then CD runes sorted
-        local displayOrder = {}
-        local readyLookup = {}
-        local cdLookup = {}
-
-        for _, v in ipairs(readyList) do
-            table_insert(displayOrder, v.index)
-            readyLookup[v.index] = true
-        end
-
-        for _, v in ipairs(cdList) do
-            table_insert(displayOrder, v.index)
-            cdLookup[v.index] = v
-        end
-
-        for pos = 1, #displayOrder do
-            local runeIndex = displayOrder[pos]
+        for pos = 1, maxPower do
+            local rec = runeOrder[pos]
+            local runeIndex = rec.index
             local runeFrame = bar.FragmentedPowerBars[runeIndex]
             local runeText = bar.FragmentedPowerBarTexts[runeIndex]
 
@@ -3245,33 +3476,25 @@ function QUICore:UpdateFragmentedPowerDisplay(bar, resource, isVertical)
                     runeText:SetShadowOffset(0, 0)
                 end
 
-                if readyLookup[runeIndex] then
+                if rec.ready then
                     -- Ready rune
                     runeFrame:SetMinMaxValues(0, 1)
                     runeFrame:SetValue(1)
                     runeText:SetText("")
                     runeFrame:SetStatusBarColor(color.r, color.g, color.b)
                 else
-                    -- Recharging rune
-                    local cdInfo = cdLookup[runeIndex]
-                    if cdInfo then
-                        runeFrame:SetMinMaxValues(0, 1)
-                        runeFrame:SetValue(cdInfo.frac)
+                    -- Recharging rune (rec carries remaining/frac)
+                    runeFrame:SetMinMaxValues(0, 1)
+                    runeFrame:SetValue(rec.frac)
 
-                        -- Only show timer text if enabled
-                        if cfg.showFragmentedPowerBarText ~= false then
-                            runeText:SetFormattedText("%.1f", math_max(0, cdInfo.remaining))
-                        else
-                            runeText:SetText("")
-                        end
-
-                        runeFrame:SetStatusBarColor(color.r * 0.5, color.g * 0.5, color.b * 0.5)
+                    -- Only show timer text if enabled
+                    if cfg.showFragmentedPowerBarText ~= false then
+                        runeText:SetFormattedText("%.1f", math_max(0, rec.remaining))
                     else
-                        runeFrame:SetMinMaxValues(0, 1)
-                        runeFrame:SetValue(0)
                         runeText:SetText("")
-                        runeFrame:SetStatusBarColor(color.r * 0.5, color.g * 0.5, color.b * 0.5)
                     end
+
+                    runeFrame:SetStatusBarColor(color.r * 0.5, color.g * 0.5, color.b * 0.5)
                 end
 
                 runeFrame:Show()
@@ -4496,6 +4719,8 @@ function QUICore:OnUnitPower(_, unit)
     if unthrottled or (now - lastPrimaryUpdate >= UPDATE_THROTTLE) then
         self:UpdatePowerBar()
         lastPrimaryUpdate = now
+    else
+        QueuePrimaryTrailingUpdate()
     end
 
     -- Secondary bar: instant for discrete resources, unthrottled mode, or throttled otherwise
@@ -4505,16 +4730,39 @@ function QUICore:OnUnitPower(_, unit)
     elseif now - lastSecondaryUpdate >= UPDATE_THROTTLE then
         self:UpdateSecondaryPowerBar()
         lastSecondaryUpdate = now
+    else
+        QueueSecondaryTrailingUpdate()
     end
 end
 
 
 -- UNIT_AURA handler for aura-based resources (Maelstrom Weapon stacks)
-function QUICore:OnUnitAura(_, unit)
-    if unit and unit ~= "player" then return end
+-- Registered via powerEventFrame:RegisterUnitEvent("UNIT_AURA", "player")
+-- (see InitializeResourceBars below): the C-level unit filter already
+-- restricts delivery to the player unit, so the payload `unit` is never
+-- read here — comparing it (`unit ~= "player"`) would be secret-unsafe if
+-- the API ever hands back a real secret sentinel instead of a plain
+-- string. `updateInfo` is probed and dropped defensively before any
+-- possible field access; every branch below only consults
+-- GetSecondaryResource() and the tracker's own retained stacks, so a nil
+-- updateInfo is always tolerated (a full-update-without-detail was
+-- already a possible payload shape pre-12.1).
+function QUICore:OnUnitAura(_, _, updateInfo)
+    -- Probe unconditionally: a whole-secret payload throws on the truth-test
+    -- itself, so `updateInfo and issecretvalue(updateInfo)` is the bug it
+    -- guards against. issecretvalue(nil) is false.
+    if issecretvalue and issecretvalue(updateInfo) then
+        updateInfo = nil
+    end
     local resource = GetSecondaryResource()
-    if resource == Enum.PowerType.MaelstromWeapon
-        or resource == Enum.PowerType.VengSoulFragments
+    if resource == Enum.PowerType.MaelstromWeapon then
+        -- Opportunistic resync (see MaelstromWeaponTracker header): only
+        -- touches the real aura value when it's not SecretWhenUnitAuraRestricted.
+        MaelstromWeaponTracker:Resync()
+        self:UpdateSecondaryPowerBar()
+        return
+    end
+    if resource == Enum.PowerType.VengSoulFragments
         or (VDH_SOUL_FRAGMENTS_POWER and resource == VDH_SOUL_FRAGMENTS_POWER)
         or resource == "SOUL"
         or resource == Enum.PowerType.Whirlwind
@@ -4566,6 +4814,7 @@ end
 function QUICore:OnRunePowerUpdate()
     local now = GetTime()
     if now - lastSecondaryUpdate < UPDATE_THROTTLE then
+        QueueSecondaryTrailingUpdate()
         return
     end
     lastSecondaryUpdate = now
@@ -4658,8 +4907,14 @@ local function InitializeResourceBars(self)
         elseif event == "SPELL_UPDATE_CHARGES" or event == "SPELL_UPDATE_COOLDOWN" then
             self:OnSpellChargeUpdate(event)
         elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
+            -- unit trusted via registration (:4861 RegisterUnitEvent player-only);
+            -- spellID probed before RUSHING_WIND_KICK_SPELL_IDS[spellID] indexing
+            -- and the == compare below, and before it's forwarded into
+            -- OnSpellChargeUpdate (:4738) which re-indexes/compares it again -
+            -- this is that helper's only UNIT_SPELLCAST_SUCCEEDED-sourced spellID
+            -- call site, so probing here covers it too.
             local _, spellID = ...
-            if unit == "player" then
+            if not IsSecretSpellcastPayload(spellID) then
                 local shouldUpdate = RUSHING_WIND_KICK_SPELL_IDS[spellID]
                 if not shouldUpdate then
                     for _, renewingMistSpellID in ipairs(RENEWING_MIST_SPELL_IDS) do
@@ -4673,6 +4928,9 @@ local function InitializeResourceBars(self)
                     self:OnSpellChargeUpdate(event, spellID)
                 end
             end
+            -- Secret cast: skip. SPELL_UPDATE_CHARGES/SPELL_UPDATE_COOLDOWN
+            -- (:4859-4860) still drive charge updates independently of this
+            -- event, so the Renewing Mist charge tracker isn't left stale.
         else
             self:OnUnitPower(event, unit, ...)
         end

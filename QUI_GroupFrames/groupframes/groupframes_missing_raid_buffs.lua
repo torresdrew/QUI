@@ -47,6 +47,14 @@ local GetDB = ns.Helpers and ns.Helpers.CreateDBGetter and ns.Helpers.CreateDBGe
 
 local GetPlayerAuraBySpellID = C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID
 local GetUnitAuraBySpellID = C_UnitAuras and C_UnitAuras.GetUnitAuraBySpellID
+-- 12.1: AuraUtil.ForEachAura + GetAuraDataByIndex (index-based) throw while auras
+-- are secret. DirectAuraLookup (GetPlayerAura/GetUnitAuraBySpellID) stays live in
+-- combat for whitelisted raid buffs, so the index-scan fallbacks below are gated
+-- off when auras are secret rather than erroring.
+local C_Secrets = C_Secrets
+local function AurasAreSecret()
+    return C_Secrets and C_Secrets.ShouldAurasBeSecret and C_Secrets.ShouldAurasBeSecret()
+end
 local GetAuraDataByIndex = C_UnitAuras and C_UnitAuras.GetAuraDataByIndex
 
 -- Ally-buff delta scoping (see AllyDeltaIsRelevant below).
@@ -131,6 +139,111 @@ function MRB:RegisterActivePredicate(predicate)
         activePredicates[#activePredicates + 1] = predicate
     end
 end
+
+-- Merge the player's Blizzard CDM "Group Buff" curated list into the tracked set.
+-- CDM items carry no provider class -> treated as always-relevant per-unit (see
+-- ElementShouldCheckBuff). APIs read from _G at call time so a later
+-- COOLDOWN_VIEWER_DATA_LOADED refresh picks up data that loads after login.
+local function BuildCDMGroupBuffEntries(out)
+    local CV = _G.C_CooldownViewer
+    if not (CV and CV.GetGroupBuffItems) then return end
+    local okItems, items = pcall(CV.GetGroupBuffItems)
+    if not okItems or type(items) ~= "table" then return end
+
+    -- Hidden-set precedence mirrors Blizzard's GroupBuffFilter.lua
+    -- (GetCurrentHiddenGroupBuffSpellIDs): the saved layout's hidden list is
+    -- AUTHORITATIVE when readable — a user can un-hide a HideByDefault buff,
+    -- the flag is only the initial seed — and the static flags apply solely
+    -- when no layout list could be read. C_UnitAuras.GetHiddenGroupBuffs is
+    -- the C-side sync TARGET of that same list (SyncHiddenGroupBuffs writes
+    -- it; Blizzard never reads it back) — it is consulted ONLY as a fallback
+    -- when the layout list is unreadable: merging it on top of a read layout
+    -- list would let a stale not-yet-resynced copy re-hide a buff the user
+    -- just un-hid.
+    local hidden = {}
+    local layoutListRead = false
+    local CVS = _G.CooldownViewerSettings
+    local layoutGetter = _G.CooldownManagerLayout_GetHiddenGroupBuffs
+    local layoutMode = _G.Enum and _G.Enum.CDMLayoutMode and _G.Enum.CDMLayoutMode.AccessOnly
+    if CVS and type(layoutGetter) == "function" and layoutMode ~= nil then
+        local okLayout, list = pcall(function()
+            local lm = CVS:GetLayoutManager()
+            local layout = lm and lm:GetActiveLayout(layoutMode)
+            return layout and layoutGetter(layout) or nil
+        end)
+        if okLayout and type(list) == "table" then
+            layoutListRead = true
+            for _, sid in ipairs(list) do hidden[sid] = true end
+        end
+    end
+    if not layoutListRead then
+        local UA = _G.C_UnitAuras
+        if UA and UA.GetHiddenGroupBuffs then
+            local okHidden, hiddenIDs = pcall(UA.GetHiddenGroupBuffs)
+            if okHidden and type(hiddenIDs) == "table" then
+                for _, sid in ipairs(hiddenIDs) do hidden[sid] = true end
+            end
+        end
+    end
+
+    -- spellIDs already covered by a built-in entry's ids
+    local builtinIDs = {}
+    for i = 1, #out do
+        local ids = out[i].ids
+        if type(ids) == "table" then
+            for j = 1, #ids do builtinIDs[ids[j]] = true end
+        end
+    end
+
+    -- GroupBuffItemFlags.HideByDefault: Blizzard's own viewer doesn't show
+    -- these unless the user opts in; without honoring it (plus isKnown) every
+    -- curated entry generates missing-buff icons for buffs the player can't
+    -- even provide (GroupBuffItem carries isKnown per player,
+    -- CooldownViewerDocumentation.lua). FALLBACK ONLY: when the layout list
+    -- was read, it already reflects the user's final shown/hidden choices.
+    local hideByDefault = _G.Enum and _G.Enum.GroupBuffItemFlags
+        and _G.Enum.GroupBuffItemFlags.HideByDefault or 1
+    local band = bit and bit.band
+
+    local seen = {}
+    for _, item in ipairs(items) do
+        local sid = item.spellID
+        local flaggedHidden = not layoutListRead
+            and type(item.flags) == "number" and band
+            and band(item.flags, hideByDefault) ~= 0
+        if type(sid) == "number" and not IsSecretValue(sid)
+            and item.isKnown ~= false
+            and not flaggedHidden
+            and not hidden[sid] and not builtinIDs[sid] and not seen[sid] then
+            seen[sid] = true
+            out[#out + 1] = {
+                key = "cdm:" .. sid,
+                ids = { sid },
+                label = (type(item.name) == "string" and item.name) or ("Spell " .. sid),
+                providerClass = nil,
+                iconSpellID = sid,
+                source = "cdm",
+            }
+        end
+    end
+end
+
+-- Rebuild MRB.RaidBuffs IN PLACE (consumers hold the reference). Built-in entries
+-- stay (they have no `source`); previously-merged CDM entries are dropped and
+-- re-merged, so this is idempotent and safe to call on every refresh event.
+function MRB:RebuildRaidBuffs()
+    for i = #RAID_BUFFS, 1, -1 do
+        if RAID_BUFFS[i].source == "cdm" then
+            table.remove(RAID_BUFFS, i)
+        end
+    end
+    BuildCDMGroupBuffEntries(RAID_BUFFS)
+    for i = 1, #RAID_BUFFS do
+        RegisterSnapshotIDs(RAID_BUFFS[i].ids)
+    end
+end
+
+MRB:RebuildRaidBuffs()
 
 local function SafeBoolean(fn, unit, fallback)
     if not fn then return fallback end
@@ -325,7 +438,7 @@ function MRB:UnitHasBuff(unit, spellIDOrTable, spellName)
         end
     end
 
-    if AuraUtil and AuraUtil.ForEachAura then
+    if AuraUtil and AuraUtil.ForEachAura and not AurasAreSecret() then
         local found = false
         AuraUtil.ForEachAura(unit, "HELPFUL", nil, function(auraData)
             local auraSpellID = SafeAuraField(auraData, "spellId")
@@ -341,7 +454,7 @@ function MRB:UnitHasBuff(unit, spellIDOrTable, spellName)
         if found then return true end
     end
 
-    if GetAuraDataByIndex then
+    if GetAuraDataByIndex and not AurasAreSecret() then
         for index = 1, 40 do
             local ok, auraData = pcall(GetAuraDataByIndex, unit, index, "HELPFUL")
             if not ok or not auraData then break end
@@ -379,7 +492,7 @@ function MRB:UnitHasMyBuff(unit, ids)
             end
         end
     end
-    if AuraUtil and AuraUtil.ForEachAura then
+    if AuraUtil and AuraUtil.ForEachAura and not AurasAreSecret() then
         local found = false
         AuraUtil.ForEachAura(unit, "HELPFUL|PLAYER", nil, function(auraData)
             local sid = SafeAuraField(auraData, "spellId")
@@ -499,7 +612,10 @@ end
 
 local function ElementShouldCheckBuff(element, buff)
     if element.classDetection ~= false then
+        -- Built-in buffs gate to the player's class; CDM Group Buff entries carry
+        -- no providerClass and are always relevant (show on any unit lacking them).
         return CLASS_TO_BUFF_KEY[GetPlayerClass() or ""] == buff.key
+            or buff.providerClass == nil
     end
     local checks = element.buffChecks
     if type(checks) ~= "table" then
@@ -507,6 +623,7 @@ local function ElementShouldCheckBuff(element, buff)
     end
     return checks[buff.key] == true
 end
+MRB.ElementShouldCheckBuff = ElementShouldCheckBuff
 
 function MRB:BuildMatches(unit, element, out)
     out = out or {}
@@ -703,6 +820,10 @@ local function EnsureEventFrame()
     snapshotEventFrame:RegisterEvent("UNIT_IN_RANGE_UPDATE")
     snapshotEventFrame:RegisterEvent("ENCOUNTER_START")
     snapshotEventFrame:RegisterEvent("CHALLENGE_MODE_START")
+    -- CDM Group Buff list changes (12.x). pcall-guarded: RegisterEvent errors on
+    -- an unknown event name on clients that predate these.
+    pcall(function() snapshotEventFrame:RegisterEvent("COOLDOWN_VIEWER_DATA_LOADED") end)
+    pcall(function() snapshotEventFrame:RegisterEvent("HIDDEN_GROUP_BUFFS_CHANGED") end)
     snapshotEventFrame:SetScript("OnEvent", function(_, event, unit)
         if event == "PLAYER_REGEN_DISABLED" then
             MRB:SnapshotRaidBuffAuras()
@@ -714,6 +835,9 @@ local function EnsureEventFrame()
             RefreshUnit(unit)
         elseif event == "GROUP_ROSTER_UPDATE" then
             C_Timer.After(0.25, RefreshAll)
+        elseif event == "COOLDOWN_VIEWER_DATA_LOADED" or event == "HIDDEN_GROUP_BUFFS_CHANGED" then
+            MRB:RebuildRaidBuffs()
+            RefreshAll()
         else
             RefreshAll()
         end

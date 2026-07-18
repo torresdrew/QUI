@@ -454,9 +454,11 @@ end
 -- after the first call; until it loads (or if the addon is absent/disabled),
 -- search degrades gracefully to the tile-seeded routes registered at panel build.
 local function SearchCacheAddonName()
-    local loc = (ns.GetLocalizationLocale and ns.GetLocalizationLocale())
-        or (GetLocale and GetLocale())
-        or "enUS"
+    -- Match the locale chunks' resolution (core/locale/*.lua): a UI-language
+    -- override in QUIDB.global.selectedLocale must select the same-language
+    -- search index, not the client locale's.
+    local loc = (QUIDB and QUIDB.global and QUIDB.global.selectedLocale)
+        or (GetLocale and GetLocale()) or "enUS"
     return (loc == "enUS") and "QUI_OptionsSearch" or ("QUI_OptionsSearch_" .. loc)
 end
 function GUI:EnsureSearchCacheLoaded()
@@ -464,8 +466,16 @@ function GUI:EnsureSearchCacheLoaded()
         return
     end
     self._searchCacheLoadAttempted = true
+    -- Combined locale addons (QUI_OptionsSearch_<loc>) already loaded at
+    -- login for their UI strings (core/locale/load_overlay.lua): their
+    -- load-time self-apply no-oped because QUI_Options wasn't loaded, and
+    -- the index is parked on the shared ns. Apply it here — a second
+    -- LoadAddOn on an already-loaded addon is a no-op, never a re-apply.
+    if ns.QUI_SearchCache then
+        self:ApplyGeneratedSearchCache(ns.QUI_SearchCache)
+    end
     local loader = (C_AddOns and C_AddOns.LoadAddOn) or LoadAddOn
-    if type(loader) == "function" then
+    if not self:HasGeneratedSearchCache() and type(loader) == "function" then
         local ok = pcall(loader, SearchCacheAddonName())
         -- Fallback: missing locale cache (e.g. unshipped) -> English index.
         if not self:HasGeneratedSearchCache() then
@@ -2072,7 +2082,14 @@ local function BuildPillToggle(parent, label, dbKey, dbTable, onChange, registry
     RegisterWidgetInstance(container, dbTable, dbKey)
     MaybeBindPinnedWidget(container, "checkbox", label, dbKey, dbTable, toggle, registryInfo)
 
-    SetValue(GetValue(), true)  -- Skip callback on init
+    -- Init is display-only: never write the DB from widget construction.
+    -- The inverted variant computes GetValue() as `not db`, so an absent
+    -- key (nil) reads as display-ON; routing that through SetValue would
+    -- write the inverted value (false) back and seed the absent key. An
+    -- absent key must stay absent (raw-SV absent-key-means-default stores).
+    local initialOn = GetValue() and true or false
+    container.checked = initialOn
+    UpdateVisual(initialOn)
 
     if ns.UIKit and ns.UIKit.RegisterScaleRefresh then
         local scaleKey = invert and "formToggleInvertedScale" or "formToggleScale"
@@ -2410,7 +2427,15 @@ function GUI:CreateFormEditBox(parent, label, dbKey, dbTable, onChange, options,
     end
 
     RegisterWidgetInstance(container, dbTable, dbKey)
-    SetValue(GetValue(), true)
+
+    -- Init is display-only: never write the DB from widget construction.
+    -- GetValue() falls back to initialValue/"" for an absent key so the
+    -- field has something to show; routing that through SetValue would
+    -- write the fallback back to dbTable and seed the absent key (raw-SV
+    -- absent-key-means-default stores must stay absent until the user
+    -- actually commits an edit).
+    container.value = GetValue()
+    UpdateVisual(container.value)
 
     editBox:SetScript("OnTextChanged", function(self, userInput)
         if isSyncingVisual then return end
@@ -2812,8 +2837,8 @@ function GUI:CreateFormSlider(parent, label, min, max, step, dbKey, dbTable, onC
         value = math.floor(value / container.step + 0.5) * container.step
         editBox:SetText(FormatValue(value))
         UpdateTrackFill(value)
-        if dbTable and dbKey then dbTable[dbKey] = value end
         if userInput then
+            if dbTable and dbKey then dbTable[dbKey] = value end
             MaybeUpdatePinnedWidgetValue(container, value)
             BroadcastToSiblings(container, value)
             if deferOnDrag and isDragging then
@@ -2876,8 +2901,12 @@ function GUI:CreateFormSlider(parent, label, min, max, step, dbKey, dbTable, onC
         end
     end)
 
-    -- Initialize value (visual update will happen via OnSizeChanged when layout completes)
-    SetValue(GetValue(), true)
+    -- Init is display-only: never write the DB from widget construction.
+    -- A stored value outside the widget range must survive (display clamps,
+    -- store doesn't), and an absent key must stay absent (raw-SV
+    -- absent-key-means-default stores).
+    container.value = math.max(container.min, math.min(container.max, GetValue()))
+    UpdateVisual(container.value)
 
     -- EditBox:SetText() doesn't persist when called inside a hidden parent
     -- hierarchy (e.g. collapsed composer sections with alpha 0). Expose a
@@ -5235,16 +5264,6 @@ function GUI:CreateMainFrame()
         })
     end)
 
-    local function UpdateAccentFromDB()
-        local db = QUI.QUICore and QUI.QUICore.db and QUI.QUICore.db.profile and QUI.QUICore.db.profile.general
-        if not db then return end
-        local preset = db.themePreset or "Sky Blue"
-        themeDropText:SetText(preset)
-        local r, g, b = GUI:ResolveThemePreset(preset)
-        ApplyAccentToAll(r, g, b)
-        accentSwatch:SetAlpha(preset == "Custom" and 1 or 0.5)
-    end
-
     -- Initialize theme from DB
     do
         local initDB = QUI.QUICore and QUI.QUICore.db and QUI.QUICore.db.profile and QUI.QUICore.db.profile.general
@@ -5255,7 +5274,6 @@ function GUI:CreateMainFrame()
         accentSwatch:SetAlpha(preset == "Custom" and 1 or 0.5)
     end
 
-    local localizationEnabled = not ns.IsLocalizationEnabled or ns.IsLocalizationEnabled()
     -- Language picker (account-wide; reload required to apply)
     local LOCALE_NAMES = {
         enUS = "English",          deDE = "Deutsch",
@@ -5271,12 +5289,8 @@ function GUI:CreateMainFrame()
     }
 
     local function GetSelectedLocale()
-        if not localizationEnabled then
-            return "enUS"
-        end
-        return (ns.GetLocalizationLocale and ns.GetLocalizationLocale())
-            or (GetLocale and GetLocale())
-            or "enUS"
+        local g = QUI.QUICore and QUI.QUICore.db and QUI.QUICore.db.global
+        return (g and g.selectedLocale) or GetLocale()
     end
 
     local langLabel = titleBar:CreateFontString(nil, "OVERLAY", "GameFontNormal")
@@ -5290,10 +5304,6 @@ function GUI:CreateMainFrame()
     UIKit.CreateBackground(langDropBtn, 0.1, 0.1, 0.1, 0.8)
     UIKit.CreateBorderLines(langDropBtn)
     UIKit.UpdateBorderLines(langDropBtn, 1, 0.3, 0.3, 0.3, 1)
-    langDropBtn:EnableMouse(localizationEnabled)
-    if not localizationEnabled then
-        langDropBtn:SetAlpha(0.55)
-    end
 
     local langDropText = langDropBtn:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     SetFont(langDropText, 10, "", C.text)
@@ -5305,7 +5315,7 @@ function GUI:CreateMainFrame()
 
     local langDropArrow = langDropBtn:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     SetFont(langDropArrow, 8, "", C.textMuted)
-    langDropArrow:SetText(localizationEnabled and "v" or "")
+    langDropArrow:SetText("v")
     langDropArrow:SetPoint("RIGHT", -3, 0)
 
     local langMenu = CreateFrame("Frame", nil, langDropBtn)
@@ -5371,27 +5381,25 @@ function GUI:CreateMainFrame()
         end
     end
 
-    if localizationEnabled then
-        langDropBtn:SetScript("OnClick", function()
-            if langMenu:IsShown() then
-                langMenu:Hide()
-            else
-                BuildLangMenu()
-                langMenu:Show()
-            end
-        end)
-        langDropBtn:SetScript("OnEnter", function()
-            UIKit.UpdateBorderLines(langDropBtn, 1, C.accent[1], C.accent[2], C.accent[3], 1)
-        end)
-        langDropBtn:SetScript("OnLeave", function()
-            if not langMenu:IsShown() then
-                UIKit.UpdateBorderLines(langDropBtn, 1, 0.3, 0.3, 0.3, 1)
-            end
-        end)
-        langMenu:SetScript("OnHide", function()
+    langDropBtn:SetScript("OnClick", function()
+        if langMenu:IsShown() then
+            langMenu:Hide()
+        else
+            BuildLangMenu()
+            langMenu:Show()
+        end
+    end)
+    langDropBtn:SetScript("OnEnter", function()
+        UIKit.UpdateBorderLines(langDropBtn, 1, C.accent[1], C.accent[2], C.accent[3], 1)
+    end)
+    langDropBtn:SetScript("OnLeave", function()
+        if not langMenu:IsShown() then
             UIKit.UpdateBorderLines(langDropBtn, 1, 0.3, 0.3, 0.3, 1)
-        end)
-    end
+        end
+    end)
+    langMenu:SetScript("OnHide", function()
+        UIKit.UpdateBorderLines(langDropBtn, 1, 0.3, 0.3, 0.3, 1)
+    end)
 
     -- Panel Scale (compact inline: label + editbox + slider)
     local scaleContainer = CreateFrame("Frame", nil, titleBar)

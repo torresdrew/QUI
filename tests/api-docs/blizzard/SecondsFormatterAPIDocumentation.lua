@@ -2,6 +2,7 @@ local SecondsFormatterAPI =
 {
 	Name = "SecondsFormatterAPI",
 	Type = "ScriptObject",
+	ObjectType = "Userdata",
 	Environment = "All",
 
 	Functions =

@@ -100,7 +100,10 @@ end
 local function CollectEligibleLODFolders(includeLate)
     local queue = {}
     for _, entry in ipairs(ns.AddonManifest or {}) do
-        if entry.class == "lod"
+        -- entry.folder guard: coreModule entries (no folder; they ship inside
+        -- the main addon) are not independently loadable here, so skip them.
+        if entry.folder
+            and entry.class == "lod"
             and (includeLate or not entry.lateLoad)
             and not AddonLoader.IsModuleLoaded(entry.folder)
             and (not C_AddOns.DoesAddOnExist or C_AddOns.DoesAddOnExist(entry.folder))

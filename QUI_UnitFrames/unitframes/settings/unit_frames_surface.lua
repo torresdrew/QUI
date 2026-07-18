@@ -105,6 +105,13 @@ local function SetSelectedUnit(key)
     UnitSelection:Set(key)
 end
 
+-- Read-only accessor for consumers (e.g. the Auras hub's Unit Frames
+-- sub-page) that need to source the currently-selected unit without
+-- keeping their own page-local copy of this module-level singleton.
+local function GetSelectedUnit()
+    return State.selectedUnit
+end
+
 local function SetActiveTab(tabKey)
     if type(tabKey) ~= "string" or tabKey == "" then
         return false
@@ -491,6 +498,11 @@ local function ApplyBorder(mock, size)
 end
 
 local function RefreshMock()
+    -- Search-cache harvest (tools/generate_search_cache.lua) drives this
+    -- build against an auto-vivifying DB where every numeric leaf reads as a
+    -- TABLE — the mock math would error and knock this page's labels out of
+    -- the cache. Nothing to render there anyway.
+    if _G.QUI_SEARCH_HARVEST then return end
     if not State.previewMock or not State.previewHost then return end
     local mock, host = State.previewMock, State.previewHost
 
@@ -780,10 +792,24 @@ local function RefreshMock()
         portrait:Hide()
     end
 
-    -- Auras (debuffs + buffs). Respects: showDebuffs, showBuffs, icon sizes,
-    -- anchor (4-corner), grow (L/R/U/D), max icons, X/Y offsets, stack +
-    -- duration text + color per kind. Max 6 icons shown in the mock.
+    -- Auras (debuffs + buffs) — element-model source (v50): each unit's
+    -- auras.elements["*"] bucket holds filterStrip elements; the mock previews
+    -- the FIRST enabled strip per polarity (mirrors buffborders.lua's
+    -- FirstEnabledStripAnchor pattern for the same "one representative strip"
+    -- need). Icon sizes, anchor (4-corner), grow (L/R/U/D), max icons, X/Y
+    -- offsets, stack + duration text + color per kind. Max 6 icons shown in
+    -- the mock.
     local auraDB = unitDB.auras or {}
+    local function FirstEnabledFilterStrip(auras, auraType)
+        local elements = type(auras) == "table" and type(auras.elements) == "table" and auras.elements["*"]
+        if type(elements) ~= "table" then return nil end
+        for _, e in ipairs(elements) do
+            if type(e) == "table" and e.mode == "filterStrip" and e.enabled ~= false and e.auraType == auraType then
+                return e
+            end
+        end
+        return nil
+    end
     local function LayoutAuraKind(pool, enabled, anchorKey, growKey, iconSize, maxIcons, offXRaw, offYRaw, showStack, stackSize, stackColor, stackAnchor, stackOffX, stackOffY, showDur, durSize, durColor, durAnchor, durOffX, durOffY, spacing)
         if not enabled then
             for _, icon in ipairs(pool) do icon:Hide() end
@@ -857,27 +883,29 @@ local function RefreshMock()
         end
     end
 
+    local debuffStrip = FirstEnabledFilterStrip(auraDB, "HARMFUL")
     LayoutAuraKind(
-        mock._debuffIcons, auraDB.showDebuffs,
-        auraDB.debuffAnchor, auraDB.debuffGrow,
-        auraDB.iconSize, auraDB.debuffMaxIcons,
-        auraDB.debuffOffsetX, auraDB.debuffOffsetY,
-        auraDB.debuffShowStack, auraDB.debuffStackSize, auraDB.debuffStackColor,
-        auraDB.debuffStackAnchor, auraDB.debuffStackOffsetX, auraDB.debuffStackOffsetY,
-        auraDB.debuffShowDuration, auraDB.debuffDurationSize, auraDB.debuffDurationColor,
-        auraDB.debuffDurationAnchor, auraDB.debuffDurationOffsetX, auraDB.debuffDurationOffsetY,
-        auraDB.debuffSpacing
+        mock._debuffIcons, debuffStrip ~= nil,
+        debuffStrip and debuffStrip.anchor, debuffStrip and debuffStrip.growDirection,
+        debuffStrip and debuffStrip.iconSize, debuffStrip and debuffStrip.maxIcons,
+        debuffStrip and debuffStrip.offsetX, debuffStrip and debuffStrip.offsetY,
+        debuffStrip and debuffStrip.stack.show, debuffStrip and debuffStrip.stack.fontSize, debuffStrip and debuffStrip.stack.color,
+        debuffStrip and debuffStrip.stack.anchor, debuffStrip and debuffStrip.stack.offsetX, debuffStrip and debuffStrip.stack.offsetY,
+        debuffStrip and debuffStrip.duration.show, debuffStrip and debuffStrip.duration.fontSize, debuffStrip and debuffStrip.duration.color,
+        debuffStrip and debuffStrip.duration.anchor, debuffStrip and debuffStrip.duration.offsetX, debuffStrip and debuffStrip.duration.offsetY,
+        debuffStrip and debuffStrip.spacing
     )
+    local buffStrip = FirstEnabledFilterStrip(auraDB, "HELPFUL")
     LayoutAuraKind(
-        mock._buffIcons, auraDB.showBuffs,
-        auraDB.buffAnchor, auraDB.buffGrow,
-        auraDB.buffIconSize, auraDB.buffMaxIcons,
-        auraDB.buffOffsetX, auraDB.buffOffsetY,
-        auraDB.buffShowStack, auraDB.buffStackSize, auraDB.buffStackColor,
-        auraDB.buffStackAnchor, auraDB.buffStackOffsetX, auraDB.buffStackOffsetY,
-        auraDB.buffShowDuration, auraDB.buffDurationSize, auraDB.buffDurationColor,
-        auraDB.buffDurationAnchor, auraDB.buffDurationOffsetX, auraDB.buffDurationOffsetY,
-        auraDB.buffSpacing
+        mock._buffIcons, buffStrip ~= nil,
+        buffStrip and buffStrip.anchor, buffStrip and buffStrip.growDirection,
+        buffStrip and buffStrip.iconSize, buffStrip and buffStrip.maxIcons,
+        buffStrip and buffStrip.offsetX, buffStrip and buffStrip.offsetY,
+        buffStrip and buffStrip.stack.show, buffStrip and buffStrip.stack.fontSize, buffStrip and buffStrip.stack.color,
+        buffStrip and buffStrip.stack.anchor, buffStrip and buffStrip.stack.offsetX, buffStrip and buffStrip.stack.offsetY,
+        buffStrip and buffStrip.duration.show, buffStrip and buffStrip.duration.fontSize, buffStrip and buffStrip.duration.color,
+        buffStrip and buffStrip.duration.anchor, buffStrip and buffStrip.duration.offsetX, buffStrip and buffStrip.duration.offsetY,
+        buffStrip and buffStrip.spacing
     )
 
     -- Power text. Respects: showPowerText, powerTextFormat,
@@ -1013,7 +1041,7 @@ _G.QUI_RefreshUnitFramePreview = function()
     RefreshMock()
 end
 
-local function BuildPreviewBlock(pv)
+local function BuildPreviewBlock(pv, opts)
     local model = ResolveModel()
     local getUnitOptions = model and model.GetUnitOptions
 
@@ -1028,6 +1056,7 @@ local function BuildPreviewBlock(pv)
         dropdownMeta = {
             description = ns.L["Select which unit frame to configure. Settings in the tabs below apply to the chosen unit."],
         },
+        showDropdown = opts and opts.showDropdown,
         onDropdownChanged = function(value)
             SetSelectedUnit(value)
         end,
@@ -1100,5 +1129,6 @@ ns.QUI_UnitFramesSettingsSurface = {
     NavigateSearchEntry = NavigateSearchEntry,
     SetActiveTab = SetActiveTab,
     SetSelectedUnit = SetSelectedUnit,
+    GetSelectedUnit = GetSelectedUnit,
     RenderPage = BuildTileBody,
 }

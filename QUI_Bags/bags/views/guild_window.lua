@@ -37,6 +37,7 @@
 -- luacheck: read globals GetGuildBankMoney GetGuildBankWithdrawMoney GetNumGuildBankTabs
 local ADDON_NAME, ns = ...
 local Bags = ns.Bags or {}; ns.Bags = Bags
+local Storage = ns.Storage
 local UIKit = ns.UIKit
 local Helpers = ns.Helpers
 local GetSettings = Helpers.CreateDBGetter("bags")
@@ -128,12 +129,12 @@ local ScheduleRefresh = Bags.Chassis.MakeScheduleRefresh(
 --- via the owner selector / ShowCached key), falling back to the current
 --- character's guild.
 local function ViewedGuildKey()
-    return viewedGuildKey or Bags.Store.GetCurrentGuildKey()
+    return viewedGuildKey or Storage.Store.GetCurrentGuildKey()
 end
 
 local function GetGuildRecord()
     local key = ViewedGuildKey()
-    return key and Bags.Store.GetGuild(key) or nil
+    return key and Storage.Store.GetGuild(key) or nil
 end
 
 --- Keep the selection when its tab still exists (the "all" sentinel stays
@@ -300,11 +301,14 @@ local function ColorName(name)
 end
 
 local function LogTimeSuffix(year, month, day, hour)
-    -- GUILD_BANK_LOG_TIME + RecentTimeDate (UIParent.lua:354) — the exact
-    -- pair Blizzard appends (Blizzard_GuildBankUI.lua:775); plain fallback
-    -- (no timestamp) when either global is missing.
-    if GUILD_BANK_LOG_TIME and RecentTimeDate then
-        return GUILD_BANK_LOG_TIME:format(RecentTimeDate(year, month, day, hour))
+    -- GUILD_BANK_LOG_TIME + the recent-time formatter Blizzard appends
+    -- (Blizzard_GuildBankUI.lua:775). 12.1 moved the global RecentTimeDate to
+    -- TimeUtil.GetRecentTimeDate (Blizzard_SharedXML/TimeUtil.lua:24); keep
+    -- the old global as a fallback for older clients, plain "" when both are
+    -- missing.
+    local recent = (TimeUtil and TimeUtil.GetRecentTimeDate) or RecentTimeDate
+    if GUILD_BANK_LOG_TIME and recent then
+        return GUILD_BANK_LOG_TIME:format(recent(year, month, day, hour))
     end
     return ""
 end
@@ -649,16 +653,16 @@ local function EnsureWindow()
         title = ns.L["Guilds"],
         tooltip = ns.L["View another guild bank"],
         listOwners = function()
-            local cur = Bags.Store.GetCurrentGuildKey()
-            if cur and not Bags.Store.GetGuild(cur) then cur = nil end
-            return Bags.OwnerSelect.BuildOwnerList(Bags.Store.ListGuilds(), cur)
+            local cur = Storage.Store.GetCurrentGuildKey()
+            if cur and not Storage.Store.GetGuild(cur) then cur = nil end
+            return Bags.OwnerSelect.BuildOwnerList(Storage.Store.ListGuilds(), cur)
         end,
         current = ViewedGuildKey,
         onSelect = function(key)
             -- selecting your own guild while the vault session is open
             -- returns to live mode; everything else is an offline render
             if Bags.GuildTakeover and Bags.GuildTakeover.IsLive()
-                and key == Bags.Store.GetCurrentGuildKey() then
+                and key == Storage.Store.GetCurrentGuildKey() then
                 GuildWindow.ShowLive()
             else
                 GuildWindow.ShowCached(key)
@@ -1026,7 +1030,7 @@ function GuildWindow.FocusItem(itemID, guildKey)
             end
         end)
     end
-    local isCurrent = guildKey == nil or guildKey == Bags.Store.GetCurrentGuildKey()
+    local isCurrent = guildKey == nil or guildKey == Storage.Store.GetCurrentGuildKey()
     if isCurrent and Bags.GuildTakeover and Bags.GuildTakeover.IsLive
         and Bags.GuildTakeover.IsLive() then
         GuildWindow.ShowLive()
@@ -1062,13 +1066,13 @@ end
 
 -- data refresh: coalesced re-render on guild cache changes (tab metadata —
 -- purchase, rename — also lands here via the scanner's drain)
-Bags.Bus.Subscribe("GuildChanged", function()
+Storage.Bus.Subscribe("GuildChanged", function()
     ScheduleRefresh()
 end)
 
 -- money/limit freshness: GUILDBANK_UPDATE_MONEY / _WITHDRAWMONEY (routed by
 -- the core storage collector as GuildMoneyChanged). Cached mode renders no money row, so the
 -- ping is live-only; ScheduleRefresh already no-ops while hidden.
-Bags.Bus.Subscribe("GuildMoneyChanged", function()
+Storage.Bus.Subscribe("GuildMoneyChanged", function()
     if liveMode then ScheduleRefresh() end
 end)

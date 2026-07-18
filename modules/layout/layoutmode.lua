@@ -1512,23 +1512,14 @@ local function SavePendingPosition(key, point, relPoint, offsetX, offsetY, ancho
                 local isGrowAnchorKey = key == "buffFrame" or key == "debuffFrame"
                 local growCorner
                 if isGrowAnchorKey then
-                    local profile = QUI and QUI.db and QUI.db.profile
-                    local bbDB = profile and profile.buffBorders
-                    if bbDB then
-                        local growLeft, growUp
-                        if key == "buffFrame" then
-                            growLeft = bbDB.buffGrowLeft
-                            growUp   = bbDB.buffGrowUp
-                        else
-                            growLeft = bbDB.debuffGrowLeft
-                            growUp   = bbDB.debuffGrowUp
-                        end
-                        if growUp then
-                            growCorner = growLeft and "BOTTOMRIGHT" or "BOTTOMLEFT"
-                        else
-                            growCorner = growLeft and "TOPRIGHT" or "TOPLEFT"
-                        end
-                    end
+                    -- The corner is derived from the FIRST enabled filter-strip
+                    -- element's anchor and kept fresh by buffborders.lua's own
+                    -- UpdateGrowAnchor (every FullRefresh + Init). Migration v50
+                    -- pruned the flat buff/debuffGrowLeft/GrowUp keys this used
+                    -- to read directly in favor of the buffAuras/debuffAuras
+                    -- element store, so read the maintained value instead of
+                    -- re-deriving it from keys that no longer exist.
+                    growCorner = (fa[key] and fa[key].growAnchor) or "TOPRIGHT"
                 end
 
                 if growCorner then
@@ -3725,9 +3716,11 @@ do
                 dbKey = "buffBorders", enabledField = "enableBuffs",
                 refresh = "QUI_RefreshBuffBorders",
                 getFrame = function() return _G["QUI_BuffIconContainer"] end,
-                -- SecureAuraHeaderTemplate auto-sizes from its secure children.
-                -- Return _naturalW/_naturalH so the mover tracks the settings-
-                -- computed size (from StyleHeaderChildren / preview grid).
+                -- The anchor frame's size is NOT auto-derived from the secure
+                -- CustomAuraContainer (PTR4 removed SecureAuraHeaderTemplate).
+                -- buffborders' ApplyConfigPass computes the natural grid
+                -- extent and stashes it on _naturalW/_naturalH each pass;
+                -- return those so the mover tracks the settings-computed size.
                 getSize = function()
                     local f = _G["QUI_BuffIconContainer"]
                     if f then return f._naturalW, f._naturalH end
@@ -3915,6 +3908,22 @@ do
                 enabledField = "enabled",
                 previewOn  = function() if ns.ToggleNoTargetWarningPreview then ns.ToggleNoTargetWarningPreview(true) end end,
                 previewOff = function() if ns.ToggleNoTargetWarningPreview then ns.ToggleNoTargetWarningPreview(false) end end,
+            },
+            {
+                key = "healerMana", label = ns.L["Healer Mana"], group = ns.L["QoL"], order = 8.6,
+                frame = "QUI_HealerManaFrame",
+                dbGetter = function() return GeneralSubDB("healerMana") end,
+                enabledField = "enabled",
+                previewOn  = function() if ns.ToggleHealerManaPreview then ns.ToggleHealerManaPreview(true) end end,
+                previewOff = function() if ns.ToggleHealerManaPreview then ns.ToggleHealerManaPreview(false) end end,
+            },
+            {
+                key = "deathAlert", label = ns.L["Death Alert"], group = ns.L["QoL"], order = 8.7,
+                frame = "QUI_DeathAlertFrame",
+                dbGetter = function() return GeneralSubDB("deathAlert") end,
+                enabledField = "enabled",
+                previewOn  = function() if ns.ToggleDeathAlertPreview then ns.ToggleDeathAlertPreview(true) end end,
+                previewOff = function() if ns.ToggleDeathAlertPreview then ns.ToggleDeathAlertPreview(false) end end,
             },
             {
                 key = "preyTracker", label = ns.L["Prey Tracker"], group = ns.L["QoL"], order = 9,

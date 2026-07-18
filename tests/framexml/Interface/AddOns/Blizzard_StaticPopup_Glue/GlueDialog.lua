@@ -1,4 +1,4 @@
-GlueDialogMixin = {};
+GlueDialogMixin = CreateFromMixins(StaticPopupDialogNarrationMixin);
 
 local function GetContainerRegions(dialog)
 	local button1 = dialog.Container.Button1;
@@ -186,6 +186,18 @@ function GlueDialogMixin:Init(which, text_arg1, text_arg2, data, insertedFrame)
 	end
 
 	self:SetupStartDelay(dialogInfo);
+end
+
+function GlueDialogMixin:NarrationGetName()
+	-- HTML text is exclusive with base text.
+	if self.Container.HtmlText:IsShown() then
+		local htmlText = self.Container.HtmlText:NarrationGetName();
+		if htmlText and htmlText ~= "" then
+			return htmlText;
+		end
+	end
+
+	return self:GetText();
 end
 
 function GlueDialogMixin:SetBackground(useDark)

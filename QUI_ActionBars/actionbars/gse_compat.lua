@@ -160,16 +160,6 @@ local watermarkedButtons = {}   -- [buttonName] = texture region
 local iconHookedButtons = {}    -- [buttonName] = true
 local latestSequenceIcons = {}  -- [sequenceName] = iconID
 
---- Resolve the effective action slot for a QUI button.
-local function GetButtonEffectiveSlot(btn)
-    local action = tonumber(btn:GetAttribute("action"))
-    if action and action > 0 then return action end
-    local slot = tonumber(btn:GetAttribute("qui-button-index")) or btn:GetID()
-    if not slot or slot == 0 then return nil end
-    local page = tonumber(btn:GetAttribute("actionpage")) or 1
-    return slot + (page - 1) * 12
-end
-
 local function GetSequenceStepEntry(seqName)
     if not GSE or not GSE.SequencesExec or not seqName then return nil end
     local executionseq = GSE.SequencesExec[seqName]
@@ -937,8 +927,21 @@ castTraceFrame:RegisterUnitEvent("UNIT_SPELLCAST_SENT", "player")
 castTraceFrame:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
 castTraceFrame:RegisterUnitEvent("UNIT_SPELLCAST_FAILED", "player")
 castTraceFrame:RegisterUnitEvent("UNIT_SPELLCAST_FAILED_QUIET", "player")
-castTraceFrame:SetScript("OnEvent", function(_, event, _, _, spellID)
+castTraceFrame:SetScript("OnEvent", function(_, event, _, _, arg3, arg4)
     if not DEBUG_GSE then return end
+    -- SENT's payload is (unit, target, castGUID, spellID) — one slot longer
+    -- than SUCCEEDED/FAILED's (unit, castGUID, spellID); pick the right slot
+    -- so the trace doesn't print a castGUID labeled spellID. if/else, not
+    -- `and/or`: a secret arg4 would throw on the `or`'s truth-test.
+    local spellID
+    if event == "UNIT_SPELLCAST_SENT" then spellID = arg4 else spellID = arg3 end
+    -- 68569: spellcast payload can be whole-secret under restriction; render
+    -- the fact instead of passing a secret into GetSpellInfo/tostring. Probe
+    -- unconditionally — the truth-test itself throws on secrets.
+    if issecretvalue and issecretvalue(spellID) then
+        dbg("Cast      %s spellID=<secret>", event)
+        return
+    end
     local info = spellID and C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(spellID)
     local name = info and info.name or "?"
     dbg("Cast      %s spellID=%s name=%s", event, tostring(spellID), name)

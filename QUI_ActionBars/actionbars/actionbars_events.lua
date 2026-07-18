@@ -223,9 +223,9 @@ end
 
 -- ACTIONBAR_SLOT_CHANGED: only needed for drag/drop (specific slot > 0).
 -- Slot 0 ("all changed") is ignored — already covered by SPELLS_CHANGED,
--- SafeSyncAction, PLAYER_ENTERING_WORLD, etc.
+-- Blizzard's action-button lifecycle, PLAYER_ENTERING_WORLD, etc.
 -- Specific slots during paging are also suppressed: UPDATE_SHAPESHIFT_FORM
--- and SafeSyncAction already handle those buttons.
+-- and Blizzard's restricted action-attribute update already handle them.
 abDirtySlots = {}
 abSlotFrame = CreateFrame("Frame")
 abSlotFrame:Hide()
@@ -291,7 +291,7 @@ function ScheduleSlotUpdate(slot)
     -- Ignore slot 0 (full refresh) — redundant with companion events
     if not slot or slot < 1 then return end
     -- Suppress during paging window (form changes, stealth, vehicle).
-    -- UPDATE_SHAPESHIFT_FORM + SafeSyncAction already refresh these buttons.
+    -- UPDATE_SHAPESHIFT_FORM plus Blizzard's button lifecycle refresh them.
     if GetTime() - _lastPagingTime < 0.5 then return end
     abDirtySlots[slot] = true
     abSlotFrame:Show()
@@ -320,12 +320,31 @@ function OnOwnedEvent(self, event, ...)
         if HideOwnedFlyout then
             HideOwnedFlyout()
         end
-        -- Paging is handled by state driver: _childupdate-offset sets the
-        -- action attribute and calls CallMethod("SafeSyncAction") which
-        -- syncs self.action and refreshes visuals on each button.
+        -- Paging is handled by the state driver: _childupdate-offset changes
+        -- the action attribute in restricted code, then Blizzard's clean
+        -- OnAttributeChanged -> UpdateAction path owns self.action and pings.
         -- Remaining work: empty slot visibility, cooldowns, proc glows,
         -- and bar1 bindings.
         local buttons = ActionBarsOwned.nativeButtons["bar1"]
+        local slotMap = ActionBarsOwned.slotMap
+        if slotMap then
+            for slot, entry in pairs(slotMap) do
+                if entry.barKey == "bar1" then
+                    slotMap[slot] = nil
+                end
+            end
+            if buttons then
+                for _, btn in ipairs(buttons) do
+                    local action = btn.action
+                    if action and action > 0 then
+                        slotMap[action] = { button = btn, barKey = "bar1" }
+                        if ResetButtonChargeCapabilityCache then
+                            ResetButtonChargeCapabilityCache(btn)
+                        end
+                    end
+                end
+            end
+        end
         local settings = GetEffectiveSettings("bar1")
         if buttons and settings then
             for _, btn in ipairs(buttons) do
@@ -610,12 +629,16 @@ function OnOwnedEvent(self, event, ...)
 
     elseif event == "UNIT_AURA" then
         -- Aura-based resource overlays (Soul Fragments, etc.) update
-        -- the action display count when auras change.  Only react to
-        -- player auras — party/target aura churn is irrelevant.
-        local unit = ...
-        if unit == "player" then
-            ScheduleABCountUpdate()
-        end
+        -- the action display count when auras change. Registration
+        -- (actionbars_public.lua:75) is RegisterUnitEvent("UNIT_AURA",
+        -- "player"), so this branch only ever fires for the player unit —
+        -- never read the payload unit. PTR 68569 marks UNIT_AURA event-wide
+        -- SecretWhenAurasRestricted: a `unit == "player"` compare would be
+        -- reading an unprobed payload value (harmless-looking today only
+        -- because a table-vs-string `==` happens not to throw in Lua 5.1;
+        -- not proven safe against a real secret sentinel). updateInfo is
+        -- never consumed here, so no probe is needed for it either.
+        ScheduleABCountUpdate()
 
     elseif event == "ACTIONBAR_SHOWGRID" then
         -- Dragging from spellbook — show empty slot grid.

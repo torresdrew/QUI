@@ -5,8 +5,7 @@
     All bars are simple Frame objects with StatusBar children — no protected
     attributes, eliminating combat taint concerns for frame operations.
 
-    All bar state flows through QUI's resolver pipeline. When a composer entry
-    is backed by a native viewer child, bars render that mirror payload directly.
+    All bar state flows through QUI's resolver pipeline.
 
     Pattern mirrors cdm_icon_renderer.lua pool management.
 ]]
@@ -483,6 +482,157 @@ local function ApplyNameTextWithCount(fontString, name, count)
 end
 
 CDMBars.ApplyNameTextWithCount = ApplyNameTextWithCount
+
+local function NormalizeTrackedBarRuntimeEntries(runtimeEntries)
+    if type(runtimeEntries) ~= "table" or #runtimeEntries == 0 then
+        return nil
+    end
+
+    local spellList = {}
+    for i, entry in ipairs(runtimeEntries) do
+        if type(entry) == "table" then
+            local runtimeSpellID = entry.overrideSpellID or entry.spellID or entry.baseSpellID
+            local baseSpellID = entry.baseSpellID or entry.spellID or runtimeSpellID
+            local id = runtimeSpellID or entry.cooldownID
+            if id then
+                local instanceID = entry.cooldownID or runtimeSpellID or entry.layoutIndex or i
+                spellList[#spellList + 1] = {
+                    id = id,
+                    spellID = baseSpellID,
+                    baseSpellID = baseSpellID,
+                    overrideSpellID = entry.overrideSpellID,
+                    name = entry.name or "",
+                    type = "spell",
+                    kind = "aura",
+                    isAura = true,
+                    viewerType = "trackedBar",
+                    source = "blizzardCDM",
+                    cooldownID = entry.cooldownID,
+                    layoutIndex = entry.layoutIndex or i,
+                    iconTexture = entry.iconTexture,
+                    _instanceKey = "trackedBar:" .. tostring(instanceID),
+                    _trackedBarRuntime = true,
+                    _trackedBarActive = entry.isActive == true,
+                    _blzFrame = entry.frame,
+                }
+            end
+        end
+    end
+
+    if #spellList == 0 then
+        return nil
+    end
+    return spellList
+end
+
+CDMBars._NormalizeTrackedBarRuntimeEntries = NormalizeTrackedBarRuntimeEntries
+
+local function CopyTrackedEntry(entry)
+    local out = {}
+    if type(entry) ~= "table" then return out end
+    for k, v in pairs(entry) do
+        out[k] = v
+    end
+    return out
+end
+
+local function AddTrackedSpellIdentity(out, value)
+    if value == nil then return end
+    out[tostring(value)] = true
+end
+
+local function BuildTrackedSpellIdentitySet(entry)
+    local out = {}
+    if type(entry) ~= "table" then return out end
+    AddTrackedSpellIdentity(out, entry.id)
+    AddTrackedSpellIdentity(out, entry.spellID)
+    AddTrackedSpellIdentity(out, entry.baseSpellID)
+    AddTrackedSpellIdentity(out, entry.overrideSpellID)
+    AddTrackedSpellIdentity(out, entry.itemID)
+    return out
+end
+
+local function TrackedEntriesMatch(configured, runtime)
+    if type(configured) ~= "table" or type(runtime) ~= "table" then
+        return false
+    end
+
+    local configuredIDs = BuildTrackedSpellIdentitySet(configured)
+    local runtimeIDs = BuildTrackedSpellIdentitySet(runtime)
+    for id in pairs(configuredIDs) do
+        if runtimeIDs[id] then
+            return true
+        end
+    end
+
+    if configured.cooldownID ~= nil and runtime.cooldownID ~= nil then
+        return tostring(configured.cooldownID) == tostring(runtime.cooldownID)
+    end
+    return false
+end
+
+local function FindTrackedRuntimeMatch(configured, runtimeSpellList, usedRuntime)
+    if type(runtimeSpellList) ~= "table" then return nil end
+    for i = 1, #runtimeSpellList do
+        local runtime = runtimeSpellList[i]
+        if not usedRuntime[i] and TrackedEntriesMatch(configured, runtime) then
+            usedRuntime[i] = true
+            return runtime
+        end
+    end
+    return nil
+end
+
+local function MergeTrackedRuntimeFields(configured, runtime)
+    local out = CopyTrackedEntry(configured)
+    if type(runtime) ~= "table" then
+        return out
+    end
+
+    if out.spellID == nil then out.spellID = runtime.spellID end
+    if out.baseSpellID == nil then out.baseSpellID = runtime.baseSpellID end
+    if out.overrideSpellID == nil then out.overrideSpellID = runtime.overrideSpellID end
+    if (out.name == nil or out.name == "") and runtime.name then out.name = runtime.name end
+    if out.iconTexture == nil then out.iconTexture = runtime.iconTexture end
+    out.cooldownID = runtime.cooldownID
+    out.layoutIndex = runtime.layoutIndex
+    out._instanceKey = runtime._instanceKey
+    out._trackedBarRuntime = runtime._trackedBarRuntime == true
+    out._trackedBarActive = runtime._trackedBarActive == true
+    out._blzFrame = runtime._blzFrame
+    return out
+end
+
+local function BuildTrackedBarSpellList(runtimeEntries, configuredSpellList, configuredOwnedInitialized)
+    local runtimeSpellList = NormalizeTrackedBarRuntimeEntries(runtimeEntries)
+    if not configuredOwnedInitialized then
+        return runtimeSpellList
+    end
+
+    local out = {}
+    local usedRuntime = {}
+    if type(configuredSpellList) ~= "table" then
+        return out
+    end
+
+    for i = 1, #configuredSpellList do
+        local configured = configuredSpellList[i]
+        if type(configured) == "table" then
+            local runtime = FindTrackedRuntimeMatch(configured, runtimeSpellList, usedRuntime)
+            out[#out + 1] = MergeTrackedRuntimeFields(configured, runtime)
+        end
+    end
+    return out
+end
+
+CDMBars._BuildTrackedBarSpellList = BuildTrackedBarSpellList
+
+local function ContainerOwnedListInitialized(containerKey)
+    local shared = ns.CDMShared
+    local getDB = shared and shared.GetContainerDB
+    local db = getDB and getDB(containerKey)
+    return db and db.ownedSpells ~= nil or false
+end
 
 local function ShouldHideAuraDurationText(r)
     if not r or not r.isActive then return false end
@@ -964,6 +1114,8 @@ local function ReleaseBar(bar)
     bar._active = false
     bar._auraUnit = nil
     bar._auraInstanceID = nil
+    bar._blzChild = nil
+    bar._blzCooldownID = nil
     bar._cSideFill = nil
     bar._preferDurObjFill = nil
     bar._forceTimerDurationRebind = nil
@@ -1084,6 +1236,11 @@ function CDMBars:BuildBarsFromOwned(container, spellList)
                     bar._isTotemInstance = entry._isTotemInstance and true or false
                     bar._totemSlot = entry._totemSlot
                     bar._spellID = entry.overrideSpellID or entry.spellID or entry.id
+                    -- Re-pair with the freshly scanned Blizzard child: pool
+                    -- recycling re-keys children mid-combat, and a stale ref
+                    -- leaves the bar with no fill/timer source.
+                    bar._blzChild = entry._blzFrame or bar._blzChild
+                    bar._blzCooldownID = entry._blzFrame and entry.cooldownID or bar._blzCooldownID
                 end
                 self:UpdateOwnedBarAura(bar)
             end
@@ -1106,11 +1263,18 @@ function CDMBars:BuildBarsFromOwned(container, spellList)
         local spellID = entry.overrideSpellID or entry.spellID or entry.id
         bar._spellID = spellID
 
+        -- Pair with the live Blizzard CDM child when the scanner delivered
+        -- one. Paired bars mirror fill/timer straight off the Blizzard frame
+        -- (secret-safe widget passthrough) and never enter the Lua resolver.
+        -- cooldownID is pinned so pool re-keying is detected before mirroring.
+        bar._blzChild = entry._blzFrame
+        bar._blzCooldownID = entry._blzFrame and entry.cooldownID or nil
+
         -- Set initial texture from composer entry / direct C-side APIs.
         -- Totem-instance bars defer to UpdateOwnedBarAura's totemIcon path.
         if bar.IconTexture and spellID and not bar._isTotemInstance then
-            local texID
-            if entry.type == "item" or entry.type == "slot" then
+            local texID = entry.iconTexture
+            if not texID and (entry.type == "item" or entry.type == "slot") then
                 if entry.type == "slot" then
                     texID = Sources and Sources.QueryInventoryItemTexture
                         and Sources.QueryInventoryItemTexture("player", entry.id)
@@ -1121,7 +1285,7 @@ function CDMBars:BuildBarsFromOwned(container, spellList)
                     end
                     texID = icon
                 end
-            elseif entry.type == "spell" then
+            elseif not texID and entry.type == "spell" then
                 -- Cooldown bars use overrideSpellID for talent replacements.
                 -- Aura bars keep their configured entry identity.
                 local iconSid
@@ -1297,8 +1461,8 @@ local function UpdateItemBarCooldown(bar, entry)
     end
     if not isActive and scanner and scanner.IsItemActive and itemID then
         local active, expiration, duration = scanner.IsItemActive(itemID)
-        local readableDuration = duration
-        local readableExpiration = expiration
+        local readableDuration = ReadNumber(duration, nil)
+        local readableExpiration = ReadNumber(expiration, nil)
         if active and readableDuration and readableDuration > 0 then
             isActive = true
             auraDur = readableDuration
@@ -1363,7 +1527,12 @@ local function UpdateItemBarCooldown(bar, entry)
        and r.isOnCooldown == true
        and r.numericCooldownActive == true
        and type(startTime) == "number"
-       and type(duration) == "number" then
+       and type(duration) == "number"
+       and not (issecretvalue and issecretvalue(startTime))
+       and not (issecretvalue and issecretvalue(duration)) then
+        -- Paired issecretvalue with the type() checks: the arithmetic below throws
+        -- on a secret value even though type() reports "number" (defense-in-depth;
+        -- the resolver already rejects secrets via IsSafeNumeric upstream).
         local remaining = (startTime + duration) - GetTime()
         if remaining > 0 then
             bar._active = true
@@ -1397,7 +1566,6 @@ end
 local IsSpellCooldownEntry
 
 local _barCooldownStateContextOptions = {
-    mirrorIdentityPolicy = "entry-or-fallback",
     fallbackContainerKey = "trackedBar",
 }
 
@@ -1411,21 +1579,6 @@ function BuildBarCooldownStateContext(bar, entry, spellID)
     options.totemSlot = bar and bar._totemSlot
     options.useBuffSwipe = not IsSpellCooldownEntry(entry)
     options.skipAuraPhase = nil
-    -- Do NOT feed a cached mirror state into the resolve. GetStateByCooldownID
-    -- returns a per-key PackState table that is only refreshed when it is
-    -- called, and the resolver's cached-state fast path deliberately skips
-    -- re-querying the mirror (asserted by cdm_resolvers_cooldown_state_test).
-    -- So a state cached while an aura was inactive stays frozen at
-    -- mode=inactive even after the buff goes live -- the cross-category
-    -- buff-bar "won't activate until a rebuild / breaks again on /reload" bug.
-    -- A buff-viewer aura (cdID in the buff category) placed in the trackedBar
-    -- container binds correctly but the frozen cache masks its live aura.
-    -- Resolving fresh each poll -- exactly what the icon path does (it never
-    -- feeds a cache) -- reads the live mirror and is cheap at the bar's 0.5s
-    -- cadence; aura-mode fill stays stable via the DurationObject
-    -- userdata-identity check, and cooldown-mode keys off the spellID.
-    options.cachedMirrorState = nil
-    options.cachedMirrorSourceID = nil
     return builder(bar, entry, spellID, options)
 end
 
@@ -1440,11 +1593,174 @@ function IsSpellCooldownEntry(entry)
     return entry.kind == "cooldown" or entryType == "cooldown"
 end
 
+---------------------------------------------------------------------------
+-- PAIRED-BAR MIRROR (reference pattern)
+--
+-- Bars whose spell exists in Blizzard's BuffBarCooldownViewer never enter the
+-- Lua resolver: Blizzard's untainted code already drives the hidden native
+-- bar's fill and Duration text from data we cannot read while auras are
+-- secret. Mirror those surfaces through absorb-capable widget setters
+-- (SetMinMaxValues/SetValue/SetText take secret values natively) — no aura
+-- queries, no comparisons, works identically in and out of combat.
+---------------------------------------------------------------------------
+
+-- Re-validate the pairing each use: Blizzard pools these children, and a
+-- re-keyed frame would otherwise mirror the wrong spell until the next
+-- scanner rebuild. cooldownID is plain (catalog key, never secret).
+--
+-- Self-healing (reference pattern): when the cached child no longer carries
+-- our cooldownID (pool recycle mid-combat), re-scan the live viewer children
+-- for the cooldownID instead of going dark until the next scanner rebuild —
+-- an unpaired bar has no combat fill/timer source at all.
+local function FindBlzChildByCooldownID(cooldownID)
+    local viewer = _G.BuffBarCooldownViewer
+    if not viewer or not viewer.GetChildren then return nil end
+    local ok, numChildren = pcall(viewer.GetNumChildren, viewer)
+    if not ok or not numChildren then return nil end
+    for ci = 1, numChildren do
+        local child = select(ci, viewer:GetChildren())
+        if child and child.Bar then
+            local cid = child.cooldownID
+            if not (issecretvalue and issecretvalue(cid)) and cid == cooldownID then
+                return child
+            end
+        end
+    end
+    return nil
+end
+
+local function GetPairedBlzChild(bar)
+    local wantCid = bar._blzCooldownID
+    if not wantCid then return nil end
+    local blz = bar._blzChild
+    if blz then
+        local cid = blz.cooldownID
+        if not (issecretvalue and issecretvalue(cid)) and cid == wantCid then
+            return blz
+        end
+    end
+    local found = FindBlzChildByCooldownID(wantCid)
+    bar._blzChild = found
+    return found
+end
+
+-- Active state from the CooldownViewer item mixin (runtime aura flag,
+-- observed non-secret in taint dumps). Fail OPEN on secret/missing: never
+-- hide a possibly-active bar. IsShown is NOT a substitute — inactive items
+-- stay shown unless the user enables Blizzard's hide-when-inactive option.
+local function ReadPairedBarActive(blz)
+    if blz.IsActive then
+        local ok, active = pcall(blz.IsActive, blz)
+        if ok then
+            if issecretvalue and issecretvalue(active) then return true end
+            return active and true or false
+        end
+        return true
+    end
+    if blz.IsShown then
+        local ok, shown = pcall(blz.IsShown, blz)
+        return ok and shown and true or false
+    end
+    return false
+end
+
+local barFillInterpolation = Enum and Enum.StatusBarInterpolation
+    and Enum.StatusBarInterpolation.ExponentialEaseOut
+
+-- Visual passthrough, reference-faithful: min/max + value + timer text are
+-- forwarded from the live Blizzard bar every frame. Values may be secret —
+-- they flow straight from getter to setter with no Lua inspection. The
+-- first tick after a show SNAPS (no interpolation) so a fresh bar doesn't
+-- animate from a stale value; subsequent ticks ease.
+local function MirrorPairedBarVisuals(bar, blz)
+    local nativeBar = blz.Bar
+    if not nativeBar or not nativeBar.GetValue then return end
+    local sb = bar.StatusBar
+    if sb then
+        sb.SetMinMaxValues(sb, nativeBar:GetMinMaxValues())
+        local smooth = bar._mirrorWasShown and barFillInterpolation
+        if smooth then
+            sb.SetValue(sb, nativeBar:GetValue(), smooth)
+        else
+            sb.SetValue(sb, nativeBar:GetValue())
+        end
+        bar._mirrorWasShown = true
+    end
+    if bar.DurationText then
+        if bar._hideDurationText then
+            bar.DurationText.SetText(bar.DurationText, "")
+        else
+            local durationFS = nativeBar.Duration
+            if durationFS and durationFS.GetText then
+                bar.DurationText.SetText(bar.DurationText, durationFS:GetText())
+            end
+        end
+    end
+end
+
+-- Per-frame mirror ticker (reference pattern: bar fill needs smooth updates,
+-- so paired bars tick at frame rate, not on the 100ms animation loop the
+-- durObj bars use). Self-hides when no paired bar is active.
+local pairedMirrorFrame = CreateFrame("Frame")
+-- Method guards: the headless test harness stubs CreateFrame minimally.
+if pairedMirrorFrame.Hide then pairedMirrorFrame:Hide() end
+local pairedMirrorAccum = 0
+pairedMirrorFrame:SetScript("OnUpdate", function(self, elapsed)
+    pairedMirrorAccum = pairedMirrorAccum + elapsed
+    if pairedMirrorAccum < 0.016 then return end
+    pairedMirrorAccum = 0
+    local anyPaired = false
+    for _, bar in ipairs(barPool) do
+        if bar._isOwnedBar and bar._active and bar:IsShown() then
+            local blz = GetPairedBlzChild(bar)
+            if blz then
+                anyPaired = true
+                MirrorPairedBarVisuals(bar, blz)
+            end
+        end
+    end
+    if not anyPaired then
+        self:Hide()
+    end
+end)
+
+-- State pass for paired bars (runs from UpdateOwnedBars in place of the
+-- resolver). Owns _active only; visuals belong to the mirror ticker.
+local function UpdatePairedBarState(bar, blz)
+    local active = ReadPairedBarActive(blz)
+    bar._active = active
+    bar._hideDurationText = GetBarSpellHideDurationOverride(bar)
+    -- Nothing of ours may sit on top of or fight the mirror: drop any
+    -- leftover durObj binding/fill state and the PermanentFill overlay a
+    -- recycled bar may carry from a previous unpaired configuration.
+    if bar._boundDurObj then DisableBarDurationBinding(bar) end
+    bar._durObj = nil
+    bar._cSideFill = nil
+    bar._preferDurObjFill = nil
+    if bar.PermanentFill then
+        bar.PermanentFill.SetAlpha(bar.PermanentFill, 0)
+    end
+    if not active then
+        bar._mirrorWasShown = nil
+    end
+    StoreBarRuntimeState(bar, active and "aura" or "inactive", active, nil)
+    if active and pairedMirrorFrame.Show then
+        pairedMirrorFrame:Show()
+    end
+end
+
 function CDMBars:UpdateOwnedBarAura(bar)
     if not bar or not bar._spellID then return end
     local spellID = bar._spellID
     local entry = bar._spellEntry
     if not ns.CDMSpellData then return end
+
+    -- Paired bars mirror Blizzard's live bar; no Lua resolver.
+    local blz = GetPairedBlzChild(bar)
+    if blz then
+        UpdatePairedBarState(bar, blz)
+        return
+    end
 
     -- Inventory-backed bars retain their adapter path for item names,
     -- trinket-slot texture updates, and SpellScanner item-aura detection.
@@ -1469,9 +1785,6 @@ function CDMBars:UpdateOwnedBarAura(bar)
         countValue = count and count.value or nil,
         countSource = count and count.source or nil,
         hasExpirationTime = r.hasExpirationTime,
-        mirrorBacked = r.mirrorBacked == true,
-        mirrorState = r.mirrorState,
-        mirrorSourceID = r.sourceID,
     })
 
     local _bname = entry and entry.name
@@ -1956,7 +2269,7 @@ end
 ---------------------------------------------------------------------------
 -- REFRESH: Rebuild + re-layout (called from CDMBuffLayout)
 ---------------------------------------------------------------------------
-function CDMBars:Refresh(container, settings, overrideWidth, containerKey)
+function CDMBars:Refresh(container, settings, overrideWidth, containerKey, runtimeEntries)
     if not container then return end
     if not settings then return end
 
@@ -1969,9 +2282,23 @@ function CDMBars:Refresh(container, settings, overrideWidth, containerKey)
     _lastContainer = container
     _lastSettings = settings
 
-    -- All bars are sourced from the composer's owned-spells snapshot.
-    if ns.CDMSpellData then
-        local spellList = ns.CDMSpellData:GetSpellList(containerKey or "trackedBar")
+    -- Tracked bars use QUI ownership once the composer has initialized the
+    -- trackedBar list. Blizzard's live BuffBarCooldownViewer child list is only
+    -- an enrichment source for matching configured entries (cooldownID/order)
+    -- and a first-load fallback before ownedSpells exists.
+    local spellList
+    if containerKey == "trackedBar" then
+        local configuredOwnedInitialized = ContainerOwnedListInitialized(containerKey)
+        local configuredSpellList
+        if configuredOwnedInitialized and ns.CDMSpellData then
+            configuredSpellList = ns.CDMSpellData:GetSpellList(containerKey)
+        end
+        spellList = BuildTrackedBarSpellList(runtimeEntries, configuredSpellList, configuredOwnedInitialized)
+    end
+    if not spellList and ns.CDMSpellData then
+        spellList = ns.CDMSpellData:GetSpellList(containerKey or "trackedBar")
+    end
+    if spellList then
         self:BuildBarsFromOwned(container, spellList)
     else
         self:ClearPool()
@@ -2019,7 +2346,11 @@ barTimerGroup:SetScript("OnLoop", function()
     local anyActive = false
     for _, bar in ipairs(barPool) do
         if bar._isOwnedBar and bar._active and bar:IsShown() then
-            if bar._hideDurationText then
+            if GetPairedBlzChild(bar) then
+                -- Paired bar: visuals are owned by the per-frame mirror
+                -- ticker; this 100ms loop must not touch them.
+                anyActive = true
+            elseif bar._hideDurationText then
                 anyActive = true
                 if bar._boundDurObj then DisableBarDurationBinding(bar) end
                 if bar.DurationText then

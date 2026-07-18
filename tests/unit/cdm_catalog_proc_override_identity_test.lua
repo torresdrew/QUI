@@ -105,6 +105,10 @@ assert(availBySpell[CONV_OVERRIDE], "the converted slot must be offered by its o
 _G.CooldownViewerSettings = {
     GetDataProvider = function()
         return {
+            -- memo fields present = cache already built by a secure consumer
+            -- (cold-boot taint gate reads these raw; see cdm_index/cdm_catalog)
+            displayDataDirty = false,
+            displayData = {},
             GetLayoutManager = function() return {} end,
             GetOrderedCooldownIDsForCategory = function(_, category)
                 if category == 0 then return { 1001, 1002 } end

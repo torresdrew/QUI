@@ -266,6 +266,63 @@ function Helpers.FrameIsAnchoringRestricted(frame)
     return restricted == true
 end
 
+--- Fail-closed protection probe for gating in-combat MUTATION of a frame
+--- (SetPoint/SetParent/SetScale/Show...). Opposite polarity to the fail-open
+--- FrameIsProtected/FrameIsAnchoringRestricted pair above (those pick the
+--- absolute-pin path, which must only trigger for KNOWN-protected targets):
+--- here a pcall error from either getter or a secret (unreadable) answer
+--- counts as RESTRICTED, because mutating a frame whose protection state
+--- cannot be proven draws ADDON_ACTION_BLOCKED, while deferring to
+--- PLAYER_REGEN_ENABLED is cheap. Truth-tests run only after the
+--- issecretvalue probe (truth-testing a secret itself throws).
+--- @return boolean true when the frame must not be mutated in combat
+function Helpers.FrameMutationRestricted(frame)
+    if not frame then return false end
+    if frame.IsProtected then
+        local ok, answer = pcall(frame.IsProtected, frame)
+        if not ok then return true end
+        if issecretvalue and issecretvalue(answer) then return true end
+        if answer then return true end
+    end
+    if frame.IsAnchoringRestricted then
+        local ok, answer = pcall(frame.IsAnchoringRestricted, frame)
+        if not ok then return true end
+        if issecretvalue and issecretvalue(answer) then return true end
+        if answer then return true end
+    end
+    return false
+end
+
+--- Secret-safe visibility read for anchor parents (hideWithParent path).
+--- IsShown/GetAlpha can throw on a tainted stack and both can answer with a
+--- secret in 12.1 — truth-testing a secret throws, and a secret number passes
+--- type() == "number" but throws on `<` comparison — so every read is pcalled
+--- and issecretvalue-probed before any truth-test or comparison. Tri-state:
+---   true  — provably visible (shown, and alpha above threshold when readable)
+---   false — provably hidden (missing frame/method, not shown, or alpha ≈ 0;
+---           alpha ≈ 0 counts as hidden because HUD visibility fades frames
+---           to alpha 0 instead of calling Hide)
+---   nil   — unprovable (a getter threw or answered with a secret); callers
+---           must defer rather than Hide/Show anything on a guess.
+--- @param frame table|nil The candidate parent frame
+--- @param alphaThreshold number|nil Alpha below which the frame counts as hidden (default 0.01)
+--- @return boolean|nil
+function Helpers.FrameVisibleSecure(frame, alphaThreshold)
+    if not frame or not frame.IsShown then return false end
+    local ok, shown = pcall(frame.IsShown, frame)
+    if not ok then return nil end
+    if issecretvalue and issecretvalue(shown) then return nil end
+    if not shown then return false end
+    if not frame.GetAlpha then return true end
+    local okAlpha, alpha = pcall(frame.GetAlpha, frame)
+    if not okAlpha then return nil end
+    if issecretvalue and issecretvalue(alpha) then return nil end
+    if type(alpha) == "number" and alpha < (alphaThreshold or 0.01) then
+        return false
+    end
+    return true
+end
+
 --- Safely compare two values (returns false if either is secret)
 --- @param a any First value
 --- @param b any Second value
@@ -2032,11 +2089,8 @@ function Helpers.ReadSpellCooldown(spellID)
         return a, b, d, nil, nil
     end
 
-    if GetSpellCooldown then
-        local start, duration = GetSpellCooldown(spellID)
-        return start, duration, nil, nil, nil
-    end
-
+    -- No bare GetSpellCooldown fallback: the global was removed in 12.x (C_Spell
+    -- is the only surviving API), so referencing it is dead code.
     return nil, nil, nil, nil, nil
 end
 
@@ -2212,6 +2266,31 @@ function Helpers.ApplyCooldownFromAura(cooldownFrame, unit, auraInstanceID, expi
         cooldownFrame:Clear()
     end
     return false
+end
+
+--- Toggle a Cooldown's native radial swipe per an element's swipeStyle config
+--- (radial / horizontal / vertical). Lifted out of the group-frames aura
+--- renderer (commit 8735c4429b, "linear cooldown swipe option") so
+--- core/aura_slots.lua's tracked-slot runtime can share the exact same
+--- radial-suppression rule instead of re-deriving it: "radial" (the default)
+--- shows the native swipe, honoring hideSwipe; any other style suppresses it
+--- (a linear replacement, where one exists, is a SEPARATE object -- the
+--- native swipe texture has no linear mode of its own). Pure config: no aura
+--- reads, so this is safe to call from any host.
+--- @param cooldownFrame table|nil
+--- @param element table|nil Reads swipeStyle / hideSwipe / reverseSwipe.
+function Helpers.ApplyCooldownSwipeStyle(cooldownFrame, element)
+    if not cooldownFrame then
+        return
+    end
+    local style = (element and element.swipeStyle) or "radial"
+    if cooldownFrame.SetDrawSwipe then
+        pcall(cooldownFrame.SetDrawSwipe, cooldownFrame,
+            style == "radial" and (not element or element.hideSwipe ~= true))
+    end
+    if cooldownFrame.SetReverse then
+        pcall(cooldownFrame.SetReverse, cooldownFrame, element and element.reverseSwipe == true)
+    end
 end
 
 ---------------------------------------------------------------------------

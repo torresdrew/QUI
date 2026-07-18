@@ -26,6 +26,13 @@ function V2.Register(frame)
                 end
             end,
         },
+        -- Buff/Debuff sub-page removed (moved to the Auras hub tile, tabIndex
+        -- 21 subTabIndex 4 = Buff/Debuff Frames -- see tiles/auras.lua). The
+        -- actionBarsBuffDebuff feature registration (action_bars.lua) stays
+        -- alive: Layout Mode's buffFrame/debuffFrame mover drawers still
+        -- resolve through it via moverKey/lookupKeys, now repointed at the
+        -- hub. "Per-Bar" shifted from array position 3 to 2 -- its own nav
+        -- (action_bars_per_bar.lua) was updated to match.
         subPages = {
             {
                 id = "general",
@@ -37,18 +44,6 @@ function V2.Register(frame)
                     tabName = ns.L["Action Bars"],
                     subTabIndex = 0,
                     subTabName = ns.L["General"],
-                },
-            },
-            {
-                id = "buffDebuff",
-                name = ns.L["Buff/Debuff"],
-                featureId = "actionBarsBuffDebuff",
-                navRoutes = { { tabIndex = 2, subTabIndex = 4 } },
-                searchContext = {
-                    tabIndex = 2,
-                    tabName = ns.L["Unit Frames"],
-                    subTabIndex = 4,
-                    subTabName = ns.L["Buff & Debuff"],
                 },
             },
             {

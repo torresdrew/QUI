@@ -63,28 +63,6 @@ function ns.WhenLoggedIn(callback)
     end)
 end
 
-ns.FeatureFlags = ns.FeatureFlags or {}
--- Release gate: keep the beta localization payloads in-tree, but force the UI
--- to English until translated copy is ready for a wider release.
-ns.FeatureFlags.localization = false
-
-function ns.IsLocalizationEnabled()
-    return ns.FeatureFlags and ns.FeatureFlags.localization == true
-end
-
-function ns.GetLocalizationLocale()
-    if not ns.IsLocalizationEnabled() then
-        return "enUS"
-    end
-
-    local selected = QUIDB and QUIDB.global and QUIDB.global.selectedLocale
-    if type(selected) == "string" and selected ~= "" then
-        return selected
-    end
-
-    return (GetLocale and GetLocale()) or "enUS"
-end
-
 -- Flush the after-first-frame queue once the first frame renders.
 if CreateFrame then
     local firstFrameFrame = CreateFrame("Frame")
@@ -357,7 +335,23 @@ SlashCmdList["QUI_CDM"] = function()
 end
 
 function QUI:SlashCommandOpen(input)
-    if input and input == "debug" then
+    local isUISmokeCommand = input and input:match("^uitest")
+
+    if isUISmokeCommand and (input == "uitest" or input:match("^uitest%s")) then
+        local subcmd = input:match("^uitest%s*(.*)$") or ""
+        local ok, reason = self:EnsureDebugToolsLoaded()
+        if not ok then
+            print("|cff60A5FAQUI:|r UI smoke runner could not be loaded (" .. tostring(reason) .. ").")
+            return
+        end
+
+        if ns.UISmoke and type(ns.UISmoke.HandleSlash) == "function" then
+            ns.UISmoke.HandleSlash(subcmd)
+        else
+            print("|cff60A5FAQUI:|r UI smoke runner did not initialize.")
+        end
+        return
+    elseif input and input == "debug" then
         self.db.char.debug.reload = true
         QUI:SafeReload()
     elseif input and (input == "layout" or input == "unlock" or input == "editmode") then
@@ -375,108 +369,6 @@ function QUI:SlashCommandOpen(input)
             print("|cff60A5FAQUI:|r " .. ns.L["CDM Spell Composer not available. Enable CDM first."])
         end
         return
-    elseif input and input:match("^cdm_cache") then
-        -- /qui cdm_cache               → status (cache sizes + dirty flags)
-        -- /qui cdm_cache status        → same
-        -- /qui cdm_cache reset         → wipe + rebuild (OOC only, aggressive)
-        local sub = input:match("^cdm_cache%s+(%S+)") or "status"
-        local SD   = ns.CDMSpellData
-        local IC   = ns.CDMIcons
-        local BR   = ns.CDMBars
-        if not SD then
-            print("|cff60A5FAQUI:|r " .. ns.L["CDM not loaded."])
-            return
-        end
-        if sub == "status" then
-            local s     = SD.GetCacheStats and SD:GetCacheStats() or {}
-            local ic    = (IC and IC.GetCacheStats) and IC:GetCacheStats() or {}
-            local br    = (BR and BR.GetCacheStats) and BR:GetCacheStats() or {}
-            local fr    = ns.GetCDMFrameCacheStats and ns.GetCDMFrameCacheStats() or {}
-            local bm    = (ns.CDMBlizzMirror and ns.CDMBlizzMirror.GetCacheStats)
-                and ns.CDMBlizzMirror.GetCacheStats() or {}
-            local rt    = (ns.CDMRuntimeStore and ns.CDMRuntimeStore.GetStats)
-                and ns.CDMRuntimeStore.GetStats() or {}
-            local rs    = (ns.CDMResolvers and ns.CDMResolvers.GetMirrorPolicyStats)
-                and ns.CDMResolvers.GetMirrorPolicyStats() or {}
-            local combat = InCombatLockdown() and "true" or "false"
-            print(("|cff60A5FAQUI cdm_cache:|r status (combat=%s)"):format(combat))
-            print(("  hud_visibility frames:    dirty=%s size=%d"):format(
-                tostring(fr.dirty), tonumber(fr.size) or 0))
-            print(("  child map (spellID→child): dirty=%s size=%d"):format(
-                tostring(s.childMapDirty), tonumber(s.childMapSize) or 0))
-            print(("  captured aura index:      entries=%d units=%d spellKeys=%d nameKeys=%d"):format(
-                tonumber(s.capturedAuraEntries) or 0,
-                tonumber(s.capturedAuraUnits) or 0,
-                tonumber(s.capturedAuraSpellKeys) or 0,
-                tonumber(s.capturedAuraNameKeys) or 0))
-            print(("  Blizzard mirror:          states=%d info=%d spellMap=%d directMap=%d"):format(
-                tonumber(bm.mirrorStates) or 0,
-                tonumber(bm.cooldownInfo) or 0,
-                tonumber(bm.spellMapEntries) or 0,
-                tonumber(bm.directSpellMapEntries) or 0))
-            print(("  runtime store:            states=%d version=%d"):format(
-                tonumber(rt.states) or 0,
-                tonumber(rt.version) or 0))
-            print(("  stale mirror skips:       gcd=%d inactive=%d total=%d"):format(
-                tonumber(rs.staleGCDSkips) or 0,
-                tonumber(rs.staleInactiveSkips) or 0,
-                tonumber(rs.staleMirrorSkips) or 0))
-            print(("  learned cooldowns:        dirty=%s size=%d"):format(
-                tostring(s.learnedDirty), tonumber(s.learnedSize) or 0))
-            print(("  tick aura caches:         data=%d dur=%d exp=%d app=%d"):format(
-                tonumber(s.tickAuraData) or 0,
-                tonumber(s.tickAuraDuration) or 0,
-                tonumber(s.tickAuraExpiration) or 0,
-                tonumber(s.tickAuraApplication) or 0))
-            print(("  resolve memos:            icon=%d auraActive=%d"):format(
-                tonumber(s.resolveIconMemo) or 0,
-                tonumber(s.resolveAuraMemo) or 0))
-            print(("  totem slot map:           size=%d"):format(
-                tonumber(s.totemSlotMap) or 0))
-            print(("  texture cycle cache:      size=%d"):format(
-                tonumber(ic.textureCycleCache) or 0))
-            print(("  bar pool:                 active=%d"):format(
-                tonumber(br.activeBars) or 0))
-            print(("  icon update:              barsDirty=%s pending=%s"):format(
-                tostring(ic.barsDirty), tostring(ic.updatePending)))
-            if ic.iconEventProfileTop and #ic.iconEventProfileTop > 0 then
-                print(("  icon events:              window=%.1fs"):format(
-                    tonumber(ic.iconEventProfileWindow) or 0))
-                for _, row in ipairs(ic.iconEventProfileTop) do
-                    print(("    %-30s %6.2f ms/s  %5.0f/s"):format(
-                        tostring(row.event),
-                        tonumber(row.msPerSec) or 0,
-                        tonumber(row.callsPerSec) or 0))
-                end
-            end
-            print("  run |cFFFFFF00/qui cdm_cache reset|r to wipe and rebuild (OOC only).")
-            return
-        elseif sub == "reset" then
-            if InCombatLockdown() then
-                print("|cff60A5FAQUI:|r " .. ns.L["cdm_cache reset blocked in combat — try again out of combat."])
-                return
-            end
-            -- Wipe — order doesn't matter, all are independent.
-            if ns.InvalidateCDMFrameCache then ns.InvalidateCDMFrameCache() end
-            if SD.InvalidateLearnedCache then SD:InvalidateLearnedCache() end
-            if SD.ClearChildCaches       then SD:ClearChildCaches()       end
-            if IC and IC.ClearTextureCycleCache then IC:ClearTextureCycleCache() end
-            if BR and BR.ClearPerBarCaches      then BR:ClearPerBarCaches()      end
-            if ns.CDMRuntimeStore and ns.CDMRuntimeStore.ClearAll then ns.CDMRuntimeStore.ClearAll() end
-            if ns.CDMResolvers and ns.CDMResolvers.ResetMirrorPolicyStats then ns.CDMResolvers.ResetMirrorPolicyStats() end
-            -- Rebuild — re-derive owned spells from current viewer state.
-            if SD.CheckAllDormantSpells   then SD:CheckAllDormantSpells()   end
-            if SD.ReconcileAllContainers  then SD:ReconcileAllContainers()  end
-            -- Force a full repaint even if reconcile didn't add anything.
-            if _G.QUI_OnSpellDataChanged then _G.QUI_OnSpellDataChanged() end
-            if IC and IC.RequestFullUpdate then IC:RequestFullUpdate() end
-            print("|cff60A5FAQUI:|r " .. ns.L["cdm_cache reset — caches wiped, full rebuild scheduled."])
-            return
-        else
-            print("|cff60A5FAQUI:|r " .. ns.L["unknown cdm_cache subcommand '%s'."]:format(tostring(sub)))
-            print("  usage: |cFFFFFF00/qui cdm_cache|r [status|reset]")
-            return
-        end
     elseif input and input:match("^bindkey") then
         -- /qui bindkey            → show current key
         -- /qui bindkey CTRL-O     → bind (session binding, re-applied at login)

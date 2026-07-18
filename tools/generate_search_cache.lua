@@ -172,26 +172,7 @@ local function should_load_script(path)
         if path:match("^QUI_Bags/bags/settings/") then
             return true
         end
-        if path:match("^QUI_Alts/alts/settings/") then
-            return true
-        end
-        if path:match("^QUI_InfoBar/infobar/settings/") then
-            return true
-        end
-        if path == "QUI_Minimap/minimap/settings/minimap.lua" then
-            return true
-        end
-        if path == "QUI_Datatexts/datatexts/settings/datatexts_features.lua" then
-            return true
-        end
         if path:match("^QUI_ResourceBars/resourcebars/settings/") then
-            return true
-        end
-        if path:match("^QUI_Skinning/skinning/.+/settings/")
-            or path:match("^QUI_Skinning/skinning/settings/") then
-            return true
-        end
-        if path:match("^QUI_QoL/.+/settings/") then
             return true
         end
         if path == "QUI_DamageMeter/damage_meter/settings/damage_meter_content.lua" then
@@ -829,6 +810,12 @@ _G.C_Timer = {
     end,
 }
 
+-- Published so page builds can skip work that's meaningless under the
+-- harvest — e.g. live preview-mock rendering, whose math reads numeric DB
+-- leaves that make_auto_table() vivifies as TABLES (math.max(0, table)
+-- errors, and the failed build knocks the page's labels out of the cache).
+_G.QUI_SEARCH_HARVEST = true
+
 local profile_db = make_auto_table()
 profile_db.general.showOptionTooltips = true
 profile_db.quiGroupFrames = {
@@ -1109,6 +1096,26 @@ collect_qui_options_scripts(scripts, script_xml_seen)
 local failures = {}
 local loaded_count = 0
 
+-- groupframes_aura_model.lua is now a compatibility shim: `local E =
+-- ns.AuraElements` captured at file scope, delegating every constructor to the
+-- shared core model (core/aura_elements.lua). That core file is part of
+-- QUI.toc and would normally load via the main scripts loop below, but the
+-- shim (pre-loaded next) needs ns.AuraElements populated BEFORE it runs, so
+-- pull it in here first. Pure Lua / no dependencies, safe to load standalone;
+-- the main loop loading it again later is harmless (a fresh idempotent table
+-- assignment — this file's shim already captured its own reference).
+do
+    local core_model_path = "core/aura_elements.lua"
+    local probe = io.open(core_model_path, "r")
+    if probe then
+        probe:close()
+        local ok, err = load_script(core_model_path)
+        if not ok then
+            failures[#failures + 1] = { path = core_model_path, error = err }
+        end
+    end
+end
+
 -- The unified-auras editor captures `local Model = ns.QUI_GroupFramesAuraModel`
 -- at file scope, and the auras element-list capture below needs the model's
 -- element constructors. That model lives in the QUI_GroupFrames runtime TOC, not
@@ -1122,6 +1129,26 @@ do
         local ok, err = load_script(model_path)
         if not ok then
             failures[#failures + 1] = { path = model_path, error = err }
+        end
+    end
+end
+
+-- The setup-wizard page (core/settings/content/auras_wizard_page.lua) captures
+-- `local W = ns.QUI_AuraWizard` at file scope, and its build() calls W.WizardSteps
+-- / W.RoleDefaults / W.CommitTrackedHoTs etc. during the harvest. That module
+-- lives in QUI.toc (core/aura_wizard.lua), which should_load_script() does not
+-- pull into the main loop, so pre-load it here -- AFTER core/aura_elements.lua
+-- (loaded above), which it depends on via `local E = ns.AuraElements`. Without
+-- this the page's W upvalue is nil and the wizard page build errors, leaving
+-- only its nav entry (SetSearchContext) searchable and none of its labels.
+do
+    local wizard_path = "core/aura_wizard.lua"
+    local probe = io.open(wizard_path, "r")
+    if probe then
+        probe:close()
+        local ok, err = load_script(wizard_path)
+        if not ok then
+            failures[#failures + 1] = { path = wizard_path, error = err }
         end
     end
 end
@@ -1948,7 +1975,7 @@ end
 -- the element renders expanded. The variant matrix covers every conditional
 -- branch (each filterMode, each tracked displayType, multi-spell per-spell rows).
 local function capture_group_frames_auras_elements()
-    local AurasEditor = ns.QUI_GroupFramesAurasSettings
+    local AurasEditor = ns.QUI_AuraElementsEditor
     local Model = ns.QUI_GroupFramesAuraModel
     if type(AurasEditor) ~= "table"
         or type(AurasEditor.RenderAuras) ~= "function"
@@ -1963,8 +1990,8 @@ local function capture_group_frames_auras_elements()
     -- render (they only appear when a strip tracks more than one spell). Missing
     -- raid buff renders twice so both auto-detect and manual buff rows enter the
     -- generated search cache.
-    local function strip(filterMode)
-        local element = Model.NewFilterStripElement("HARMFUL")
+    local function strip(filterMode, auraType)
+        local element = Model.NewFilterStripElement(auraType or "HARMFUL")
         element.filterMode = filterMode
         return element
     end
@@ -1984,7 +2011,15 @@ local function capture_group_frames_auras_elements()
     -- One entry per expanded-element render. label is diagnostic only.
     local variants = {
         { label = "filterStrip:off", element = strip("off") },
-        { label = "filterStrip:classification", element = strip("classification") },
+        { label = "filterStrip:flags", element = strip("flags") },
+        { label = "filterStrip:classify", element = strip("classify") },
+        -- HELPFUL variants: the classify checkboxes + flag tokens differ by
+        -- polarity (Cancelable / Not Cancelable / Big Defensive / External
+        -- Defensive are HELPFUL-only) — without these renders those labels
+        -- vanish from the search cache (they were searchable at HEAD via the
+        -- old flat filter rows).
+        { label = "filterStrip:classify:HELPFUL", element = strip("classify", "HELPFUL") },
+        { label = "filterStrip:flags:HELPFUL", element = strip("flags", "HELPFUL") },
         { label = "filterStrip:whitelist", element = strip("whitelist") },
         { label = "tracked:icon", element = tracked("icon") },
         { label = "tracked:bar", element = tracked("bar") },
@@ -2052,7 +2087,7 @@ local UNIT_FRAMES_SEARCH_CAPTURE_TABS = {
     { key = "bars", label = "Bars", method = "RenderBarsTab" },
     { key = "castbar", label = "Castbar", method = "RenderCastbarTab" },
     { key = "text", label = "Text", method = "RenderTextTab" },
-    { key = "icons", label = "Icons", method = "RenderIconsTab" },
+    { key = "icons", label = "Auras", method = "RenderIconsTab" },
     { key = "indicators", label = "Indicators", method = "RenderIndicatorsTab" },
     { key = "portrait", label = "Portrait", method = "RenderPortraitTab" },
     { key = "privateAuras", label = "Priv. Auras", method = "RenderPrivateAurasTab" },
@@ -2526,6 +2561,7 @@ local tile_order = {
     "QUI_GlobalTile",
     "QUI_UnitFramesTile",
     "QUI_GroupFramesTile",
+    "QUI_AurasTile",
     "QUI_ActionBarsTile",
     "QUI_CooldownManagerTile",
     "QUI_ResourceBarsTile",

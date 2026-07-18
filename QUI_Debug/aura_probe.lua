@@ -157,10 +157,6 @@ local function AppendCopyArgsFor(tag, ...)
     AppendCopyLine(table.concat(parts, " "), tag)
 end
 
-local function AppendCopyArgs(...)
-    AppendCopyArgsFor("[QAura]", ...)
-end
-
 local function EnsureCopyFrame()
     if copyFrame then return end
 
@@ -343,6 +339,24 @@ end
 
 local function OnUnitAura(_, event, unit, updateInfo)
     if not enabled then return end
+
+    -- 68569: probe FIRST, before any other check (including the unit ~=
+    -- "player"/"pet" token comparison below) touches either payload arg.
+    -- A secret unit token or a secret updateInfo table throws on ==/~=
+    -- and on indexing respectively; render the shape (which arg is
+    -- secret, restriction state) instead of the values themselves and
+    -- bail. Never tostring/format the secret value -- only the booleans
+    -- and state around it.
+    local unitSecret = IsSecret(unit)
+    local infoSecret = IsSecret(updateInfo)
+    if unitSecret or infoSecret then
+        Emit("UNIT_AURA-secret",
+            "unit=", tostring(unitSecret),
+            "updateInfo=", tostring(infoSecret),
+            "ShouldAurasBeSecret=", tostring(C_Secrets and C_Secrets.ShouldAurasBeSecret and C_Secrets.ShouldAurasBeSecret()))
+        return
+    end
+
     if unit ~= "player" and unit ~= "pet" then return end
 
     if type(updateInfo) ~= "table" then
@@ -350,27 +364,46 @@ local function OnUnitAura(_, event, unit, updateInfo)
         return
     end
 
+    -- 12.1 per-field secrecy: each delta array (and isFullUpdate) can be a
+    -- secret value while updateInfo itself reads fine. Boolean test, #, and
+    -- ipairs on a secret all throw; type() does NOT (it leaks the real type),
+    -- so the type()=="table" checks alone would still walk a secret array.
+    -- Probe each field once, render "<secret>" for its count, skip its walk.
+    -- isFullUpdate needs no probe here: it's only passed through Emit, which
+    -- probes every vararg itself.
+    local added = updateInfo.addedAuras
+    local updated = updateInfo.updatedAuraInstanceIDs
+    local removed = updateInfo.removedAuraInstanceIDs
+    local addedSecret = IsSecret(added)
+    local updatedSecret = IsSecret(updated)
+    local removedSecret = IsSecret(removed)
+    local function deltaCount(value, secret)
+        if secret then return "<secret>" end
+        if type(value) ~= "table" then return 0 end
+        return #value
+    end
+
     Emit("UNIT_AURA",
         "unit=", unit,
         "full=", updateInfo.isFullUpdate,
-        "added=", updateInfo.addedAuras and #updateInfo.addedAuras or 0,
-        "updated=", updateInfo.updatedAuraInstanceIDs and #updateInfo.updatedAuraInstanceIDs or 0,
-        "removed=", updateInfo.removedAuraInstanceIDs and #updateInfo.removedAuraInstanceIDs or 0)
+        "added=", deltaCount(added, addedSecret),
+        "updated=", deltaCount(updated, updatedSecret),
+        "removed=", deltaCount(removed, removedSecret))
 
-    if type(updateInfo.addedAuras) == "table" then
-        for i, aura in ipairs(updateInfo.addedAuras) do
+    if not addedSecret and type(added) == "table" then
+        for i, aura in ipairs(added) do
             EmitAura("added", unit, i, aura)
         end
     end
 
-    if type(updateInfo.updatedAuraInstanceIDs) == "table" then
-        for i, auraInstanceID in ipairs(updateInfo.updatedAuraInstanceIDs) do
+    if not updatedSecret and type(updated) == "table" then
+        for i, auraInstanceID in ipairs(updated) do
             ProbeUpdatedAura(unit, i, auraInstanceID)
         end
     end
 
-    if type(updateInfo.removedAuraInstanceIDs) == "table" then
-        for i, auraInstanceID in ipairs(updateInfo.removedAuraInstanceIDs) do
+    if not removedSecret and type(removed) == "table" then
+        for i, auraInstanceID in ipairs(removed) do
             Emit("removed", "unit=", unit, "i=", i, "inst=", auraInstanceID)
         end
     end
