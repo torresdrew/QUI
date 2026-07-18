@@ -3917,6 +3917,22 @@ do
                 previewOff = function() if ns.ToggleNoTargetWarningPreview then ns.ToggleNoTargetWarningPreview(false) end end,
             },
             {
+                key = "healerMana", label = ns.L["Healer Mana"], group = ns.L["QoL"], order = 8.6,
+                frame = "QUI_HealerManaFrame",
+                dbGetter = function() return GeneralSubDB("healerMana") end,
+                enabledField = "enabled",
+                previewOn  = function() if ns.ToggleHealerManaPreview then ns.ToggleHealerManaPreview(true) end end,
+                previewOff = function() if ns.ToggleHealerManaPreview then ns.ToggleHealerManaPreview(false) end end,
+            },
+            {
+                key = "deathAlert", label = ns.L["Death Alert"], group = ns.L["QoL"], order = 8.7,
+                frame = "QUI_DeathAlertFrame",
+                dbGetter = function() return GeneralSubDB("deathAlert") end,
+                enabledField = "enabled",
+                previewOn  = function() if ns.ToggleDeathAlertPreview then ns.ToggleDeathAlertPreview(true) end end,
+                previewOff = function() if ns.ToggleDeathAlertPreview then ns.ToggleDeathAlertPreview(false) end end,
+            },
+            {
                 key = "preyTracker", label = ns.L["Prey Tracker"], group = ns.L["QoL"], order = 9,
                 frame = "QUI_PreyTracker",
                 dbKey = "preyTracker", enabledField = "enabled",
