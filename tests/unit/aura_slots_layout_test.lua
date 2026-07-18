@@ -28,12 +28,16 @@ end
 
 -- Minimal slot-frame stub: only the methods StyleSlot/AnchorSlot call on a
 -- non-bar, non-square, radial-swipe (default) element ever get invoked.
+-- _setPointCount distinguishes birth-time (initializeFrame) anchoring from
+-- the post-birth pass: restricted creation must anchor exactly once (birth).
 local function MakeFrame()
     return {
+        _setPointCount = 0,
         SetSize = function() end,
         ClearAllPoints = function() end,
         Icon = { SetAlpha = function() end },
         SetPoint = function(self, point, relativeTo, relativePoint, dx, dy)
+            self._setPointCount = self._setPointCount + 1
             self._lastSetPoint = { point = point, relativeTo = relativeTo,
                 relativePoint = relativePoint, dx = dx, dy = dy }
         end,
@@ -42,14 +46,21 @@ end
 
 -- Minimal container stub: records every SetAuraSlotCandidateFilters /
 -- SetAuraSlotFilterString call by slot key so tests can assert park vs.
--- live filters, and AddAuraSlot hands back a fresh frame stub.
+-- live filters, and AddAuraSlot hands back a fresh frame stub. Like the live
+-- 68675 frame provider (Blizzard_AuraContainerFrameProviders), AddAuraSlot
+-- runs opts.initializeFrame(frame) at creation — BEFORE the child-access
+-- restriction would apply — so birth-time styling/anchoring is exercised.
 local function MakeContainer()
     local c = { _filterCalls = {}, _stringCalls = {}, _createdKeys = {} }
     c.SetAuraSlotFilterString = function(self, key, base) c._stringCalls[key] = base end
     c.SetAuraSlotCandidateFilters = function(self, key, filters) c._filterCalls[key] = filters end
     c.AddAuraSlot = function(self, key, base, opts)
         c._createdKeys[#c._createdKeys + 1] = key
-        return MakeFrame()
+        local frame = MakeFrame()
+        if opts and type(opts.initializeFrame) == "function" then
+            opts.initializeFrame(frame)
+        end
+        return frame
     end
     return c
 end
@@ -262,6 +273,73 @@ do
         sp5 and sp5.dx == 0, sp5 and tostring(sp5.dx))
     check("CENTER short row: slot 5 dy == -(2 * (h + spacing))",
         sp5 and sp5.dy == -2 * step, sp5 and tostring(sp5.dy))
+end
+
+----------------------------------------------------------------------------
+-- Test G: restricted creation (68675) — auras secret during Sync. AddAuraSlot
+-- still runs (only combat gates creation) and initializeFrame styles/anchors
+-- AT BIRTH (the provider runs it before the child-access restriction
+-- applies). The post-birth child pass is restriction-gated and must be
+-- SKIPPED, so each frame anchors exactly once, and Sync reports incomplete
+-- so the caller's regen replay re-runs it once the restriction clears.
+----------------------------------------------------------------------------
+do
+    _G.C_Secrets = { ShouldAurasBeSecret = function() return true end }
+    local element = {
+        spells = { 501, 502, 503 },
+        enabled = true,
+        auraType = "HELPFUL",
+        anchor = "TOPLEFT",
+        growDirection = "RIGHT",
+    }
+    local container = MakeContainer()
+    local complete = S.Sync(container, element, true)
+    check("restricted create: Sync reports INCOMPLETE (replay at regen)", complete == false)
+
+    local pool = container._quiSlots
+    check("restricted create: all 3 slots created", pool and pool[3] ~= nil)
+    local w, spacing = 22, 2
+    for i = 1, 3 do
+        local f = pool[i] and pool[i].frame
+        check(("restricted create: slot %d anchored exactly once (at birth)"):format(i),
+            f and f._setPointCount == 1, f and tostring(f._setPointCount))
+        local sp = f and f._lastSetPoint
+        check(("restricted create: slot %d birth anchor dx == %d"):format(i, (i - 1) * (w + spacing)),
+            sp and sp.dx == (i - 1) * (w + spacing), sp and tostring(sp.dx))
+    end
+    _G.C_Secrets = nil
+end
+
+----------------------------------------------------------------------------
+-- Test H: restricted REWRITE — pool already populated, auras secret. The
+-- container-level SetAuraSlot* rewrites stay live (only CHILD access is
+-- restricted), no child write happens (no SetPoint at all on the pre-seeded
+-- frames), and Sync reports incomplete.
+----------------------------------------------------------------------------
+do
+    _G.C_Secrets = { ShouldAurasBeSecret = function() return true end }
+    local element = {
+        spells = { 601, 602 },
+        enabled = true,
+        auraType = "HELPFUL",
+        anchor = "TOPLEFT",
+        growDirection = "RIGHT",
+    }
+    local container = MakeContainer()
+    container._quiSlots = {}
+    for i = 1, 2 do
+        container._quiSlots[i] = { key = "t" .. i, frame = MakeFrame(), parked = true }
+    end
+    local complete = S.Sync(container, element, true)
+    check("restricted rewrite: Sync reports INCOMPLETE", complete == false)
+    check("restricted rewrite: slot 1 unparked (container writes stay live)",
+        container._quiSlots[1].parked == false)
+    check("restricted rewrite: slot 1 got a live per-spell filter",
+        container._filterCalls["t1"] and container._filterCalls["t1"].includeSpellIDs ~= nil)
+    check("restricted rewrite: no child writes (SetPoint never called)",
+        container._quiSlots[1].frame._setPointCount == 0
+        and container._quiSlots[2].frame._setPointCount == 0)
+    _G.C_Secrets = nil
 end
 
 if failures > 0 then error(failures .. " failure(s) in aura_slots_layout_test") end

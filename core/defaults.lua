@@ -4538,8 +4538,8 @@ local defaults = {
                 widthAdjust = 0, heightAdjust = 0,
             },
             zoneAbility = {
-                point = "CENTER", parent = "extraActionButton", relative = "CENTER",
-                offsetX = 0, offsetY = 0,
+                point = "CENTER", parent = "screen", relative = "CENTER",
+                offsetX = 150, offsetY = -27.5,
                 sizeStable = true, autoWidth = false, autoHeight = false,
                 hideWithParent = false, keepInPlace = true,
                 widthAdjust = 0, heightAdjust = 0,

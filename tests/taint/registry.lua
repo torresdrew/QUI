@@ -115,6 +115,12 @@ function M.new()
         local ns = k:match("^([%w_]+)%.")
         if ns then self.preconditionNamespaces[ns] = true end
     end
+    -- Guard namespaces feed the same alias detection (round-8: `local H =
+    -- Helpers; H.IsSecretValue(x)` must resolve like gate/API namespaces).
+    for k in pairs(self.guards) do
+        local ns = k:match("^([%w_]+)%.")
+        if ns then self.preconditionNamespaces[ns] = true end
+    end
     return self
 end
 
@@ -127,7 +133,11 @@ function Registry:isSafeSinkMethod(name)    return self.safeSinkMethods[name]   
 function Registry:addSafeSinkFunction(name) self.safeSinkFunctions[name] = true end
 function Registry:isSafeSinkFunction(name)  return self.safeSinkFunctions[name] == true end
 
-function Registry:addGuard(name)            self.guards[name]            = true end
+function Registry:addGuard(name)
+    self.guards[name] = true
+    local ns = type(name) == "string" and name:match("^([%w_]+)%.")
+    if ns then self.preconditionNamespaces[ns] = true end
+end
 function Registry:isGuard(name)             return self.guards[name]            == true end
 
 function Registry:addUnwrap(name)           self.unwraps[name]           = true end
@@ -186,8 +196,16 @@ function Registry:isRestrictionGate(name)   return self.restrictionGates[name]  
 -- handler parameter POSITIONS that carry secret payload values. A function
 -- whose body compares against the event-name literal gets those parameters
 -- seeded as taint sources (analyzer walkFunctionBody).
+-- The entry may also carry `gateGoverned = false` for events whose payload is
+-- ALWAYS secret rather than restriction-conditional (UNIT_AURA_BLOCKED): a
+-- falsy aura restriction gate proves nothing about such payloads, so the
+-- analyzer's gate clears/proofs must not bless them.
 function Registry:addSecretPayloadEvent(name, params) self.secretEventParams[name] = params end
 function Registry:secretPayloadParams(name)           return self.secretEventParams[name] end
 function Registry:hasSecretPayloadEvents()            return next(self.secretEventParams) ~= nil end
+function Registry:payloadGateGoverned(name)
+    local params = self.secretEventParams[name]
+    return not params or params.gateGoverned ~= false
+end
 
 return M

@@ -667,8 +667,11 @@ local function GetTrackedBarIconTexture(frame, spellData)
         -- GetTexture returns a secret number in combat (aura-driven icon).
         -- The result feeds identity-adjacent consumers and the ~= compares
         -- below throw on secrets — reject and fall back to the spellID icon.
+        -- No `okTex and rawTexture or nil`: the `or` truth-tests rawTexture,
+        -- and a secret throws on that test before the probe. if/else instead.
         local okTex, rawTexture = pcall(iconTexture.GetTexture, iconTexture)
-        local texture = okTex and rawTexture or nil
+        local texture
+        if okTex then texture = rawTexture end
         if WoW_IsSecretValue and WoW_IsSecretValue(texture) then texture = nil end
         if texture and texture ~= 0 and texture ~= "" then
             return texture
@@ -688,8 +691,12 @@ end
 
 local function IsTrackedBarActive(frame)
     if not frame or not frame.IsShown then return false end
+    -- 68675: IsShown() on Blizzard viewer children is secret by aspect while
+    -- restricted — the `and` truth-test would throw. ReadBoolean rejects the
+    -- secret before any boolean use and folds it to the inactive fallback.
     local okShown, shown = pcall(frame.IsShown, frame)
-    return okShown and shown or false
+    if not okShown then return false end
+    return ReadBoolean(shown, false)
 end
 
 local function GetTrackedBarRuntimeEntries()

@@ -689,7 +689,9 @@ local function InvalidateAuraMemoForDelta(unit, updateInfo)
     -- once, up front, and fold to the same "no payload" full-wipe path a nil
     -- delta already takes: a delta we can't read must WIPE the memo, not
     -- silently skip it (a stale entry would otherwise survive undetected).
-    if updateInfo and WoW_IsSecretValue and WoW_IsSecretValue(updateInfo) then
+    -- The probe runs unconditionally — a whole-secret payload throws on the
+    -- truth-test itself, so it must not hide behind `updateInfo and ...`.
+    if WoW_IsSecretValue and WoW_IsSecretValue(updateInfo) then
         updateInfo = nil
     end
 

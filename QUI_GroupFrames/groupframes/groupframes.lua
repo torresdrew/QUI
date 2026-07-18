@@ -5211,7 +5211,8 @@ local function GRU_DeferredWork()
     -- Refresh GUID cache so OnAttributeChanged skip has fresh data
     for unit, list in pairs(QUI_GF.unitFrameMap) do
         local guid = UnitGUID(unit)
-        if guid and IsSecretValue(guid) then guid = nil end
+        -- Probe before any truth-test — a secret guid throws on `guid and`.
+        if IsSecretValue(guid) then guid = nil end
         for i = 1, #list do
             _state.unitGuidCache[list[i]] = guid
         end

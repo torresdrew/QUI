@@ -83,14 +83,20 @@ function UpdateOwnedFlyoutButtonCooldown(button)
 
     -- This runs via secure CallMethod from the flyout snippet, so any field
     -- on cdInfo / chargeInfo may be secret. Comparing secret numbers errors;
-    -- coerce through Helpers before gating display.
-    local cur = Helpers.SafeToNumber(chargeInfo and chargeInfo.currentCharges, 0)
-    local max = Helpers.SafeToNumber(chargeInfo and chargeInfo.maxCharges, 0)
+    -- coerce through Helpers before gating display. The `cdInfo and` /
+    -- `chargeInfo and` truth-tests read the structure ref itself, which is a
+    -- plain table-or-nil (SpellCooldownInfo/SpellChargeInfo secretize per
+    -- FIELD, several NeverSecret, per SpellSharedDocumentation).
+    local cur = Helpers.SafeToNumber(chargeInfo and chargeInfo.currentCharges, 0) -- @secret-safe: SpellChargeInfo container is a plain table-or-nil; the secret-capable field goes to the unwrap
+    local max = Helpers.SafeToNumber(chargeInfo and chargeInfo.maxCharges, 0) -- @secret-safe: SpellChargeInfo container is a plain table-or-nil; maxCharges is NeverSecret and goes to the unwrap
     local showCharge = max > 0 and cur < max
 
-    local enabled = Helpers.SafeValue(cdInfo and cdInfo.isEnabled, false)
-    local dur     = Helpers.SafeToNumber(cdInfo and cdInfo.duration, 0)
-    local showNormal = enabled and dur > 0
+    -- Gate on isActive: NeverSecret, and it already folds in isEnabled plus
+    -- startTime/duration (per SpellSharedDocumentation).  Gating on the
+    -- secret-capable duration would fold an unreadable value to 0 during
+    -- restricted cooldowns and skip the secret-safe DurationObject path
+    -- exactly when it is the only legal display route.
+    local showNormal = Helpers.SafeValue(cdInfo and cdInfo.isActive, false) -- @secret-safe: SpellCooldownInfo container is a plain table-or-nil; isActive is NeverSecret and goes to the unwrap
 
     if showNormal then
         -- ignoreGCD=true so the flyout button's swipe tracks the spell's

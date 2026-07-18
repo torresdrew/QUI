@@ -191,7 +191,13 @@ end
 -- event to a full-update sentinel; downstream consumers gate their own
 -- (now-restricted) rescans on C_Secrets.ShouldAurasBeSecret().
 local function PayloadIsSecret(updateInfo)
-    if not (updateInfo and issecretvalue) then return false end
+    if not issecretvalue then return false end
+    -- Defense in depth: QueueAuraEvent probes the whole-secret payload before
+    -- calling here, but a secret updateInfo would throw on the `updateInfo
+    -- and` truth-test below — probe it first so this function is safe from
+    -- any call site.
+    if issecretvalue(updateInfo) then return true end
+    if not updateInfo then return false end
     -- isFullUpdate: 12.1 can deliver a READABLE table whose scalar
     -- isFullUpdate field is itself a secret boolean (live shape:
     -- { removedAuraInstanceIDs=<secret table>, isFullUpdate=<secret
@@ -251,9 +257,11 @@ local function QueueAuraEvent(unit, updateInfo)
     local existing = pendingUnits[unit]
     if existing == true then
         -- Already marked as full update, nothing to do
-    elseif updateInfo and issecretvalue and issecretvalue(updateInfo) then
+    elseif issecretvalue and issecretvalue(updateInfo) then
         -- 68569: the whole updateInfo arg is secret while restricted (a plain
-        -- __index into it, e.g. .isFullUpdate below, throws). Opaque
+        -- __index into it, e.g. .isFullUpdate below, throws — and so does a
+        -- bare truth-test, so this probe runs UNCONDITIONALLY, never behind
+        -- `updateInfo and ...`; issecretvalue(nil) is simply false). Opaque
         -- invalidation; consumers gate their own rescans off
         -- C_Secrets.ShouldAurasBeSecret() instead of reading this payload.
         pendingUnits[unit] = true

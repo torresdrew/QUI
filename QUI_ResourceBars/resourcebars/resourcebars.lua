@@ -4748,7 +4748,10 @@ end
 -- updateInfo is always tolerated (a full-update-without-detail was
 -- already a possible payload shape pre-12.1).
 function QUICore:OnUnitAura(_, _, updateInfo)
-    if updateInfo and issecretvalue and issecretvalue(updateInfo) then
+    -- Probe unconditionally: a whole-secret payload throws on the truth-test
+    -- itself, so `updateInfo and issecretvalue(updateInfo)` is the bug it
+    -- guards against. issecretvalue(nil) is false.
+    if issecretvalue and issecretvalue(updateInfo) then
         updateInfo = nil
     end
     local resource = GetSecondaryResource()

@@ -26,6 +26,43 @@ C_Timer.After(0.5, function() _forceRawPointMode = false end)
 -- stray global and combat-deferred re-positioning was silently dropped.
 local pendingAnchoredFrameUpdateAfterCombat = false
 
+-- Consumer-specific operations (position-only re-anchor, overlay anchoring)
+-- that combat blocked, latched for the PLAYER_REGEN_ENABLED reconcile.
+-- [originKey] = { [slotKey] = op }. The regen reconcile's bulk apply only
+-- re-runs the DEFAULT apply (QUI_ApplyFrameAnchor, auto-sizing included);
+-- without this latch a blocked consumer operation is silently replaced by
+-- that full apply — a position-only consumer whose module owns the frame's
+-- size then gets auto-sized (repro: width 77 → 333). Slots mirror the
+-- resolve-retry slots (clearResolveRetrySlots drops a latched op once its
+-- consumer resolves fully readable).
+local pendingCombatConsumerOps = {}
+
+local function latchCombatConsumerOp(originKey, slotKey, op)
+    if not originKey or type(op) ~= "function" then return end
+    local bySlot = pendingCombatConsumerOps[originKey]
+    if not bySlot then
+        bySlot = {}
+        pendingCombatConsumerOps[originKey] = bySlot
+    end
+    bySlot[slotKey or "apply"] = op
+end
+
+local function drainPendingCombatConsumerOps()
+    if next(pendingCombatConsumerOps) == nil then return end
+    -- Swap in a clean table first: a replay that re-latches (fresh combat,
+    -- another unreadable walk) must land in live state, not be dropped with
+    -- the snapshot.
+    local snapshot = pendingCombatConsumerOps
+    pendingCombatConsumerOps = {}
+    for originKey, bySlot in pairs(snapshot) do
+        for _, op in pairs(bySlot) do
+            -- pcall: one throwing consumer must not drop the remaining
+            -- latched operations.
+            pcall(op, originKey)
+        end
+    end
+end
+
 -- Anchor target registry: { name = { frame = frame, options = {...} } }
 QUI_Anchoring.anchorTargets = {}
 
@@ -625,21 +662,48 @@ end
 local anchoredFramesCombatFrame = CreateFrame("Frame")
 anchoredFramesCombatFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
 anchoredFramesCombatFrame:SetScript("OnEvent", function()
-    if not pendingAnchoredFrameUpdateAfterCombat then return end
+    if not pendingAnchoredFrameUpdateAfterCombat
+        and next(pendingCombatConsumerOps) == nil then return end
 
+    -- The bulk apply runs only when the FLAG was set: a lone latched
+    -- consumer op (position-only started in combat) must replay exactly
+    -- itself, not be substituted by the auto-sizing full apply.
+    local runFullApply = pendingAnchoredFrameUpdateAfterCombat
     pendingAnchoredFrameUpdateAfterCombat = false
     C_Timer.After(0.05, function()
         if InCombatLockdown() then
-            pendingAnchoredFrameUpdateAfterCombat = true
+            -- Re-latch; consumer ops are still in pendingCombatConsumerOps.
+            if runFullApply then
+                pendingAnchoredFrameUpdateAfterCombat = true
+            end
             return
         end
-        if QUI_Anchoring then
+        if runFullApply and QUI_Anchoring then
             -- Every live writer of the pending flag (edit-mode layout swaps,
             -- anchor guards, ApplyFrameAnchor, PositionFrame) deferred a
             -- POSITION RE-STAMP; the retired legacy-registry walk that used
             -- to sit here no-oped over an empty table and lost it.
-            QUI_Anchoring:ApplyAllFrameAnchors()
+            local applyOK, status = pcall(
+                QUI_Anchoring.ApplyAllFrameAnchors, QUI_Anchoring,
+                false, drainPendingCombatConsumerOps)
+            if not applyOK then
+                -- The required full reconcile did not complete. Keep both the
+                -- consumer ops and their queued after-apply drain alive, and
+                -- retry the full pass on the next regen instead of silently
+                -- degrading it to a consumer-only replay.
+                pendingAnchoredFrameUpdateAfterCombat = true
+                return
+            end
+            -- No pass can complete when the profile/layout is unavailable;
+            -- do not strand the independently replayable consumer operations.
+            if status == "skipped" then
+                drainPendingCombatConsumerOps()
+            end
+            return
         end
+        -- Consumer ops drain AFTER the bulk apply so their re-stamp (overlay
+        -- position, size-untouched re-anchor) lands on top of it.
+        drainPendingCombatConsumerOps()
     end)
 end)
 
@@ -1502,7 +1566,69 @@ _G.QUI_UnregisterFrameResolver = function(key)
 end
 
 local hideWithParentHidden = {}  -- keys hidden because their anchor parent is hidden
-local _visibilityHooked = {}    -- [frame] = true — prevents double-hooking OnShow/OnHide
+local resolveUnreadableRetried = {}  -- [originKey] = { [slotKey] = state }
+-- Fresh-stack retry state for unreadable (secret/throwing) IsShown answers
+-- inside ResolveParentFrame, ONE state per (originKey, consumer). slotKey
+-- identifies the CONSUMER ("apply" = the default full apply, "positionOnly",
+-- or an overlay FRAME) — consumers replay DIFFERENT operations, and a shared
+-- state would let the first one suppress or hijack the others' retries.
+-- state = {
+--   op      — the NEWEST replay operation (function, or true = default full
+--             apply). EVERY unreadable walk refreshes it, so whichever timer
+--             fires replays current arguments: repeat calls with new
+--             geometry, a resolver that swaps the chain-link frame, and
+--             A→B→A flip-flops all resolve to the newest op.
+--   pending — a C_Timer.After(0) retry is queued; at most one in flight
+--             per consumer.
+--   burned  — SET of chain-link frames whose unreadable answer already
+--             consumed an ARM this episode. A replay re-entering the walk
+--             on a burned frame does not re-arm (no zero-delay loop); a
+--             genuinely NEW frame (recreated parent, deeper unreadable
+--             link, resolver swap) may arm once more — chains are bounded
+--             by the number of distinct frames seen.
+--   arms    — total arms consumed this episode. Hard cap
+--             (RESOLVE_RETRY_MAX_ARMS): frame identity alone cannot bound
+--             a resolver that returns a FRESH unreadable frame each call.
+-- }
+local RESOLVE_RETRY_MAX_ARMS = 8
+-- The state clears ONLY on the owning consumer's fully-readable resolution
+-- (clearResolveRetrySlots — another consumer's readable replay must not
+-- defuse a still-needed retry) and via the ApplyAllFrameAnchors wipe; the
+-- timer validates identity (captured state == live state) before replaying,
+-- so a readable call or wipe between arm and fire defuses it.
+local function clearResolveRetrySlots(originKey, retryKey)
+    local byKey = resolveUnreadableRetried[originKey]
+    if byKey then
+        byKey[retryKey or "apply"] = nil
+        if next(byKey) == nil then
+            resolveUnreadableRetried[originKey] = nil
+        end
+    end
+    -- A fully-readable resolution also retires this consumer's latched
+    -- combat op: the operation just ran against real state, so replaying
+    -- the stale latch at regen would overwrite newer geometry.
+    local bySlot = pendingCombatConsumerOps[originKey]
+    if bySlot then
+        bySlot[retryKey or "apply"] = nil
+        if next(bySlot) == nil then
+            pendingCombatConsumerOps[originKey] = nil
+        end
+    end
+end
+local hideWithParentUnreadableRetried = {}  -- [key] = parent FRAME that already
+-- burned its one fresh-stack retry for an unreadable (secret/throwing)
+-- visibility answer; cleared on the next readable pass so a later
+-- unreadable episode gets a fresh retry. Prevents a persistent secret from
+-- turning the C_Timer.After(0) retry into an every-frame poll loop. The
+-- value is the parent frame IDENTITY (not `true`): a reparented child or a
+-- recreated parent frame is a NEW episode and must re-arm the retry, or the
+-- new parent's visibility decision would stay stale forever. Also wiped by
+-- ApplyAllFrameAnchors with the rest of the runtime state (profile/spec
+-- switches re-arm every key).
+local _visibilityHooked = {}    -- [frame] = { onShow, onHide, alpha } — each
+-- flag records a VERIFIED successful install (HookScript returns success and
+-- can refuse/throw on forbidden frames); a missing flag retries on the next
+-- InstallVisibilityHook call. Prevents double-hooking per script.
 -- Anch_visibilityHooked memprobe anchor
 local FRAME_ANCHOR_FALLBACKS    -- forward-declared; table populated below
 local HUD_MIN_WIDTH_DEFAULT = (ns.Helpers and ns.Helpers.HUD_MIN_WIDTH_DEFAULT) or 200
@@ -1566,23 +1692,45 @@ end
 -- visibility) fade to alpha 0 instead of calling Hide(). We detect when
 -- the effective alpha crosses the ~0 threshold and re-evaluate anchors.
 local function InstallVisibilityHook(frame)
-    if not frame or _visibilityHooked[frame] then return end
-    if not frame.HookScript then return end
-    _visibilityHooked[frame] = true
+    if not frame or not frame.HookScript then return end
+    local hooked = _visibilityHooked[frame]
+    if not hooked then
+        hooked = {}
+        _visibilityHooked[frame] = hooked
+    end
+    local wantAlpha = frame.SetAlpha ~= nil
+    if hooked.onShow and hooked.onHide and (hooked.alpha or not wantAlpha) then
+        return
+    end
     local function onVisibilityChanged()
         if QUI_Anchoring then
             QUI_Anchoring:ApplyAllFrameAnchors()
         end
     end
-    frame:HookScript("OnShow", onVisibilityChanged)
-    frame:HookScript("OnHide", onVisibilityChanged)
+    -- HookScript RETURNS success and checks the frame's ScriptBindings
+    -- forbidden aspect (SimpleScriptRegionAPIDocumentation HookScript:
+    -- ChecksForbiddenAspects, Returns success) — it can refuse (false) or
+    -- throw on a forbidden frame. Record each hook ONLY on a verified
+    -- success, tracked separately, so a failed install retries on the next
+    -- call instead of being permanently marked hooked.
+    if not hooked.onShow then
+        local ok, success = pcall(frame.HookScript, frame, "OnShow", onVisibilityChanged)
+        if ok and success then hooked.onShow = true end
+    end
+    if not hooked.onHide then
+        local ok, success = pcall(frame.HookScript, frame, "OnHide", onVisibilityChanged)
+        if ok and success then hooked.onHide = true end
+    end
     -- Detect alpha-based visibility changes (HUD fade system)
-    if frame.SetAlpha then
-        local curAlpha = frame:GetAlpha()
+    if wantAlpha and not hooked.alpha then
+        -- pcall: GetAlpha can throw on a tainted stack (same hazard as the
+        -- hideWithParent visibility read). A throw counts as unknown alpha.
+        local okAlpha, curAlpha = pcall(frame.GetAlpha, frame)
         -- Secret numbers pass the type check but error on comparison.
-        local curAlphaSecret = nsHelpers and nsHelpers.IsSecretValue and nsHelpers.IsSecretValue(curAlpha)
+        local curAlphaSecret = not okAlpha
+            or (nsHelpers and nsHelpers.IsSecretValue and nsHelpers.IsSecretValue(curAlpha))
         local wasAlphaHidden = (not curAlphaSecret) and type(curAlpha) == "number" and curAlpha < 0.01
-        hooksecurefunc(frame, "SetAlpha", function(self, alpha)
+        local okHook = pcall(hooksecurefunc, frame, "SetAlpha", function(self, alpha)
             if type(alpha) ~= "number" then return end
             -- Secret numbers pass the type check but error on comparison.
             -- The HUD curve override (hud_visibility.lua) passes secret
@@ -1596,6 +1744,7 @@ local function InstallVisibilityHook(frame)
                 onVisibilityChanged()
             end
         end)
+        if okHook then hooked.alpha = true end
     end
 end
 
@@ -1605,7 +1754,7 @@ end
 -- (e.g. Objective Tracker → Data Text Panel → Minimap: if the Data Text Panel
 -- is disabled, follows Data Text Panel's own parent to reach Minimap).
 --
--- Returns: frame, chainSettings
+-- Returns: frame, chainSettings, unreadable
 --   frame         — the resolved visible parent frame (or UIParent)
 --   chainSettings — when a chain walk occurred via the user's anchoring config,
 --                   contains the anchor settings of the last hidden link so the
@@ -1613,14 +1762,35 @@ end
 --                   frame in the chain rather than using the child's own points).
 --                   nil when no chain walk happened or only hardcoded fallbacks
 --                   were used.
+--   unreadable    — true when a chain link's visibility answered secret/threw:
+--                   the resolution is a status-quo guess. In-combat callers
+--                   MUST defer their mutation (the regen reconcile is already
+--                   latched); out of combat positioning is safe and a
+--                   fresh-stack retry is already armed.
 -- originKey: optional key of the frame being anchored. Pre-seeding visited[originKey]
 -- prevents the walker from resolving to the origin frame itself via fallback chains.
 -- e.g. primaryPower.parent = "secondaryPower" on a class without a secondary resource
 -- falls back to FRAME_ANCHOR_FALLBACKS["secondaryPower"] = "primaryPower", which would
 -- return the primaryPower frame — creating a self-anchor. With originKey="primaryPower"
 -- the visited guard breaks the loop and the walker returns UIParent instead.
-local function ResolveParentFrame(parentKey, originKey)
+-- retryOp: optional replay operation for the unreadable-link fresh-stack
+-- retry. Callers whose operation is NOT QUI_ApplyFrameAnchor (position-only
+-- re-anchor, overlay anchoring) pass their own replay closure so the retry
+-- repeats THEIR operation; called as retryOp(originKey). Defaults to
+-- QUI_ApplyFrameAnchor.
+-- retryKey: STABLE identity for the consumer's latch slot (defaults to
+-- "apply"). Distinct consumers must pass distinct keys or the first one to
+-- hit an unreadable link suppresses the others' retries; the key must be
+-- stable across re-entries (a fresh closure identity per call would re-arm
+-- every pass — zero-delay loop). Overlay callers pass the overlay FRAME so
+-- multiple overlays on one originKey each get their own retry.
+local function ResolveParentFrame(parentKey, originKey, retryOp, retryKey)
     if not parentKey or parentKey == "screen" or parentKey == "disabled" then
+        -- Fully-readable resolution (no chain walk): end this consumer's
+        -- retry episode like every other readable return. A parent changed
+        -- to screen/disabled while a retry was queued would otherwise leave
+        -- the timer live to replay stale geometry over this resolution.
+        if originKey then clearResolveRetrySlots(originKey, retryKey) end
         return UIParent, nil
     end
 
@@ -1658,9 +1828,128 @@ local function ResolveParentFrame(parentKey, originKey)
 
             local frame = ResolveFrameForKey(key)
 
-            -- Frame exists and is shown (or at least alpha-shown) → use it
-            if frame and frame.IsShown and frame:IsShown() then
+            -- Secret-safe visibility read: IsShown can throw on a tainted
+            -- stack and can answer with a secret in 12.1 (truth-testing a
+            -- secret throws), so never call it raw. Threshold 0 keeps
+            -- alpha-faded frames valid chain links — only the hideWithParent
+            -- path treats alpha ≈ 0 as hidden; the chain walk keys off
+            -- IsShown alone, as before.
+            local visible = false
+            if frame then
+                visible = nsHelpers.FrameVisibleSecure(frame, 0)
+            end
+
+            -- Frame exists and is provably shown → use it. Hook its
+            -- visibility too: a later hide must re-run the chain walk so
+            -- children walk past it — without the hook, the first hide
+            -- after a visible resolution leaves children anchored through
+            -- the stale chain until another explicit reapply.
+            if visible == true then
+                InstallVisibilityHook(frame)
+                if originKey then clearResolveRetrySlots(originKey, retryKey) end
                 return frame, lastChainSettings
+            end
+
+            -- Unreadable (nil) visibility: never chain-walk on a guess — a
+            -- wrong walk repositions the child against the grandparent.
+            -- Keep the configured link as the parent (SetPoint against a
+            -- hidden frame is safe and the caller's combat probe still
+            -- gates any mutation) and re-evaluate on a readable stack: in
+            -- combat via the regen reconcile, out of combat via ONE
+            -- fresh-stack C_Timer.After(0) retry per (originKey,
+            -- frame-identity) episode.
+            if visible == nil then
+                -- Hook the guessed parent too: once the one-shot retry is
+                -- consumed, a later visibility flip must still re-evaluate
+                -- the chain (the hook install itself is safe — HookScript
+                -- plus a pcall'd GetAlpha read).
+                InstallVisibilityHook(frame)
+                if InCombatLockdown() then
+                    pendingAnchoredFrameUpdateAfterCombat = true
+                    -- A consumer-specific caller (overlay anchoring) defers
+                    -- its own operation too: the regen bulk apply only
+                    -- replays the default apply, so latch the consumer op
+                    -- for the regen drain or it is lost.
+                    latchCombatConsumerOp(originKey, retryKey, retryOp)
+                elseif originKey and frame then
+                    local byKey = resolveUnreadableRetried[originKey]
+                    if not byKey then
+                        byKey = {}
+                        resolveUnreadableRetried[originKey] = byKey
+                    end
+                    local slotKey = retryKey or "apply"
+                    local state = byKey[slotKey]
+                    if not state then
+                        state = { burned = {} }
+                        byKey[slotKey] = state
+                    end
+                    -- THIS walk is the consumer's newest operation — the
+                    -- timer reads state.op at FIRE time, so whichever
+                    -- retry fires replays the newest arguments no matter
+                    -- which chain-link frame armed it (repeat-call,
+                    -- replacement-parent, and A→B→A flip-flop races all
+                    -- collapse onto this one field).
+                    state.op = retryOp or true
+                    -- Arm at most ONE timer at a time, and only for a
+                    -- frame that has not consumed an arm this episode:
+                    -- a replay that re-enters this walk on a still-secret,
+                    -- already-burned frame must not re-arm (zero-delay
+                    -- loop); a genuinely NEW frame (recreated parent,
+                    -- deeper unreadable link, resolver swap) may arm once
+                    -- more — retry chains are bounded by the number of
+                    -- distinct frames seen this episode, with a hard cap
+                    -- (state.arms): a resolver that constructs a FRESH
+                    -- unreadable frame every call defeats the identity
+                    -- bound and would otherwise schedule forever.
+                    if not state.pending and not state.burned[frame]
+                        and (state.arms or 0) < RESOLVE_RETRY_MAX_ARMS then
+                        state.arms = (state.arms or 0) + 1
+                        state.burned[frame] = true
+                        state.pending = true
+                        C_Timer.After(0, function()
+                            -- Uncancellable timer: re-check state inside
+                            -- the closure. Identity first: the consumer's
+                            -- fully-readable resolution (or the
+                            -- ApplyAllFrameAnchors wipe) between arm and
+                            -- fire REPLACES/removes the live state — this
+                            -- timer is then stale, and current geometry is
+                            -- already applied; replaying would overwrite
+                            -- it with old arguments.
+                            local liveByKey = resolveUnreadableRetried[originKey]
+                            if not liveByKey or liveByKey[slotKey] ~= state then
+                                return
+                            end
+                            state.pending = false
+                            local op = state.op
+                            if InCombatLockdown() then
+                                -- Timer crossed into combat. A consumer op
+                                -- latches for the regen drain — flagging the
+                                -- bulk apply instead would SUBSTITUTE the
+                                -- auto-sizing full apply for the consumer's
+                                -- operation (position-only repro: width
+                                -- 77 → 333). The default apply keeps using
+                                -- the bulk-apply flag.
+                                if type(op) == "function" then
+                                    latchCombatConsumerOp(originKey, slotKey, op)
+                                else
+                                    pendingAnchoredFrameUpdateAfterCombat = true
+                                end
+                                return
+                            end
+                            -- Replay the CALLER'S operation: a position-only
+                            -- or overlay consumer must not be retried via the
+                            -- full QUI_ApplyFrameAnchor apply.
+                            local reapply
+                            if type(op) == "function" then
+                                reapply = op
+                            else
+                                reapply = _G.QUI_ApplyFrameAnchor
+                            end
+                            if reapply then reapply(originKey) end
+                        end)
+                    end
+                end
+                return frame, lastChainSettings, true
             end
 
             -- In Layout Mode, treat hidden-but-enabled frames as valid anchor
@@ -1668,6 +1957,8 @@ local function ResolveParentFrame(parentKey, originKey)
             -- hidden (e.g. pet bar on a class with no pet), so dependents should
             -- still anchor to it rather than walking up the chain.
             if frame and ns.QUI_LayoutMode and ns.QUI_LayoutMode.isActive then
+                InstallVisibilityHook(frame)
+                if originKey then clearResolveRetrySlots(originKey, retryKey) end
                 return frame, lastChainSettings
             end
 
@@ -1694,13 +1985,18 @@ local function ResolveParentFrame(parentKey, originKey)
                     key = chainParent
                 else
                     -- End of the chain; return the frame if it exists (even if hidden)
-                    -- so that anchored frames keep their reference, or UIParent as last resort
+                    -- so that anchored frames keep their reference, or UIParent as last
+                    -- resort. Fully-readable walk (an unreadable link returns above) —
+                    -- the retry episode ends here.
+                    if originKey then clearResolveRetrySlots(originKey, retryKey) end
                     return frame or UIParent, lastChainSettings
                 end
             end
         end
     end
 
+    -- Fully-readable walk (cycle/exhausted chain) — the retry episode ends.
+    if originKey then clearResolveRetrySlots(originKey, retryKey) end
     return UIParent, lastChainSettings
 end
 
@@ -1942,14 +2238,21 @@ end
 -- chain walk never happened for it.
 do
     local ResolveParentFrameBase = ResolveParentFrame
-    ResolveParentFrame = function(parentKey, originKey)
+    ResolveParentFrame = function(parentKey, originKey, retryOp, retryKey)
         if FORBIDDEN_AURA_KEYS[parentKey] and originKey and FORBIDDEN_AURA_KEYS[originKey] then
             local live = LiveAuraContainerFor(parentKey)
             if live then
+                -- Successful early resolution (no chain walk): end the
+                -- consumer's retry episode — same contract as the base's
+                -- readable returns; a queued retry must not replay stale
+                -- geometry over this resolution.
+                clearResolveRetrySlots(originKey, retryKey)
                 return live
             end
         end
-        return ResolveParentFrameBase(parentKey, originKey)
+        -- retryOp/retryKey must ride through: the base's unreadable-link
+        -- retry replays the caller's own operation, latched per consumer.
+        return ResolveParentFrameBase(parentKey, originKey, retryOp, retryKey)
     end
 end
 
@@ -2119,8 +2422,24 @@ local function GetCastbarConfiguredWidth(key)
 end
 
 -- Apply auto-width and auto-height to a frame
+-- Origin keys whose pending POSITION-ONLY consumer op must survive the
+-- bulk pass with module-owned geometry intact: armed only around the
+-- ApplyAllFrameAnchors key loop (see the harvest there). Auto-sizing such
+-- an origin BEFORE the op replays clobbers its size (repro: width 77 →
+-- 333 — the replayed op re-stamps position only, never size).
+-- Stack, rather than one mutable set: force=true may enter a nested bulk pass
+-- synchronously from a SetWidth/SetPoint side effect. Every nested pass must
+-- honor all still-active outer suppression sets and restore them on return.
+local suppressAutoSizingKeys = {}
+
 local function ApplyAutoSizing(frame, settings, parentFrame, key)
     if not frame then return end
+    if key then
+        for i = #suppressAutoSizingKeys, 1, -1 do
+            local keys = suppressAutoSizingKeys[i]
+            if keys and keys[key] then return end
+        end
+    end
 
     -- Auto-width: match anchor target width
     -- parentFrame may now be a live forbidden aura container (aura→aura
@@ -2364,16 +2683,16 @@ function QUI_Anchoring:ApplyFrameAnchor(key, settings)
             -- Boss frames array — check first frame
             probe = resolved[1]
         end
-        local isProtected = probe and probe.IsProtected and probe:IsProtected()
-        -- A protected DEPENDENT (e.g. secure macro buttons on the chat
-        -- button bar, anchored to the chat container) blocks SetPoint the
-        -- same way but leaves IsProtected() false — IsAnchoringRestricted
-        -- is the query for that state. Both returns can be secret: branch
-        -- only, never compare or store past this block.
-        if not isProtected and probe and probe.IsAnchoringRestricted then
-            isProtected = probe:IsAnchoringRestricted()
-        end
-        if isProtected then
+        -- Fail-closed probe. IsProtected catches directly-secure targets; a
+        -- protected DEPENDENT (e.g. secure macro buttons on the chat button
+        -- bar, anchored to the chat container) blocks SetPoint the same way
+        -- but leaves IsProtected() false — IsAnchoringRestricted is the
+        -- query for that state. Both getters can throw on a tainted stack
+        -- and both returns can be secret (truth-testing a secret itself
+        -- throws); the helper pcalls and issecretvalue-probes each answer,
+        -- and any error/secret/true counts as restricted — defer to combat
+        -- end rather than mutate a frame whose state can't be proven.
+        if ns.Helpers.FrameMutationRestricted(probe) then
             pendingAnchoredFrameUpdateAfterCombat = true
             return
         end
@@ -2397,41 +2716,75 @@ function QUI_Anchoring:ApplyFrameAnchor(key, settings)
         if directParent then
             InstallVisibilityHook(directParent)
         end
-        local directVisible = directParent and directParent.IsShown and directParent:IsShown()
-        -- Also treat alpha ≈ 0 as hidden (HUD visibility fades frames
-        -- to alpha 0 instead of calling Hide, so IsShown stays true).
-        if directVisible and directParent.GetAlpha then
-            local parentAlpha = directParent:GetAlpha()
-            if type(parentAlpha) == "number" and parentAlpha < 0.01 then
-                directVisible = false
+        -- Secret-safe visibility read (alpha ≈ 0 counts as hidden: HUD
+        -- visibility fades frames to alpha 0 instead of calling Hide, so
+        -- IsShown stays true). IsShown/GetAlpha can throw on a tainted
+        -- stack and can answer with secrets — truth-testing a secret
+        -- throws, and a secret number passes the type() check but throws
+        -- on comparison — so the helper pcalls and probes every read.
+        -- nil = unprovable: never Hide/Show the child on a guess.
+        local directVisible = ns.Helpers.FrameVisibleSecure(directParent)
+        if directVisible == nil then
+            if InCombatLockdown() then
+                -- In combat the whole apply defers to the regen reconcile.
+                pendingAnchoredFrameUpdateAfterCombat = true
+                return
             end
-        end
-        if not directVisible then
-            -- Parent hidden/missing — hide the child frame
-            local canMutate = not InCombatLockdown()
-                or not (resolved.IsProtected and resolved:IsProtected())
-            if canMutate then
-                if type(resolved) == "table" and not resolved.GetObjectType then
-                    for _, frame in ipairs(resolved) do pcall(frame.Hide, frame) end
-                else
-                    pcall(resolved.Hide, resolved)
+            -- Out of combat: retry ONCE on a fresh stack — a secure-context
+            -- throw clears when the tainted stack unwinds, so After(0)
+            -- usually reads clean. Single-shot per (key, parent-identity)
+            -- episode (cleared on the next readable pass, re-armed when the
+            -- resolved parent frame changes) so a persistent secret never
+            -- becomes an every-frame poll; further re-evaluation then rides
+            -- the parent's visibility hooks / regen / bulk re-applies.
+            if hideWithParentUnreadableRetried[key] ~= directParent then
+                hideWithParentUnreadableRetried[key] = directParent
+                C_Timer.After(0, function()
+                    -- Uncancellable timer: re-check state inside the closure.
+                    if InCombatLockdown() then
+                        pendingAnchoredFrameUpdateAfterCombat = true
+                        return
+                    end
+                    local reapply = _G.QUI_ApplyFrameAnchor
+                    if reapply then reapply(key) end
+                end)
+            end
+            -- Fall through WITHOUT touching visibility: the child is still
+            -- POSITIONED against the direct parent below (SetPoint works on
+            -- hidden frames and is safe out of combat), so an unreadable
+            -- parent can never strand the child unanchored — only the
+            -- hide/show decision waits for a readable answer.
+        else
+            hideWithParentUnreadableRetried[key] = nil
+            if not directVisible then
+                -- Parent hidden/missing — hide the child frame.
+                -- Same fail-closed probe as above: an error/secret answer from
+                -- the protection getters counts as restricted.
+                local canMutate = not InCombatLockdown()
+                    or not ns.Helpers.FrameMutationRestricted(resolved)
+                if canMutate then
+                    if type(resolved) == "table" and not resolved.GetObjectType then
+                        for _, frame in ipairs(resolved) do pcall(frame.Hide, frame) end
+                    else
+                        pcall(resolved.Hide, resolved)
+                    end
                 end
+                hideWithParentHidden[key] = true
+                return
             end
-            hideWithParentHidden[key] = true
-            return
-        end
-        -- Direct parent visible — restore child if we previously hid it
-        if hideWithParentHidden[key] then
-            local canMutate = not InCombatLockdown()
-                or not (resolved.IsProtected and resolved:IsProtected())
-            if canMutate then
-                if type(resolved) == "table" and not resolved.GetObjectType then
-                    for _, frame in ipairs(resolved) do pcall(frame.Show, frame) end
-                else
-                    pcall(resolved.Show, resolved)
+            -- Direct parent visible — restore child if we previously hid it
+            if hideWithParentHidden[key] then
+                local canMutate = not InCombatLockdown()
+                    or not ns.Helpers.FrameMutationRestricted(resolved)
+                if canMutate then
+                    if type(resolved) == "table" and not resolved.GetObjectType then
+                        for _, frame in ipairs(resolved) do pcall(frame.Show, frame) end
+                    else
+                        pcall(resolved.Show, resolved)
+                    end
                 end
+                hideWithParentHidden[key] = nil
             end
-            hideWithParentHidden[key] = nil
         end
         parentFrame = directParent
     elseif settings.keepInPlace and not parentIsSentinel then
@@ -2451,10 +2804,19 @@ function QUI_Anchoring:ApplyFrameAnchor(key, settings)
         -- castbar's explicit relation (e.g. TOP→BOTTOM).
         parentFrame = ResolveFrameForKey(settings.parent) or UIParent
     else
-        local chainSettings
+        local chainSettings, parentUnreadable
         -- Pass `key` as originKey so the walker can never resolve a fallback
         -- chain back to the frame we're positioning (self-anchor loop).
-        parentFrame, chainSettings = ResolveParentFrame(settings.parent, key)
+        parentFrame, chainSettings, parentUnreadable = ResolveParentFrame(settings.parent, key)
+
+        -- In combat an unreadable chain link makes the resolution a guess
+        -- and the parent itself may be combat-restricted — defer the WHOLE
+        -- apply to the regen reconcile (ResolveParentFrame already latched
+        -- it) instead of mutating the child on unproven state. Mirrors the
+        -- hideWithParent in-combat defer above.
+        if parentUnreadable and InCombatLockdown() then
+            return
+        end
 
         -- When a chain walk occurred (hidden intermediate frame), adopt the
         -- last hidden link's anchor points so the child "replaces" it visually.
@@ -2812,11 +3174,40 @@ end
 -- CDM bounds changes and PowerBar updates can trigger cascading re-anchor calls.
 local _anchorThrottleFrame = nil
 local _anchorThrottlePending = false
+-- Coalesced replay: a request that lands while the throttle is armed (e.g. a
+-- visibility flip right after this frame's apply already ran) must not be
+-- dropped — one replay runs on the next frame.
+local _anchorThrottleReplay = false
+-- Work that semantically follows a full pass (not merely the REQUEST for
+-- one). The combat reconcile uses this to keep consumer ops latched when its
+-- request coalesces onto the next-frame replay.
+local _anchorThrottleAfterApply = {}
+-- force=true deliberately bypasses the once-per-frame throttle and can enter
+-- synchronously from a geometry side effect. Completion callbacks belong to
+-- the outermost successful pass, never to an inner forced pass.
+local _anchorApplyDepth = 0
 
-function QUI_Anchoring:ApplyAllFrameAnchors(force)
-    if not QUICore or not QUICore.db or not QUICore.db.profile then return end
+local function QueueAfterAnchorApply(callback)
+    if callback then
+        _anchorThrottleAfterApply[#_anchorThrottleAfterApply + 1] = callback
+    end
+end
+
+local function RunAfterAnchorApply()
+    if #_anchorThrottleAfterApply == 0 then return end
+    local callbacks = _anchorThrottleAfterApply
+    _anchorThrottleAfterApply = {}
+    for _, callback in ipairs(callbacks) do
+        callback()
+    end
+end
+
+function QUI_Anchoring:ApplyAllFrameAnchors(force, afterApply)
+    if not QUICore or not QUICore.db or not QUICore.db.profile then
+        return "skipped"
+    end
     local anchoringDB = QUICore.db.profile.frameAnchoring
-    if not anchoringDB then return end
+    if not anchoringDB then return "skipped" end
 
     -- During layout mode, skip bulk reapply — the handle system owns frame
     -- positions. Debounced reapply (from module refreshes, OnSizeChanged)
@@ -2824,33 +3215,136 @@ function QUI_Anchoring:ApplyAllFrameAnchors(force)
     -- (from settings changes) are still allowed. force=true bypasses this
     -- (used by post-Close reapply in SaveAndClose/DiscardAndClose).
     if not force and _G.QUI_IsLayoutModeActive and _G.QUI_IsLayoutModeActive() then
-        return
+        return "skipped"
     end
 
-    -- Throttle: if already applied this frame, defer to next frame
-    if not force and _anchorThrottlePending then return end
+    -- Throttle: if already applied this frame, coalesce ONE replay on the
+    -- next frame — dropping the request outright loses whatever state change
+    -- (visibility flip, resize) triggered it.
+    if not force and _anchorThrottlePending then
+        QueueAfterAnchorApply(afterApply)
+        _anchorThrottleReplay = true
+        return "deferred"
+    end
+    QueueAfterAnchorApply(afterApply)
     _anchorThrottlePending = true
     if not _anchorThrottleFrame then
         _anchorThrottleFrame = CreateFrame("Frame")
         _anchorThrottleFrame:SetScript("OnUpdate", function(self)
             _anchorThrottlePending = false
             self:Hide()
+            if _anchorThrottleReplay then
+                _anchorThrottleReplay = false
+                local replayOK, replayStatus = pcall(
+                    QUI_Anchoring.ApplyAllFrameAnchors, QUI_Anchoring)
+                if not replayOK then
+                    -- A queued completion callback means this replay belongs
+                    -- to a regen reconcile. Preserve its queue and relatch the
+                    -- required full pass; ordinary replay failures retain the
+                    -- prior error-reporting behavior.
+                    if #_anchorThrottleAfterApply > 0 then
+                        pendingAnchoredFrameUpdateAfterCombat = true
+                    else
+                        error(replayStatus, 0)
+                    end
+                elseif replayStatus == "skipped" then
+                    -- Mirror the direct regen path: layout/profile state can
+                    -- make the deferred full pass intentionally unavailable,
+                    -- but its independently replayable consumer ops must not
+                    -- remain queued until an unrelated future bulk apply.
+                    RunAfterAnchorApply()
+                end
+            end
         end)
     end
     _anchorThrottleFrame:Show()
 
-    -- Clear all runtime state before re-applying from current profile.
-    -- Prevents stale overrides and anchor relationships from a previous
-    -- profile leaking across profile/spec switches.
-    wipe(self.layoutOwnedFrames)
+    _anchorApplyDepth = _anchorApplyDepth + 1
+    local suppressionPushed = false
+    local applyOK, applyError = xpcall(function()
+        -- Consumer retries (position-only, overlay) armed against unreadable
+        -- links live as state in resolveUnreadableRetried; the wipe below
+        -- defuses their timers (identity check), and the bulk pass below only
+        -- re-runs the DEFAULT apply per key. Harvest the pending consumer ops
+        -- BEFORE the wipe and replay them after the pass — otherwise any bulk
+        -- apply or visibility callback racing an armed consumer retry silently
+        -- drops it (stale overlay, auto-sized position-only frame).
+        local replayConsumerOps
+        -- Same-origin sizing suppression: the bulk pass below runs the DEFAULT
+        -- auto-sizing apply per key, but an origin with a pending POSITION-ONLY
+        -- consumer op has module-owned geometry — sizing it before the op
+        -- replays clobbers that size (width 77 → 333) while the replay only
+        -- re-stamps position. Slot identity picks exactly those origins;
+        -- unrelated keys and other consumer slots keep full sizing. Pending
+        -- ops live in TWO stores: armed retry states (harvested here, replayed
+        -- below) and combat-latched ops (drained by the regen handler right
+        -- after this bulk apply returns).
+        local positionOnlyPending
+        for opOriginKey, bySlot in pairs(resolveUnreadableRetried) do
+            for slotKey, state in pairs(bySlot) do
+                if type(state.op) == "function" then
+                    replayConsumerOps = replayConsumerOps or {}
+                    replayConsumerOps[#replayConsumerOps + 1] = { op = state.op, key = opOriginKey }
+                end
+                if slotKey == "positionOnly" then
+                    positionOnlyPending = positionOnlyPending or {}
+                    positionOnlyPending[opOriginKey] = true
+                end
+            end
+        end
+        for opOriginKey, bySlot in pairs(pendingCombatConsumerOps) do
+            if bySlot["positionOnly"] then
+                positionOnlyPending = positionOnlyPending or {}
+                positionOnlyPending[opOriginKey] = true
+            end
+        end
 
-    local sorted = ComputeAnchorApplyOrder(anchoringDB)
-    for _, key in ipairs(sorted) do
-        self:ApplyFrameAnchor(key, anchoringDB[key])
+        -- Clear all runtime state before re-applying from current profile.
+        -- Prevents stale overrides and anchor relationships from a previous
+        -- profile leaking across profile/spec switches.
+        wipe(self.layoutOwnedFrames)
+        wipe(hideWithParentUnreadableRetried)
+        wipe(resolveUnreadableRetried)
+
+        local sorted = ComputeAnchorApplyOrder(anchoringDB)
+        suppressAutoSizingKeys[#suppressAutoSizingKeys + 1] = positionOnlyPending or false
+        suppressionPushed = true
+        for _, key in ipairs(sorted) do
+            self:ApplyFrameAnchor(key, anchoringDB[key])
+        end
+        suppressAutoSizingKeys[#suppressAutoSizingKeys] = nil
+        suppressionPushed = false
+
+        -- Ensure ApplySystemAnchor guards are installed for any newly resolved frames
+        InstallAllAnchorGuards()
+
+        -- Replay harvested consumer ops on top of the bulk pass. A replay that
+        -- hits a still-unreadable link re-arms its own fresh retry episode.
+        if replayConsumerOps then
+            for _, entry in ipairs(replayConsumerOps) do
+                -- pcall: one throwing consumer must not drop the rest.
+                pcall(entry.op, entry.key)
+            end
+        end
+    end, function(err)
+        return err
+    end)
+    if suppressionPushed then
+        suppressAutoSizingKeys[#suppressAutoSizingKeys] = nil
+    end
+    _anchorApplyDepth = _anchorApplyDepth - 1
+    if not applyOK then
+        error(applyError, 0)
     end
 
-    -- Ensure ApplySystemAnchor guards are installed for any newly resolved frames
-    InstallAllAnchorGuards()
+    -- A SetSize/SetPoint side effect may have requested another coalesced
+    -- pass while this one was running. The callbacks belong after the whole
+    -- replay chain; pending combat ops also keep the next pass's same-origin
+    -- sizing suppression intact until then.
+    if _anchorApplyDepth == 0 and not _anchorThrottleReplay then
+        RunAfterAnchorApply()
+    end
+    return "applied"
 end
 
 ---------------------------------------------------------------------------
@@ -2981,7 +3475,15 @@ end
 -- Position-only re-anchor: repositions a frame to its configured
 -- parent without calling ApplyAutoSizing.
 _G.QUI_ReanchorFramePositionOnly = function(key)
-    if not key or InCombatLockdown() then return end
+    if not key then return end
+    if InCombatLockdown() then
+        -- Started in combat: latch THIS operation for the regen drain.
+        -- Silently dropping it left the frame stale, and the regen bulk
+        -- apply is no substitute — it runs ApplyAutoSizing, exactly what
+        -- this entry point exists to avoid (repro: width 77 → 333).
+        latchCombatConsumerOp(key, "positionOnly", _G.QUI_ReanchorFramePositionOnly)
+        return
+    end
     if not QUI_Anchoring or not QUICore or not QUICore.db or not QUICore.db.profile then return end
     local anchoringDB = QUICore.db.profile.frameAnchoring
     if not anchoringDB then return end
@@ -2992,7 +3494,12 @@ _G.QUI_ReanchorFramePositionOnly = function(key)
     local resolved = ResolveApplyFrameForKey(key)
     if not resolved then return end
 
-    local parentFrame = ResolveParentFrame(settings.parent, key)
+    -- retryOp: an unreadable chain link must replay THIS position-only
+    -- operation, not the full QUI_ApplyFrameAnchor apply (which would run
+    -- ApplyAutoSizing — exactly what this entry point exists to avoid).
+    -- Own retryKey: the latch slot must not collide with the full apply's.
+    local parentFrame = ResolveParentFrame(settings.parent, key,
+        _G.QUI_ReanchorFramePositionOnly, "positionOnly")
     if not parentFrame then return end
     -- ResolveParentFrame can hand back a live forbidden aura container
     -- (aura->aura docking). This path SetPoints `resolved` directly (no
@@ -3041,8 +3548,23 @@ _G.QUI_AnchorOverlayToParent = function(overlayFrame, key, overlayW, overlayH)
     local settings = anchoringDB[key]
     if type(settings) ~= "table" then return end
 
-    local parentFrame = ResolveParentFrame(settings.parent, key)
+    -- retryOp: an unreadable chain link must replay THIS overlay anchoring,
+    -- not QUI_ApplyFrameAnchor — the full apply repositions the real frame
+    -- and leaves the overlay stale. retryKey = the overlay frame: a STABLE
+    -- identity (the closure below is fresh per call and would re-arm every
+    -- pass), distinct per overlay so co-existing overlays on one originKey
+    -- and the full apply's own retry never suppress each other.
+    local parentFrame, _, parentUnreadable = ResolveParentFrame(
+        settings.parent, key,
+        function()
+            _G.QUI_AnchorOverlayToParent(overlayFrame, key, overlayW, overlayH)
+        end,
+        overlayFrame)
     if not parentFrame then return end
+    -- In combat an unreadable chain link defers this overlay reposition the
+    -- same way ApplyFrameAnchor defers: the parent may be combat-restricted
+    -- and the resolution is a guess.
+    if parentUnreadable and InCombatLockdown() then return end
     -- ResolveParentFrame can hand back a live forbidden aura container
     -- (aura->aura docking). This path SetPoints an arbitrary insecure
     -- overlay frame directly — an insecure frame must never anchor to a

@@ -931,11 +931,14 @@ castTraceFrame:SetScript("OnEvent", function(_, event, _, _, arg3, arg4)
     if not DEBUG_GSE then return end
     -- SENT's payload is (unit, target, castGUID, spellID) — one slot longer
     -- than SUCCEEDED/FAILED's (unit, castGUID, spellID); pick the right slot
-    -- so the trace doesn't print a castGUID labeled spellID.
-    local spellID = (event == "UNIT_SPELLCAST_SENT") and arg4 or arg3
+    -- so the trace doesn't print a castGUID labeled spellID. if/else, not
+    -- `and/or`: a secret arg4 would throw on the `or`'s truth-test.
+    local spellID
+    if event == "UNIT_SPELLCAST_SENT" then spellID = arg4 else spellID = arg3 end
     -- 68569: spellcast payload can be whole-secret under restriction; render
-    -- the fact instead of passing a secret into GetSpellInfo/tostring.
-    if spellID and issecretvalue and issecretvalue(spellID) then
+    -- the fact instead of passing a secret into GetSpellInfo/tostring. Probe
+    -- unconditionally — the truth-test itself throws on secrets.
+    if issecretvalue and issecretvalue(spellID) then
         dbg("Cast      %s spellID=<secret>", event)
         return
     end

@@ -428,8 +428,9 @@ local function DoUpdate(overrideSpellID)
 
     -- Secret spellID: pass directly to C-side display functions (texture,
     -- tint, keybind).  Skip the equality dedup — comparing secret to
-    -- non-secret taints, and the update is cheap.
-    local isSecret = spellID and IsSecretValue(spellID)
+    -- non-secret taints, and the update is cheap. Probe unconditionally:
+    -- `spellID and` would itself throw on a secret truth-test.
+    local isSecret = IsSecretValue(spellID)
     if isSecret then
         UpdateIconDisplay(spellID)
         return

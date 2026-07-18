@@ -1499,11 +1499,17 @@ local function HookTextHasDisplay(text)
     if stackPolicy then
         return stackPolicy:TextHasDisplay(text)
     end
+    if issecretvalue and issecretvalue(text) then
+        return true
+    end
     return text ~= nil
 end
 function _resolverRuntimePolicy.ValueIsPresent(value)
     if stackPolicy then
         return stackPolicy:ValueIsPresent(value)
+    end
+    if issecretvalue and issecretvalue(value) then
+        return true
     end
     return value ~= nil
 end

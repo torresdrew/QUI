@@ -19,13 +19,18 @@ return {
         -- results. Opt-in per directory: aspect secrets only materialize on
         -- objects whose aspect was secretized (CDM/aura surfaces), so
         -- repo-wide coverage would flood the tiers.
-        -- STATUS (2026-07 round-6): still empty — a diagnostic enable of
+        -- STATUS (2026-07 round-7): still empty — a diagnostic enable of
         -- "QUI_CDM/cdm/" produced 218 strict findings, overwhelmingly aspect
         -- getters on QUI-created chrome frames whose aspects are never
         -- secretized. Blanket enablement needs receiver PROVENANCE (taint
         -- only getters on Blizzard-owned viewer icons/children), which the
         -- analyzer does not model yet — see the 12.1 review follow-up before
-        -- adding a path here.
+        -- adding a path here. KNOWN COST of leaving this empty: the
+        -- cdm_buff_layout IsTrackedBarActive IsShown()-secret defect (fixed
+        -- round-7 via ReadBoolean) was invisible to the strict scan — aspect
+        -- getters on Blizzard viewer children go unanalyzed until provenance
+        -- lands. Grep new viewer-child code for bare IsShown()/GetAlpha()
+        -- truth-tests during review instead.
     },
     strict_unwrap_paths = {
         -- Safe* unwrap helpers are stricter in CDM: cooldown-secret values
@@ -68,7 +73,11 @@ return {
         -- no SecretWhenAurasRestricted flag, so unitTarget is NOT secret here
         -- (unlike UNIT_AURA's whole-payload restriction) — marking it tainted
         -- produced false positives on plain unit-token use.
-        UNIT_AURA_BLOCKED = { 4 },
+        -- gateGoverned = false: the payload is ALWAYS secret, not
+        -- restriction-conditional — a falsy C_Secrets.ShouldAurasBeSecret
+        -- gate proves nothing about auraInstanceID, so the analyzer's
+        -- aura-gate clears and wildcard proofs must not bless it.
+        UNIT_AURA_BLOCKED = { 4, gateGoverned = false },
     },
     coverage = {
         secretWhenCooldownsRestricted = true,

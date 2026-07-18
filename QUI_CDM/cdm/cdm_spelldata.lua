@@ -844,9 +844,10 @@ local function AuraCaptureFrameOnEvent(self, event, ...)
     end
     -- The payload can independently arrive whole-secret even when `unit` is
     -- readable (e.g. .isFullUpdate / .addedAuras / .removedAuraInstanceIDs
-    -- would all throw on field access). Probe once and fold to the same
-    -- nil / full-rescan path HandleUnitAura already takes for isFullUpdate.
-    if updateInfo and issecretvalue and issecretvalue(updateInfo) then
+    -- would all throw on field access — as would a bare truth-test, so the
+    -- probe must NOT hide behind `updateInfo and ...`). Probe once and fold
+    -- to the same nil / full-rescan path HandleUnitAura takes for isFullUpdate.
+    if issecretvalue and issecretvalue(updateInfo) then
         updateInfo = nil
     end
     HandleUnitAura(unit, updateInfo)
