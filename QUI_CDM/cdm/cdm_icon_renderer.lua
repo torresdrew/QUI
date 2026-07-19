@@ -3292,7 +3292,14 @@ function _resolverRuntimePolicy.SyncBlizzMirrorIconState(icon)
             ClearIconStackText(icon)
         end
         if icon.Icon then
-            local baseTex = GetEntryTexture(entry) or GetSpellTexture(runtimeSid)
+            -- runtimeSid is the LIVE display spell (ResolveLiveDisplaySpellID:
+            -- mirror-child override art during a proc -- Empty Barrel turning
+            -- Keg Smash into a brew is the reference case). It must outrank
+            -- GetEntryTexture, which resolves from the SAVED entry fields and
+            -- always returns the base art for spell entries; with the old
+            -- entry-first order this sync pass repainted the base icon over
+            -- the proc art on every mirror tick, so the proc never showed.
+            local baseTex = GetSpellTexture(runtimeSid) or GetEntryTexture(entry)
             icon._desiredTexture = nil
             if baseTex and baseTex ~= icon._lastTexture then
                 icon.Icon.SetTexture(icon.Icon, baseTex)

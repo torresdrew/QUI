@@ -205,4 +205,15 @@ assert(rendererSource:find(
     "state%.overrideChildReady = resolvedState and resolvedState%.overrideChildReady or nil"),
     "StoreIconRuntimeState must persist overrideChildReady into the runtime store")
 
+-- Icon ART pin: SyncBlizzMirrorIconState's no-aura texture write runs on
+-- every mirror pass and used to paint GetEntryTexture(entry) FIRST -- the
+-- saved entry art (Keg Smash) -- clobbering the live-display override art
+-- (the procced brew) that UpdateIconCooldownOwned had just applied from
+-- runtimeSid. The live-resolved runtimeSid must win; entry art is the
+-- fallback. In-game 2026-07-19: Keg Smash icon stayed default through
+-- every Empty Barrel proc because of this ordering.
+assert(rendererSource:find(
+    "local baseTex = GetSpellTexture%(runtimeSid%) or GetEntryTexture%(entry%)"),
+    "mirror sync no-aura texture write must prefer the live-display runtimeSid art over the saved entry art")
+
 print("cdm_resolvers_override_child_ready_visibility_test: PASS")
