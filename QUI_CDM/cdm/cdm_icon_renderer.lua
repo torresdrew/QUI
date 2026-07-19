@@ -1329,6 +1329,7 @@ function _resolverRuntimePolicy.StoreIconRuntimeState(icon, mode, sourceID, spel
     state.countShown = resolvedState and resolvedState.countShown == true or false
     state.countSource = resolvedState and resolvedState.countSource or nil
     state.countMirrorBacked = resolvedState and resolvedState.countMirrorBacked or nil
+    state.overrideChildReady = resolvedState and resolvedState.overrideChildReady or nil
 
     store.SetIconState(icon, state)
 end
@@ -4811,6 +4812,12 @@ local function UpdateCooldownContainerVisibility(icon, entry, containerDB, editM
     elseif effectiveMode == "active" then
         if isOnCD then
             shouldShow = true
+        -- A live Blizzard override child that is READY while its base rolls
+        -- a real cooldown (Empty Barrel brew proc, Void Volley during
+        -- Voidform) resolves mode=inactive -- correct ready semantics, but
+        -- the proc must surface, not hide with the idle icons.
+        elseif cooldownState.overrideChildReady == true then
+            shouldShow = true
         else
             local keepForGlow = false
             if ns._OwnedGlows and ns._OwnedGlows.ShouldIconGlow then
@@ -4981,6 +4988,11 @@ local function RefreshAllIcon(icon, context)
                     shouldShow = true
                 elseif effectiveMode == "active" then
                     if isOnCD then
+                        shouldShow = true
+                    -- Ready override child over a base on real cooldown
+                    -- (Empty Barrel brew proc) -- keep it shown; see the
+                    -- matching gate in UpdateCooldownContainerVisibility.
+                    elseif cooldownState.overrideChildReady == true then
                         shouldShow = true
                     else
                         local keepForGlow = false
