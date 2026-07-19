@@ -5,6 +5,12 @@ All notable changes to QUI will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
+## v4.1.1-beta9 - 2026-07-19
+
+### Added
+- chore(cdm): temporary Brewmaster diagnostic for the Empty Barrel icon investigation — while playing Brewmaster, QUI prints `[QUI EB]` lines to chat around Keg Smash casts and proc changes; screenshot these lines when reporting. No output on other specs; will be removed once the issue is closed
+
+
 ## v4.1.1-beta8 - 2026-07-19
 
 ### Fixed
