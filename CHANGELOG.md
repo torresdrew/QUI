@@ -5,6 +5,12 @@ All notable changes to QUI will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
+## v4.1.1-beta8 - 2026-07-19
+
+### Fixed
+- fix(cdm): cooldown proc overrides now show the proc's icon art — the periodic icon sync repainted the base spell's saved art (e.g. Keg Smash) over the live override art (e.g. the procced brew from Empty Barrel) every pass, so the icon never visually swapped during a proc
+
+
 ## v4.1.1-beta7 - 2026-07-19
 
 ### Fixed
