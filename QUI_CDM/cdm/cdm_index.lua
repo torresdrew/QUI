@@ -344,58 +344,104 @@ do
         return specID == 268
     end
 
-    local _lastSnapshotSig
-    local function ProbeSnapshot(reason)
+    -- Delta scan across EVERY cooldown-viewer entry (all four categories):
+    -- signature = spellID/override/overrideTooltip, plus — for the cooldown
+    -- categories — the Blizzard child frame's LIVE icon texture (ground
+    -- truth: does Blizzard's own child swap art on a proc even when the
+    -- info API stays silent?). Round-1 probe only watched entries whose
+    -- spellID==121253 and saw nothing move, so round 2 watches everything
+    -- and prints only what CHANGES between scans.
+    local _baseline = {}
+    local _baselineBuilt = false
+
+    local function EntrySig(cat, cdID, info)
+        local sig = FmtID(info.spellID) .. "/" .. FmtID(info.overrideSpellID)
+            .. "/" .. FmtID(info.overrideTooltipSpellID)
+        if cat <= 1 and ns.CDMBlizzMirror
+            and ns.CDMBlizzMirror.GetCooldownMethodTestPayload then
+            local payload = ns.CDMBlizzMirror.GetCooldownMethodTestPayload(
+                cdID, PROBE_CATEGORY_NAMES[cat])
+            if payload then
+                sig = sig .. "/tex=" .. FmtID(payload.iconTexture)
+            end
+        end
+        return sig
+    end
+
+    local function ProbeScan(reason)
         if not (C_CooldownViewer
             and C_CooldownViewer.GetCooldownViewerCategorySet
             and C_CooldownViewer.GetCooldownViewerCooldownInfo) then
             return
         end
-        local lines
+        local seen = {}
         for cat = 0, 3 do
             local set = C_CooldownViewer.GetCooldownViewerCategorySet(cat, true)
             if type(set) == "table" then
                 for i = 1, #set do
                     local cdID = set[i]
-                    local info = (not (issecretvalue and issecretvalue(cdID)))
-                        and C_CooldownViewer.GetCooldownViewerCooldownInfo(cdID)
-                        or nil
-                    local sid = info and info.spellID
-                    local sidIsSecret = issecretvalue and issecretvalue(sid)
-                    if not sidIsSecret and sid == KEG_SMASH then
-                        local catName = PROBE_CATEGORY_NAMES[cat]
-                        local m = ns.CDMBlizzMirror
-                            and ns.CDMBlizzMirror.GetStateByCooldownID
-                            and ns.CDMBlizzMirror.GetStateByCooldownID(cdID, catName)
-                        lines = lines or {}
-                        lines[#lines + 1] = ("%s cat=%s cdID=%s api.ov=%s api.tt=%s mir.ov=%s mir.tt=%s mir.child=%s"):format(
-                            reason, catName, FmtID(cdID),
-                            FmtID(info.overrideSpellID),
-                            FmtID(info.overrideTooltipSpellID),
-                            FmtID(m and m.overrideSpellID),
-                            FmtID(m and m.overrideTooltipSpellID),
-                            FmtID(m and m.childIsActive))
+                    if not (issecretvalue and issecretvalue(cdID)) then
+                        local info = C_CooldownViewer.GetCooldownViewerCooldownInfo(cdID)
+                        if info then
+                            local key = PROBE_CATEGORY_NAMES[cat] .. ":" .. FmtID(cdID)
+                            local sig = EntrySig(cat, cdID, info)
+                            seen[key] = true
+                            local prev = _baseline[key]
+                            if prev ~= sig then
+                                _baseline[key] = sig
+                                if _baselineBuilt then
+                                    ProbePrint(("%s CHANGE %s now [%s] was [%s]"):format(
+                                        reason, key, sig, prev or "absent"))
+                                else
+                                    local sid = info.spellID
+                                    if not (issecretvalue and issecretvalue(sid))
+                                        and sid == KEG_SMASH then
+                                        ProbePrint(("baseline %s [%s]"):format(key, sig))
+                                    end
+                                end
+                            end
+                        end
                     end
                 end
             end
         end
-        if not lines then
-            ProbePrint(reason, "Keg Smash", KEG_SMASH, "not found in any cooldown-viewer category")
-            return
+        if _baselineBuilt then
+            local removed
+            for key in pairs(_baseline) do
+                if not seen[key] then
+                    removed = removed or {}
+                    removed[#removed + 1] = key
+                end
+            end
+            if removed then
+                for i = 1, #removed do
+                    local key = removed[i]
+                    ProbePrint(("%s REMOVED %s was [%s]"):format(
+                        reason, key, _baseline[key]))
+                    _baseline[key] = nil
+                end
+            end
+        else
+            _baselineBuilt = true
         end
-        -- Only re-print when the picture changes, so routine Keg Smash casts
-        -- with no override stay quiet after the first baseline line.
-        local sig = table.concat(lines, "|")
-        if sig == _lastSnapshotSig then return end
-        _lastSnapshotSig = sig
-        for i = 1, #lines do
-            ProbePrint(lines[i])
+    end
+
+    local function ScanSoon(reason, delay)
+        if C_Timer and C_Timer.After then
+            C_Timer.After(delay, function()
+                ProbeScan(reason)
+            end)
+        else
+            ProbeScan(reason)
         end
     end
 
     local _probeFrame = CreateFrame("Frame")
     _probeFrame:RegisterEvent("COOLDOWN_VIEWER_SPELL_OVERRIDE_UPDATED")
     _probeFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+    _probeFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
+    _probeFrame:RegisterEvent("SPELL_ACTIVATION_OVERLAY_GLOW_SHOW")
+    _probeFrame:RegisterEvent("SPELL_ACTIVATION_OVERLAY_GLOW_HIDE")
     if _probeFrame.RegisterUnitEvent then
         _probeFrame:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
     else
@@ -407,24 +453,40 @@ do
         if event == "PLAYER_ENTERING_WORLD" then
             if not _announced then
                 _announced = true
-                ProbePrint("probe active — screenshot every [QUI EB] line while testing Empty Barrel procs")
+                ProbePrint("probe v2 active — test several Empty Barrel procs, screenshot ALL [QUI EB] lines")
             end
+            ProbeScan("login")
+            return
+        end
+        if event == "PLAYER_REGEN_DISABLED" then
+            -- Refresh the baseline entering combat so proc deltas diff
+            -- against the immediate pre-pull state.
+            ProbeScan("combat-start")
             return
         end
         if event == "COOLDOWN_VIEWER_SPELL_OVERRIDE_UPDATED" then
             -- Payload: baseSpellID, overrideSpellID (nil = override removed).
             ProbePrint("override event base=" .. FmtID(arg1) .. " override=" .. FmtID(arg2))
-            ProbeSnapshot("event")
+            ScanSoon("override-event", 0.1)
             return
         end
-        -- UNIT_SPELLCAST_SUCCEEDED player: arg3 = spellID. Snapshot shortly
-        -- after each Keg Smash cast — the proc lands with/just after the cast.
+        if event == "SPELL_ACTIVATION_OVERLAY_GLOW_SHOW"
+            or event == "SPELL_ACTIVATION_OVERLAY_GLOW_HIDE" then
+            -- The action-bar proc-glow edge. Fires for procs the cooldown
+            -- info API may never report; the spellID names the proc spell.
+            ProbePrint(event == "SPELL_ACTIVATION_OVERLAY_GLOW_SHOW"
+                and ("overlay SHOW spellID=" .. FmtID(arg1))
+                or ("overlay HIDE spellID=" .. FmtID(arg1)))
+            ScanSoon("overlay", 0.1)
+            return
+        end
+        -- UNIT_SPELLCAST_SUCCEEDED player: arg3 = spellID. The proc lands
+        -- with/just after a Keg Smash cast — scan twice to catch late flips.
         local castSid = arg3
         if issecretvalue and issecretvalue(castSid) then return end
-        if castSid == KEG_SMASH and C_Timer and C_Timer.After then
-            C_Timer.After(0.25, function()
-                ProbeSnapshot("post-cast")
-            end)
+        if castSid == KEG_SMASH then
+            ScanSoon("post-cast", 0.25)
+            ScanSoon("post-cast+1s", 1.0)
         end
     end)
 end
