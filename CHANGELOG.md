@@ -5,6 +5,12 @@ All notable changes to QUI will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
+## v4.1.1-beta7 - 2026-07-19
+
+### Fixed
+- fix(cdm): cooldown proc overrides (e.g. Brewmaster's Empty Barrel brew procs) no longer vanish from bars set to show active cooldowns only — a ready proc riding on a spell whose base cooldown is still running now stays visible until used, while plain ready spells are still hidden as configured
+
+
 ## v4.1.1-beta6 - 2026-07-15
 
 ### Fixed
