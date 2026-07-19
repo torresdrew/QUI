@@ -5,6 +5,12 @@ All notable changes to QUI will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
+## v4.1.1-beta10 - 2026-07-19
+
+### Added
+- chore(cdm): expanded the temporary Brewmaster Empty Barrel diagnostic — the `[QUI EB]` probe now watches every cooldown-viewer entry (including live icon art) and action-bar proc glows, printing only what changes; screenshot all `[QUI EB]` lines while testing procs. No output on other specs; will be removed once the issue is closed
+
+
 ## v4.1.1-beta9 - 2026-07-19
 
 ### Added
