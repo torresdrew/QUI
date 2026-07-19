@@ -216,4 +216,30 @@ assert(rendererSource:find(
     "local baseTex = GetSpellTexture%(runtimeSid%) or GetEntryTexture%(entry%)"),
     "mirror sync no-aura texture write must prefer the live-display runtimeSid art over the saved entry art")
 
+-- Proc ART ground truth (probe round 2, in-game 2026-07-19): at proc time
+-- the Blizzard child's icon texture flips to a SECRET value while every
+-- spell-ID surface (GetOverrideSpell, cooldown-info override fields,
+-- override events) stays silent. The ONLY way to render the proc art is to
+-- forward the child's texture verbatim -- SetTexture is SecretArguments
+-- "AllowedWhenTainted" (SimpleTextureBaseAPIDocumentation.lua:441) -- and
+-- it must never be compared or truth-tested when secret.
+local handle2 = assert(io.open("QUI_CDM/cdm/cdm_blizz_mirror.lua", "rb"))
+local mirrorSource = handle2:read("*a")
+handle2:close()
+assert(mirrorSource:find("packed%.childIconTexture"),
+    "mirror PackState must capture the Blizzard child's live icon texture")
+assert(rendererSource:find(
+    "function _resolverRuntimePolicy%.ApplyMirrorChildTexture"),
+    "renderer must define the child-texture forward helper (policy method -- 200-local ceiling)")
+local _, forwardCalls = rendererSource:gsub(
+    "not _resolverRuntimePolicy%.ApplyMirrorChildTexture%(icon", "%0")
+assert(forwardCalls >= 2,
+    "both cooldown texture sites must try the child-texture forward first (found "
+        .. tostring(forwardCalls) .. ")")
+-- Secret discipline inside the helper: probe first, forward-only, poison the
+-- dedup fields so the first clean post-proc texture repaints.
+assert(rendererSource:find(
+    "if issecretvalue and issecretvalue%(tex%) then%s*icon%.Icon%.SetTexture%(icon%.Icon, tex%)%s*icon%._lastTexture = nil%s*icon%._desiredTexture = nil"),
+    "child-texture helper must probe-then-forward secret textures and poison texture dedup state")
+
 print("cdm_resolvers_override_child_ready_visibility_test: PASS")

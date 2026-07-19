@@ -858,6 +858,20 @@ local function PackState(cooldownID, viewerCategory)
     packed.totemIcon              = s.totemIcon
     packed.totemSpellID           = s.totemSpellID
     packed.cooldownID             = cooldownID
+    -- The Blizzard child's LIVE icon texture. During a Brewmaster Empty
+    -- Barrel proc this is the ONLY surface that carries the proc art: the
+    -- value flips to a SECRET while GetOverrideSpell, the cooldown-info
+    -- override fields, and COOLDOWN_VIEWER_SPELL_OVERRIDE_UPDATED all stay
+    -- on the base (in-game probe, 2026-07-19). Store it verbatim -- may be
+    -- secret; consumers must probe with issecretvalue before ANY compare or
+    -- truth-test, and may only forward it to Texture:SetTexture
+    -- (SecretArguments "AllowedWhenTainted").
+    local childIconTex
+    local childIcon = child and child.Icon
+    if childIcon and childIcon.GetTexture then
+        childIconTex = childIcon:GetTexture()
+    end
+    packed.childIconTexture       = childIconTex
     packed.childIsActive          = SafeFrameBooleanField(child, "isActive")
     packed.cooldownIsActive       = SafeFrameBooleanField(child, "cooldownIsActive")
     packed.wasSetFromAura         = SafeFrameBooleanField(child, "wasSetFromAura")
