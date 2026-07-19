@@ -308,6 +308,128 @@ _hookFrame:SetScript("OnEvent", function(self)
 end)
 
 ---------------------------------------------------------------------------
+-- TEMPORARY DIAGNOSTIC — Brewmaster Empty Barrel proc probe.
+-- Ships in the beta so an affected player can diagnose without running
+-- macros: every relevant line is printed to chat with a [QUI EB] prefix
+-- for a screenshot. Remove once the Empty Barrel art regression is closed.
+--
+-- What it answers (the one unverified assumption left after three fix
+-- rounds): does the game expose the Empty Barrel override to addons at
+-- proc time — via COOLDOWN_VIEWER_SPELL_OVERRIDE_UPDATED and/or the
+-- CooldownViewerCooldown info fields — and does QUI's mirror capture it?
+-- Brewmaster-gated (spec 268); zero output on other specs.
+---------------------------------------------------------------------------
+do
+    local KEG_SMASH = 121253
+    local PROBE_CATEGORY_NAMES = {
+        [0] = "essential", [1] = "utility", [2] = "buff", [3] = "trackedBar",
+    }
+
+    local function FmtID(v)
+        -- Probe BEFORE any truth-test/comparison: secret values throw on both.
+        if issecretvalue and issecretvalue(v) then return "secret" end
+        if v == nil then return "nil" end
+        return tostring(v)
+    end
+
+    local function ProbePrint(...)
+        print("|cff30d1ff[QUI EB]|r", ...)
+    end
+
+    local function IsBrewmaster()
+        if not (GetSpecialization and GetSpecializationInfo) then return false end
+        local idx = GetSpecialization()
+        if not idx then return false end
+        local specID = GetSpecializationInfo(idx)
+        return specID == 268
+    end
+
+    local _lastSnapshotSig
+    local function ProbeSnapshot(reason)
+        if not (C_CooldownViewer
+            and C_CooldownViewer.GetCooldownViewerCategorySet
+            and C_CooldownViewer.GetCooldownViewerCooldownInfo) then
+            return
+        end
+        local lines
+        for cat = 0, 3 do
+            local set = C_CooldownViewer.GetCooldownViewerCategorySet(cat, true)
+            if type(set) == "table" then
+                for i = 1, #set do
+                    local cdID = set[i]
+                    local info = (not (issecretvalue and issecretvalue(cdID)))
+                        and C_CooldownViewer.GetCooldownViewerCooldownInfo(cdID)
+                        or nil
+                    local sid = info and info.spellID
+                    local sidIsSecret = issecretvalue and issecretvalue(sid)
+                    if not sidIsSecret and sid == KEG_SMASH then
+                        local catName = PROBE_CATEGORY_NAMES[cat]
+                        local m = ns.CDMBlizzMirror
+                            and ns.CDMBlizzMirror.GetStateByCooldownID
+                            and ns.CDMBlizzMirror.GetStateByCooldownID(cdID, catName)
+                        lines = lines or {}
+                        lines[#lines + 1] = ("%s cat=%s cdID=%s api.ov=%s api.tt=%s mir.ov=%s mir.tt=%s mir.child=%s"):format(
+                            reason, catName, FmtID(cdID),
+                            FmtID(info.overrideSpellID),
+                            FmtID(info.overrideTooltipSpellID),
+                            FmtID(m and m.overrideSpellID),
+                            FmtID(m and m.overrideTooltipSpellID),
+                            FmtID(m and m.childIsActive))
+                    end
+                end
+            end
+        end
+        if not lines then
+            ProbePrint(reason, "Keg Smash", KEG_SMASH, "not found in any cooldown-viewer category")
+            return
+        end
+        -- Only re-print when the picture changes, so routine Keg Smash casts
+        -- with no override stay quiet after the first baseline line.
+        local sig = table.concat(lines, "|")
+        if sig == _lastSnapshotSig then return end
+        _lastSnapshotSig = sig
+        for i = 1, #lines do
+            ProbePrint(lines[i])
+        end
+    end
+
+    local _probeFrame = CreateFrame("Frame")
+    _probeFrame:RegisterEvent("COOLDOWN_VIEWER_SPELL_OVERRIDE_UPDATED")
+    _probeFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+    if _probeFrame.RegisterUnitEvent then
+        _probeFrame:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
+    else
+        _probeFrame:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
+    end
+    local _announced = false
+    _probeFrame:SetScript("OnEvent", function(_, event, arg1, arg2, arg3)
+        if not IsBrewmaster() then return end
+        if event == "PLAYER_ENTERING_WORLD" then
+            if not _announced then
+                _announced = true
+                ProbePrint("probe active — screenshot every [QUI EB] line while testing Empty Barrel procs")
+            end
+            return
+        end
+        if event == "COOLDOWN_VIEWER_SPELL_OVERRIDE_UPDATED" then
+            -- Payload: baseSpellID, overrideSpellID (nil = override removed).
+            ProbePrint("override event base=" .. FmtID(arg1) .. " override=" .. FmtID(arg2))
+            ProbeSnapshot("event")
+            return
+        end
+        -- UNIT_SPELLCAST_SUCCEEDED player: arg3 = spellID. Snapshot shortly
+        -- after each Keg Smash cast — the proc lands with/just after the cast.
+        local castSid = arg3
+        if issecretvalue and issecretvalue(castSid) then return end
+        if castSid == KEG_SMASH and C_Timer and C_Timer.After then
+            C_Timer.After(0.25, function()
+                ProbeSnapshot("post-cast")
+            end)
+        end
+    end)
+end
+
+---------------------------------------------------------------------------
 -- Ordered map — what CDM is currently RENDERING (per the user's ordering
 -- and visibility), as distinct from CDMIndex.Get above which answers
 -- "what does CDM KNOW about" (incl. HiddenSpell / HiddenAura entries
