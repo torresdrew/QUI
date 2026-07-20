@@ -1329,6 +1329,7 @@ function _resolverRuntimePolicy.StoreIconRuntimeState(icon, mode, sourceID, spel
     state.countShown = resolvedState and resolvedState.countShown == true or false
     state.countSource = resolvedState and resolvedState.countSource or nil
     state.countMirrorBacked = resolvedState and resolvedState.countMirrorBacked or nil
+    state.overrideChildReady = resolvedState and resolvedState.overrideChildReady or nil
 
     store.SetIconState(icon, state)
 end
@@ -3118,6 +3119,36 @@ function _resolverRuntimePolicy.DebugBlizzSyncSnapshot(enabled, icon, entry, mir
         CDMIcons._FormatMirrorState(mirrorState))
 end
 
+-- Forward the Blizzard child's live icon texture onto a mirror-backed icon.
+-- This is the ONLY art surface that carries some proc overrides (Brewmaster
+-- Empty Barrel: the child texture flips to a SECRET value at proc time while
+-- GetOverrideSpell, the cooldown-info override fields, and the override
+-- event all stay on the base — in-game probe 2026-07-19). Secret handling:
+-- probe BEFORE any compare/truth-test; a secret texture is forwarded to
+-- SetTexture verbatim (SecretArguments "AllowedWhenTainted") every pass —
+-- it cannot be deduped — and _lastTexture/_desiredTexture are poisoned so
+-- the first clean texture after the proc repaints through the normal path.
+-- Returns true when it painted (callers skip their spell-ID fallback).
+-- A _resolverRuntimePolicy method, NOT a file local — cdm_icon_renderer.lua
+-- sits at the 200-local ceiling.
+function _resolverRuntimePolicy.ApplyMirrorChildTexture(icon, m)
+    if not (icon and icon.Icon and m) then return false end
+    local tex = m.childIconTexture
+    if issecretvalue and issecretvalue(tex) then
+        icon.Icon.SetTexture(icon.Icon, tex)
+        icon._lastTexture = nil
+        icon._desiredTexture = nil
+        return true
+    end
+    if tex == nil then return false end
+    if tex ~= icon._lastTexture then
+        icon.Icon.SetTexture(icon.Icon, tex)
+        icon._lastTexture = tex
+    end
+    icon._desiredTexture = nil
+    return true
+end
+
 function _resolverRuntimePolicy.SyncBlizzMirrorIconState(icon)
     local entry = icon and icon._spellEntry
     local cooldownID = icon and icon._blizzMirrorCooldownID
@@ -3290,8 +3321,15 @@ function _resolverRuntimePolicy.SyncBlizzMirrorIconState(icon)
         if not mirrorStackApplied then
             ClearIconStackText(icon)
         end
-        if icon.Icon then
-            local baseTex = GetEntryTexture(entry) or GetSpellTexture(runtimeSid)
+        if icon.Icon and not _resolverRuntimePolicy.ApplyMirrorChildTexture(icon, m) then
+            -- No child texture captured -- fall back to spell-ID art.
+            -- runtimeSid is the LIVE display spell (ResolveLiveDisplaySpellID:
+            -- mirror-child override art during a proc). It must outrank
+            -- GetEntryTexture, which resolves from the SAVED entry fields and
+            -- always returns the base art for spell entries; with the old
+            -- entry-first order this sync pass repainted the base icon over
+            -- the proc art on every mirror tick, so the proc never showed.
+            local baseTex = GetSpellTexture(runtimeSid) or GetEntryTexture(entry)
             icon._desiredTexture = nil
             if baseTex and baseTex ~= icon._lastTexture then
                 icon.Icon.SetTexture(icon.Icon, baseTex)
@@ -3685,10 +3723,17 @@ local function UpdateIconCooldownOwned(icon)
             icon.Icon.SetTexture(icon.Icon, _chargedTotemTexture)
             icon._lastTexture = _chargedTotemTexture
         elseif icon.Icon and not entry.isAura then
-            local texID = GetSpellTexture(_runtimeSid)
-            if texID and icon._desiredTexture ~= texID then
-                icon._desiredTexture = texID
-                icon.Icon.SetTexture(icon.Icon, texID)
+            -- Blizzard child texture first (the only surface carrying some
+            -- proc art -- may be secret; see ApplyMirrorChildTexture).
+            local childMirror = icon._blizzMirrorCooldownID
+                and (GetCachedMirrorStateForIcon(icon)
+                    or RefreshCachedMirrorStateForIcon(icon))
+            if not _resolverRuntimePolicy.ApplyMirrorChildTexture(icon, childMirror) then
+                local texID = GetSpellTexture(_runtimeSid)
+                if texID and icon._desiredTexture ~= texID then
+                    icon._desiredTexture = texID
+                    icon.Icon.SetTexture(icon.Icon, texID)
+                end
             end
         elseif icon.Icon then
             icon._desiredTexture = nil
@@ -4811,6 +4856,12 @@ local function UpdateCooldownContainerVisibility(icon, entry, containerDB, editM
     elseif effectiveMode == "active" then
         if isOnCD then
             shouldShow = true
+        -- A live Blizzard override child that is READY while its base rolls
+        -- a real cooldown (Empty Barrel brew proc, Void Volley during
+        -- Voidform) resolves mode=inactive -- correct ready semantics, but
+        -- the proc must surface, not hide with the idle icons.
+        elseif cooldownState.overrideChildReady == true then
+            shouldShow = true
         else
             local keepForGlow = false
             if ns._OwnedGlows and ns._OwnedGlows.ShouldIconGlow then
@@ -4981,6 +5032,11 @@ local function RefreshAllIcon(icon, context)
                     shouldShow = true
                 elseif effectiveMode == "active" then
                     if isOnCD then
+                        shouldShow = true
+                    -- Ready override child over a base on real cooldown
+                    -- (Empty Barrel brew proc) -- keep it shown; see the
+                    -- matching gate in UpdateCooldownContainerVisibility.
+                    elseif cooldownState.overrideChildReady == true then
                         shouldShow = true
                     else
                         local keepForGlow = false

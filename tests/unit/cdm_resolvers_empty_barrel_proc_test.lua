@@ -98,14 +98,21 @@ local function ResolveMode()
 end
 
 -- Scenario 1: proc fired, base brew rolling a charge recharge (1/2), override
--- child active with no cooldown of its own. Must surface the recharge swipe --
--- pre-4.0.4 behaviour -- not vanish.
+-- child active with no cooldown of its own. The live proc outranks the
+-- recharge lane (Drew canon): classify inactive (proc READY) with
+-- overrideChildReady set so the visibility layer keeps the icon shown --
+-- never vanish. (Pre-4.1.1 this pinned mode=="cooldown" to surface the
+-- recharge swipe; superseded by proc-priority --
+-- cdm_resolvers_override_child_ready_visibility_test.lua covers the full
+-- matrix.)
 baseCooldown.isActive, baseCooldown.isOnGCD = false, false
 baseCharges.isActive = true
 local charging = ResolveMode()
-assert(charging.mode == "cooldown",
-    "active override child over a recharging base must surface the charge lane, got "
+assert(charging.mode == "inactive",
+    "active override child over a recharging base must rank the proc ready, got "
         .. tostring(charging.mode))
+assert(charging.overrideChildReady == true,
+    "proc over recharging base must set overrideChildReady so it stays visible")
 
 -- Scenario 2: base at max charges, an incidental GCD ticking from another cast,
 -- override child active. Must still surface (gcd swipe), never inactive.
