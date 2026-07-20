@@ -207,6 +207,7 @@ end
 Data._combatStartTime = nil   -- GetTime() at last PLAYER_REGEN_DISABLED
 Data._combatEndTime   = nil   -- GetTime() at last PLAYER_REGEN_ENABLED
 Data._combatFrozen    = 0     -- elapsed seconds frozen at end-of-combat for post-combat display
+Data._currentDurPin   = 0     -- warm Current-session duration pin (see ResolveCurrentViewDuration)
 
 local function GetCombatElapsed()
     if Data._combatStartTime then
@@ -229,7 +230,47 @@ function Data:ResetCombatClock()
         self._combatEndTime   = nil
     end
     self._combatFrozen = 0
+    self._currentDurPin = 0
 end
+
+-- Current-session view duration. The server ROLLS the Current session at
+-- segment boundaries (a new pull after regen, a boss pull mid chain-pull):
+-- any locally anchored clock — and any post-combat GetSessionDurationSeconds
+-- read — races that roll. Two prior failures prove it: dividing by the
+-- regen-to-regen combat clock broke for sessions the clock didn't cover, and
+-- dividing by a post-combat API read picked up the freshly rolled (tiny)
+-- session. So the Current duration follows the session's OWN clock:
+--   * In combat: read GetSessionDurationSeconds(Current) live each refresh
+--     and keep a pin warm with the last good value. When the server rolls the
+--     session mid-combat, the next live read tracks it — timer and bars reset
+--     in lockstep, no local clock to drift.
+--   * Out of combat: serve the warm pin — it froze at the last in-combat
+--     refresh (≤ one combat-cadence tick before the end). The live API value
+--     is NOT trusted out of combat: the session may already have rolled
+--     underneath the retained view data. No combat-end API read exists at
+--     all (event handlers never touch C_DamageMeter), so there is no read to
+--     race the roll. The pin resets at every combat START, never at the end.
+--   * No pin (fresh login /reload with retained data): fall back to the API,
+--     then to the legacy combat clock.
+-- Returns (duration, newPin). Pure helper — state and isSecret are injected
+-- so it unit-tests under plain Lua. A duration is "usable" only if it's a
+-- positive, non-secret number (comparing a secret in Lua faults in combat).
+local function ResolveCurrentViewDuration(inCombat, apiDuration, pinnedDuration, combatElapsed, isSecret)
+    local function usable(d)
+        return type(d) == "number" and not (isSecret and isSecret(d)) and d > 0
+    end
+    if inCombat then
+        if usable(apiDuration) then return apiDuration, apiDuration end
+        if usable(pinnedDuration) then return pinnedDuration, pinnedDuration end
+        if usable(combatElapsed) then return combatElapsed, pinnedDuration end
+        return nil, pinnedDuration
+    end
+    if usable(pinnedDuration) then return pinnedDuration, pinnedDuration end
+    if usable(apiDuration) then return apiDuration, pinnedDuration end
+    if usable(combatElapsed) then return combatElapsed, pinnedDuration end
+    return nil, pinnedDuration
+end
+QUI_DamageMeter.ResolveCurrentViewDuration = ResolveCurrentViewDuration
 
 Data._eventFrame = CreateFrame("Frame")
 Data._eventFrame:RegisterEvent("DAMAGE_METER_COMBAT_SESSION_UPDATED")
@@ -259,6 +300,9 @@ Data._eventFrame:SetScript("OnEvent", function(_, event, arg1, _arg2)
         Data._inCombat = true
         Data._combatStartTime = GetTime()
         Data._combatEndTime   = nil
+        -- New combat = new session segment: drop the pinned duration so it
+        -- cannot carry a stale value across combats.
+        Data._currentDurPin   = 0
         -- Combat drives the live elapsed clock, which must tick smoothly even
         -- through damage lulls. Re-arm the ticker; it stays awake until combat
         -- ends and pending work drains (see the park check in OnUpdate).
@@ -267,6 +311,10 @@ Data._eventFrame:SetScript("OnEvent", function(_, event, arg1, _arg2)
         Data._inCombat = false
         Data._combatEndTime   = GetTime()
         Data._combatFrozen    = (Data._combatStartTime and (Data._combatEndTime - Data._combatStartTime)) or 0
+        -- The Current-session duration pin is NOT touched here: it froze at
+        -- the last in-combat refresh (see ResolveCurrentViewDuration), and a
+        -- combat-end API read would race the server's session roll — besides,
+        -- event handlers never call C_DamageMeter (scaffold contract).
         -- The API briefly returns secret-tagged source GUIDs after combat
         -- ends, which makes GetCombatSessionSourceFromType return an empty
         -- combatSpells. Re-mark dirty after a short delay so the next tick
@@ -393,65 +441,6 @@ HasCachedViewKey = function(selectorKey, damageMeterType)
     return bySelector and bySelector[damageMeterType] ~= nil
 end
 
--- DerivePerSecond: recompute a row's per-second rate as totalAmount / duration
--- rather than trust the API's amountPerSecond. Per DamageMeterDocumentation a
--- combat source/spell's amountPerSecond is SecretWhenInCombat and is derived
--- from the live session duration; after combat it declassifies to a garbage
--- value (the report: a DPS row read "4" and an HPS row "7.04e-15" instead of
--- ~405K). GetSessionDurationSeconds is AllowedWhenUntainted and — unlike
--- GetCombatSessionFromType — NOT SecretWhenInCombat, so it hands us a usable,
--- non-secret duration for the session in and out of combat.
---
--- We can only divide once totalAmount is non-secret (post-combat / idle /
--- historical). Mid-combat totalAmount stays secret, so we return nil and the
--- caller keeps the API amountPerSecond (rendered secret-safe downstream — the
--- C side can read it). The secret check runs BEFORE any comparison: comparing
--- or dividing a secret in Lua faults under combat restrictions. Pure helper —
--- isSecret is injected so it unit-tests under plain Lua.
-local function DerivePerSecond(totalAmount, duration, isSecret)
-    if totalAmount == nil then return nil end
-    if isSecret and (isSecret(totalAmount) or isSecret(duration)) then return nil end
-    if type(duration) ~= "number" or duration <= 0 then return nil end
-    return totalAmount / duration
-end
-QUI_DamageMeter.DerivePerSecond = DerivePerSecond
-
--- ResolveRateDuration: pick the divisor DerivePerSecond uses for a session's
--- rows. GetSessionDurationSeconds is Nilable (DamageMeterDocumentation) and for
--- the live Current session frequently returns nil; when that happened the rows
--- kept the API's amountPerSecond, which declassifies to garbage post-combat (a
--- DPS row read 0.0576, an HPS row 0.0000933 instead of ~5K). So:
---   * Current (live): prefer our own combat timer (GetCombatElapsed — the same
---     value the [m:ss] header shows) so the rate stays consistent with the
---     visible clock; fall back to the API duration. The API Current duration is
---     unreliable (the reference distrusts it too), hence timer-first.
---   * Expired (historical): the session's own recorded durationSeconds is
---     authoritative; fall back to the API duration.
---   * Overall (cumulative across past combats): only the API knows that span,
---     so prefer it; fall back to the live timer if it's nil.
--- A duration is "usable" only if it's a positive, non-secret number — dividing
--- by a secret or comparing it faults under combat restrictions. Pure helper:
--- the durations and isSecret are injected so it unit-tests under plain Lua.
-local function ResolveRateDuration(sessionType, apiDuration, combatElapsed, historicalDuration, isSecret, currentType, expiredType)
-    local function usable(d)
-        return type(d) == "number" and not (isSecret and isSecret(d)) and d > 0
-    end
-    if expiredType ~= nil and sessionType == expiredType then
-        if usable(historicalDuration) then return historicalDuration end
-        if usable(apiDuration) then return apiDuration end
-        return nil
-    end
-    if currentType ~= nil and sessionType == currentType then
-        if usable(combatElapsed) then return combatElapsed end
-        if usable(apiDuration) then return apiDuration end
-        return nil
-    end
-    if usable(apiDuration) then return apiDuration end
-    if usable(combatElapsed) then return combatElapsed end
-    return nil
-end
-QUI_DamageMeter.ResolveRateDuration = ResolveRateDuration
-
 local function FetchView(sessionType, damageMeterType, sessionID)
     if not C_DamageMeter then
         return NewView({}, 0, 0, 0)
@@ -478,41 +467,35 @@ local function FetchView(sessionType, damageMeterType, sessionID)
 
     local sources = NormalizeSources(session.combatSources or {})
 
-    -- Duration: prefer our own elapsed timer for live sessions to sidestep
-    -- the secret-tagged session.durationSeconds. For historical sessions
-    -- (Expired session type = 2 per Enum.DamageMeterSessionType.Expired),
-    -- the API duration is safe.
+    -- Rows keep the API's amountPerSecond untouched. The server computes the
+    -- total/rate pair against the session's OWN clock, so the pair is always
+    -- self-consistent — while any locally derived rate races the server-side
+    -- session roll (see ResolveCurrentViewDuration). The stock meter renders
+    -- source.amountPerSecond as-is too (DamageMeterEntry.lua GetMainValue /
+    -- GetParentheticalValue); secret-tagged values flow to the render path,
+    -- where the C side reads them fine.
+    --
+    -- Duration (header timer / breakdown aggregates only):
+    --   * Explicit sessionID / Expired: the session's recorded durationSeconds.
+    --   * Current: the pinned session clock (ResolveCurrentViewDuration).
+    --   * Overall: the legacy combat clock (display-only, as before).
+    local S = Enum and Enum.DamageMeterSessionType
     local duration
     if sessionID ~= nil then
         duration = session.durationSeconds
-    elseif sessionType == (Enum and Enum.DamageMeterSessionType and Enum.DamageMeterSessionType.Expired or 2) then
+    elseif sessionType == ((S and S.Expired) or 2) then
         duration = session.durationSeconds  -- historical: API value is safe
-    else
-        duration = GetCombatElapsed()
-    end
-
-    -- Replace the API's per-source amountPerSecond (SecretWhenInCombat, derived
-    -- from the live duration and garbage once it declassifies) with a rate we
-    -- compute from the session's own non-secret duration. See DerivePerSecond:
-    -- it returns nil while totalAmount is still secret (mid-combat), leaving the
-    -- API value in place for the secret-safe render path. ResolveRateDuration
-    -- picks the divisor: the API session duration is Nilable and nil for the
-    -- live Current session, so we fall back to our own combat timer there.
-    local IsSecret = Helpers and Helpers.IsSecretValue
-    local S = Enum and Enum.DamageMeterSessionType
-    local rateDuration
-    if sessionID ~= nil then
-        rateDuration = session.durationSeconds
-    else
+    elseif sessionType == ((S and S.Current) or 1) then
+        local IsSecret = Helpers and Helpers.IsSecretValue
         local apiDuration = C_DamageMeter.GetSessionDurationSeconds
             and C_DamageMeter.GetSessionDurationSeconds(sessionType)
-        rateDuration = ResolveRateDuration(
-            sessionType, apiDuration, GetCombatElapsed(), session.durationSeconds,
-            IsSecret, (S and S.Current) or 1, (S and S.Expired) or 2)
-    end
-    for _, s in ipairs(sources) do
-        local rate = DerivePerSecond(s.totalAmount, rateDuration, IsSecret)
-        if rate ~= nil then s.amountPerSecond = rate end
+        local dur, newPin = ResolveCurrentViewDuration(
+            Data._inCombat and true or false, apiDuration,
+            Data._currentDurPin, GetCombatElapsed(), IsSecret)
+        Data._currentDurPin = newPin or 0
+        duration = dur or 0
+    else
+        duration = GetCombatElapsed()
     end
 
     return NewView(sources, duration, session.maxAmount, session.totalAmount)
