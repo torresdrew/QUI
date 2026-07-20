@@ -5,6 +5,12 @@ All notable changes to QUI will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
+## v4.1.1-beta12 - 2026-07-19
+
+### Removed
+- chore(cdm): removed the temporary Brewmaster Empty Barrel `[QUI EB]` diagnostic — the underlying icon art issue is fixed, so the probe is no longer needed
+
+
 ## v4.1.1-beta11 - 2026-07-19
 
 ### Fixed
