@@ -5,6 +5,12 @@ All notable changes to QUI will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
+## v4.1.1-beta11 - 2026-07-19
+
+### Fixed
+- fix(cdm): cooldown proc override art now renders even when the proc only changes the Blizzard icon's texture — during a Brewmaster Empty Barrel proc the game swaps the icon art without reporting a spell override anywhere QUI could read it, so QUI icons kept the base art; QUI now mirrors the live icon texture directly, including when the game marks it as protected data
+
+
 ## v4.1.1-beta10 - 2026-07-19
 
 ### Added
