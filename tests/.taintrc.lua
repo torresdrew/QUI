@@ -267,8 +267,23 @@ return {
     --    are safe — whole-call sourcing would FP every `if auras`).
     --    Element-level hazard modeling ("secret contents of a safe
     --    container": flag unprobed element/field use of such returns) is
-    --    a NEW analyzer class, still backlog; runtime is covered by
-    --    router/choke-point element probes (round-16 canon).
+    --    WIRED as of round-23: marker-based element taint on flagged
+    --    returns, driven by two config keys — element_secret_functions
+    --    (call-site spellings of wrapper functions whose result 1 carries
+    --    the hazard; C_UnitAuras.GetUnitAuras itself stays index-wired,
+    --    not listed here) and element_container_params (helper name ->
+    --    declared-param positions, for helpers that receive an
+    --    already-tainted container as an argument rather than a call
+    --    result). Adding a wrapper requires the spelling audit: grep every
+    --    call-site spelling of the wrapper across the repo and list each
+    --    distinct one; value-copy aliases (`local Get =
+    --    C_UnitAuras.GetUnitAuras`, incl. `A and A.f` chains) resolve
+    --    automatically and must NOT be listed, but receiver-import
+    --    spellings (`Sources.QueryUnitAuras` where `Sources` is a local
+    --    table alias, not a function-value copy) do NOT resolve and MUST
+    --    be listed individually — a missed spelling is a silent false
+    --    negative the strict scan cannot surface on its own. Runtime
+    --    choke-point probes remain defense-in-depth (round-16 canon).
     --  - Round-13b collapse-rule NON-GOALS (known and accepted): bare
     --    `Show()`/`Hide()` calls inside guard-secret branches are
     --    unflagged (call-shaped defer is indistinguishable from
@@ -300,6 +315,34 @@ return {
         "ResolverIsSecretValue", -- cdm_resolvers
         "ScannerIsSecretValue",  -- spellscanner local issecretvalue wrapper
         "IsSecretSpellcastPayload", -- resourcebars UNIT_SPELLCAST_SUCCEEDED payload probe (spellID, castGUID)
+    },
+    -- Round-23 element-taint class (conditionalSecretContents): wrapper
+    -- functions whose RESULT 1 is a readable container with secret-capable
+    -- ELEMENTS. Entries are CALL-SITE spellings (literal matching) — when
+    -- adding a wrapper, grep every call spelling and list each; a missed
+    -- spelling is a silent FN the strict scan cannot surface. Value-copy
+    -- aliases (`local Get = C_UnitAuras.GetUnitAuras`) resolve
+    -- automatically; receiver-import spellings (`Sources.QueryUnitAuras`)
+    -- do not and must be listed.
+    element_secret_functions = {
+        "Sources.QueryUnitAuras",
+        -- Definition-spelling (cdm_sources.lua:676); zero live call sites
+        -- use it today — kept as future-proofing for direct callers.
+        "CDMSources.QueryUnitAuras",
+        -- Task-6 audit (2026-07-21): grep across QUI_ActionBars, QUI_Bags,
+        -- QUI_CDM, QUI_Chat, QUI_DamageMeter, QUI_Debug, QUI_GroupFrames,
+        -- QUI_Logger, QUI_Options, QUI_ResourceBars, QUI_UnitFrames, core,
+        -- modules, init.lua surfaced no further QueryUnitAuras receiver
+        -- spellings beyond the two above; C_UnitAuras.GetUnitAuras is
+        -- index-wired (excluded) and _C_GetUnitAuras (cdm_sources.lua:454,
+        -- `local _C_GetUnitAuras = C_UnitAuras and C_UnitAuras.GetUnitAuras`)
+        -- is a value-copy alias (analyzer-resolved, excluded).
+    },
+    -- Helper PARAMS holding element-secret containers (positions index
+    -- the DECLARED parameter list; colon-method self is not counted).
+    element_container_params = {
+        CopyReadableAuras = { 1 }, -- groupframes_auras.lua:780 (src)
+        ScanAuraListForAtonement = { 2 }, -- atonement_counter.lua:201 (auraList)
     },
     extra_unwraps = {
         -- QUI imports Helpers.Safe* as bare locals at file scope and calls
