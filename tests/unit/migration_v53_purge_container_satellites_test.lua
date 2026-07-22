@@ -162,9 +162,11 @@ do
 end
 
 ----------------------------------------------------------------------------
--- 4) Already-current (51) profile is a no-op: the purge gate does NOT
---    re-run, so an orphan added AFTER migration (impossible via normal
---    DeleteContainer flow, but simulates a re-imported orphan) survives.
+-- 4) Alpha stamp (51) re-enters the v58 squash: the purge is a
+--    content-idempotent repair step (NOT stamp-guarded), so an orphan
+--    carried by a mid-chain alpha profile (e.g. a re-imported orphan) is
+--    healed on the way to 58. At 58 the gate is closed: the same orphan
+--    added after the squash survives untouched.
 ----------------------------------------------------------------------------
 do
     local profile = {
@@ -173,8 +175,12 @@ do
         frameAnchoring = { ["cdmCustom_custom_9_9"] = { parent = "UIParent" } },
     }
     M.RunOnProfile(profile)
-    check("already-51: gate does not re-run", profile.frameAnchoring["cdmCustom_custom_9_9"] ~= nil)
-    check("already-51: stamped to current (58, cascades through later gates)", profile._schemaVersion == 58, tostring(profile._schemaVersion))
+    check("alpha stamp 51: squash re-runs the purge, orphan healed", profile.frameAnchoring["cdmCustom_custom_9_9"] == nil)
+    check("alpha stamp 51: stamped to current (58)", profile._schemaVersion == 58, tostring(profile._schemaVersion))
+
+    profile.frameAnchoring["cdmCustom_custom_9_9"] = { parent = "UIParent" }
+    M.RunOnProfile(profile)
+    check("at 58: gate closed, post-squash orphan survives", profile.frameAnchoring["cdmCustom_custom_9_9"] ~= nil)
 end
 
 if failures > 0 then os.exit(1) end

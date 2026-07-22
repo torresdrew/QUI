@@ -90,8 +90,9 @@ end
 -- 1) Pre-existing "i"/"e" buckets — one with curated content, one empty —
 --    each get exactly one defensives clone; numeric + "*" untouched by this
 --    step. Starting the profile already at 57 (rather than below it) means
---    only the v58 gate fires below (`stored < 54/56/57` are all false at
---    57), isolating this migration's own behavior from v54/v56/v57's.
+--    the seed steps' inner stamp guards (`stored < 51/54/57`) are all false
+--    inside the v58 squash and the repair steps no-op, isolating this
+--    migration's own behavior from the earlier-shipped steps'.
 ----------------------------------------------------------------------------
 do
     local profile = {

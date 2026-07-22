@@ -78,14 +78,16 @@ do
     check("alpha stamp 48 re-enters squash, stamps to CURRENT (58)", profile._schemaVersion == 58, tostring(profile._schemaVersion))
 end
 
--- 3) Post-squash profile (51): the v51 squash gate does NOT re-run, so a flat
--- buffIconSize left in place is preserved untouched; only the v54
--- defensives-backfill gate fires and moves the stamp.
+-- 3) Mid-chain alpha stamp (51) re-enters the v58 squash: flat buffborders
+-- keys a real 51-stamped profile would have had consumed at its original
+-- 51-crossing get the same conversion treatment as a 47 profile (the
+-- aura-surface unification is latch-gated, not stamp-gated), and the stamp
+-- lands on 58.
 do
     local profile = { _schemaVersion = 51, buffBorders = { buffIconSize = 35, debuffIconSize = 12 } }
     M.RunOnProfile(profile)
-    check("current (51) untouched: custom debuffIconSize preserved", profile.buffBorders.debuffIconSize == 12, tostring(profile.buffBorders.debuffIconSize))
-    check("current (51) buffIconSize NOT migrated (no-op)", profile.buffBorders.buffIconSize == 35, tostring(profile.buffBorders.buffIconSize))
+    check("alpha stamp 51: leftover flat debuffIconSize consumed by the unification", profile.buffBorders.debuffIconSize == nil, tostring(profile.buffBorders.debuffIconSize))
+    check("alpha stamp 51: leftover flat buffIconSize consumed by the unification", profile.buffBorders.buffIconSize == nil, tostring(profile.buffBorders.buffIconSize))
     check("pre-v54 (51) stamped to current (58)", profile._schemaVersion == 58, tostring(profile._schemaVersion))
 end
 

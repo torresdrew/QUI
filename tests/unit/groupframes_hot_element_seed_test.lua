@@ -370,7 +370,8 @@ do
     -- short-circuits E.EnsureSeeded, nothing comes back. Then run the REAL
     -- Migrations.RunOnProfile against a profile already stamped >= 57
     -- (the version this element shipped in) -> still nothing, because the
-    -- migration's own `stored < 57` gate skips the step entirely.
+    -- step's inner `stored < 57` stamp guard (inside the v58 squash gate)
+    -- skips the seed entirely — deletions must stick.
     ----------------------------------------------------------------------
     do
         local a2 = {}

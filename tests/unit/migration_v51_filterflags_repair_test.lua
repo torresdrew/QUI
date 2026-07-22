@@ -123,9 +123,12 @@ do
 end
 
 ----------------------------------------------------------------------------
--- 4) Idempotency: a repaired (already-current, 51) profile is untouched — an element
---    hand-set back to a weird token after repair is NOT re-stripped (the gate
---    ran once), and the stamp stays 51.
+-- 4) Alpha stamp (51) re-enters the v58 squash: the repair is a
+--    content-idempotent step (NOT stamp-guarded), so an out-of-set token
+--    still carried at a mid-chain alpha stamp IS stripped on the way to 58
+--    (out-of-set tokens are corruption that hard-errors the container's
+--    IsValidFilterString — healing them is the point). At 58 the gate is
+--    closed: a token hand-set after the squash is not re-stripped.
 ----------------------------------------------------------------------------
 do
     local profile = {
@@ -141,8 +144,12 @@ do
     }
     M.RunOnProfile(profile)
     local e = profile.quiUnitFrames.player.auras.elements["*"][1]
-    check("already-51: gate does not re-run", e.filterFlags.modifiers == true, "was stripped")
-    check("already-51: stamped to current (58, cascades through later gates)", profile._schemaVersion == 58, tostring(profile._schemaVersion))
+    check("alpha stamp 51: squash re-runs the repair, weird token stripped", e.filterFlags.modifiers == nil, "survived")
+    check("alpha stamp 51: stamped to current (58)", profile._schemaVersion == 58, tostring(profile._schemaVersion))
+
+    e.filterFlags.modifiers = true
+    M.RunOnProfile(profile)
+    check("at 58: gate closed, hand-set token not re-stripped", e.filterFlags.modifiers == true, "was stripped")
 end
 
 ----------------------------------------------------------------------------
