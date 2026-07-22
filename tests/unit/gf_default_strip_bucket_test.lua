@@ -6,6 +6,11 @@
 -- with the retired healer.defensiveIndicator defaults: party ON, raid OFF).
 -- The strip is classify-mode bigDefensive+externalDefensive with a green
 -- borderColor (the old indicator's visual identity).
+--
+-- v57: the bucket also always carries a 4th element, the "healerHoTs"
+-- tracked element (Model.HealerHoTElement) -- same
+-- surface-independent-always-present shape as debuffs/buffs, not
+-- frameType-gated like defensives.
 
 local envmod = dofile("tools/_addon_env.lua")
 local ns = envmod.LoadCore()
@@ -20,10 +25,12 @@ end
 
 for _, frameType in ipairs({ "party", "raid" }) do
     local bucket = Model.DefaultStripBucket(frameType)
-    check(frameType .. ": bucket has 3 strips", #bucket == 3, tostring(#bucket))
-    check(frameType .. ": strip ids stable", bucket[1].id == "debuffs"
-        and bucket[2].id == "buffs" and bucket[3].id == "defensives",
-        table.concat({ tostring(bucket[1].id), tostring(bucket[2].id), tostring(bucket[3].id) }, ","))
+    check(frameType .. ": bucket has 4 elements", #bucket == 4, tostring(#bucket))
+    check(frameType .. ": strip/element ids stable", bucket[1].id == "debuffs"
+        and bucket[2].id == "buffs" and bucket[3].id == "defensives"
+        and bucket[4].id == "healerHoTs",
+        table.concat({ tostring(bucket[1].id), tostring(bucket[2].id), tostring(bucket[3].id),
+            tostring(bucket[4].id) }, ","))
     local d = bucket[3]
     check(frameType .. ": defensives enabled parity",
         d.enabled == (frameType == "party"), tostring(d.enabled))
@@ -46,20 +53,38 @@ for _, frameType in ipairs({ "party", "raid" }) do
         check(frameType .. ": strip " .. i .. " has no dedupeDefensives",
             bucket[i].dedupeDefensives == nil, tostring(bucket[i].dedupeDefensives))
     end
+
+    -- healerHoTs (v57): tracked, uncapped, onlyMine, surface-INDEPENDENT
+    -- (present and identical shape on both party and raid, unlike
+    -- defensives' frameType gate).
+    local hot = bucket[4]
+    check(frameType .. ": healerHoTs mode == tracked", hot.mode == "tracked", tostring(hot.mode))
+    check(frameType .. ": healerHoTs displayType == icon", hot.displayType == "icon", tostring(hot.displayType))
+    check(frameType .. ": healerHoTs onlyMine == true", hot.onlyMine == true, tostring(hot.onlyMine))
+    check(frameType .. ": healerHoTs maxIcons absent (uncapped)", hot.maxIcons == nil, tostring(hot.maxIcons))
+    check(frameType .. ": healerHoTs _quiHoTSeed flag set", hot._quiHoTSeed == true, tostring(hot._quiHoTSeed))
+    check(frameType .. ": healerHoTs has 42 spells", type(hot.spells) == "table" and #hot.spells == 42,
+        tostring(hot.spells and #hot.spells))
 end
 
 -- No-arg call must not error (legacy callers during rollout); defensives
--- defaults DISABLED when the surface is unknown (conservative).
+-- defaults DISABLED when the surface is unknown (conservative). healerHoTs
+-- is unaffected by frameType -- present either way.
 local anon = Model.DefaultStripBucket()
 check("nil frameType: defensives disabled", anon[3].enabled == false, tostring(anon[3].enabled))
+check("nil frameType: healerHoTs still present", anon[4] and anon[4].id == "healerHoTs",
+    tostring(anon[4] and anon[4].id))
 
 -- Shim: string second arg seeds via the surface-aware bucket.
 local auras = {}
 Model.EnsureSeeded(auras, "party")
-check("EnsureSeeded('party') seeds 3 strips", #auras.elements["*"] == 3,
+check("EnsureSeeded('party') seeds 4 elements", #auras.elements["*"] == 4,
     tostring(auras.elements and #auras.elements["*"]))
 check("EnsureSeeded('party') defensives enabled",
     auras.elements["*"][3].enabled == true, "disabled")
+check("EnsureSeeded('party') healerHoTs present",
+    auras.elements["*"][4] and auras.elements["*"][4].id == "healerHoTs",
+    tostring(auras.elements["*"][4] and auras.elements["*"][4].id))
 
 if failures > 0 then os.exit(1) end
 print("gf_default_strip_bucket_test: all checks passed")

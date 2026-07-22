@@ -771,7 +771,13 @@ local function GetHealthBarColor(unit, settings)
 
     if useClassColor and UnitIsPlayer(unit) then
         local _, class = UnitClass(unit)
-        if type(class) == "string" then
+        -- PTR7 (announced in Blizzard's addon-dev notes, next PTR build): classFile
+        -- is SECRET on compound tokens (targettarget, bossNtarget). type() is a
+        -- safe inspection, but the class-color table-index below throws on a
+        -- secret — probe first.
+        -- @secret-policy: collapse-only — fall through to hostility/default color
+        local classIsSecret = issecretvalue and issecretvalue(class)
+        if not classIsSecret and type(class) == "string" then
             local color = RAID_CLASS_COLORS[class]
             if color then
                 return color.r, color.g, color.b, 1

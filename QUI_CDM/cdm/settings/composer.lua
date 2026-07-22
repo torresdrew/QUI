@@ -2153,8 +2153,7 @@ StopDrag = function()
     if not spellData or not activeContainer then return end
 
     if fromSpecKey ~= targetSpecKey then
-        UIErrorsFrame:AddMessage(ns.L["Can only reorder within the same source spec"], 1.0, 0.3, 0.3, 1.0, 3)
-        UIErrorsFrame:SetFrameStrata("TOOLTIP")
+        if UIErrorsFrame then UIErrorsFrame:AddMessage(ns.L["Can only reorder within the same source spec"], 1.0, 0.3, 0.3, 1.0, 3); UIErrorsFrame:SetFrameStrata("TOOLTIP") end
         return
     end
 
@@ -2185,8 +2184,7 @@ StopDrag = function()
                 end
             end
             if count >= rd.iconCount then
-                UIErrorsFrame:AddMessage(string.format(ns.L["Row %1$d is full (%2$d/%3$d)"], targetRow, rd.iconCount, rd.iconCount), 1.0, 0.3, 0.3, 1.0, 3)
-                UIErrorsFrame:SetFrameStrata("TOOLTIP")
+                if UIErrorsFrame then UIErrorsFrame:AddMessage(string.format(ns.L["Row %1$d is full (%2$d/%3$d)"], targetRow, rd.iconCount, rd.iconCount), 1.0, 0.3, 0.3, 1.0, 3); UIErrorsFrame:SetFrameStrata("TOOLTIP") end
                 return
             end
         end
@@ -2322,10 +2320,7 @@ local function ShowEntryContextMenu(anchorCell, entry, entryIndex)
                     items[#items + 1] = {
                         label = lbl,
                         color = isFull and { 0.4, 0.4, 0.4 } or { ACCENT_R, ACCENT_G, ACCENT_B },
-                        action = isFull and function()
-                            UIErrorsFrame:AddMessage(string.format(ns.L["Row %1$d is full (%2$d/%3$d)"], rn, rowMax[rn], rowMax[rn]), 1.0, 0.3, 0.3, 1.0, 3)
-                            UIErrorsFrame:SetFrameStrata("TOOLTIP")
-                        end or function()
+                        action = isFull and function() if UIErrorsFrame then UIErrorsFrame:AddMessage(string.format(ns.L["Row %1$d is full (%2$d/%3$d)"], rn, rowMax[rn], rowMax[rn]), 1.0, 0.3, 0.3, 1.0, 3); UIErrorsFrame:SetFrameStrata("TOOLTIP") end end or function()
                             if InCombatLockdown() then return end
                             spellData:SetEntryRow(activeContainer, entryIndex, rn)
                             C_Timer.After(0.02, function()
@@ -3462,8 +3457,7 @@ RefreshAddList = function()
                                 end
                             end
                             if not targetRow then
-                                UIErrorsFrame:AddMessage(ns.L["All rows are full — remove a spell or increase row size"], 1.0, 0.3, 0.3, 1.0, 3)
-                                UIErrorsFrame:SetFrameStrata("TOOLTIP")
+                                if UIErrorsFrame then UIErrorsFrame:AddMessage(ns.L["All rows are full — remove a spell or increase row size"], 1.0, 0.3, 0.3, 1.0, 3); UIErrorsFrame:SetFrameStrata("TOOLTIP") end
                                 return
                             end
                         end

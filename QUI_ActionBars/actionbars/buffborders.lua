@@ -21,9 +21,12 @@
 -- TEMP WEAPON ENCHANTS render inside the buff container itself (PTR4
 -- AddItemEnchantment, placement=BeforeAuraGroups): the engine owns their
 -- frames, updates and flow position — no addon events, no lead-in offset.
--- Known gap: the engine click-cancel path is auraInstanceID-only and
--- no-ops for enchants, so right-click cancel of a temp enchant is
--- unavailable until Blizzard wires their own enchant-cancel TODO.
+-- 68824: enchant frames register for clicks the same as aura buttons
+-- (SetCancelAuraButtons, re-asserted every ConfigureEnchantments pass — see
+-- core/aura_skin.lua), so right-click cancel now works on temp enchants
+-- natively; C_PaperDollInfo.CancelTemporaryEnchantment(slot) also exists as
+-- a direct API. Pre-68824 clients keep the old auraInstanceID-only
+-- click-cancel path, under which a temp enchant click-cancel is unavailable.
 
 local _, ns = ...
 local Helpers = ns.Helpers
@@ -513,9 +516,11 @@ local function ApplyMoverElements(moverFrame, strips, isBuff, allowCreate)
             -- (PTR4 AddItemEnchantment, placement=BeforeAuraGroups — the
             -- engine-owned version of the old strip + lead-in). First call
             -- creates forbidden frames → OOC only; the layout mutator
-            -- re-applies every pass. Known gap: engine right-click cancel is
-            -- instanceID-only and no-ops for enchants (Blizzard's own
-            -- BuffFrame still cancels via the legacy path) — accepted.
+            -- re-applies every pass. 68824: right-click cancel is native
+            -- here too (SetCancelAuraButtons re-asserted on enchant frames
+            -- every AuraSkin.ConfigureEnchantments pass) — pre-68824
+            -- clients fall back to the legacy instanceID-only cancel path,
+            -- which does not reach enchant frames.
             if isBuff and i == 1 then
                 if InCombatLockdown() and not container._quiEnchantsAdded then
                     incomplete = true

@@ -399,6 +399,9 @@ local function DirectAuraLookup(unit, spellID)
     return nil
 end
 
+-- Returns true (present), false (definitely absent), or nil (UNKNOWN — aura
+-- data secret or unreadable). Callers must treat nil as "do not flag":
+-- flagging missing on unknown false-positives every secret-aura combat frame.
 function MRB:UnitHasBuff(unit, spellIDOrTable, spellName)
     if not unit or not UnitExists(unit) then return false end
 
@@ -437,6 +440,12 @@ function MRB:UnitHasBuff(unit, spellIDOrTable, spellName)
         end
     end
 
+    -- Past this point every remaining strategy is a best-effort read that can
+    -- legitimately fail closed (pcall error) or hand back a secret we can't
+    -- inspect. `unknown` tracks whether that happened so a clean "nothing
+    -- found" scan (false) stays distinguishable from "couldn't tell" (nil).
+    local unknown = false
+
     if spellName and AuraUtil and AuraUtil.FindAuraByName then
         local ok, aura = pcall(AuraUtil.FindAuraByName, spellName, unit, "HELPFUL")
         -- Probe before the truth-test: the returned name can be secret for a
@@ -444,12 +453,18 @@ function MRB:UnitHasBuff(unit, spellIDOrTable, spellName)
         if ok then
             if IsSecretValue(aura) then
                 -- @secret-policy: readable-only-scan — unidentifiable; fall
-                -- through to the other scan strategies.
+                -- through to the other scan strategies, but this unit's
+                -- status can no longer be called a definite absence.
                 aura = nil
+                unknown = true
             end
             if aura then
                 return true
             end
+        else
+            -- The guarded call itself failed (secret-tainted throw inside
+            -- Blizzard's lookup) — can't determine, fall through.
+            unknown = true
         end
     end
 
@@ -470,9 +485,10 @@ function MRB:UnitHasBuff(unit, spellIDOrTable, spellName)
         while true do
             index = index + 1
             local ok, auraData = pcall(GetAuraDataByIndex, unit, index, "HELPFUL")
-            if not ok then break end
+            if not ok then unknown = true; break end
             if IsSecretValue(auraData) then
                 -- @secret-policy: readable-only-scan
+                unknown = true
             elseif not auraData then
                 break
             else
@@ -486,8 +502,13 @@ function MRB:UnitHasBuff(unit, spellIDOrTable, spellName)
                 end
             end
         end
+    elseif GetAuraDataByIndex and AurasAreSecret() then
+        -- Auras are globally secret and the index-scan fallback couldn't run
+        -- at all: zero coverage for these spellIDs this pass.
+        unknown = true
     end
 
+    if unknown then return nil end
     return false
 end
 
@@ -500,6 +521,10 @@ end
 -- True iff `unit` carries one of `ids` cast by the player. For whitelisted IDs
 -- the aura is non-secret, so isFromPlayerOrPlayerPet is readable; otherwise fall
 -- back to the player-cast aura filter (C-side caster check, no secret read).
+-- Returns true (present, cast by the player), false (definitely absent), or
+-- nil (UNKNOWN — aura data secret or unreadable). Callers must treat nil as
+-- "do not flag": flagging missing on unknown false-positives every
+-- secret-aura combat frame.
 function MRB:UnitHasMyBuff(unit, ids)
     if not unit or not SafeBoolean(UnitExists, unit, false) then return false end
     for i = 1, #ids do
@@ -514,15 +539,20 @@ function MRB:UnitHasMyBuff(unit, ids)
     -- Probe-first index scan — never AuraUtil.ForEachAura (its internal
     -- `if auraInfo` truth-test throws on whole-secret entries before the
     -- callback runs). A secret entry is NOT end-of-list: skip and continue.
+    -- `unknown` mirrors MRB:UnitHasBuff's contract: a pcall failure, a secret
+    -- entry the probe already caught, or the scan being globally gated off
+    -- all mean "couldn't tell", never a silent false.
+    local unknown = false
     if GetAuraDataByIndex and not AurasAreSecret() then
         -- Unbounded until the nil terminator (see the index scan above).
         local index = 0
         while true do
             index = index + 1
             local ok, auraData = pcall(GetAuraDataByIndex, unit, index, "HELPFUL|PLAYER")
-            if not ok then break end
+            if not ok then unknown = true; break end
             if IsSecretValue(auraData) then
                 -- @secret-policy: readable-only-scan
+                unknown = true
             elseif not auraData then
                 break
             else
@@ -534,7 +564,12 @@ function MRB:UnitHasMyBuff(unit, ids)
                 end
             end
         end
+    elseif GetAuraDataByIndex and AurasAreSecret() then
+        -- Auras are globally secret and the index-scan fallback couldn't run
+        -- at all: zero coverage for these ids this pass.
+        unknown = true
     end
+    if unknown then return nil end
     return false
 end
 
@@ -635,15 +670,27 @@ function MRB:PlayerIsProviderSpec(buff)
     return cur ~= nil and specs[cur] == true
 end
 
--- True iff at least one eligible group member carries one of `ids` cast by ME.
+-- Aggregate tristate over the eligible group: true if any eligible ally
+-- definitely carries one of `ids` cast by ME; false only if every eligible
+-- ally's status was definitely determined and none carried it; nil
+-- (UNKNOWN) if at least one eligible ally's status could not be read and no
+-- ally confirmed true — mirrors MRB:UnitHasBuff's contract (nil = "do not
+-- flag").
 function MRB:AnyEligibleAllyHasMyBuff(ids)
     local units = MRB._groupUnitsProbe()
+    local sawUnknown = false
     for i = 1, #units do
         local unit = units[i]
-        if MRB._eligibleProbe(unit) and MRB:UnitHasMyBuff(unit, ids) then
-            return true
+        if MRB._eligibleProbe(unit) then
+            local has = MRB:UnitHasMyBuff(unit, ids)
+            if has == true then
+                return true
+            elseif has == nil then
+                sawUnknown = true
+            end
         end
     end
+    if sawUnknown then return nil end
     return false
 end
 
@@ -679,9 +726,11 @@ function MRB:BuildMatches(unit, element, out)
         if ally then
             for i = 1, #ally do
                 local buff = ally[i]
+                -- Tristate consumer: only a definite false reminds the
+                -- player; nil (unknown ally aura data) shows nothing.
                 if MRB:PlayerIsProviderSpec(buff)
                     and MRB._spellKnownProbe(buff)
-                    and not MRB:AnyEligibleAllyHasMyBuff(buff.ids)
+                    and MRB:AnyEligibleAllyHasMyBuff(buff.ids) == false
                 then
                     out[#out + 1] = GetSyntheticAura(buff)
                 end
@@ -694,7 +743,9 @@ function MRB:BuildMatches(unit, element, out)
         local buff = RAID_BUFFS[i]
         if ElementShouldCheckBuff(element or {}, buff) then
             local name = GetBuffName(buff)
-            if not self:UnitHasBuff(unit, buff.ids, name) then
+            -- Tristate: only a definite false is a missing-buff flag; nil
+            -- (unknown/secret aura data) renders nothing this pass.
+            if self:UnitHasBuff(unit, buff.ids, name) == false then
                 out[#out + 1] = GetSyntheticAura(buff)
             end
         end

@@ -54,9 +54,26 @@ do -- spec bucket backfilled, context bucket untouched, stamp moves
             check("copy, not alias", e ~= elements["*"][1])
         end
     end
-    check("context bucket untouched", #elements["i2810"] == 1 and elements["i2810"][1].id == 9)
+    -- v54 ITSELF never touches "i2810" (that's what this check proves — see
+    -- ExtendDefensivesToSpecBuckets's numeric-only bucketKey filter); the
+    -- original id=9 element and its position survive. This profile's
+    -- RunOnProfile call cascades all the way to the CURRENT schema, though,
+    -- so a LATER, independent step in the same chain — v57's
+    -- SeedHealerHoTElements, which (unlike v54) fans a _quiHoTSeed element
+    -- into string i/e context buckets too, see core/migrations.lua's v57 doc
+    -- — legitimately appends a second element to this same bucket. That's
+    -- expected and unrelated to v54; the assertion below still pins v54's
+    -- own no-touch behavior (original element unmoved, no "defensives"
+    -- landed) while accounting for the v57 addition.
+    check("context bucket: v54 leaves the original element untouched (in place)",
+        elements["i2810"][1] and elements["i2810"][1].id == 9)
+    check("context bucket: v54 itself injects no 'defensives' element into it",
+        countDefensives(elements["i2810"]) == 0)
+    check("context bucket: only the v57 healerHoTs fan-out added anything (no other growth)",
+        #elements["i2810"] == 2 and elements["i2810"][2]._quiHoTSeed == true,
+        tostring(#elements["i2810"]))
     check("'*' still has exactly one", countDefensives(elements["*"]) == 1)
-    check("stamped 56", p._schemaVersion == 56, tostring(p._schemaVersion))
+    check("stamped 57", p._schemaVersion == 57, tostring(p._schemaVersion))
 end
 
 do -- disabled "*" defensives mirrors as disabled

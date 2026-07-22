@@ -80,6 +80,12 @@ function G.ElementProfile(element, overrides)
         -- (aura_skin styleButton falls back to AuraTheme.BorderColor). The
         -- seeded GF "defensives" strip ships green through this field.
         borderColor  = element.borderColor,
+        -- Optional per-element dispel-type border palette; absent = engine
+        -- default dispel colors (aura_skin buildButtonArt only sets
+        -- customDispelColorMap when this is a table). No UI exposure yet
+        -- (task 10) -- this is the passthrough pin so a future writer isn't
+        -- silently dropped before it ever reaches the runtime.
+        dispelColors = element.dispelColors,
     }
     if overrides then
         for k, v in pairs(overrides) do p[k] = v end

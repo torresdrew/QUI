@@ -106,11 +106,87 @@ local _currentGlobalDB     = nil  -- db.global; for cross-profile reads (v32+)
 --        classify-equivalence presence check already prevented the
 --        analogous "defensives" duplicate.)
 --
+--   v57: SeedHealerHoTElements — an upcoming PTR build makes ~42 healer
+--        HoT/absorb spell ids secret in combat; the legacy Lua-side
+--        spellID matcher (buffsBySpellID) cannot see secret auras and
+--        silently drops the icon, but engine-rendered tracked slots
+--        (AuraSlots) render them C-side. Injects ONE shipped "tracked"
+--        element (flagged _quiHoTSeed) carrying the non-secret-preset
+--        union of HoT ids into every LATCHED "*" bucket (GF party/raid) —
+--        same injection scope/shape as v51(e)'s FoldDefensiveIndicatorIntoElements
+--        (elementsSeeded-gated, "*" only), PLUS a fan-out into every OTHER
+--        override bucket that REPLACES "*" at render time rather than
+--        merging with it (E.ActiveElementsForSpec's OVERRIDE semantics),
+--        covering all three override dimensions the cascade resolves ahead
+--        of "*": numeric spec-override buckets (the v54-style
+--        ExtendDefensivesToSpecBuckets idiom established for "defensives"),
+--        AND the string context buckets "i"..mapID / "e"..encounterID
+--        (E.InstanceBucketKey / E.EncounterBucketKey, tried by
+--        core/aura_context.lua ahead of specID) — a pre-existing i/e bucket
+--        would otherwise silently drop the healer-HoT element for the whole
+--        instance/encounter it covers, which is exactly the raid content
+--        this element exists for. So after "*" is seeded (or found already
+--        seeded) every numeric/i.../e... bucket lacking a _quiHoTSeed
+--        element gets a CloneValue copy of "*"'s element appended, mirroring
+--        its enabled state (the clone is a full deep copy, so whatever "*"'s
+--        element carries — including enabled — comes along automatically,
+--        exactly like ExtendDefensivesToSpecBuckets). "*" itself is never a
+--        fan-out target (it's the source, not a peer bucket). Folded into
+--        this SAME v57 step rather than a separate later-versioned repair
+--        (unlike v54, which patched an already-shipped v51 gap under its
+--        own gate) because v57 itself is still staged/unreleased when this
+--        fan-out was added — no profile in the wild is stamped 57 yet, so
+--        there is nothing to backfill retroactively. (v54's ExtendDefensivesToSpecBuckets
+--        itself still excludes i/e buckets — see that function's comment —
+--        so a pre-existing i/e bucket predating v54 can still be missing
+--        the "defensives" element; that gap is a released-profile backfill
+--        and out of scope here.) If "*" isn't a table at all (the same
+--        unlatched edge case the "*"-seeding step above already no-ops on),
+--        there is nothing to mirror and the fan-out is skipped for that
+--        surface, exactly like ExtendDefensivesToSpecBuckets skips when its
+--        "*" lookup finds no base element. This migration covers only
+--        profiles whose GF buckets were ALREADY LATCHED before this version
+--        shipped — a profile that
+--        latches for the first time on or after v57 gets the identical
+--        element straight from the runtime default instead: core/aura_elements.lua
+--        E.EnsureSeeded calls the surface's defaultBucketFn, and
+--        QUI_GroupFrames/groupframes/groupframes_aura_model.lua
+--        Model.DefaultStripBucket (that closure's target) now appends
+--        Model.HealerHoTElement() unconditionally. SAME GATING PATTERN as
+--        v51(e)'s BuildShippedDefensivesElement (a single linear
+--        `if stored < N` gate, injected literal, elementsSeeded-gated
+--        "*"-only bucket resolution) but a DIFFERENT DEPENDENCY PROFILE:
+--        BuildShippedDefensivesElement is a dependency-free plain-table
+--        literal, while this step needs _G.QUI.AuraElements.NewTrackedElement
+--        (core, TOC-guaranteed loaded by the time any Migrations.Run call
+--        site fires — silently no-ops per-profile via the `not (E and
+--        E.NewTrackedElement) then return true` guard if somehow absent, same
+--        belt-and-braces shape as the v51-squash steps' element-model check).
+--        Reads its spell list from the SAME canonical source the model
+--        default uses — E.HealerHoTSpellIDs() (core/aura_elements.lua) — so
+--        this migration's element and the runtime default's element can
+--        never drift apart from each other; that source in turn is pinned
+--        (tests/unit/migration_v57_hot_element_seed_test.lua, set- and
+--        order-equality) against the independent ground truth
+--        QUI_GroupFrames' AuraDefaults.SeedHealerHoTElements derives at
+--        runtime from SPEC_AURA_PRESETS (group_frames_aura_defaults.lua) —
+--        this migration does NOT call into that Options-side function
+--        directly: Migrations.Run's primary call site (QUICore:OnInitialize,
+--        core/main.lua) fires on the QUI addon's own ADDON_LOADED, strictly
+--        before the QUI_GroupFrames sub-addon (a TOC dependent) has loaded,
+--        so that table is nil on every normal login. Deliberately UNCAPPED
+--        (no maxIcons): AuraSlots binds tracked slots 1:1 per spellID in array
+--        order and a maxIcons cap would strand every spell past the cap with
+--        no watching slot — this element carries 42 ids across 8 specs
+--        specifically so each spec's non-secret HoTs get a slot; onlyMine=true
+--        means only the player's own current spec's ids ever have anything to
+--        bind (the rest sit dormant, not truncated).
+--
 -- When adding a new migration: bump CURRENT_SCHEMA_VERSION (next free number
--- is 57 — see the burned-numbers rule above), add a single linear gate in
+-- is 58 — see the burned-numbers rule above), add a single linear gate in
 -- RunOnProfile, and document the version above.
 ---------------------------------------------------------------------------
-local CURRENT_SCHEMA_VERSION = 56
+local CURRENT_SCHEMA_VERSION = 57
 
 -- The oldest schema we still carry forward. The last 4.x stable release and
 -- 5.0 alpha4 both shipped schema 47, and every step-by-step migration through
@@ -1063,6 +1139,147 @@ function Migrations.RepairSpecBucketBossStrips(profile)
         for _, key in ipairs({ "party", "raid" }) do
             local surface = gf[key]
             if type(surface) == "table" then repairStore(surface.auras) end
+        end
+    end
+    return true
+end
+
+-- v57: see the version doc at the top of the file. Spells for the injected
+-- element come from core/aura_elements.lua E.HealerHoTSpellIDs() — the
+-- SINGLE canonical copy of the non-secret union, shared with the runtime
+-- default (QUI_GroupFrames/groupframes/groupframes_aura_model.lua
+-- Model.HealerHoTElement) so this migration's element and the runtime
+-- default's element can never drift apart from each other. That source is,
+-- in turn, pinned (set- and order-equality) against the independent ground
+-- truth: AuraDefaults.SeedHealerHoTElements
+-- (QUI_GroupFrames/groupframes/settings/group_frames_aura_defaults.lua)
+-- derives the non-secret union at runtime from SPEC_AURA_PRESETS, ordered
+-- by preset-then-spell occurrence with duplicates dropped (Prayer of
+-- Mending, id 41635, is shared by Discipline and Holy Priest — kept once,
+-- at its first occurrence). Every `secret = true` preset entry is
+-- deliberately excluded (Blessing of Protection, Pain Suppression, Guardian
+-- Spirit, Life Cocoon, etc. — those already render via engine-native paths
+-- / other tracked surfaces; this element exists specifically for the ids
+-- that would otherwise silently vanish).
+-- tests/unit/migration_v57_hot_element_seed_test.lua asserts
+-- E.HealerHoTSpellIDs() stays byte-for-byte equal to that
+-- AuraDefaults.SpecPresets()-derived union, so the two can never drift.
+--
+-- The four skip guards below (no E.NewTrackedElement / quiGroupFrames not a
+-- table / auras.elementsSeeded unlatched / elements["*"] missing) each used to
+-- mean a permanent miss: the caller (the `stored < 57` gate above) stamps
+-- schema 57 regardless of whether this function actually seeded anything, so
+-- a profile that fails any guard here — most commonly an unlatched surface
+-- because the user never opened group frames — would never get another
+-- migration pass at it. That gap is closed: an unlatched surface gets the
+-- SAME element from the runtime MODEL DEFAULT instead —
+-- QUI_GroupFrames/groupframes/groupframes_aura_model.lua
+-- Model.DefaultStripBucket now appends Model.HealerHoTElement()
+-- unconditionally, and core/aura_elements.lua E.EnsureSeeded calls that
+-- bucket builder the FIRST time ANY surface (runtime render, editmode,
+-- preview, the Options Auras section, the setup wizard — not just Options)
+-- latches its "*" bucket. Both paths share the same _quiHoTSeed presence
+-- guard, so whichever runs first (migration-then-latch or
+-- latch-then-migration) makes the other a no-op — the stamp-anyway behavior
+-- below is safe BY DESIGN now, not by accident.
+
+-- True for any elements-table key that is an OVERRIDE bucket the render
+-- cascade (E.ActiveElementsForSpec, via core/aura_context.lua's contextKeys)
+-- would pick INSTEAD OF "*" — i.e. every bucket shape "*" is not: numeric
+-- specID buckets, plus the string context buckets E.InstanceBucketKey
+-- ("i"..mapID) / E.EncounterBucketKey ("e"..encounterID) produce. "*" itself
+-- always returns false here — it is the fan-out's SOURCE bucket, never a
+-- target. No other key shape exists in this table (see core/aura_elements.lua
+-- file header + E.EnsureSeeded/ActiveElementsForSpec; grepped writers confirm
+-- only "*", numeric specID, and "i"/"e" context keys are ever assigned).
+local function IsHoTOverrideBucketKey(bucketKey)
+    if type(bucketKey) == "number" then return true end
+    if type(bucketKey) ~= "string" or bucketKey == "*" then return false end
+    return bucketKey:match("^i%d+$") ~= nil or bucketKey:match("^e%d+$") ~= nil
+end
+
+function Migrations.SeedHealerHoTElements(profile)
+    local E = _G.QUI and _G.QUI.AuraElements
+    if not (E and E.NewTrackedElement and E.HealerHoTSpellIDs) then return true end
+    local gf = profile.quiGroupFrames
+    if type(gf) ~= "table" then return true end
+    for _, key in ipairs({ "party", "raid" }) do
+        local surface = gf[key]
+        local a = type(surface) == "table" and surface.auras
+        local elements = type(a) == "table" and a.elementsSeeded
+            and type(a.elements) == "table" and a.elements
+        if elements then
+            local bucket = elements["*"]
+            if type(bucket) == "table" then
+                local present = false
+                for _, e in ipairs(bucket) do
+                    if type(e) == "table" and e._quiHoTSeed then present = true break end
+                end
+                if not present then
+                    local element = E.NewTrackedElement(E.HealerHoTSpellIDs(), "icon")
+                    -- Fixed id (not the session-scoped "e<N>" counter
+                    -- NewTrackedElement assigns by default): the counter is
+                    -- not yet synced to existing bucket elements at
+                    -- OnInitialize, and this dedup check is a one-shot latch
+                    -- (the `present` scan above), so a counter-derived id can
+                    -- permanently collide with an existing element on legacy
+                    -- profiles. Same fixed-id precedent as "defensives" /
+                    -- "encounterBoss" (v51(e)/v56).
+                    element.id = "healerHoTs"
+                    element.onlyMine = true
+                    -- Deliberately UNCAPPED: leave maxIcons absent (0/absent =
+                    -- uncapped per core/aura_slots.lua Sync's `cap and cap > 0
+                    -- and cap < total` check). AuraSlots binds slots 1:1 per
+                    -- spellID in element.spells' array order and stops at the
+                    -- cap — a maxIcons=4 here would strand every id past the
+                    -- first 4 (Restoration Druid's) with no watching slot,
+                    -- silently dropping the other 7/8 healer specs' HoTs
+                    -- entirely. onlyMine=true is the real bound: only the
+                    -- player's own current spec's ids ever have a live aura to
+                    -- match, so every other spec's slots simply sit unbound —
+                    -- not truncated, just unused until that spec is played.
+                    element.name = ns.L["Healer HoTs"]
+                    element._quiHoTSeed = true
+                    bucket[#bucket + 1] = element
+                end
+            end
+
+            -- Override-bucket fan-out (v54-style ExtendDefensivesToSpecBuckets
+            -- idiom, EXTENDED beyond spec buckets — see IsHoTOverrideBucketKey
+            -- and the v57 version doc above): every bucket the render cascade
+            -- would pick INSTEAD OF "*" — numeric spec-override buckets AND
+            -- the string "i"..mapID / "e"..encounterID context buckets —
+            -- REPLACES "*" at render time (E.ActiveElementsForSpec), it does
+            -- not merge with it, so a healer with a pre-existing override
+            -- bucket (spec, instance, OR encounter) would otherwise never see
+            -- this element even though "*" just got it (or already had it)
+            -- above. base is the "*" bucket's _quiHoTSeed element post-seed;
+            -- if "*" isn't a table at all (elements["*"] missing/non-table —
+            -- an unlatched edge case the seeding step above already no-ops
+            -- on) base stays nil and, exactly like v54, the fan-out below is
+            -- skipped for this surface.
+            local base
+            if type(bucket) == "table" then
+                for _, e in ipairs(bucket) do
+                    if type(e) == "table" and e._quiHoTSeed then base = e break end
+                end
+            end
+            if base then
+                for bucketKey, overrideBucket in pairs(elements) do
+                    -- "*" is the source above, never a fan-out target; any
+                    -- OTHER key shape (custom/unrecognized) is left alone too
+                    -- — see IsHoTOverrideBucketKey.
+                    if IsHoTOverrideBucketKey(bucketKey) and type(overrideBucket) == "table" then
+                        local specPresent = false
+                        for _, e in ipairs(overrideBucket) do
+                            if type(e) == "table" and e._quiHoTSeed then specPresent = true break end
+                        end
+                        if not specPresent then
+                            overrideBucket[#overrideBucket + 1] = CloneValue(base)
+                        end
+                    end
+                end
+            end
         end
     end
     return true
@@ -2234,6 +2451,21 @@ function Migrations.RunOnProfile(profile)
     -- buggy first-cut repair kept enabled-mismatched duplicates.
     if stored < 56 then
         Migrations.RepairSpecBucketBossStrips(profile)
+    end
+
+    -- v57: seed the engine-rendered healer-HoT tracked element (see the
+    -- version doc at the top of the file). Same LATCHED "*"-bucket-only
+    -- scope as v51(e); the migration's own _quiHoTSeed presence check
+    -- guards against a double even if a profile somehow already carries
+    -- one — no longer hypothetical: the runtime MODEL DEFAULT
+    -- (QUI_GroupFrames/groupframes/groupframes_aura_model.lua
+    -- Model.DefaultStripBucket / Model.HealerHoTElement, delivered via
+    -- core/aura_elements.lua E.EnsureSeeded on any surface's first bucket
+    -- latch) lands the same element for surfaces this migration finds
+    -- unlatched, so the < 57 stamp below is unconditionally safe regardless
+    -- of load order.
+    if stored < 57 then
+        Migrations.SeedHealerHoTElements(profile)
     end
 
     profile._schemaVersion = CURRENT_SCHEMA_VERSION

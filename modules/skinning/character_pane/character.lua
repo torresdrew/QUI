@@ -1157,6 +1157,10 @@ local function CreateSlotOverlay(slotFrame, slotInfo, unit)
     local customEnchantColor = IsInspectUnit(overlayUnit) and settings.inspectEnchantTextColor or settings.enchantTextColor
     if useClassColor then
         local _, class = UnitClass(overlayUnit)
+        -- PTR7: classFile is secret for secret-identity inspect targets.
+        -- @secret-policy: collapse-only — skin falls back to neutral styling
+        local classIsSecret = issecretvalue and issecretvalue(class)
+        if classIsSecret then class = nil end
         local classColor = Helpers.GetClassColorTable(class)
         if classColor then
             enchantColor = {classColor.r, classColor.g, classColor.b}
@@ -1383,6 +1387,10 @@ local function UpdateSlotOverlay(overlay, unit)
         noEnchantColor = noEnchantColor or {0.5, 0.5, 0.5}
         if useClassColor then
             local _, class = UnitClass(unit)
+            -- PTR7: classFile is secret for secret-identity inspect targets.
+            -- @secret-policy: collapse-only — skin falls back to neutral styling
+            local classIsSecret = issecretvalue and issecretvalue(class)
+            if classIsSecret then class = nil end
             local classColor = Helpers.GetClassColorTable(class)
             if classColor then
                 enchantColor = {classColor.r, classColor.g, classColor.b}
@@ -2926,7 +2934,11 @@ local function UpdateStatsPanel(panel, unit)
             tooltipBody = STAT_CRITICAL_STRIKE_TOOLTIP
         elseif stat.statKey == "HASTE" then
             local _, class = UnitClass(unit)
-            tooltipBody = _G["STAT_HASTE_"..class.."_TOOLTIP"] or STAT_HASTE_TOOLTIP
+            -- PTR7: classFile is secret for secret-identity inspect targets.
+            -- @secret-policy: collapse-only — concat throws on secret; safe fallback in all branches
+            local classIsSecret = issecretvalue and issecretvalue(class)
+            if classIsSecret then class = nil end
+            tooltipBody = class and _G["STAT_HASTE_"..class.."_TOOLTIP"] or STAT_HASTE_TOOLTIP
         elseif stat.statKey == "MASTERY" then
             tooltipBody = STAT_MASTERY_TOOLTIP
         elseif stat.statKey == "VERSATILITY" then
@@ -2947,10 +2959,14 @@ local function UpdateStatsPanel(panel, unit)
                 end
             elseif stat.statKey == "HASTE" then
                 local _, class = UnitClass(unit)
+                -- PTR7: classFile is secret for secret-identity inspect targets.
+                -- @secret-policy: collapse-only — concat throws on secret; safe fallback in all branches
+                local classIsSecret = issecretvalue and issecretvalue(class)
+                if classIsSecret then class = nil end
                 local hasteRating = SafeGetStat(GetCombatRating, CR_HASTE_SPELL)
                 local hasteBonus = SafeGetStat(GetCombatRatingBonus, CR_HASTE_SPELL)
                 row.tooltip = HIGHLIGHT_FONT_COLOR_CODE..format(PAPERDOLLFRAME_TOOLTIP_FORMAT, STAT_HASTE)..FONT_COLOR_CODE_CLOSE
-                row.tooltip2 = _G["STAT_HASTE_"..class.."_TOOLTIP"] or STAT_HASTE_TOOLTIP
+                row.tooltip2 = class and _G["STAT_HASTE_"..class.."_TOOLTIP"] or STAT_HASTE_TOOLTIP
                 row.tooltip2 = row.tooltip2 .. format(STAT_HASTE_BASE_TOOLTIP, BreakUpLargeNumbers(hasteRating), hasteBonus)
             elseif stat.statKey == "MASTERY" then
                 local mastery, bonusCoeff = SafeGetStatValues(GetMasteryEffect)
@@ -3118,6 +3134,10 @@ local function UpdateStatsPanel(panel, unit)
     local classFilter = {}
     do
         local _, cls = UnitClass(unit)
+        -- PTR7: classFile is secret for secret-identity inspect targets.
+        -- @secret-policy: collapse-only — skin falls back to neutral styling
+        local clsIsSecret = issecretvalue and issecretvalue(cls)
+        if clsIsSecret then cls = nil end
         local casterClasses = { MAGE = true, PRIEST = true, WARLOCK = true }
         local hybridClasses = { DRUID = true, PALADIN = true, SHAMAN = true, EVOKER = true, MONK = true }
         classFilter.ATTACK_POWER = not casterClasses[cls]
@@ -3195,6 +3215,10 @@ local function UpdateStatsPanel(panel, unit)
     local block = SafeGetStat(GetBlockChance)
     local staggerPercent = 0
     local _, classTag = UnitClass(unit)
+    -- PTR7: classFile is secret for secret-identity inspect targets.
+    -- @secret-policy: collapse-only — skin falls back to neutral styling
+    local classTagIsSecret = issecretvalue and issecretvalue(classTag)
+    if classTagIsSecret then classTag = nil end
     local isBrewmaster = false
 
     if classTag == "MONK" and unit == "player" and GetSpecialization and GetSpecializationInfo then

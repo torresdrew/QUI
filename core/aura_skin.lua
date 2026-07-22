@@ -112,7 +112,7 @@ end
 -- ApplyAuraBorder reads the secret dispel fields secure-side.  Both run inside the
 -- secure apply where secret compares are allowed — the earlier "blank" was the
 -- unsized container, not these setters.
-local function buildButtonArt(button)
+local function buildButtonArt(button, container)
     if button._quiWired then return end
     button._quiWired = true
 
@@ -133,11 +133,18 @@ local function buildButtonArt(button)
     dispel:SetColorTexture(1, 1, 1, 1)
     if dispel.DisablePixelSnap then dispel:DisablePixelSnap() end
     button._quiDispel = dispel
-    button:SetAuraBorder(dispel, {
+    local borderOpts = {
         style = 1,                 -- AuraButtonBorderStyle.Color (secure-env enum; mirror value)
         showWhenHarmful = true,
         showWhenHelpful = false,
-    })
+    }
+    -- 68824: optional per-element dispel palette. SetAuraBorder securecopies
+    -- options, so passing an addon table (and nested color tables) is safe.
+    local prof = container and container._quiProfile
+    if prof and type(prof.dispelColors) == "table" then
+        borderOpts.customDispelColorMap = prof.dispelColors
+    end
+    button:SetAuraBorder(dispel, borderOpts)
 
     -- Icon (ARTWORK, inset 1px so the border shows as a ring).  Cropped 8% per
     -- edge to cut the bevel baked into icon art (engine's ApplyIcon only calls
@@ -361,13 +368,20 @@ local function ApplyContainerLayout(container, L)
 end
 
 -- Per-group flow contribution: spacing + explicit element size.
-local function GroupLayout(L)
-    return {
+local function GroupLayout(L, g)
+    local t = {
         elementSpacingX = L.spacing,
         elementSpacingY = L.spacing,
         elementWidth    = L.iconSize,
         elementHeight   = L.iconSize,
     }
+    -- 68824: explicit ordering. Registration order was the implicit order;
+    -- layoutIndex pins it so a fallback-path re-registration (new composite
+    -- key appends LAST) can no longer reorder groups visually.
+    if g and type(g._quiOrder) == "number" then
+        t.layoutIndex = g._quiOrder
+    end
+    return t
 end
 
 -- Per-group initializeFrame: the engine securecallfunction()s this once per
@@ -386,7 +400,7 @@ end
 -- — combat-legal, no secure header.
 local function MakeInitializer(container, _groupDesc)
     return function(button)
-        buildButtonArt(button)
+        buildButtonArt(button, container)
         styleButton(button, container._quiProfile or {})
         if button.SetCancelAuraButtons then
             button:SetCancelAuraButtons(container._quiCancelButtons)
@@ -403,24 +417,67 @@ local function MakeInitializer(container, _groupDesc)
     end
 end
 
+-- Iterate every live engine button. 68824+ containers expose sanctioned
+-- enumeration (GetAuraGroupFrame/GetAuraGroupFrameCount); older containers
+-- fall back to the birth-time _quiButtons registry MakeInitializer maintains.
+-- Item-enchant frames are NOT group members — they only exist in the
+-- registry, so the engine path also walks the registry for any button not
+-- yet seen (dedup via button._quiTracked is already set at birth).
+local function EachTrackedButton(container, fn)
+    local seen
+    if container.GetAuraGroupFrame and container.GetAuraGroupFrameCount then
+        seen = {}
+        local registered = container._quiGroups
+        if registered then
+            for key in pairs(registered) do
+                local count = container:GetAuraGroupFrameCount(key)
+                for i = 1, count or 0 do
+                    local button = container:GetAuraGroupFrame(key, i)
+                    if button then
+                        seen[button] = true
+                        fn(button)
+                    end
+                end
+            end
+        end
+    end
+    local reg = container._quiButtons
+    if reg then
+        for i = 1, #reg do
+            local button = reg[i]
+            if button and not (seen and seen[button]) then
+                fn(button)
+            end
+        end
+    end
+end
+
 -- Configure: reconcile this container's aura groups + grid shape.
--- PTR4 groups can NEVER be removed by addons (the group-clearing API is
--- private-mixin-only, not addon-callable) and a group's filter string is
--- immutable — so the registry key embeds the filter string: any filter
--- change lands on a fresh key, the old key is retired to zero frames, and
--- repeat Configures with the same settings only touch the mutators. The
--- consumer keeps SetUnit (MUST run before Configure — group registration
--- eagerly parses auras), SetEnabled/Show/Hide, and container anchoring.
+-- 68824+: SetAuraGroupFilterString lets a group's filter mutate in place, so
+-- capable containers (canMutateFilter below) register with the BARE group
+-- key and a filter change is an in-place rewrite — no new group, no leak.
 --
--- KNOWN RESOURCE BOUND (accepted): each NEVER-BEFORE-SEEN canonical filter
--- string permanently costs one engine frame provider + one eager frame batch
--- (FrameCreationBatchSize = 10 buttons) per live container until /reload —
--- Blizzard exposes no group removal. Growth is bounded by DISTINCT filter
--- strings ever configured, NOT by change count: a returning string reuses
--- its still-registered key below (registered[key] persists through retire),
--- so cycling A→B→A stabilizes at two groups. Worst realistic case is a user
--- iterating novel filter edits on a 40-frame raid surface; a /reload
--- reclaims everything.
+-- PRE-68824 FALLBACK: PTR4 groups can NEVER be removed by addons (the
+-- group-clearing API is private-mixin-only, not addon-callable) and a
+-- group's filter string is immutable — so the registry key embeds the
+-- filter string: any filter change lands on a fresh key, the old key is
+-- retired to zero frames, and repeat Configures with the same settings only
+-- touch the mutators. The consumer keeps SetUnit (MUST run before Configure
+-- — group registration eagerly parses auras), SetEnabled/Show/Hide, and
+-- container anchoring.
+--
+-- KNOWN RESOURCE BOUND (fallback path only, accepted): each NEVER-BEFORE-
+-- SEEN canonical filter string permanently costs one engine frame provider
+-- + one eager frame batch (FrameCreationBatchSize = 10 buttons) per live
+-- container until /reload — pre-68824 Blizzard exposes no group removal.
+-- Growth is bounded by DISTINCT filter strings ever configured, NOT by
+-- change count: a returning string reuses its still-registered key below
+-- (registered[key] persists through retire), so cycling A→B→A stabilizes at
+-- two groups. Worst realistic case is a user iterating novel filter edits on
+-- a 40-frame raid surface; a /reload reclaims everything. Capable (68824+)
+-- containers never hit this bound at all — SetAuraGroupFilterString rewrites
+-- the SAME group in place, so the key set is bounded by group COUNT, not by
+-- every filter string ever seen.
 -- NOT combat-safe by contract: consumers pcall this in combat and fall back
 -- to Restyle + an OOC replay queue.
 function AuraSkin.Configure(container, profile, groups)
@@ -448,8 +505,18 @@ function AuraSkin.Configure(container, profile, groups)
     end
     local wanted = {}
     local E = ResolveAuraElements()
+    -- 68824+: SetAuraGroupFilterString exists → filters mutate in place, so
+    -- the registry key can be the bare group key (see header). Probed once
+    -- per Configure call, not per group — the container's capability can't
+    -- change mid-loop.
+    local canMutateFilter = container.SetAuraGroupFilterString ~= nil
     for i = 1, #groups do
         local g = groups[i]
+        -- Registration order (the caller's array order) was always the
+        -- IMPLICIT visual order; stamp it explicitly onto the descriptor so
+        -- GroupLayout can pin it via layoutIndex — see GroupLayout's header
+        -- for why this matters on the fallback path.
+        g._quiOrder = i
         local gkey = g.key or ""
         -- "|" is the composite-key separator; a "|" inside g.key would let two
         -- distinct (key, filter) pairs collapse onto one registry entry and
@@ -467,7 +534,12 @@ function AuraSkin.Configure(container, profile, groups)
         -- just hashed into the key), so a group's own immutable filter
         -- string is always the canonical one.
         local filter = (E and E.CanonicalizeFilterString) and E.CanonicalizeFilterString(g.filter) or g.filter
-        local key = gkey .. "|" .. filter
+        -- 68824+: group filters are mutable (SetAuraGroupFilterString), so the
+        -- registry key is the BARE group key and a filter change is an
+        -- in-place rewrite — the composite-key retire scheme (and its
+        -- accepted frame-provider leak, see header) only applies to
+        -- pre-68824 containers.
+        local key = canMutateFilter and gkey or (gkey .. "|" .. filter)
         wanted[key] = true
         local maxCount   = g.maxFrameCount or L.maxIcons
         local sortMethod = g.sortMethod or AuraContainerSortMethod.Default
@@ -475,11 +547,14 @@ function AuraSkin.Configure(container, profile, groups)
         -- HasAuraGroup heals registry desync: a prior AddAuraGroup may have
         -- registered engine-side but thrown before our bookkeeping ran.
         if registered[key] or container:HasAuraGroup(key) then
+            if canMutateFilter and registered[key] ~= filter then
+                container:SetAuraGroupFilterString(key, filter)
+            end
             container:SetAuraGroupMaxFrameCount(key, maxCount)
             container:SetAuraGroupSortMethod(key, sortMethod, sortDir)
             container:SetAuraGroupCandidateFilters(key, g.candidateFilters)
-            container:SetAuraGroupLayout(key, GroupLayout(L))
-            registered[key] = true
+            container:SetAuraGroupLayout(key, GroupLayout(L, g))
+            registered[key] = filter
         elseif not InCombatLockdown() then
             container:AddAuraGroup(key, filter, {
                 maxFrameCount    = maxCount,
@@ -487,9 +562,9 @@ function AuraSkin.Configure(container, profile, groups)
                 sortDirection    = sortDir,
                 candidateFilters = g.candidateFilters,
                 initializeFrame  = MakeInitializer(container, g),
-                layout           = GroupLayout(L),
+                layout           = GroupLayout(L, g),
             })
-            registered[key] = true
+            registered[key] = filter
         end
         -- (in combat with an unregistered key: skip — AddAuraGroup runs
         -- frameProvider:CreateFrameBatch() synchronously, i.e. forbidden
@@ -513,18 +588,12 @@ function AuraSkin.Configure(container, profile, groups)
         ScheduleRestrictedRestyle(container)
         return
     end
-    local reg = container._quiButtons
-    if reg then
-        for i = 1, #reg do
-            local button = reg[i]
-            if button then
-                styleButton(button, profile)
-                if button.SetCancelAuraButtons then
-                    button:SetCancelAuraButtons(container._quiCancelButtons)
-                end
-            end
+    EachTrackedButton(container, function(button)
+        styleButton(button, profile)
+        if button.SetCancelAuraButtons then
+            button:SetCancelAuraButtons(container._quiCancelButtons)
         end
-    end
+    end)
 end
 
 -- Restyle: combat-legal subset — re-apply fonts/colors/swipe to every
@@ -544,17 +613,12 @@ function AuraSkin.Restyle(container, profile)
         ScheduleRestrictedRestyle(container)
         return
     end
-    local reg = container._quiButtons
-    if not reg then return end
-    for i = 1, #reg do
-        local button = reg[i]
-        if button then
-            styleButton(button, profile)
-            if button.SetCancelAuraButtons then
-                button:SetCancelAuraButtons(container._quiCancelButtons)
-            end
+    EachTrackedButton(container, function(button)
+        styleButton(button, profile)
+        if button.SetCancelAuraButtons then
+            button:SetCancelAuraButtons(container._quiCancelButtons)
         end
-    end
+    end)
 end
 
 -- Register the three weapon temp-enchant displays on a container (PTR4
@@ -584,6 +648,24 @@ function AuraSkin.ConfigureEnchantments(container, profile)
         elementWidth    = L.iconSize,
         elementHeight   = L.iconSize,
     })
+    -- 68824: temp weapon enchants support native click-to-cancel — the same
+    -- RegisterForClicks tokens as aura buttons. Re-assert on every pass so a
+    -- cancel toggle reaches enchant frames born on an earlier pass.
+    -- 68675: button writes hard-error on restricted children while auras are
+    -- secret (same restriction Configure/Restyle gate on) — skip the
+    -- re-assert during a secret window; the OOC restriction-clear replay
+    -- (ScheduleRestrictedRestyle) re-covers this pass once auras clear.
+    if not AurasAreSecret() then
+        local reg = container._quiButtons
+        if reg then
+            for i = 1, #reg do
+                local b = reg[i]
+                if b and b.SetCancelAuraButtons then
+                    b:SetCancelAuraButtons(container._quiCancelButtons)
+                end
+            end
+        end
+    end
     if not container._quiEnchantsAdded then
         local init = MakeInitializer(container, {})
         for _, slot in ipairs({ slots.MainHand, slots.OffHand, slots.Ranged }) do

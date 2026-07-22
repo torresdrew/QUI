@@ -286,6 +286,21 @@ local function GetClassData(unit)
     if not unit or not UnitExists(unit) then return nil, nil end
 
     local localizedClassName, classToken, classID = UnitClass(unit)
+    -- PTR7: classID is secret when the inspected unit has secret identity.
+    -- @secret-policy: collapse-only — inspect panel shows nothing for secret units
+    local classIDSecret = issecretvalue and issecretvalue(classID)
+    if classIDSecret then classID = nil end
+    -- localizedClassName is ConditionalSecret alongside classID (same PTR7
+    -- identity gate) and reaches the `or` below on its own if the
+    -- C_CreatureInfo overwrite is skipped.
+    -- @secret-policy: collapse-only — inspect panel shows nothing for secret units
+    local localizedClassNameSecret = issecretvalue and issecretvalue(localizedClassName)
+    if localizedClassNameSecret then localizedClassName = nil end
+    -- classToken is the `or` fallback AND the second return value handed
+    -- straight to callers — must be collapsed too, not just the primary.
+    -- @secret-policy: collapse-only — inspect panel shows nothing for secret units
+    local classTokenSecret = issecretvalue and issecretvalue(classToken)
+    if classTokenSecret then classToken = nil end
     if classID and C_CreatureInfo and C_CreatureInfo.GetClassInfo then
         local classInfo = C_CreatureInfo.GetClassInfo(classID)
         if classInfo and classInfo.className then
@@ -301,6 +316,9 @@ local function GetSpecName(unit, useInspectData)
 
     if useInspectData then
         local specID = GetInspectSpecialization(unit)
+        -- @secret-policy: collapse-only — no spec shown for secret units
+        local specIDSecret = issecretvalue and issecretvalue(specID)
+        if specIDSecret then specID = nil end
         if specID and specID > 0 then
             local _, specName = GetSpecializationInfoByID(specID)
             return specName

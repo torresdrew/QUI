@@ -464,6 +464,9 @@ end
 
 -- Shared raid buff detection (direct spell-ID lookup, pre-combat snapshot,
 -- name lookup, guarded iteration).
+-- Returns true (present), false (definitely absent), or nil (UNKNOWN — aura
+-- data secret or unreadable). Callers must treat nil as "do not flag":
+-- flagging missing on unknown false-positives every secret-aura combat frame.
 local function UnitHasBuff(unit, spellId, spellName, buffIDs)
     if not MissingRaidBuffs or not MissingRaidBuffs.UnitHasBuff then return false end
     return MissingRaidBuffs:UnitHasBuff(unit, buffIDs or spellId, spellName)
@@ -476,21 +479,27 @@ end
 
 -- Check if player has a buff, with toggle aura fallback (for raid buff entries)
 -- Toggle auras (e.g. Devotion Aura) don't place a HELPFUL buff on the caster when solo
+-- Tristate passthrough: true stays true; a confirmed false or an unknown nil
+-- both fall through to the toggle-aura fallback (an independent confirmation
+-- route), and if that doesn't confirm either, the original false/nil is
+-- returned unchanged — an unknown scan must never collapse to "missing".
 local function PlayerHasRaidBuff(buff)
-    if PlayerHasBuff(buff.spellId, buff.name, buff.buffIDs) then
+    local has = PlayerHasBuff(buff.spellId, buff.name, buff.buffIDs)
+    if has == true then
         return true
     end
     if buff.isToggleAura and buff.castSpellId and IsCurrentSpell then
         local ok, current = pcall(IsCurrentSpell, buff.castSpellId)
         if ok and current then return true end
     end
-    return false
+    return has
 end
 
 -- Check if any available group member is missing a specific buff
 local function AnyGroupMemberMissingBuff(spellId, spellName, rangeYards, buffIDs)
-    -- Check player first
-    if not PlayerHasBuff(spellId, spellName, buffIDs) then
+    -- Check player first — only a definite false counts as "missing";
+    -- unknown (nil, secret/unreadable aura data) is never flagged.
+    if PlayerHasBuff(spellId, spellName, buffIDs) == false then
         return true
     end
 
@@ -504,7 +513,7 @@ local function AnyGroupMemberMissingBuff(spellId, spellName, rangeYards, buffIDs
             -- buff on unverifiable identity). Fold before any truth-test.
             if IsSecretValue(isPlayer) then isPlayer = true end
             if IsUnitAvailable(unit, rangeYards) and not isPlayer then
-                if not UnitHasBuff(unit, spellId, spellName, buffIDs) then
+                if UnitHasBuff(unit, spellId, spellName, buffIDs) == false then
                     return true
                 end
             end
@@ -513,7 +522,7 @@ local function AnyGroupMemberMissingBuff(spellId, spellName, rangeYards, buffIDs
         for i = 1, GetNumGroupMembers() - 1 do
             local unit = "party" .. i
             if IsUnitAvailable(unit, rangeYards) then
-                if not UnitHasBuff(unit, spellId, spellName, buffIDs) then
+                if UnitHasBuff(unit, spellId, spellName, buffIDs) == false then
                     return true
                 end
             end
@@ -736,7 +745,9 @@ local function GetRelevantBuffs()
                 -- Provider mode: only show buffs the player's class can provide that are missing
                 if buff.providerClass == playerClass then
                     buff._hasBuff = PlayerHasRaidBuff(buff)
-                    if not buff._hasBuff then
+                    -- Tristate: only a definite false flags the icon as
+                    -- missing; nil (unknown/secret aura data) shows nothing.
+                    if buff._hasBuff == false then
                         table_insert(result, buff)
                     end
                 end
@@ -744,7 +755,7 @@ local function GetRelevantBuffs()
                 -- Default: show missing buffs where provider class is in the group
                 if groupClasses[buff.providerClass] then
                     buff._hasBuff = PlayerHasRaidBuff(buff)
-                    if not buff._hasBuff then
+                    if buff._hasBuff == false then
                         table_insert(result, buff)
                     end
                 end
@@ -755,9 +766,11 @@ local function GetRelevantBuffs()
         -- Reuses MissingRaidBuffs engine methods to avoid logic duplication.
         if ns.QUI_AllyBuffs and MissingRaidBuffs then
             for _, buff in ipairs(ns.QUI_AllyBuffs) do
+                -- Tristate consumer: only a definite false reminds the
+                -- player; nil (unknown ally aura data) shows nothing.
                 if MissingRaidBuffs:PlayerIsProviderSpec(buff)
                     and MissingRaidBuffs._spellKnownProbe(buff)
-                    and not MissingRaidBuffs:AnyEligibleAllyHasMyBuff(buff.ids)
+                    and MissingRaidBuffs:AnyEligibleAllyHasMyBuff(buff.ids) == false
                 then
                     table_insert(result, {
                         name = buff.label or buff.name,
@@ -1702,7 +1715,11 @@ function QUI_RaidBuffs:Debug()
         local canProvide = PlayerCanCastBuff(buff)
         local anyMissing = AnyGroupMemberMissingBuff(buff.spellId, buff.name, buffRange, buff.buffIDs)
         local status = ""
-        if hasProvider and not playerHas then
+        if playerHas == nil then
+            -- Unknown (secret/unreadable aura data) is never reported as
+            -- MISSING — this debug tool must not lie about the tristate.
+            status = hasProvider and "UNKNOWN" or "No provider"
+        elseif hasProvider and not playerHas then
             if providerInRange then
                 status = "MISSING"
             else
@@ -1725,6 +1742,8 @@ function QUI_RaidBuffs:Debug()
                     local hasText
                     if IsSecretValue(has) then
                         hasText = "SECRET"
+                    elseif has == nil then
+                        hasText = "UNKNOWN"
                     elseif has then
                         hasText = "HAS"
                     else

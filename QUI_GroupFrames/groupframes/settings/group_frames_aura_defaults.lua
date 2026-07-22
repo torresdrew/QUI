@@ -233,6 +233,70 @@ local function DeduplicatePresets(presets)
     return deduped
 end
 
+-- Read-only accessor for the shipped spec presets — lets consumers outside
+-- this file (e.g. the HoT seed below, future editor surfaces) reach the
+-- table without duplicating it. Returns the live table (not a copy), same
+-- as every other accessor in this file (GetDefaultPresets et al. read it
+-- directly); callers must not mutate it.
+function AuraDefaults.SpecPresets()
+    return SPEC_AURA_PRESETS
+end
+
+-- NOT called by any production path (v57 rework) — the shipped delivery is
+-- now the model default (QUI_GroupFrames/groupframes/groupframes_aura_model.lua
+-- Model.HealerHoTElement, reached via core/aura_elements.lua E.EnsureSeeded
+-- on any surface's first bucket latch) plus core/migrations.lua
+-- Migrations.SeedHealerHoTElements for profiles that latched before v57;
+-- both read the single canonical spell-id source core/aura_elements.lua
+-- E.HealerHoTSpellIDs(). This function stays ONLY as the tested
+-- drift-anchor primitive: it independently re-derives the non-secret union
+-- from SPEC_AURA_PRESETS below (the Options-side human-maintained ground
+-- truth core cannot see), and
+-- tests/unit/migration_v57_hot_element_seed_test.lua pins
+-- E.HealerHoTSpellIDs() against this derivation (set AND order) so an edit
+-- to the presets can never silently drift from what actually ships.
+-- Engine slots (AuraSlots) render secret auras C-side, so HoT icons survive
+-- the aura-secrecy expansion; the legacy Lua-side spellID match cannot see
+-- secret auras and silently drops them. Seed-once (bucket-mutating, flag on
+-- the element) — kept for the standalone/idempotence assertions the tests
+-- still run against it.
+function AuraDefaults.SeedHealerHoTElements(bucket)
+    if type(bucket) ~= "table" then return false end
+    for i = 1, #bucket do
+        if bucket[i] and bucket[i]._quiHoTSeed then return false end
+    end
+    local E = ns.AuraElements
+    if not (E and E.NewTrackedElement) then return false end
+    local spells, seen = {}, {}
+    for _, preset in ipairs(SPEC_AURA_PRESETS) do
+        for _, s in ipairs(preset.spells) do
+            if not s.secret and not seen[s.id] then
+                seen[s.id] = true
+                spells[#spells + 1] = s.id
+            end
+        end
+    end
+    local element = E.NewTrackedElement(spells, "icon")
+    -- Fixed id (not the session-scoped "e<N>" counter NewTrackedElement
+    -- assigns by default) — drift-pin parity with core/migrations.lua's
+    -- Migrations.SeedHealerHoTElements, same fixed-id precedent as
+    -- "defensives" / "encounterBoss".
+    element.id = "healerHoTs"
+    element.onlyMine = true
+    -- Deliberately UNCAPPED: leave maxIcons absent (0/absent = uncapped per
+    -- core/aura_slots.lua Sync's `cap and cap > 0 and cap < total` check).
+    -- AuraSlots binds slots 1:1 per spellID in `spells`' array order and
+    -- stops at the cap — a maxIcons=4 here would strand every id past the
+    -- first 4 (Restoration Druid's) with no watching slot, silently dropping
+    -- 7 of 8 healer specs' HoTs entirely. onlyMine=true is the real bound:
+    -- only the player's own current spec's ids ever have a live aura to
+    -- match, so every other spec's slots simply sit unbound, not truncated.
+    element.name = ns.L["Healer HoTs"]
+    element._quiHoTSeed = true
+    bucket[#bucket + 1] = element
+    return true
+end
+
 function AuraDefaults.GetDefaultPresets(options)
     options = options or {}
     local specID = options.specID or GetPlayerSpecID()

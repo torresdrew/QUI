@@ -69,7 +69,7 @@ do
     check("party: dedupeDefensives stripped",
         profile.quiGroupFrames.party.auras.elements["*"][1].dedupeDefensives == nil
         and profile.quiGroupFrames.party.auras.elements["*"][2].dedupeDefensives == nil)
-    check("stamped to current (56)", profile._schemaVersion == 56, tostring(profile._schemaVersion))
+    check("stamped to current (57)", profile._schemaVersion == 57, tostring(profile._schemaVersion))
 end
 
 ----------------------------------------------------------------------------
@@ -156,7 +156,9 @@ do
     local before = findById(profile.quiGroupFrames.party.auras.elements["*"], "defensives")
     M.RunOnProfile(profile)
     local after = findById(profile.quiGroupFrames.party.auras.elements["*"], "defensives")
-    check("idempotent", before == after and #profile.quiGroupFrames.party.auras.elements["*"] == 3)
+    -- debuffs + buffs + defensives (v51e) + the v57 HoT seed, run in the
+    -- same RunOnProfile pass on this schema-50 fixture.
+    check("idempotent", before == after and #profile.quiGroupFrames.party.auras.elements["*"] == 4)
 end
 
 ----------------------------------------------------------------------------

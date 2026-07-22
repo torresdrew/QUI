@@ -1700,7 +1700,14 @@ function Helpers.GetUnitClassColor(unit)
     -- Player characters: use their actual class color
     if UnitIsPlayer(unit) then
         local _, class = UnitClass(unit)
-        if type(class) == "string" then
+        -- PTR7 (announced in Blizzard's addon-dev notes, next PTR build): classFile
+        -- is SECRET on secret-identity units (nameplates, compound tokens). type()
+        -- is a safe inspection, but the table-index inside GetClassColorTable
+        -- throws on a secret — probe first. Secret class falls through to
+        -- reaction/grey.
+        -- @secret-policy: collapse-only — display fallback color, no state
+        local classIsSecret = issecretvalue and issecretvalue(class)
+        if not classIsSecret and type(class) == "string" then
             local color = Helpers.GetClassColorTable(class)
             if color then
                 return color.r, color.g, color.b, 1

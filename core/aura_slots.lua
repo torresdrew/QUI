@@ -124,6 +124,21 @@ local function LiveAssistProbe(unit)
 end
 S.LiveAssistProbe = LiveAssistProbe
 
+-- 68824: the engine honors includeSpellIDs on ANY unit for spells whose aura
+-- secrecy is NeverSecret (identity-filter exemption in AuraContainerUtil).
+-- Parking those slots is over-conservative — a never-secret whitelisted
+-- debuff (e.g. raid-utility exhaustion class) may render on friendly units.
+-- Absent API/enum (pre-68824) → false → behavior unchanged.
+local function SpellNeverSecret(spellID)
+    local CS = C_Secrets
+    if not (CS and CS.GetSpellAuraSecrecy and Enum and Enum.SecrecyLevel) then
+        return false
+    end
+    local ok, level = pcall(CS.GetSpellAuraSecrecy, spellID)
+    -- @secret-safe: level is a plain enum for a literal spellID argument
+    return ok and level == Enum.SecrecyLevel.NeverSecret
+end
+
 -- Identity-filter decision for this container's unit right now. Returns
 -- (enforceable, liveGoverned, live):
 --   enforceable — the engine will honor includeSpellIDs (else FAIL CLOSED);
@@ -372,8 +387,9 @@ function S.Sync(container, element, allowCreate)
             if type(spellID) == "number" then
                 want = want + 1
                 local slot = pool[want]
+                local parkThis = parkAll and not SpellNeverSecret(spellID)
                 if slot then
-                    if parkAll then
+                    if parkThis then
                         ParkSlot(container, slot)
                     else
                         -- Rewrite in place — slots are filter-mutable.
@@ -390,12 +406,7 @@ function S.Sync(container, element, allowCreate)
                     -- still comes up fully styled — the post-birth pass
                     -- below is restriction-gated and would skip it.
                     local slotIndex, slotTotal = want, total
-                    local birthFilters
-                    if parkAll then
-                        birthFilters = PARK_FILTER
-                    else
-                        birthFilters = SlotCandidateFilters(element, spellID)
-                    end
+                    local birthFilters = parkThis and PARK_FILTER or SlotCandidateFilters(element, spellID)
                     local frame = container:AddAuraSlot(key, base, {
                         candidateFilters = birthFilters,
                         initializeFrame = function(f)
@@ -403,7 +414,7 @@ function S.Sync(container, element, allowCreate)
                             AnchorSlot(f, container, element, slotIndex, slotTotal)
                         end,
                     })
-                    slot = { key = key, frame = frame, parked = parkAll }
+                    slot = { key = key, frame = frame, parked = parkThis }
                     pool[want] = slot
                 else
                     -- AddAuraSlot creates a forbidden frame synchronously —
