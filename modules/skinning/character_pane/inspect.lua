@@ -355,17 +355,15 @@ RefreshInspectUnitAfterRosterUpdate = function()
     RefreshCurrentInspectGUID(resolvedUnit)
 
     if not InCombatLockdown() then
-        if InspectFrame.SetPortraitToUnit then
-            pcall(InspectFrame.SetPortraitToUnit, InspectFrame, resolvedUnit)
-        end
+        ns.SafeCallMethodIfPresent("best-effort-style", InspectFrame, "SetPortraitToUnit", resolvedUnit)
         if InspectFrame.SetTitle and GetUnitName then
             local ok, name = pcall(GetUnitName, resolvedUnit, true)
             if ok and name and not Helpers.IsSecretValue(name) then
-                pcall(InspectFrame.SetTitle, InspectFrame, name)
+                ns.SafeCallMethod("best-effort-style", InspectFrame, "SetTitle", name)
             end
         end
         if type(_G.InspectFrame_UpdateTabs) == "function" then
-            pcall(_G.InspectFrame_UpdateTabs)
+            ns.SafeCall("best-effort-style", _G.InspectFrame_UpdateTabs)
         end
     end
 
@@ -411,7 +409,7 @@ local function GetSlotItemLevel(unit, slotId)
 
     local itemLink = GetReadableInventoryItemLink(unit, slotId)
     if itemLink and C_Item and C_Item.GetDetailedItemLevelInfo then
-        local ok, actualItemLevel, _, sparseItemLevel = pcall(C_Item.GetDetailedItemLevelInfo, itemLink)
+        local ok, actualItemLevel, _, sparseItemLevel = ns.SafeCall("best-effort-style", C_Item.GetDetailedItemLevelInfo, itemLink)
         if ok then
             actualItemLevel = ReadableNumber(actualItemLevel)
             if actualItemLevel and actualItemLevel > 0 then
@@ -483,7 +481,7 @@ local function CalculateAverageILvl(unit)
     if unit and unit ~= "player" and IsCurrentInspectUnit(unit)
         and C_PaperDollInfo and C_PaperDollInfo.GetInspectItemLevel
     then
-        local ok, equippedItemLevel = pcall(C_PaperDollInfo.GetInspectItemLevel, unit)
+        local ok, equippedItemLevel = ns.SafeCall("best-effort-style", C_PaperDollInfo.GetInspectItemLevel, unit)
         equippedItemLevel = ok and ReadableNumber(equippedItemLevel) or nil
         if equippedItemLevel and equippedItemLevel > 0 then
             return equippedItemLevel
@@ -1260,13 +1258,12 @@ local function UpdateInspectILvlDisplay()
 
     -- Get target info
     local ok, name = pcall(UnitName, unit)
-    if not ok or Helpers.IsSecretValue(name) then
-        name = nil
-    end
+    if Helpers.IsSecretValue(name) then name = nil end
+    if not ok then name = nil end
     name = name or "Unknown"
 
     local level
-    ok, level = pcall(UnitLevel, unit)
+    ok, level = ns.SafeCall("best-effort-style", UnitLevel, unit)
     level = ok and ReadableNumber(level) or nil
     level = level or 0
 
@@ -1289,7 +1286,7 @@ local function UpdateInspectILvlDisplay()
     -- Get spec info (requires inspect data)
     local specName = ""
     local specID
-    ok, specID = pcall(GetInspectSpecialization, unit)
+    ok, specID = ns.SafeCall("best-effort-style", GetInspectSpecialization, unit)
     specID = ok and ReadableNumber(specID) or nil
     specID = specID or 0
     if specID > 0 then
@@ -2100,7 +2097,7 @@ local function ShouldSkipInspectGuildUpdate()
     end
 
     if Helpers.IsSecretValue(guildName) then
-        return true
+        return true -- @secret-policy: skip-update-when-unknown
     end
 
     return not guildName or guildName == ""

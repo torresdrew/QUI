@@ -163,7 +163,7 @@ local batchSharedCache = {
 
 local function ReadRuntimeCache(cacheName, _owner, key, hitStat)
     if runtimeQueryBatchDepth <= 0 then return nil, false end
-    if IsSecretValue(key) then return nil, false end
+    if IsSecretValue(key) then return nil, false end -- @secret-policy: reject-secret-ids
     local cache = batchSharedCache[cacheName]
     if not cache then return nil, false end
     local slot = cache[key]
@@ -289,7 +289,7 @@ function CDMRuntimeQueries.QueryOverrideSpell(spellID)
         overrideID = Sources.QueryOverrideSpell(spellID)
     end
     if IsSecretValue(overrideID) then
-        return nil
+        return nil -- @secret-policy: reject-secret-ids
     end
     stableOverrideCache[spellID] = overrideID == nil and NIL_SENTINEL or overrideID
     if runtimeQueryBatchDepth > 0 then

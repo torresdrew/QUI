@@ -36,7 +36,7 @@ assertContains(
 
 assertContains(
     source,
-    "pcall(dropdown.ValidateResetState, dropdown)",
+    "ns.SafeCallMethod(\"best-effort-style\", dropdown, \"ValidateResetState\")",
     "CO reset-X re-validate must be guarded and run against the live dropdown")
 
 print("OK: craftingorders_filter_resetx_strata_test")

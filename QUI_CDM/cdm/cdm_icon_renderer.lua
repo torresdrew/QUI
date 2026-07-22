@@ -134,7 +134,7 @@ local C_StringUtil = C_StringUtil
 local issecretvalue = issecretvalue
 
 local function IsSafeNumeric(val)
-    if issecretvalue and issecretvalue(val) then return false end
+    if issecretvalue and issecretvalue(val) then return false end -- @secret-policy: reject-secret-value
     return Shared and Shared.IsSafeNumeric(val) or type(val) == "number"
 end
 
@@ -142,7 +142,7 @@ local _resolverRuntimePolicy = {}
 
 local function SafeBoolean(val)
     if issecretvalue and issecretvalue(val) then
-        return nil
+        return nil -- @secret-policy: reject-secret-value
     end
     if Shared and Shared.SafeBoolean then
         return Shared.SafeBoolean(val)
@@ -912,12 +912,15 @@ local function ScheduleCooldownExpiryRefresh(icon, key, cdInfo)
     local getCooldownInfoField = Resolvers and Resolvers.GetCooldownInfoField
     if not getCooldownInfoField then return end
 
-    local start = getCooldownInfoField(cdInfo, "startTime")
-    if start == nil then
-        start = getCooldownInfoField(cdInfo, "start")
+    -- GetCooldownInfoField returns (value, isSecret); honor the flag BEFORE
+    -- the `== nil` fallback compare — `secret == nil` throws in-game.
+    local start, startSecret = getCooldownInfoField(cdInfo, "startTime")
+    if not startSecret and start == nil then
+        start, startSecret = getCooldownInfoField(cdInfo, "start")
     end
-    local duration = getCooldownInfoField(cdInfo, "duration")
-    if issecretvalue and (issecretvalue(start) or issecretvalue(duration)) then
+    local duration, durationSecret = getCooldownInfoField(cdInfo, "duration")
+    if startSecret or durationSecret
+        or (issecretvalue and (issecretvalue(start) or issecretvalue(duration))) then
         if icon._cooldownExpiryTimerKey and icon._cooldownExpiryTimerKey ~= key then
             CancelCooldownExpiryRefresh(icon)
         end
@@ -1500,7 +1503,7 @@ local function HookTextHasDisplay(text)
         return stackPolicy:TextHasDisplay(text)
     end
     if issecretvalue and issecretvalue(text) then
-        return true
+        return true -- @secret-policy: route-to-text-sink
     end
     return text ~= nil
 end
@@ -1509,7 +1512,7 @@ function _resolverRuntimePolicy.ValueIsPresent(value)
         return stackPolicy:ValueIsPresent(value)
     end
     if issecretvalue and issecretvalue(value) then
-        return true
+        return true -- @secret-policy: opaque-value-present
     end
     return value ~= nil
 end
@@ -1561,7 +1564,7 @@ local _recentCastSpellByName = {}
 local RECENT_CAST_ALIAS_TTL = 600
 
 local function NormalizeSpellAliasName(name)
-    if issecretvalue and issecretvalue(name) then return nil end
+    if issecretvalue and issecretvalue(name) then return nil end -- @secret-policy: reject-secret-ids
     if type(name) ~= "string" or name == "" then return nil end
     return string.lower(name)
 end
@@ -5010,13 +5013,16 @@ end
 
 cdEventFrame:SetScript("OnEvent", function(self, event, arg1, arg2, arg3, arg4, arg5)
     local profileStart = _resolverRuntimePolicy.eventProfilingActive and debugprofilestop and debugprofilestop()
-    -- arg4/arg5 are forwarded for the event trace only — SPELL_UPDATE_COOLDOWN
+    -- arg5 is forwarded for the event trace only — SPELL_UPDATE_COOLDOWN
     -- carries (spellID, baseSpellID, category, startRecoveryCategory, itemID)
-    -- per SpellBookDocumentation.lua:859. The runtime refresh path stays on
-    -- the 3-arg shape; only the debug trace needs startRecoveryCategory
-    -- (133 = GCD) to filter out GCD-only fires, and itemID for item casts.
+    -- per SpellBookDocumentation.lua:859; the debug trace needs
+    -- startRecoveryCategory (133 = GCD) to filter GCD-only fires, and itemID
+    -- for item casts. arg4 rides the refresh path too so payload COLUMNS stay
+    -- true end-to-end (UNIT_SPELLCAST_CHANNEL_STOP's 4th payload member,
+    -- interruptedBy — the taint analyzer keys secret positions to the OnEvent
+    -- contract, and the frame must sit PAST every secret-capable column).
     CDMIcons.EventTracePrint("frame-pre", event, arg1, arg2, arg3, arg4, arg5)
-    _resolverRuntimePolicy.HandleRuntimeRefresh(event, arg1, arg2, arg3, self)
+    _resolverRuntimePolicy.HandleRuntimeRefresh(event, arg1, arg2, arg3, arg4, self)
     CDMIcons.EventTracePrint("frame-post", event, arg1, arg2, arg3, arg4, arg5)
     -- Re-check the flag, not just profileStart: keeps the inactive path free
     -- of RecordEventProfile work; profileStart alone is falsy when
@@ -5264,15 +5270,15 @@ do
     }
     runtimeRefresh = ns.CDMIconRuntimeRefresh and ns.CDMIconRuntimeRefresh.Create(callbacks)
 
-    function _resolverRuntimePolicy.HandleRuntimeRefresh(event, arg1, arg2, arg3, frame)
+    function _resolverRuntimePolicy.HandleRuntimeRefresh(event, arg1, arg2, arg3, arg4, frame)
         if runtimeRefresh then
-            return runtimeRefresh:Handle(event, arg1, arg2, arg3, frame)
+            return runtimeRefresh:Handle(event, arg1, arg2, arg3, arg4, frame)
         end
     end
 end
 
-function CDMIcons.HandleRuntimeRefresh(event, arg1, arg2, arg3)
-    return _resolverRuntimePolicy.HandleRuntimeRefresh(event, arg1, arg2, arg3)
+function CDMIcons.HandleRuntimeRefresh(event, arg1, arg2, arg3, arg4)
+    return _resolverRuntimePolicy.HandleRuntimeRefresh(event, arg1, arg2, arg3, arg4)
 end
 
 local function OnCDMCooldownChanged(_, spellID, baseSpellID, kind)

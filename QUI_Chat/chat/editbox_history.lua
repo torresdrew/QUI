@@ -257,7 +257,7 @@ local function RegisterPreSendCallback()
 
     preSendCallbackRegistered = true
     EventRegistry:RegisterCallback("ChatFrame.OnEditBoxPreSendText", function(_, editBox)
-        pcall(captureSent, editBox)
+        ns.SafeCall("bulkhead", captureSent, editBox)
     end, PRE_SEND_OWNER)
 end
 
@@ -467,7 +467,7 @@ function InitializeForFrame(chatFrame)
     -- hooksecurefunc is taint-safe (post-hook, never replaces the secure method).
     if hooksecurefunc and editBox.AddHistoryLine then
         hooksecurefunc(editBox, "AddHistoryLine", function(self, text)
-            pcall(captureSlashCommand, self, text)
+            ns.SafeCall("bulkhead", captureSlashCommand, self, text)
         end)
     end
 end

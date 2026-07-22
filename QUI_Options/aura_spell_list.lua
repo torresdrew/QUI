@@ -16,13 +16,13 @@ end
 
 local function GetSpellName(spellId)
     if C_Spell and C_Spell.GetSpellName then
-        local ok, name = pcall(C_Spell.GetSpellName, spellId)
+        local ok, name = ns.SafeCall("best-effort-style", C_Spell.GetSpellName, spellId)
         if ok and name and name ~= "" then
             return name
         end
     end
     if GetSpellInfo then
-        local ok, name = pcall(GetSpellInfo, spellId)
+        local ok, name = ns.SafeCall("best-effort-style", GetSpellInfo, spellId)
         if ok and name and name ~= "" then
             return name
         end
@@ -177,7 +177,7 @@ end
 
 local function GetSpellIcon(spellId)
     if C_Spell and C_Spell.GetSpellTexture then
-        local ok, icon = pcall(C_Spell.GetSpellTexture, spellId)
+        local ok, icon = ns.SafeCall("best-effort-style", C_Spell.GetSpellTexture, spellId)
         if ok and icon then
             return icon
         end
@@ -318,7 +318,7 @@ local function EnsureBrowsePopup()
         local okCur, currentScroll = pcall(self.GetVerticalScroll, self)
         if not okCur then return end
         local maxScroll = math.max(0, scrollChild:GetHeight() - self:GetHeight())
-        pcall(self.SetVerticalScroll, self,
+        self:SetVerticalScroll(
             math.max(0, math.min(currentScroll - (delta * BROWSE_SCROLL_STEP), maxScroll)))
         UpdateThumb()
     end)
@@ -481,7 +481,7 @@ RebuildBrowseRows = function(filter)
     local scroll = popup._scroll
     local okCur, cur = pcall(scroll.GetVerticalScroll, scroll)
     local maxScroll = math.max(0, popup._scrollChild:GetHeight() - scroll:GetHeight())
-    pcall(scroll.SetVerticalScroll, scroll, math.min((okCur and cur) or 0, maxScroll))
+    scroll:SetVerticalScroll(math.min((okCur and cur) or 0, maxScroll))
     if popup._updateThumb then
         C_Timer.After(0, popup._updateThumb)
     end
@@ -502,7 +502,7 @@ function SpellList.ToggleBrowsePopup(key, opts)
     popup._title:SetText((opts and opts.title) or ns.L["Browse Spells"])
     popup._search:SetText("")
     popup._placeholder:Show()
-    pcall(popup._scroll.SetVerticalScroll, popup._scroll, 0)
+    popup._scroll:SetVerticalScroll(0)
     RebuildBrowseRows(nil)
     popup:Show()
     popup:Raise()

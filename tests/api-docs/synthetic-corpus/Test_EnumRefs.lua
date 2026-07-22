@@ -1,6 +1,7 @@
 local TestEnumRefs =
 {
-    Name = "C_TestEnumRefs",
+    Name = "TestEnumRefs",
+    Namespace = "C_TestEnumRefs",
     Type = "System",
 
     Functions =

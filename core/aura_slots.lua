@@ -53,6 +53,105 @@ local PARK_FILTER = { maxDuration = 0 }
 -- Ordinal keys are stable for the container's lifetime; contents are rewritten
 -- to whatever spell currently needs that ordinal.
 
+-- KNOWN ENGINE LIMITATION (12.1, deliberate Blizzard privacy design —
+-- Blizzard_AuraContainerUtil.CanApplyIdentityCandidateFilters): the engine
+-- IGNORES includeSpellIDs/excludeSpellIDs for (a) HARMFUL auras on
+-- assistable units and (b) HELPFUL auras on non-assistable units ("it
+-- shouldn't be possible to filter out debuffs on player targets because that
+-- would allow for extremely specific displays"). A tracked slot in those
+-- quadrants would bind an ARBITRARY aura of that polarity — misinformation
+-- under a per-spell config. There is no addon-side post-verify (slot frames
+-- are engine-owned/forbidden), so QUI FAILS CLOSED in two tiers:
+--   * STATIC token-class parks: HARMFUL slots on assist-class tokens
+--     (player/pet/party/raid) and HELPFUL slots on never-assistable tokens
+--     (boss) park unconditionally.
+--   * LIVE probe (party/raid HELPFUL): the engine's check is LIVE
+--     UnitCanAssist("player", unit) per aura at bind time — an open-world
+--     cross-faction, mind-controlled, dead/released, phased, or
+--     not-yet-streamed group member fails it and its includeSpellIDs are
+--     silently skipped, so the assist-class token alone missed exactly
+--     that window. Sync additionally gates on LiveAssistProbe; group-frame
+--     unit-state events (UNIT_FACTION/UNIT_FLAGS/UNIT_PHASE/
+--     UNIT_CONNECTION) re-drive Sync when the probe flips (groupframes
+--     RefreshTrackedSlotAssist), and EVENT-LESS flips — zone-rule changes
+--     on instance entry, visibility drift — are caught by the
+--     PLAYER_ENTERING_WORLD / ZONE_CHANGED_NEW_AREA sweeps plus a slow 5s
+--     safety ticker (groupframes SweepTrackedSlotAssist), so a parked slot
+--     can never stay parked across a zone transition. player/pet are
+--     exempt — own units never degrade. Shells are CONSTRUCTED even while
+--     the probe is false (parked, whenever creation is combat-legal):
+--     unpark is a filter REWRITE and stays available mid-combat, so a
+--     member untrusted at first Sync doesn't lose the whole fight to the
+--     regen replay.
+-- target/focus stay VARIABLE: reaction flips per target with no re-Sync,
+-- so those tokens keep engine behavior (their gate applies per-aura at
+-- bind time) — the residual "tracked buff on a currently-hostile target"
+-- case remains engine best-effort and is the documented remainder of this
+-- limitation.
+
+-- Token-class reaction: "assist" (assistable-class while valid), "hostile"
+-- (never assistable), or nil (variable — target/focus/arena/unknown).
+local function TokenReactionClass(unit)
+    if type(unit) ~= "string" then return nil end
+    if unit == "player" or unit == "pet" then return "assist" end
+    local p4 = unit:sub(1, 4)
+    if p4 == "part" or p4 == "raid" then return "assist" end
+    if p4 == "boss" then return "hostile" end
+    return nil
+end
+
+-- Live assistability for the party/raid HELPFUL quadrant. Mirrors the
+-- engine's per-aura UnitCanAssist gate
+-- (Blizzard_AuraContainerUtil.CanApplyIdentityCandidateFilters), HARDENED
+-- to require every positively checkable trust signal: plain UnitCanAssist
+-- alone still passes for dead/released or phased members whose filter
+-- flags have not streamed, yet the engine skips their include-list
+-- filters (observed live) — so connected + alive + assistable + visible +
+-- not phased, or park. Any throw inside the chain (secret identity state
+-- under teardown/restriction) fails CLOSED — a parked slot shows nothing,
+-- never an arbitrary buff. player/pet exempt by LEXICAL token compare
+-- (never UnitIsUnit here: SecretWhenUnitComparisonRestricted).
+local function LiveAssistProbe(unit)
+    if unit == "player" or unit == "pet" then return true end
+    local ok, trusted = pcall(function()
+        return UnitIsConnected(unit)
+            and not UnitIsDeadOrGhost(unit)
+            and UnitCanAssist("player", unit)
+            and UnitIsVisible(unit)
+            and not UnitPhaseReason(unit)
+    end)
+    return ok and trusted == true -- @secret-policy: reject-secret-value — fail-closed park
+end
+S.LiveAssistProbe = LiveAssistProbe
+
+-- Identity-filter decision for this container's unit right now. Returns
+-- (enforceable, liveGoverned, live):
+--   enforceable — the engine will honor includeSpellIDs (else FAIL CLOSED);
+--   liveGoverned — the decision rides LiveAssistProbe (party/raid HELPFUL)
+--     and must be re-checked whenever live unit state changes;
+--   live — the probe value used (meaningful only when liveGoverned).
+-- Sync records `live` on the container (_quiAssistApplied) so readers
+-- judge staleness against what was ACTUALLY applied, never a shadow cache.
+local function IdentityFilterEnforceable(container, base)
+    local ok, unit = pcall(function()
+        return container.GetUnit and container:GetUnit()
+    end)
+    if not ok then return true, false, nil end
+    local class = TokenReactionClass(unit)
+    if class == nil then return true, false, nil end
+    local harmful = type(base) == "string" and base:find("HARMFUL", 1, true) ~= nil
+    if harmful then
+        return class ~= "assist", false, nil
+    end
+    if class == "hostile" then return false, false, nil end
+    if unit == "player" or unit == "pet" then return true, false, nil end
+    -- class == "assist" party/raid, HELPFUL: the static class is necessary
+    -- but not sufficient — the engine's gate is LIVE UnitCanAssist (see
+    -- header).
+    local live = LiveAssistProbe(unit)
+    return live, true, live
+end
+
 local function SlotCandidateFilters(element, spellID)
     local cf = { includeSpellIDs = { [spellID] = true } }
     if E.EffectiveOnlyMine(element, spellID) then
@@ -215,6 +314,43 @@ function S.Sync(container, element, allowCreate)
     local spells = (element.enabled ~= false) and element.spells or nil
     local complete = true
     local want = 0
+    -- Applied-state record for the live-assist stale check (groupframes
+    -- TrackedAssistStale): nil = this container's quadrant is not governed
+    -- by the live probe; true/false = the probe value these slot filters
+    -- were last reconciled against. Sync is the ONLY writer — a reader-side
+    -- dedupe cache proved unable to track it (any config pass can run Sync
+    -- under a different probe value than the last event sweep observed,
+    -- leaving slots parked with no flip left for the reader to see).
+    container._quiAssistApplied = nil
+    local parkAll = false
+    if spells then
+        local base = element.auraType or "HELPFUL"
+        local enforceable, liveGoverned, live = IdentityFilterEnforceable(container, base)
+        if liveGoverned then
+            container._quiAssistApplied = live
+        end
+        -- FAIL CLOSED: when the engine ignores identity filters for this
+        -- unit-class/polarity (see header), don't render arbitrary auras
+        -- under a tracked-spell config.
+        if not enforceable then
+            if liveGoverned then
+                -- LIVE-governed quadrant (party/raid HELPFUL): the probe can
+                -- flip back MID-COMBAT, and slot CREATION is combat-forbidden
+                -- while filter REWRITES are combat-legal. Build/keep the slot
+                -- shells but PARK them, so an in-combat trust flip unparks
+                -- by rewriting filters in place — without shells, a member
+                -- untrusted at first Sync rendered nothing for the whole
+                -- fight (creation deferred to the regen replay).
+                parkAll = true
+            else
+                -- Statically never-enforceable (token-class park): leave
+                -- `want` at 0 — enforceability can never flip for this
+                -- container+polarity, so shells would be permanent dead
+                -- weight (slots are addon-unremovable).
+                spells = nil
+            end
+        end
+    end
     if spells then
         local base = element.auraType or "HELPFUL"
         -- Pre-count the RENDERABLE spells (numeric entries only), capped by
@@ -237,10 +373,14 @@ function S.Sync(container, element, allowCreate)
                 want = want + 1
                 local slot = pool[want]
                 if slot then
-                    -- Rewrite in place — slots are filter-mutable.
-                    container:SetAuraSlotFilterString(slot.key, base)
-                    container:SetAuraSlotCandidateFilters(slot.key, SlotCandidateFilters(element, spellID))
-                    slot.parked = false
+                    if parkAll then
+                        ParkSlot(container, slot)
+                    else
+                        -- Rewrite in place — slots are filter-mutable.
+                        container:SetAuraSlotFilterString(slot.key, base)
+                        container:SetAuraSlotCandidateFilters(slot.key, SlotCandidateFilters(element, spellID))
+                        slot.parked = false
+                    end
                 elseif allowCreate and not InCombatLockdown() then
                     local key = "t" .. tostring(want)
                     -- Style + anchor at BIRTH via initializeFrame: the frame
@@ -250,14 +390,20 @@ function S.Sync(container, element, allowCreate)
                     -- still comes up fully styled — the post-birth pass
                     -- below is restriction-gated and would skip it.
                     local slotIndex, slotTotal = want, total
+                    local birthFilters
+                    if parkAll then
+                        birthFilters = PARK_FILTER
+                    else
+                        birthFilters = SlotCandidateFilters(element, spellID)
+                    end
                     local frame = container:AddAuraSlot(key, base, {
-                        candidateFilters = SlotCandidateFilters(element, spellID),
+                        candidateFilters = birthFilters,
                         initializeFrame = function(f)
                             StyleSlot(f, element, slotIndex)
                             AnchorSlot(f, container, element, slotIndex, slotTotal)
                         end,
                     })
-                    slot = { key = key, frame = frame, parked = false }
+                    slot = { key = key, frame = frame, parked = parkAll }
                     pool[want] = slot
                 else
                     -- AddAuraSlot creates a forbidden frame synchronously —
@@ -298,6 +444,9 @@ end
 
 -- Park everything (element deleted/disabled; container returns to the pool).
 function S.Park(container)
+    -- No live-governed quadrant remains on a fully parked container — clear
+    -- the applied record so the stale check never re-drives a retired one.
+    container._quiAssistApplied = nil
     local pool = container._quiSlots
     if not pool then return end
     for i = 1, #pool do

@@ -584,7 +584,7 @@ local function InstallOverrideOnButton(buttonName, sequenceName, suppressRefresh
     -- GSE.UpdateIcon populates latestSequenceIcons, which covers the
     -- case where SequencesExec wasn't ready when GetSequenceIcon ran.
     if _G.GSE and _G.GSE.UpdateIcon and _G[sequenceName] then
-        pcall(_G.GSE.UpdateIcon, _G[sequenceName], false)
+        ns.SafeCall("bulkhead", _G.GSE.UpdateIcon, _G[sequenceName], false)
     end
     if btn.RunAttribute then
         btn:RunAttribute("QUI_UpdateActionFlags")
@@ -594,9 +594,7 @@ local function InstallOverrideOnButton(buttonName, sequenceName, suppressRefresh
     HookButtonIconUpdates(buttonName)
     AddWatermark(buttonName)
     ScheduleIconRestore(btn)
-    if btn.Update then
-        pcall(btn.Update, btn)
-    end
+    ns.SafeCallMethodIfPresent("best-effort-style", btn, "Update")
     if not suppressRefresh then
         RefreshQUIOverrides()
     end
@@ -623,9 +621,7 @@ local function RemoveOverrideFromButton(buttonName, suppressRefresh)
     RemoveWatermark(buttonName)
     -- Re-run the button's update so the icon refreshes back to the
     -- normal action slot state (or hides if the slot is empty).
-    if btn.Update then
-        pcall(btn.Update, btn)
-    end
+    ns.SafeCallMethodIfPresent("best-effort-style", btn, "Update")
     if not suppressRefresh then
         RefreshQUIOverrides()
     end
@@ -994,7 +990,7 @@ local debugHookedSequences = {}
 
 dbg = function(fmt, ...)
     if not DEBUG_GSE then return end
-    local ok, msg = pcall(string.format, fmt, ...)
+    local ok, msg = ns.SafeCall("report", string.format, fmt, ...)
     if not ok then msg = tostring(fmt) end
     if DEFAULT_CHAT_FRAME then
         DEFAULT_CHAT_FRAME:AddMessage("|cff60A5FA[QUI GSE]|r " .. msg)

@@ -348,9 +348,7 @@ function ActionBarsOwned.SafeUpdate(self)
         ActionBarsOwned.UpdateOverlayGlow(self)
 
         -- Flyout arrow
-        if self.UpdateFlyout then
-            pcall(self.UpdateFlyout, self)
-        end
+        ns.SafeCallMethodIfPresent("best-effort-style", self, "UpdateFlyout")
 
         -- Assisted combat rotation arrow (one-button rotation).
         -- Set everActive flag here — SafeUpdate already confirmed
@@ -382,13 +380,13 @@ function ActionBarsOwned.SafeUpdate(self)
         if shouldFlash then
             if not self.flashing then
                 if ActionButton_StartFlash then
-                    pcall(ActionButton_StartFlash, self)
+                    ns.SafeCall("best-effort-style", ActionButton_StartFlash, self)
                 end
             end
         else
             if self.flashing then
                 if ActionButton_StopFlash then
-                    pcall(ActionButton_StopFlash, self)
+                    ns.SafeCall("best-effort-style", ActionButton_StopFlash, self)
                 end
             end
         end
@@ -421,13 +419,11 @@ function ActionBarsOwned.SafeUpdate(self)
         end
         if self.flashing then
             if ActionButton_StopFlash then
-                pcall(ActionButton_StopFlash, self)
+                ns.SafeCall("best-effort-style", ActionButton_StopFlash, self)
             end
         end
         -- Clean up overlays/elements that belong to the departed action
-        if self.UpdateFlyout then
-            pcall(self.UpdateFlyout, self)
-        end
+        ns.SafeCallMethodIfPresent("best-effort-style", self, "UpdateFlyout")
         UpdateAssistedCombatRotationFrame(self)
         ActionBarsOwned.UpdateOverlayGlow(self)
     end

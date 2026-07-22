@@ -71,10 +71,10 @@ if not TooltipDebug then
 
     local function GetAddonMemoryKB()
         if UpdateAddOnMemoryUsage then
-            pcall(UpdateAddOnMemoryUsage)
+            ns.SafeCall("best-effort-style", UpdateAddOnMemoryUsage)
         end
         if GetAddOnMemoryUsage then
-            local ok, mem = pcall(GetAddOnMemoryUsage, ADDON_NAME)
+            local ok, mem = ns.SafeCall("chain-next", GetAddOnMemoryUsage, ADDON_NAME)
             if ok and type(mem) == "number" then
                 return mem
             end
@@ -85,7 +85,7 @@ if not TooltipDebug then
     local function FrameLabel(frame)
         if not frame then return "nil" end
         if frame.GetName then
-            local ok, name = pcall(frame.GetName, frame)
+            local ok, name = ns.SafeCallMethod("chain-next", frame, "GetName")
             if ok and name then return name end
         end
         return tostring(frame)
@@ -95,14 +95,14 @@ if not TooltipDebug then
         if not GameTooltip then
             return "gt=nil"
         end
-        local okShown, shown = pcall(GameTooltip.IsShown, GameTooltip)
+        local okShown, shown = ns.SafeCallMethod("chain-next", GameTooltip, "IsShown")
         if not okShown or not shown then
             return "gt=hidden"
         end
 
         local owner
         if GameTooltip.GetOwner then
-            local okOwner, result = pcall(GameTooltip.GetOwner, GameTooltip)
+            local okOwner, result = ns.SafeCallMethod("chain-next", GameTooltip, "GetOwner")
             if okOwner then owner = result end
         end
 
@@ -511,9 +511,12 @@ local function HasActiveWidgetContainer(tooltip)
 
             local shownWidgetCount = child.shownWidgetCount
             if shownWidgetCount ~= nil then
+                -- ACTION POLICY: an unreadable count is INDETERMINATE, not
+                -- "widgets present" — treat-as-widgeted keeps the layout on
+                -- the safe (non-clobbering) path.
                 if Helpers.IsSecretValue(shownWidgetCount) then
                     TooltipDebugCount("qol.widgetHit")
-                    return true
+                    return true -- @secret-policy: keep-native-when-unknown
                 end
                 shownWidgetCount = tonumber(shownWidgetCount)
                 if shownWidgetCount and shownWidgetCount > 0 then
@@ -526,7 +529,7 @@ local function HasActiveWidgetContainer(tooltip)
             if numWidgetsShowing ~= nil then
                 if Helpers.IsSecretValue(numWidgetsShowing) then
                     TooltipDebugCount("qol.widgetHit")
-                    return true
+                    return true -- @secret-policy: keep-native-when-unknown
                 end
                 numWidgetsShowing = tonumber(numWidgetsShowing)
                 if numWidgetsShowing and numWidgetsShowing > 0 then
@@ -563,7 +566,7 @@ local function HasActiveMoneyFrame(tooltip)
         if child then
             local childName
             if child.GetName then
-                local okName, name = pcall(child.GetName, child)
+                local okName, name = ns.SafeCallMethod("chain-next", child, "GetName")
                 if okName then childName = name end
             end
             if child.moneyType ~= nil or child.staticMoney ~= nil or child.lastArgMoney ~= nil or
@@ -753,7 +756,7 @@ local function RefreshTooltipLayout(tooltip)
     -- the Lua API entirely, so for that path the chrome refit below is what
     -- actually fixes the short-chrome artifact.
     if type(tooltip.UpdateTooltipSize) == "function" then
-        pcall(tooltip.UpdateTooltipSize, tooltip)
+        ns.SafeCallMethod("best-effort-style", tooltip, "UpdateTooltipSize")
     end
     local alreadyShown = tooltip.IsShown and tooltip:IsShown()
     -- AddLine/AddDoubleLine on an already visible GameTooltip can render the
@@ -765,7 +768,7 @@ local function RefreshTooltipLayout(tooltip)
     -- SetAllPoints, so it tracks that new size — no addon-side extent refit.
     if tooltip == GameTooltip or not alreadyShown then
         tooltipRefreshInProgress = true
-        pcall(tooltip.Show, tooltip)
+        ns.SafeCallMethod("best-effort-style", tooltip, "Show")
         tooltipRefreshInProgress = false
     end
 end
@@ -877,7 +880,7 @@ local function ResetTooltipHideFade()
     tooltipHideFadeState.elapsed = 0
     tooltipHideFadeState.startAlpha = 1
     if GameTooltip and GameTooltip.IsShown and GameTooltip:IsShown() then
-        pcall(GameTooltip.SetAlpha, GameTooltip, 1)
+        ns.SafeCallMethod("sink-forward", GameTooltip, "SetAlpha", 1)
     end
 end
 
@@ -1067,7 +1070,7 @@ end
 
 local function GetPlayerItemLevelColor(itemLevel)
     if Helpers.IsSecretValue(itemLevel) then
-        return 1, 1, 1
+        return 1, 1, 1 -- @secret-policy: neutral-color-degrade
     end
 
     itemLevel = tonumber(itemLevel)
@@ -1110,7 +1113,7 @@ local function GetPlayerClassColor(classToken)
     local classColor
     if InCombatLockdown() then
         if C_ClassColor and C_ClassColor.GetClassColor then
-            local ok, color = pcall(C_ClassColor.GetClassColor, classToken)
+            local ok, color = ns.SafeCall("chain-next", C_ClassColor.GetClassColor, classToken)
             if ok and color then
                 classColor = color
             end
@@ -1144,7 +1147,7 @@ end
 
 local function TooltipColorByte(value)
     if Helpers.IsSecretValue and Helpers.IsSecretValue(value) then
-        return 255
+        return 255 -- @secret-policy: neutral-color-degrade
     end
     local n = tonumber(value) or 1
     if n < 0 then n = 0 end
@@ -1154,7 +1157,7 @@ end
 
 local function TooltipColorText(text, r, g, b)
     if Helpers.IsSecretValue and Helpers.IsSecretValue(text) then
-        return nil
+        return nil -- @secret-policy: reject-secret-value
     end
     return string.format(
         "|cff%02x%02x%02x%s|r",
@@ -1200,6 +1203,7 @@ local function AddPlayerItemLevelToTooltip(tooltip, unit, skipShow)
     end
 
     local guid = UnitGUID(unit)
+    if Helpers.IsSecretValue(guid) then return false end -- @secret-policy: reject-secret-ids
     if tooltipPlayerItemLevelGUID[tooltip] == guid then
         TooltipDebugCount("qol.itemLevelDuplicate")
         return false
@@ -1207,7 +1211,7 @@ local function AddPlayerItemLevelToTooltip(tooltip, unit, skipShow)
 
     if Helpers.IsSecretValue(playerData.itemLevel) then
         TooltipDebugCount("qol.itemLevelSecret")
-        return false
+        return false -- @secret-policy: reject-secret-value
     end
 
     local itemLevel = tonumber(playerData.itemLevel)
@@ -1292,7 +1296,9 @@ local function ResolveTooltipTargetInfo(unit)
     end
 
     local okName, targetName = pcall(UnitName, targetUnit)
-    if not okName or not targetName or Helpers.IsSecretValue(targetName) then
+    if Helpers.IsSecretValue(targetName) then
+        targetName = "Unknown"
+    elseif not okName or not targetName then
         targetName = "Unknown"
     end
 
@@ -1342,9 +1348,13 @@ local function GetTargetingMemberName(groupUnit, mouseoverUnit)
     local okSelf, isSelf = pcall(UnitIsUnit, groupUnit, mouseoverUnit)
     if not okSelf or Helpers.IsSecretValue(isSelf) or isSelf then return nil end
     local okTarget, targetsUnit = pcall(UnitIsUnit, groupUnit .. "target", mouseoverUnit)
-    if not okTarget or Helpers.IsSecretValue(targetsUnit) or not targetsUnit then return nil end
+    if not okTarget then return nil end
+    if Helpers.IsSecretValue(targetsUnit) then return nil end -- @secret-policy: reject-secret-value
+    if not targetsUnit then return nil end
     local okName, name = pcall(UnitName, groupUnit)
-    if not okName or not name or name == "" or Helpers.IsSecretValue(name) then return nil end
+    if not okName then return nil end
+    if Helpers.IsSecretValue(name) then return nil end -- @secret-policy: reject-secret-ids
+    if not name or name == "" then return nil end
     return name
 end
 
@@ -1420,8 +1430,8 @@ local function SetMountSpellNameCache(spellID, mountName, mountID)
 end
 
 local function GetMountNameFromSpellID(spellID)
+    if Helpers.IsSecretValue(spellID) then return nil end -- @secret-policy: reject-secret-ids
     if not spellID then return nil end
-    if Helpers.IsSecretValue(spellID) then return nil end
     if spellID == 0 then return nil end
 
     local cached = mountSpellNameCache[spellID]
@@ -1444,7 +1454,7 @@ local function GetMountNameFromSpellID(spellID)
         return nil
     end
 
-    local okInfo, mountName = pcall(C_MountJournal.GetMountInfoByID, mountID)
+    local okInfo, mountName = ns.SafeCall("chain-next", C_MountJournal.GetMountInfoByID, mountID)
     if not okInfo or not mountName then
         SetMountSpellNameCache(spellID, false)
         return nil
@@ -1534,7 +1544,8 @@ local function GetMountedPlayerMountName(unit, state)
     end
 
     local guid = UnitGUID(unit)
-    if not guid or Helpers.IsSecretValue(guid) then return nil, true end
+    if Helpers.IsSecretValue(guid) then return nil, true end -- @secret-policy: reject-secret-ids
+    if not guid then return nil, true end
 
     local cachedName, cacheHit, cachedMountID = GetCachedMountName(guid)
     if cacheHit then
@@ -1551,13 +1562,18 @@ local function GetMountedPlayerMountName(unit, state)
         for i = startIndex, endIndex do
             TooltipDebugCount("qol.mountAuraScanned")
             local ok, auraData = pcall(C_UnitAuras.GetAuraDataByIndex, unit, i, "HELPFUL")
+            if Helpers.IsSecretValue(auraData) then
+                SetCachedMountName(guid, false)
+                return nil, true -- @secret-policy: reject-secret-value
+            end
             if not ok or not auraData then
                 SetCachedMountName(guid, false)
                 return nil, true
             end
 
-            if auraData.spellId then
-                local mountName, mountID = GetMountNameFromSpellID(auraData.spellId)
+            local auraSpellId = auraData.spellId
+            if not Helpers.IsSecretValue(auraSpellId) and auraSpellId then
+                local mountName, mountID = GetMountNameFromSpellID(auraSpellId)
                 if mountName then
                     SetCachedMountName(guid, mountName, mountID)
                     return mountName, true, mountID
@@ -1688,7 +1704,8 @@ local function AddUnitTooltipInfoToTooltip(tooltip, unit, settings)
     if InCombatLockdown() then return false end
 
     local guid = UnitGUID(unit)
-    if not guid or Helpers.IsSecretValue(guid) then return false end
+    if Helpers.IsSecretValue(guid) then return false end -- @secret-policy: reject-secret-ids
+    if not guid then return false end
 
     local state = EnsureTooltipUnitInfoState(tooltip, guid)
     if not state then return false end
@@ -1768,7 +1785,13 @@ local function DeferredUnitInfoOnUpdate(self, elapsed)
     end
 
     local unitGUID = UnitGUID(unit)
-    if not unitGUID or Helpers.IsSecretValue(unitGUID) or unitGUID ~= guid then
+    local guidStale
+    if Helpers.IsSecretValue(unitGUID) then
+        guidStale = true -- reject/defer: an unreadable GUID can't confirm the deferred unit
+    else
+        guidStale = not unitGUID or unitGUID ~= guid
+    end
+    if guidStale then
         self:SetScript("OnUpdate", nil)
         deferredUnitTooltip = nil
         deferredUnitGUID = nil
@@ -1841,7 +1864,8 @@ end
 ScheduleDeferredUnitInfo = function(tooltip, unit)
     if not tooltip or not unit then return end
     local guid = UnitGUID(unit)
-    if not guid or Helpers.IsSecretValue(guid) then return end
+    if Helpers.IsSecretValue(guid) then return end -- @secret-policy: reject-secret-ids
+    if not guid then return end
     if deferredUnitTooltip == tooltip and deferredUnitGUID == guid then
         TooltipDebugCount("qol.deferredCoalesced")
         return
@@ -1932,7 +1956,7 @@ local function SetupTooltipHook()
         -- every default-anchored tooltip picks it up before it is positioned.
         local userScale = tonumber(settings.scale) or 1
         if userScale <= 0 then userScale = 1 end
-        pcall(tooltip.SetScale, tooltip, userScale)
+        ns.SafeCallMethod("sink-forward", tooltip, "SetScale", userScale)
 
         InvalidatePendingSetUnit()
 
@@ -2010,8 +2034,8 @@ local function SetupTooltipHook()
                 local okLT, lt = pcall(line.GetText, line)
                 if okLT and lt and not Helpers.IsSecretValue(lt) then
                     if matches(lt) then
-                        pcall(line.SetText, line, "")
-                        pcall(line.Hide, line)
+                        ns.SafeCallMethod("sink-forward", line, "SetText", "")
+                        ns.SafeCallMethod("best-effort-style", line, "Hide")
                         break
                     end
                 end
@@ -2032,7 +2056,7 @@ local function SetupTooltipHook()
         if not connectedRealmSet then
             connectedRealmSet = {}
             if C_AutoComplete and C_AutoComplete.GetAutoCompleteRealms then
-                local okRealms, realms = pcall(C_AutoComplete.GetAutoCompleteRealms)
+                local okRealms, realms = ns.SafeCall("best-effort-style", C_AutoComplete.GetAutoCompleteRealms)
                 if okRealms and type(realms) == "table" then
                     for _, r in ipairs(realms) do
                         if type(r) == "string" then
@@ -2063,8 +2087,9 @@ local function SetupTooltipHook()
                 local okText, lineText = pcall(nameLine.GetText, nameLine)
                 if okText and lineText and not Helpers.IsSecretValue(lineText) then
                     local okName, bareName = pcall(UnitName, unit)
-                    if okName and bareName and not Helpers.IsSecretValue(bareName) and lineText ~= bareName then
-                        pcall(nameLine.SetText, nameLine, bareName)
+                    bareName = Helpers.SafeValue(bareName)
+                    if okName and bareName and lineText ~= bareName then
+                        ns.SafeCallMethod("sink-forward", nameLine, "SetText", bareName)
                     end
                 end
             end
@@ -2072,9 +2097,10 @@ local function SetupTooltipHook()
 
         if hideServer then
             local okRealm, _, unitRealm = pcall(UnitName, unit)
-            if okRealm and unitRealm and unitRealm ~= "" and not Helpers.IsSecretValue(unitRealm) then
+            unitRealm = Helpers.SafeValue(unitRealm)
+            if okRealm and unitRealm and unitRealm ~= "" then
                 HideTooltipLineMatching(tooltip, function(lt)
-                    return lt == unitRealm
+                    return Helpers.SafeCompare(lt, unitRealm) == true
                 end)
             end
         end
@@ -2112,15 +2138,17 @@ local function SetupTooltipHook()
         -- is being hidden.
         if showConnected and not hideServer then
             local okRealm, _, unitRealm = pcall(UnitName, unit)
-            if okRealm and unitRealm and unitRealm ~= "" and not Helpers.IsSecretValue(unitRealm)
+            unitRealm = Helpers.SafeValue(unitRealm)
+            if okRealm and unitRealm and unitRealm ~= ""
                 and IsConnectedRealm(unitRealm) then
                 for i = 2, 5 do
                     local line = tooltip.GetLeftLine and tooltip:GetLeftLine(i)
                         or _G["GameTooltipTextLeft" .. i]
                     if line then
                         local okLT, lt = pcall(line.GetText, line)
-                        if okLT and lt and not Helpers.IsSecretValue(lt) and lt == unitRealm then
-                            pcall(line.SetText, line, lt .. " |cff80ff80(" .. ns.L["Connected"] .. ")|r")
+                        lt = Helpers.SafeValue(lt)
+                        if okLT and lt and lt == unitRealm then
+                            ns.SafeCallMethod("sink-forward", line, "SetText", lt .. " |cff80ff80(" .. ns.L["Connected"] .. ")|r")
                             break
                         end
                     end
@@ -2155,7 +2183,7 @@ local function SetupTooltipHook()
                     and (lt == guildName or lt == bracketed) then
                     if wantRank and guildRankName and guildRankName ~= ""
                         and not Helpers.IsSecretValue(guildRankName) then
-                        pcall(line.SetText, line, lt .. " (" .. guildRankName .. ")")
+                        ns.SafeCallMethod("sink-forward", line, "SetText", lt .. " (" .. guildRankName .. ")")
                     end
                     if wantColor then
                         local mine = false
@@ -2164,7 +2192,7 @@ local function SetupTooltipHook()
                             mine = true
                         end
                         local c = mine and GUILD_COLOR_MINE or GUILD_COLOR_OTHER
-                        pcall(line.SetTextColor, line, c.r, c.g, c.b)
+                        ns.SafeCallMethod("sink-forward", line, "SetTextColor", c.r, c.g, c.b)
                     end
                     break
                 end
@@ -2182,7 +2210,7 @@ local function SetupTooltipHook()
         local classColor
         if InCombatLockdown() then
             if C_ClassColor and C_ClassColor.GetClassColor then
-                local okColor, color = pcall(C_ClassColor.GetClassColor, class)
+                local okColor, color = ns.SafeCall("chain-next", C_ClassColor.GetClassColor, class)
                 if okColor and color then classColor = color end
             end
         else
@@ -2194,7 +2222,7 @@ local function SetupTooltipHook()
             if nameLine then
                 local okText, text = pcall(nameLine.GetText, nameLine)
                 if okText and text and not Helpers.IsSecretValue(text) then
-                    pcall(nameLine.SetTextColor, nameLine, classColor.r, classColor.g, classColor.b)
+                    ns.SafeCallMethod("sink-forward", nameLine, "SetTextColor", classColor.r, classColor.g, classColor.b)
                 end
             end
         end
@@ -2213,24 +2241,24 @@ local function SetupTooltipHook()
 
         if settings.hideHealthBar then
             if GameTooltipStatusBar and not (GameTooltipStatusBar.IsForbidden and GameTooltipStatusBar:IsForbidden()) then
-                pcall(GameTooltipStatusBar.SetShown, GameTooltipStatusBar, false)
-                pcall(GameTooltipStatusBar.SetAlpha, GameTooltipStatusBar, 0)
+                ns.SafeCallMethod("best-effort-style", GameTooltipStatusBar, "SetShown", false)
+                ns.SafeCallMethod("sink-forward", GameTooltipStatusBar, "SetAlpha", 0)
             end
             -- TIP-05: modern tooltips can attach the bar to the tooltip itself
             -- (tooltip.StatusBar) or acquire from a pool (tooltip.StatusBarPool);
             -- cover both, existence-guarded.
             local attachedBar = tooltip and tooltip.StatusBar
             if attachedBar and not (attachedBar.IsForbidden and attachedBar:IsForbidden()) then
-                pcall(attachedBar.SetShown, attachedBar, false)
-                pcall(attachedBar.SetAlpha, attachedBar, 0)
+                ns.SafeCallMethod("best-effort-style", attachedBar, "SetShown", false)
+                ns.SafeCallMethod("sink-forward", attachedBar, "SetAlpha", 0)
             end
             local pool = tooltip and tooltip.StatusBarPool
             if pool and pool.EnumerateActive then
-                local okIter, iter, state = pcall(pool.EnumerateActive, pool)
+                local okIter, iter, state = ns.SafeCallMethod("best-effort-style", pool, "EnumerateActive")
                 if okIter and type(iter) == "function" then
                     for pooledBar in iter, state do
-                        pcall(pooledBar.SetShown, pooledBar, false)
-                        pcall(pooledBar.SetAlpha, pooledBar, 0)
+                        ns.SafeCallMethod("best-effort-style", pooledBar, "SetShown", false)
+                        ns.SafeCallMethod("sink-forward", pooledBar, "SetAlpha", 0)
                     end
                 end
             end
@@ -2354,7 +2382,7 @@ local function SetupTooltipHook()
                 GameTooltip:Hide()
             else
                 local nextAlpha = math.max(0, tooltipHideFadeState.startAlpha * (1 - progress))
-                pcall(GameTooltip.SetAlpha, GameTooltip, nextAlpha)
+                ns.SafeCallMethod("sink-forward", GameTooltip, "SetAlpha", nextAlpha)
             end
         end
     end)
@@ -2527,8 +2555,8 @@ local function SetupTooltipHook()
 
         local iconID = nil
         if C_Spell and C_Spell.GetSpellTexture then
-            local iconOk, result = pcall(C_Spell.GetSpellTexture, spellID)
-            if iconOk and result and type(result) == "number" then
+            local result = C_Spell.GetSpellTexture(spellID)
+            if result and type(result) == "number" then
                 iconID = result
             end
         end
@@ -2570,8 +2598,8 @@ local function SetupTooltipHook()
         if type(issecretvalue) == "function" and issecretvalue(itemID) then return end
         if not C_Item or not C_Item.GetItemMaxStackSizeByID then return end
 
-        local okStack, stackSize = pcall(C_Item.GetItemMaxStackSizeByID, itemID)
-        if not okStack or type(stackSize) ~= "number" or stackSize <= 1 then return end
+        local stackSize = C_Item.GetItemMaxStackSizeByID(itemID)
+        if type(stackSize) ~= "number" or stackSize <= 1 then return end
 
         local dedupeKey = BuildItemIDDedupeKey(data, itemID)
         if tooltipMaxStackAdded[tooltip] == dedupeKey then return end
@@ -2617,7 +2645,7 @@ local function SetupTooltipHook()
         TooltipDebugCount("qol.spellPost")
         if InCombatLockdown() then return end
         if not ShouldProcessTooltipIDs(tooltip) then return end
-        pcall(TryAddSpellIDFromTooltipData, tooltip, data)
+        ns.SafeCall("bulkhead", TryAddSpellIDFromTooltipData, tooltip, data)
     end)
 
     local auraTooltipType = Enum.TooltipDataType.UnitAura or Enum.TooltipDataType.Aura
@@ -2626,7 +2654,7 @@ local function SetupTooltipHook()
             TooltipDebugCount("qol.auraPost")
             if InCombatLockdown() then return end
             if not ShouldProcessTooltipIDs(tooltip) then return end
-            pcall(TryAddAuraSpellIDFromTooltipData, tooltip, data)
+            ns.SafeCall("bulkhead", TryAddAuraSpellIDFromTooltipData, tooltip, data)
         end)
     end
 
@@ -2660,8 +2688,8 @@ local function SetupTooltipHook()
         TooltipDebugCount("qol.itemPost")
         if not InCombatLockdown() then
             if ShouldProcessTooltipIDs(tooltip) then
-                pcall(TryAddItemIDFromTooltipData, tooltip, data)
-                pcall(TryAddItemMaxStackSizeFromTooltipData, tooltip, data)
+                ns.SafeCall("bulkhead", TryAddItemIDFromTooltipData, tooltip, data)
+                ns.SafeCall("bulkhead", TryAddItemMaxStackSizeFromTooltipData, tooltip, data)
             end
         end
 
@@ -2680,9 +2708,10 @@ local function SetupTooltipHook()
             if not unit then return end
 
             local unitGUID = UnitGUID(unit)
-            if not unitGUID or Helpers.IsSecretValue(unitGUID) or Helpers.IsSecretValue(guid) then
-                return
+            if Helpers.IsSecretValue(unitGUID) or Helpers.IsSecretValue(guid) then
+                return -- @secret-policy: reject-secret-ids
             end
+            if not unitGUID then return end
             if Helpers.SafeCompare(unitGUID, guid) ~= true then return end
 
             AddPlayerItemLevelToTooltip(GameTooltip, unit, false)
@@ -2723,7 +2752,7 @@ local function OnUnitAuraChanged(changedUnit)
     if not unit or unit ~= changedUnit then return end
 
     local guid = UnitGUID(unit)
-    if guid and not Helpers.IsSecretValue(guid) then
+    if not Helpers.IsSecretValue(guid) and guid then
         ClearCachedMountName(guid)
     end
 

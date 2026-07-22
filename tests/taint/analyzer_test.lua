@@ -143,6 +143,11 @@ print("nested taint propagation test passed")
 -- Test: tainted local passed to safe sink method emits no finding
 local r5 = Registry.new()
 r5:addSource("C_Spell.GetSpellCooldownDuration")
+-- These methods are api-index safe sinks at real scan time (durationObjectArg /
+-- AllowedWhenTainted); register them so the bare unit registry exercises the
+-- safe-sink branch rather than the round-13 default-reject fall-through.
+r5:addSafeSinkMethod("SetCooldownFromDurationObject")
+r5:addSafeSinkMethod("SetText")
 
 local source6 = [[
 local durObj = C_Spell.GetSpellCooldownDuration(123)
@@ -223,7 +228,12 @@ else
 end
 ]]
 local findings12 = Analyzer.analyze(source12, "modules/foo.lua", r7, cfg)
-assert_eq(#findings12, 0, "guard untaints in else-branch")
+-- Round-13b: `return 0` in the secret branch is a secret-to-state collapse
+-- (manufactured ordinary value) — the guard still untaints the else-branch
+-- arith, so the collapse finding is the ONLY one.
+assert_eq(#findings12, 1, "guard untaints in else-branch; only the collapse flags")
+assert_eq(findings12[1].sink, "<secret-collapse>",
+    "literal return in the secret branch flags collapse")
 
 -- Test: after the if/end, taint is restored (union of branches)
 local source13 = [[
@@ -573,6 +583,9 @@ assert_eq(fSR2[1].sink, "<comparison>", "sink labeled comparison")
 -- function does not emit a finding for that argument-passing step.
 local rSR3 = Registry.new()
 rSR3:addSource("C_Spell.GetSpellInfo")
+-- SetText is an api-index safe sink at real scan time; register it so the
+-- SetText pipeline exercises the safe-sink branch, not round-13 default-reject.
+rSR3:addSafeSinkMethod("SetText")
 local srcSR3 = [[
 local info = C_Spell.GetSpellInfo(1)
 local s = C_StringUtil.TruncateWhenZero(info)
@@ -1203,6 +1216,9 @@ other:SetAlpha(icon:GetAlpha())
 ]]
 local rAspSink = Registry.new()
 rAspSink:addAspectReturningMethod("GetAlpha", { "Alpha" })
+-- SetAlpha is the C-side sink here; an api-index safe sink at real scan time.
+-- Register it so this exercises the safe-sink branch, not default-reject.
+rAspSink:addSafeSinkMethod("SetAlpha")
 assert_eq(#Analyzer.analyze(srcAspSink, "QUI_CDM/cdm/foo.lua", rAspSink, cfgAsp), 0,
     "aspect getter piped to C-side sink is clean")
 
@@ -8170,3 +8186,275 @@ end)()
 print("round-8 truth-test + gate-scope + guard-alias test passed")
 print("round-9 gate-governance + deep-field provenance test passed")
 end
+
+-- round-12b: all-guard OR-chain untaint (`if G(x) or G(y) then return end`
+-- proves x AND y for else/subsequent code — the canonical multi-value probe
+-- bail). Mixed chains (any non-guard disjunct) must keep the taint.
+;(function()
+    local r12 = Registry.new()
+    r12:addSource("UnitCastingInfo")
+    r12:addGuard("RSV")  -- extra_guards-style registered wrapper name
+    local c12 = Config.loadFromString(nil)
+    local function count(src)
+        local f = Analyzer.analyze(src, "modules/foo.lua", r12, c12)
+        assert(f, "analyze ok")
+        return #f
+    end
+
+    -- Round-13b: `return nil` inside the all-guard branch is itself a
+    -- secret-to-state collapse (the fail-open spelling), so each of these
+    -- now carries exactly ONE finding — the collapse — while the or-chain
+    -- proof still keeps the post-if reads clean.
+    assert_eq(count([[
+local _, _, _, startMS, endMS = UnitCastingInfo("player")
+if issecretvalue(startMS) or issecretvalue(endMS) then
+    return nil
+end
+if startMS and endMS then
+    return startMS / 1000, (endMS - startMS) / 1000
+end
+return false
+]]), 1, "all-guard or-chain terminator proves every probed value"
+    .. " (+ the return-nil collapse)")
+
+    assert_eq(count([[
+local _, _, _, startMS, endMS = UnitCastingInfo("player")
+if RSV(startMS) or RSV(endMS) then
+    return nil
+end
+return startMS + endMS
+]]), 1, "registered wrapper guards work in the or-chain"
+    .. " (+ the return-nil collapse)")
+
+    assert(count([[
+local _, _, _, startMS, endMS = UnitCastingInfo("player")
+if issecretvalue(startMS) or endMS == 5 then
+    return nil
+end
+return startMS + endMS
+]]) >= 1, "mixed or-chain must NOT untaint (endMS never probed, and the == throws)")
+
+    assert(count([[
+local _, _, _, startMS, endMS = UnitCastingInfo("player")
+if issecretvalue(startMS) or issecretvalue(endMS) then
+    return nil
+end
+local other = UnitCastingInfo("player")
+return other and 1 or 0
+]]) >= 1, "or-chain proof scoped to probed values only")
+
+    print("round-12b all-guard or-chain untaint test passed")
+end)()
+
+-- ===== Round-13: unknown-consumer default-reject =====
+do
+    local r13 = Registry.new()
+    r13:addSource("C_Spell.GetSpellCharges")
+    r13:addDocArgRestrictedMethod("SetShown", "AllowedWhenUntainted")
+    r13:addDocArgRestrictedFunction("C_Test.Forbidden", "NotAllowed")
+    r13:addSafeSinkMethod("SetValue")
+    local srcR13
+
+    -- 1. tainted arg to an UNKNOWN method → flags
+    srcR13 = [[
+local info = C_Spell.GetSpellCharges(1)
+local obj = GetFrame()
+obj:Configure(info)
+]]
+    local f = Analyzer.analyze(srcR13, "modules/foo.lua", r13, cfg)
+    assert_eq(#f, 1, "unknown method consumer flags")
+    assert(f[1].sink:find("consumer", 1, true), "consumer sink label")
+
+    -- 2. tainted arg to a DOCUMENTED-restricted method → flags, cites doc
+    srcR13 = [[
+local info = C_Spell.GetSpellCharges(1)
+local obj = GetFrame()
+obj:SetShown(info)
+]]
+    f = Analyzer.analyze(srcR13, "modules/foo.lua", r13, cfg)
+    assert_eq(#f, 1, "documented-restricted method flags")
+    assert(f[1].message:find("AllowedWhenUntainted", 1, true), "message cites the doc value")
+
+    -- 3. tainted arg to a documented-restricted FUNCTION → flags
+    srcR13 = [[
+local info = C_Spell.GetSpellCharges(1)
+C_Test.Forbidden(info)
+]]
+    f = Analyzer.analyze(srcR13, "modules/foo.lua", r13, cfg)
+    assert_eq(#f, 1, "documented-restricted function flags")
+
+    -- 4. tainted arg to an UNDOCUMENTED plain function → NO consumer finding
+    --    (non-interprocedural boundary: helpers are hand-audited)
+    srcR13 = [[
+local info = C_Spell.GetSpellCharges(1)
+HelperFn(info)
+]]
+    f = Analyzer.analyze(srcR13, "modules/foo.lua", r13, cfg)
+    assert_eq(#f, 0, "plain undocumented function stays traversal-only")
+
+    -- 5. safe-sink control: no finding
+    srcR13 = [[
+local info = C_Spell.GetSpellCharges(1)
+local bar = GetFrame()
+bar:SetValue(info)
+]]
+    f = Analyzer.analyze(srcR13, "modules/foo.lua", r13, cfg)
+    assert_eq(#f, 0, "allowlisted sink method stays clean")
+
+    -- 6. clean arg to unknown method: no finding
+    srcR13 = [[
+local obj = GetFrame()
+obj:Configure(5)
+]]
+    f = Analyzer.analyze(srcR13, "modules/foo.lua", r13, cfg)
+    assert_eq(#f, 0, "clean args never flag")
+
+    -- 7. protected-call demotion parity with the UNSAFE_BUILTIN branch
+    srcR13 = [[
+local obj = GetFrame()
+obj:Configure((pcall(C_Spell.GetSpellCharges, 1)))
+]]
+    f = Analyzer.analyze(srcR13, "modules/foo.lua", r13, cfg)
+    assert_eq(#f, 0, "parenthesized pcall truncates to the clean ok boolean")
+end
+print("round-13 unknown-consumer default-reject tests passed")
+
+-- ===== Round-13b: secret-to-state collapse (Drew's 12d canon) =====
+do
+    local r13b = Registry.new()
+    r13b:addSource("C_Spell.GetSpellCharges")
+    r13b:addSafeSinkMethod("SetValue")
+    local srcC
+
+    -- 1. THE canonical defect: secret ⇒ true
+    srcC = [[
+local x = C_Spell.GetSpellCharges(1)
+if issecretvalue(x) then
+    return true
+end
+]]
+    local f = Analyzer.analyze(srcC, "modules/foo.lua", r13b, cfg)
+    local n = 0
+    for _, ff in ipairs(f) do if ff.sink == "<secret-collapse>" then n = n + 1 end end
+    assert_eq(n, 1, "secret => return true flags collapse")
+
+    -- 2. secret ⇒ nil (the fail-open spelling is the SAME error)
+    srcC = [[
+local x = C_Spell.GetSpellCharges(1)
+if issecretvalue(x) then
+    return nil
+end
+]]
+    f = Analyzer.analyze(srcC, "modules/foo.lua", r13b, cfg)
+    n = 0; for _, ff in ipairs(f) do if ff.sink == "<secret-collapse>" then n = n + 1 end end
+    assert_eq(n, 1, "secret => return nil flags collapse")
+
+    -- 3. bare return = reject/defer → sanctioned, clean
+    srcC = [[
+local x = C_Spell.GetSpellCharges(1)
+if issecretvalue(x) then
+    return
+end
+]]
+    f = Analyzer.analyze(srcC, "modules/foo.lua", r13b, cfg)
+    n = 0; for _, ff in ipairs(f) do if ff.sink == "<secret-collapse>" then n = n + 1 end end
+    assert_eq(n, 0, "bare return (defer) stays clean")
+
+    -- 4. routing the opaque value to a documented C sink → clean
+    srcC = [[
+local x = C_Spell.GetSpellCharges(1)
+local bar = GetBar()
+if issecretvalue(x) then
+    bar:SetValue(x)
+    return
+end
+]]
+    f = Analyzer.analyze(srcC, "modules/foo.lua", r13b, cfg)
+    n = 0; for _, ff in ipairs(f) do if ff.sink == "<secret-collapse>" then n = n + 1 end end
+    assert_eq(n, 0, "sink-route + defer stays clean")
+
+    -- 5. literal STATE write in the guard-secret branch flags
+    srcC = [[
+local state = {}
+local x = C_Spell.GetSpellCharges(1)
+if issecretvalue(x) then
+    state.active = true
+end
+]]
+    f = Analyzer.analyze(srcC, "modules/foo.lua", r13b, cfg)
+    n = 0; for _, ff in ipairs(f) do if ff.sink == "<secret-collapse>" then n = n + 1 end end
+    assert_eq(n, 1, "secret => state.active = true flags")
+
+    -- 6. inverted polarity: else-branch of `if not issecretvalue(x)` is the
+    --    secret region
+    srcC = [[
+local x = C_Spell.GetSpellCharges(1)
+if not issecretvalue(x) then
+    local y = 1
+else
+    return false
+end
+]]
+    f = Analyzer.analyze(srcC, "modules/foo.lua", r13b, cfg)
+    n = 0; for _, ff in ipairs(f) do if ff.sink == "<secret-collapse>" then n = n + 1 end end
+    assert_eq(n, 1, "later clauses after untaint-then are the secret region")
+
+    -- 7. nested statements inside the region are scanned
+    srcC = [[
+local x = C_Spell.GetSpellCharges(1)
+if issecretvalue(x) then
+    if GetFlag() then
+        return {}
+    end
+end
+]]
+    f = Analyzer.analyze(srcC, "modules/foo.lua", r13b, cfg)
+    n = 0; for _, ff in ipairs(f) do if ff.sink == "<secret-collapse>" then n = n + 1 end end
+    assert_eq(n, 1, "literal constructor return in nested if flags")
+
+    -- 8. @secret-policy suppresses; @secret-safe does NOT
+    srcC = [[
+local x = C_Spell.GetSpellCharges(1)
+if issecretvalue(x) then
+    return true -- @secret-policy: keep-visible-when-unknown
+end
+]]
+    f = Analyzer.analyze(srcC, "modules/foo.lua", r13b, cfg)
+    n = 0; for _, ff in ipairs(f) do if ff.sink == "<secret-collapse>" then n = n + 1 end end
+    assert_eq(n, 0, "named policy annotation suppresses collapse")
+
+    srcC = [[
+local x = C_Spell.GetSpellCharges(1)
+if issecretvalue(x) then
+    return true -- @secret-safe: fine
+end
+]]
+    f = Analyzer.analyze(srcC, "modules/foo.lua", r13b, cfg)
+    n = 0; for _, ff in ipairs(f) do if ff.sink == "<secret-collapse>" then n = n + 1 end end
+    assert_eq(n, 1, "@secret-safe cannot bless a collapse — policy must be named")
+
+    -- 9. closures inside the region are NOT scanned (deferred bodies run
+    --    outside the guard's dominance)
+    srcC = [[
+local x = C_Spell.GetSpellCharges(1)
+if issecretvalue(x) then
+    RunLater(function() return true end)
+    return
+end
+]]
+    f = Analyzer.analyze(srcC, "modules/foo.lua", r13b, cfg)
+    n = 0; for _, ff in ipairs(f) do if ff.sink == "<secret-collapse>" then n = n + 1 end end
+    assert_eq(n, 0, "closure bodies skipped")
+
+    -- 10. non-literal returns stay clean (forwarding/unwrap paths)
+    srcC = [[
+local x = C_Spell.GetSpellCharges(1)
+if issecretvalue(x) then
+    return x
+end
+]]
+    f = Analyzer.analyze(srcC, "modules/foo.lua", r13b, cfg)
+    n = 0; for _, ff in ipairs(f) do if ff.sink == "<secret-collapse>" then n = n + 1 end end
+    assert_eq(n, 0, "forwarding the opaque value is not a collapse")
+end
+print("round-13b secret-collapse tests passed")

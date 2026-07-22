@@ -136,9 +136,18 @@ local ns = {
     LSM = {
         Fetch = function() return nil end,
     },
+    SafeCall = function(_policy, fn, ...)
+        return pcall(fn, ...)
+    end,
+    SafeCallMethod = function(_policy, obj, name, ...)
+        return pcall(function(...) return obj[name](obj, ...) end, ...)
+    end,
+    SafeCallMethodIfPresent = function(_policy, obj, name, ...) if obj == nil then return nil end local okP, m = pcall(function() return obj[name] end) if not okP then return false end if m == nil then return nil end return pcall(m, obj, ...) end,
 }
 
-assert(loadfile("modules/qol/focuscastalert.lua"))("QUI", ns)
+-- Instrumented load (Task 7): truthiness/==/# on sentinels now THROW
+-- inside the module, matching in-game 12.1 secret semantics.
+assert(SecretSentinel.LoadInstrumented("modules/qol/focuscastalert.lua"))("QUI", ns)
 assert(eventFrame and eventFrame.scripts and eventFrame.scripts.OnEvent, "focus cast alert event handler missing")
 
 ----------------------------------------------------------------------------

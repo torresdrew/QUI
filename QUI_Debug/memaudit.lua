@@ -201,7 +201,7 @@ local function TakeSnapshot()
         end
     end
 
-    pcall(UpdateAddOnMemoryUsage)
+    ns.SafeCall("best-effort-style", UpdateAddOnMemoryUsage)
     snap._totalKB = SumSuiteMemoryKB()
     snap._time = GetTime()
     snap._combat = InCombatLockdown() and true or false
@@ -780,7 +780,7 @@ local function HandleExperiment(arg)
     if arg == "reset" then
         local exps = GetExperiments()
         for i = 1, #exps do
-            pcall(exps[i].setEnabled, true)
+            ns.SafeCall("report", exps[i].setEnabled, true)
         end
         print("|cff60A5FA[memaudit exp]|r all experiments restored to production (on)")
         return
@@ -1030,10 +1030,10 @@ end
 
 _G.QUI_MemAudit = function(subcmd, arg)
     if subcmd == "gc" then
-        pcall(UpdateAddOnMemoryUsage)
+        ns.SafeCall("best-effort-style", UpdateAddOnMemoryUsage)
         local before = SumSuiteMemoryKB()
         collectgarbage("collect")
-        pcall(UpdateAddOnMemoryUsage)
+        ns.SafeCall("best-effort-style", UpdateAddOnMemoryUsage)
         local after = SumSuiteMemoryKB()
         print(string.format("|cff60A5FAQUI GC:|r Before: %s  After: %s  Freed: |cff44FF44%s|r",
             FormatKB(before), FormatKB(after), FormatKB(before - after)))

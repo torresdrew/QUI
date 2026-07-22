@@ -72,11 +72,12 @@ assert(pass:find("previewSuppressed", 1, true)
 assert(pass:find("AuraGlue.QueueRegenWork(frame, function(f) ApplyElementPass(f, true) end)", 1, true),
     "incomplete (forbidden work skipped in combat) must queue a regen replay via AuraGlue.QueueRegenWork")
 
--- UpdateAuras: combat = pcall'd mutable pass now + STILL queue.
+-- UpdateAuras: combat = SafeCall-guarded mutable pass now + STILL queue.
+-- (Task 45a: converted from bare pcall to ns.SafeCall("best-effort-style", ...).)
 local update = slice("local function UpdateAuras(frame)")
 assert(update:find("InCombatLockdown()", 1, true), "UpdateAuras must branch on combat")
-assert(update:find("pcall(ApplyElementPass, frame, false)", 1, true),
-    "UpdateAuras must pcall the mutation-only pass immediately in combat")
+assert(update:find('ns.SafeCall("best-effort-style", ApplyElementPass, frame, false)', 1, true),
+    "UpdateAuras must SafeCall-guard the mutation-only pass immediately in combat")
 assert(update:find("AuraGlue.QueueRegenWork(frame, function(f) ApplyElementPass(f, true) end)", 1, true),
     "UpdateAuras must STILL queue the full pass for regen (self-heal)")
 assert(update:find("ApplyElementPass(frame, true)", 1, true),

@@ -60,7 +60,7 @@ function EnsureOwnedActionButton(container, barKey, btnName, index)
     local existed = btn ~= nil
     if not btn then
         local ok
-        ok, btn = pcall(CreateFrame, "CheckButton", btnName, container, "ActionBarButtonTemplate")
+        ok, btn = ns.SafeCall("best-effort-style", CreateFrame, "CheckButton", btnName, container, "ActionBarButtonTemplate")
         if not ok then btn = _G[btnName] end
         btn:SetAttribute("type", "action")
         btn:SetAttribute("checkselfcast", true)
@@ -301,7 +301,7 @@ end
 function PrimeStandardOwnedButtonVisuals(buttons)
     for _, btn in ipairs(buttons) do
         if ActionButton_Update then
-            pcall(ActionButton_Update, btn)
+            ns.SafeCall("best-effort-style", ActionButton_Update, btn)
         end
         ActionBarsOwned.UpdateCooldown(btn)
         ActionBarsOwned.UpdateOverlayGlow(btn)
@@ -362,7 +362,7 @@ function BuildBar(barKey)
             local btn = _G[btnName]
             if not btn then
                 local ok
-                ok, btn = pcall(CreateFrame, "CheckButton", btnName, container, template)
+                ok, btn = ns.SafeCall("best-effort-style", CreateFrame, "CheckButton", btnName, container, template)
                 if not ok then btn = _G[btnName] end
                 btn:SetID(i)
             else
@@ -785,7 +785,7 @@ function BuildBar(barKey)
         -- Prevent BagsBar from responding to expand/collapse state changes
         -- which would trigger unnecessary Layout calls.
         if BagsBar and EventRegistry and EventRegistry.UnregisterCallback then
-            pcall(EventRegistry.UnregisterCallback, EventRegistry, "MainMenuBarManager.OnExpandChanged", BagsBar)
+            ns.SafeCallMethod("best-effort-style", EventRegistry, "UnregisterCallback", "MainMenuBarManager.OnExpandChanged", BagsBar)
         end
 
         -- Hook Blizzard's layout to reclaim buttons if it tries to reparent them

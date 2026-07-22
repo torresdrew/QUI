@@ -102,6 +102,11 @@ local settings = { modifiers = {
 
 local ns = {
     Helpers = { IsSecretValue = function(v) return secrets[v] == true end },
+    -- core/safecall.lua stub: silent pcall swallow matches the pre-SafeCall
+    -- behavior these tests were written against (Task 45b ns-mock precedent).
+    SafeCall = function(_policy, fn, ...) return pcall(fn, ...) end,
+    SafeCallMethod = function(_policy, obj, name, ...) return pcall(function(...) return obj[name](obj, ...) end, ...) end,
+    SafeCallMethodIfPresent = function(_policy, obj, name, ...) if obj == nil then return nil end local okP, m = pcall(function() return obj[name] end) if not okP then return false end if m == nil then return nil end return pcall(m, obj, ...) end,
     QUI = { Chat = {
         _internals = {
             GetSettings = function() return settings end,

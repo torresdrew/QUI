@@ -50885,7 +50885,7 @@ ns.QUI_SearchCache = {
         },
         {
             ["category"] = "frames",
-            ["description"] = "Outline the frame border in the dispel type's color when a dispellable debuff or private-dispel marker is active on the unit.",
+            ["description"] = "Outline the frame border in the dispel type's color when a debuff you can dispel is active on the unit.",
             ["featureId"] = "groupFramesPage",
             ["label"] = "Enable Dispel Overlay",
             ["providerKey"] = "partyFrames",
@@ -50908,7 +50908,7 @@ ns.QUI_SearchCache = {
         },
         {
             ["category"] = "frames",
-            ["description"] = "Outline the frame border in the dispel type's color when a dispellable debuff or private-dispel marker is active on the unit.",
+            ["description"] = "Outline the frame border in the dispel type's color when a debuff you can dispel is active on the unit.",
             ["featureId"] = "groupFramesPage",
             ["label"] = "Enable Dispel Overlay",
             ["providerKey"] = "raidFrames",

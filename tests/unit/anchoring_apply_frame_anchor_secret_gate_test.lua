@@ -46,7 +46,14 @@ local function fakeIsSecretValue(v) return v == SECRET end
 _G.issecretvalue = fakeIsSecretValue
 _G.LibStub = function() return nil end
 
-local ns = {}
+local ns = {
+    -- modules/layout/anchoring.lua now routes its pcall guards through
+    -- ns.SafeCall (Task 45d); mirror the ns-mock stub precedent used
+    -- across the suite.
+    SafeCall = function(_policy, fn, ...) return pcall(fn, ...) end,
+    SafeCallMethod = function(_policy, obj, name, ...) return pcall(function(...) return obj[name](obj, ...) end, ...) end,
+    SafeCallMethodIfPresent = function(_policy, obj, name, ...) if obj == nil then return nil end local okP, m = pcall(function() return obj[name] end) if not okP then return false end if m == nil then return nil end return pcall(m, obj, ...) end,
+}
 assert(loadfile("core/utils.lua"))("QUI", ns)
 assert(ns.Helpers and ns.Helpers.FrameMutationRestricted,
     "core/utils.lua must export Helpers.FrameMutationRestricted")
@@ -91,6 +98,42 @@ check("FVS: throwing GetAlpha -> nil (defer)",
     }) == nil)
 check("FVS: custom threshold hides below it",
     FVS(visFrame(true, 0.3), 0.5) == false)
+
+-- Member LOOKUP throws (forbidden frame / 68675 DenyTaintedAccess child —
+-- round-18b guard-position class): the getter index itself detonates, not
+-- the call. Unprovable -> nil, and the throw must never escape the helper.
+local function lookupThrowFrame(throwMembers, base)
+    return setmetatable({}, {
+        __index = function(_, k)
+            if throwMembers[k] then
+                error("Attempted to read forbidden member " .. tostring(k))
+            end
+            return base and base[k] or nil
+        end,
+    })
+end
+local okL, resL = pcall(FVS, lookupThrowFrame({ IsShown = true }))
+check("FVS: throwing IsShown LOOKUP -> nil (defer, no escape)",
+    okL and resL == nil, tostring(resL))
+okL, resL = pcall(FVS, lookupThrowFrame({ GetAlpha = true },
+    { IsShown = function() return true end }))
+check("FVS: throwing GetAlpha LOOKUP -> nil (defer, no escape)",
+    okL and resL == nil, tostring(resL))
+okL, resL = pcall(FVS, { IsShown = SECRET })
+check("FVS: secret IsShown MEMBER value -> nil (defer)",
+    okL and resL == nil, tostring(resL))
+
+-- Short-circuit contract: a provably-hidden verdict must never depend on
+-- the alpha getter. Once IsShown answered false, GetAlpha lookup/member
+-- state is irrelevant — probing it jointly with IsShown would degrade a
+-- provable false to nil and park callers that could have acted.
+okL, resL = pcall(FVS, lookupThrowFrame({ GetAlpha = true },
+    { IsShown = function() return false end }))
+check("FVS: hidden + throwing GetAlpha LOOKUP -> false (short-circuit)",
+    okL and resL == false, tostring(resL))
+okL, resL = pcall(FVS, { IsShown = function() return false end, GetAlpha = SECRET })
+check("FVS: hidden + secret GetAlpha MEMBER -> false (short-circuit)",
+    okL and resL == false, tostring(resL))
 
 ---------------------------------------------------------------------------
 -- Stub WoW environment for the anchoring chunk.
@@ -1469,6 +1512,213 @@ env.QUI_IsLayoutModeActive = oldLayoutModeProbe
 
 env.QUI_ReanchorFramePositionOnly = realPosOnly
 frameAnchoring.qtestPosChild.autoWidth = nil
+
+---------------------------------------------------------------------------
+-- (u) Source pins: InstallVisibilityHook guard lookups are protected.
+--     The resolved target can be a forbidden frame / 68675 DenyTaintedAccess
+--     child where the member LOOKUP itself throws (round-18b guard-position
+--     class). Section (v) below models this behaviorally with SELECTIVE
+--     throwing __index proxies; the source pins remain for the probe-order
+--     shape a proxy cannot model — Lua 5.1 __eq never fires against nil, so
+--     a throwing `frame == nil` truth-test on a secret is unstubable.
+---------------------------------------------------------------------------
+local srcF = assert(io.open("modules/layout/anchoring.lua", "rb"))
+local anchSrc = srcF:read("*a"); srcF:close()
+anchSrc = anchSrc:gsub("\r\n", "\n")
+check("pin: visibility-hook existence lookups run inside pcall",
+    anchSrc:find("pcall(ProbeVisibilityHookMembers, frame)", 1, true) ~= nil)
+check("pin: no raw guard lookup of frame.HookScript remains",
+    anchSrc:find("not frame or not frame.HookScript", 1, true) == nil)
+check("pin: GetAlpha is not pre-indexed outside its pcall",
+    anchSrc:find("pcall(frame.GetAlpha", 1, true) == nil
+    and anchSrc:find("pcall(InvokeGetAlpha, frame)", 1, true) ~= nil)
+check("pin: secret probe precedes the nil check on the hook target",
+    (function()
+        local probePos = anchSrc:find("nsHelpers.IsSecretValue(frame))", 1, true)
+        local nilPos = anchSrc:find("or frame == nil then", 1, true)
+        return probePos ~= nil and nilPos ~= nil and probePos < nilPos
+    end)())
+
+---------------------------------------------------------------------------
+-- (v) BEHAVIORAL: selective throwing __index proxies through the FULL apply.
+--     The anchor parent delegates every member to a plain stub EXCEPT the
+--     members under test, whose LOOKUP throws (round-18b guard-position
+--     class: forbidden frame / DenyTaintedAccess child). The apply must
+--     contain the throw, still position the child, and never take a
+--     hide/show decision from an unreadable parent.
+--       HookScript lookup throws  -> member probe fails, no hook installed
+--       SetAlpha lookup throws    -> probe fails closed, no hook at all
+--       GetAlpha lookup throws    -> probe passed, hooks install; the alpha
+--                                    read is contained (pcall'd InvokeGetAlpha
+--                                    + FrameVisibleSecure lookup probe)
+---------------------------------------------------------------------------
+local function ThrowingMemberProxy(base, throwMembers)
+    return setmetatable({}, {
+        __index = function(_, k)
+            if throwMembers[k] then
+                error("Attempted to access forbidden member " .. tostring(k))
+            end
+            return base[k]
+        end,
+        __newindex = function(_, k, v) base[k] = v end,
+    })
+end
+
+inCombat = false
+-- Normalize first: a readable-VISIBLE parent legitimately restores (Show)
+-- a child whose hidden latch is still set from earlier sections. Clear the
+-- latch on the plain parent so any Show/Hide inside the proxy cases can
+-- only come from a decision taken against the throwing parent itself.
+activeParent = parentFrame
+parentFrame.shownAnswer = true
+parentFrame.alphaAnswer = 1
+env.QUI_ApplyFrameAnchor("qtestHideChild")
+runScheduled()
+
+local proxyCases = {
+    { label = "HookScript lookup throws", throws = { HookScript = true },
+      expectHooks = false },
+    { label = "SetAlpha lookup throws", throws = { SetAlpha = true },
+      expectHooks = false },
+    { label = "GetAlpha lookup throws", throws = { GetAlpha = true },
+      expectHooks = true },
+}
+for _, case in ipairs(proxyCases) do
+    local base = StubFrame("proxyParent", true)
+    activeParent = ThrowingMemberProxy(base, case.throws)
+    resetGeom()
+    local okProxy, errProxy = pcall(env.QUI_ApplyFrameAnchor, "qtestHideChild")
+    runScheduled() -- unreadable-visibility retry replays must stay contained too
+    check(("proxy %s: apply does not error"):format(case.label),
+        okProxy, tostring(errProxy))
+    check(("proxy %s: child still positioned"):format(case.label),
+        sawGeom("hideChild:SetPoint"), geomSummary())
+    check(("proxy %s: no hide/show decision from throwing parent"):format(case.label),
+        not sawGeom("hideChild:Hide") and not sawGeom("hideChild:Show"),
+        geomSummary())
+    if case.expectHooks then
+        check(("proxy %s: OnShow/OnHide visibility hooks installed"):format(case.label),
+            base.hookScripts.OnShow ~= nil and base.hookScripts.OnHide ~= nil)
+    else
+        check(("proxy %s: NO hook installed after failed member probe"):format(case.label),
+            next(base.hookScripts) == nil)
+    end
+end
+-- Restore the plain parent so the swap never leaks past this section.
+activeParent = parentFrame
+parentFrame.shownAnswer = true
+parentFrame.alphaAnswer = 1
+env.QUI_ApplyFrameAnchor("qtestHideChild")
+runScheduled()
+
+---------------------------------------------------------------------------
+-- (z) SetAlpha visibility-hook latch: an UNREADABLE initial alpha must be
+--     preserved as UNKNOWN (nil), never collapsed to "visible". Unfixed
+--     repro: the hook installs while GetAlpha answers secret (HUD fade),
+--     latching wasAlphaHidden=false; the parent is actually faded out and
+--     a later readable pass hides the child; the one-shot unreadable retry
+--     is burned. When the parent fades back in, SetAlpha(1) compares
+--     false==false — no transition seen, no re-anchor, the child stays
+--     hidden forever. Fixed: unknown stays nil, so the FIRST readable
+--     alpha callback fires the re-anchor exactly once, then normal edge
+--     detection latches. This section invokes the INSTALLED callback (the
+--     env-wide hooksecurefunc stub is a no-op, so the other sections never
+--     exercise it).
+---------------------------------------------------------------------------
+do
+    inCombat = false
+    local capturedHooks = {}
+    local realHooksecurefunc = env.hooksecurefunc
+    env.hooksecurefunc = function(frame, method, cb)
+        capturedHooks[frame] = capturedHooks[frame] or {}
+        capturedHooks[frame][method] = cb
+    end
+
+    local alphaParent = StubFrame("alphaParent")
+    local alphaChild = StubFrame("alphaChild")
+    env.QUI_RegisterFrameResolver("qtestAlphaParent",
+        { resolver = function() return alphaParent end })
+    env.QUI_RegisterFrameResolver("qtestAlphaChild",
+        { resolver = function() return alphaChild end })
+    frameAnchoring.qtestAlphaChild = {
+        parent = "qtestAlphaParent", point = "TOP", relative = "BOTTOM",
+        offsetX = 0, offsetY = -4, hideWithParent = true,
+    }
+
+    -- Hook installs while the alpha answer is SECRET: initial state UNKNOWN.
+    alphaParent.shownAnswer = true
+    alphaParent.alphaAnswer = SECRET
+    env.QUI_ApplyFrameAnchor("qtestAlphaChild")
+    runScheduled() -- burn the one-shot unreadable retry (answer still secret)
+    local alphaCb = capturedHooks[alphaParent] and capturedHooks[alphaParent].SetAlpha
+    check("alpha-latch: SetAlpha hook installed under a secret initial alpha",
+        alphaCb ~= nil, "no SetAlpha callback captured")
+
+    -- The parent turns out to be faded OUT (readable pass hides the child)...
+    alphaParent.alphaAnswer = 0
+    resetGeom()
+    env.QUI_ApplyFrameAnchor("qtestAlphaChild")
+    runScheduled()
+    check("alpha-latch: readable alpha~0 pass hides the child",
+        sawGeom("alphaChild:Hide"), geomSummary())
+    check("alpha-latch: hidden latch set",
+        env.QUI_IsFrameHiddenByAnchor("qtestAlphaChild") == true)
+
+    -- ...then fades back in via SetAlpha(1). The callback's stored state is
+    -- UNKNOWN, so this first readable transition MUST re-run the anchor
+    -- pass (unfixed: false==false, no re-run, child parked hidden forever).
+    alphaParent.alphaAnswer = 1
+    resetGeom()
+    alphaCb(alphaParent, 1)
+    runScheduled()
+    check("alpha-latch: first readable SetAlpha re-runs the anchor pass",
+        sawGeom("alphaChild:Show"), geomSummary())
+    check("alpha-latch: hidden latch cleared",
+        env.QUI_IsFrameHiddenByAnchor("qtestAlphaChild") == false)
+
+    -- The unknown fired once and latched: an identical readable alpha is a
+    -- NO-transition and must not re-enter the bulk pass at all. Counted at
+    -- the METHOD (called synchronously by the hook before any throttling),
+    -- and asserted BEFORE runScheduled so throttle replays never pollute.
+    local visApplies = 0
+    local realBulk = Anchoring.ApplyAllFrameAnchors
+    Anchoring.ApplyAllFrameAnchors = function(self, ...)
+        visApplies = visApplies + 1
+        return realBulk(self, ...)
+    end
+    alphaCb(alphaParent, 1)
+    check("alpha-latch: repeated readable alpha is edge-detected (no re-fire)",
+        visApplies == 0, ("%d applies"):format(visApplies))
+
+    -- Normal edge detection continues: visible -> hidden fires...
+    alphaParent.alphaAnswer = 0
+    alphaCb(alphaParent, 0)
+    check("alpha-latch: visible->hidden edge fires the anchor pass",
+        visApplies == 1, ("%d applies"):format(visApplies))
+    runScheduled()
+    check("alpha-latch: edge pass re-hides the child",
+        env.QUI_IsFrameHiddenByAnchor("qtestAlphaChild") == true)
+
+    -- ...and a SECRET alpha through the hook is ignored: no fire, no latch
+    -- corruption (the HUD curve passes secret HP-derived alphas through
+    -- SetAlpha intentionally).
+    local appliesBefore = visApplies
+    alphaCb(alphaParent, SECRET)
+    check("alpha-latch: secret alpha through the hook is ignored",
+        visApplies == appliesBefore, ("%d applies"):format(visApplies))
+    alphaParent.alphaAnswer = 1
+    alphaCb(alphaParent, 1)
+    check("alpha-latch: hidden->visible edge still fires after the secret call",
+        visApplies == appliesBefore + 1, ("%d applies"):format(visApplies))
+    runScheduled()
+    check("alpha-latch: child restored after the secret interlude",
+        env.QUI_IsFrameHiddenByAnchor("qtestAlphaChild") == false)
+
+    Anchoring.ApplyAllFrameAnchors = realBulk
+    env.hooksecurefunc = realHooksecurefunc
+    frameAnchoring.qtestAlphaChild = nil
+    runScheduled()
+end
 
 print(("\n%d failure(s)"):format(failures))
 if failures == 0 then

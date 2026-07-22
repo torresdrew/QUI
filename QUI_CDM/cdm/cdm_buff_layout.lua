@@ -356,7 +356,7 @@ local function ApplyTrackedBarAnchor(settings)
         if anchorCacheMatches(vbs.anchorCache, anchorTo, placement, anchorFrame, sourcePoint, targetPoint, px, py) then
             return
         end
-        ok = pcall(function()
+        ok = ns.SafeCall("best-effort-style", function()
             viewer:ClearAllPoints()
             viewer:SetPoint(sourcePoint, anchorFrame, targetPoint, offsetX, offsetY)
         end)
@@ -420,7 +420,7 @@ local function ApplyBuffIconAnchor(settings)
         local hadAnchor = vbs.anchorCache ~= nil
         local originalPoints = vbs.originalPoints
         if hadAnchor and originalPoints and #originalPoints > 0 then
-            pcall(function()
+            ns.SafeCall("best-effort-style", function()
                 viewer:ClearAllPoints()
                 for _, pointData in ipairs(originalPoints) do
                     viewer:SetPoint(
@@ -481,7 +481,7 @@ local function ApplyBuffIconAnchor(settings)
         if anchorCacheMatches(vbs.anchorCache, anchorTo, placement, anchorFrame, sourcePoint, targetPoint, px, py) then
             return
         end
-        ok = pcall(function()
+        ok = ns.SafeCall("best-effort-style", function()
             viewer:ClearAllPoints()
             viewer:SetPoint(sourcePoint, anchorFrame, targetPoint, offsetX, offsetY)
         end)
@@ -855,9 +855,21 @@ local function GetBuffIconFrames()
     local pool = ns.CDMIconFactory and ns.CDMIconFactory:GetIconPool("buff")
     if not pool or #pool == 0 then return {} end
 
+    -- Same combat-gated laundering as the CheckIconChanges scan over this
+    -- pool: aspect getters can return secrets in combat; ReadBoolean/
+    -- ReadNumber launder before the truth-test/compare.
+    local inCombat = InCombatLockdown()
     local visible = {}
     for _, icon in ipairs(pool) do
-        if icon:IsShown() and icon:GetAlpha() > 0 then
+        local shown, alpha
+        if inCombat then
+            shown = ReadBoolean(icon:IsShown(), false)
+            alpha = ReadNumber(icon:GetAlpha(), 1)
+        else
+            shown = icon:IsShown()
+            alpha = icon:GetAlpha()
+        end
+        if shown and alpha > 0 then
             visible[#visible + 1] = icon
         end
     end

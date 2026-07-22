@@ -83,7 +83,7 @@ function ActionBarsOwned.UpdatePetButton(btn)
     if cooldown and GetPetActionCooldown then
         local start, duration, enable = GetPetActionCooldown(id)
         if CooldownFrame_Set then
-            pcall(CooldownFrame_Set, cooldown, start, duration, enable)
+            ns.SafeCall("sink-forward", CooldownFrame_Set, cooldown, start, duration, enable)
         end
     end
 end
@@ -127,7 +127,7 @@ function ActionBarsOwned.UpdateStanceButton(btn)
     if cooldown and GetShapeshiftFormCooldown then
         local start, duration, enable = GetShapeshiftFormCooldown(id)
         if CooldownFrame_Set then
-            pcall(CooldownFrame_Set, cooldown, start, duration, enable)
+            ns.SafeCall("sink-forward", CooldownFrame_Set, cooldown, start, duration, enable)
         end
     end
 end

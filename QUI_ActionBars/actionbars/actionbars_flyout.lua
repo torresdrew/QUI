@@ -33,10 +33,10 @@ function ApplyOwnedFlyoutButtonVisuals(button, spellID)
         local texture
         if spellID then
             if C_Spell and C_Spell.GetSpellTexture then
-                local ok, result = pcall(C_Spell.GetSpellTexture, spellID)
+                local ok, result = ns.SafeCall("best-effort-style", C_Spell.GetSpellTexture, spellID)
                 if ok then texture = result end
             elseif GetSpellTexture then
-                local ok, result = pcall(GetSpellTexture, spellID)
+                local ok, result = ns.SafeCall("best-effort-style", GetSpellTexture, spellID)
                 if ok then texture = result end
             end
         end
@@ -101,7 +101,7 @@ function UpdateOwnedFlyoutButtonCooldown(button)
     if showNormal then
         -- ignoreGCD=true so the flyout button's swipe tracks the spell's
         -- real cooldown instead of being masked by the 1.5s GCD sweep.
-        local ok, durObj = pcall(C_Spell.GetSpellCooldownDuration, spellID, true)
+        local ok, durObj = ns.SafeCall("best-effort-style", C_Spell.GetSpellCooldownDuration, spellID, true)
         if ok and durObj then
             cooldown:SetCooldownFromDurationObject(durObj)
         else
@@ -120,7 +120,7 @@ function UpdateOwnedFlyoutButtonCooldown(button)
             cd:SetFrameLevel(button:GetFrameLevel())
             button.chargeCooldown = cd
         end
-        local ok, durObj = pcall(C_Spell.GetSpellChargeDuration, spellID)
+        local ok, durObj = ns.SafeCall("best-effort-style", C_Spell.GetSpellChargeDuration, spellID)
         if ok and durObj then
             button.chargeCooldown:SetCooldownFromDurationObject(durObj)
         else
@@ -401,7 +401,7 @@ function DiscoverOwnedFlyoutInfo()
     wipe(ownedFlyoutInfo)
 
     for flyoutID = 1, 300 do
-        local ok, _, _, numSlots, isKnown = pcall(GetFlyoutInfo, flyoutID)
+        local ok, _, _, numSlots, isKnown = ns.SafeCall("best-effort-style", GetFlyoutInfo, flyoutID)
         if ok and type(numSlots) == "number" and numSlots > 0 then
             local info = { slots = {} }
             PopulateOwnedFlyoutInfoEntry(info, flyoutID, numSlots, isKnown)
@@ -421,7 +421,7 @@ function UpdateOwnedFlyoutInfo()
     local seen = ownedFlyoutSeen
     wipe(seen)
     for flyoutID = 1, 300 do
-        local ok, _, _, numSlots, isKnown = pcall(GetFlyoutInfo, flyoutID)
+        local ok, _, _, numSlots, isKnown = ns.SafeCall("best-effort-style", GetFlyoutInfo, flyoutID)
         if ok and type(numSlots) == "number" and numSlots > 0 then
             local info = ownedFlyoutInfo[flyoutID] or { slots = {} }
             PopulateOwnedFlyoutInfoEntry(info, flyoutID, numSlots, isKnown)

@@ -284,9 +284,13 @@ local function OnCDMFadeUpdate(self)
     local frames = CDMVisibility.fadeTargets or GetCDMFrames()
     for i = #frames, 1, -1 do
         local frame = frames[i]
+        -- Existence/forbidden probes moved INSIDE the trampoline: the guard's
+        -- own frame.SetAlpha / frame.IsForbidden lookups throw on 68675
+        -- DenyTaintedAccess children. A forbidden SetAlpha errors as the
+        -- expected class (silent) and still prunes via ok=false.
         local ok = false
-        if frame and frame.SetAlpha and (not frame.IsForbidden or not frame:IsForbidden()) then
-            ok = pcall(frame.SetAlpha, frame, alpha)
+        if frame then
+            ok = ns.SafeCallMethodIfPresent("best-effort-style", frame, "SetAlpha", alpha)
         end
         if not ok then
             table.remove(frames, i)
@@ -345,8 +349,8 @@ local function SnapCDMFadeToTarget()
     local frames = CDMVisibility.fadeTargets or GetCDMFrames()
     for i = #frames, 1, -1 do
         local frame = frames[i]
-        if frame and frame.SetAlpha and (not frame.IsForbidden or not frame:IsForbidden()) then
-            pcall(frame.SetAlpha, frame, target)
+        if frame then
+            ns.SafeCallMethodIfPresent("best-effort-style", frame, "SetAlpha", target)
         end
     end
     ApplyReanchorViewerAlpha(target)
@@ -390,8 +394,8 @@ UpdateCDMVisibility = function()
         local frames = GetCDMFrames()
         for i = #frames, 1, -1 do
             local frame = frames[i]
-            if frame and frame.SetAlpha and (not frame.IsForbidden or not frame:IsForbidden()) then
-                pcall(frame.SetAlpha, frame, damagedAlpha)
+            if frame then
+                ns.SafeCallMethodIfPresent("sink-forward", frame, "SetAlpha", damagedAlpha)
             end
         end
         -- Secret curve-resolved alpha forwards straight into SetAlpha — the
@@ -601,9 +605,13 @@ local function OnCustomTrackersFadeUpdate(self)
     local frames = CustomTrackersVisibility.fadeTargets or GetCustomTrackerFrames()
     for i = #frames, 1, -1 do
         local frame = frames[i]
+        -- Existence/forbidden probes moved INSIDE the trampoline: the guard's
+        -- own frame.SetAlpha / frame.IsForbidden lookups throw on 68675
+        -- DenyTaintedAccess children. A forbidden SetAlpha errors as the
+        -- expected class (silent) and still prunes via ok=false.
         local ok = false
-        if frame and frame.SetAlpha and (not frame.IsForbidden or not frame:IsForbidden()) then
-            ok = pcall(frame.SetAlpha, frame, alpha)
+        if frame then
+            ok = ns.SafeCallMethodIfPresent("best-effort-style", frame, "SetAlpha", alpha)
         end
         if not ok then
             table.remove(frames, i)
@@ -1180,9 +1188,9 @@ end
 
 local function ApplyBarAlpha(setBarAlpha, barKey, container, alpha)
     if setBarAlpha then
-        pcall(setBarAlpha, barKey, alpha)
-    elseif container and container.SetAlpha then
-        pcall(container.SetAlpha, container, alpha)
+        ns.SafeCall("best-effort-style", setBarAlpha, barKey, alpha)
+    elseif container then
+        ns.SafeCallMethodIfPresent("best-effort-style", container, "SetAlpha", alpha)
     end
 end
 
@@ -1493,9 +1501,7 @@ local function OnChatFadeUpdate(self)
 
     local frames = ChatVisibility.fadeTargets or GetChatFrames()
     for _, frame in ipairs(frames) do
-        if frame and frame.SetAlpha then
-            pcall(frame.SetAlpha, frame, alpha)
-        end
+        ns.SafeCallMethodIfPresent("best-effort-style", frame, "SetAlpha", alpha)
     end
 
     if progress >= 1 then

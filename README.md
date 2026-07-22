@@ -5,7 +5,7 @@
 
 # QUI Community Edition
 
-QUI is a modular World of Warcraft UI suite for Midnight 12.0+. It combines combat HUD tools, layout editing, action bars, unit and group frames, chat, minimap controls, data panels, a native damage meter, profile tools, and quality-of-life helpers under one settings experience.
+QUI is a modular World of Warcraft UI suite for Midnight 12.1+. It combines combat HUD tools, layout editing, action bars, unit and group frames, chat, minimap controls, data panels, a native damage meter, profile tools, and quality-of-life helpers under one settings experience.
 
 ## What is New in QUI 4
 

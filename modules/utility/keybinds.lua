@@ -784,7 +784,7 @@ local function RunGlobalActionButtonSweep()
             else
                 -- pcall the widget check — some addons expose GetObjectType via
                 -- metatables on non-widget objects, which errors when called
-                local ok, isActionButton = pcall(LooksLikeActionButton, frame)
+                local ok, isActionButton = QUI.SafeCall("best-effort-style", LooksLikeActionButton, frame)
 
                 if ok and isActionButton then
                     table.insert(globalSweepButtons, frame)
@@ -986,7 +986,7 @@ local function RebuildCache()
 
     -- Process cached buttons (fast - no _G iteration)
     for _, button in ipairs(cachedActionButtons) do
-        pcall(ProcessActionButton, button)
+        QUI.SafeCall("best-effort-style", ProcessActionButton, button)
     end
 
     lastCacheUpdate = GetTime()

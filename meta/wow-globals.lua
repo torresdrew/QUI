@@ -372,7 +372,6 @@ GetReadyCheckStatus = nil ---@type any
 GetRepairAllCost = nil ---@type any
 GetSavedInstanceInfo = nil ---@type any
 GetSavedWorldBossInfo = nil ---@type any
-GetScaledCursorPosition = nil ---@type any
 GetSendMailCOD = nil ---@type any
 GetSendMailItem = nil ---@type any
 GetSendMailItemLink = nil ---@type any

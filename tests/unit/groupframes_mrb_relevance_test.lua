@@ -4,7 +4,7 @@
 -- Run: lua tests/unit/groupframes_mrb_relevance_test.lua
 
 _G.issecretvalue = function() return false end
-function CreateFrame() return { RegisterEvent = function() end, SetScript = function() end } end
+function CreateFrame() return { RegisterEvent = function() end, RegisterUnitEvent = function() end, SetScript = function() end } end
 _G.C_Timer = { After = function() end }
 _G.wipe = function(t) for k in pairs(t) do t[k] = nil end end
 -- player class = MAGE (GetPlayerClass localizes UnitClass at load, so set first)

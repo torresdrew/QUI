@@ -170,6 +170,9 @@ local function loadSubModules()
     -- (pure Lua, headless-safe) into the same ns FIRST so the shim's __index
     -- delegation resolves.
     assert(loadfile("core/aura_elements.lua"))("QUI", ns)
+    -- Real core/safecall.lua: groupframes_aura_render.lua (Task 45a) routes
+    -- its countdown/reseat sink calls through ns.SafeCall("sink-forward", ...).
+    assert(loadfile("core/safecall.lua"))("QUI", ns)
     assert(loadfile("QUI_GroupFrames/groupframes/groupframes_aura_model.lua"))(
         "QUI_GroupFrames", ns)
     assert(loadfile("QUI_GroupFrames/groupframes/groupframes_aura_render.lua"))(
@@ -712,6 +715,12 @@ local function buildFullNs(onCB)
         QUI_GroupFrameEditMode      = nil,
         QUI_GroupFrameClickCast     = nil,
     }
+
+    -- Real core/safecall.lua: groupframes_aura_render.lua (Task 45a) routes
+    -- its countdown/reseat sink calls through ns.SafeCall("sink-forward", ...).
+    -- issecretvalue is absent in this harness, so safecall.lua's own
+    -- documented fallback (treat as never-secret) applies.
+    assert(loadfile("core/safecall.lua"))("QUI", ns)
 
     return ns, onCB
 end

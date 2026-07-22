@@ -265,13 +265,13 @@ end
 
 local function GetSpellName(spellID)
     if C_Spell and C_Spell.GetSpellName then
-        local ok, name = pcall(C_Spell.GetSpellName, spellID)
+        local ok, name = ns.SafeCall("best-effort-style", C_Spell.GetSpellName, spellID)
         if ok and name and name ~= "" then
             return name
         end
     end
     if GetSpellInfo then
-        local ok, name = pcall(GetSpellInfo, spellID)
+        local ok, name = ns.SafeCall("best-effort-style", GetSpellInfo, spellID)
         if ok and name and name ~= "" then
             return name
         end
@@ -281,7 +281,7 @@ end
 
 local function GetSpellTexture(spellID)
     if C_Spell and C_Spell.GetSpellTexture then
-        local ok, texture = pcall(C_Spell.GetSpellTexture, spellID)
+        local ok, texture = ns.SafeCall("best-effort-style", C_Spell.GetSpellTexture, spellID)
         if ok and texture then
             return texture
         end
@@ -323,7 +323,7 @@ local function GetElementLabel(element)
         if buffs and buffs[1] then
             local spellID = buffs[1].iconSpellID or (buffs[1].ids and buffs[1].ids[1])
             if spellID and C_Spell and C_Spell.GetSpellTexture then
-                local ok, texture = pcall(C_Spell.GetSpellTexture, spellID)
+                local ok, texture = ns.SafeCall("best-effort-style", C_Spell.GetSpellTexture, spellID)
                 if ok and texture then icon = texture end
             end
         end

@@ -420,7 +420,7 @@ end
 local DebugBarLabel = function() end
 
 local function ReadBoolean(value)
-    if issecretvalue and issecretvalue(value) then return nil end
+    if issecretvalue and issecretvalue(value) then return nil end -- @secret-policy: reject-secret-value
     if type(value) == "boolean" then return value end
     return nil
 end
@@ -441,13 +441,15 @@ local function WrapStackSuffix(stackValue)
 end
 
 local function IsMissingOrKnownEmptyText(value)
-    if issecretvalue and issecretvalue(value) then return false end
+    if issecretvalue and issecretvalue(value) then return false end -- @secret-policy: route-to-text-sink
     if value == nil then return true end
     return type(value) == "string" and value == ""
 end
 
+-- ACTION POLICY, not a truth claim: "route to the text sink". A secret is
+-- indeterminate and must reach the C-side renderer.
 local function ValueIsPresent(value)
-    if issecretvalue and issecretvalue(value) then return true end
+    if issecretvalue and issecretvalue(value) then return true end -- @secret-policy: opaque-value-present
     return value ~= nil
 end
 
@@ -683,7 +685,7 @@ local function GetBarDurationFormatter()
         barDurationFormatter = false
         return nil
     end
-    local ok, fmt = pcall(CreateSecondsFormatter)
+    local ok, fmt = ns.SafeCall("best-effort-style", CreateSecondsFormatter)
     if not ok or not fmt then
         barDurationFormatter = false
         return nil
@@ -692,14 +694,12 @@ local function GetBarDurationFormatter()
     -- one-decimal seconds (eg. "8.7"); above it, whole seconds / clock form.
     -- Abbreviation mode controls the long-form look ("1m 5s" vs "1:05"); pick
     -- whichever reads best in the narrow right-aligned slot.
-    if fmt.SetMillisecondsThreshold then
-        pcall(fmt.SetMillisecondsThreshold, fmt, 10)
-    end
+    ns.SafeCallMethodIfPresent("best-effort-style", fmt, "SetMillisecondsThreshold", 10)
     if fmt.SetDefaultAbbreviation and Enum and Enum.SecondsFormatterAbbreviation then
-        pcall(fmt.SetDefaultAbbreviation, fmt, Enum.SecondsFormatterAbbreviation.OneLetter)
+        ns.SafeCallMethod("best-effort-style", fmt, "SetDefaultAbbreviation", Enum.SecondsFormatterAbbreviation.OneLetter)
     end
     if fmt.SetStripIntervalWhitespace and Enum and Enum.SecondsFormatterIntervalWhitespace then
-        pcall(fmt.SetStripIntervalWhitespace, fmt, Enum.SecondsFormatterIntervalWhitespace.Strip)
+        ns.SafeCallMethod("best-effort-style", fmt, "SetStripIntervalWhitespace", Enum.SecondsFormatterIntervalWhitespace.Strip)
     end
     barDurationFormatter = fmt
     return fmt
@@ -725,21 +725,21 @@ local function EnsureBarDurationBinding(bar)
         bar._durTextBinding = false
         return nil
     end
-    local ok, binding = pcall(CreateDurationTextBinding)
+    local ok, binding = ns.SafeCall("best-effort-style", CreateDurationTextBinding)
     if not ok or not binding or not binding.SetFontString or not binding.SetFormatter then
         bar._durTextBinding = false
         return nil
     end
     -- DurationText is a CreateFontString FontString == SimpleFontString; pcall
     -- guards the (unlikely) type rejection so a bad bind degrades to fallback.
-    local okBind = pcall(binding.SetFontString, binding, bar.DurationText)
+    local okBind = ns.SafeCallMethod("best-effort-style", binding, "SetFontString", bar.DurationText)
     if not okBind then
         bar._durTextBinding = false
         return nil
     end
-    pcall(binding.SetFormatter, binding, fmt)
-    if binding.SetZeroDurationText then pcall(binding.SetZeroDurationText, binding, "") end
-    if binding.SetExpiredText then pcall(binding.SetExpiredText, binding, "") end
+    ns.SafeCallMethod("best-effort-style", binding, "SetFormatter", fmt)
+    ns.SafeCallMethodIfPresent("best-effort-style", binding, "SetZeroDurationText", "")
+    ns.SafeCallMethodIfPresent("best-effort-style", binding, "SetExpiredText", "")
     bar._durTextBinding = binding
     return binding
 end
@@ -749,9 +749,7 @@ end
 -- fontstring for paths that don't already SetText("") themselves.
 local function DisableBarDurationBinding(bar, clearText)
     local binding = bar and bar._durTextBinding
-    if binding and binding.SetEnabled then
-        pcall(binding.SetEnabled, binding, false)
-    end
+    ns.SafeCallMethodIfPresent("best-effort-style", binding, "SetEnabled", false)
     if bar then bar._boundDurObj = nil end
     if clearText and bar and bar.DurationText then
         bar.DurationText.SetText(bar.DurationText, "")
@@ -770,10 +768,8 @@ local function WriteDurationTextFromDurationObject(bar, durObj)
     local binding = EnsureBarDurationBinding(bar)
     if binding then
         if bar._boundDurObj ~= durObj then
-            pcall(binding.SetDuration, binding, durObj)
-            if binding.SetEnabled then
-                pcall(binding.SetEnabled, binding, true)
-            end
+            ns.SafeCallMethod("sink-forward", binding, "SetDuration", durObj)
+            ns.SafeCallMethodIfPresent("best-effort-style", binding, "SetEnabled", true)
             bar._boundDurObj = durObj
         end
         return true
@@ -1644,15 +1640,18 @@ local function GetPairedBlzChild(bar)
     return found
 end
 
--- Active state from the CooldownViewer item mixin (runtime aura flag,
--- observed non-secret in taint dumps). Fail OPEN on secret/missing: never
--- hide a possibly-active bar. IsShown is NOT a substitute — inactive items
--- stay shown unless the user enables Blizzard's hide-when-inactive option.
+-- ACTION POLICY, not activity truth: returns "keep this bar visible".
+-- Sourced from the CooldownViewer item mixin's runtime aura flag (observed
+-- non-secret in taint dumps). A SECRET/missing flag is INDETERMINATE — it
+-- is never converted into "active"; the policy keeps the bar visible so a
+-- possibly-active bar is never hidden (reference-mirror directive). IsShown
+-- is NOT a substitute — inactive items stay shown unless the user enables
+-- Blizzard's hide-when-inactive option.
 local function ReadPairedBarActive(blz)
     if blz.IsActive then
         local ok, active = pcall(blz.IsActive, blz)
         if ok then
-            if issecretvalue and issecretvalue(active) then return true end
+            if issecretvalue and issecretvalue(active) then return true end -- @secret-policy: keep-visible-when-unknown
             return active and true or false
         end
         return true

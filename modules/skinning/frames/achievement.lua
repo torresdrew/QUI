@@ -52,9 +52,7 @@ local function HideAchievementChrome()
     -- entirely (SkinAchievement gives AchievementFrame its own CreateBackdrop child)
     -- so it doesn't peek through the QUI backdrop. pcall-guarded; SetBackdrop(nil)
     -- reads no width/height, so no secret-value/combat throw.
-    if frame.SetBackdrop then
-        pcall(frame.SetBackdrop, frame, nil)
-    end
+    ns.SafeCallMethodIfPresent("best-effort-style", frame, "SetBackdrop", nil)
 end
 
 -- Category / achievement / stat rows are ScrollBox-pooled and Blizzard swaps
@@ -90,9 +88,7 @@ end
 local function HookAchievementListColors()
     local listFrame = _G.AchievementFrameAchievements
     local scrollBox = listFrame and listFrame.ScrollBox
-    if scrollBox and scrollBox.ForEachFrame then
-        pcall(scrollBox.ForEachFrame, scrollBox, RecolorAchievementRow)
-    end
+    ns.SafeCallMethodIfPresent("best-effort-style", scrollBox, "ForEachFrame", RecolorAchievementRow)
 
     if achievementListColorHooked then return end
     local mixin = _G.AchievementTemplateMixin

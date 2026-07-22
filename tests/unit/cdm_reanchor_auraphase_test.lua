@@ -7,6 +7,11 @@
 -- timing write so the aura-phase-off re-bind survives the refresh.
 
 local ns = {}
+-- Task 45f: cdm_reanchor_auraphase.lua routes discarded-result pcall guards
+-- through ns.SafeCall. Additive stub (T1d/T1e precedent).
+ns.SafeCall = function(_policy, fn, ...) return pcall(fn, ...) end
+ns.SafeCallMethod = function(_policy, obj, name, ...) return pcall(function(...) return obj[name](obj, ...) end, ...) end
+ns.SafeCallMethodIfPresent = function(_policy, obj, name, ...) if obj == nil then return nil end local okP, m = pcall(function() return obj[name] end) if not okP then return false end if m == nil then return nil end return pcall(m, obj, ...) end
 assert(loadfile("QUI_CDM/cdm/cdm_reanchor_auraphase.lua"))("QUI", ns)
 local M = assert(ns.CDMReanchorAuraPhase, "CDMReanchorAuraPhase not exported")
 

@@ -64,8 +64,10 @@ end
 ---------------------------------------------------------------------------
 
 function CDMIndex.IsUsableID(id)
-    if id == nil or type(id) ~= "number" then return false end
-    if issecretvalue(id) then return false end
+    -- type() is secret-safe; `id == nil` is not (== on a secret throws), so
+    -- the nil case must ride the type check like CDMCatalog.IsUsableID.
+    if type(id) ~= "number" then return false end
+    if issecretvalue(id) then return false end -- @secret-policy: reject-secret-ids
     return id > 0
 end
 

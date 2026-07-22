@@ -165,13 +165,13 @@ function CDMReanchor:ResolveIdentity(frame)
         cooldownID = frame.cooldownID
     end
     -- Guard issecretvalue BEFORE any comparison; the type check below rejects nil.
-    if _issecretvalue(cooldownID) then return nil end
+    if _issecretvalue(cooldownID) then return nil end -- @secret-policy: reject-secret-ids
     if type(cooldownID) ~= "number" then return nil end
 
     local info = self._infoCache[cooldownID]
     if info == nil then
         if C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCooldownInfo then
-            local ok, resolved = pcall(C_CooldownViewer.GetCooldownViewerCooldownInfo, cooldownID)
+            local ok, resolved = ns.SafeCall("best-effort-style", C_CooldownViewer.GetCooldownViewerCooldownInfo, cooldownID)
             info = (ok and resolved) or false
         else
             info = false
@@ -190,7 +190,7 @@ function CDMReanchor:GetFrameCooldownInfo(frame, cooldownID)
 
     local getInfo = frame.GetCooldownInfo
     if getInfo then
-        local ok, info = pcall(getInfo, frame)
+        local ok, info = ns.SafeCall("best-effort-style", getInfo, frame)
         if ok and type(info) == "table" then
             return info
         end
@@ -210,7 +210,7 @@ function CDMReanchor:GetFrameCooldownInfo(frame, cooldownID)
     local info = self._infoCache[cooldownID]
     if info == nil then
         if C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCooldownInfo then
-            local ok, resolved = pcall(C_CooldownViewer.GetCooldownViewerCooldownInfo, cooldownID)
+            local ok, resolved = ns.SafeCall("best-effort-style", C_CooldownViewer.GetCooldownViewerCooldownInfo, cooldownID)
             info = (ok and resolved) or false
         else
             info = false

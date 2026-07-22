@@ -11,6 +11,7 @@ local GUI = QUI.GUI
 local C = GUI.Colors
 local Shared = ns.QUI_Options
 local UIKit = ns.UIKit
+local issecretvalue = _G.issecretvalue
 
 local SECTION_GAP = 14
 
@@ -92,7 +93,13 @@ local function BuildKeybindOverridesSection(tabContent, startY)
     toggleCard.Finalize()
     y = y - toggleCard.frame:GetHeight() - 12
 
-    local charName = UnitName("player") or ns.L["Unknown"]
+    -- UnitName is SecretWhenUnitNameRestricted (12.1) — probe before the
+    -- or-fallback truth-tests it.
+    local charName = UnitName("player")
+    if issecretvalue and issecretvalue(charName) then
+        charName = nil -- @secret-policy: reject-secret-value (label falls back to Unknown)
+    end
+    charName = charName or ns.L["Unknown"]
     local specID = 0
     local specName = ns.L["No Spec"]
 

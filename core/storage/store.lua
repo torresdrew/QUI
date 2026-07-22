@@ -21,6 +21,7 @@
 --   {} is the pre-first-scan placeholder.
 ---------------------------------------------------------------------------
 local ADDON_NAME, ns = ...
+local issecretvalue = _G.issecretvalue
 local Storage = ns.Storage or {}; ns.Storage = Storage
 
 local Store = {}
@@ -110,6 +111,11 @@ end
 -- format). Display realm for UI lives in details.realm, never in keys.
 local function NormalizedRealm()
     local _, realm = UnitFullName("player")
+    -- UnitFullName is secret-capable under identity restriction — probe
+    -- before the truth-test; unknown realm falls through the chain below.
+    if issecretvalue and issecretvalue(realm) then
+        realm = nil -- @secret-policy: reject-secret-value (next realm source decides)
+    end
     if realm and realm ~= "" then return realm end
     if type(GetNormalizedRealmName) == "function" then
         realm = GetNormalizedRealmName()
@@ -121,6 +127,11 @@ end
 
 function Store.GetCurrentCharacterKey()
     local name = UnitFullName("player")
+    -- Secret self-name cannot key the character store (secret table index
+    -- throws) — treat as not-ready, callers already tolerate nil.
+    if issecretvalue and issecretvalue(name) then
+        name = nil -- @secret-policy: reject-secret-value (store stays unkeyed this pass)
+    end
     if not name then return nil end
     local realm = NormalizedRealm()
     if not realm or realm == "" then return nil end

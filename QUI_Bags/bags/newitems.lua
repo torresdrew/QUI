@@ -123,7 +123,7 @@ local function SlotGUID(bagID, slot)
     end
     local loc = ItemLocation:CreateFromBagAndSlot(bagID, slot)
     if not C_Item.DoesItemExist(loc) then return nil end
-    local ok, guid = pcall(C_Item.GetItemGUID, loc)
+    local ok, guid = ns.SafeCall("best-effort-style", C_Item.GetItemGUID, loc)
     if ok then return guid end
     return nil
 end

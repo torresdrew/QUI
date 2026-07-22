@@ -66,9 +66,9 @@ assert(stampBlock:find("container._quiHostMover = moverFrame", 1, true),
 -- container with a cold-start fallback to the mover itself.
 assert(zone:find("i > 1 then", 1, true),
     "the per-strip anchor call must be gated to i > 1 (strip 1 is centrally anchored, never self-anchored here)")
-assert(zone:find("pcall(AnchorElementContainer, container, pool[1] or moverFrame, element)", 1, true),
-    "strips i>1 must dock to pool[1] or moverFrame via pcall (forbidden->forbidden relativeTo is a PTR4 in-game unknown)")
-assert(zone:find("pcall(AnchorElementContainer, container, moverFrame, element)", 1, true),
+assert(zone:find('ns.SafeCall("defer-ooc", AnchorElementContainer, container, pool[1] or moverFrame, element)', 1, true),
+    "strips i>1 must dock to pool[1] or moverFrame via SafeCall (forbidden->forbidden relativeTo is a PTR4 in-game unknown)")
+assert(zone:find('ns.SafeCall("defer-ooc", AnchorElementContainer, container, moverFrame, element)', 1, true),
     "a rejected forbidden->forbidden dock must fall back to anchoring on the mover")
 
 -- (c) Retiring every strip clears the forward stamp so the central anchoring

@@ -30,10 +30,13 @@ end
 -- in combat) must therefore be REJECTED here rather than passed through: return
 -- false so the Query* guards bail to nil and callers fall back instead of erroring.
 local function HasOpaqueValue(value)
-    if value == nil then return false end
+    -- Probe BEFORE the nil compare: `value == nil` on a secret value throws
+    -- in-game (12.1), so the secret check must run first. issecretvalue(nil)
+    -- is false, so the reordering is behavior-preserving for nil.
     if WoW_IsSecretValue and WoW_IsSecretValue(value) then
-        return false
+        return false -- @secret-policy: reject-secret-ids
     end
+    if value == nil then return false end
     return true
 end
 
@@ -161,18 +164,18 @@ end
 
 function CDMSources.EnableSpellRangeCheck(spellID, enable)
     if not spellID or not (C_Spell and C_Spell.EnableSpellRangeCheck) then return false end
-    local ok = pcall(C_Spell.EnableSpellRangeCheck, spellID, enable == true)
+    local ok = ns.SafeCall("best-effort-style", C_Spell.EnableSpellRangeCheck, spellID, enable == true)
     return ok == true
 end
 
 local function querySpellAffinity(spellNameOrID, namespacedFn, globalFn)
     if not spellNameOrID then return nil end
     if namespacedFn then
-        local ok, result = pcall(namespacedFn, spellNameOrID)
+        local ok, result = ns.SafeCall("compat", namespacedFn, spellNameOrID)
         if ok then return result end
     end
     if globalFn then
-        local ok, result = pcall(globalFn, spellNameOrID)
+        local ok, result = ns.SafeCall("compat", globalFn, spellNameOrID)
         if ok then return result end
     end
     return nil
@@ -221,13 +224,13 @@ end
 
 function CDMSources.QueryItemProfessionQualityInfo(itemInfo)
     if not itemInfo or not C_TradeSkillUI then return nil end
-    if issecretvalue and issecretvalue(itemInfo) then return nil end
+    if issecretvalue and issecretvalue(itemInfo) then return nil end -- @secret-policy: reject-secret-value
     if C_TradeSkillUI.GetItemReagentQualityInfo then
-        local ok, info = pcall(C_TradeSkillUI.GetItemReagentQualityInfo, itemInfo)
+        local ok, info = ns.SafeCall("best-effort-style", C_TradeSkillUI.GetItemReagentQualityInfo, itemInfo)
         if ok and info then return info end
     end
     if C_TradeSkillUI.GetItemCraftedQualityInfo then
-        local ok, info = pcall(C_TradeSkillUI.GetItemCraftedQualityInfo, itemInfo)
+        local ok, info = ns.SafeCall("best-effort-style", C_TradeSkillUI.GetItemCraftedQualityInfo, itemInfo)
         if ok then return info end
     end
     return nil
@@ -273,7 +276,7 @@ end
 
 function CDMSources.QueryBestOwnedItemVariant(itemID)
     if not itemID then return nil end
-    if issecretvalue and issecretvalue(itemID) then return nil end
+    if issecretvalue and issecretvalue(itemID) then return nil end -- @secret-policy: reject-secret-ids
 
     local consumables = ns.ConsumableMacros
     local getVariantOrder = consumables and consumables.GetVariantOrderForItem
@@ -307,13 +310,13 @@ end
 local function QueryScannerActive(scanner, spellID, itemID)
     local active, expiration, duration, auraInstanceID, auraUnit
     if itemID and scanner.IsItemActive then
-        local ok, a, e, d, instID, unit = pcall(scanner.IsItemActive, itemID)
+        local ok, a, e, d, instID, unit = ns.SafeCall("chain-next", scanner.IsItemActive, itemID)
         if ok then
             active, expiration, duration, auraInstanceID, auraUnit = a, e, d, instID, unit
         end
     end
     if active ~= true and spellID and scanner.IsSpellActive then
-        local ok, a, e, d, instID, unit = pcall(scanner.IsSpellActive, spellID)
+        local ok, a, e, d, instID, unit = ns.SafeCall("chain-next", scanner.IsSpellActive, spellID)
         if ok then
             active, expiration, duration, auraInstanceID, auraUnit = a, e, d, instID, unit
         end
@@ -351,7 +354,7 @@ end
 
 local function QueryScannedItemInfo(scanner, itemID)
     if not itemID or not scanner.GetScannedItemInfo then return nil end
-    local ok, data = pcall(scanner.GetScannedItemInfo, itemID)
+    local ok, data = ns.SafeCall("best-effort-style", scanner.GetScannedItemInfo, itemID)
     if ok and type(data) == "table" then
         return data
     end
@@ -360,7 +363,7 @@ end
 
 local function QueryScannedSpellInfo(scanner, spellID)
     if not spellID or not scanner.GetScannedSpellInfo then return nil end
-    local ok, data = pcall(scanner.GetScannedSpellInfo, spellID)
+    local ok, data = ns.SafeCall("best-effort-style", scanner.GetScannedSpellInfo, spellID)
     if ok and type(data) == "table" then
         return data
     end
@@ -369,7 +372,16 @@ end
 
 local function RegisterScannerItemUseSpell(scanner, itemID, spellID)
     if not itemID or not spellID or not scanner.RegisterItemUseSpell then return end
-    pcall(scanner.RegisterItemUseSpell, itemID, spellID)
+    -- itemID/spellID are catalog-sourced, not secret, by the time they reach
+    -- here: every caller resolves itemID via QueryInventoryItemID("player",
+    -- slot) (plain slot lookup on our own unit, no SecretWhen* restriction)
+    -- or QueryBestOwnedItemVariant, which itself rejects secret itemIDs
+    -- (@secret-policy: reject-secret-ids, cdm_sources.lua:279) before this
+    -- point; spellID resolves via QueryItemSpell -> C_Item.GetItemSpell,
+    -- whose return values carry no Secret annotation in
+    -- tests/api-docs/blizzard/ItemDocumentation.lua. "report" policy: an
+    -- unexpected failure here is our bug, not an expected/secret class.
+    ns.SafeCall("report", scanner.RegisterItemUseSpell, itemID, spellID)
 end
 
 function CDMSources.QueryScannedItemAuraInfo(itemID, itemSpellID)
@@ -440,6 +452,36 @@ local _C_GetAuraDataBySpellID = C_UnitAuras and (C_UnitAuras.GetAuraDataBySpellI
 local _C_GetCooldownAuraBySpellID = C_UnitAuras and C_UnitAuras.GetCooldownAuraBySpellID
 local _C_GetAuraDataBySpellName = C_UnitAuras and C_UnitAuras.GetAuraDataBySpellName
 local _C_GetUnitAuras = C_UnitAuras and C_UnitAuras.GetUnitAuras
+
+-- GetUnitAuraBySpellID is documented (unit, spellID) — no filter parameter.
+-- The client ignores an extra arg, so HELPFUL/HARMFUL semantics must be
+-- enforced Lua-side wherever that getter backs a filtered query. The getter
+-- is RequiresNonSecretAura (nil for a secret aura, never a secret result),
+-- so field reads off a non-nil result are safe; a secret polarity field
+-- (defensive, shouldn't happen per that contract) passes through unfiltered
+-- rather than guessing.
+local function EnforceAuraFilterPolarity(result, filter)
+    if result == nil or filter == nil then return result end
+    local wantHelpful = string.find(filter, "HELPFUL", 1, true) ~= nil
+    local wantHarmful = string.find(filter, "HARMFUL", 1, true) ~= nil
+    if wantHelpful == wantHarmful then return result end
+    local field
+    if wantHelpful then
+        field = result.isHelpful
+    else
+        field = result.isHarmful
+    end
+    if issecretvalue and issecretvalue(field) then return result end
+    -- Absent polarity field (harness token shapes; real AuraData carries
+    -- non-nilable isHelpful/isHarmful): can't verify — pass through.
+    if field == nil then return result end
+    if field then return result end
+    return nil
+end
+-- The live fallback for GetAuraDataBySpellID is the filterless unit getter;
+-- a real (mocked/test) GetAuraDataBySpellID honors its filter arg itself.
+local _auraDataFallbackNeedsPolarity = C_UnitAuras
+    and not C_UnitAuras.GetAuraDataBySpellID and _C_GetUnitAuraBySpellID ~= nil
 
 ---------------------------------------------------------------------------
 -- AURA QUERY MEMO
@@ -514,7 +556,7 @@ end
 -- (non-secret) value usable as a table key. Secret ids take the live path.
 local function AuraMemoCacheable(unit, id)
     if not _auraMemoCacheableUnit[unit] then return false end
-    if WoW_IsSecretValue and WoW_IsSecretValue(id) then return false end
+    if WoW_IsSecretValue and WoW_IsSecretValue(id) then return false end -- @secret-policy: skip-capture-when-unknown
     return true
 end
 
@@ -555,13 +597,16 @@ function CDMSources.QueryUnitAuraBySpellID(unit, spellID, filter)
         if bucketKey then
             local v, hit = AuraMemoGet(unit, bucketKey, spellID)
             if hit then return v end
-            local result = _C_GetUnitAuraBySpellID(unit, spellID, filter)
+            -- Signature-correct call: the API takes (unit, spellID) only;
+            -- filter semantics are enforced Lua-side before the memo store
+            -- (bucket key = filter, value = already-filtered result).
+            local result = EnforceAuraFilterPolarity(_C_GetUnitAuraBySpellID(unit, spellID), filter)
             AuraMemoStore(unit, bucketKey, spellID, result)
             return result
         end
     end
     if auraMemoStats then auraMemoStats.bypass = auraMemoStats.bypass + 1 end
-    return _C_GetUnitAuraBySpellID(unit, spellID, filter)
+    return EnforceAuraFilterPolarity(_C_GetUnitAuraBySpellID(unit, spellID), filter)
 end
 
 function CDMSources.QueryPlayerAuraBySpellID(spellID)
@@ -579,8 +624,11 @@ function CDMSources.QueryPlayerAuraBySpellID(spellID)
 end
 
 -- 12.1: _C_GetAuraDataBySpellID falls back to GetUnitAuraBySpellID on live clients
--- (GetAuraDataBySpellID was removed). `filter` is passed through for the mocked
--- test path and kept as a memo bucket key so buff/debuff lookups stay separate.
+-- (GetAuraDataBySpellID was removed). That fallback takes (unit, spellID) only —
+-- the filter arg is ignored by the client — so HELPFUL/HARMFUL polarity is
+-- enforced Lua-side on the fallback path. A real (mocked/test)
+-- GetAuraDataBySpellID still receives and honors its filter arg itself.
+-- `filter` stays the memo bucket key so buff/debuff lookups stay separate.
 function CDMSources.QueryAuraDataBySpellID(unit, spellID, filter)
     if not unit or not spellID or not _C_GetAuraDataBySpellID then return nil end
     if AuraMemoCacheable(unit, spellID) then
@@ -589,12 +637,19 @@ function CDMSources.QueryAuraDataBySpellID(unit, spellID, filter)
             local v, hit = AuraMemoGet(unit, bucketKey, spellID)
             if hit then return v end
             local result = _C_GetAuraDataBySpellID(unit, spellID, filter)
+            if _auraDataFallbackNeedsPolarity then
+                result = EnforceAuraFilterPolarity(result, filter)
+            end
             AuraMemoStore(unit, bucketKey, spellID, result)
             return result
         end
     end
     if auraMemoStats then auraMemoStats.bypass = auraMemoStats.bypass + 1 end
-    return _C_GetAuraDataBySpellID(unit, spellID, filter)
+    local result = _C_GetAuraDataBySpellID(unit, spellID, filter)
+    if _auraDataFallbackNeedsPolarity then
+        result = EnforceAuraFilterPolarity(result, filter)
+    end
+    return result
 end
 
 function CDMSources.QueryCooldownAuraBySpellID(spellID)
@@ -648,8 +703,11 @@ end
 -- conservative nil-sweep). Dropping a still-valid present entry here is
 -- harmless -- it simply re-probes once.
 local function DropAuraMemoKey(u, key)
+    -- Callers pass raw payload fields (ad.spellId / ad.name) which can be
+    -- secret scalars — probe BEFORE the nil compare (`== nil` on a secret
+    -- throws in-game; issecretvalue(nil) is false so nil still returns true).
+    if WoW_IsSecretValue and WoW_IsSecretValue(key) then return false end -- @secret-policy: reject-secret-ids
     if key == nil then return true end
-    if WoW_IsSecretValue and WoW_IsSecretValue(key) then return false end
     for _, b in pairs(u) do
         if b[key] ~= nil then
             b[key] = nil
@@ -677,7 +735,8 @@ local _auraDeltaChangedIID = {}
 -- The resolver always queries by the post-mapping aura spellID, so an added
 -- aura's spellId matches the memo key directly. Secret ids/instanceIDs under
 -- combat aura-restriction can't be matched, so they widen to a conservative
--- sweep (drop nil entries / unverifiable present entries) -- correct, just less
+-- sweep dropping every entry the unknowable change could name (all present
+-- entries for removed/updated, all entries for adds) -- correct, just less
 -- precise in that regime.
 local function InvalidateAuraMemoForDelta(unit, updateInfo)
     local u = _auraMemo[unit]
@@ -719,49 +778,55 @@ local function InvalidateAuraMemoForDelta(unit, updateInfo)
     -- -- cdm_spelldata.lua's own UNIT_AURA capture guards addedAuras and
     -- removedAuraInstanceIDs the same way before indexing/length-ing them.
     -- Mirror that idiom here: an unreadable whole array can't be walked, so
-    -- widen to the conservative sweep below instead of touching #array.
+    -- widen to the conservative sweep below instead of touching #array. Every
+    -- probe runs BEFORE the truth/nil test on its value — a secret array (or
+    -- element) throws on the truth-test itself, so the probe must not hide
+    -- behind `removed and ...` / `iid ~= nil`.
     local removed = updateInfo.removedAuraInstanceIDs
-    if removed and WoW_IsSecretValue and WoW_IsSecretValue(removed) then
+    if WoW_IsSecretValue and WoW_IsSecretValue(removed) then
         uncertainChanged = true
     elseif removed then
         for i = 1, #removed do
             local iid = removed[i]
-            if iid ~= nil then
-                if WoW_IsSecretValue and WoW_IsSecretValue(iid) then
-                    uncertainChanged = true
-                else
-                    changed[iid] = true; hasChanged = true
-                end
+            if WoW_IsSecretValue and WoW_IsSecretValue(iid) then
+                uncertainChanged = true
+            elseif iid ~= nil then
+                changed[iid] = true; hasChanged = true
             end
         end
     end
     local updated = updateInfo.updatedAuraInstanceIDs
-    if updated and WoW_IsSecretValue and WoW_IsSecretValue(updated) then
+    if WoW_IsSecretValue and WoW_IsSecretValue(updated) then
         uncertainChanged = true
     elseif updated then
         for i = 1, #updated do
             local iid = updated[i]
-            if iid ~= nil then
-                if WoW_IsSecretValue and WoW_IsSecretValue(iid) then
-                    uncertainChanged = true
-                else
-                    changed[iid] = true; hasChanged = true
-                end
+            if WoW_IsSecretValue and WoW_IsSecretValue(iid) then
+                uncertainChanged = true
+            elseif iid ~= nil then
+                changed[iid] = true; hasChanged = true
             end
         end
     end
 
-    -- Added auras: re-probe only the keys they could satisfy. A secret-keyed
-    -- add we can't target widens to dropping all nil-sentinel entries.
-    local dropAllNils = false
+    -- Added auras: re-probe only the keys they could satisfy. An add we can't
+    -- target (whole-secret array/element, or a secret key) widens to dropping
+    -- EVERY entry: it could satisfy any nil sentinel AND refresh/restack any
+    -- PRESENT aura (the targeted DropAuraMemoKey path drops both classes under
+    -- its keys -- the widened path must not drop less).
+    local dropAllNils, dropAllPresent = false, false
     local added = updateInfo.addedAuras
-    if added and WoW_IsSecretValue and WoW_IsSecretValue(added) then
-        dropAllNils = true
+    if WoW_IsSecretValue and WoW_IsSecretValue(added) then
+        dropAllNils, dropAllPresent = true, true
     elseif added then
         for i = 1, #added do
+            -- A whole-secret element (PTR4 fully-secret addedAuras struct)
+            -- can't be truth-tested or field-read: probe first, widen.
             local ad = added[i]
-            if ad then
-                if not DropAuraMemoKey(u, ad.spellId) then dropAllNils = true end
+            if WoW_IsSecretValue and WoW_IsSecretValue(ad) then
+                dropAllNils, dropAllPresent = true, true
+            elseif ad then
+                if not DropAuraMemoKey(u, ad.spellId) then dropAllNils, dropAllPresent = true, true end
                 -- 12.1 PTR4: an addedAuras struct is fully secret while auras are
                 -- secret, so ad.spellID / ad.spellId can both be secret. The dedup
                 -- compare `ad.spellID ~= ad.spellId` is a raw ~= that THROWS on a
@@ -770,11 +835,11 @@ local function InvalidateAuraMemoForDelta(unit, updateInfo)
                 -- secret guard returns false and widens the sweep).
                 local mapped = ad.spellID
                 if (WoW_IsSecretValue and (WoW_IsSecretValue(mapped) or WoW_IsSecretValue(ad.spellId))) then
-                    if not DropAuraMemoKey(u, mapped) then dropAllNils = true end
+                    if not DropAuraMemoKey(u, mapped) then dropAllNils, dropAllPresent = true, true end
                 elseif mapped ~= ad.spellId and not DropAuraMemoKey(u, mapped) then
-                    dropAllNils = true
+                    dropAllNils, dropAllPresent = true, true
                 end
-                if not DropAuraMemoKey(u, ad.name) then dropAllNils = true end
+                if not DropAuraMemoKey(u, ad.name) then dropAllNils, dropAllPresent = true, true end
             end
         end
     end
@@ -785,12 +850,23 @@ local function InvalidateAuraMemoForDelta(unit, updateInfo)
         for key, val in pairs(b) do
             if val == _auraMemoNilResult then
                 if dropAllNils then b[key] = nil end
+            elseif uncertainChanged or dropAllPresent then
+                -- Unknowable removed/updated set (whole-secret array or a
+                -- secret element) or un-targetable add: NO present entry is
+                -- provably unaffected -- drop them all, readable instanceID
+                -- or not. Nil sentinels survive only the removed/updated
+                -- case (a removal/update can't turn an absent aura present);
+                -- an un-targetable add drops them via dropAllNils above.
+                b[key] = nil
             else
                 local iid = val and val.auraInstanceID
-                if iid == nil then
+                if WoW_IsSecretValue and WoW_IsSecretValue(iid) then
+                    -- An unreadable cached instanceID can't be compared
+                    -- against the readable changed set -- any change could
+                    -- name it.
+                    if hasChanged then b[key] = nil end -- @secret-policy: evict-when-unreadable
+                elseif iid == nil then
                     -- No readable instanceID to match; only a full wipe clears it.
-                elseif WoW_IsSecretValue and WoW_IsSecretValue(iid) then
-                    if uncertainChanged then b[key] = nil end
                 elseif changed[iid] then
                     b[key] = nil
                 end

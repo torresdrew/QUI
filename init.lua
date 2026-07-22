@@ -591,9 +591,9 @@ function QUI:SlashCommandOpen(input)
                         -- If it has _qui color fields, recover automatically
                         if f._quiBgR then
                             print("  _qui colors present — recovering")
-                            pcall(f.SetBackdropColor, f, f._quiBgR, f._quiBgG, f._quiBgB, f._quiBgA or 1)
+                            ns.SafeCallMethod("best-effort-style", f, "SetBackdropColor", f._quiBgR, f._quiBgG, f._quiBgB, f._quiBgA or 1)
                             if f._quiBorderR then
-                                pcall(f.SetBackdropBorderColor, f, f._quiBorderR, f._quiBorderG, f._quiBorderB, f._quiBorderA or 1)
+                                ns.SafeCallMethod("best-effort-style", f, "SetBackdropBorderColor", f._quiBorderR, f._quiBorderG, f._quiBorderB, f._quiBorderA or 1)
                             end
                         end
                     end
@@ -763,10 +763,10 @@ local function RecoverQUIBackdrops()
     for f in pairs(queue) do
         queue[f] = nil
         if f._quiBgR then
-            pcall(f.SetBackdropColor, f, f._quiBgR, f._quiBgG, f._quiBgB, f._quiBgA or 1)
+            ns.SafeCallMethod("defer-ooc", f, "SetBackdropColor", f._quiBgR, f._quiBgG, f._quiBgB, f._quiBgA or 1)
         end
         if f._quiBorderR then
-            pcall(f.SetBackdropBorderColor, f, f._quiBorderR, f._quiBorderG, f._quiBorderB, f._quiBorderA or 1)
+            ns.SafeCallMethod("defer-ooc", f, "SetBackdropBorderColor", f._quiBorderR, f._quiBorderG, f._quiBorderB, f._quiBorderA or 1)
         end
     end
 end

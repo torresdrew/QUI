@@ -1499,7 +1499,7 @@ local function ShowCustomMailTooltip(owner)
     GameTooltip:SetOwner(owner, "ANCHOR_LEFT")
 
     if type(MinimapMailFrameUpdate) == "function" then
-        local ok = pcall(MinimapMailFrameUpdate)
+        local ok = ns.SafeCall("best-effort-style", MinimapMailFrameUpdate)
         if ok then
             return
         end
@@ -1507,7 +1507,7 @@ local function ShowCustomMailTooltip(owner)
 
     local senders = {}
     if type(GetLatestThreeSenders) == "function" then
-        local ok, sender1, sender2, sender3 = pcall(GetLatestThreeSenders)
+        local ok, sender1, sender2, sender3 = ns.SafeCall("best-effort-style", GetLatestThreeSenders)
         if ok then
             if sender1 then senders[#senders + 1] = sender1 end
             if sender2 then senders[#senders + 1] = sender2 end
@@ -2255,7 +2255,7 @@ local function TryRestoreDungeonEyeViaBlizzard(btn)
     if not (btn and btn.UpdatePosition) then return false end
     if not (MicroMenu and MicroMenuContainer and MicroMenuContainer.GetPosition) then return false end
 
-    local ok, position = pcall(MicroMenuContainer.GetPosition, MicroMenuContainer)
+    local ok, position = ns.SafeCallMethod("report", MicroMenuContainer, "GetPosition")
     local isHorizontal = MicroMenu.isHorizontal
     if not ok or not position or type(isHorizontal) ~= "boolean" then return false end
 
@@ -2453,9 +2453,9 @@ local function IsMinimapButton(frame)
     -- Accept if it has click handlers and is a child of a minimap container
     local parent = frame:GetParent()
     if parent and (parent == Minimap or parent == MinimapBackdrop or parent == MinimapCluster) then
-        local ok, hasClick = pcall(function() return frame:HasScript("OnClick") and frame:GetScript("OnClick") end)
-        local ok2, hasMouseUp = pcall(function() return frame:HasScript("OnMouseUp") and frame:GetScript("OnMouseUp") end)
-        local ok3, hasMouseDown = pcall(function() return frame:HasScript("OnMouseDown") and frame:GetScript("OnMouseDown") end)
+        local ok, hasClick = ns.SafeCall("best-effort-style", function() return frame:HasScript("OnClick") and frame:GetScript("OnClick") end)
+        local ok2, hasMouseUp = ns.SafeCall("best-effort-style", function() return frame:HasScript("OnMouseUp") and frame:GetScript("OnMouseUp") end)
+        local ok3, hasMouseDown = ns.SafeCall("best-effort-style", function() return frame:HasScript("OnMouseDown") and frame:GetScript("OnMouseDown") end)
         if (ok and hasClick) or (ok2 and hasMouseUp) or (ok3 and hasMouseDown) then
             return true
         end
@@ -2489,7 +2489,7 @@ local function SaveOriginalState(frame, name)
     -- Find the icon texture for square conversion
     local iconTex = frame.icon  -- LibDBIcon buttons always have .icon
     if not iconTex then
-        pcall(function()
+        ns.SafeCall("best-effort-style", function()
             for _, region in ipairs({ frame:GetRegions() }) do
                 if region:IsObjectType("Texture") and region:GetTexture() and region:GetDrawLayer() == "ARTWORK" then
                     iconTex = region
@@ -2499,7 +2499,7 @@ local function SaveOriginalState(frame, name)
         end)
     end
     local origOnDragStart, origOnDragStop
-    pcall(function()
+    ns.SafeCall("best-effort-style", function()
         if frame:HasScript("OnDragStart") then origOnDragStart = frame:GetScript("OnDragStart") end
         if frame:HasScript("OnDragStop") then origOnDragStop = frame:GetScript("OnDragStop") end
     end)
@@ -2719,7 +2719,7 @@ local function MakeButtonSquare(data, bSize)
 
     local iconTex = frame.icon or frame.Icon or data.iconTex
 
-    local ok = pcall(function()
+    local ok = ns.SafeCall("best-effort-style", function()
         local regions = { frame:GetRegions() }
         for _, region in ipairs(regions) do
             if region:IsObjectType("Texture") then
@@ -2731,7 +2731,7 @@ local function MakeButtonSquare(data, bSize)
                     region:SetAllPoints(frame)
                     region:SetTexCoord(0, 1, 0, 1)
                     region:Show()
-                    if region.SetMask then pcall(region.SetMask, region, "") end
+                    ns.SafeCallMethodIfPresent("best-effort-style", region, "SetMask", "")
                 elseif layer == "HIGHLIGHT" then
                     -- skip highlight texture
                 else
@@ -3155,7 +3155,7 @@ local function CollectButton(frame, name)
         local buttonName = name:gsub("^LibDBIcon10_", "")
         LibDBIcon:ShowOnEnter(buttonName, false)
         -- Stop any fadeOut animation group
-        pcall(function()
+        ns.SafeCall("best-effort-style", function()
             if frame.fadeOut then frame.fadeOut:Stop() end
             for _, child in ipairs({ frame:GetChildren() }) do
                 if child.Stop and child:IsObjectType("AnimationGroup") then
@@ -3265,7 +3265,7 @@ ScanAndCollectButtons = function()  -- assigned to forward-declared local
     -- Scan UIParent children for minimap buttons parented outside the
     -- minimap hierarchy (some addons parent their button to UIParent)
     for _, child in ipairs({ UIParent:GetChildren() }) do
-        local ok, name = pcall(child.GetName, child)
+        local ok, name = ns.SafeCallMethod("best-effort-style", child, "GetName")
         if ok and name and not collectedButtons[name] and IsMinimapButton(child) then
             if not ShouldSkipDrawerButton(name) then
                 CollectButton(child, name)
@@ -3290,10 +3290,10 @@ local function ReleaseAllButtons()
             frame.SetFrameStrata = nil
             frame.SetFrameLevel = nil
             if data.origStrata then
-                pcall(frame.SetFrameStrata, frame, data.origStrata)
+                ns.SafeCallMethod("best-effort-style", frame, "SetFrameStrata", data.origStrata)
             end
             if data.origLevel then
-                pcall(frame.SetFrameLevel, frame, data.origLevel)
+                ns.SafeCallMethod("best-effort-style", frame, "SetFrameLevel", data.origLevel)
             end
             -- Restore hidden overlay/border textures for LibDBIcon buttons
             if data.hiddenRegions then
@@ -3309,7 +3309,7 @@ local function ReleaseAllButtons()
             if data.origMovable ~= nil then
                 frame:SetMovable(data.origMovable)
             end
-            pcall(function()
+            ns.SafeCall("best-effort-style", function()
                 if data.origOnDragStart and frame:HasScript("OnDragStart") then
                     frame:SetScript("OnDragStart", data.origOnDragStart)
                 end

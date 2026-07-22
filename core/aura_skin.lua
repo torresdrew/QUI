@@ -411,6 +411,16 @@ end
 -- repeat Configures with the same settings only touch the mutators. The
 -- consumer keeps SetUnit (MUST run before Configure — group registration
 -- eagerly parses auras), SetEnabled/Show/Hide, and container anchoring.
+--
+-- KNOWN RESOURCE BOUND (accepted): each NEVER-BEFORE-SEEN canonical filter
+-- string permanently costs one engine frame provider + one eager frame batch
+-- (FrameCreationBatchSize = 10 buttons) per live container until /reload —
+-- Blizzard exposes no group removal. Growth is bounded by DISTINCT filter
+-- strings ever configured, NOT by change count: a returning string reuses
+-- its still-registered key below (registered[key] persists through retire),
+-- so cycling A→B→A stabilizes at two groups. Worst realistic case is a user
+-- iterating novel filter edits on a 40-frame raid surface; a /reload
+-- reclaims everything.
 -- NOT combat-safe by contract: consumers pcall this in combat and fall back
 -- to Restyle + an OOC replay queue.
 function AuraSkin.Configure(container, profile, groups)

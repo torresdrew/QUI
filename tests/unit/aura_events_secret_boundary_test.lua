@@ -132,7 +132,9 @@ end
 
 -- Load the live dispatcher with a fresh namespace ------------------------------
 local ns = {}
-assert(loadfile("core/aura_events.lua"))("QUI", ns)
+-- Instrumented load (Task 7): truthiness/==/# on sentinels now THROW
+-- inside the module, matching in-game 12.1 secret semantics.
+assert(SecretSentinel.LoadInstrumented("core/aura_events.lua"))("QUI", ns)
 local AuraEvents = ns.AuraEvents
 assert(AuraEvents, "core/aura_events.lua must publish ns.AuraEvents")
 
@@ -350,6 +352,67 @@ check("(g) per-field secret isFullUpdate promotes to ('player', nil)",
     r_g ~= nil and r_g.info == nil)
 check("(g) isFullUpdate was probed via issecretvalue before any boolean test",
     probedValues[secretFull_g] == true)
+
+---------------------------------------------------------------------------
+-- (h) ELEMENT-level secrecy: a READABLE delta array carrying a SECRET
+-- element (UnitAuraUpdateInfo no longer promises non-secret contents).
+-- Consumers ==-compare and table-key these elements, so the router must
+-- promote to the full-update sentinel instead of passing them through.
+---------------------------------------------------------------------------
+resetRecorder()
+local secretElem_h = SecretSentinel.MakeSecretSentinel()
+local ok_h, err_h = pcall(rosterHandler_for("player"), { _isFrame = true }, "UNIT_AURA", "player",
+    { isFullUpdate = false, removedAuraInstanceIDs = { 101, secretElem_h, 103 } })
+check("(h) roster handler does not throw on a secret array ELEMENT", ok_h)
+if not ok_h then print("      error was: " .. tostring(err_h)) end
+drain()
+local r_h = dispatchedTo("player", "player")
+check("(h) secret removed-array element promotes to ('player', nil)",
+    r_h ~= nil and r_h.info == nil)
+check("(h) the element itself was probed", probedValues[secretElem_h] == true)
+
+---------------------------------------------------------------------------
+-- (i) FIELD-level secrecy on a readable added aura: consumers table-key
+-- auraInstanceID and look up spellId — a secret identity field promotes.
+---------------------------------------------------------------------------
+resetRecorder()
+local secretSpellId_i = SecretSentinel.MakeSecretSentinel()
+local ok_i, err_i = pcall(rosterHandler_for("player"), { _isFrame = true }, "UNIT_AURA", "player",
+    { isFullUpdate = false, addedAuras = { { auraInstanceID = 7, spellId = secretSpellId_i } } })
+check("(i) roster handler does not throw on a secret added-aura field", ok_i)
+if not ok_i then print("      error was: " .. tostring(err_i)) end
+drain()
+local r_i = dispatchedTo("player", "player")
+check("(i) secret added-aura spellId promotes to ('player', nil)",
+    r_i ~= nil and r_i.info == nil)
+
+-- Control: a fully readable delta still passes through as a DELTA.
+resetRecorder()
+local okCtl = pcall(rosterHandler_for("player"), { _isFrame = true }, "UNIT_AURA", "player",
+    { isFullUpdate = false, addedAuras = { { auraInstanceID = 8, spellId = 2825 } } })
+check("(i) control: readable delta does not throw", okCtl)
+drain()
+local r_ctl = dispatchedTo("player", "player")
+check("(i) control: readable delta passes through as a table",
+    r_ctl ~= nil and type(r_ctl.info) == "table"
+        and r_ctl.info.addedAuras[1].spellId == 2825)
+
+---------------------------------------------------------------------------
+-- (j) PER-SUBSCRIBER isolation: one throwing subscriber must not abort the
+-- remaining subscribers for the same unit (errors route to geterrorhandler).
+---------------------------------------------------------------------------
+local handledErrors = 0
+_G.geterrorhandler = function() return function() handledErrors = handledErrors + 1 end end
+local laterRan = false
+AuraEvents:Subscribe("player", function() error("boom: first subscriber") end)
+AuraEvents:Subscribe("player", function() laterRan = true end)
+resetRecorder()
+local ok_j = pcall(rosterHandler_for("player"), { _isFrame = true }, "UNIT_AURA", "player", nil)
+check("(j) dispatch survives a throwing subscriber", ok_j)
+local okDrain_j = pcall(drain)
+check("(j) coalesce drain does not throw", okDrain_j)
+check("(j) the later subscriber still ran", laterRan == true)
+check("(j) the throw reached geterrorhandler", handledErrors == 1)
 
 _G.issecretvalue = restoreSecretStub
 

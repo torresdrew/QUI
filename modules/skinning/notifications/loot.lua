@@ -202,7 +202,7 @@ local function CreateLootSlot(parent, index)
     slot:SetScript("OnEnter", function(self)
         if self.slotIndex then
             GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-            local ok = pcall(GameTooltip.SetLootItem, GameTooltip, self.slotIndex)
+            local ok = ns.SafeCallMethod("best-effort-style", GameTooltip, "SetLootItem", self.slotIndex)
             if ok then
                 GameTooltip:Show()
             else
@@ -532,7 +532,7 @@ local function CreateRollFrame(index)
         if self.rollID then
             GameTooltip:SetOwner(self, "ANCHOR_BOTTOMRIGHT")
             -- pcall guards against third-party tooltip hooks (e.g. Altoholic) that may error
-            local ok = pcall(GameTooltip.SetLootRollItem, GameTooltip, self.rollID)
+            local ok = ns.SafeCallMethod("best-effort-style", GameTooltip, "SetLootRollItem", self.rollID)
             if ok then
                 GameTooltip:Show()
             else

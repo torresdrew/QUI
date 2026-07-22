@@ -156,7 +156,7 @@ function GUI:AttachTooltip(frame, description, label)
             GameTooltip:SetText(description, 1, 1, 1, 1, true)
         end
         if type(self._quiTooltipAugment) == "function" then
-            pcall(self._quiTooltipAugment, self, GameTooltip)
+            ns.SafeCallMethod("bulkhead", self, "_quiTooltipAugment", GameTooltip)
         end
         GameTooltip:Show()
     end)
@@ -476,10 +476,10 @@ function GUI:EnsureSearchCacheLoaded()
     end
     local loader = (C_AddOns and C_AddOns.LoadAddOn) or LoadAddOn
     if not self:HasGeneratedSearchCache() and type(loader) == "function" then
-        local ok = pcall(loader, SearchCacheAddonName())
+        local ok = ns.SafeCall("report", loader, SearchCacheAddonName())
         -- Fallback: missing locale cache (e.g. unshipped) -> English index.
         if not self:HasGeneratedSearchCache() then
-            pcall(loader, "QUI_OptionsSearch")
+            ns.SafeCall("report", loader, "QUI_OptionsSearch")
         end
     end
     -- Pre-split, the cache applied at QUI_Options load (before the panel built),
@@ -1125,7 +1125,7 @@ function GUI:ScrollToRegisteredSection(tabIndex, subTabIndex, sectionName, opts)
         local scrollTop = scroll:GetTop()
         if sectionTop and scrollTop then
             local offset = math.max(0, (scrollTop - sectionTop) + 10)
-            pcall(scroll.SetVerticalScroll, scroll, offset)
+            scroll:SetVerticalScroll(offset)
         end
     end
 
@@ -1592,10 +1592,10 @@ function GUI:ShowConfirmation(options)
         confirmDialog.acceptBtn.text:SetPoint("CENTER", 0, 0)
 
         confirmDialog.acceptBtn:SetScript("OnEnter", function(self)
-            pcall(self.SetBackdropBorderColor, self, C.accent[1], C.accent[2], C.accent[3], 1)
+            self:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 1)
         end)
         confirmDialog.acceptBtn:SetScript("OnLeave", function(self)
-            pcall(self.SetBackdropBorderColor, self, C.border[1], C.border[2], C.border[3], 1)
+            self:SetBackdropBorderColor(C.border[1], C.border[2], C.border[3], 1)
         end)
 
         -- Cancel button (right)
@@ -1612,10 +1612,10 @@ function GUI:ShowConfirmation(options)
         confirmDialog.cancelBtn.text:SetPoint("CENTER", 0, 0)
 
         confirmDialog.cancelBtn:SetScript("OnEnter", function(self)
-            pcall(self.SetBackdropBorderColor, self, C.accent[1], C.accent[2], C.accent[3], 1)
+            self:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 1)
         end)
         confirmDialog.cancelBtn:SetScript("OnLeave", function(self)
-            pcall(self.SetBackdropBorderColor, self, C.border[1], C.border[2], C.border[3], 1)
+            self:SetBackdropBorderColor(C.border[1], C.border[2], C.border[3], 1)
         end)
 
         -- ESC to close
@@ -1929,7 +1929,7 @@ local function CreateDropdownScrollBody(menuFrame)
         local frameH = self:GetHeight()
         local maxScroll = math.max(0, contentH - frameH)
         local newScroll = math.max(0, math.min(currentScroll - (delta * SCROLL_STEP), maxScroll))
-        pcall(self.SetVerticalScroll, self, newScroll)
+        self:SetVerticalScroll(newScroll)
         UpdateThumb()
     end)
 
@@ -3019,7 +3019,7 @@ function GUI:CreateFormDropdown(parent, label, options, dbKey, dbTable, onChange
         if useUIKitBorders then
             UIKit.UpdateBorderLines(dropdown, 1, r, g, b, a or 1, false)
         else
-            pcall(dropdown.SetBackdropBorderColor, dropdown, r, g, b, a or 1)
+            dropdown:SetBackdropBorderColor(r, g, b, a or 1)
         end
     end
 
@@ -3244,7 +3244,7 @@ function GUI:CreateFormDropdown(parent, label, options, dbKey, dbTable, onChange
 
         -- Reset scroll to top when filtering
         if isFiltering then
-            pcall(scrollFrame.SetVerticalScroll, scrollFrame, 0)
+            scrollFrame:SetVerticalScroll(0)
         end
 
         for i, opt in ipairs(container.options) do
@@ -3622,7 +3622,7 @@ function GUI:CreateFormColorPicker(parent, label, dbKey, dbTable, onChange, opti
         if useUIKitBorders then
             UIKit.UpdateBorderLines(swatch, 1, r, g, b, a or 1, false)
         else
-            pcall(swatch.SetBackdropBorderColor, swatch, r, g, b, a or 1)
+            swatch:SetBackdropBorderColor(r, g, b, a or 1)
         end
     end
 
@@ -4110,7 +4110,7 @@ function GUI:CreateSearchBox(parent, placeholderText)
     local icon = container:CreateTexture(nil, "OVERLAY")
     icon:SetSize(12, 12)
     icon:SetPoint("LEFT", container, "LEFT", 8, 0)
-    local atlasOk = pcall(function() icon:SetAtlas("common-search-magnifier") end)
+    local atlasOk = ns.SafeCall("best-effort-style", function() icon:SetAtlas("common-search-magnifier") end)
     if not atlasOk or not icon:GetAtlas() then
         icon:SetTexture("Interface\\FriendsFrame\\UI-Searchbox-Icon")
     end
@@ -4361,7 +4361,7 @@ function GUI:HandleSearchDescriptorChange(descriptor)
         or nil
 
     if feature and type(feature.apply) == "function" then
-        pcall(feature.apply)
+        ns.SafeCall("bulkhead", feature.apply)
     end
 
     local compat = settings and settings.RenderAdapters
@@ -5627,7 +5627,7 @@ function GUI:CreateMainFrame()
     glow:SetAllPoints(contentArea)
     glow:SetTexture("Interface\\BUTTONS\\WHITE8x8")
     if glow.SetGradient then
-        local ok = pcall(function()
+        local ok = ns.SafeCall("best-effort-style", function()
             glow:SetGradient("HORIZONTAL",
                 CreateColor(C.accentGlow[1], C.accentGlow[2], C.accentGlow[3], C.accentGlow[4]),
                 CreateColor(C.accentGlow[1], C.accentGlow[2], C.accentGlow[3], 0))
@@ -6442,7 +6442,7 @@ function GUI:BuildTilePage(frame, tile)
                     print("|cff60A5FAQUI:|r Cannot open Layout Mode during combat.")
                     return
                 end
-                if GUI and GUI.Hide then pcall(GUI.Hide, GUI) end
+                if GUI and GUI.Hide then GUI:Hide() end
                 if _G.QUI_OpenLayoutMode then _G.QUI_OpenLayoutMode() end
                 if moverKey ~= "" and _G.QUI_LayoutModeSelectMover then
                     -- SelectMover works once handles are created. Open is
@@ -6750,7 +6750,7 @@ function GUI:SelectFeatureTile(frame, index, opts)
                         local sectionTop = target.GetTop and target:GetTop() or nil
                         if bodyTop and sectionTop and scroll.SetVerticalScroll then
                             local offset = math.max(0, bodyTop - sectionTop)
-                            pcall(scroll.SetVerticalScroll, scroll, offset)
+                            scroll:SetVerticalScroll(offset)
                             scrolledToSection = true
                         end
                     end
@@ -6783,7 +6783,7 @@ function GUI:SelectFeatureTile(frame, index, opts)
                             -- correct absolute scroll value to bring the
                             -- widget into view (with ~50px breathing room).
                             local offset = math.max(0, bodyTop - widgetTop - 50)
-                            pcall(scroll.SetVerticalScroll, scroll, offset)
+                            scroll:SetVerticalScroll(offset)
                         end
                     end
                 end
@@ -7801,7 +7801,7 @@ function GUI:ApplyFeatureSearchNavigation(tile, entry, opts)
         return false
     end
 
-    local ok, handled = pcall(feature.searchNavigate, entry, {
+    local ok, handled = ns.SafeCall("bulkhead", feature.searchNavigate, entry, {
         tile = tile,
         pageFrame = tile._pageFrame,
         opts = opts,
@@ -7984,7 +7984,7 @@ function GUI:FocusSearchBox()
     local box = frame._searchBox.editBox or frame._searchBox
     if box and box.SetFocus then
         box:SetFocus()
-        if box.HighlightText then pcall(box.HighlightText, box) end
+        if box.HighlightText then box:HighlightText() end
     end
 end
 

@@ -594,8 +594,23 @@ function openRaidLib.GearManager.BuildPlayerEquipmentList()
     return equipmentList
 end
 
+--QUI patch (12.1): UnitHealth is SecretReturns — `>= 1` on a secret value
+--throws while restricted. ACTION POLICY, not liveness truth: a secret
+--health is INDETERMINATE — keep tracking the pet (UnitExists already
+--proved existence); readable health decides normally.
+local isPetAliveHealthCheck = function()
+    if (not UnitExists("pet")) then
+        return false
+    end
+    local petHealth = UnitHealth("pet")
+    if (issecretvalue and issecretvalue(petHealth)) then
+        return true
+    end
+    return petHealth >= 1
+end
+
 local playerHasPetOfNpcId = function(npcId)
-    if (UnitExists("pet") and UnitHealth("pet") >= 1) then
+    if (isPetAliveHealthCheck()) then
         local guid = UnitGUID("pet")
         if (guid) then
             local split = {strsplit("-", guid)}
@@ -948,6 +963,15 @@ function openRaidLib.CooldownManager.GetPlayerCooldownStatus(spellId)
     if (spellData) then
         local buffDuration = getAuraDuration(spellId)
         local chargesAvailable, chargesTotal, start, duration = GetSpellCharges(spellId)
+        --QUI patch (12.1): charge fields are SecretWhenCooldownsRestricted —
+        --any truth-test/==/arithmetic on them throws while restricted.
+        --Degrade to "ready, no cooldown info": correct data is unobtainable
+        --by tainted code under restriction, and a stable answer beats an
+        --error thrown into the comm scheduler.
+        if (issecretvalue and (issecretvalue(chargesAvailable) or issecretvalue(chargesTotal)
+            or issecretvalue(start) or issecretvalue(duration))) then
+            return 0, 1, 0, 0, buffDuration or 0
+        end
         if chargesAvailable then
             if (chargesAvailable == chargesTotal) then
                 return 0, chargesTotal, 0, 0, 0 --all charges are ready to use
@@ -963,12 +987,23 @@ function openRaidLib.CooldownManager.GetPlayerCooldownStatus(spellId)
                 local spellCooldownInfo = GetSpellCooldown(spellId)
                 local start = spellCooldownInfo.startTime
                 local duration = spellCooldownInfo.duration
+                --QUI patch (12.1): cooldown timing is SecretWhenCooldownsRestricted;
+                --probe before the == 0 compare below.
+                if (issecretvalue and (issecretvalue(start) or issecretvalue(duration))) then
+                    return 0, 1, 0, 0, buffDuration or 0
+                end
                 if (start == 0) then --cooldown is ready
                     return 0, 1, 0, 0, 0 --time left, charges, startTime
                 else
                     local timeLeft = start + duration - GetTime()
                     local globalCooldownInfo = GetSpellCooldown(CONST_GLOBALCOOLDOWN_SPELLID)
-                    if (globalCooldownInfo.startTime ~= 0 and globalCooldownInfo.duration >= timeLeft) then
+                    local gcStart = globalCooldownInfo.startTime
+                    local gcDuration = globalCooldownInfo.duration
+                    --QUI patch (12.1): secret GCD timing can't be compared —
+                    --skip the GCD-override shortcut, the plain math below
+                    --uses only the (proven non-secret) spell cooldown.
+                    local gcReadable = not (issecretvalue and (issecretvalue(gcStart) or issecretvalue(gcDuration)))
+                    if (gcReadable and gcStart ~= 0 and gcDuration >= timeLeft) then
                         return 0, 1, 0, 0, 0 --time left, charges, startTime
                     else
                         local startTimeOffset = start - GetTime()

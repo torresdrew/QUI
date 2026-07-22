@@ -8563,6 +8563,7 @@ return {
         },
         dandersFrames = {
           party = {
+            absolutePoint = "CENTER",
             absoluteX = 467,
             absoluteY = 119,
             offsetX = -200,
@@ -8571,6 +8572,7 @@ return {
             targetPoint = "TOPLEFT"
           },
           raid = {
+            absolutePoint = "CENTER",
             absoluteX = -520,
             absoluteY = 98,
             offsetY = 0,

@@ -78,6 +78,7 @@ local _state = {
     raidRosterSortCache = {},
     unitEventRegistrationEnabled = false,
     unitEventFrames = {},
+    rangeListenerFrames = {},
     healAbsorbThrottle = {},
     healthThrottle = {},
     unitEventActive = {
@@ -1144,7 +1145,7 @@ local function UpdateHealth(frame)
 
         local Render = ns.QUI_GroupFrameAuraRender
         if Render and Render.SyncHealthBarTint then
-            Render:SyncHealthBarTint(frame, healthPct, isConnected and not isDeadOrGhost)
+            Render:SyncHealthBarTint(frame, healthPct, isConnected and not isDeadOrGhost) -- @secret-safe: SyncHealthBarTint and StartHealthTintAnimation probe IsSecretValue before any truth-test on healthPct and forward the opaque value to the SetValue sink (round-13 hand-audit)
         end
     end
 
@@ -1193,7 +1194,7 @@ local function UpdateHealth(frame)
             local ok
             if style == "percent" then
                 local pct = GetHealthPct(unit)
-                ok = pcall(frame.healthText.SetFormattedText, frame.healthText, pctFmt, pct)
+                ok = ns.SafeCallMethod("sink-forward", frame.healthText, "SetFormattedText", pctFmt, pct)
             elseif style == "absolute" then
                 -- AbbreviateNumbers is SecretArguments="AllowedWhenTainted": it takes
                 -- a secret OR plain value and returns a string. Forward that result
@@ -1202,35 +1203,35 @@ local function UpdateHealth(frame)
                 -- the old IsSecretValue gate fell back to a raw, unabbreviated number.
                 local hp = UnitHealth(unit, true)
                 if abbr then
-                    ok = pcall(frame.healthText.SetText, frame.healthText, abbr(hp))
+                    ok = ns.SafeCallMethod("sink-forward", frame.healthText, "SetText", abbr(hp))
                 else
-                    ok = pcall(frame.healthText.SetFormattedText, frame.healthText, "%s", hp)
+                    ok = ns.SafeCallMethod("sink-forward", frame.healthText, "SetFormattedText", "%s", hp)
                 end
             elseif style == "both" then
                 local hp = UnitHealth(unit, true)
                 local pct = GetHealthPct(unit)
                 local bothFmt = healthSettings.hideHealthPercentSymbol and "%s | %.0f" or "%s | %.0f%%"
                 if abbr then
-                    ok = pcall(frame.healthText.SetFormattedText, frame.healthText, bothFmt, abbr(hp), pct)
+                    ok = ns.SafeCallMethod("sink-forward", frame.healthText, "SetFormattedText", bothFmt, abbr(hp), pct)
                 else
-                    ok = pcall(frame.healthText.SetFormattedText, frame.healthText, bothFmt, hp, pct)
+                    ok = ns.SafeCallMethod("sink-forward", frame.healthText, "SetFormattedText", bothFmt, hp, pct)
                 end
             elseif style == "deficit" then
                 local miss = UnitHealthMissing(unit, true)
                 if IsSecretValue(miss) then
-                    ok = pcall(frame.healthText.SetFormattedText, frame.healthText, "-%s", miss)
+                    ok = ns.SafeCallMethod("sink-forward", frame.healthText, "SetFormattedText", "-%s", miss)
                 elseif C_StringUtil and C_StringUtil.TruncateWhenZero and C_StringUtil.WrapString then
                     local truncated = C_StringUtil.TruncateWhenZero(miss)
                     local result = C_StringUtil.WrapString(truncated, "-")
-                    ok = pcall(frame.healthText.SetText, frame.healthText, result)
+                    ok = ns.SafeCallMethod("sink-forward", frame.healthText, "SetText", result)
                 elseif abbr then
-                    ok = pcall(frame.healthText.SetFormattedText, frame.healthText, "-%s", abbr(miss))
+                    ok = ns.SafeCallMethod("sink-forward", frame.healthText, "SetFormattedText", "-%s", abbr(miss))
                 else
-                    ok = pcall(frame.healthText.SetFormattedText, frame.healthText, "-%s", miss)
+                    ok = ns.SafeCallMethod("sink-forward", frame.healthText, "SetFormattedText", "-%s", miss)
                 end
             else
                 local pct = GetHealthPct(unit)
-                ok = pcall(frame.healthText.SetFormattedText, frame.healthText, pctFmt, pct)
+                ok = ns.SafeCallMethod("sink-forward", frame.healthText, "SetFormattedText", pctFmt, pct)
             end
             if not ok then
                 frame.healthText:SetText("")
@@ -1384,7 +1385,11 @@ local function UpdateName(frame)
     if not UnitExists(unit) then return end
 
     local name = UnitName(unit)
-    if not name then return end
+    -- Probe BEFORE the nil bail: UnitName is SecretWhenUnitIdentityRestricted
+    -- and `not <secret>` throws, aborting the render this comment block below
+    -- explicitly hardened. A secret name flows on to TruncateUTF8 → SetText
+    -- (both secret-safe); only a readable nil keeps the last good name.
+    if not IsSecretValue(name) and not name then return end
 
     -- UnitName is SecretWhenUnitIdentityRestricted: in restricted combat it
     -- returns a secret string, and a bare `#name > maxLen` length pre-check
@@ -1445,12 +1450,11 @@ local function UpdateAbsorbs(frame, _unit, _maxHP)
 
     -- Hide explicit zero absorbs. Some clients/textures can keep drawing a
     -- visible reverse-filled StatusBar at value 0; secret values still pass
-    -- directly to C-side APIs below.
-    if not absorbAmount then
-        frame.absorbBar:Hide()
-        return
-    end
-    if not IsSecretValue(absorbAmount) and SafeToNumber(absorbAmount, 0) <= 0 then
+    -- directly to C-side APIs below. Probe BEFORE any truth-test — the
+    -- UnitGetTotalAbsorbs return is secret in restricted combat and
+    -- `not <secret>` throws, which killed the sink route below.
+    if not IsSecretValue(absorbAmount)
+        and (not absorbAmount or SafeToNumber(absorbAmount, 0) <= 0) then
         frame.absorbBar:SetValue(0)
         frame.absorbBar:Hide()
         return
@@ -1510,11 +1514,11 @@ local function UpdateHealAbsorb(frame, _unit, _maxHP)
     local maxHP = _maxHP or UnitHealthMax(unit)
     local healAbsorbAmount = UnitGetTotalHealAbsorbs(unit)
 
-    if not healAbsorbAmount then
-        frame.healAbsorbBar:Hide()
-        return
-    end
-    if not IsSecretValue(healAbsorbAmount) and SafeToNumber(healAbsorbAmount, 0) <= 0 then
+    -- Probe BEFORE any truth-test — UnitGetTotalHealAbsorbs is secret in
+    -- restricted combat and `not <secret>` throws; a secret amount rides the
+    -- C-side SetMinMaxValues/SetValue sinks below.
+    if not IsSecretValue(healAbsorbAmount)
+        and (not healAbsorbAmount or SafeToNumber(healAbsorbAmount, 0) <= 0) then
         frame.healAbsorbBar:SetValue(0)
         frame.healAbsorbBar:Hide()
         return
@@ -1580,7 +1584,11 @@ local function UpdateHealPrediction(frame, _unit, _maxHP)
 
     -- Only hide on nil (API unavailable). Do NOT check for zero — StatusBar
     -- naturally shows 0-width when value is 0 (matches QUI pattern).
-    if not incomingHeals then
+    -- Probe FIRST: both providers are SecretReturns and `not x` throws on a
+    -- secret; a secret amount just flows to the C-side bar below.
+    if IsSecretValue(incomingHeals) then
+        -- secret: render path absorbs it
+    elseif not incomingHeals then
         frame.healPredictionBar:Hide()
         return
     end
@@ -1729,8 +1737,30 @@ end
 _state.IsPlayerUnit = function(unit)
     if unit == "player" then return true end
     if UnitIsUnit then
+        -- Statement-split guards (analyzer-provable): probe before the ==.
         local ok, isPlayer = pcall(UnitIsUnit, unit, "player")
-        return ok and not IsSecretValue(isPlayer) and isPlayer == true
+        if not ok then return false end
+        if IsSecretValue(isPlayer) then return false end -- @secret-policy: reject-secret-ids
+        return isPlayer == true
+    end
+    return false
+end
+
+-- UnitIsUnit is SecretWhenUnitComparisonRestricted AND
+-- RequiresComparableUnitTokens (UnitDocumentation). The precondition's
+-- FailureMode is "ReturnNothing" (SecretPredicatesDocumentation) — an
+-- incomparable-token call yields NIL, it does not throw — so nil-tolerance
+-- is the required shape and the pcall is defensive belt only; the probe
+-- folds the secret-return axis.
+-- ACTION POLICY: unknown = "not proven target" (highlight stays off).
+_state.IsUnitTarget = function(unit)
+    if not unit then return false end
+    if UnitIsUnit then
+        -- Statement-split guards (analyzer-provable): probe before the ==.
+        local ok, isTarget = pcall(UnitIsUnit, unit, "target")
+        if not ok then return false end
+        if IsSecretValue(isTarget) then return false end -- @secret-policy: reject-secret-value
+        return isTarget == true
     end
     return false
 end
@@ -1739,20 +1769,20 @@ _state.GetActivePlayerSummonPopup = function()
     if not StaticPopup_FindVisible then return nil, nil end
 
     local checkedPopup = false
-    local ok, popup = pcall(StaticPopup_FindVisible, "CONFIRM_SUMMON")
-    if ok and not IsSecretValue(popup) then
+    local popup = StaticPopup_FindVisible("CONFIRM_SUMMON")
+    if not IsSecretValue(popup) then
         if popup then return true, "CONFIRM_SUMMON" end
         checkedPopup = true
     end
 
-    ok, popup = pcall(StaticPopup_FindVisible, "CONFIRM_SUMMON_SCENARIO")
-    if ok and not IsSecretValue(popup) then
+    popup = StaticPopup_FindVisible("CONFIRM_SUMMON_SCENARIO")
+    if not IsSecretValue(popup) then
         if popup then return true, "CONFIRM_SUMMON_SCENARIO" end
         checkedPopup = true
     end
 
-    ok, popup = pcall(StaticPopup_FindVisible, "CONFIRM_SUMMON_STARTING_AREA")
-    if ok and not IsSecretValue(popup) then
+    popup = StaticPopup_FindVisible("CONFIRM_SUMMON_STARTING_AREA")
+    if not IsSecretValue(popup) then
         if popup then return true, "CONFIRM_SUMMON_STARTING_AREA" end
         checkedPopup = true
     end
@@ -1766,8 +1796,8 @@ _state.HasActivePlayerSummonConfirmation = function()
     if popupVisible ~= nil then return popupVisible end
 
     if C_SummonInfo and C_SummonInfo.GetSummonConfirmTimeLeft then
-        local ok, timeLeft = pcall(C_SummonInfo.GetSummonConfirmTimeLeft)
-        if ok and not IsSecretValue(timeLeft) then
+        local timeLeft = C_SummonInfo.GetSummonConfirmTimeLeft()
+        if not IsSecretValue(timeLeft) then
             return SafeToNumber(timeLeft, 0) > 0
         end
     end
@@ -1831,6 +1861,14 @@ local function UpdateThreat(frame)
     end
 
     local status = UnitThreatSituation(unit)
+    -- UnitThreatSituation is SecretWhenUnitThreatStateRestricted: probe
+    -- BEFORE the truth-test/>= compare. A secret status can't drive the Lua
+    -- show/hide fork — keep the border hidden until it reads again.
+    -- @secret-policy: reject-secret-value
+    if IsSecretValue(status) then
+        frame.threatBorder:Hide()
+        return
+    end
     if status and status >= 2 then
         local tc = indSettings.threatColor or _state.defaultColors.threat
         frame.threatBorder:SetBackdropBorderColor(tc[1], tc[2], tc[3], tc[4] or 0.8)
@@ -1858,6 +1896,13 @@ local function UpdateTargetMarker(frame)
     end
 
     local index = GetRaidTargetIndex(unit)
+    -- Probe first: a secret index throws on `if index`, and
+    -- SetRaidTargetIconTexture computes texcoords from it Lua-side —
+    -- unreadable under restriction means no marker can be selected.
+    if IsSecretValue(index) then
+        frame.targetMarker:Hide()
+        return
+    end
     if index then
         frame.targetMarker:SetTexture("Interface\\TargetingFrame\\UI-RaidTargetingIcons")
         SetRaidTargetIconTexture(frame.targetMarker, index)
@@ -1957,7 +2002,7 @@ local function UpdateTargetHighlight(frame)
         return
     end
 
-    if unit and UnitIsUnit(unit, "target") then
+    if unit and _state.IsUnitTarget(unit) then
         local c = healerSettings.targetHighlight.color or _state.defaultColors.targetHighlight
         frame.targetHighlight:SetBackdropBorderColor(c[1], c[2], c[3], c[4] or 0.6)
         frame.targetHighlight:Show()
@@ -2101,8 +2146,21 @@ local function UpdateDispelOverlay(frame)
                     hasDispellable = true
                     firstDispellableInstID = instID
                     local dispelAura = cache.debuffsByID and cache.debuffsByID[instID]
-                    if dispelAura and dispelAura.dispelName and not IsSecretValue(dispelAura.dispelName) then
-                        firstDispellableType = SafeValue(dispelAura.dispelName, nil)
+                    -- Statement-split probe: dispelName can be secret on an
+                    -- otherwise readable cached entry (RebuildDebuffMaps
+                    -- stores such entries and probes this same field for its
+                    -- own dispel classification). The previous compound
+                    -- `and dispelAura.dispelName and not IsSecretValue(...)`
+                    -- truth-tested the secret BEFORE the probe could run.
+                    local dispelName = dispelAura and dispelAura.dispelName
+                    if IsSecretValue(dispelName) then
+                        -- @secret-policy: reject-secret-value — a secret
+                        -- dispel type is indeterminate; leave the type nil
+                        -- (flat-color fallback path).
+                        dispelName = nil
+                    end
+                    if dispelName then
+                        firstDispellableType = dispelName
                     end
                     break
                 end
@@ -2142,10 +2200,17 @@ local function UpdateDispelOverlay(frame)
         local curve = GetDispelColorCurve(opacity)
         if curve then
             local cOk, color = pcall(C_UnitAuras.GetAuraDispelTypeColor, unit, firstDispellableInstID, curve)
-            if cOk and color then
-                SetDispelBorderColorMixin(overlay, color)
-                overlay:Show()
-                return
+            if cOk then
+                -- A secret color OBJECT can't be method-called (GetRGBA
+                -- throws); fold to nil so the fallback below renders instead.
+                if IsSecretValue(color) then
+                    color = nil
+                end
+                if color then
+                    SetDispelBorderColorMixin(overlay, color)
+                    overlay:Show()
+                    return
+                end
             end
         end
     end
@@ -2189,7 +2254,7 @@ local function UpdatePortrait(frame)
 
 
     -- Update texture
-    pcall(SetPortraitTexture, frame.portraitTexture, unit, true)
+    ns.SafeCall("best-effort-style", SetPortraitTexture, frame.portraitTexture, unit, true)
     frame.portraitTexture:SetTexCoord(0.15, 0.85, 0.15, 0.85)
 
     -- Desaturate for dead/offline
@@ -2837,7 +2902,10 @@ local function DecorateGroupFrame(frame)
             -- UnitGUID returns secret strings during combat — coerce to nil
             -- so we never store or compare secret values.
             local rawGuid = UnitGUID(value)
-            local newGuid = (rawGuid and not IsSecretValue(rawGuid)) and rawGuid or nil
+            -- Statement-split probe: `rawGuid and ...` truth-tests the value
+            -- first and throws when it is secret. Probe, THEN coerce.
+            local newGuid = rawGuid
+            if IsSecretValue(newGuid) then newGuid = nil end
             local oldGuid = _state.unitGuidCache[self]
             if newGuid then
                 _state.unitGuidCache[self] = newGuid
@@ -4247,7 +4315,11 @@ _state.UnitNameMatchesRoster = function(unit, rosterName)
     if not unit or not rosterName then return false end
 
     local unitName, unitRealm = UnitName(unit)
+    -- 12.1 identity restriction: probe before truth-test/==/concat; a
+    -- secret name can't match a plain roster string.
+    if IsSecretValue(unitName) then return false end -- @secret-policy: reject-secret-ids
     if not unitName then return false end
+    if IsSecretValue(unitRealm) then unitRealm = nil end
 
     if string.find(rosterName, "-", 1, true) then
         if unitRealm and unitRealm ~= "" then
@@ -4261,7 +4333,9 @@ end
 
 _state.GetPlayerRosterNames = function()
     local playerName, playerRealm = UnitName("player")
+    if IsSecretValue(playerName) then return nil, nil end -- @secret-policy: reject-secret-ids
     if not playerName then return nil, nil end
+    if IsSecretValue(playerRealm) then playerRealm = nil end
     if playerRealm and playerRealm ~= "" then
         return playerName, playerName .. "-" .. playerRealm
     end
@@ -4395,7 +4469,7 @@ GetRaidDisplaySections = function()
             end
 
             local isPlayer = _state.IsPlayerRosterName(name, playerName, playerFullName)
-                or (unitMatchesRoster and UnitIsUnit(unit, "player"))
+                or (unitMatchesRoster and _state.IsPlayerUnit(unit))
             table_insert(section.members, {
                 name = name,
                 index = i,
@@ -5057,8 +5131,53 @@ local function ResolveRangeSpells()
     end
 end
 
+-- Tracked-slot live-assist re-drive (see core/aura_slots.lua header): the
+-- engine skips HELPFUL includeSpellIDs for live-non-assistable group
+-- members (cross-faction/MC/dead/phased), so an assist flip must re-run
+-- AuraSlots.Sync via the container config pass. Staleness is judged
+-- against the APPLIED state Sync records on each container
+-- (_quiAssistApplied) — never a reader-side dedupe cache: config passes
+-- run Sync from roster/settings/regen paths under whatever probe value
+-- holds at that moment, so only the writer's record says what the slots
+-- currently reflect (a reader cache left independently re-parked slots
+-- parked with no observable flip). A matching-state check is one probe
+-- per frame and does zero config work.
+function _state.RefreshTrackedSlotAssist(unit, frames)
+    local GFA = ns.QUI_GroupFrameAuras
+    if not (GFA and GFA.TrackedAssistStale and GFA.UpdateStripContainers) then return end
+    for i = 1, #frames do
+        local frame = frames[i]
+        if GFA.TrackedAssistStale(frame) then
+            GFA.UpdateStripContainers(frame)
+        end
+    end
+end
+
+-- Catch-all sweep for EVENT-LESS assist flips: zone-rule changes (a
+-- cross-faction member becomes assistable on instance entry with no
+-- UNIT_FACTION/FLAGS/PHASE/CONNECTION edge) and visibility drift (members
+-- walking in/out of render distance). Driven by PLAYER_ENTERING_WORLD /
+-- ZONE_CHANGED_NEW_AREA (0.5s deferred — world state must stream first)
+-- and a slow 5s safety ticker (raidbuffs' range-ticker precedent). The
+-- applied-state comparison in RefreshTrackedSlotAssist makes a no-flip
+-- sweep ~40 cheap probes and zero config work.
+function _state.SweepTrackedSlotAssist()
+    if not _state.cachedModuleEnabled then return end
+    local map = QUI_GF.unitFrameMap
+    if not map then return end
+    for unit, frames in pairs(map) do
+        _state.RefreshTrackedSlotAssist(unit, frames)
+    end
+end
+
 local function CheckUnitRange(unit)
-    if UnitIsUnit(unit, "player") then return true end
+    -- UnitIsUnit is SecretWhenUnitComparisonRestricted (UnitDocumentation).
+    -- ACTION POLICY: a secret result is INDETERMINATE — fold to "not
+    -- proven self" and fall through to the normal range checks below
+    -- (which carry their own probes), matching the connected/alive folds.
+    local isSelf = UnitIsUnit(unit, "player")
+    if IsSecretValue(isSelf) then isSelf = nil end -- @secret-policy: reject-secret-value
+    if isSelf then return true end
     if not UnitExists(unit) then return true end
 
     -- Phased units are always out of range
@@ -5066,6 +5185,10 @@ local function CheckUnitRange(unit)
         return false
     end
 
+    -- ACTION POLICY on both folds below: a SECRET state is INDETERMINATE
+    -- (never converted into connected/alive truth); the policy keeps the
+    -- unit ELIGIBLE so a possibly-live unit is never dropped from range
+    -- handling. Readable values decide normally.
     local connected = UnitIsConnected(unit)
     if IsSecretValue(connected) then connected = true end
     if not connected then
@@ -5359,18 +5482,24 @@ local function OnEvent(self, event, arg1, ...)
     -- Skip GetSettings() entirely for units not in the map (nameplates,
     -- boss, arena, target, focus, pet) — saves ~20k table lookups/sec in raids.
     if type(arg1) == "string" then
-        local frames = QUI_GF.unitFrameMap[arg1]
+        -- READY_CHECK — the only event this dispatcher receives whose pos-3
+        -- payload secretizes (initiatorName, SecretInChatMessagingLockdown)
+        -- — is handled and RETURNED by the branch above, so on this path
+        -- arg1 is a plain unit token. The analyzer cannot narrow event
+        -- identity across a terminating sequential if, hence the
+        -- annotations.
+        local frames = QUI_GF.unitFrameMap[arg1] -- @secret-safe: READY_CHECK terminated above; arg1 is a plain unit token here
 
         if not frames then
             -- Self-healing: rebuild map on miss for party/raid/player units.
             -- Fast prefix check avoids per-event regex (string.sub vs :match).
             local p4 = arg1:sub(1, 4)
-            if p4 == "part" or p4 == "raid" or arg1 == "player" then
+            if p4 == "part" or p4 == "raid" or arg1 == "player" then -- @secret-safe: READY_CHECK terminated above; arg1 is a plain unit token here
                 local now = GetTime()
                 if not QUI_GF.lastMapRebuild or (now - QUI_GF.lastMapRebuild) > 1.0 then
                     QUI_GF.lastMapRebuild = now
                     RebuildUnitFrameMap()
-                    frames = QUI_GF.unitFrameMap[arg1]
+                    frames = QUI_GF.unitFrameMap[arg1] -- @secret-safe: READY_CHECK terminated above; arg1 is a plain unit token here
                 end
             end
             if not frames then return end  -- Not a tracked unit, bail early
@@ -5469,32 +5598,21 @@ local function OnEvent(self, event, arg1, ...)
                 UpdateHealth(frame)
                 UpdatePower(frame)
             end
+            _state.RefreshTrackedSlotAssist(arg1, frames)
 
-        elseif event == "UNIT_IN_RANGE_UPDATE" then
-            -- Instant range update from Blizzard (~38yd boundary crossing).
-            -- Primary driver for range checks; ticker is a slow fallback.
-            -- Range status is per-unit; compute once and apply to all frames.
-            local inRange = CheckUnitRange(arg1)
-            local cached = _range.cache[arg1]
-            local isSecret = issecretvalue and (issecretvalue(inRange) or issecretvalue(cached))
-            if isSecret or cached ~= inRange then
-                _range.cache[arg1] = inRange
-                for i = 1, nFrames do
-                    local frame = frames[i]
-                    local rangeSettings = GetRangeSettings(frame._isRaid)
-                    if rangeSettings and rangeSettings.enabled ~= false then
-                        local outAlpha = rangeSettings.outOfRangeAlpha or 0.4
-                        local state = GetFrameState(frame)
-                        state.outOfRange = true
-                        state.inRange = inRange
-                        ApplyRangeAlpha(frame, inRange, outAlpha)
-                    end
-                end
-            end
-            _range.cacheTime[arg1] = GetTime()
+        elseif event == "UNIT_FACTION" then
+            -- Mind control / faction flip changes live assistability —
+            -- re-gate tracked HELPFUL slots (core/aura_slots.lua header).
+            _state.RefreshTrackedSlotAssist(arg1, frames)
+
+        -- UNIT_IN_RANGE_UPDATE handled by per-unit range listener frames
+        -- (_state.HandleRangeUpdate): its payload is SecretPayloads = true —
+        -- ALWAYS secret — so the payload-keyed fast path above (unitFrameMap
+        -- index + :sub prefix check) would throw on it. Never route it here.
 
         elseif event == "UNIT_PHASE" then
             for i = 1, nFrames do UpdatePhaseIcon(frames[i]) end
+            _state.RefreshTrackedSlotAssist(arg1, frames)
 
         elseif event == "INCOMING_RESURRECT_CHANGED" then
             wipe(_range.cache)
@@ -5542,7 +5660,7 @@ local function OnEvent(self, event, arg1, ...)
                 for i = 1, #list do
                     local frame = list[i]
                     local unit = QUI_GF.GetFrameUnit(frame)
-                    if unit and UnitIsUnit(unit, "target") then
+                    if unit and _state.IsUnitTarget(unit) then
                         UpdateTargetHighlight(frame)
                         prevList[#prevList + 1] = frame
                     end
@@ -5665,7 +5783,13 @@ local function OnEvent(self, event, arg1, ...)
             UpdateHeaderVisibility()
             UpdateFrameScaling(true)
             ResolveRangeSpells()
+            _state.SweepTrackedSlotAssist()
         end)
+
+    elseif event == "ZONE_CHANGED_NEW_AREA" then
+        -- Zone rules flip live assistability with no unit event (see
+        -- SweepTrackedSlotAssist) — re-probe after the transition settles.
+        C_Timer.After(0.5, _state.SweepTrackedSlotAssist)
 
     elseif event == "PLAYER_SPECIALIZATION_CHANGED" or event == "SPELLS_CHANGED" then
         ResolveRangeSpells()
@@ -5673,6 +5797,37 @@ local function OnEvent(self, event, arg1, ...)
 end
 
 eventFrame:SetScript("OnEvent", OnEvent)
+
+-- Instant range update from Blizzard (~38yd boundary crossing). Primary
+-- driver for range checks; the ticker is a slow fallback. UNIT_IN_RANGE_UPDATE
+-- is SecretPayloads = true — its unit AND isInRange payload args are ALWAYS
+-- secret and RegisterUnitEvent filtering does not declassify them — so the
+-- per-unit listener frames below call this with their LEXICAL registration
+-- token and the payload is never touched. Range status is per-unit; compute
+-- once and apply to all frames.
+function _state.HandleRangeUpdate(unit)
+    if not _state.cachedModuleEnabled then return end
+    local frames = QUI_GF.unitFrameMap[unit]
+    if not frames then return end
+    local inRange = CheckUnitRange(unit)
+    local cached = _range.cache[unit]
+    local isSecret = issecretvalue and (issecretvalue(inRange) or issecretvalue(cached))
+    if isSecret or cached ~= inRange then
+        _range.cache[unit] = inRange
+        for i = 1, #frames do
+            local frame = frames[i]
+            local rangeSettings = GetRangeSettings(frame._isRaid)
+            if rangeSettings and rangeSettings.enabled ~= false then
+                local outAlpha = rangeSettings.outOfRangeAlpha or 0.4
+                local state = GetFrameState(frame)
+                state.outOfRange = true
+                state.inRange = inRange
+                ApplyRangeAlpha(frame, inRange, outAlpha)
+            end
+        end
+    end
+    _range.cacheTime[unit] = GetTime()
+end
 
 function _state.RegisterUnitEventsForUnit(unit)
     if not _state.unitEventRegistrationEnabled or not unit or not QUI_GF.unitFrameMap[unit] then return end
@@ -5694,10 +5849,27 @@ function _state.RegisterUnitEventsForUnit(unit)
             frame:UnregisterEvent(event)
         end
     end
+
+    -- Range listener: closure captures the lexical token; the secret payload
+    -- is ignored entirely (see _state.HandleRangeUpdate).
+    local rangeListener = _state.rangeListenerFrames[unit]
+    if not rangeListener then
+        rangeListener = CreateFrame("Frame")
+        rangeListener:Hide()
+        rangeListener:SetScript("OnEvent", function()
+            _state.HandleRangeUpdate(unit)
+        end)
+        _state.rangeListenerFrames[unit] = rangeListener
+    end
+    rangeListener:RegisterUnitEvent("UNIT_IN_RANGE_UPDATE", unit)
 end
 
 function _state.UnregisterUnitEventsForUnit(unit)
     local frame = unit and _state.unitEventFrames[unit]
+    local rangeListener = unit and _state.rangeListenerFrames[unit]
+    if rangeListener then
+        rangeListener:UnregisterEvent("UNIT_IN_RANGE_UPDATE")
+    end
     if not frame then return end
 
     for i = 1, #_state.unitEventList do
@@ -5793,8 +5965,16 @@ local function RegisterEvents()
     -- Group events
     eventFrame:RegisterEvent("GROUP_ROSTER_UPDATE")
     eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+    -- Zone-rule assist flips carry no unit event — sweep the tracked-slot
+    -- live-assist gate on zone transitions (SweepTrackedSlotAssist).
+    eventFrame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
     eventFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
     eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+    -- Slow safety ticker for the same event-less flips (visibility drift);
+    -- no-flip ticks are ~40 cheap probes (same-state dedupe short-circuits).
+    if not _state.assistSweepTicker then
+        _state.assistSweepTicker = C_Timer.NewTicker(5, _state.SweepTrackedSlotAssist)
+    end
 
     -- Noisy unit events are registered on per-unit hidden frames via
     -- RegisterUnitEvent, so unrelated nameplate/target traffic never reaches
@@ -5808,11 +5988,14 @@ local function RegisterEvents()
     -- UNIT_AURA handled by centralized dispatcher (core/aura_events.lua)
     eventFrame:RegisterEvent("UNIT_FLAGS")
     eventFrame:RegisterEvent("UNIT_PHASE")
+    -- Live-assist re-gate for tracked HELPFUL slots (MC/faction flips).
+    eventFrame:RegisterEvent("UNIT_FACTION")
     eventFrame:RegisterEvent("INCOMING_RESURRECT_CHANGED")
     eventFrame:RegisterEvent("INCOMING_SUMMON_CHANGED")
 
-    -- Range event (instant ~38yd boundary crossing, supplements ticker polling)
-    eventFrame:RegisterEvent("UNIT_IN_RANGE_UPDATE")
+    -- Range event: registered on per-unit listener frames (see
+    -- _state.RegisterUnitEventsForUnit) — its payload is ALWAYS secret
+    -- (SecretPayloads), so the central payload-keyed dispatch can't route it.
 
     -- Non-unit events
     eventFrame:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
@@ -6126,12 +6309,12 @@ local function ApplyHUDLayering()
         for _, headerKey in ipairs({"party", "raid", "self"}) do
             local header = QUI_GF.headers[headerKey]
             if header then
-                pcall(header.SetFrameLevel, header, frameLevel)
+                ns.SafeCallMethod("sink-forward", header, "SetFrameLevel", frameLevel)
             end
         end
         for _, header in ipairs(QUI_GF.raidGroupHeaders) do
             if header then
-                pcall(header.SetFrameLevel, header, frameLevel)
+                ns.SafeCallMethod("sink-forward", header, "SetFrameLevel", frameLevel)
             end
         end
     end
@@ -6202,6 +6385,10 @@ function QUI_GF:Disable()
     if _state.rangeCheckTicker then
         _state.rangeCheckTicker:Cancel()
         _state.rangeCheckTicker = nil
+    end
+    if _state.assistSweepTicker then
+        _state.assistSweepTicker:Cancel()
+        _state.assistSweepTicker = nil
     end
     wipe(_range.cache)
     wipe(_range.cacheTime)

@@ -439,7 +439,7 @@ local function ShouldPersistPreferenceOnUse(buttonType)
 end
 
 local function GetMacroVariantOrder(itemID)
-    if Helpers.IsSecretValue and Helpers.IsSecretValue(itemID) then return nil end
+    if Helpers.IsSecretValue and Helpers.IsSecretValue(itemID) then return nil end -- @secret-policy: reject-secret-ids
     itemID = tonumber(itemID)
     if not itemID then return nil end
 
@@ -449,7 +449,7 @@ local function GetMacroVariantOrder(itemID)
 end
 
 local function GetMacroVariantRank(itemID)
-    if Helpers.IsSecretValue and Helpers.IsSecretValue(itemID) then return nil end
+    if Helpers.IsSecretValue and Helpers.IsSecretValue(itemID) then return nil end -- @secret-policy: reject-secret-ids
     itemID = tonumber(itemID)
     if not itemID then return nil end
 
@@ -519,7 +519,7 @@ local function BuildOwnedItemLookup(ownedItems)
 end
 
 local function ResolveBestOwnedVariantItemData(itemID, ownedItems)
-    if Helpers.IsSecretValue and Helpers.IsSecretValue(itemID) then return nil end
+    if Helpers.IsSecretValue and Helpers.IsSecretValue(itemID) then return nil end -- @secret-policy: reject-secret-ids
     itemID = tonumber(itemID)
     if not itemID then return nil end
 
@@ -773,16 +773,33 @@ local function ApplyPreferredItemIcons(buttons, settings)
 end
 
 -- 12.1: GetAuraDataByIndex throws while aura data is secret. Player consumable
--- buffs can't change in combat, so when auras are secret we collapse the 1..40
--- scan bound to 0 (loop body skipped) and keep the last displayed state instead
--- of erroring. The bound of a numeric-for is evaluated once at loop entry, so
--- AuraScanCount() costs a single C call per scan.
+-- buffs can't change in combat, so when auras are secret the walk doesn't start
+-- and callers keep the last displayed state instead of erroring. Otherwise the
+-- walk is UNBOUNDED, matching the iterator's own termination contract: plain
+-- nil terminates, pcall-fail terminates, and a per-spell SECRET entry is
+-- SKIPPED (secret entry ≠ end-of-list) — the old 1..40 bound silently
+-- truncated heavy aura sets, and folding a secret entry to nil then breaking
+-- ended the scan at the first secret element. Callback returning true stops
+-- the walk early.
 local C_Secrets = C_Secrets
-local function AuraScanCount()
+local function ForEachPlayerHelpfulAura(callback)
     if C_Secrets and C_Secrets.ShouldAurasBeSecret and C_Secrets.ShouldAurasBeSecret() then
-        return 0
+        return
     end
-    return 40
+    local i = 0
+    while true do
+        i = i + 1
+        local ok, auraData = pcall(C_UnitAuras.GetAuraDataByIndex, "player", i, "HELPFUL")
+        if not ok then return end
+        if Helpers.IsSecretValue(auraData) then
+            auraData = nil -- @secret-policy: reject-secret-value — skip, keep walking
+        elseif auraData == nil then
+            return
+        end
+        if auraData ~= nil and callback(auraData) then
+            return
+        end
+    end
 end
 
 local function ScanPlayerBuffs()
@@ -798,32 +815,25 @@ local function ScanPlayerBuffs()
     local checkMHAura = mhConfig and mhConfig.checkType == "playerAura"
     local checkOHAura = ohConfig and ohConfig.checkType == "playerAura"
 
-    for i = 1, AuraScanCount() do
-        local auraData = C_UnitAuras.GetAuraDataByIndex("player", i, "HELPFUL") -- @secret-safe: AuraScanCount() collapses the bound to 0 under ShouldAurasBeSecret, so this never runs restricted
-        if not auraData then break end
-        local spellId = auraData.spellId
-        local icon = auraData.icon
+    ForEachPlayerHelpfulAura(function(auraData)
+        local spellId = Helpers.SafeValue(auraData.spellId)
+        local icon = Helpers.SafeValue(auraData.icon)
         if not result.hasFood then
-            local success, isFood = pcall(function() return FOOD_BUFFS[spellId] or icon == 136000 end)
-            if success and isFood then result.hasFood = true; result.foodData = auraData end
+            if FOOD_BUFFS[spellId] or icon == 136000 then result.hasFood = true; result.foodData = auraData end
         end
         if not result.hasFlask then
-            local success, isFlask = pcall(function() return FLASK_BUFFS[spellId] end)
-            if success and isFlask then result.hasFlask = true; result.flaskData = auraData end
+            if FLASK_BUFFS[spellId] then result.hasFlask = true; result.flaskData = auraData end
         end
         if not result.hasRune then
-            local success, isRune = pcall(function() return RUNE_BUFFS[spellId] end)
-            if success and isRune then result.hasRune = true; result.runeData = auraData end
+            if RUNE_BUFFS[spellId] then result.hasRune = true; result.runeData = auraData end
         end
         if checkMHAura and not result.hasWeaponMH then
-            local ok, match = pcall(function() return mhConfig.anyBuffIDs[spellId] end)
-            if ok and match then result.hasWeaponMH = true; result.weaponMHData = auraData end
+            if mhConfig.anyBuffIDs[spellId] then result.hasWeaponMH = true; result.weaponMHData = auraData end
         end
         if checkOHAura and not result.hasWeaponOH then
-            local ok, match = pcall(function() return ohConfig.anyBuffIDs[spellId] end)
-            if ok and match then result.hasWeaponOH = true; result.weaponOHData = auraData end
+            if ohConfig.anyBuffIDs[spellId] then result.hasWeaponOH = true; result.weaponOHData = auraData end
         end
-    end
+    end)
     return result
 end
 
@@ -1286,26 +1296,25 @@ local function CheckEnhancementActive(slot, button, hasEnchant, enchantExpiratio
 
     if config and config.checkType == "playerAura" then
         -- Aura-based detection (rogues)
-        for i = 1, AuraScanCount() do
-            local auraData = C_UnitAuras.GetAuraDataByIndex("player", i, "HELPFUL") -- @secret-safe: AuraScanCount() collapses the bound to 0 under ShouldAurasBeSecret, so this never runs restricted
-            if not auraData then break end
-            local ok, match = pcall(function() return config.anyBuffIDs[auraData.spellId] end)
-            if ok and match then
+        local found = false
+        ForEachPlayerHelpfulAura(function(auraData)
+            local buffSpellId = Helpers.SafeValue(auraData.spellId)
+            if config.anyBuffIDs[buffSpellId] then
                 button.status:SetTexture("Interface\\RaidFrame\\ReadyCheck-Ready")
                 button.icon:SetDesaturated(false)
-                if auraData.icon then
-                    button.icon:SetTexture(auraData.icon)
+                local auraIcon = Helpers.SafeValue(auraData.icon)
+                if auraIcon then
+                    button.icon:SetTexture(auraIcon)
                 end
-                pcall(function()
-                    local expires = auraData.expirationTime
-                    if expires and expires > 0 then
-                        button.timeText:SetText(FormatTimeRemaining(expires - GetTime()))
-                    end
-                end)
+                local expires = Helpers.SafeToNumber(auraData.expirationTime)
+                if expires > 0 then
+                    button.timeText:SetText(FormatTimeRemaining(expires - GetTime()))
+                end
+                found = true
                 return true
             end
-        end
-        return false
+        end)
+        return found
     end
 
     if config and config.checkType == "weaponEnchant" then
@@ -1433,56 +1442,45 @@ UpdateConsumables = function()
     end
 
     -- Scan player buffs
-    for i = 1, AuraScanCount() do
-        local auraData = C_UnitAuras.GetAuraDataByIndex("player", i, "HELPFUL")
-        if not auraData then break end
-        local spellId = auraData.spellId
-        local expires = auraData.expirationTime
-        local icon = auraData.icon
+    ForEachPlayerHelpfulAura(function(auraData)
+        local spellId = Helpers.SafeValue(auraData.spellId)
+        local expires = Helpers.SafeToNumber(auraData.expirationTime)
+        local icon = Helpers.SafeValue(auraData.icon)
 
         if settings.consumableFood ~= false then
-            local success, isFood = pcall(function() return FOOD_BUFFS[spellId] or icon == 136000 end)
-            if success and isFood then
+            if FOOD_BUFFS[spellId] or icon == 136000 then
                 hasFoodBuff = true
                 buttons.food.status:SetTexture("Interface\\RaidFrame\\ReadyCheck-Ready")
                 buttons.food.icon:SetDesaturated(false)
-                pcall(function()
-                    if expires and expires > 0 then
-                        buttons.food.timeText:SetText(FormatTimeRemaining(expires - now))
-                    end
-                end)
+                if expires and expires > 0 then
+                    buttons.food.timeText:SetText(FormatTimeRemaining(expires - now))
+                end
             end
         end
 
         if settings.consumableFlask ~= false then
-            local success, isFlask = pcall(function() return FLASK_BUFFS[spellId] end)
-            if success and isFlask then
+            if FLASK_BUFFS[spellId] then
                 hasFlaskBuff = true
                 buttons.flask.status:SetTexture("Interface\\RaidFrame\\ReadyCheck-Ready")
                 buttons.flask.icon:SetDesaturated(false)
                 buttons.flask.icon:SetTexture(icon)
-                pcall(function()
-                    if expires and expires > 0 then
-                        buttons.flask.timeText:SetText(FormatTimeRemaining(expires - now))
-                    end
-                end)
+                if expires and expires > 0 then
+                    buttons.flask.timeText:SetText(FormatTimeRemaining(expires - now))
+                end
             end
         end
 
         if settings.consumableRune ~= false then
-            local success, isRune = pcall(function() return RUNE_BUFFS[spellId] end)
-            if success and isRune then
+            if RUNE_BUFFS[spellId] then
                 hasRuneBuff = true
                 buttons.rune.status:SetTexture("Interface\\RaidFrame\\ReadyCheck-Ready")
                 buttons.rune.icon:SetDesaturated(false)
-                pcall(function()
-                    if expires and expires > 0 then
-                        buttons.rune.timeText:SetText(FormatTimeRemaining(expires - now))
-                    end
-                end)
+                if expires and expires > 0 then
+                    buttons.rune.timeText:SetText(FormatTimeRemaining(expires - now))
+                end
             end
         end
-    end
+    end)
 
     -- Weapon enhancement check (class-aware)
     local hasMainHandEnchant, mainHandExpiration, _, mainHandEnchantID, hasOffHandEnchant, offHandExpiration, _, offHandEnchantID = GetWeaponEnchantInfo()
@@ -1501,8 +1499,7 @@ UpdateConsumables = function()
     if settings.consumableHealthstone ~= false and HasWarlockInGroup() then
         local hsCount = C_Item.GetItemCount(5512, false, true) or 0
         local hsLockCount = C_Item.GetItemCount(224464, false, true) or 0
-        local ok, totalHS = pcall(function() return hsCount + hsLockCount end)
-        if not ok then totalHS = 0 end
+        local totalHS = hsCount + hsLockCount
         if totalHS > 0 then
             buttons.healthstone.status:SetTexture("Interface\\RaidFrame\\ReadyCheck-Ready")
             buttons.healthstone.icon:SetDesaturated(false)

@@ -445,7 +445,7 @@ local function IsSidebarFrameShown(tab)
     local index = GetSidebarTabIndex(tab)
     if not index or type(_G.GetPaperDollSideBarFrame) ~= "function" then return false end
 
-    local ok, frame = pcall(_G.GetPaperDollSideBarFrame, index)
+    local ok, frame = ns.SafeCall("best-effort-style", _G.GetPaperDollSideBarFrame, index)
     return ok and frame and frame.IsShown and frame:IsShown()
 end
 
@@ -613,7 +613,7 @@ end
 ---------------------------------------------------------------------------
 local function FormatNumber(num)
     if Helpers.IsSecretValue(num) then
-        return "--"
+        return "--" -- @secret-policy: encode-secret-as-placeholder
     end
 
     num = tonumber(num) or 0
@@ -635,7 +635,7 @@ local function FormatPercent(value, decimals)
     decimals = decimals or 2
 
     if Helpers.IsSecretValue(value) then
-        return "--"
+        return "--" -- @secret-policy: encode-secret-as-placeholder
     end
 
     value = tonumber(value) or 0
@@ -701,7 +701,7 @@ local function GetItemIDFromLink(itemLink)
     if not itemLink or Helpers.IsSecretValue(itemLink) then return nil end
 
     if GetItemInfoInstant then
-        local ok, itemID = pcall(GetItemInfoInstant, itemLink)
+        local ok, itemID = ns.SafeCall("best-effort-style", GetItemInfoInstant, itemLink)
         itemID = ok and ReadableNumber(itemID) or nil
         if itemID and itemID > 0 then return itemID end
     end
@@ -827,7 +827,7 @@ local function GetSlotItemLevel(unit, slotId)
     if itemID and C_Item and C_Item.RequestLoadItemDataByID then
         local cached = true
         if C_Item.IsItemDataCachedByID then
-            local ok, isCached = pcall(C_Item.IsItemDataCachedByID, itemID)
+            local ok, isCached = ns.SafeCall("best-effort-style", C_Item.IsItemDataCachedByID, itemID)
             cached = ok and isCached
         end
         if not cached then
@@ -836,7 +836,7 @@ local function GetSlotItemLevel(unit, slotId)
     end
 
     if C_Item and C_Item.GetDetailedItemLevelInfo then
-        local ok, actualItemLevel, _, sparseItemLevel = pcall(C_Item.GetDetailedItemLevelInfo, itemLink)
+        local ok, actualItemLevel, _, sparseItemLevel = ns.SafeCall("best-effort-style", C_Item.GetDetailedItemLevelInfo, itemLink)
         if ok then
             actualItemLevel = ReadableNumber(actualItemLevel)
             if actualItemLevel and actualItemLevel > 0 then
@@ -850,7 +850,7 @@ local function GetSlotItemLevel(unit, slotId)
     end
 
     if C_Item and C_Item.GetItemInfo then
-        local ok, ilvl = pcall(function()
+        local ok, ilvl = ns.SafeCall("best-effort-style", function()
             return select(4, C_Item.GetItemInfo(itemLink))
         end)
         ilvl = ok and ReadableNumber(ilvl) or nil
@@ -981,7 +981,7 @@ local function GetGemInfo(unit, slotId)
     local totalSockets = 0
 
     if C_Item and C_Item.GetItemNumSockets then
-        local ok, socketCount = pcall(C_Item.GetItemNumSockets, itemLink)
+        local ok, socketCount = ns.SafeCall("best-effort-style", C_Item.GetItemNumSockets, itemLink)
         if ok then
             socketCount = ReadableNumber(socketCount)
             if socketCount then
@@ -1564,12 +1564,10 @@ local function HideBlizzardDecorations()
     -- those into our panel during combat / encounters / M+ / PvP, when API
     -- reads from addon code return secret values.
     if CharacterStatsPane then
-        pcall(CharacterStatsPane.SetAlpha, CharacterStatsPane, 0)
-        if CharacterStatsPane.EnableMouse then
-            pcall(CharacterStatsPane.EnableMouse, CharacterStatsPane, false)
-        end
+        ns.SafeCallMethod("best-effort-style", CharacterStatsPane, "SetAlpha", 0)
+        ns.SafeCallMethodIfPresent("best-effort-style", CharacterStatsPane, "EnableMouse", false)
         if CharacterStatsPane.ClassBackground then
-            pcall(CharacterStatsPane.ClassBackground.SetAlpha, CharacterStatsPane.ClassBackground, 0)
+            ns.SafeCallMethod("best-effort-style", CharacterStatsPane.ClassBackground, "SetAlpha", 0)
         end
     end
 
@@ -2566,13 +2564,11 @@ local function MaskNativeStatsPane()
     -- Show explicitly: if anything (skinning, our own past hide path, Blizzard
     -- tab transitions) left the pane :Hide()'d, its update path won't run and
     -- our mirror reads stale text. Keep it Shown but visually invisible.
-    pcall(CharacterStatsPane.Show, CharacterStatsPane)
-    pcall(CharacterStatsPane.SetAlpha, CharacterStatsPane, 0)
-    if CharacterStatsPane.EnableMouse then
-        pcall(CharacterStatsPane.EnableMouse, CharacterStatsPane, false)
-    end
+    ns.SafeCallMethod("best-effort-style", CharacterStatsPane, "Show")
+    ns.SafeCallMethod("best-effort-style", CharacterStatsPane, "SetAlpha", 0)
+    ns.SafeCallMethodIfPresent("best-effort-style", CharacterStatsPane, "EnableMouse", false)
     if CharacterStatsPane.ClassBackground then
-        pcall(CharacterStatsPane.ClassBackground.SetAlpha, CharacterStatsPane.ClassBackground, 0)
+        ns.SafeCallMethod("best-effort-style", CharacterStatsPane.ClassBackground, "SetAlpha", 0)
     end
 end
 
@@ -2589,7 +2585,7 @@ local function UpdateStatsPanel(panel, unit)
     if updatingStatsPanel then return end
     updatingStatsPanel = true
 
-    local success, err = pcall(function()
+    local success = ns.SafeCall("best-effort-style", function()
         local settings = GetSettings()
         MaskNativeStatsPane()
         panel:Show()
@@ -2671,7 +2667,7 @@ local function UpdateStatsPanel(panel, unit)
         row.label:SetText(ns.L["Health"])
         do
             local hOk, healthMax = pcall(UnitHealthMax, unit)
-            if hOk and healthMax then
+            if hOk and (Helpers.IsSecretValue(healthMax) or healthMax) then
                 row.value:SetFormattedText("%s", healthMax)
             end
         end
@@ -2691,7 +2687,7 @@ local function UpdateStatsPanel(panel, unit)
         row.label:SetText(powerName)
         do
             local pOk, powerMax = pcall(UnitPowerMax, unit, powerType)
-            if pOk and powerMax then
+            if pOk and (Helpers.IsSecretValue(powerMax) or powerMax) then
                 row.value:SetFormattedText("%s", powerMax)
             end
         end
@@ -2722,7 +2718,7 @@ local function UpdateStatsPanel(panel, unit)
         if unit == "player" and C_SpecializationInfo and C_SpecializationInfo.GetSpecialization then
             local sp = C_SpecializationInfo.GetSpecialization()
             if sp and C_SpecializationInfo.GetSpecializationInfo then
-                local okSI, _, _, _, _, _, primary = pcall(C_SpecializationInfo.GetSpecializationInfo, sp, false, false, nil, UnitSex(unit))
+                local okSI, _, _, _, _, _, primary = ns.SafeCall("best-effort-style", C_SpecializationInfo.GetSpecializationInfo, sp, false, false, nil, UnitSex(unit))
                 if okSI then specPrimaryStat = primary end
             end
         end
@@ -2750,7 +2746,7 @@ local function UpdateStatsPanel(panel, unit)
                 -- Direct API → SetFormattedText. UnitStat returns 5 values;
                 -- the 2nd is the effective stat we display.
                 local uOk, _, eff = pcall(UnitStat, unit, stat.statIndex)
-                if uOk and eff then
+                if uOk and (Helpers.IsSecretValue(eff) or eff) then
                     row.value:SetFormattedText("%s", eff)
                 end
 
@@ -2788,7 +2784,7 @@ local function UpdateStatsPanel(panel, unit)
 
                     -- Add class-specific tooltip info (similar to Blizzard's PaperDollFrame_SetStat)
                     if unit == "player" then
-                        local _success, _result = pcall(function()
+                        ns.SafeCall("best-effort-style", function()
                             local _, unitClass = UnitClass("player")
                             unitClass = strupper(unitClass)
                             local primaryStat, spec, role
@@ -2808,8 +2804,10 @@ local function UpdateStatsPanel(panel, unit)
                                         row.tooltip2 = format(row.tooltip2 or STAT_TOOLTIP_BONUS_AP, BreakUpLargeNumbers(attackPower))
                                         if role == "TANK" and GetParryChanceFromAttribute then
                                             local increasedParryChance = GetParryChanceFromAttribute()
-                                            if increasedParryChance and increasedParryChance > 0 then
-                                                row.tooltip2 = row.tooltip2.."|n|n"..format(CR_PARRY_BASE_STAT_TOOLTIP, increasedParryChance)
+                                            if not Helpers.IsSecretValue(increasedParryChance) then
+                                                if increasedParryChance and increasedParryChance > 0 then
+                                                    row.tooltip2 = row.tooltip2.."|n|n"..format(CR_PARRY_BASE_STAT_TOOLTIP, increasedParryChance)
+                                                end
                                             end
                                         end
                                     else
@@ -2825,8 +2823,10 @@ local function UpdateStatsPanel(panel, unit)
                                     end
                                     if role == "TANK" and GetDodgeChanceFromAttribute then
                                         local increasedDodgeChance = GetDodgeChanceFromAttribute()
-                                        if increasedDodgeChance and increasedDodgeChance > 0 then
-                                            row.tooltip2 = row.tooltip2.."|n|n"..format(CR_DODGE_BASE_STAT_TOOLTIP, increasedDodgeChance)
+                                        if not Helpers.IsSecretValue(increasedDodgeChance) then
+                                            if increasedDodgeChance and increasedDodgeChance > 0 then
+                                                row.tooltip2 = row.tooltip2.."|n|n"..format(CR_DODGE_BASE_STAT_TOOLTIP, increasedDodgeChance)
+                                            end
                                         end
                                     end
                                 else
@@ -2866,7 +2866,13 @@ local function UpdateStatsPanel(panel, unit)
         { label = ns.L["Crit"], statKey = "CRIT", percentFunc = function() return GetSpellCritChance("player") end, ratingFunc = function() return GetCombatRating(CR_CRIT_SPELL) end, color = C.crit },
         { label = ns.L["Haste"], statKey = "HASTE", percentFunc = function() return UnitSpellHaste("player") end, ratingFunc = function() return GetCombatRating(CR_HASTE_SPELL) end, color = C.haste },
         { label = ns.L["Mastery"], statKey = "MASTERY", percentFunc = GetMasteryEffect, ratingFunc = function() return GetCombatRating(CR_MASTERY) end, color = C.mastery },
-        { label = ns.L["Versatility"], statKey = "VERSATILITY", percentFunc = function() return GetCombatRatingBonus(CR_VERSATILITY_DAMAGE_DONE) + GetVersatilityBonus(CR_VERSATILITY_DAMAGE_DONE) end, combatPercentFunc = function() return GetCombatRatingBonus(CR_VERSATILITY_DAMAGE_DONE) end, ratingFunc = function() return GetCombatRating(CR_VERSATILITY_DAMAGE_DONE) end, color = C.versatility },
+        { label = ns.L["Versatility"], statKey = "VERSATILITY", percentFunc = function()
+            local a = GetCombatRatingBonus(CR_VERSATILITY_DAMAGE_DONE)
+            local b = GetVersatilityBonus(CR_VERSATILITY_DAMAGE_DONE)
+            if Helpers.IsSecretValue(a) then return nil end -- @secret-policy: reject-secret-value
+            if Helpers.IsSecretValue(b) then return nil end -- @secret-policy: reject-secret-value
+            return a + b
+        end, combatPercentFunc = function() return GetCombatRatingBonus(CR_VERSATILITY_DAMAGE_DONE) end, ratingFunc = function() return GetCombatRating(CR_VERSATILITY_DAMAGE_DONE) end, color = C.versatility },
     }
 
     local statFormat = settings.secondaryStatFormat or "percent"
@@ -2888,16 +2894,21 @@ local function UpdateStatsPanel(panel, unit)
         if secretsOff and stat.combatPercentFunc then
             percentFunc = stat.combatPercentFunc
         end
+        -- In restricted content these getters RETURN secrets (pcall succeeds),
+        -- so a bare `and pct` truth-test throws. Probe first and let secrets
+        -- ride the C-side SetFormattedText/SetValue sinks (ARMOR-row idiom).
         local pctOk, pct = pcall(percentFunc)
         local ratingOk, rating = pcall(stat.ratingFunc)
+        local pctHas = pctOk and (Helpers.IsSecretValue(pct) or pct)
+        local ratingHas = ratingOk and (Helpers.IsSecretValue(rating) or rating)
         if statFormat == "percent" then
-            if pctOk and pct then row.value:SetFormattedText("%.2f%%", pct) end
+            if pctHas then row.value:SetFormattedText("%.2f%%", pct) end
         elseif statFormat == "rating" then
-            if ratingOk and rating then row.value:SetFormattedText("%s", rating) end
+            if ratingHas then row.value:SetFormattedText("%s", rating) end
         else  -- "both"
-            if pctOk and ratingOk and pct and rating then
+            if pctHas and ratingHas then
                 row.value:SetFormattedText("%s (%.2f%%)", rating, pct)
-            elseif pctOk and pct then
+            elseif pctHas then
                 row.value:SetFormattedText("%.2f%%", pct)
             end
         end
@@ -2905,8 +2916,8 @@ local function UpdateStatsPanel(panel, unit)
         -- Bar fill: SetValue is C-side and accepts secret numbers, but it
         -- silently clamps to whatever the bar's max is. Forward directly
         -- without comparison — out of range just clips harmlessly.
-        if pctOk and pct then
-            pcall(row.bar.SetValue, row.bar, pct)
+        if pctHas then
+            ns.SafeCallMethod("sink-forward", row.bar, "SetValue", pct)
         end
 
         local tooltipTitle = stat.label
@@ -2962,7 +2973,7 @@ local function UpdateStatsPanel(panel, unit)
                 end
                 local ratingText
                 if STAT_MASTERY_TOOLTIP then
-                    local ok, result = pcall(format, STAT_MASTERY_TOOLTIP, BreakUpLargeNumbers(masteryRating), masteryBonus)
+                    local ok, result = ns.SafeCall("report", format, STAT_MASTERY_TOOLTIP, BreakUpLargeNumbers(masteryRating), masteryBonus)
                     if ok then ratingText = result end
                 end
                 if not ratingText then
@@ -3130,7 +3141,9 @@ local function UpdateStatsPanel(panel, unit)
             -- want raw integer; pick spec from statKey.
             local fmtStr = (stat.statKey == "ATTACK_SPEED") and "%.2fs" or "%s"
             local vOk, v = pcall(stat.func)
-            if vOk and v then row.value:SetFormattedText(fmtStr, v) end
+            -- Probe before the truth-test: the getter returns a secret under
+            -- stat restriction; forward it to the C text sink (ARMOR idiom).
+            if vOk and (Helpers.IsSecretValue(v) or v) then row.value:SetFormattedText(fmtStr, v) end
 
             local tooltipTitle, tooltipBody
             if stat.statKey == "ATTACK_POWER" then
@@ -3244,11 +3257,11 @@ local function UpdateStatsPanel(panel, unit)
             -- Direct API → SetFormattedText. Different format per stat.
             if stat.statKey == "ARMOR" then
                 local aOk, _, aEff = pcall(UnitArmor, unit)
-                if aOk and aEff then row.value:SetFormattedText("%s", aEff) end
+                if aOk and (Helpers.IsSecretValue(aEff) or aEff) then row.value:SetFormattedText("%s", aEff) end
             elseif stat.statKey == "STAGGER" then
                 if C_PaperDollInfo and C_PaperDollInfo.GetStaggerPercentage then
                     local sOk, s = pcall(C_PaperDollInfo.GetStaggerPercentage, unit)
-                    if sOk and s then row.value:SetFormattedText("%.2f%%", s) end
+                    if sOk and (Helpers.IsSecretValue(s) or s) then row.value:SetFormattedText("%.2f%%", s) end
                 end
             else
                 local valueFn = stat.statKey == "DODGE" and GetDodgeChance
@@ -3256,7 +3269,7 @@ local function UpdateStatsPanel(panel, unit)
                             or  stat.statKey == "BLOCK" and GetBlockChance
                 if valueFn then
                     local vOk, v = pcall(valueFn)
-                    if vOk and v then row.value:SetFormattedText("%.2f%%", v) end
+                    if vOk and (Helpers.IsSecretValue(v) or v) then row.value:SetFormattedText("%.2f%%", v) end
                 end
             end
 
@@ -3379,24 +3392,21 @@ local function UpdateStatsPanel(panel, unit)
         end
 
         FinalizeStatsPanelLayout(panel, scrollChild, y)
-    end)  -- End pcall
+    end)  -- End SafeCall; failure already reported by ns.SafeCall (probed + deduped)
 
     updatingStatsPanel = false
 
     if not success then
         -- Last-resort: panel update threw. Hide our panel and let Blizzard's
         -- native stats pane render (un-mask it) so the user still sees stats.
-        if panel then pcall(panel.Hide, panel) end
+        if panel then ns.SafeCallMethod("best-effort-style", panel, "Hide") end
         if CharacterStatsPane then
-            pcall(CharacterStatsPane.SetAlpha, CharacterStatsPane, 1)
-            if CharacterStatsPane.EnableMouse then
-                pcall(CharacterStatsPane.EnableMouse, CharacterStatsPane, true)
-            end
+            ns.SafeCallMethod("best-effort-style", CharacterStatsPane, "SetAlpha", 1)
+            ns.SafeCallMethodIfPresent("best-effort-style", CharacterStatsPane, "EnableMouse", true)
             if CharacterStatsPane.ClassBackground then
-                pcall(CharacterStatsPane.ClassBackground.SetAlpha, CharacterStatsPane.ClassBackground, 1)
+                ns.SafeCallMethod("best-effort-style", CharacterStatsPane.ClassBackground, "SetAlpha", 1)
             end
         end
-        print("QUI: Error updating stats panel:", err)
     end
 end
 
@@ -3433,7 +3443,11 @@ local function UpdateILvlDisplay()
     if not displayFrame.text then return end
 
     -- Get player info
-    local name = UnitName("player") or "Unknown"
+    local rawName = UnitName("player")
+    local name = "Unknown"
+    if not Helpers.IsSecretValue(rawName) then
+        name = rawName or "Unknown"
+    end
     local level = UnitLevel("player") or 0
     local overall, equipped, pvp = GetPlayerAverageItemLevels()
     local ilvlStr = string.format("%.0f", equipped)
@@ -3656,9 +3670,7 @@ local function SetSidebarTabSelected(tab, selected)
     if tab.SetChecked then
         tab:SetChecked(selected)
     end
-    if tab.SetSelected then
-        pcall(tab.SetSelected, tab, selected)
-    end
+    ns.SafeCallMethodIfPresent("best-effort-style", tab, "SetSelected", selected)
 
     SetRegionShown(tab.Hider, not selected)
     SetRegionShown(tab.Highlight, not selected)
@@ -3695,13 +3707,13 @@ local function SelectCharacterStatsSidebarTab()
     if not PaperDollSidebarTab1 then return end
 
     if type(_G.PaperDollFrame_SetSidebar) == "function" then
-        pcall(_G.PaperDollFrame_SetSidebar, PaperDollSidebarTab1, 1)
+        ns.SafeCall("best-effort-style", _G.PaperDollFrame_SetSidebar, PaperDollSidebarTab1, 1)
     elseif CharacterStatsPane and CharacterStatsPane.Show then
         CharacterStatsPane:Show()
     end
 
     if type(_G.PaperDollFrame_UpdateSidebarTabs) == "function" then
-        pcall(_G.PaperDollFrame_UpdateSidebarTabs)
+        ns.SafeCall("best-effort-style", _G.PaperDollFrame_UpdateSidebarTabs)
     end
 
     SetSidebarTabSelected(PaperDollSidebarTab1, true)

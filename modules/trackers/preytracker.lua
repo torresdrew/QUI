@@ -156,7 +156,7 @@ local function GetWidgetState(target)
     return state
 end
 
-local function SafeCall(func, ...)
+local function LocalSafeCall(func, ...)
     if not func then return nil end
     local ok, result = pcall(func, ...)
     if ok then return result end
@@ -226,7 +226,7 @@ end
 
 local function GetActivePreyQuest()
     if not HasPreyAPI then return nil end
-    return SafeCall(C_QuestLog.GetActivePreyQuest)
+    return LocalSafeCall(C_QuestLog.GetActivePreyQuest)
 end
 
 local function ScanPreyWidgets()
@@ -434,11 +434,11 @@ local function DetectPreyZone(questID)
 
     -- Try task quest zone first
     if HasTaskAPI then
-        local zoneID = SafeCall(C_TaskQuest.GetQuestZoneID, questID)
+        local zoneID = LocalSafeCall(C_TaskQuest.GetQuestZoneID, questID)
         if zoneID and zoneID > 0 then
             State.preyZoneMapID = zoneID
             if HasMapAPI then
-                local info = SafeCall(C_Map.GetMapInfo, zoneID)
+                local info = LocalSafeCall(C_Map.GetMapInfo, zoneID)
                 if info then State.preyZoneName = info.name end
             end
             return
@@ -447,10 +447,10 @@ local function DetectPreyZone(questID)
 
     -- Fall back to best map for player, walk parents
     if HasMapAPI then
-        local mapID = SafeCall(C_Map.GetBestMapForUnit, "player")
+        local mapID = LocalSafeCall(C_Map.GetBestMapForUnit, "player")
         if mapID then
             State.preyZoneMapID = mapID
-            local info = SafeCall(C_Map.GetMapInfo, mapID)
+            local info = LocalSafeCall(C_Map.GetMapInfo, mapID)
             if info then State.preyZoneName = info.name end
         end
     end
@@ -460,7 +460,7 @@ local function CheckInPreyZone()
     if not State.preyZoneMapID then return true end -- if we can't determine zone, assume yes
     if not HasMapAPI then return true end
 
-    local currentMap = SafeCall(C_Map.GetBestMapForUnit, "player")
+    local currentMap = LocalSafeCall(C_Map.GetBestMapForUnit, "player")
     if not currentMap then return true end
 
     -- Walk parent chain to see if we're in the same zone hierarchy
@@ -469,7 +469,7 @@ local function CheckInPreyZone()
         if checkMap == State.preyZoneMapID then
             return true
         end
-        local info = SafeCall(C_Map.GetMapInfo, checkMap)
+        local info = LocalSafeCall(C_Map.GetMapInfo, checkMap)
         if not info or not info.parentMapID or info.parentMapID == 0 then break end
         checkMap = info.parentMapID
     end
@@ -481,7 +481,7 @@ local function ExtractPreyInfo(questID)
     if not questID then return end
     if not C_QuestLog or not C_QuestLog.GetTitleForQuestID then return end
 
-    local title = SafeCall(C_QuestLog.GetTitleForQuestID, questID)
+    local title = LocalSafeCall(C_QuestLog.GetTitleForQuestID, questID)
     if not title then return end
 
     State.preyName = title
@@ -920,12 +920,12 @@ local function ApplyWidgetFrameSuppression(frameRef, suppress)
             if targetState.wasShown == nil and target.IsShown then
                 targetState.wasShown = target:IsShown() and true or false
             end
-            pcall(target.Hide, target)
+            ns.SafeCallMethod("best-effort-style", target, "Hide")
         else
             local targetState = widgetSideState[target]
             if targetState and targetState.wasShown then
                 targetState.wasShown = nil
-                if target.Show then pcall(target.Show, target) end
+                ns.SafeCallMethodIfPresent("best-effort-style", target, "Show")
             elseif targetState and targetState.wasShown ~= nil then
                 targetState.wasShown = nil
             end
@@ -934,22 +934,19 @@ local function ApplyWidgetFrameSuppression(frameRef, suppress)
 
     local function applyAnimationSuppression(target)
         if not target or not target.GetAnimationGroups then return end
-        local okGroups, groups = pcall(function() return { target:GetAnimationGroups() } end)
+        local okGroups, groups = ns.SafeCall("best-effort-style", function() return { target:GetAnimationGroups() } end)
         if not okGroups or type(groups) ~= "table" then return end
 
         for _, group in ipairs(groups) do
             if group then
                 if suppress then
-                    local isPlaying = false
-                    if group.IsPlaying then
-                        local okP, playing = pcall(group.IsPlaying, group)
-                        isPlaying = okP and playing and true or false
-                    end
+                    local okP, playing = ns.SafeCallMethodIfPresent("best-effort-style", group, "IsPlaying")
+                    local isPlaying = okP and playing and true or false
                     widgetAnimationState[group] = isPlaying and true or false
-                    if group.Stop then pcall(group.Stop, group) end
+                    ns.SafeCallMethodIfPresent("best-effort-style", group, "Stop")
                 elseif widgetAnimationState[group] then
                     widgetAnimationState[group] = nil
-                    if group.Play then pcall(group.Play, group) end
+                    ns.SafeCallMethodIfPresent("best-effort-style", group, "Play")
                 end
             end
         end
@@ -1047,7 +1044,7 @@ local function EnsureWidgetSuppressionHook(frameRef)
     suppressionHookedFrames[frameRef] = true
 
     frameRef:HookScript("OnShow", function(self)
-        pcall(function()
+        ns.SafeCall("best-effort-style", function()
             if not State.widgetSuppressed then return end
             local settings = GetSettings()
             if settings and settings.replaceDefaultIndicator and settings.enabled then
@@ -1176,11 +1173,11 @@ local function OnStageTransition(oldStage, newStage)
     State.stageSoundPlayed[soundKey] = true
 
     if newStage == 2 and settings.soundStage2 then
-        pcall(PlaySound, STAGE_SOUNDS[2])
+        ns.SafeCall("best-effort-style", PlaySound, STAGE_SOUNDS[2])
     elseif newStage == 3 and settings.soundStage3 then
-        pcall(PlaySound, STAGE_SOUNDS[3])
+        ns.SafeCall("best-effort-style", PlaySound, STAGE_SOUNDS[3])
     elseif newStage == 4 and settings.soundStage4 then
-        pcall(PlaySound, STAGE_SOUNDS[4])
+        ns.SafeCall("best-effort-style", PlaySound, STAGE_SOUNDS[4])
     end
 end
 
@@ -1194,7 +1191,7 @@ local function TriggerAmbushAlert()
     State.ambushActiveUntil = GetTime() + duration
 
     if settings.ambushSoundEnabled then
-        pcall(PlaySound, SOUNDKIT.RAID_WARNING or 8959)
+        ns.SafeCall("best-effort-style", PlaySound, SOUNDKIT.RAID_WARNING or 8959)
     end
 
     if settings.ambushGlowEnabled and LCG then
@@ -1208,7 +1205,10 @@ local function TriggerAmbushAlert()
 end
 
 local function OnAmbushMessage(message)
-    if not message or Helpers.IsSecretValue(message) then return end
+    -- CHAT_MSG_SYSTEM text is SecretInChatMessagingLockdown; probe BEFORE any
+    -- truth-test (`not message` on a secret throws).
+    if Helpers.IsSecretValue(message) then return end -- @secret-policy: reject-secret-value
+    if not message then return end
     local settings = GetSettings()
     if not settings or not settings.ambushAlertEnabled then return end
 
@@ -1229,7 +1229,7 @@ local function OnQuestCompleted(questID)
     ShowBar()
 
     if settings and settings.completionSound and settings.soundEnabled then
-        pcall(PlaySound, COMPLETION_SOUND)
+        ns.SafeCall("best-effort-style", PlaySound, COMPLETION_SOUND)
     end
 
     -- Clear after hold time
@@ -1261,7 +1261,7 @@ local function OnGossipShow()
     if not settings or not settings.huntScannerEnabled then return end
 
     if not C_GossipInfo or not C_GossipInfo.GetOptions then return end
-    local options = SafeCall(C_GossipInfo.GetOptions)
+    local options = LocalSafeCall(C_GossipInfo.GetOptions)
     if not options then return end
 
     State.availableHunts = {}
@@ -1387,7 +1387,7 @@ local function SaveWarbandSnapshot()
     local globalDB = core.db.global.preyTracker
 
     -- Character key
-    local name = UnitName("player")
+    local name = Helpers.SafeValue(UnitName("player"))
     local realm = GetRealmName()
     if not name or not realm then return end
     local charKey = name .. "-" .. realm

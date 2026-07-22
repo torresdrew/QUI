@@ -1925,10 +1925,10 @@ do
                 if not target then return end
                 if hide then
                     target:SetAlpha(0)
-                    pcall(target.EnableMouse, target, false)
+                    ns.SafeCallMethod("best-effort-style", target, "EnableMouse", false)
                 else
                     target:SetAlpha(1)
-                    pcall(target.EnableMouse, target, true)
+                    ns.SafeCallMethod("best-effort-style", target, "EnableMouse", true)
                 end
             end,
             onOpen = function()
@@ -1958,10 +1958,10 @@ do
                 if not target then return end
                 if hide then
                     target:SetAlpha(0)
-                    pcall(target.EnableMouse, target, false)
+                    ns.SafeCallMethod("best-effort-style", target, "EnableMouse", false)
                 else
                     target:SetAlpha(1)
-                    pcall(target.EnableMouse, target, true)
+                    ns.SafeCallMethod("best-effort-style", target, "EnableMouse", true)
                 end
             end,
             getFrame = function()
@@ -2028,10 +2028,10 @@ do
                 if not container then return end
                 if hide then
                     container:SetAlpha(0)
-                    pcall(container.EnableMouse, container, false)
+                    ns.SafeCallMethod("best-effort-style", container, "EnableMouse", false)
                 else
                     container:SetAlpha(1)
-                    pcall(container.EnableMouse, container, true)
+                    ns.SafeCallMethod("best-effort-style", container, "EnableMouse", true)
                 end
             end,
             getFrame = function()

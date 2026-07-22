@@ -217,7 +217,7 @@ function G.RunConfigPass(container, profile, groups, allowCreate)
         AuraSkin.Configure(container, profile, groups)
         return true
     end
-    local ok = pcall(AuraSkin.Configure, container, profile, groups)
+    local ok = ns.SafeCall("chain-next", AuraSkin.Configure, container, profile, groups)
     if not ok then
         AuraSkin.Restyle(container, profile)
     end
@@ -266,10 +266,11 @@ FlushPending = function()
     local run = _pending
     _pending = {}
     for owner, fn in pairs(run) do
-        local ok, err = pcall(fn, owner)
-        if not ok then
-            (ns.DebugPrint or print)("QUI AuraGlue regen replay error: " .. tostring(err))
-        end
+        -- ns.SafeCall's bulkhead policy probes err for secrecy BEFORE any
+        -- tostring/format and already reports+dedups via the classified
+        -- error handler; the manual tostring(err) forward this replaced
+        -- skipped that probe (err here can carry aura/secret payload).
+        ns.SafeCall("bulkhead", fn, owner)
     end
 end
 

@@ -143,7 +143,7 @@ function GUI:InitializeOptions()
                 print("|cff60A5FAQUI:|r Cannot open Layout Mode during combat.")
                 return
             end
-            if GUI and GUI.Hide then pcall(GUI.Hide, GUI) end
+            if GUI and GUI.Hide then GUI:Hide() end
             if _G.QUI_OpenLayoutMode then _G.QUI_OpenLayoutMode() end
         end,
     })

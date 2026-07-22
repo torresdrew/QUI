@@ -440,8 +440,8 @@ local function SetHandlePosition(handle, ox, oy)
                 oy = oy / pScale
             end
         end
-        pcall(parent.ClearAllPoints, parent)
-        pcall(parent.SetPoint, parent, "CENTER", UIParent, "CENTER", ox, oy)
+        ns.SafeCallMethod("best-effort-style", parent, "ClearAllPoints")
+        ns.SafeCallMethod("best-effort-style", parent, "SetPoint", "CENTER", UIParent, "CENTER", ox, oy)
     else
         handle:ClearAllPoints()
         handle:SetPoint("CENTER", UIParent, "CENTER", ox, oy)
@@ -1804,7 +1804,7 @@ CreateFramesDrawer = function(ui)
         local ok2, max = pcall(self.GetVerticalScrollRange, self)
         if not ok2 then return end
         local newScroll = math.max(0, math.min((cur or 0) - (delta * 40), max or 0))
-        pcall(self.SetVerticalScroll, self, newScroll)
+        ns.SafeCallMethod("best-effort-style", self, "SetVerticalScroll", newScroll)
     end)
 
     drawer._scrollFrame = scrollFrame

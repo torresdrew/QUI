@@ -333,9 +333,7 @@ end
 local function RemoveFromManagedContainer(frame)
     if not frame then return nil end
     local currentParent = frame.GetParent and frame:GetParent() or nil
-    if currentParent and currentParent.RemoveManagedFrame then
-        pcall(currentParent.RemoveManagedFrame, currentParent, frame)
-    end
+    ns.SafeCallMethodIfPresent("best-effort-style", currentParent, "RemoveManagedFrame", frame)
     frame.ignoreFramePositionManager = true
     return currentParent
 end
@@ -355,11 +353,13 @@ local function BanishBlizzardFrame(frame)
     RemoveFromManagedContainer(frame)
 
     local hiddenParent = EnsureBlizzardBanishParent()
-    if frame.SetParent and frame:GetParent() ~= hiddenParent then
-        pcall(frame.SetParent, frame, hiddenParent)
-    end
-    if frame.SetAlpha then pcall(frame.SetAlpha, frame, 0) end
-    if frame.EnableMouse then pcall(frame.EnableMouse, frame, false) end
+    -- GetParent/SetParent lookups inside the closure: aura frames carry
+    -- forbidden aspects, so the guard's own reads can throw.
+    ns.SafeCall("best-effort-style", function()
+        if frame:GetParent() ~= hiddenParent then frame:SetParent(hiddenParent) end
+    end)
+    ns.SafeCallMethodIfPresent("best-effort-style", frame, "SetAlpha", 0)
+    ns.SafeCallMethodIfPresent("best-effort-style", frame, "EnableMouse", false)
     SetDescendantMouse(frame, false)
 
     state.banished = true
@@ -378,18 +378,18 @@ local function RestoreBlizzardFrame(frame)
     end
 
     local parent = state and state.originalParent or UIParent
-    if frame.SetParent and parent then
-        pcall(frame.SetParent, frame, parent)
+    if parent then
+        ns.SafeCallMethodIfPresent("best-effort-style", frame, "SetParent", parent)
     end
 
     local alpha = (state and state.originalAlpha ~= nil) and state.originalAlpha or 1
-    if frame.SetAlpha then pcall(frame.SetAlpha, frame, alpha) end
+    ns.SafeCallMethodIfPresent("best-effort-style", frame, "SetAlpha", alpha)
 
     local mouse = not (state and state.originalMouse == false)
-    if frame.EnableMouse then pcall(frame.EnableMouse, frame, mouse) end
+    ns.SafeCallMethodIfPresent("best-effort-style", frame, "EnableMouse", mouse)
     SetDescendantMouse(frame, mouse)
 
-    if frame.Show then pcall(frame.Show, frame) end
+    ns.SafeCallMethodIfPresent("best-effort-style", frame, "Show")
     if state then state.banished = false end
     return true
 end
@@ -498,9 +498,9 @@ local function ApplyMoverElements(moverFrame, strips, isBuff, allowCreate)
                 -- pcall: forbidden→forbidden relativeTo acceptance is a PTR4
                 -- in-game unknown — on rejection fall back to the mover and
                 -- queue an OOC replay rather than aborting the whole pass.
-                local okA = pcall(AnchorElementContainer, container, pool[1] or moverFrame, element)
+                local okA = ns.SafeCall("defer-ooc", AnchorElementContainer, container, pool[1] or moverFrame, element)
                 if not okA then
-                    pcall(AnchorElementContainer, container, moverFrame, element)
+                    ns.SafeCall("defer-ooc", AnchorElementContainer, container, moverFrame, element)
                     incomplete = true
                 end
             end
@@ -520,7 +520,7 @@ local function ApplyMoverElements(moverFrame, strips, isBuff, allowCreate)
                 if InCombatLockdown() and not container._quiEnchantsAdded then
                     incomplete = true
                 else
-                    local okE = pcall(AuraSkin.ConfigureEnchantments, container, profile)
+                    local okE = ns.SafeCall("defer-ooc", AuraSkin.ConfigureEnchantments, container, profile)
                     if not okE or not container._quiEnchantsAdded then
                         incomplete = true
                     end
@@ -561,8 +561,8 @@ local function DisableMoverContainers(moverFrame)
     for i = 1, #pool do
         local c = pool[i]
         if c then
-            pcall(c.SetEnabled, c, false)
-            pcall(c.Hide, c)
+            ns.SafeCallMethod("best-effort-style", c, "SetEnabled", false)
+            ns.SafeCallMethod("best-effort-style", c, "Hide")
         end
     end
 end
@@ -617,8 +617,8 @@ local function ApplyConfigPass(allowCreate)
         -- PLAYER_REGEN_ENABLED. The combat path never creates, so freshN
         -- stays nil/false here.
         local ok1, ok2
-        ok1, inc1, fresh1 = pcall(ApplyMoverElements, buffContainer,   buffActive,   true,  false)
-        ok2, inc2, fresh2 = pcall(ApplyMoverElements, debuffContainer, debuffActive, false, false)
+        ok1, inc1, fresh1 = ns.SafeCall("defer-ooc", ApplyMoverElements, buffContainer,   buffActive,   true,  false)
+        ok2, inc2, fresh2 = ns.SafeCall("defer-ooc", ApplyMoverElements, debuffContainer, debuffActive, false, false)
         if (not ok1) or (not ok2) or inc1 or inc2 then QueueContainerWork() end
     end
 

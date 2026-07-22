@@ -16,7 +16,6 @@ local QUI_GF = ns.QUI_GroupFrames
 -- Upvalue standard globals used on callback paths.
 local pairs = pairs
 local type = type
-local pcall = pcall
 local IsInRaid = IsInRaid
 local C_Timer = C_Timer
 
@@ -69,8 +68,8 @@ local function TryRegister()
     if not (api and api.v1 and api.v1.RegisterFrameProvider) then
         return false
     end
-    -- pcall: never let a third-party error break QUI login/refresh.
-    local ok = pcall(api.v1.RegisterFrameProvider, api.v1, provider)
+    -- bulkhead: never let a third-party error break QUI login/refresh.
+    local ok = ns.SafeCallMethod("bulkhead", api.v1, "RegisterFrameProvider", provider)
     if ok then
         registered = true
     end
@@ -87,7 +86,7 @@ local function Notify()
     C_Timer.After(0, function()
         notifyScheduled = false
         local cb = refreshCb
-        if cb then pcall(cb) end
+        if cb then ns.SafeCall("bulkhead", cb) end
     end)
 end
 

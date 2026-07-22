@@ -21,6 +21,9 @@ local fnSource = source:sub(fnStart, nl - 1)
 
 local chunk = table.concat({
     "local C_UnitAuras = _CUA",
+    -- Production defines this file-locally (above the extracted section);
+    -- the standalone chunk needs its own. Mocks here are never secret.
+    "local IsSecretValue = function() return false end",
     fnSource,
     "return ApplyDebuffTypeBorder, ShowTypeBorder, HideTypeBorder",
 }, "\n")

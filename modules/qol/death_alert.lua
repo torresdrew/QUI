@@ -88,7 +88,8 @@ local function ShowAlert(unit)
     -- Secret-guarded name; fall back rather than leak or error.
     local who = ns.L["An ally"]
     local okName, name = pcall(UnitName, unit)
-    if okName and name and not Helpers.IsSecretValue(name) and name ~= "" then
+    name = Helpers.SafeValue(name)
+    if okName and name and name ~= "" then
         who = name
     end
     alertText:SetText(who .. " " .. ns.L["died!"])

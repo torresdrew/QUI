@@ -14,6 +14,8 @@ if not openRaidLib then
     return
 end
 
+local issecretvalue = _G.issecretvalue
+
 -- CJK-safe font setter: preserves the roman font and only adds CJK fallback
 -- members where available, degrading to plain SetFont otherwise.
 local function CJKFont(fs, p, s, f)
@@ -377,17 +379,44 @@ local function UpdateButtonCooldown(button)
     if InCombatLockdown() then return end
     if button.spellID then
         local cooldownInfo = C_Spell.GetSpellCooldown(button.spellID)
-        -- Use pcall to handle secret values in Midnight (startTime/duration can be protected)
-        local success, showCooldown = pcall(function()
-            return cooldownInfo and cooldownInfo.startTime > 0 and cooldownInfo.duration > 5
-        end)
-        if success and showCooldown then
-            button.cooldownOverlay:Show()
+        -- SpellCooldownInfo is a non-nilable plain struct; startTime/duration
+        -- are SecretWhenCooldownsRestricted — probe each at its decision
+        -- point before comparing. An unreadable field leaves the overlay
+        -- untouched (hold-last) instead of manufacturing an off state.
+        local showCooldown  -- nil = unknown, true/false = decided
+        if cooldownInfo then -- @secret-safe: SpellCooldownInfo container is a plain table-or-nil (MayReturnNothing); fields probed below
+            local startTime = cooldownInfo.startTime
+            if issecretvalue and issecretvalue(startTime) then
+                -- @secret-policy: keep-visible-when-unknown (hold last overlay state)
+            elseif startTime > 0 then
+                local duration = cooldownInfo.duration
+                if issecretvalue and issecretvalue(duration) then
+                    -- @secret-policy: keep-visible-when-unknown (hold last overlay state)
+                else
+                    showCooldown = duration > 5
+                end
+            else
+                showCooldown = false
+            end
         else
+            showCooldown = false
+        end
+        if showCooldown == true then
+            button.cooldownOverlay:Show()
+        elseif showCooldown == false then
+            button.cooldownOverlay:Hide()
+        elseif button._quiCooldownSpellID ~= button.spellID then
+            -- Unknown verdict for a DIFFERENT spell than the overlay's last
+            -- decision: buttons are reused across roster passes, so holding
+            -- here would leak the previous spell's overlay onto this one.
+            -- Hold-last is only valid within the same spell identity; reset
+            -- to hidden (the fresh-button default) until a readable tick.
             button.cooldownOverlay:Hide()
         end
+        button._quiCooldownSpellID = button.spellID
     else
         button.cooldownOverlay:Hide()
+        button._quiCooldownSpellID = nil
     end
 end
 
@@ -474,8 +503,17 @@ local function UpdateAllKeystones()
     local myKeystoneInfo = openRaidLib.GetKeystoneInfo("player")
     if myKeystoneInfo and myKeystoneInfo.level and myKeystoneInfo.level > 0 then
         local isLeader = UnitIsGroupLeader("player")
-        UpdateButton(keystoneButtons[buttonIndex], myKeystoneInfo, UnitName("player"), "player", isLeader)
-        buttonIndex = buttonIndex + 1
+        -- UnitName is SecretWhenUnitNameRestricted (12.1); UpdateButton
+        -- pattern-matches and concats the name, so a secret name must not
+        -- reach it.
+        local myName = UnitName("player")
+        if issecretvalue and issecretvalue(myName) then
+            myName = nil -- @secret-policy: reject-secret-value (skip row this pass)
+        end
+        if myName then
+            UpdateButton(keystoneButtons[buttonIndex], myKeystoneInfo, myName, "player", isLeader)
+            buttonIndex = buttonIndex + 1
+        end
     end
 
     -- Check party members' keys (only show those with keys)
@@ -483,6 +521,15 @@ local function UpdateAllKeystones()
     for i = 1, numMembers - 1 do
         local unitId = "party" .. i
         local unitName, realm = UnitName(unitId)
+        -- UnitName is SecretWhenUnitNameRestricted (12.1); a secret name
+        -- cannot key allKeystoneInfo (secret table index throws) or concat
+        -- the realm suffix — probe each return before any use.
+        if issecretvalue and issecretvalue(unitName) then
+            unitName = nil -- @secret-policy: reject-secret-value (skip row this pass)
+        end
+        if issecretvalue and issecretvalue(realm) then
+            realm = nil -- @secret-policy: reject-secret-value (fall back to short name)
+        end
 
         if unitName and buttonIndex <= 4 then
             local fullName = unitName

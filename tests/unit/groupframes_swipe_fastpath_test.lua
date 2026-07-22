@@ -23,9 +23,11 @@ local nl = assert(source:find("\n%-%- <<< QUI_TEST_EXTRACT RefreshUpdatedIcons",
 local fnSource = source:sub(fnStart, nl - 1)
 
 -- factory injects R (table), STATE_KEY (string constant), a unit accessor,
--- and a stubbed C_UnitAuras as upvalues
+-- a stubbed C_UnitAuras, and ns (core/safecall.lua stub: silent pcall
+-- passthrough — Task 45a routed the reseat loop's SetCooldownFromDurationObject
+-- / SetTimerDuration calls through ns.SafeCall("sink-forward", ...)) as upvalues
 local factory = assert(loadstring(
-    "return function(_R, _STATE_KEY, _GetFrameUnit, _CUA)\nlocal R = _R\nlocal STATE_KEY = _STATE_KEY\nlocal GetFrameUnit = _GetFrameUnit\nlocal C_UnitAuras = _CUA\n"
+    "return function(_R, _STATE_KEY, _GetFrameUnit, _CUA, _ns)\nlocal R = _R\nlocal STATE_KEY = _STATE_KEY\nlocal GetFrameUnit = _GetFrameUnit\nlocal C_UnitAuras = _CUA\nlocal ns = _ns\n"
         .. fnSource .. "\nreturn R.RefreshUpdatedIcons\nend",
     "refreshUpdatedIcons"))()
 
@@ -34,7 +36,13 @@ local durSentinel = { __dur = true }
 local CUA = { GetAuraDuration = function() return durSentinel end }
 local R = {}
 local GetFrameUnit = function(frame) return frame.previewUnit end
-local RefreshUpdatedIcons = factory(R, STATE_KEY, GetFrameUnit, CUA)
+local function safeCallStub(_policy, fn, ...) return pcall(fn, ...) end
+local function safeCallMethodStub(_policy, obj, name, ...)
+    return pcall(function(...) return obj[name](obj, ...) end, ...)
+end
+local safeCallMethodIfPresentStub = function(_policy, obj, name, ...) if obj == nil then return nil end local okP, m = pcall(function() return obj[name] end) if not okP then return false end if m == nil then return nil end return pcall(m, obj, ...) end
+local ns = { SafeCall = safeCallStub, SafeCallMethod = safeCallMethodStub, SafeCallMethodIfPresent = safeCallMethodIfPresentStub }
+local RefreshUpdatedIcons = factory(R, STATE_KEY, GetFrameUnit, CUA, ns)
 
 local function newIcon(instID, swipeShown)
     local icon = {

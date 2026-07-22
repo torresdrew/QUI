@@ -43,7 +43,7 @@ local function MakeApplySize(env)
         -- essential/utility container parents secure click slots, so it stays
         -- anchoring-restricted and resize defers to PLAYER_REGEN_ENABLED.
         if w > 0 and h > 0 and ((not env.canMutate) or env.canMutate(container)) then
-            pcall(container.SetSize, container, w, h)
+            ns.SafeCallMethod("best-effort-style", container, "SetSize", w, h)
         end
         if env.onMetrics then env.onMetrics(container, metrics) end
     end

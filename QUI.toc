@@ -75,6 +75,7 @@ core\locale\locale.lua
 # == core/core.xml ==
 core\debug_gate.lua
 core\utils.lua
+core\safecall.lua
 core\theme.lua
 core\ns_export_guard.lua
 core\infobar_shared.lua

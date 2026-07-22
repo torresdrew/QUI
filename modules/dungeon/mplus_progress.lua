@@ -123,7 +123,7 @@ local function UnitCanShowNoProgress(unit)
     if not unit or not UnitCanAttack then return false end
     local canAttack = UnitCanAttack("player", unit)
     if Helpers.IsSecretValue(canAttack) then
-        return false
+        return false -- @secret-policy: reject-secret-value (unknown hostility = no no-progress marker)
     end
     return canAttack == true
 end

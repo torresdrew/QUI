@@ -124,8 +124,8 @@ local function SuppressBlizzardPetFrame()
     end
 
     -- Visual suppression. Method calls only — no frame-table writes.
-    pcall(PetFrame.SetAlpha, PetFrame, 0)
-    pcall(PetFrame.EnableMouse, PetFrame, false)
+    ns.SafeCallMethod("best-effort-style", PetFrame, "SetAlpha", 0)
+    ns.SafeCallMethod("best-effort-style", PetFrame, "EnableMouse", false)
 end
 
 local function KillBlizzardChildFrame(frame)
@@ -134,8 +134,8 @@ local function KillBlizzardChildFrame(frame)
         frame:UnregisterAllEvents()
     end
 
-    -- Use pcall to safely try Hide() - some child frames may be protected
-    pcall(function() frame:Hide() end)
+    -- Use SafeCall to safely try Hide() - some child frames may be protected
+    ns.SafeCall("best-effort-style", function() frame:Hide() end)
 
     if frame.EnableMouse then
         frame:EnableMouse(false)
@@ -160,7 +160,7 @@ local function SuppressPlayerCastingBarFrame()
     -- CastingBarFrame can be forbidden/restricted on newer clients, so keep
     -- every frame interaction guarded. This must be repeatable because the
     -- default player bar can reattach to spellcast events after login reloads.
-    pcall(function()
+    ns.SafeCall("best-effort-style", function()
         frame:SetAlpha(0)
         frame:SetScale(0.0001)
         frame:SetPoint("BOTTOMLEFT", UIParent, "TOPLEFT", -10000, 10000)
@@ -168,12 +168,12 @@ local function SuppressPlayerCastingBarFrame()
         frame:Hide()
     end)
 
-    pcall(function()
+    ns.SafeCall("best-effort-style", function()
         frame:SetUnit(nil)
     end)
 
     if frame.Icon then
-        pcall(function()
+        ns.SafeCall("best-effort-style", function()
             frame.Icon:SetAlpha(0)
             frame.Icon:Hide()
         end)
@@ -205,7 +205,7 @@ local function EnsurePlayerCastbarHideWatcher()
         if not frame then return end
 
         local isShown = false
-        local ok = pcall(function()
+        local ok = ns.SafeCall("best-effort-style", function()
             isShown = frame:IsShown()
         end)
         if ok and isShown then
@@ -291,7 +291,7 @@ function QUI_UF:HideBlizzardCastbars()
 
     -- Hide pet castbar only when QUI pet frame is enabled.
     if db.pet and db.pet.enabled and PetCastingBarFrame then
-        pcall(function()
+        ns.SafeCall("best-effort-style", function()
             PetCastingBarFrame:SetAlpha(0)
             PetCastingBarFrame:SetScale(0.0001)
             PetCastingBarFrame:UnregisterAllEvents()
@@ -345,9 +345,7 @@ function QUI_UF:HideBlizzardFrames()
         if BossTargetFrameContainer and not _blizzFrameGuards.bossContainerRemovedFromManaged then
             _blizzFrameGuards.bossContainerRemovedFromManaged = true
             local parent = BossTargetFrameContainer:GetParent()
-            if parent and parent.RemoveManagedFrame then
-                pcall(parent.RemoveManagedFrame, parent, BossTargetFrameContainer)
-            end
+            ns.SafeCallMethodIfPresent("best-effort-style", parent, "RemoveManagedFrame", BossTargetFrameContainer)
             BossTargetFrameContainer.ignoreFramePositionManager = true
         end
 

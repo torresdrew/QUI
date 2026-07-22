@@ -135,7 +135,7 @@ function QUI_LayoutMode:EnforceGameplayVisibility()
                 -- Hide this frame
                 if def.setGameplayHidden then
                     self._gameplayHidden[key] = true
-                    pcall(def.setGameplayHidden, true)
+                    ns.SafeCall("bulkhead", def.setGameplayHidden, true)
                 else
                     local frame = def.getFrame and def.getFrame()
                     if frame then
@@ -147,8 +147,8 @@ function QUI_LayoutMode:EnforceGameplayVisibility()
                             self._deferredGameplayHides[key] = true
                         else
                             self._gameplayHidden[key] = true
-                            pcall(frame.SetAlpha, frame, 0)
-                            pcall(frame.EnableMouse, frame, false)
+                            ns.SafeCallMethod("best-effort-style", frame, "SetAlpha", 0)
+                            ns.SafeCallMethod("best-effort-style", frame, "EnableMouse", false)
                         end
                     end
                 end
@@ -156,12 +156,12 @@ function QUI_LayoutMode:EnforceGameplayVisibility()
                 -- Restore only frames WE previously hid
                 self._gameplayHidden[key] = nil
                 if def.setGameplayHidden then
-                    pcall(def.setGameplayHidden, false)
+                    ns.SafeCall("bulkhead", def.setGameplayHidden, false)
                 else
                     local frame = def.getFrame and def.getFrame()
                     if frame then
-                        pcall(frame.SetAlpha, frame, 1)
-                        pcall(frame.EnableMouse, frame, true)
+                        ns.SafeCallMethod("best-effort-style", frame, "SetAlpha", 1)
+                        ns.SafeCallMethod("best-effort-style", frame, "EnableMouse", true)
                     end
                 end
             end
@@ -243,7 +243,7 @@ function QUI_LayoutMode:UnregisterElement(key)
         if handle._isChildOverlay and handle._parentFrame then
             local saved = self._savedMovableState[key]
             if saved ~= nil then
-                pcall(handle._parentFrame.SetMovable, handle._parentFrame, saved)
+                ns.SafeCallMethod("best-effort-style", handle._parentFrame, "SetMovable", saved)
                 self._savedMovableState[key] = nil
             end
         end
@@ -257,9 +257,9 @@ function QUI_LayoutMode:UnregisterElement(key)
         if handle._savedTargetParent then
             local targetFrame = def and def.getFrame and def.getFrame()
             if targetFrame then
-                pcall(targetFrame.SetParent, targetFrame, handle._savedTargetParent)
+                ns.SafeCallMethod("best-effort-style", targetFrame, "SetParent", handle._savedTargetParent)
                 if handle._savedTargetStrata then
-                    pcall(targetFrame.SetFrameStrata, targetFrame, handle._savedTargetStrata)
+                    ns.SafeCallMethod("best-effort-style", targetFrame, "SetFrameStrata", handle._savedTargetStrata)
                 end
                 if _G.QUI_SetFrameLayoutOwned then
                     _G.QUI_SetFrameLayoutOwned(targetFrame, nil)
@@ -272,8 +272,8 @@ function QUI_LayoutMode:UnregisterElement(key)
                     local uh = UIParent:GetHeight() or 0
                     local ox = (cx * hs / us) - (uw / 2)
                     local oy = (cy * hs / us) - (uh / 2)
-                    pcall(targetFrame.ClearAllPoints, targetFrame)
-                    pcall(targetFrame.SetPoint, targetFrame, "CENTER", UIParent, "CENTER", ox, oy)
+                    ns.SafeCallMethod("best-effort-style", targetFrame, "ClearAllPoints")
+                    ns.SafeCallMethod("best-effort-style", targetFrame, "SetPoint", "CENTER", UIParent, "CENTER", ox, oy)
                 end
             end
             handle._savedTargetParent = nil
@@ -330,7 +330,7 @@ function QUI_LayoutMode:SetElementEnabled(key, enabled)
 
     if enabled then
         -- Show preview if element has one
-        if def.onOpen then pcall(def.onOpen) end
+        if def.onOpen then ns.SafeCall("bulkhead", def.onOpen) end
         -- Create handle if it doesn't exist
         if not self._handles[key] then
             local handle = CreateHandle(def)
@@ -377,16 +377,16 @@ function QUI_LayoutMode:SetElementEnabled(key, enabled)
         end
     else
         -- Hide preview if element has one
-        if def.onClose then pcall(def.onClose) end
+        if def.onClose then ns.SafeCall("bulkhead", def.onClose) end
         -- Restore preview frame parent and destroy handle
         local handle = self._handles[key]
         if handle then
             if handle._savedTargetParent then
                 local targetFrame = def.getFrame and def.getFrame()
                 if targetFrame then
-                    pcall(targetFrame.SetParent, targetFrame, handle._savedTargetParent)
+                    ns.SafeCallMethod("best-effort-style", targetFrame, "SetParent", handle._savedTargetParent)
                     if handle._savedTargetStrata then
-                        pcall(targetFrame.SetFrameStrata, targetFrame, handle._savedTargetStrata)
+                        ns.SafeCallMethod("best-effort-style", targetFrame, "SetFrameStrata", handle._savedTargetStrata)
                     end
                     if _G.QUI_SetFrameLayoutOwned then
                         _G.QUI_SetFrameLayoutOwned(targetFrame, nil)
@@ -403,8 +403,8 @@ function QUI_LayoutMode:SetElementEnabled(key, enabled)
                         local uh = UIParent:GetHeight() or 0
                         local ox = (cx * hs / us) - (uw / 2)
                         local oy = (cy * hs / us) - (uh / 2)
-                        pcall(targetFrame.ClearAllPoints, targetFrame)
-                        pcall(targetFrame.SetPoint, targetFrame, "CENTER", UIParent, "CENTER", ox, oy)
+                        ns.SafeCallMethod("best-effort-style", targetFrame, "ClearAllPoints")
+                        ns.SafeCallMethod("best-effort-style", targetFrame, "SetPoint", "CENTER", UIParent, "CENTER", ox, oy)
                     end
                 end
                 handle._savedTargetParent = nil
@@ -414,7 +414,7 @@ function QUI_LayoutMode:SetElementEnabled(key, enabled)
             if handle._isChildOverlay and handle._parentFrame then
                 local saved = self._savedMovableState[key]
                 if saved ~= nil then
-                    pcall(handle._parentFrame.SetMovable, handle._parentFrame, saved)
+                    ns.SafeCallMethod("best-effort-style", handle._parentFrame, "SetMovable", saved)
                     self._savedMovableState[key] = nil
                 end
             end
@@ -518,7 +518,7 @@ function QUI_LayoutMode:Open()
     -- QUI_IsLayoutModeManaged to block positioning triggered by callbacks.
     self._enterCallbacksRunning = true
     for _, cb in ipairs(self._enterCallbacks) do
-        pcall(cb)
+        ns.SafeCall("bulkhead", cb)
     end
     self._enterCallbacksRunning = false
 
@@ -538,10 +538,10 @@ function QUI_LayoutMode:Open()
                 end
                 SyncHandle(key)
                 self._handles[key]:Hide()
-                if def.onClose then pcall(def.onClose) end
+                if def.onClose then ns.SafeCall("bulkhead", def.onClose) end
             else
                 -- Activate preview FIRST so frame is shown before CreateHandle
-                if def.onOpen then pcall(def.onOpen) end
+                if def.onOpen then ns.SafeCall("bulkhead", def.onOpen) end
                 if not self._handles[key] then
                     self._handles[key] = CreateHandle(def)
                 else
@@ -816,10 +816,10 @@ function QUI_LayoutMode:Close(skipSaveCheck)
             local def = self._elements[key]
             local targetFrame = def and def.getFrame and def.getFrame()
             if targetFrame then
-                pcall(targetFrame.SetParent, targetFrame, handle._savedTargetParent)
+                ns.SafeCallMethod("best-effort-style", targetFrame, "SetParent", handle._savedTargetParent)
                 -- Restore original strata (was changed to DIALOG during layout mode)
                 if handle._savedTargetStrata then
-                    pcall(targetFrame.SetFrameStrata, targetFrame, handle._savedTargetStrata)
+                    ns.SafeCallMethod("best-effort-style", targetFrame, "SetFrameStrata", handle._savedTargetStrata)
                 end
                 -- Release the PositionFrame guard set during reparenting
                 if _G.QUI_SetFrameLayoutOwned then
@@ -843,8 +843,8 @@ function QUI_LayoutMode:Close(skipSaveCheck)
                     local uh = UIParent:GetHeight() or 0
                     local ox = (cx * hs / us) - (uw / 2)
                     local oy = (cy * hs / us) - (uh / 2)
-                    pcall(targetFrame.ClearAllPoints, targetFrame)
-                    pcall(targetFrame.SetPoint, targetFrame, "CENTER", UIParent, "CENTER", ox, oy)
+                    ns.SafeCallMethod("best-effort-style", targetFrame, "ClearAllPoints")
+                    ns.SafeCallMethod("best-effort-style", targetFrame, "SetPoint", "CENTER", UIParent, "CENTER", ox, oy)
                 end
             end
             handle._savedTargetParent = nil
@@ -858,7 +858,7 @@ function QUI_LayoutMode:Close(skipSaveCheck)
                 for i, savedParent in pairs(handle._savedBossParents) do
                     local bf = bossFrames["boss" .. i]
                     if bf then
-                        pcall(bf.SetParent, bf, savedParent)
+                        ns.SafeCallMethod("best-effort-style", bf, "SetParent", savedParent)
                         if _G.QUI_SetFrameLayoutOwned then
                             _G.QUI_SetFrameLayoutOwned(bf, nil)
                         end
@@ -872,7 +872,7 @@ function QUI_LayoutMode:Close(skipSaveCheck)
             if castbars then
                 for i, savedParent in pairs(handle._savedCastbarParents) do
                     local cb = castbars["boss" .. i]
-                    if cb then pcall(cb.SetParent, cb, savedParent) end
+                    if cb then ns.SafeCallMethod("best-effort-style", cb, "SetParent", savedParent) end
                 end
             end
             handle._savedCastbarParents = nil
@@ -881,7 +881,7 @@ function QUI_LayoutMode:Close(skipSaveCheck)
         if handle._isChildOverlay and handle._parentFrame then
             local saved = self._savedMovableState[key]
             if saved ~= nil then
-                pcall(handle._parentFrame.SetMovable, handle._parentFrame, saved)
+                ns.SafeCallMethod("best-effort-style", handle._parentFrame, "SetMovable", saved)
             end
         end
     end
@@ -913,7 +913,7 @@ function QUI_LayoutMode:Close(skipSaveCheck)
     for _, key in ipairs(self._elementOrder) do
         local def = self._elements[key]
         if def.onClose then
-            pcall(def.onClose)
+            ns.SafeCall("bulkhead", def.onClose)
         end
     end
 
@@ -924,7 +924,7 @@ function QUI_LayoutMode:Close(skipSaveCheck)
         if def.setEnabled and def.isEnabled then
             local enabled = def.isEnabled()
             if not enabled then
-                pcall(def.setEnabled, false)
+                ns.SafeCall("bulkhead", def.setEnabled, false)
             end
         end
     end
@@ -934,7 +934,7 @@ function QUI_LayoutMode:Close(skipSaveCheck)
 
     -- Fire exit callbacks
     for _, cb in ipairs(self._exitCallbacks) do
-        pcall(cb)
+        ns.SafeCall("bulkhead", cb)
     end
 
     -- Unregister combat events
@@ -1009,9 +1009,9 @@ function QUI_LayoutMode:_CombatSuspend()
             local def = self._elements[key]
             local targetFrame = def and def.getFrame and def.getFrame()
             if targetFrame then
-                pcall(targetFrame.SetParent, targetFrame, handle._savedTargetParent)
+                ns.SafeCallMethod("best-effort-style", targetFrame, "SetParent", handle._savedTargetParent)
                 if handle._savedTargetStrata then
-                    pcall(targetFrame.SetFrameStrata, targetFrame, handle._savedTargetStrata)
+                    ns.SafeCallMethod("best-effort-style", targetFrame, "SetFrameStrata", handle._savedTargetStrata)
                 end
                 local cx, cy = handle:GetCenter()
                 if cx and cy then
@@ -1021,8 +1021,8 @@ function QUI_LayoutMode:_CombatSuspend()
                     local uh = UIParent:GetHeight() or 0
                     local ox = (cx * hs / us) - (uw / 2)
                     local oy = (cy * hs / us) - (uh / 2)
-                    pcall(targetFrame.ClearAllPoints, targetFrame)
-                    pcall(targetFrame.SetPoint, targetFrame, "CENTER", UIParent, "CENTER", ox, oy)
+                    ns.SafeCallMethod("best-effort-style", targetFrame, "ClearAllPoints")
+                    ns.SafeCallMethod("best-effort-style", targetFrame, "SetPoint", "CENTER", UIParent, "CENTER", ox, oy)
                 end
             end
         end
@@ -1086,7 +1086,7 @@ function QUI_LayoutMode:ActivateElement(key)
     if self._handles[key] then return end  -- already active
 
     -- Fire preview
-    if def.onOpen then pcall(def.onOpen) end
+    if def.onOpen then ns.SafeCall("bulkhead", def.onOpen) end
 
     -- Create handle
     local handle = CreateHandle(def)
@@ -1211,7 +1211,7 @@ function QUI_LayoutMode:DetachElementAnchor(key)
     entry.relative = "CENTER"
 
     if _G.QUI_ApplyFrameAnchor then
-        pcall(_G.QUI_ApplyFrameAnchor, key)
+        ns.SafeCall("bulkhead", _G.QUI_ApplyFrameAnchor, key)
     end
     local QUI = _G.QUI
     if QUI and QUI.SendMessage then
@@ -1639,8 +1639,8 @@ SetHandleFromOffsets = function(handle, offsetX, offsetY)
                 oy = oy / pScale
             end
         end
-        pcall(parent.ClearAllPoints, parent)
-        pcall(parent.SetPoint, parent, "CENTER", UIParent, "CENTER", ox, oy)
+        ns.SafeCallMethod("best-effort-style", parent, "ClearAllPoints")
+        ns.SafeCallMethod("best-effort-style", parent, "SetPoint", "CENTER", UIParent, "CENTER", ox, oy)
     else
         handle:ClearAllPoints()
         handle:SetPoint("CENTER", UIParent, "CENTER", offsetX or 0, offsetY or 0)
@@ -1792,8 +1792,8 @@ RevertPositions = function()
             elseif snap._fromFrame then
                 local frame = def.getFrame and def.getFrame()
                 if frame then
-                    pcall(frame.ClearAllPoints, frame)
-                    pcall(frame.SetPoint, frame, "CENTER", UIParent, "CENTER", snap.offsetX, snap.offsetY)
+                    ns.SafeCallMethod("best-effort-style", frame, "ClearAllPoints")
+                    ns.SafeCallMethod("best-effort-style", frame, "SetPoint", "CENTER", UIParent, "CENTER", snap.offsetX, snap.offsetY)
                 end
             elseif fa then
                 if snap.parent == nil and not fa[key] then
@@ -2219,17 +2219,17 @@ AddHandleScripts = function(handle, def)
                             if def2.getCenterOffset then
                                 cdx, cdy = def2.getCenterOffset(frame:GetSize())
                             end
-                            pcall(targetFrame.ClearAllPoints, targetFrame)
-                            pcall(targetFrame.SetPoint, targetFrame, "CENTER", frame, "CENTER", -cdx, -cdy)
+                            ns.SafeCallMethod("best-effort-style", targetFrame, "ClearAllPoints")
+                            ns.SafeCallMethod("best-effort-style", targetFrame, "SetPoint", "CENTER", frame, "CENTER", -cdx, -cdy)
                         else
-                            pcall(targetFrame.ClearAllPoints, targetFrame)
+                            ns.SafeCallMethod("best-effort-style", targetFrame, "ClearAllPoints")
                             local frameOx, frameOy = postSnapOx, postSnapOy
                             if def2.getCenterOffset then
                                 local cdx, cdy = def2.getCenterOffset(frame:GetSize())
                                 frameOx = frameOx - cdx
                                 frameOy = frameOy - cdy
                             end
-                            pcall(targetFrame.SetPoint, targetFrame, "CENTER", UIParent, "CENTER", frameOx, frameOy)
+                            ns.SafeCallMethod("best-effort-style", targetFrame, "SetPoint", "CENTER", UIParent, "CENTER", frameOx, frameOy)
                         end
                     end
                 end
@@ -2251,8 +2251,8 @@ AddHandleScripts = function(handle, def)
                                 if def2.getCenterOffset then
                                     cdx, cdy = def2.getCenterOffset(data.handle:GetSize())
                                 end
-                                pcall(targetFrame.ClearAllPoints, targetFrame)
-                                pcall(targetFrame.SetPoint, targetFrame, "CENTER", data.handle, "CENTER", -cdx, -cdy)
+                                ns.SafeCallMethod("best-effort-style", targetFrame, "ClearAllPoints")
+                                ns.SafeCallMethod("best-effort-style", targetFrame, "SetPoint", "CENTER", data.handle, "CENTER", -cdx, -cdy)
                             else
                                 local frameOx, frameOy = newOx, newOy
                                 if def2.getCenterOffset then
@@ -2260,8 +2260,8 @@ AddHandleScripts = function(handle, def)
                                     frameOx = frameOx - cdx
                                     frameOy = frameOy - cdy
                                 end
-                                pcall(targetFrame.ClearAllPoints, targetFrame)
-                                pcall(targetFrame.SetPoint, targetFrame, "CENTER", UIParent, "CENTER", frameOx, frameOy)
+                                ns.SafeCallMethod("best-effort-style", targetFrame, "ClearAllPoints")
+                                ns.SafeCallMethod("best-effort-style", targetFrame, "SetPoint", "CENTER", UIParent, "CENTER", frameOx, frameOy)
                             end
                         end
                     end
@@ -2385,8 +2385,8 @@ AddHandleScripts = function(handle, def)
                         if def2.getCenterOffset then
                             cdx, cdy = def2.getCenterOffset(self:GetSize())
                         end
-                        pcall(targetFrame.ClearAllPoints, targetFrame)
-                        pcall(targetFrame.SetPoint, targetFrame, "CENTER", self, "CENTER", -cdx, -cdy)
+                        ns.SafeCallMethod("best-effort-style", targetFrame, "ClearAllPoints")
+                        ns.SafeCallMethod("best-effort-style", targetFrame, "SetPoint", "CENTER", self, "CENTER", -cdx, -cdy)
                     else
                         local frameOx, frameOy = ox, oy
                         if def2.getCenterOffset then
@@ -2394,18 +2394,18 @@ AddHandleScripts = function(handle, def)
                             frameOx = frameOx - cdx
                             frameOy = frameOy - cdy
                         end
-                        pcall(targetFrame.ClearAllPoints, targetFrame)
-                        pcall(targetFrame.SetPoint, targetFrame, "CENTER", UIParent, "CENTER", frameOx, frameOy)
+                        ns.SafeCallMethod("best-effort-style", targetFrame, "ClearAllPoints")
+                        ns.SafeCallMethod("best-effort-style", targetFrame, "SetPoint", "CENTER", UIParent, "CENTER", frameOx, frameOy)
                     end
                 end
                 if def2.onLiveMove then
-                    pcall(def2.onLiveMove, key)
+                    ns.SafeCall("bulkhead", def2.onLiveMove, key)
                 end
             end
         else
             local def2 = QUI_LayoutMode._elements[self._barKey]
             if def2 and def2.onLiveMove then
-                pcall(def2.onLiveMove, self._barKey)
+                ns.SafeCall("bulkhead", def2.onLiveMove, self._barKey)
             end
         end
 
@@ -2845,12 +2845,12 @@ SyncHandle = function(key)
     if not handle._isChildOverlay and handle._savedTargetParent and key ~= "bossFrames" then
         local targetFrame = def.getFrame and def.getFrame()
         if targetFrame and targetFrame.GetObjectType and targetFrame:GetParent() == handle then
-            pcall(targetFrame.ClearAllPoints, targetFrame)
+            ns.SafeCallMethod("best-effort-style", targetFrame, "ClearAllPoints")
             if def.getCenterOffset then
                 local gdx, gdy = def.getCenterOffset(handle:GetSize())
-                pcall(targetFrame.SetPoint, targetFrame, "CENTER", handle, "CENTER", -gdx, -gdy)
+                ns.SafeCallMethod("best-effort-style", targetFrame, "SetPoint", "CENTER", handle, "CENTER", -gdx, -gdy)
             else
-                pcall(targetFrame.SetAllPoints, targetFrame, handle)
+                ns.SafeCallMethod("best-effort-style", targetFrame, "SetAllPoints", handle)
             end
         end
     end
@@ -2865,8 +2865,8 @@ SyncHandle = function(key)
             if def.getCenterOffset then
                 cdx, cdy = def.getCenterOffset(handle:GetSize())
             end
-            pcall(frame.ClearAllPoints, frame)
-            pcall(frame.SetPoint, frame, "CENTER", handle, "CENTER", -cdx, -cdy)
+            ns.SafeCallMethod("best-effort-style", frame, "ClearAllPoints")
+            ns.SafeCallMethod("best-effort-style", frame, "SetPoint", "CENTER", handle, "CENTER", -cdx, -cdy)
         end
     end
 
@@ -2975,11 +2975,11 @@ function QUI_LayoutMode:NudgeMover(key, dx, dy)
                     if def.getCenterOffset then
                         cdx, cdy = def.getCenterOffset(handle:GetSize())
                     end
-                    pcall(frame.ClearAllPoints, frame)
-                    pcall(frame.SetPoint, frame, "CENTER", handle, "CENTER", -cdx, -cdy)
+                    ns.SafeCallMethod("best-effort-style", frame, "ClearAllPoints")
+                    ns.SafeCallMethod("best-effort-style", frame, "SetPoint", "CENTER", handle, "CENTER", -cdx, -cdy)
                 else
-                    pcall(frame.ClearAllPoints, frame)
-                    pcall(frame.SetPoint, frame, "CENTER", UIParent, "CENTER", ox, oy)
+                    ns.SafeCallMethod("best-effort-style", frame, "ClearAllPoints")
+                    ns.SafeCallMethod("best-effort-style", frame, "SetPoint", "CENTER", UIParent, "CENTER", ox, oy)
                 end
             end
         end
@@ -3152,10 +3152,10 @@ do
                     if not f then return end
                     if hide then
                         f:SetAlpha(0)
-                        pcall(f.EnableMouse, f, false)
+                        ns.SafeCallMethod("best-effort-style", f, "EnableMouse", false)
                     else
                         f:SetAlpha(1)
-                        pcall(f.EnableMouse, f, true)
+                        ns.SafeCallMethod("best-effort-style", f, "EnableMouse", true)
                     end
                 end,
                 getFrame = function()
@@ -3204,9 +3204,12 @@ do
                 if not _G.QUI_ApplyFrameAnchor then return end
 
                 applyingBonusRollAnchor = true
-                local ok, err = pcall(_G.QUI_ApplyFrameAnchor, "bonusRollFrame")
+                -- ns.SafeCall's bulkhead policy probes err for secrecy BEFORE
+                -- any tostring/format and already reports+dedups via the
+                -- classified error handler; the manual error(err) re-raise
+                -- this replaced skipped that probe.
+                ns.SafeCall("bulkhead", _G.QUI_ApplyFrameAnchor, "bonusRollFrame")
                 applyingBonusRollAnchor = false
-                if not ok then error(err) end
             end
 
             local function RunScheduledBonusRollAnchor()
@@ -4123,7 +4126,7 @@ function QUI_LayoutMode:ToggleHandlePreview(key)
         if handle._savedTargetParent then
             local targetFrame = def.getFrame and def.getFrame()
             if targetFrame then
-                pcall(targetFrame.SetParent, targetFrame, handle._savedTargetParent)
+                ns.SafeCallMethod("best-effort-style", targetFrame, "SetParent", handle._savedTargetParent)
                 if _G.QUI_SetFrameLayoutOwned then
                     _G.QUI_SetFrameLayoutOwned(targetFrame, nil)
                 end
@@ -4139,8 +4142,8 @@ function QUI_LayoutMode:ToggleHandlePreview(key)
                     local uh = UIParent:GetHeight() or 0
                     local ox = (cx * hs / us) - (uw / 2)
                     local oy = (cy * hs / us) - (uh / 2)
-                    pcall(targetFrame.ClearAllPoints, targetFrame)
-                    pcall(targetFrame.SetPoint, targetFrame, "CENTER", UIParent, "CENTER", ox, oy)
+                    ns.SafeCallMethod("best-effort-style", targetFrame, "ClearAllPoints")
+                    ns.SafeCallMethod("best-effort-style", targetFrame, "SetPoint", "CENTER", UIParent, "CENTER", ox, oy)
                 end
             end
             handle._savedTargetParent = nil
@@ -4153,7 +4156,7 @@ function QUI_LayoutMode:ToggleHandlePreview(key)
                     for i, savedParent in pairs(handle._savedBossParents) do
                         local bf = bossFrames["boss" .. i]
                         if bf then
-                            pcall(bf.SetParent, bf, savedParent)
+                            ns.SafeCallMethod("best-effort-style", bf, "SetParent", savedParent)
                             if _G.QUI_SetFrameLayoutOwned then
                                 _G.QUI_SetFrameLayoutOwned(bf, nil)
                             end
@@ -4167,7 +4170,7 @@ function QUI_LayoutMode:ToggleHandlePreview(key)
                 if castbars then
                     for i, savedParent in pairs(handle._savedCastbarParents) do
                         local cb = castbars["boss" .. i]
-                        if cb then pcall(cb.SetParent, cb, savedParent) end
+                        if cb then ns.SafeCallMethod("best-effort-style", cb, "SetParent", savedParent) end
                     end
                 end
                 handle._savedCastbarParents = nil
@@ -4179,12 +4182,12 @@ function QUI_LayoutMode:ToggleHandlePreview(key)
         if self._selectedKey == key then
             self:SelectMover(nil)
         end
-        if def.onClose then pcall(def.onClose) end
+        if def.onClose then ns.SafeCall("bulkhead", def.onClose) end
         return false
     else
         -- Activate preview FIRST so the frame exists before CreateHandle
         if hidden then hidden[key] = nil end
-        if def.onOpen then pcall(def.onOpen) end
+        if def.onOpen then ns.SafeCall("bulkhead", def.onOpen) end
         -- Create handle if needed (after onOpen so getFrame returns the correct frame)
         if not handle then
             handle = CreateHandle(def)
@@ -4373,8 +4376,8 @@ function QUI_LayoutMode:ResetToCenter(key)
     if not handle._isChildOverlay then
         local frame = def.getFrame and def.getFrame()
         if frame then
-            pcall(frame.ClearAllPoints, frame)
-            pcall(frame.SetPoint, frame, "CENTER", UIParent, "CENTER", 0, 0)
+            ns.SafeCallMethod("best-effort-style", frame, "ClearAllPoints")
+            ns.SafeCallMethod("best-effort-style", frame, "SetPoint", "CENTER", UIParent, "CENTER", 0, 0)
         end
     end
 

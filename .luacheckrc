@@ -122,7 +122,7 @@ read_globals = {
     "wipe", "strsplit", "strjoin", "strtrim", "strconcat", "format",
     "tContains", "tInvert", "tDeleteItem", "Mixin", "CreateFromMixins",
     "hooksecurefunc", "issecure", "issecurevariable", "IsSecureCmd",
-    "securecallfunction", "tostringall", "issecretvalue", "Clamp",
+    "securecallfunction", "tostringall", "issecretvalue", "canaccesstable", "Clamp",
     "CopyTable", "debugprofilestop", "geterrorhandler", "seterrorhandler", "time", "tinsert",
 
     -- debug.upvaluejoin is a Blizzard backport (Lua 5.2+) used by the ActionBars
@@ -184,7 +184,7 @@ GetNetIpTypes GetNetStats GetNormalizedRealmName GetNumGroupMembers GetNumGuildM
 GetNumSavedInstances GetNumSavedWorldBosses GetNumShapeshiftForms GetNumSpecializations GetNumSubgroupMembers GetParryChance GetParryChanceFromAttribute GetPetActionCooldown
 GetPetActionInfo GetPetActionSlotUsable GetPhysicalScreenSize GetPlayerInfoByGUID GetPowerBarColor GetPowerRegenForPowerType GetProfessionInfo GetProfessions GetQuestDifficultyColor GetQuestProgressBarPercent
 GetQuestReward GetRaidRosterInfo GetRaidTargetIndex GetReadyCheckStatus GetRepairAllCost GetRestState GetRuneCooldown GetSavedInstanceInfo
-GetSavedWorldBossInfo GetScaledCursorPosition GetScreenHeight GetScreenWidth GetServerTime GetShapeshiftForm GetShapeshiftFormCooldown GetShapeshiftFormID
+GetSavedWorldBossInfo GetScreenHeight GetScreenWidth GetServerTime GetShapeshiftForm GetShapeshiftFormCooldown GetShapeshiftFormID
 GetShapeshiftFormInfo GetShieldBlock GetSpecializationMasterySpells GetSpecializationRole GetSpeed GetSpellBonusDamage GetSpellCharges GetSpellCooldown
 GetSpellCritChance GetSpellTexture GetStaggerPercentage GetSubZoneText GetTimePreciseSec GetTotemTimeLeft GetUnitChargedPowerPoints GetUnitEmpowerHoldAtMaxTime
 GetUnitMaxHealthModifier GetUnitName GetUnitPowerBarInfo GetUnitPowerBarStrings GetUnitSpeed GetVersatilityBonus GetWeaponEnchantInfo GetWorldElapsedTime
@@ -230,7 +230,7 @@ UnitAura UnitCanAssist UnitCastingDuration UnitChannelDuration UnitClassificatio
 UnitFullName UnitGUID UnitGetDetailedHealPrediction UnitGetIncomingHeals UnitGetTotalAbsorbs UnitGetTotalHealAbsorbs UnitGroupRolesAssigned UnitHPPerStamina
 UnitHasIncomingResurrection UnitHasVehicleUI UnitHealth UnitHealthMax UnitHealthMissing UnitInParty UnitInRaid UnitInRange
 UnitInVehicle UnitIsAFK UnitIsConnected UnitIsDeadOrGhost UnitIsFriend UnitIsGhost UnitIsGroupAssistant UnitIsGroupLeader UnitIsPlayer
-UnitIsUnit UnitLevel UnitPhaseReason UnitPower UnitPowerPercent UnitPowerType UnitReaction UnitSex
+UnitIsUnit UnitIsVisible UnitLevel UnitPhaseReason UnitPower UnitPowerPercent UnitPowerType UnitReaction UnitSex
 UnitShouldDisplaySpellTargetName UnitSpellHaste UnitStagger UnitStat UnitThreatSituation UnitXP UnitXPMax UnregisterStateDriver UpdateAddOnCPUUsage
 UpdateMicroButtons UpdateMicroButtonsParent WOW_PROJECT_ID WOW_PROJECT_MAINLINE WardrobeFrame WardrobeTransmogFrame WeeklyRewardsFrame WeeklyRewards_ShowUI WorldMapFrame
 WorldQuestCompleteAlertSystem ZoneAbilityFrame debugprofilestart gsub strupper tremove table.unpack table.wipe
@@ -415,5 +415,14 @@ files["tests/"] = {
         "121", -- setting a read-only global (stubbing a WoW API global)
         "122", -- setting a read-only field of a global
         "131", -- unused implicitly defined global
+    },
+    -- Instrumentation helper globals installed by
+    -- tests/helpers/secret_sentinel.lua InstallSecretStub and called from
+    -- sources rewritten by tests/helpers/secret_instrument.lua.
+    globals = {
+        "__QUI_SECRET_TT",
+        "__QUI_SECRET_EQ",
+        "__QUI_SECRET_NEQ",
+        "__QUI_SECRET_LEN",
     },
 }

@@ -46,7 +46,7 @@ check("AnchorOrPin start found", anchorOrPinStart ~= nil)
 
 if anchorOrPinStart then
     -- Extract a generous chunk of the function (up to ~50 lines)
-    local funcBody = src:sub(anchorOrPinStart, anchorOrPinStart + 2000)
+    local funcBody = src:sub(anchorOrPinStart, anchorOrPinStart + 2600)
 
     check("AnchorOrPin gates on IsDynamicSizeAnchorKey(key)",
         funcBody:find("IsDynamicSizeAnchorKey(key)", 1, true) ~= nil)
@@ -103,8 +103,8 @@ end
 -- -------------------------------------------------------------------------
 -- 4. ApplyFrameAnchor: the four converted sites now call AnchorOrPin,
 --    and SmoothSetPoint is NOT called directly for those sites.
---    Verify: direct calls (AnchorOrPin() and pcall(AnchorOrPin,...)) total == 4.
---    SmoothSetPoint still exists in the file (boss-array branch & others).
+--    Verify: direct calls (AnchorOrPin() and ns.SafeCall(policy, AnchorOrPin,...))
+--    total == 4. SmoothSetPoint still exists in the file (boss-array branch & others).
 -- -------------------------------------------------------------------------
 -- Count direct calls: "AnchorOrPin(key," pattern.
 -- NOTE: the "local function AnchorOrPin(key," definition line also matches this
@@ -114,9 +114,10 @@ for _ in src:gmatch("AnchorOrPin%(key,") do
     directCalls = directCalls + 1
 end
 directCalls = directCalls - 1  -- subtract 1 for the definition line
--- Count pcall-wrapped calls: "pcall(AnchorOrPin," pattern
+-- Count SafeCall-wrapped calls: 'ns.SafeCall("...", AnchorOrPin, ' pattern
+-- (Task 45d converted the prior bare 'pcall(AnchorOrPin,' sites to this form).
 local pcallCalls = 0
-for _ in src:gmatch("pcall%(AnchorOrPin,") do
+for _ in src:gmatch('ns%.SafeCall%("[%w%-]+",%s*AnchorOrPin,') do
     pcallCalls = pcallCalls + 1
 end
 local totalAnchorOrPinCalls = directCalls + pcallCalls

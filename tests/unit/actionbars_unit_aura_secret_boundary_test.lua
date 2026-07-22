@@ -172,7 +172,9 @@ assert(loadfile("QUI_ActionBars/actionbars/actionbars_builder.lua"))("QUI", ns)
 assert(loadfile("QUI_ActionBars/actionbars/actionbars_petstance.lua"))("QUI", ns)
 assert(loadfile("QUI_ActionBars/actionbars/actionbars_cooldowns.lua"))("QUI", ns)
 assert(loadfile("QUI_ActionBars/actionbars/actionbars_glow.lua"))("QUI", ns)
-assert(loadfile("QUI_ActionBars/actionbars/actionbars_events.lua"))("QUI", ns)
+-- Instrumented load (Task 7): the module under test — truthiness/==/#
+-- on sentinels now THROW inside it, matching in-game 12.1 semantics.
+assert(SecretSentinel.LoadInstrumented("QUI_ActionBars/actionbars/actionbars_events.lua"))("QUI", ns)
 assert(loadfile("QUI_ActionBars/actionbars/actionbars_skinning.lua"))("QUI", ns)
 assert(loadfile("QUI_ActionBars/actionbars/actionbars_usability.lua"))("QUI", ns)
 

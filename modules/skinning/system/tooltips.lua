@@ -3,6 +3,10 @@ local Helpers = ns.Helpers
 local SkinBase = ns.SkinBase
 local UIKit = ns.UIKit
 local GetCore = Helpers.GetCore
+-- Captured as a local: several functions below shadow the module `ns` with
+-- a `local ns = tooltip.NineSlice`, so `ns.SafeCall` would resolve to the
+-- wrong (NineSlice) table inside them. Reference SafeCall directly instead.
+local SafeCall = ns.SafeCall
 
 local function TooltipDebugCount(name, amount)
     local dbg = ns.QUI_TooltipDebug
@@ -121,9 +125,9 @@ local function SetFontStringSize(fs, size)
         return  -- already at target size; skip SetFont to avoid relayout
     end
     if Helpers and Helpers.ApplyFontWithFallback then
-        pcall(Helpers.ApplyFontWithFallback, fs, path, size, flags or "")
+        SafeCall("best-effort-style", Helpers.ApplyFontWithFallback, fs, path, size, flags or "")
     else
-        pcall(fs.SetFont, fs, path, size, flags or "")
+        SafeCall("best-effort-style", fs.SetFont, fs, path, size, flags or "")
     end
 end
 
@@ -179,7 +183,7 @@ local function ApplyFontSizeViaFontObjects(size)
             or (family ~= nil and appliedHeaderFamily ~= family)
         if needsApply then
             if family then
-                if pcall(GameTooltipHeaderText.SetFontObject, GameTooltipHeaderText, family) then
+                if SafeCall("best-effort-style", GameTooltipHeaderText.SetFontObject, GameTooltipHeaderText, family) then
                     appliedHeaderFamily = family
                 end
             else
@@ -196,7 +200,7 @@ local function ApplyFontSizeViaFontObjects(size)
             or (family ~= nil and appliedBodyFamily ~= family)
         if needsApply then
             if family then
-                if pcall(GameTooltipText.SetFontObject, GameTooltipText, family) then
+                if SafeCall("best-effort-style", GameTooltipText.SetFontObject, GameTooltipText, family) then
                     appliedBodyFamily = family
                 end
             else
@@ -219,7 +223,7 @@ local function ApplyFontSizeViaFontObjects(size)
             or (family ~= nil and appliedSmallFamily ~= family)
         if needsApply then
             if family then
-                if pcall(GameTooltipTextSmall.SetFontObject, GameTooltipTextSmall, family) then
+                if SafeCall("best-effort-style", GameTooltipTextSmall.SetFontObject, GameTooltipTextSmall, family) then
                     appliedSmallFamily = family
                 end
             else
@@ -296,11 +300,11 @@ local HasActiveWidgetContainer                    -- forward decl; defined befor
 local function HideNineSlice(tooltip)
     local ns = tooltip.NineSlice
     if not ns then return end
-    pcall(ns.Hide, ns)
+    SafeCall("best-effort-style", ns.Hide, ns)
     -- Drop NineSlice below the tooltip's frame level so that even if
     -- Blizzard briefly re-shows it (before our hook re-hides it), its
     -- textures render behind QUI's overlay at the tooltip's own level.
-    pcall(ns.SetFrameLevel, ns, 0)
+    SafeCall("best-effort-style", ns.SetFrameLevel, ns, 0)
     -- TAINT SAFETY: Do NOT write to ns.layoutType / ns.layoutTextureKit /
     -- ns.backdropInfo from addon code.  Writing nil here taints those keys;
     -- the taint persists across Show() cycles and can propagate into
@@ -329,11 +333,11 @@ local function HookNineSlice(tooltip)
         if suppressNSHook then return end
         if not IsEnabled() then return end
 
-        pcall(self.Hide, self)
-        pcall(self.SetFrameLevel, self, 0)
+        SafeCall("best-effort-style", self.Hide, self)
+        SafeCall("best-effort-style", self.SetFrameLevel, self, 0)
 
         local sf = styleFrames[tooltip]
-        if sf then pcall(sf.Show, sf) end
+        if sf then SafeCall("best-effort-style", sf.Show, sf) end
     end)
 end
 
@@ -351,7 +355,7 @@ end
 local function FallbackToNineSlice(tooltip)
     suppressNSHook = true
     local ns = tooltip and tooltip.NineSlice
-    if ns then pcall(ns.Show, ns) end
+    if ns then SafeCall("best-effort-style", ns.Show, ns) end
     suppressNSHook = false
     HideStyleFrame(tooltip)
 end
@@ -472,8 +476,8 @@ local function StyleShoppingCompareHeader(header, sr, sg, sb, sa, bgr, bgg, bgb,
     if header.IsForbidden and header:IsForbidden() then return end
 
     if not SkinBase then
-        if header.SetBackdrop then pcall(header.SetBackdrop, header, nil) end
-        if header.NineSlice then pcall(header.NineSlice.Hide, header.NineSlice) end
+        if header.SetBackdrop then SafeCall("best-effort-style", header.SetBackdrop, header, nil) end
+        if header.NineSlice then SafeCall("best-effort-style", header.NineSlice.Hide, header.NineSlice) end
         return
     end
 
@@ -501,7 +505,7 @@ local function ApplyTooltipChrome(tooltip)
     -- Embedded tooltips: strip border, no overlay (parent has one)
     if IsEmbedded(tooltip) then
         HideNineSlice(tooltip)
-        if tooltip.SetBackdrop then pcall(tooltip.SetBackdrop, tooltip, nil) end
+        if tooltip.SetBackdrop then SafeCall("best-effort-style", tooltip.SetBackdrop, tooltip, nil) end
         HideStyleFrame(tooltip)
         return
     end
@@ -562,7 +566,7 @@ local function StyleTooltip(tooltip)
 
     TooltipDebugCount("skin.style")
     local dbg, dbgStart, dbgHeap = TooltipDebugBegin()
-    pcall(ApplyTooltipChrome, tooltip)
+    ns.SafeCall("best-effort-style", ApplyTooltipChrome, tooltip)
     -- ItemRefTooltip (the item-link tooltip) carries a
     -- UIPanelCloseButtonNoScripts at .CloseButton (ItemRef.xml). Without
     -- restyling it the stock red Blizzard X shows through the otherwise-skinned
@@ -573,7 +577,7 @@ local function StyleTooltip(tooltip)
     -- first-call frame creation inside SkinCloseButton stays taint-safe.
     if tooltip.CloseButton and SkinBase.SkinCloseButton then
         local closeButton = tooltip.CloseButton
-        pcall(SkinBase.SkinCloseButton, closeButton)
+        ns.SafeCall("best-effort-style", SkinBase.SkinCloseButton, closeButton)
         -- The stock button is anchored TOPRIGHT +2,+2 (ItemRef.xml), so it
         -- overhangs the tooltip's corner. The original red-X atlas masked that
         -- with transparent padding; the solid QUI box would otherwise poke out
@@ -586,7 +590,7 @@ local function StyleTooltip(tooltip)
             -- Scale-stable re-anchor: SetPixelPoint stores the offset in a weak side table
             -- and re-applies (ClearAllPoints + SetPoint) on every scale refresh. pcall-wrapped
             -- for protected-frame safety; the side table itself is taint-safe.
-            pcall(SkinBase.SetPixelPoint, closeButton, "TOPRIGHT", tooltip, "TOPRIGHT", -2, -2)
+            SafeCall("best-effort-style", SkinBase.SetPixelPoint, closeButton, "TOPRIGHT", tooltip, "TOPRIGHT", -2, -2)
         end
     end
     TooltipDebugEnd(dbg, "skin.style", dbgStart, nil, dbgHeap)
@@ -601,7 +605,7 @@ local function CombatRefreshTooltip(tooltip)
 
     TooltipDebugCount("skin.combatRefresh")
     local dbg, dbgStart, dbgHeap = TooltipDebugBegin()
-    pcall(ApplyTooltipChrome, tooltip)
+    ns.SafeCall("best-effort-style", ApplyTooltipChrome, tooltip)
     TooltipDebugEnd(dbg, "skin.combatRefresh", dbgStart, nil, dbgHeap)
 end
 
@@ -667,9 +671,12 @@ HasActiveWidgetContainer = function(tooltip)
 
             local shownWidgetCount = child.shownWidgetCount
             if shownWidgetCount ~= nil then
+                -- ACTION POLICY: an unreadable count is INDETERMINATE, not
+                -- "widgets present" — treat-as-widgeted keeps the skin on
+                -- the safe (non-clobbering) path.
                 if Helpers.IsSecretValue(shownWidgetCount) then
                     TooltipDebugCount("skin.widgetHit")
-                    return true
+                    return true -- @secret-policy: keep-native-when-unknown
                 end
                 shownWidgetCount = tonumber(shownWidgetCount)
                 if shownWidgetCount and shownWidgetCount > 0 then
@@ -682,7 +689,7 @@ HasActiveWidgetContainer = function(tooltip)
             if numWidgetsShowing ~= nil then
                 if Helpers.IsSecretValue(numWidgetsShowing) then
                     TooltipDebugCount("skin.widgetHit")
-                    return true
+                    return true -- @secret-policy: keep-native-when-unknown
                 end
                 numWidgetsShowing = tonumber(numWidgetsShowing)
                 if numWidgetsShowing and numWidgetsShowing > 0 then
@@ -716,7 +723,7 @@ local function RefreshTooltipLayout(tooltip)
     end
 
     if type(tooltip.UpdateTooltipSize) == "function" then
-        pcall(tooltip.UpdateTooltipSize, tooltip)
+        SafeCall("best-effort-style", tooltip.UpdateTooltipSize, tooltip)
     end
 end
 
@@ -732,7 +739,7 @@ local function OnTooltipShow(tooltip)
             return
         end
         if HasActiveMoneyFrame(tooltip) then
-            pcall(ShowExistingChrome, tooltip)
+            ns.SafeCall("best-effort-style", ShowExistingChrome, tooltip)
             return
         end
     end
@@ -832,7 +839,7 @@ local function _FlushPendingFonts()
             if tt == GameTooltip and HasActiveWidgetContainer and HasActiveWidgetContainer(tt) then
                 TooltipDebugCount("skin.fontWidgetSkipped")
             else
-                pcall(ApplyFontSize, tt)
+                ns.SafeCall("best-effort-style", ApplyFontSize, tt)
                 RefreshTooltipLayout(tt)
             end
         end
@@ -1018,7 +1025,7 @@ local function SetupBackdropStyleHooks()
 
             if isEmbedded or tooltip.IsEmbedded then
                 HideNineSlice(tooltip)
-                if tooltip.SetBackdrop then pcall(tooltip.SetBackdrop, tooltip, nil) end
+                if tooltip.SetBackdrop then SafeCall("best-effort-style", tooltip.SetBackdrop, tooltip, nil) end
                 local sf = styleFrames[tooltip]
                 if sf then sf:Hide() end
             else
@@ -1096,7 +1103,7 @@ local function SetupBackdropStyleHooks()
                 -- here can taint MoneyFrame_Update's width arithmetic.
                 if HasActiveMoneyFrame(GameTooltip) then return end
                 HideNineSlice(self)
-                if self.SetBackdrop then pcall(self.SetBackdrop, self, nil) end
+                if self.SetBackdrop then SafeCall("best-effort-style", self.SetBackdrop, self, nil) end
                 local sf = styleFrames[self]
                 if sf then sf:Hide() end
             else
@@ -1107,7 +1114,7 @@ local function SetupBackdropStyleHooks()
         if IsEnabled() then
             HideNineSlice(EmbeddedItemTooltip)
             if EmbeddedItemTooltip.SetBackdrop then
-                pcall(EmbeddedItemTooltip.SetBackdrop, EmbeddedItemTooltip, nil)
+                SafeCall("best-effort-style", EmbeddedItemTooltip.SetBackdrop, EmbeddedItemTooltip, nil)
             end
         end
     end
@@ -1228,7 +1235,7 @@ local function RefreshAllColors()
     if EmbeddedItemTooltip and IsEnabled() and IsEmbedded(EmbeddedItemTooltip) then
         HideNineSlice(EmbeddedItemTooltip)
         if EmbeddedItemTooltip.SetBackdrop then
-            pcall(EmbeddedItemTooltip.SetBackdrop, EmbeddedItemTooltip, nil)
+            SafeCall("best-effort-style", EmbeddedItemTooltip.SetBackdrop, EmbeddedItemTooltip, nil)
         end
     end
 end
@@ -1456,7 +1463,7 @@ local function EnsureFontObjectCJK(fontObj)
     if cjkAppliedFont[fontObj] == family then return end   -- idempotent
     -- Font-OBJECT mutation only (never per-line FontStrings): taint-safe, per
     -- the notes in core/font_system.lua.
-    if pcall(fontObj.SetFontObject, fontObj, family) then
+    if SafeCall("best-effort-style", fontObj.SetFontObject, fontObj, family) then
         cjkAppliedFont[fontObj] = family
     end
 end

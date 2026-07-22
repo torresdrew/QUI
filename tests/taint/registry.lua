@@ -6,31 +6,20 @@
 local M = {}
 
 -- Method names that accept tainted values regardless of receiver type.
--- Derived from spec section "Safe sinks" and CLAUDE.md.
+-- MINIMAL hand-kept seed: argless visibility/geometry methods only (the
+-- sink question never arises for them, but bare unit-test registries lean
+-- on their presence). Everything argument-carrying is GENERATED from the
+-- api-index at scan time (tests/taint/index_load.lua) — registry_test pins
+-- that these seeds never contradict the index.
 local BUILTIN_SAFE_SINK_METHODS = {
-    -- Cooldown (only DurationObject path is secret-safe in 12.0.5+)
-    SetCooldownFromDurationObject = true,
-    -- Region / Frame visibility + geometry (C-side accept secret args)
-    SetAlpha = true, Show = true, Hide = true,
-    SetSize = true, SetWidth = true, SetHeight = true,
-    SetPoint = true, ClearAllPoints = true,
-    -- Texture + FontString display
-    SetText = true, SetTexture = true,
-    -- Private aura anchors (callable in combat post-12.0.5)
-    AddPrivateAuraAnchor = true,
-    RemovePrivateAuraAnchor = true,
-    SetPrivateWarningTextAnchor = true,
-    RemovePrivateAuraAppliedSound = true,
+    Show = true, Hide = true, ClearAllPoints = true,
 }
 
--- Fully-qualified function names that are safe sinks.
-local BUILTIN_SAFE_SINK_FUNCTIONS = {
-    -- C_StringUtil formatters render secret numbers without unwrapping
-    ["C_StringUtil.RoundToNearestString"] = true,
-    ["C_StringUtil.FloorToNearestString"] = true,
-    ["C_StringUtil.TruncateWhenZero"]     = true,
-    ["C_StringUtil.WrapString"]           = true,
-}
+-- Fully-qualified function names that are safe sinks. Empty hand-kept seed —
+-- the former C_StringUtil.* entries are now GENERATED from the api-index
+-- (secretArguments = "AllowedWhenTainted" / secretArgumentsAnyTainted).
+-- Config extra_safe_sinks still feeds this table at scan time.
+local BUILTIN_SAFE_SINK_FUNCTIONS = {}
 
 -- Functions that PRODUCE a secret-tagged return value when handed a secret arg.
 -- A safe sink says "you can pass a secret here without erroring"; a secret-
@@ -91,6 +80,8 @@ function M.new()
     self.sources           = {}
     self.safeSinkMethods   = {}
     self.safeSinkFunctions = {}
+    self.docArgRestrictedMethods   = {}
+    self.docArgRestrictedFunctions = {}
     self.guards            = {}
     self.unwraps           = {}
     self.cleanFields       = {}
@@ -132,6 +123,14 @@ function Registry:isSafeSinkMethod(name)    return self.safeSinkMethods[name]   
 
 function Registry:addSafeSinkFunction(name) self.safeSinkFunctions[name] = true end
 function Registry:isSafeSinkFunction(name)  return self.safeSinkFunctions[name] == true end
+
+-- Documented argument restrictions (api-index secretArguments with NO
+-- tainted-allowed system): tainted (addon) code cannot pass secrets to
+-- these at all. Feeds the analyzer's default-reject consumer rule.
+function Registry:addDocArgRestrictedMethod(name, level)   self.docArgRestrictedMethods[name]   = level end
+function Registry:docArgRestrictionMethod(name)            return self.docArgRestrictedMethods[name] end
+function Registry:addDocArgRestrictedFunction(name, level) self.docArgRestrictedFunctions[name] = level end
+function Registry:docArgRestrictionFunction(name)          return self.docArgRestrictedFunctions[name] end
 
 function Registry:addGuard(name)
     self.guards[name] = true

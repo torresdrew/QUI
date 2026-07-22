@@ -210,10 +210,11 @@ local function dofileFrom(relp)
     return result
 end
 
-local Config   = dofileFrom("tests/taint/config.lua")
-local Registry = dofileFrom("tests/taint/registry.lua")
-local Findings = dofileFrom("tests/taint/findings.lua")
-local Analyzer = dofileFrom("tests/taint/analyzer.lua")
+local Config    = dofileFrom("tests/taint/config.lua")
+local Registry  = dofileFrom("tests/taint/registry.lua")
+local Findings  = dofileFrom("tests/taint/findings.lua")
+local Analyzer  = dofileFrom("tests/taint/analyzer.lua")
+local IndexLoad = dofileFrom("tests/taint/index_load.lua")
 
 -- ---------------------------------------------------------------------------
 -- Load config
@@ -239,7 +240,8 @@ local cfg = Config.loadFromFile(cfgPath)
 local registry = Registry.new()
 
 -- event:* entries harvested from the api-index (event name → meta table);
--- cross-checked against the config's event_payload_params below.
+-- cross-checked against the config's event_payload_params below. Populated
+-- by IndexLoad.populate when the index loads successfully.
 local indexedEvents = {}
 
 -- Load api-index from <rootDir>/tests/api-docs/api-index.lua (if it exists)
@@ -254,86 +256,8 @@ if fIdx then
     else
         local ok, indexTable = pcall(chunk)
         if ok and type(indexTable) == "table" then
-            -- Which precondition flags mark a RESTRICTION hazard (hard error
-            -- while encounter/M+/PvP addon restrictions are active). Most
-            -- Requires* flags are plain argument/state validation
-            -- (RequiresValidActionSlot, RequiresFriendList, ...) — flagging
-            -- those raw calls would drown the review tier. Extendable via
-            -- config restriction_preconditions.
-            local restrictionPre = { RequiresUnitAuraAccess = true }
-            for _, name in ipairs(cfg.restriction_preconditions or {}) do
-                restrictionPre[name] = true
-            end
-
-            -- Index meta keys that must NEVER make an entry a taint source:
-            -- preconditions = call-errors (separate track below); eventFlags/
-            -- secretPayload = event entries ("event:*" keys, never call
-            -- sites). Event payload ANALYSIS is driven by the config's
-            -- event_payload_params (wired to the registry below) — the index
-            -- metadata is per-event only and cannot say WHICH handler
-            -- argument is secret, so positions are configured explicitly.
-            -- Aspect flags are also non-source here: secretArgumentsAddAspect
-            -- marks setters (never a secret RETURN), and secretReturnsForAspect
-            -- getters are widget METHODS — their dotted doc names never match a
-            -- call site, so they register on the method track below instead.
-            local nonSourceKeys = {
-                preconditions = true, eventFlags = true, secretPayload = true,
-                secretReturnsForAspect = true, secretArgumentsAddAspect = true,
-            }
-
-            for funcName, meta in pairs(indexTable) do
-                -- Collect event:* entries for the config↔index cross-check
-                -- below (round-4: config-only event coverage silently rots
-                -- when 12.1 adds/removes event flags).
-                local eventName = funcName:match("^event:(.+)$")
-                if eventName and type(meta) == "table" then
-                    indexedEvents[eventName] = meta
-                end
-                -- Filter by coverage flags from config
-                local include = false
-                if type(meta) == "table" then
-                    for coverageKey, _ in pairs(meta) do
-                        if cfg.coverage[coverageKey] and not nonSourceKeys[coverageKey] then
-                            include = true
-                            break
-                        end
-                    end
-                else
-                    include = true
-                end
-                if include then
-                    registry:addSource(funcName)
-                end
-                -- Precondition-guarded APIs are NOT taint sources — the
-                -- hazard is a hard ERROR under restrictions, not a secret
-                -- return — so they register on a separate track feeding the
-                -- analyzer's precondition scan, filtered to the restriction
-                -- flags above.
-                if type(meta) == "table" and type(meta.preconditions) == "table"
-                    and cfg.coverage.preconditions then
-                    local relevant
-                    for _, flag in ipairs(meta.preconditions) do
-                        if restrictionPre[flag] then
-                            relevant = relevant or {}
-                            relevant[#relevant + 1] = flag
-                        end
-                    end
-                    if relevant then
-                        registry:addPreconditionAPI(funcName, relevant)
-                    end
-                end
-                -- Aspect-returning widget getters register by bare method
-                -- name (call sites are `obj:GetAlpha()`). Exposure is gated
-                -- per-file by config aspect_paths at analyze time.
-                if type(meta) == "table" and type(meta.secretReturnsForAspect) == "table"
-                    and cfg.coverage.secretReturnsForAspect
-                    and not funcName:match("^event:") and not funcName:match("^C_") then
-                    local method = funcName:match("([%w_]+)$")
-                    if method then
-                        registry:addAspectReturningMethod(method, meta.secretReturnsForAspect)
-                    end
-                end
-            end
+            indexedEvents = IndexLoad.populate(registry, indexTable, cfg,
+                function(msg) io.stderr:write(msg) end)
         else
             io.stderr:write("WARNING: api-index did not return a table\n")
         end
@@ -361,11 +285,22 @@ if cfg.clean_fields then
         registry:addCleanField(name)
     end
 end
+if cfg.extra_guards then
+    for _, name in ipairs(cfg.extra_guards) do
+        registry:addGuard(name)
+    end
+end
 if cfg.extra_restriction_gates then
     for _, name in ipairs(cfg.extra_restriction_gates) do
         registry:addRestrictionGate(name)
     end
 end
+-- event_payload_params registration is config wiring and stays here; the
+-- paired forward cross-check (a configured event missing from the index) is
+-- config-side validation too, so it stays alongside the registration and
+-- reads the indexedEvents IndexLoad.populate returned above. The REVERSE
+-- cross-check (an index event with no configured payload positions) is pure
+-- index-scan logic and lives inside IndexLoad.populate instead.
 if cfg.event_payload_params then
     for eventName, params in pairs(cfg.event_payload_params) do
         if type(params) == "table" and #params > 0 then
@@ -377,38 +312,6 @@ if cfg.event_payload_params then
                     "WARNING: event_payload_params[%q] has no event:* entry in the api-index "
                     .. "(removed or renamed?) — its handler coverage is dead config\n",
                     eventName))
-            end
-        end
-    end
-end
--- Reverse check: index events carrying an aura-restriction flag that have NO
--- configured payload positions are an analysis coverage gap. Warn so a new
--- 12.1 flag shows up here instead of silently going unanalyzed. The flag set
--- mirrors the precondition scan's restriction focus; extend via config
--- restriction_event_flags.
-do
-    local restrictionEventFlags = { SecretWhenAurasRestricted = true }
-    for _, flag in ipairs(cfg.restriction_event_flags or {}) do
-        restrictionEventFlags[flag] = true
-    end
-    for eventName, meta in pairs(indexedEvents) do
-        if not (cfg.event_payload_params and cfg.event_payload_params[eventName]) then
-            local hazard
-            if meta.secretPayload == true then
-                hazard = "secretPayload"
-            else
-                for _, flag in ipairs(meta.eventFlags or {}) do
-                    if restrictionEventFlags[flag] then
-                        hazard = flag
-                        break
-                    end
-                end
-            end
-            if hazard then
-                io.stderr:write(string.format(
-                    "WARNING: api-index event %q carries %s but has no "
-                    .. "event_payload_params entry — handler payloads are unanalyzed\n",
-                    eventName, hazard))
             end
         end
     end
@@ -451,6 +354,11 @@ if options.self_test then
     local fxRegistry = Registry.new()
     fxRegistry:addSource("C_Spell.GetSpellCharges")
     fxRegistry:addSource("C_Spell.GetSpellCooldownDuration")
+    -- Safe-sink method the C-side-pipe safe fixture relies on: an api-index safe
+    -- sink (durationObjectArg) at real scan time. Register it so that fixture
+    -- exercises the safe-sink branch instead of the round-13 default-reject
+    -- fall-through, which now flags unregistered method consumers.
+    fxRegistry:addSafeSinkMethod("SetCooldownFromDurationObject")
 
     local categories = listDirs(fixturesRoot)
     local failures = 0

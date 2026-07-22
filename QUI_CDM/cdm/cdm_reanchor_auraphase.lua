@@ -39,7 +39,7 @@ function CDMReanchorAuraPhase:OnSwipeColor(frame, cd)
     if not cd or self._reentry[cd] then return end
     self._reentry[cd] = true
     local deps = self._deps
-    if deps.reassertColor then pcall(deps.reassertColor, frame, cd, self._keyByFrame[frame]) end
+    if deps.reassertColor then ns.SafeCall("bulkhead", deps.reassertColor, frame, cd, self._keyByFrame[frame]) end
     self._reentry[cd] = false
 end
 
@@ -57,7 +57,7 @@ function CDMReanchorAuraPhase:OnCooldownSet(frame, cd)
     self._timingReentry[cd] = true
     self._reentry[cd] = true
     local deps = self._deps
-    if deps.reassertColor then pcall(deps.reassertColor, frame, cd, self._keyByFrame[frame]) end
+    if deps.reassertColor then ns.SafeCall("bulkhead", deps.reassertColor, frame, cd, self._keyByFrame[frame]) end
     self._reentry[cd] = false
     self._timingReentry[cd] = false
 end
@@ -73,7 +73,7 @@ function CDMReanchorAuraPhase:OnDesaturated(frame, tex)
     if not tex or self._desatReentry[tex] then return end
     self._desatReentry[tex] = true
     local deps = self._deps
-    if deps.reassertDesat then pcall(deps.reassertDesat, frame, tex, self._keyByFrame[frame]) end
+    if deps.reassertDesat then ns.SafeCall("bulkhead", deps.reassertDesat, frame, tex, self._keyByFrame[frame]) end
     self._desatReentry[tex] = false
 end
 
@@ -86,7 +86,7 @@ function CDMReanchorAuraPhase:OnDrawEdge(frame, cd)
     if not cd or self._edgeReentry[cd] then return end
     self._edgeReentry[cd] = true
     local deps = self._deps
-    if deps.reassertEdge then pcall(deps.reassertEdge, frame, cd, self._keyByFrame[frame]) end
+    if deps.reassertEdge then ns.SafeCall("bulkhead", deps.reassertEdge, frame, cd, self._keyByFrame[frame]) end
     self._edgeReentry[cd] = false
 end
 

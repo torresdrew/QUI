@@ -280,7 +280,7 @@ assertContains(readycheck, "CJKFont(text, GeneralFontFace(), 12, FONT_FLAGS)",
 -- GameTooltipText/GameTooltipHeaderText (taint-safe); SkinFrameText is not called.
 -- Verify the tooltip skin still handles GameTooltip (the main text target).
 local tooltips = readFile("modules/skinning/system/tooltips.lua")
-assertContains(tooltips, "pcall(GameTooltipText.SetFontObject, GameTooltipText, family)",
+assertContains(tooltips, "SafeCall(\"best-effort-style\", GameTooltipText.SetFontObject, GameTooltipText, family)",
     "GameTooltip body text must size via the taint-safe SetFontObject path")
 
 ---------------------------------------------------------------------------

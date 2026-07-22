@@ -595,7 +595,7 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
                         return
                     end
                     for i = 1, #refreshList do
-                        pcall(refreshList[i])
+                        ns.SafeCall("bulkhead", refreshList[i])
                     end
                 end, { description = ns.L["Pick which custom tab to edit. Each tab stores its own name, group filter, and channel filter."] })
                 selectorCard.AddRow(row(selectorCard.frame, ns.L["Editing tab"], frameSelector))

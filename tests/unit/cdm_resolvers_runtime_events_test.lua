@@ -64,8 +64,10 @@ local ns = {
     },
 }
 
-local loadChunk = dofile("tests/helpers/load_cdm_consolidated_chunk.lua")
-loadChunk("QUI_CDM/cdm/cdm_resolvers.lua", "cdm_resolvers.lua")("QUI", ns)
+-- Instrumented load (Task 7): cdm_resolvers.lua exists standalone, so the
+-- consolidated-chunk helper reduced to a plain load — replaced with the
+-- instrumented loader (truthiness/==/# on sentinels now THROW inside it).
+assert(SecretSentinel.LoadInstrumented("QUI_CDM/cdm/cdm_resolvers.lua"))("QUI", ns)
 
 local runtimeFrame
 for _, frame in ipairs(frames) do

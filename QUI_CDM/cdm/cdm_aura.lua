@@ -26,7 +26,7 @@ local issecretvalue = issecretvalue or function() return false end
 
 local function IsUsableID(id)
     if type(id) ~= "number" then return false end
-    if issecretvalue(id) then return false end
+    if issecretvalue(id) then return false end -- @secret-policy: reject-secret-ids
     return id > 0
 end
 

@@ -315,14 +315,10 @@ local function SkinMonthlyActivitiesText(monthlyFrame)
         end
     end
 
-    if monthlyFrame.ScrollBox and monthlyFrame.ScrollBox.ForEachFrame then
-        pcall(monthlyFrame.ScrollBox.ForEachFrame, monthlyFrame.ScrollBox, SkinMonthlyActivitiesActivityButton)
-    end
+    ns.SafeCallMethodIfPresent("best-effort-style", monthlyFrame.ScrollBox, "ForEachFrame", SkinMonthlyActivitiesActivityButton)
 
     local filterScrollBox = monthlyFrame.FilterList and monthlyFrame.FilterList.ScrollBox
-    if filterScrollBox and filterScrollBox.ForEachFrame then
-        pcall(filterScrollBox.ForEachFrame, filterScrollBox, SkinMonthlyActivitiesFilterButton)
-    end
+    ns.SafeCallMethodIfPresent("best-effort-style", filterScrollBox, "ForEachFrame", SkinMonthlyActivitiesFilterButton)
 end
 
 -- Encounter description / overview / boss-ability headers only. This is the

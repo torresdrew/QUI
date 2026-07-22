@@ -92,7 +92,7 @@ assert(saveBlock:find("resolved ~= elFrame", 1, true),
 -- the real frame inside it — ForceReapply/ApplyFrameAnchor rips the
 -- SetAllPoints glue, which would leave the frame behind on the next drag.
 assert(syncBlock:find("targetFrame:GetParent() == handle", 1, true)
-    and syncBlock:find("pcall(targetFrame.SetAllPoints, targetFrame, handle)", 1, true),
+    and syncBlock:find('ns.SafeCallMethod("best-effort-style", targetFrame, "SetAllPoints", handle)', 1, true),
     "SyncHandle must re-glue the frame to its handle after repositioning")
 
 -- The circular frame:GetCenter() fallback must come AFTER (not instead of)

@@ -176,7 +176,11 @@ check("ReleaseBar must clear _blzCooldownID",
     "_blzCooldownID not cleared on release")
 
 ---------------------------------------------------------------------------
--- 6. Active state: IsActive-first, fail open on secret.
+-- 6. Active state: IsActive-first; secret = keep-visible ACTION POLICY.
+-- What this pins is a display policy, NOT a truth conversion: a secret
+-- IsActive is INDETERMINATE and must never be read as "active" — the
+-- keep-visible return simply ensures a possibly-active bar is never hidden
+-- (reference-mirror directive). See ReadPairedBarActive's contract comment.
 ---------------------------------------------------------------------------
 local actStart = assert(string.find(src, "local function ReadPairedBarActive(blz)", 1, true),
     "ReadPairedBarActive should exist")

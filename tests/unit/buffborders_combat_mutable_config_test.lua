@@ -67,10 +67,10 @@ assert(apply:find("ApplyMutableConfig()", 1, true),
 assert(apply:find("QueueContainerWork()", 1, true),
     "ApplyOrDefer must STILL queue the full pass for PLAYER_REGEN_ENABLED (self-heal)")
 
--- The combat pass must pcall-guard forbidden-container mutation (PTR-observed
+-- The combat pass must SafeCall-guard forbidden-container mutation (PTR-observed
 -- legality; a restriction error must not abort the rest of the pass).
-assert(pass:find("pcall(ApplyMoverElements", 1, true),
-    "the mutation pass must pcall the per-host container mutation")
+assert(pass:find('ns.SafeCall("defer-ooc", ApplyMoverElements', 1, true),
+    "the mutation pass must SafeCall-guard the per-host container mutation")
 
 -- v50 grow-anchor repoint: the mover's grow corner must derive from the element
 -- store (buffAuras/debuffAuras), NOT the pruned flat buff*/debuffGrowLeft/GrowUp

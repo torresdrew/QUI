@@ -91,23 +91,36 @@ local subAll, subRoster, subPlayer, subGroup = subscribers.all, subscribers.rost
 -- One subscriber tier pass for a single unit. Named function so the
 -- protected call below is pcall(DispatchUnit, ...) — no closure allocation
 -- on the hot path.
+-- Each subscriber call is individually protected: a throwing subscriber must
+-- not abort the remaining subscribers for the same unit (secret-value throws
+-- cluster exactly when every consumer needs its delta). pcall with a function
+-- value + plain args allocates nothing on this hot path. Errors stay loud.
+local function ProtectedFanout(list, n, unit, info)
+    for i = 1, n do
+        local ok, err = pcall(list[i], unit, info)
+        if not ok then
+            geterrorhandler()(err)
+        end
+    end
+end
+
 local function DispatchUnit(unit, info, isRoster)
     -- Dispatch to "all" subscribers (every UNIT_AURA, including
     -- nameplates/target/focus/boss/arena — use sparingly).
-    for i = 1, nAll do subAll[i](unit, info) end
+    ProtectedFanout(subAll, nAll, unit, info)
 
     if isRoster then
         -- Roster tier: player + party1..4 + raid1..40.
-        for i = 1, nRoster do subRoster[i](unit, info) end
+        ProtectedFanout(subRoster, nRoster, unit, info)
 
         -- Player/group split is roster-scoped: "group" means
         -- party+raid (not player). Non-roster units like nameplates,
         -- target, focus, boss, arena never reach player/group
         -- subscribers — they go through "all" if they need them.
         if unit == "player" then
-            for i = 1, nPlayer do subPlayer[i](unit, info) end
+            ProtectedFanout(subPlayer, nPlayer, unit, info)
         else
-            for i = 1, nGroup do subGroup[i](unit, info) end
+            ProtectedFanout(subGroup, nGroup, unit, info)
         end
     end
 end
@@ -185,6 +198,32 @@ local function AccumulateDelta(merged, updateInfo)
     AppendDeltaField(merged, updateInfo, "updatedAuraInstanceIDs")
 end
 
+-- Element scans below run only behind PayloadIsSecret's issecretvalue
+-- presence guard, and only after the array itself probed non-secret (a
+-- secret array would throw on #arr).
+local function AnyIDElementSecret(arr)
+    if not arr then return false end
+    for i = 1, #arr do
+        if issecretvalue(arr[i]) then return true end -- @secret-policy: report-secret-detected
+    end
+    return false
+end
+
+local function AnyAddedAuraSecret(arr)
+    if not arr then return false end
+    for i = 1, #arr do
+        local data = arr[i]
+        if issecretvalue(data) then return true end -- @secret-policy: report-secret-detected
+        if data ~= nil
+            and (issecretvalue(data.auraInstanceID)
+                or issecretvalue(data.spellId)
+                or issecretvalue(data.spellID)) then
+            return true -- @secret-policy: report-secret-detected
+        end
+    end
+    return false
+end
+
 -- 12.1: detect a secret UNIT_AURA payload. While auras are restricted the delta
 -- arrays (addedAuras / updated- / removedAuraInstanceIDs) come through as
 -- SecretValue and cannot be merged or iterated. QueueAuraEvent promotes such an
@@ -196,17 +235,30 @@ local function PayloadIsSecret(updateInfo)
     -- calling here, but a secret updateInfo would throw on the `updateInfo
     -- and` truth-test below — probe it first so this function is safe from
     -- any call site.
-    if issecretvalue(updateInfo) then return true end
+    if issecretvalue(updateInfo) then return true end -- @secret-policy: report-secret-detected
     if not updateInfo then return false end
     -- isFullUpdate: 12.1 can deliver a READABLE table whose scalar
     -- isFullUpdate field is itself a secret boolean (live shape:
     -- { removedAuraInstanceIDs=<secret table>, isFullUpdate=<secret
     -- boolean> } on raid units). Reading the field is fine; boolean-testing
     -- it throws. Probe it here alongside the delta arrays.
-    return issecretvalue(updateInfo.isFullUpdate)
+    if issecretvalue(updateInfo.isFullUpdate)
         or issecretvalue(updateInfo.addedAuras)
         or issecretvalue(updateInfo.updatedAuraInstanceIDs)
-        or issecretvalue(updateInfo.removedAuraInstanceIDs)
+        or issecretvalue(updateInfo.removedAuraInstanceIDs) then
+        return true -- @secret-policy: report-secret-detected
+    end
+    -- Element level: UnitAuraUpdateInfo no longer carries any non-secret
+    -- contents guarantee, so a READABLE array can hold SECRET elements, and a
+    -- readable AuraData element can hold secret identity fields. Consumers
+    -- table-key and ==-compare exactly these (instanceID sets, spellId
+    -- lookups), so the router's readability guarantee extends to: every array
+    -- element, and the auraInstanceID/spellId/spellID fields of added auras.
+    -- Anything secret promotes the event to the full-update sentinel, the
+    -- degradation path consumers already gate.
+    return AnyAddedAuraSecret(updateInfo.addedAuras)
+        or AnyIDElementSecret(updateInfo.updatedAuraInstanceIDs)
+        or AnyIDElementSecret(updateInfo.removedAuraInstanceIDs)
 end
 
 ---------------------------------------------------------------------------
@@ -245,7 +297,7 @@ local function IsNonRosterEventInteresting(unit)
     -- i.e. token equality against GameTooltip:GetUnit()'s unit return.
     local _, ttUnit = tt:GetUnit()
     if ttUnit == nil then return false end
-    if issecretvalue and issecretvalue(ttUnit) then return false end
+    if issecretvalue and issecretvalue(ttUnit) then return false end -- @secret-policy: reject-secret-value (unknown tooltip unit = not interesting)
     return unit == ttUnit
 end
 
@@ -264,7 +316,7 @@ local function QueueAuraEvent(unit, updateInfo)
         -- `updateInfo and ...`; issecretvalue(nil) is simply false). Opaque
         -- invalidation; consumers gate their own rescans off
         -- C_Secrets.ShouldAurasBeSecret() instead of reading this payload.
-        pendingUnits[unit] = true
+        pendingUnits[unit] = true -- @secret-policy: report-secret-detected (full-update sentinel promotion)
     elseif PayloadIsSecret(updateInfo) then
         -- Secret delta (combat, restricted auras): the arrays can't be merged
         -- or iterated, and/or the isFullUpdate flag itself is a secret boolean

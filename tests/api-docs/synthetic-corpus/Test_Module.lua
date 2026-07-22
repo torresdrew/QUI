@@ -1,6 +1,7 @@
 local TestSpell =
 {
-    Name = "C_Test",
+    Name = "Test",
+    Namespace = "C_Test",
     Type = "System",
 
     Functions =

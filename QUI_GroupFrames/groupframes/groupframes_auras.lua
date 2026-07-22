@@ -233,6 +233,9 @@ end
 -- widened to "anyone in the raid can dispel" and would light the overlay for
 -- dispels the player cannot touch.
 local DISPEL_FILTER = "HARMFUL|RAID"
+-- PAGE size for the slot scan, NOT a coverage cap: GetAuraSlots is paginated
+-- via its continuationToken (UnitAuraDocumentation) and ScanUnitAurasBySlot
+-- loops until the token comes back nil, so aura 41+ is still scanned.
 local MAX_SCAN_AURAS = 40
 
 -- Classify a single harmful aura as dispellable by the current player.
@@ -321,9 +324,19 @@ local function RebuildBuffMaps(_unit, cache)
     local buffsBySpellID = cache.buffsBySpellID
     local buffsByName = cache.buffsByName
 
+    -- Per-spell always-secret auras survive the AurasAreSecret() gate —
+    -- probe before truth-tests (see RebuildDebuffMaps).
     for i = 1, #buffs do
         local auraData = buffs[i]
+        if IsSecretValue(auraData) then
+            -- @secret-policy: reject-secret-value
+            auraData = nil
+        end
         local instID = auraData and auraData.auraInstanceID
+        if IsSecretValue(instID) then
+            -- @secret-policy: reject-secret-ids
+            instID = nil
+        end
         if instID then
             buffsByID[instID] = auraData
             buffsIndexByID[instID] = i
@@ -359,15 +372,36 @@ local function RebuildDebuffMaps(unit, cache)
     local playerDispellableOrder = cache.playerDispellableOrder
     local allDispellable = cache.allDispellable
 
+    -- Per-spell always-secret auras survive the AurasAreSecret() gate
+    -- (SecretPredicatesDocumentation: "Individual spells may be flagged as
+    -- never or always secret, which takes priority over restrictions"), so
+    -- every field read below probes BEFORE any truth-test or compare.
     for i = 1, #debuffs do
         local auraData = debuffs[i]
+        if IsSecretValue(auraData) then
+            -- @secret-policy: reject-secret-value — an opaque AuraData entry
+            -- is unusable for map/dispel classification; skip it.
+            auraData = nil
+        end
         local instID = auraData and auraData.auraInstanceID
+        if IsSecretValue(instID) then
+            -- @secret-policy: reject-secret-ids — cannot key maps on an
+            -- opaque aura instance id.
+            instID = nil
+        end
         if instID then
             debuffsByID[instID] = auraData
             debuffsIndexByID[instID] = i
 
             local dispelName = auraData.dispelName
-            local hasDispelType = dispelName ~= nil and not IsSecretValue(dispelName)
+            local hasDispelType = false
+            if IsSecretValue(dispelName) then
+                -- @secret-policy: reject-secret-value — a secret dispel type
+                -- is INDETERMINATE; never derive "dispellable" from secrecy.
+                hasDispelType = false
+            elseif dispelName ~= nil then
+                hasDispelType = true
+            end
             if hasDispelType then
                 allDispellable[instID] = true
             end
@@ -456,7 +490,17 @@ local function RemoveIDFromOrder(order, instID)
 end
 
 local function AddBuffDerivedData(_unit, cache, auraData)
+    -- Probe-first parity with AddDebuffDerivedData: per-spell always-secret
+    -- auras pass the global gate and throw on `not x` truth-tests.
+    if IsSecretValue(auraData) then
+        -- @secret-policy: reject-secret-value
+        auraData = nil
+    end
     local instID = auraData and auraData.auraInstanceID
+    if IsSecretValue(instID) then
+        -- @secret-policy: reject-secret-ids
+        instID = nil
+    end
     if not instID then return end
 
     local spellID = SafeValue(auraData.spellId, nil)
@@ -485,11 +529,30 @@ local function RemoveBuffDerivedData(cache, auraData, instID)
 end
 
 local function AddDebuffDerivedData(unit, cache, auraData)
+    -- Per-spell always-secret auras pass the global AurasAreSecret() gate —
+    -- probe BEFORE every truth-test (a secret instID/dispelName throws on
+    -- `not x` / `~= nil`).
+    if IsSecretValue(auraData) then
+        -- @secret-policy: reject-secret-value — opaque AuraData carries no
+        -- usable identity for derived maps.
+        auraData = nil
+    end
     local instID = auraData and auraData.auraInstanceID
+    if IsSecretValue(instID) then
+        -- @secret-policy: reject-secret-ids
+        instID = nil
+    end
     if not instID then return end
 
     local dispelName = auraData.dispelName
-    local hasDispelType = dispelName ~= nil and not IsSecretValue(dispelName)
+    local hasDispelType = false
+    if IsSecretValue(dispelName) then
+        -- @secret-policy: reject-secret-value — secret dispel type is
+        -- INDETERMINATE; never derive "dispellable" from secrecy.
+        hasDispelType = false
+    elseif dispelName ~= nil then
+        hasDispelType = true
+    end
     if hasDispelType then
         cache.allDispellable[instID] = true
     end
@@ -653,17 +716,51 @@ local function ReplaceAuraInBucket(_unit, cache, bucketName, instID, auraData)
     return true
 end
 
+-- Returns GetAuraSlots' outContinuationToken (vararg position 1) so the
+-- caller can page; slots start at position 2 (StrideIndex = 1).
 local function AppendSlotAuras(unit, dst, ...)
     local n = select("#", ...)
     for i = 2, n do
         local slot = select(i, ...)
         if slot then
             local auraData = GetAuraDataBySlot(unit, slot) -- @secret-safe: caller-gated: AppendSlotAuras is only reached via ScanUnitAuras, which bails at its AurasAreSecret gate
-            if auraData and auraData.auraInstanceID then
+            -- Per-spell always-secret auras still pass that gate — probe the
+            -- returned AuraData and its instance id before any truth-test.
+            if IsSecretValue(auraData) then
+                -- @secret-policy: reject-secret-value — opaque entries can't
+                -- be keyed or classified downstream; drop from the scan cache.
+                auraData = nil
+            end
+            local instID = auraData and auraData.auraInstanceID
+            if IsSecretValue(instID) then
+                -- @secret-policy: reject-secret-ids
+                instID = nil
+            end
+            if instID then
                 dst[#dst + 1] = auraData
             end
         end
     end
+    local token
+    if n >= 1 then
+        token = select(1, ...)
+    end
+    if IsSecretValue(token) then
+        -- @secret-policy: reject-secret-value — an unreadable continuation
+        -- token can't drive pagination; stop paging with the partial scan.
+        token = nil
+    end
+    return token
+end
+
+-- Page through GetAuraSlots until the continuation token comes back nil
+-- (UnitAuraDocumentation pagination contract) — a single call returns at
+-- most maxSlots entries and silently truncates heavy raid aura sets.
+local function ScanSlotFilter(unit, dst, filter)
+    local token
+    repeat
+        token = AppendSlotAuras(unit, dst, GetAuraSlots(unit, filter, MAX_SCAN_AURAS, token)) -- @secret-safe: caller-gated: ScanSlotFilter is only reached via ScanUnitAuras, which bails at its AurasAreSecret gate
+    until token == nil
 end
 
 local function ScanUnitAurasBySlot(unit, cache)
@@ -671,29 +768,60 @@ local function ScanUnitAurasBySlot(unit, cache)
         return false
     end
 
-    AppendSlotAuras(unit, cache.debuffs, GetAuraSlots(unit, "HARMFUL", MAX_SCAN_AURAS)) -- @secret-safe: caller-gated: ScanUnitAurasBySlot is only reached via ScanUnitAuras, which bails at its AurasAreSecret gate
-    AppendSlotAuras(unit, cache.buffs, GetAuraSlots(unit, "HELPFUL", MAX_SCAN_AURAS)) -- @secret-safe: caller-gated: same ScanUnitAuras AurasAreSecret gate as the HARMFUL scan above
+    ScanSlotFilter(unit, cache.debuffs, "HARMFUL")
+    ScanSlotFilter(unit, cache.buffs, "HELPFUL")
     return true
+end
+
+-- Copy a raw GetUnitAuras array into a cache bucket, dropping per-spell
+-- always-secret entries: those survive the AurasAreSecret() gate (array
+-- readable ≠ elements readable) and would throw at every downstream
+-- truth-test/map key.
+local function CopyReadableAuras(src, dst)
+    local n = 0
+    for i = 1, #src do
+        local auraData = src[i]
+        if IsSecretValue(auraData) then
+            -- @secret-policy: reject-secret-value — opaque entries are
+            -- unusable for the cache's identity maps; drop from the copy.
+            auraData = nil
+        end
+        if auraData ~= nil then
+            local instID = auraData.auraInstanceID
+            if IsSecretValue(instID) then
+                -- @secret-policy: reject-secret-ids — GetUnitAuras' return
+                -- is ConditionalSecretContents (secret ELEMENTS proven;
+                -- this per-field probe is defense-in-depth for the observed
+                -- readable-struct/secret-scalar shapes). A retained entry
+                -- with a secret instance id can never join the byID/index
+                -- maps, and RemoveAuraFromBucket's reindex walk truth-tests
+                -- this exact field on every retained bucket entry. Drop it,
+                -- matching AppendSlotAuras' slot-path handling.
+                auraData = nil
+            end
+        end
+        if auraData ~= nil then
+            n = n + 1
+            dst[n] = auraData
+        end
+    end
 end
 
 local function ScanUnitAurasLegacy(unit, cache)
     local GetUnitAuras = C_UnitAuras and C_UnitAuras.GetUnitAuras
     if not GetUnitAuras then return false end
 
-    local debuffs = GetUnitAuras(unit, "HARMFUL", MAX_SCAN_AURAS) -- @secret-safe: caller-gated: ScanUnitAurasLegacy is only reached via ScanUnitAuras, which bails at its AurasAreSecret gate
+    -- maxCount is nilable (UnitAuraDocumentation) and GetUnitAuras has no
+    -- continuation token — omit the cap so the full list returns; a literal
+    -- cap here silently dropped aura 41+ on heavy raid aura sets.
+    local debuffs = GetUnitAuras(unit, "HARMFUL") -- @secret-safe: caller-gated: ScanUnitAurasLegacy is only reached via ScanUnitAuras, which bails at its AurasAreSecret gate
     if debuffs then
-        local dst = cache.debuffs
-        for i = 1, #debuffs do
-            dst[i] = debuffs[i]
-        end
+        CopyReadableAuras(debuffs, cache.debuffs)
     end
 
-    local buffs = GetUnitAuras(unit, "HELPFUL", MAX_SCAN_AURAS) -- @secret-safe: caller-gated: same ScanUnitAuras AurasAreSecret gate as the HARMFUL scan above
+    local buffs = GetUnitAuras(unit, "HELPFUL") -- @secret-safe: caller-gated: same ScanUnitAuras AurasAreSecret gate as the HARMFUL scan above
     if buffs then
-        local dst = cache.buffs
-        for i = 1, #buffs do
-            dst[i] = buffs[i]
-        end
+        CopyReadableAuras(buffs, cache.buffs)
     end
     return true
 end
@@ -752,6 +880,14 @@ local function SummaryAddSpell(auraData)
     end
 end
 
+-- INPUT CONTRACT (production): the sole caller chain is the aura router
+-- (core/aura_events.lua) → ProcessUnitAuraSetChange. PayloadIsSecret there
+-- promotes whole-secret payloads/arrays, secret ELEMENTS of all three delta
+-- arrays, and secret identity fields (auraInstanceID/spellId/spellID) of
+-- added auras to the full-update sentinel before any subscriber runs — so
+-- the array walks, field truth-tests, and byID keying below may assume
+-- element-level readability. Any caller that bypasses the router (tests,
+-- future direct wiring) MUST pre-sanitize to the same guarantee.
 local function ApplyAuraDelta(unit, updateInfo)
     local cache = unitAuraCache[unit]
     if not cache or not cache.hasFullScan or type(updateInfo) ~= "table" then
@@ -836,6 +972,14 @@ local function ApplyAuraDelta(unit, updateInfo)
                 if bucketName then
                     if auraStats then auraStats.deltaFreshFetches = auraStats.deltaFreshFetches + 1 end
                     local freshAura = GetAuraByInstanceID(unit, instID)
+                    -- GetAuraDataByAuraInstanceID is SecretWhenUnitAuraRestricted:
+                    -- a per-spell always-secret aura returns WHOLE-secret
+                    -- AuraData even while the global gate is false — probe
+                    -- before the truth-test; opaque = fall back to full scan.
+                    if IsSecretValue(freshAura) then
+                        -- @secret-policy: reject-secret-value
+                        return false
+                    end
                     if not freshAura then
                         return false
                     end
@@ -1016,7 +1160,14 @@ local function FrameRoleGate(frame)
     if not unit then return nil, false end
     local role = UnitGroupRolesAssigned and UnitGroupRolesAssigned(unit) or nil
     if role == "NONE" then role = nil end
-    local isSelf = UnitIsUnit and UnitIsUnit(unit, "player") or false
+    -- Probe before the ==: UnitIsUnit can return a secret under identity
+    -- restriction, and the old `X and call() or false` truth-tested it.
+    local isSelf = false
+    if UnitIsUnit then
+        local raw = UnitIsUnit(unit, "player")
+        if IsSecretValue(raw) then raw = nil end
+        isSelf = raw == true
+    end
     return role, isSelf
 end
 
@@ -1479,16 +1630,42 @@ local function UpdateStripContainers(frame)
     if not frame or not GetFrameUnit(frame) then return end
     if InCombatLockdown() then
         -- Mutation of pre-created containers is 12.1-PTR-legal (SetUnit /
-        -- filters / enable); pcall-guard the whole mutable pass (a surprise
+        -- filters / enable); SafeCall-guard the whole mutable pass (a surprise
         -- combat restriction must not error out of the event handler) and
         -- STILL queue the full pass (creation + reconcile) for regen.
-        pcall(ApplyElementPass, frame, false)
+        ns.SafeCall("best-effort-style", ApplyElementPass, frame, false)
         QueueContainerCombatWork(frame)
         return
     end
     ApplyElementPass(frame, true)
 end
 QUI_GFA.UpdateStripContainers = UpdateStripContainers
+
+-- True when any of this frame's tracked containers was last reconciled
+-- against a live-assist probe value that no longer matches. Judged against
+-- the APPLIED state Sync itself records (_quiAssistApplied, written only
+-- by AuraSlots.Sync/Park) — a reader-side cache cannot track it: config
+-- passes run Sync from roster/settings/regen paths under whatever probe
+-- value holds at that moment. Callers re-run UpdateStripContainers on true.
+function QUI_GFA.TrackedAssistStale(frame)
+    local pool = frame and frame._quiAuraContainers
+    if not pool then return false end
+    local AuraSlots = ns.AuraSlots
+    if not (AuraSlots and AuraSlots.LiveAssistProbe) then return false end
+    local live, probed
+    for i = 1, #pool do
+        local container = pool[i]
+        local applied = container and container._quiAssistApplied
+        if applied ~= nil then
+            if not probed then
+                probed = true
+                live = AuraSlots.LiveAssistProbe(GetFrameUnit(frame)) == true
+            end
+            if live ~= applied then return true end
+        end
+    end
+    return false
+end
 
 -- Disable + hide every aura container on a frame (unit cleared / frame hidden):
 -- retire each (empty groups + park slots + disable + hide). Group/slot mutation
@@ -1516,9 +1693,9 @@ local function DisableStripContainers(frame)
             if inCombat then
                 -- SetEnabled/Hide/park on a pre-created container is combat-
                 -- legal mutation: hide the cleared unit's auras NOW instead of
-                -- showing stale icons all fight; pcall-guard so a surprise
+                -- showing stale icons all fight; SafeCall-guard so a surprise
                 -- restriction can't error out, and reconcile at regen.
-                local ok, complete = pcall(RetireContainer, container, false)
+                local ok, complete = ns.SafeCall("best-effort-style", RetireContainer, container, false)
                 if not ok or not complete then incomplete = true end
             else
                 if not RetireContainer(container, true) then incomplete = true end

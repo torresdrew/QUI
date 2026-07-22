@@ -682,7 +682,7 @@ ApplyFlyoutDirection = function(barKey)
             -- is always given a concrete value now, so the arrow can never get
             -- stuck on a stale direction when toggling AUTO <-> explicit.
             if btn.SetPopupDirection then btn:SetPopupDirection(effectiveDir) end
-            if btn.UpdateFlyout then pcall(btn.UpdateFlyout, btn) end
+            ns.SafeCallMethodIfPresent("best-effort-style", btn, "UpdateFlyout")
         end
     end
 end

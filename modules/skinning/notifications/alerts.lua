@@ -1059,9 +1059,7 @@ local function CreateAlertMover()
         C_Timer.After(0, function()
             if not GroupLootContainer then return end
             local mgr = GroupLootContainer.layoutParent
-            if mgr and mgr.RemoveManagedFrame then
-                pcall(mgr.RemoveManagedFrame, mgr, GroupLootContainer)
-            end
+            ns.SafeCallMethodIfPresent("best-effort-style", mgr, "RemoveManagedFrame", GroupLootContainer)
             GroupLootContainer.ignoreFramePositionManager = true
             GroupLootContainer.ignoreInLayout = true
         end)

@@ -936,13 +936,13 @@ end
 -- CHECK OVERLAY STATE: query API + event-based tracking
 ---------------------------------------------------------------------------
 local function IsOverlayQueryActive(spellID)
-    if _issecretvalue(spellID) then return false end
+    if _issecretvalue(spellID) then return false end -- @secret-policy: reject-secret-ids
     if not spellID or not IsSpellOverlayed then return false end
     return IsSpellOverlayed(spellID) and true or false
 end
 
 IsOverlayed = function(spellID)
-    if _issecretvalue(spellID) then return false end
+    if _issecretvalue(spellID) then return false end -- @secret-policy: reject-secret-ids
     if not spellID then return false end
     -- The SPELL_ACTIVATION_OVERLAY_GLOW_SHOW/HIDE event is Blizzard's
     -- authoritative proc signal (ref-counted into overlayedSpells, cleared on
@@ -1121,7 +1121,7 @@ local _scanGlowVisited = {}
 -- callback captured `visited`, `matched`, and `spellIdToGlowIcons`. State
 -- now lives on module locals; matched is signaled via the return value.
 local function _ProcessGlowIconsForCandidate(spellID, visited)
-    if _issecretvalue(spellID) then return false end
+    if _issecretvalue(spellID) then return false end -- @secret-policy: reject-secret-ids
     local icons = spellIdToGlowIcons[spellID]
     if not icons then return false end
     for i = 1, #icons do

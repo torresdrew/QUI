@@ -1104,6 +1104,24 @@ local loaded_count = 0
 -- pull it in here first. Pure Lua / no dependencies, safe to load standalone;
 -- the main loop loading it again later is harmless (a fresh idempotent table
 -- assignment — this file's shim already captured its own reference).
+-- QUI_Options/shared.lua (GetFontList, CVar helpers) calls ns.SafeCall at
+-- harvest time. That guard lives in QUI.toc (core/safecall.lua), which
+-- should_load_script() does not pull into the main loop, so pre-load it
+-- here or every page whose build() touches those helpers errors out of the
+-- harvest. Pure Lua (issecretvalue/geterrorhandler resolved defensively),
+-- safe to load standalone.
+do
+    local safecall_path = "core/safecall.lua"
+    local probe = io.open(safecall_path, "r")
+    if probe then
+        probe:close()
+        local ok, err = load_script(safecall_path)
+        if not ok then
+            failures[#failures + 1] = { path = safecall_path, error = err }
+        end
+    end
+end
+
 do
     local core_model_path = "core/aura_elements.lua"
     local probe = io.open(core_model_path, "r")

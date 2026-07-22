@@ -443,9 +443,7 @@ function ApplyExtraActionContainerAnchor(holder, offsetX, offsetY, scale)
 
     container.ignoreInLayout = true
     container.ignoreFramePositionManager = true
-    if container.SetIsLayoutFrame then
-        pcall(container.SetIsLayoutFrame, container, false)
-    end
+    ns.SafeCallMethodIfPresent("best-effort-style", container, "SetIsLayoutFrame", false)
 
     -- The managed-frame system honors ignoreFramePositionManager only at
     -- AddManagedFrame time; a container that was already visible before this
@@ -631,9 +629,9 @@ local function EvictZoneAbilityFrame(scale, offsetX, offsetY)
     -- layout pass would SetPoint the protected extra bar; the deferred
     -- regen refresh re-runs the eviction and marks dirty then.
     local container = ExtraAbilityContainer
-    if container and container.MarkDirty then
+    if container then
         if not InCombatLockdown() or inInitSafeWindow then
-            pcall(container.MarkDirty, container)
+            ns.SafeCallMethodIfPresent("defer-ooc", container, "MarkDirty")
         else
             ActionBarsOwned.pendingExtraButtonRefresh = true
         end

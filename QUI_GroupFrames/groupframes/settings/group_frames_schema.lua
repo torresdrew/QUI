@@ -2076,7 +2076,7 @@ local function RenderDispelOverlaySection(sectionHost, ctx)
     end
 
     builder.Header(ns.L["Dispel Overlay"])
-    builder.Description(string.format(ns.L["Dispel overlays, including Blizzard private-dispel markers when available, for %1$s group frames."], groupFrames.sourceLabel))
+    builder.Description(string.format(ns.L["Dispel overlays for %1$s group frames."], groupFrames.sourceLabel))
 
     local dispelCard = builder.Card()
     local dispelRows = {}
@@ -2091,7 +2091,7 @@ local function RenderDispelOverlaySection(sectionHost, ctx)
         refresh()
         UpdateDispelRows()
     end, {
-        description = ns.L["Outline the frame border in the dispel type's color when a dispellable debuff or private-dispel marker is active on the unit."],
+        description = ns.L["Outline the frame border in the dispel type's color when a debuff you can dispel is active on the unit."],
     })
     local borderSizeSlider = gui:CreateFormSlider(dispelCard.frame, nil, 1, 16, 1, "borderSize", dispel, refresh, { deferOnDrag = true }, {
         description = ns.L["Pixel thickness of the dispel border."],

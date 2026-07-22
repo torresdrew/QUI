@@ -89,17 +89,21 @@ local function GetSettings()
 end
 
 -- Strip the "-Realm" suffix from a unit name when the shortenNames setting is
--- on (e.g. "Anya-Stormrage" -> "Anya"). Ambiguate is a C function that's safe
--- to call on a secret-tagged name (the API marks source.name ConditionalSecret)
--- — it passes through anything it can't read, and the value still goes straight
--- to a FontString. We never compare or concatenate the result against a secret
--- here, so the only Lua-side touch is the C call. Returns nil for nil input so
--- callers keep their own "?" / "Unknown" fallback.
+-- on (e.g. "Anya-Stormrage" -> "Anya"). source.name is ConditionalSecret —
+-- probe BEFORE the nil-compare (`secret == nil` throws). A secret name is
+-- returned UNCHANGED so it rides untouched to the FontString sink; callers
+-- must not truth-test/concatenate the result without their own probe.
+-- Returns nil for nil input so callers keep their own "?" fallback.
 local function ShortenName(name)
+    if Helpers and Helpers.IsSecretValue and Helpers.IsSecretValue(name) then
+        return name -- @secret-policy: sink-passthrough
+    end
     if name == nil then return nil end
     local s = GetSettings()
     if s and s.shortenNames and Ambiguate then
-        return Ambiguate(name, "short") or name
+        local short = Ambiguate(name, "short")
+        if short ~= nil then return short end
+        return name
     end
     return name
 end
@@ -133,8 +137,9 @@ QUI_DamageMeter.SortByDescSafe = SortByDescSafe
 -- total stays a plain number (per-source bars carry secrets through for
 -- display). Shared by GetCombinedHealingView / GetCombinedHealingBreakdown.
 local function SafeNumOrZero(v, isSecret)
+    -- Probe BEFORE the nil-compare: `secret == nil` throws.
+    if isSecret and isSecret(v) then return 0 end -- @secret-policy: zero-degrade
     if v == nil then return 0 end
-    if isSecret and isSecret(v) then return 0 end
     return v
 end
 
@@ -145,7 +150,10 @@ local function RankAndMaxAmount(list, isSecret)
     for i, s in ipairs(list) do
         s.rank = i
         local v = s.totalAmount
-        if v and not (isSecret and isSecret(v)) and v > maxAmount then maxAmount = v end
+        -- Probe BEFORE the truth-test: `v and isSecret(v)` throws when v IS
+        -- secret (the leading truth-test evaluates first).
+        local vSecret = isSecret and isSecret(v)
+        if not vSecret and v ~= nil and v > maxAmount then maxAmount = v end
     end
     return maxAmount
 end
@@ -362,13 +370,35 @@ local function SessionKey(sessionType, sessionID)
 end
 QUI_DamageMeter.SessionKey = SessionKey
 
+-- Container fields ride in as plain tables per DamageMeterDocumentation
+-- (non-nilable), but probe anyway: a secret container would throw on the
+-- very first #/ipairs. Secret → treated as empty.
+local function TableOrEmpty(v)
+    if Helpers and Helpers.IsSecretValue and Helpers.IsSecretValue(v) then
+        return {} -- @secret-policy: empty-table-degrade
+    end
+    if type(v) ~= "table" then return {} end
+    return v
+end
+
+-- Amount/duration fields can be SECRET mid-combat and flow to C-side render
+-- sinks untouched; `v or d` truth-tests v — a throw when v is secret — so
+-- only a plain nil takes the default.
+local function AmountOrDefault(v, dflt)
+    if Helpers and Helpers.IsSecretValue and Helpers.IsSecretValue(v) then
+        return v
+    end
+    if v == nil then return dflt end
+    return v
+end
+
 local function NewView(sources, duration, maxAmount, totalAmount)
     Data._generation = Data._generation + 1
     return {
-        duration    = duration or 0,
-        maxAmount   = maxAmount or 0,
-        totalAmount = totalAmount or 0,
-        sources     = sources or {},
+        duration    = AmountOrDefault(duration, 0),
+        maxAmount   = AmountOrDefault(maxAmount, 0),
+        totalAmount = AmountOrDefault(totalAmount, 0),
+        sources     = TableOrEmpty(sources),
         generation  = Data._generation,
     }
 end
@@ -409,8 +439,10 @@ end
 -- or dividing a secret in Lua faults under combat restrictions. Pure helper —
 -- isSecret is injected so it unit-tests under plain Lua.
 local function DerivePerSecond(totalAmount, duration, isSecret)
+    -- Probe BEFORE the nil-compare: mid-combat totalAmount is secret and
+    -- `secret == nil` throws.
+    if isSecret and (isSecret(totalAmount) or isSecret(duration)) then return nil end -- @secret-policy: keep-api-rate
     if totalAmount == nil then return nil end
-    if isSecret and (isSecret(totalAmount) or isSecret(duration)) then return nil end
     if type(duration) ~= "number" or duration <= 0 then return nil end
     return totalAmount / duration
 end
@@ -434,7 +466,9 @@ QUI_DamageMeter.DerivePerSecond = DerivePerSecond
 -- the durations and isSecret are injected so it unit-tests under plain Lua.
 local function ResolveRateDuration(sessionType, apiDuration, combatElapsed, historicalDuration, isSecret, currentType, expiredType)
     local function usable(d)
-        return type(d) == "number" and not (isSecret and isSecret(d)) and d > 0
+        -- Probe first: type() must never see a secret.
+        if isSecret and isSecret(d) then return false end
+        return type(d) == "number" and d > 0
     end
     if expiredType ~= nil and sessionType == expiredType then
         if usable(historicalDuration) then return historicalDuration end
@@ -472,11 +506,20 @@ local function FetchView(sessionType, damageMeterType, sessionID)
         end
         ok, session = pcall(C_DamageMeter.GetCombatSessionFromType, sessionType, damageMeterType)
     end
-    if not ok or type(session) ~= "table" then
+    if not ok then
+        return NewView({}, 0, 0, 0)
+    end
+    -- Probe before type(): a whole-secret session must never reach type()
+    -- (SecretWhenInCombat; field-level NeverSecret markers imply the struct is
+    -- normally traversable, but never hand type() a secret).
+    if Helpers and Helpers.IsSecretValue and Helpers.IsSecretValue(session) then
+        return NewView({}, 0, 0, 0) -- @secret-policy: empty-view-degrade
+    end
+    if type(session) ~= "table" then
         return NewView({}, 0, 0, 0)
     end
 
-    local sources = NormalizeSources(session.combatSources or {})
+    local sources = NormalizeSources(TableOrEmpty(session.combatSources))
 
     -- Duration: prefer our own elapsed timer for live sessions to sidestep
     -- the secret-tagged session.durationSeconds. For historical sessions
@@ -579,7 +622,9 @@ local function IsSecretValue(value)
 end
 
 local function IsIndexableSpellID(spellID)
-    return spellID ~= nil and not IsSecretValue(spellID)
+    -- Probe BEFORE the nil-compare: `secret ~= nil` throws.
+    if IsSecretValue(spellID) then return false end -- @secret-policy: reject-secret-ids
+    return spellID ~= nil
 end
 
 local function ResolveSpellInfo(spellID)
@@ -594,19 +639,38 @@ end
 
 local function NormalizeSpells(rawSpells)
     local out = {}
-    for i, spell in ipairs(rawSpells) do
-        local info = ResolveSpellInfo(spell.spellID)
-        out[i] = {
-            rank             = i,
-            spellID          = spell.spellID,
-            name             = (info and info.name) or spell.creatureName,
-            iconID           = info and info.iconID,
-            totalAmount      = spell.totalAmount,
-            amountPerSecond  = spell.amountPerSecond,
-            hitCount         = spell.hitCount,
-            critCount        = spell.critCount,
-            criticalAmount   = spell.criticalAmount,
-        }
+    local n = 0
+    for i = 1, #rawSpells do
+        local spell = rawSpells[i]
+        -- Probe each element: array-readable ≠ elements-readable — a
+        -- whole-secret combatSpells entry throws on the first field index.
+        if IsSecretValue(spell) then
+            -- @secret-policy: reject-secret-value — an opaque entry carries
+            -- no renderable identity; skip it.
+            spell = nil
+        end
+        if spell ~= nil then
+            n = n + 1
+            local info = ResolveSpellInfo(spell.spellID)
+            -- name may end up the SECRET creatureName (value-copy only —
+            -- renderers must probe before truth-test/concat and route
+            -- secrets to text sinks).
+            local name = info and info.name
+            if not IsSecretValue(name) and name == nil then
+                name = spell.creatureName
+            end
+            out[n] = {
+                rank             = n,
+                spellID          = spell.spellID,
+                name             = name,
+                iconID           = info and info.iconID,
+                totalAmount      = spell.totalAmount,
+                amountPerSecond  = spell.amountPerSecond,
+                hitCount         = spell.hitCount,
+                critCount        = spell.critCount,
+                criticalAmount   = spell.criticalAmount,
+            }
+        end
     end
     return out
 end
@@ -632,13 +696,20 @@ function Data:GetBreakdownView(sessionType, damageMeterType, sourceGUID, sourceC
         ok, src = pcall(C_DamageMeter.GetCombatSessionSourceFromType,
             sessionType, damageMeterType, sourceGUID, sourceCreatureID)
     end
-    if not ok or type(src) ~= "table" then
+    if not ok then
+        return { spells = {}, maxAmount = 0, totalAmount = 0 }
+    end
+    -- Probe before type(): the whole source struct is SecretWhenInCombat.
+    if Helpers and Helpers.IsSecretValue and Helpers.IsSecretValue(src) then
+        return { spells = {}, maxAmount = 0, totalAmount = 0 } -- @secret-policy: empty-table-degrade
+    end
+    if type(src) ~= "table" then
         return { spells = {}, maxAmount = 0, totalAmount = 0 }
     end
     return {
-        spells      = NormalizeSpells(src.combatSpells or {}),
-        maxAmount   = src.maxAmount or 0,
-        totalAmount = src.totalAmount or 0,
+        spells      = NormalizeSpells(TableOrEmpty(src.combatSpells)),
+        maxAmount   = AmountOrDefault(src.maxAmount, 0),
+        totalAmount = AmountOrDefault(src.totalAmount, 0),
     }
 end
 
@@ -662,11 +733,17 @@ end
 local function AggregateSpellsByUnit(combatSpells, isSecret)
     local byName, list = {}, {}
     for _, spell in ipairs(combatSpells or {}) do
-        local det  = spell.combatSpellDetails
+        -- Probe BEFORE indexing/nil-compares: a secret spell entry throws on
+        -- `.combatSpellDetails`, and `x ~= nil` before the probe throws too.
+        if isSecret and isSecret(spell) then spell = nil end -- @secret-policy: reject-secret-value
+        local det  = spell and spell.combatSpellDetails
+        if isSecret and isSecret(det) then det = nil end -- @secret-policy: reject-secret-value
         local name = det and det.unitName
-        local amt  = spell.totalAmount
-        local nameOk = name ~= nil and not (isSecret and isSecret(name))
-        local amtOk  = amt  ~= nil and not (isSecret and isSecret(amt))
+        local amt  = spell and spell.totalAmount
+        local nameSecret = isSecret and isSecret(name)
+        local amtSecret  = isSecret and isSecret(amt)
+        local nameOk = not nameSecret and name ~= nil
+        local amtOk  = not amtSecret and amt ~= nil
         if nameOk and amtOk then
             local e = byName[name]
             if not e then
@@ -720,8 +797,13 @@ local function FetchSourceSpells(sessionType, meterType, sourceGUID, sourceCreat
         ok, src = pcall(C_DamageMeter.GetCombatSessionSourceFromType,
             sessionType, meterType, sourceGUID, sourceCreatureID)
     end
-    if not ok or type(src) ~= "table" then return {} end
-    return src.combatSpells or {}
+    if not ok then return {} end
+    -- Probe before type(): the whole source struct is SecretWhenInCombat.
+    if Helpers and Helpers.IsSecretValue and Helpers.IsSecretValue(src) then
+        return {} -- @secret-policy: empty-table-degrade
+    end
+    if type(src) ~= "table" then return {} end
+    return TableOrEmpty(src.combatSpells)
 end
 
 local function EnemyDamageTakenType()
@@ -769,9 +851,12 @@ function Data:GetPlayerTargetsMap(sessionType, sessionID)
 end
 
 function Data:GetPlayerTargets(sessionType, playerName, sessionID)
-    if playerName == nil then return {} end
+    -- Probe BEFORE the nil compare: `playerName == nil` on a secret name is
+    -- itself the throw (== consumes the secret). issecretvalue(nil) is
+    -- false, so the reorder is behavior-preserving for plain nil.
     local IsSecret = Helpers and Helpers.IsSecretValue
-    if IsSecret and IsSecret(playerName) then return {} end
+    if IsSecret and IsSecret(playerName) then return {} end -- @secret-policy: empty-table-degrade
+    if playerName == nil then return {} end
     return self:GetPlayerTargetsMap(sessionType, sessionID)[playerName] or {}
 end
 
@@ -805,7 +890,10 @@ function Data:GetCombinedHealingView(sessionType, sessionID)
     -- (see PLAYER_REGEN_ENABLED handler) re-runs this merge after GUIDs
     -- become indexable, so the duplicate-row state is transient.
     local function isIndexableKey(v)
-        return v and not (IsSecret and IsSecret(v))
+        -- Probe BEFORE the truth-test: `v and IsSecret(v)` throws when v IS
+        -- secret (the leading truth-test evaluates first).
+        if IsSecret and IsSecret(v) then return false end -- @secret-policy: reject-secret-ids
+        return v ~= nil
     end
     for i, s in ipairs(hView.sources or {}) do
         local copy = {}
@@ -816,12 +904,15 @@ function Data:GetCombinedHealingView(sessionType, sessionID)
     for _, a in ipairs(aView.sources) do
         local existing = isIndexableKey(a.sourceGUID) and byGuid[a.sourceGUID]
         if existing then
-            if existing.totalAmount and a.totalAmount
-                and not (IsSecret and (IsSecret(existing.totalAmount) or IsSecret(a.totalAmount))) then
+            -- Probe BEFORE the truth-tests: leading `x and y and probe` throws
+            -- when either amount is secret. Secret amounts skip the merge this
+            -- tick (unchanged policy; post-combat re-dirty re-runs it).
+            local totSecret = IsSecret and (IsSecret(existing.totalAmount) or IsSecret(a.totalAmount))
+            if not totSecret and existing.totalAmount ~= nil and a.totalAmount ~= nil then
                 existing.totalAmount = existing.totalAmount + a.totalAmount
             end
-            if existing.amountPerSecond and a.amountPerSecond
-                and not (IsSecret and (IsSecret(existing.amountPerSecond) or IsSecret(a.amountPerSecond))) then
+            local psSecret = IsSecret and (IsSecret(existing.amountPerSecond) or IsSecret(a.amountPerSecond))
+            if not psSecret and existing.amountPerSecond ~= nil and a.amountPerSecond ~= nil then
                 existing.amountPerSecond = existing.amountPerSecond + a.amountPerSecond
             end
         else
@@ -865,8 +956,9 @@ function Data:GetCombinedHealingBreakdown(sessionType, sourceGUID, sourceCreatur
     for _, sp in ipairs(aView.spells) do
         local existing = IsIndexableSpellID(sp.spellID) and bySpell[sp.spellID] or nil
         if existing then
-            if existing.totalAmount and sp.totalAmount
-                and not (IsSecret and (IsSecret(existing.totalAmount) or IsSecret(sp.totalAmount))) then
+            -- Probe BEFORE the truth-tests (see GetCombinedHealingView merge).
+            local totSecret = IsSecret and (IsSecret(existing.totalAmount) or IsSecret(sp.totalAmount))
+            if not totSecret and existing.totalAmount ~= nil and sp.totalAmount ~= nil then
                 existing.totalAmount = existing.totalAmount + sp.totalAmount
             end
         else
@@ -899,7 +991,7 @@ end
 -- FormatDuration(seconds) → "M:SS" string, "" when nil/0.
 -- Handles ConditionalSecret values: routes through C_StringUtil when tainted.
 local function FormatDuration(seconds)
-    if not seconds then return "" end
+    -- Probe BEFORE the truth-test: `not seconds` on a secret duration throws.
     -- Secret-value path: arithmetic on secret numbers under taint faults.
     -- Route through C_StringUtil helpers which Blizzard tags
     -- SecretArguments=AllowedWhenTainted. Worst case we render raw seconds
@@ -909,9 +1001,10 @@ local function FormatDuration(seconds)
             local s = C_StringUtil.TruncateWhenZero(seconds)
             return C_StringUtil.WrapString(s, "", "s")
         end
-        return ""
+        return "" -- @secret-policy: empty-text-degrade
     end
     -- Non-secret pure-Lua path:
+    if not seconds then return "" end
     if seconds == 0 then return "" end
     local s = math.floor(seconds)
     local m = math.floor(s / 60)
@@ -969,7 +1062,11 @@ local _formatOpts = {
 }
 
 local function FormatNumber(amount, format)
-    if amount == nil then return "" end
+    -- Probe BEFORE the nil-compare: `secret == nil` throws. A secret amount
+    -- falls through STRAIGHT to the AllowedWhenTainted C formatters (which
+    -- read it C-side and hand back a render-ready string for the SetText
+    -- sink). -- @secret-policy: sink-passthrough
+    if not IsSecretValue(amount) and amount == nil then return "" end
     if format == "complete" then
         return BreakUpLargeNumbers(amount)
     end
@@ -1004,6 +1101,18 @@ local function BuildValueText(primaryVal, secondaryVal, numberFormat, isSecret, 
         secondaryHas = (secondaryStr ~= "")
     end
     if primaryHas and secondaryHas then
+        if primarySecret or secondarySecret then
+            -- Lua `..` on a secret string throws. Compose via WrapString
+            -- (stringViews accept secrets): first ride the secret primary as
+            -- PREFIX around the never-empty plain infix " (", then ride that
+            -- accumulated string as PREFIX around the secondary infix.
+            local WrapString = C_StringUtil and C_StringUtil.WrapString
+            if WrapString then
+                local opened = WrapString(" (", primaryStr, nil)
+                return WrapString(secondaryStr, opened, ")")
+            end
+            return primaryStr -- @secret-policy: drop-secondary-decoration
+        end
         return primaryStr .. " (" .. secondaryStr .. ")"
     elseif primaryHas then
         return primaryStr
@@ -1148,12 +1257,19 @@ local function ComputeBarFill(meterType, source, fillMax, deathsType, isSecret)
         return 0, 1, 1
     end
     -- Check secret BEFORE any nil/<= comparison: comparing a secret value
-    -- against nil or a number faults under combat restrictions.
+    -- against nil or a number faults under combat restrictions. The `or`
+    -- fallbacks must ALSO be probe-gated — `secret or 1` truth-tests the
+    -- secret and throws, defeating the raw-to-widget intent.
     local maxSecret = isSecret and isSecret(fillMax)
     if not maxSecret and (fillMax == nil or fillMax <= 0) then
         return 0, 1, 0
     end
-    return 0, (fillMax or 1), (source.totalAmount or 0)
+    local fm = fillMax
+    if not maxSecret and fm == nil then fm = 1 end
+    local fv = source.totalAmount
+    local fvSecret = isSecret and isSecret(fv)
+    if not fvSecret and fv == nil then fv = 0 end
+    return 0, fm, fv
 end
 QUI_DamageMeter.ComputeBarFill = ComputeBarFill
 
@@ -1378,33 +1494,46 @@ function Window:_AttachRowVisuals(row)
         GameTooltip:SetOwner(rowSelf, "ANCHOR_BOTTOM")
         GameTooltip:ClearLines()
 
-        -- Header colored by class
+        -- GameTooltip:AddLine/AddDoubleLine are NOT secret-accepting sinks
+        -- (undocumented SecretArguments = default-reject) — every value that
+        -- reaches them below must be probed and, when secret, replaced with a
+        -- plain placeholder. -- @secret-policy: placeholder-when-secret
+        local IsSecret = Helpers and Helpers.IsSecretValue
+
+        -- Header colored by class (classFilename is NeverSecret)
         local cr, cg, cb = 1, 1, 1
         if src.classFilename and RAID_CLASS_COLORS and RAID_CLASS_COLORS[src.classFilename] then
             local cc = Helpers.GetClassColorTable(src.classFilename)
             cr, cg, cb = cc.r, cc.g, cc.b
         end
-        GameTooltip:AddLine(ShortenName(src.name) or "?", cr, cg, cb)
+        local headerName = ShortenName(src.name)
+        if IsSecret and IsSecret(headerName) then
+            headerName = "???" -- @secret-policy: placeholder-when-secret
+        end
+        GameTooltip:AddLine(headerName or "?", cr, cg, cb)
 
         if src.classFilename then
             GameTooltip:AddLine(src.classFilename, 0.7, 0.7, 0.7)
         end
 
         local totalLabel, rateLabel = TooltipLabelsForType(rowSelf._damageMeterType or 0)
-        -- Capture secret state BEFORE any equality comparison: comparing a
-        -- secret-tagged string against "" taints execution. AbbreviateNumbers
-        -- propagates the secret tag, so secret amounts must be rendered as-is
-        -- without the "is it empty?" gate.
-        local IsSecret = Helpers and Helpers.IsSecretValue
-        local totalSecret = src.totalAmount and IsSecret and IsSecret(src.totalAmount)
-        local amt = FormatNumber(src.totalAmount, "complete")
-        if totalSecret or (amt ~= "") then
-            GameTooltip:AddDoubleLine(totalLabel .. ":", amt, 1, 1, 1, 1, 1, 1)
+        -- Probe BEFORE any truth-test or equality comparison: the old
+        -- `x and IsSecret(x)` order truth-tested the secret first and threw.
+        local totalSecret = IsSecret and IsSecret(src.totalAmount)
+        if totalSecret then
+            GameTooltip:AddDoubleLine(totalLabel .. ":", "???", 1, 1, 1, 1, 1, 1) -- @secret-policy: placeholder-when-secret
+        else
+            local amt = FormatNumber(src.totalAmount, "complete")
+            if amt ~= "" then
+                GameTooltip:AddDoubleLine(totalLabel .. ":", amt, 1, 1, 1, 1, 1, 1)
+            end
         end
 
         local ps = src.amountPerSecond
-        local psSecret = ps and IsSecret and IsSecret(ps)
-        if ps and (psSecret or ps ~= 0) then
+        local psSecret = IsSecret and IsSecret(ps)
+        if psSecret then
+            GameTooltip:AddDoubleLine((rateLabel or ns.L["Per Second"]) .. ":", "???", 1, 1, 1, 1, 1, 1) -- @secret-policy: placeholder-when-secret
+        elseif ps and ps ~= 0 then
             GameTooltip:AddDoubleLine((rateLabel or ns.L["Per Second"]) .. ":", FormatNumber(ps, "compact"), 1, 1, 1, 1, 1, 1)
         end
 
@@ -1531,7 +1660,16 @@ function Window:_SetRowSource(row, source, maxAmount)
         end
     end
 
-    row.Name:SetText((source.rank or 0) .. ". " .. (ShortenName(source.name) or "?"))
+    -- source.name is ConditionalSecret: ShortenName passes a secret through
+    -- untouched, and Lua `..` / `or "?"` on it throw. Route the secret name
+    -- through the SetFormattedText sink (AllowedWhenTainted, Text aspect)
+    -- with the plain rank composed by the FORMAT string, never by Lua concat.
+    local displayName = ShortenName(source.name)
+    if Helpers and Helpers.IsSecretValue and Helpers.IsSecretValue(displayName) then
+        row.Name:SetFormattedText("%d. %s", source.rank or 0, displayName) -- @secret-policy: sink-passthrough
+    else
+        row.Name:SetText((source.rank or 0) .. ". " .. (displayName or "?"))
+    end
 
     -- Name text color: class-color when enabled and the class is known,
     -- otherwise the configured Row Name color. Set here (per refresh) so the
@@ -1560,8 +1698,15 @@ function Window:_SetRowSource(row, source, maxAmount)
     -- possibly-secret secondary is never inspected — just not passed.
     local numberFormat = ResolveAppearance(windowID, "numberFormat") or "compact"
     local perSecondMode = IsPerSecondType(self.damageMeterType)
-    local primaryVal   = perSecondMode and source.amountPerSecond or source.totalAmount
-    local secondaryVal = perSecondMode and source.totalAmount     or source.amountPerSecond
+    -- if/else, NOT `cond and a or b`: the `or` truth-tests a possibly-secret
+    -- amount and throws mid-combat. Plain field reads are safe; truth-tests
+    -- are not.
+    local primaryVal, secondaryVal
+    if perSecondMode then
+        primaryVal, secondaryVal = source.amountPerSecond, source.totalAmount
+    else
+        primaryVal, secondaryVal = source.totalAmount, source.amountPerSecond
+    end
     if ResolveAppearance(windowID, "showSecondaryValue") == false then
         secondaryVal = nil
     end
@@ -1583,8 +1728,9 @@ function Window:_SetRowSource(row, source, maxAmount)
     -- Push the raw value straight to the widget and let the C side compute the
     -- fill (it reads secret combat values fine). The bar is never blended in
     -- Lua: interpolating the fill would mean arithmetic on the value, which
-    -- faults on secret combat values.
-    row.Bar:SetValue(fillValue or 0)
+    -- faults on secret combat values. No `or 0` fallback here — that would
+    -- truth-test a secret fillValue; ComputeBarFill already returns non-nil.
+    row.Bar:SetValue(fillValue)
 
     -- Bar color: priority is useClassColor → barColorAccent → custom barColor.
     local alpha = ResolveAppearance(windowID, "barFillAlpha") or 1
@@ -1783,8 +1929,11 @@ local function PrepareSourcesForRender(view)
     -- secret during combat). _SetRowSource hands it to the StatusBar widget,
     -- which divides on the C side. Bars are total-based even for per-second
     -- views — the rate has no secret-safe Lua maximum to divide against while
-    -- combat values are still secret.
-    local fillMax = sources[1] and sources[1].totalAmount or 0
+    -- combat values are still secret. No `... and X or 0` here: the trailing
+    -- `or 0` truth-tests the secret amount and throws — probe instead.
+    local first = sources[1]
+    local fillMax = first and first.totalAmount
+    if not IsSecretValue(fillMax) and fillMax == nil then fillMax = 0 end
     return sources, fillMax
 end
 
@@ -1841,7 +1990,7 @@ function Window:_OpenConfigMenu()
         local previousMenu = root:CreateButton(ns.L["Previous"])
         local sessions
         if C_DamageMeter and C_DamageMeter.GetAvailableCombatSessions then
-            local ok, availableSessions = pcall(C_DamageMeter.GetAvailableCombatSessions)
+            local ok, availableSessions = ns.SafeCall("best-effort-style", C_DamageMeter.GetAvailableCombatSessions)
             if ok and type(availableSessions) == "table" then
                 sessions = availableSessions
             end
@@ -2207,9 +2356,7 @@ local function AttachWindowResizeOverlay(overlay, frame, window, windowID)
                 LM:RecordFreeElementPosition(overlay._barKey, frame)
             end
 
-            if window.Refresh then
-                pcall(window.Refresh, window)
-            end
+            ns.SafeCallMethodIfPresent("best-effort-style", window, "Refresh")
 
             -- Re-sync the Layout Mode Frame Size sliders to the dragged size
             -- (they read the live size only at build time otherwise).
@@ -2359,7 +2506,7 @@ do
                         if _G.QUI_ReassertAnchorAfterResize then
                             _G.QUI_ReassertAnchorAfterResize(providerKey)
                         end
-                        if window.Refresh then pcall(window.Refresh, window) end
+                        ns.SafeCallMethodIfPresent("best-effort-style", window, "Refresh")
                     end
 
                     local prevPosOnly = U._layoutModePositionOnly
@@ -2816,7 +2963,15 @@ function Breakdown:_SetSpellRow(row, spell, maxAmount)
         row.Icon:SetTexture("Interface\\Icons\\INV_Misc_QuestionMark")
     end
 
-    row.Name:SetText((spell.rank or 0) .. ". " .. (spell.name or "?"))
+    -- spell.name can be a SECRET creatureName (NormalizeSpells value-copies
+    -- it) — `or "?"` / Lua `..` on it throw; compose via the
+    -- SetFormattedText sink instead.
+    local spellName = spell.name
+    if Helpers and Helpers.IsSecretValue and Helpers.IsSecretValue(spellName) then
+        row.Name:SetFormattedText("%d. %s", spell.rank or 0, spellName) -- @secret-policy: sink-passthrough
+    else
+        row.Name:SetText((spell.rank or 0) .. ". " .. (spellName or "?"))
+    end
     local numberFormat = ResolveAppearance(self.parentWindowID, "numberFormat") or "compact"
     row.Value:SetText(FormatNumber(spell.totalAmount, numberFormat))
 
@@ -2829,7 +2984,8 @@ function Breakdown:_SetSpellRow(row, spell, maxAmount)
     local IsSecret = Helpers and Helpers.IsSecretValue
     local fillMin, fillMaxValue, fillValue = ComputeBarFill(nil, spell, maxAmount, nil, IsSecret)
     row.Bar:SetMinMaxValues(fillMin, fillMaxValue)
-    row.Bar:SetValue(fillValue or 0)
+    -- ComputeBarFill returns non-nil; `or 0` would truth-test a secret fill.
+    row.Bar:SetValue(fillValue)
 
     -- Bar color: inherit parent window's accent or custom color (class color
     -- doesn't apply to spells).
@@ -2865,17 +3021,26 @@ function Breakdown:_SetTargetRow(row, target, maxAmount)
         row.Icon:SetTexture(nil)
     end
 
-    row.Name:SetText(ShortenName(target.name) or "?")
+    -- target.name can be a secret enemyName (PivotPlayerTargets stores it
+    -- as a value) — `or "?"` truth-tests it; route secrets straight to the
+    -- SetText sink instead.
+    local IsSecret = Helpers and Helpers.IsSecretValue
+    local targetName = ShortenName(target.name)
+    if IsSecret and IsSecret(targetName) then
+        row.Name:SetText(targetName) -- @secret-policy: sink-passthrough
+    else
+        row.Name:SetText(targetName or "?")
+    end
     local numberFormat = ResolveAppearance(self.parentWindowID, "numberFormat") or "compact"
     row.Value:SetText(FormatNumber(target.totalAmount, numberFormat))
 
     -- Aggregated target totals are plain Lua numbers (secret amounts were
     -- skipped during aggregation), but route through the widget anyway for
-    -- consistency with the rest of the meter.
-    local IsSecret = Helpers and Helpers.IsSecretValue
+    -- consistency with the rest of the meter. ComputeBarFill returns non-nil;
+    -- `or 0` would truth-test a secret fill value.
     local fillMin, fillMaxValue, fillValue = ComputeBarFill(nil, target, maxAmount, nil, IsSecret)
     row.Bar:SetMinMaxValues(fillMin, fillMaxValue)
-    row.Bar:SetValue(fillValue or 0)
+    row.Bar:SetValue(fillValue)
 
     -- Bar color: class color for known players, else parent accent / custom.
     local alpha = ResolveAppearance(self.parentWindowID, "barFillAlpha") or 1
@@ -2925,9 +3090,15 @@ function Breakdown:Refresh()
             self.source.sourceGUID, self.source.sourceCreatureID, sessionID)
     end
 
-    -- Title: "Damage Done by <Name>"
+    -- Title: "Damage Done by <Name>". A secret name can't ride Lua concat —
+    -- compose via the SetFormattedText sink instead.
     local label = LabelForType(damageMeterType)
-    self.TitleLabel:SetText(label .. " by " .. (ShortenName(self.source.name) or "?"))
+    local titleName = ShortenName(self.source.name)
+    if Helpers and Helpers.IsSecretValue and Helpers.IsSecretValue(titleName) then
+        self.TitleLabel:SetFormattedText("%s by %s", label, titleName) -- @secret-policy: sink-passthrough
+    else
+        self.TitleLabel:SetText(label .. " by " .. (titleName or "?"))
+    end
 
     local visibleCount = math.min(#view.spells, BREAKDOWN_POOL_SIZE)
     for i = 1, visibleCount do
@@ -3046,11 +3217,14 @@ function WindowManager:Despawn(windowID)
     -- Phase 3: also unregister from Layout Mode + the frame resolver registry
     -- so the dead window doesn't continue to claim a slot in the layout list.
     local key = LayoutKey(windowID)
+    -- Loud by design: key is our own "damageMeter_window_<id>" string (never
+    -- secret-tainted), so a failure here is our bug, not an expected/secret
+    -- class. Let it crash at destroy time instead of leaking silently.
     if ns.QUI_LayoutMode and ns.QUI_LayoutMode.UnregisterElement then
-        pcall(ns.QUI_LayoutMode.UnregisterElement, ns.QUI_LayoutMode, key)
+        ns.QUI_LayoutMode.UnregisterElement(ns.QUI_LayoutMode, key)
     end
     if _G.QUI_UnregisterFrameResolver then
-        pcall(_G.QUI_UnregisterFrameResolver, key)
+        _G.QUI_UnregisterFrameResolver(key)
     end
     local Registry = ns.Settings and ns.Settings.Registry
     if Registry and type(Registry.UnregisterLookupKey) == "function" then

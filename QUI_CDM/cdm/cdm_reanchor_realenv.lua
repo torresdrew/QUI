@@ -266,7 +266,7 @@ local function _BarReskinWork(live, settings)
             local sid = entry and (entry.spellID or entry.overrideSpellID or entry.id)
             local nm
             if type(sid) == "number" and C_Spell and C_Spell.GetSpellName then
-                local ok, n = pcall(C_Spell.GetSpellName, sid)
+                local ok, n = ns.SafeCall("best-effort-style", C_Spell.GetSpellName, sid)
                 if ok and type(n) == "string" then nm = n end
             end
             if nm then
@@ -460,17 +460,13 @@ function CDMReanchorRealEnv.BuildEnv(ctx)
         --    land on the CHILD frames only -- the live item frame keeps its
         --    zero strata/level-write posture. pcall'd so an unexpected
         --    region-shaped key can never break the decorate pass.
-        local lvlOk, baseLvl = pcall(frame.GetFrameLevel, frame)
+        local lvlOk, baseLvl = ns.SafeCallMethod("best-effort-style", frame, "GetFrameLevel")
         if lvlOk and type(baseLvl) == "number" then
             local textLvl = baseLvl + 23
             local apps = frame.Applications
-            if apps and apps.SetFrameLevel then
-                pcall(apps.SetFrameLevel, apps, textLvl)
-            end
+            ns.SafeCallMethodIfPresent("best-effort-style", apps, "SetFrameLevel", textLvl)
             local charge = frame.ChargeCount
-            if charge and charge.SetFrameLevel then
-                pcall(charge.SetFrameLevel, charge, textLvl)
-            end
+            ns.SafeCallMethodIfPresent("best-effort-style", charge, "SetFrameLevel", textLvl)
         end
         -- QUI border as an OWN child texture of the live icon. SAME skin-border recipe as
         -- positionShell (GetSkinBorderColor + Core:Pixels + SetColorTexture, anchored
@@ -930,7 +926,9 @@ function CDMReanchorRealEnv.BuildEnv(ctx)
         local function present(id)
             if type(id) ~= "number" or _issecretvalue(id) then return false end
             local ok, aura = pcall(query, id)
-            return (ok and aura ~= nil and not _issecretvalue(aura)) or false
+            -- Probe BEFORE the nil compare: a secret AuraData return is a
+            -- successful pcall, and `<secret> ~= nil` throws.
+            return (ok and not _issecretvalue(aura) and aura ~= nil) or false
         end
         if present(entry.overrideSpellID) or present(entry.spellID) or present(entry.id) then
             return true
@@ -982,10 +980,12 @@ function CDMReanchorRealEnv.BuildEnv(ctx)
             end
             return (Layout.BuildBuffGridLayout and Layout.BuildBuffGridLayout(s, icons, opts)) or nil
         end or nil,
-        -- Active-mode filter inputs. frameIsActive reads the live Blizzard item's
-        -- CooldownViewerItemMixin:IsActive(), issecretvalue-guarded + fail-open (a
-        -- combat-secret active state returns true so a possibly-active frame is never
-        -- hidden). inCombat resolves the "combat" display mode.
+        -- Active-mode filter inputs. frameIsActive is an ACTION POLICY
+        -- ("keep this frame visible"), not activity truth: it reads the live
+        -- Blizzard item's CooldownViewerItemMixin:IsActive(), and a SECRET
+        -- state is INDETERMINATE — never converted into "active"; the
+        -- keep-visible policy just ensures a possibly-active frame is never
+        -- hidden. inCombat resolves the "combat" display mode.
         frameIsActive = function(frame, containerKey, entry)
             if not frame then return true end
             -- BuffIcon: IsActive is authoritative. It reads Blizzard's plain
@@ -1013,7 +1013,7 @@ function CDMReanchorRealEnv.BuildEnv(ctx)
                 if frame.IsShown then
                     local ok, shown = pcall(frame.IsShown, frame)
                     if not ok then return true end
-                    if _issecretvalue(shown) then return true end
+                    if _issecretvalue(shown) then return true end -- @secret-policy: keep-visible-when-unknown
                     return shown and true or false
                 end
                 return true
@@ -1021,7 +1021,7 @@ function CDMReanchorRealEnv.BuildEnv(ctx)
             if not frame.IsActive then return true end
             local ok, active = pcall(frame.IsActive, frame)
             if not ok then return true end
-            if _issecretvalue(active) then return true end
+            if _issecretvalue(active) then return true end -- @secret-policy: keep-visible-when-unknown
             return active and true or false
         end,
         -- Aura ground truth for non-Blizzard/custom owned fallbacks (see the

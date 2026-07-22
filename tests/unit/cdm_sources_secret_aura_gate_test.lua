@@ -9,6 +9,13 @@
 -- getters (RequiresNonSecretAura — return secrets, never throw) must NOT be
 -- gated.
 
+-- Task 7: InstallSecretStub installs the __QUI_SECRET_* instrumentation
+-- helpers the LoadInstrumented chunk below routes through. The test's own
+-- issecretvalue (next lines) OVERRIDES the sentinel stub afterwards; the
+-- helpers late-bind _G.issecretvalue at call time, so they compose.
+local SecretSentinel = dofile("tests/helpers/secret_sentinel.lua")
+SecretSentinel.InstallSecretStub()
+
 local secretValues = {}
 function issecretvalue(value) return secretValues[value] == true end
 
@@ -54,8 +61,10 @@ C_UnitAuras = {
 }
 
 local ns = {}
-local loadChunk = dofile("tests/helpers/load_cdm_consolidated_chunk.lua")
-loadChunk("QUI_CDM/cdm/cdm_sources.lua", "cdm_sources.lua")("QUI", ns)
+-- Instrumented load (Task 7): cdm_sources.lua exists standalone, so the
+-- consolidated-chunk helper reduced to a plain load — replaced with the
+-- instrumented loader (truthiness/==/# on sentinels now THROW inside it).
+assert(SecretSentinel.LoadInstrumented("QUI_CDM/cdm/cdm_sources.lua"))("QUI", ns)
 local S = ns.CDMSources
 
 ---------------------------------------------------------------------------
@@ -119,7 +128,7 @@ do
     local ns2 = {}
     local savedSecrets = C_Secrets
     C_Secrets = nil
-    loadChunk("QUI_CDM/cdm/cdm_sources.lua", "cdm_sources.lua")("QUI", ns2)
+    assert(SecretSentinel.LoadInstrumented("QUI_CDM/cdm/cdm_sources.lua"))("QUI", ns2)
     C_Secrets = savedSecrets
     assert(ns2.CDMSources.AreAurasSecret() == false, "T6: no C_Secrets -> never secret")
     assert(ns2.CDMSources.QueryAuraDuration("player", 1685) == durationToken,

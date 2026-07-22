@@ -20,9 +20,7 @@ end
 
 -- Safely iterate a ScrollBox's visible frames
 local function SafeForEachFrame(scrollBox, callback)
-    if scrollBox and scrollBox.ForEachFrame then
-        pcall(scrollBox.ForEachFrame, scrollBox, callback)
-    end
+    ns.SafeCallMethodIfPresent("best-effort-style", scrollBox, "ForEachFrame", callback)
 end
 
 -- Style each pooled ScrollBox row as it's acquired (shared by all lists).
@@ -137,7 +135,7 @@ local function SkinBrowseOrders(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
             -- No-op when filters are default (the X correctly stays hidden — it
             -- only appears when there is something to reset).
             if dropdown.ValidateResetState then
-                C_Timer.After(0, function() pcall(dropdown.ValidateResetState, dropdown) end)
+                C_Timer.After(0, function() ns.SafeCallMethod("best-effort-style", dropdown, "ValidateResetState") end)
             end
         end
     end

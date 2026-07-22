@@ -99,6 +99,12 @@ local QUICore = {
     GetPixelSize = function() return 1 end,
 }
 local ns = { Addon = QUICore, Helpers = {}, LSM = { Fetch = function() return nil end } }
+-- Task 1f: datatexts.lua now routes swallow-pcalls through ns.SafeCall.
+-- Additive stub (T1d/T1e precedent) — same semantics as core/safecall.lua's
+-- bare pcall passthrough, no classification needed for this test's scope.
+ns.SafeCall = function(_policy, fn, ...) return pcall(fn, ...) end
+ns.SafeCallMethod = function(_policy, obj, name, ...) return pcall(function(...) return obj[name](obj, ...) end, ...) end
+ns.SafeCallMethodIfPresent = function(_policy, obj, name, ...) if obj == nil then return nil end local okP, m = pcall(function() return obj[name] end) if not okP then return false end if m == nil then return nil end return pcall(m, obj, ...) end
 -- datatexts.lua indexes ns.L["..."] at load (post-i18n); install identity resolver.
 local installLocale = dofile(ROOT .. "tests/helpers/locale.lua")
 installLocale(ns)

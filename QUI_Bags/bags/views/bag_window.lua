@@ -909,7 +909,7 @@ function BagWindow.Refresh()
                 dep:SetFrameLevel(btn:GetFrameLevel() + 4)
                 dep:RegisterForClicks("RightButtonUp")
                 if InCombatLockdown()
-                    or not pcall(dep.SetPassThroughButtons, dep, "LeftButton") then
+                    or not ns.SafeCallMethod("defer-ooc", dep, "SetPassThroughButtons", "LeftButton") then
                     dep._quiPassThroughFailed = true
                 end
                 dep:SetScript("OnClick", function()
@@ -994,7 +994,7 @@ function BagWindow.Refresh()
             local dep = btn._quiDepositCatcher
             -- retry the pass-through arming if creation happened in combat
             if dep._quiPassThroughFailed and not InCombatLockdown() then
-                if pcall(dep.SetPassThroughButtons, dep, "LeftButton") then
+                if ns.SafeCallMethod("defer-ooc", dep, "SetPassThroughButtons", "LeftButton") then
                     dep._quiPassThroughFailed = nil
                 end
             end

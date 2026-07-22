@@ -406,7 +406,7 @@ local function MigLog(fmt, ...)
     if not _G.QUI_MIGRATION_LOG then _G.QUI_MIGRATION_LOG = {} end
     local line
     if select("#", ...) > 0 then
-        local ok, msg = pcall(string.format, fmt, ...)
+        local ok, msg = ns.SafeCall("report", string.format, fmt, ...)
         line = ok and msg or fmt
     else
         line = fmt

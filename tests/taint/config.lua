@@ -14,6 +14,10 @@ local DEFAULT_IGNORE_PATHS = {
 
 local DEFAULT_COVERAGE = {
     secretWhenCooldownsRestricted = true,
+    -- Generic 12.1 class: ANY SecretWhen*Restricted flag (aura, spellcast,
+    -- stats, identity, power, health-max, comparison, threat, ...). The
+    -- cooldown key above predates this and is kept for back-compat configs.
+    secretWhenRestricted = true,
     isSecretReturn = true,
     secretArguments_restricted = true,
     -- Requires* precondition flags (FailureMode=Error) — feeds the analyzer's
@@ -33,6 +37,7 @@ local function defaults()
         ignore_paths = { _unpack(DEFAULT_IGNORE_PATHS) },
         coverage = {
             secretWhenCooldownsRestricted = DEFAULT_COVERAGE.secretWhenCooldownsRestricted,
+            secretWhenRestricted = DEFAULT_COVERAGE.secretWhenRestricted,
             isSecretReturn = DEFAULT_COVERAGE.isSecretReturn,
             secretArguments_restricted = DEFAULT_COVERAGE.secretArguments_restricted,
             preconditions = DEFAULT_COVERAGE.preconditions,
@@ -46,6 +51,12 @@ local function defaults()
         extra_safe_sinks = {},
         extra_unwraps = {},
         clean_fields = {},
+        -- Module-local guard WRAPPERS (`local function IsSecret(v) return
+        -- Helpers.IsSecretValue(v) end`). The analyzer's alias resolution
+        -- covers bare copies (`local isv = issecretvalue`) but is
+        -- non-interprocedural, so wrapper FUNCTIONS must be registered by
+        -- name to participate in guard proofs.
+        extra_guards = {},
         extra_restriction_gates = {},
         restriction_preconditions = {},
         precondition_only_paths = {},

@@ -88,10 +88,10 @@ end
 local function SetRowName(row, unit)
     -- Group-frames playbook: pcall + secret guard; on secret keep old text.
     local okName, name = pcall(UnitName, unit)
-    if okName and name and not Helpers.IsSecretValue(name) then
+    if okName and not Helpers.IsSecretValue(name) and name then
         local classColor
         local okClass, _, class = pcall(UnitClass, unit)
-        if okClass and class and not Helpers.IsSecretValue(class) then
+        if okClass and not Helpers.IsSecretValue(class) and class then
             classColor = RAID_CLASS_COLORS and RAID_CLASS_COLORS[class]
         end
         row.name:SetText(name)
@@ -110,10 +110,17 @@ local function UpdateBar(unit)
     -- Forward-only: secrets ride into the StatusBar untouched.
     local okMax, maxPower = pcall(UnitPowerMax, unit, 0)
     local okCur, curPower = pcall(UnitPower, unit, 0)
-    if okMax and okCur and maxPower ~= nil and curPower ~= nil then
-        pcall(row.bar.SetMinMaxValues, row.bar, 0, maxPower)
-        pcall(row.bar.SetValue, row.bar, curPower)
+    if not okMax or not okCur then return end
+    -- Presence probe: an opaque value is present and rides raw into the
+    -- StatusBar sink; only a readable nil skips the update.
+    if not Helpers.IsSecretValue(maxPower) then
+        if maxPower == nil then return end
     end
+    if not Helpers.IsSecretValue(curPower) then
+        if curPower == nil then return end
+    end
+    ns.SafeCallMethod("sink-forward", row.bar, "SetMinMaxValues", 0, maxPower)
+    ns.SafeCallMethod("sink-forward", row.bar, "SetValue", curPower)
 end
 
 local function RebuildRoster()

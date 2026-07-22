@@ -1083,14 +1083,12 @@ function M.functions.createHooks(root, entry)
 		if not anchor then return nil end
 		stripAnchors[anchor] = true
 		local strip
-		local ok = pcall(function()
+		local ok = ns.SafeCall("chain-next", function()
 			strip = CreateFrame("Frame", nil, anchor, "PanelDragBarTemplate")
 		end)
 		if not ok or not strip then strip = CreateFrame("Frame", nil, anchor) end
-		pcall(function()
-			strip.onDragStartCallback = function() return false end
-			strip.onDragStopCallback = function() return false end
-		end)
+		strip.onDragStartCallback = function() return false end
+		strip.onDragStopCallback = function() return false end
 		local function layoutStrip()
 			strip:SetAllPoints(anchor)
 			if strip.SetFrameStrata and anchor.GetFrameStrata then

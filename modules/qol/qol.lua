@@ -471,7 +471,7 @@ local function BuildMicroButtonSet()
         if btn then set[btn] = true end
     end
     for i = 1, #extraAlertAnchorResolvers do
-        local ok, btn = pcall(extraAlertAnchorResolvers[i])
+        local ok, btn = ns.SafeCall("bulkhead", extraAlertAnchorResolvers[i])
         if ok and btn then set[btn] = true end
     end
     return set
@@ -731,7 +731,7 @@ local function RefreshHelpTipSweeper()
     -- QUI's reparented microbar can leave Blizzard HelpTip glow geometry in a
     -- runaway state, and in that mode we only hide the oversized glow visual.
     for _, ev in ipairs(helpTipSweepEvents) do
-        pcall(helpTipSweepFrame.RegisterEvent, helpTipSweepFrame, ev)
+        ns.SafeCallMethod("best-effort-style", helpTipSweepFrame, "RegisterEvent", ev)
     end
     -- Immediate sweep for any HelpTips currently showing
     SweepMicroButtonHelpTips()
@@ -1127,21 +1127,21 @@ end
 
 local function HasMythicPlusActiveSignal()
     if C_MythicPlus and type(C_MythicPlus.IsMythicPlusActive) == "function" then
-        local ok, active = pcall(C_MythicPlus.IsMythicPlusActive)
+        local ok, active = ns.SafeCall("chain-next", C_MythicPlus.IsMythicPlusActive)
         if ok and active == true then
             return true
         end
     end
 
     if C_ChallengeMode and type(C_ChallengeMode.GetActiveChallengeMapID) == "function" then
-        local ok, mapID = pcall(C_ChallengeMode.GetActiveChallengeMapID)
+        local ok, mapID = ns.SafeCall("chain-next", C_ChallengeMode.GetActiveChallengeMapID)
         if ok and mapID ~= nil then
             return true
         end
     end
 
     if C_ChallengeMode and type(C_ChallengeMode.IsChallengeModeActive) == "function" then
-        local ok, active = pcall(C_ChallengeMode.IsChallengeModeActive)
+        local ok, active = ns.SafeCall("chain-next", C_ChallengeMode.IsChallengeModeActive)
         if ok and active == true then
             return true
         end

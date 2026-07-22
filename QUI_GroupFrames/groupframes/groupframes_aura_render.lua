@@ -41,6 +41,9 @@ local ADDON_NAME, ns = ...
 local R = ns.QUI_GroupFrameAuraRender or {}
 ns.QUI_GroupFrameAuraRender = R
 
+local IsSecretValue = ns.Helpers and ns.Helpers.IsSecretValue
+    or function() return false end
+
 local function CJKFont(fs, p, s, f)
     if ns.Helpers and ns.Helpers.ApplyFontWithFallback then
         ns.Helpers.ApplyFontWithFallback(fs, p, s, f)
@@ -163,13 +166,11 @@ end
 -- are hidden and the swipe alone conveys time.
 local function ConfigureCountdown(cd, showText)
     if not cd then return end
-    if cd.SetHideCountdownNumbers then
-        pcall(cd.SetHideCountdownNumbers, cd, showText ~= true)
-    end
-    if showText and cd.SetCountdownFormatter then
+    ns.SafeCallMethodIfPresent("sink-forward", cd, "SetHideCountdownNumbers", showText ~= true)
+    if showText then
         local formatter = GetAuraCountdownFormatter()
         if formatter then
-            pcall(cd.SetCountdownFormatter, cd, formatter)
+            ns.SafeCallMethodIfPresent("sink-forward", cd, "SetCountdownFormatter", formatter)
         end
     end
 end
@@ -177,9 +178,9 @@ end
 -- Style the native countdown FontString (this IS the duration text) per the
 -- element's font size. Mirrors the buff-border StyleIcon countdown styling.
 local function StyleCountdownText(cd, fontSize)
-    if not cd or not cd.GetCountdownFontString then return end
-    local ok, cdText = pcall(cd.GetCountdownFontString, cd)
-    if not ok or not cdText or not cdText.SetFont then return end
+    if not cd then return end
+    local ok, cdText = ns.SafeCallMethodIfPresent("sink-forward", cd, "GetCountdownFontString")
+    if not ok or not cdText then return end
     CJKFont(cdText, GetFontPath(fontSize), fontSize or 9, "OUTLINE")
 end
 
@@ -487,9 +488,7 @@ local function ReleaseIconFrame(item)
     item:ClearAllPoints()
     if item.cooldown then
         item.cooldown:Clear()
-        if item.cooldown.SetHideCountdownNumbers then
-            pcall(item.cooldown.SetHideCountdownNumbers, item.cooldown, true)
-        end
+        ns.SafeCallMethodIfPresent("sink-forward", item.cooldown, "SetHideCountdownNumbers", true)
     end
     if item.icon then
         item.icon:Show()
@@ -618,9 +617,11 @@ local function BindBarDurationObject(bar)
     end
 
     -- A readable, non-secret, non-positive duration means "no live timer".
+    -- Probe FIRST: `<secret> ~= nil` throws, so the IsSecretValue check must
+    -- short-circuit ahead of the nil compare.
     local readableDuration = auraData.duration
-    if readableDuration ~= nil
-        and not IsSecretValue(readableDuration)
+    if not IsSecretValue(readableDuration)
+        and readableDuration ~= nil
         and SafeToNumber(readableDuration, 0) <= 0
     then
         return false
@@ -782,7 +783,11 @@ local function ApplyDebuffTypeBorder(icon, unit, element, auraData, borderCurve)
     local instID = auraData and auraData.auraInstanceID
     if not instID then return false end
     local ok, color = pcall(C_UnitAuras.GetAuraDispelTypeColor, unit, instID, borderCurve)
-    if not ok or not color then return false end
+    if not ok then return false end
+    -- Probe before the truth-test: a secret color OBJECT throws on `not
+    -- color` and on any method call — no border rather than a crash.
+    if IsSecretValue(color) then return false end -- @secret-policy: reject-secret-value
+    if not color then return false end
     ShowTypeBorder(icon, color)
     return true
 end
@@ -1294,17 +1299,24 @@ function R.RefreshUpdatedIcons(self, frames, nFrames, unit, updatedAuraInstanceI
                             if hit then
                                 local dObj = GetDuration(unit, instID) -- @secret-safe: caller-gated — the fast-update (1910) and mixed-delta (cacheUpdated) paths both bail behind AurasAreSecret before reseating
                                 local cd = icon.cooldown
-                                if cd and cd.SetCooldownFromDurationObject and dObj then
-                                    pcall(cd.SetCooldownFromDurationObject, cd, dObj, true)
+                                if cd and dObj then
+                                    ns.SafeCallMethodIfPresent("sink-forward", cd, "SetCooldownFromDurationObject", dObj, true)
                                 end
                                 -- Linear swipe (sub-project D): SetTimerDuration is a snapshot,
                                 -- so reseat it on a duration delta too (mirrors the radial cd
                                 -- reseat above and the detached-bar reseat in RefreshUpdatedBars).
                                 -- Only shown for linear-mode icons; _cfgElement carries reverseSwipe.
                                 local sb = icon._swipeBar
-                                if sb and sb:IsShown() and sb.SetTimerDuration and dObj then
+                                if sb and dObj then
+                                    -- IsShown/SetTimerDuration lookups inside the
+                                    -- closure: forbidden aspects PROPAGATE to children
+                                    -- of the engine icon, so even the guard reads throw.
                                     local el = icon._cfgElement
-                                    pcall(sb.SetTimerDuration, sb, dObj, 0, (el and el.reverseSwipe and 0) or 1)
+                                    ns.SafeCall("sink-forward", function()
+                                        if sb:IsShown() then
+                                            sb:SetTimerDuration(dObj, 0, (el and el.reverseSwipe and 0) or 1)
+                                        end
+                                    end)
                                 end
                             end
                         end
@@ -1503,7 +1515,15 @@ function R.SyncHealthBarTint(self, frame, healthPct, canShow)
     overlay:SetStatusBarColor(r, g, b, a)
     overlay:Show()
 
-    local targetValue = healthPct or 0
+    -- healthPct comes from UnitHealthPercent (isSecretReturn); `healthPct or 0`
+    -- would truth-test the secret and throw. Probe first: a secret value flows
+    -- untouched to the SetValue sink below (and StartHealthTintAnimation probes
+    -- again); only a readable nil degrades to 0. Short-circuit keeps `== nil`
+    -- off the secret path.
+    local targetValue = healthPct
+    if not IsSecretValue(targetValue) and targetValue == nil then
+        targetValue = 0
+    end
     if not overlay._quiTintWasShown then
         overlay._quiTintWasShown = true
         StartHealthTintAnimation(overlay, frame._quiAuraRenderHealthTintAnimation, targetValue, 1)

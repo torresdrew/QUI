@@ -123,7 +123,7 @@ do
 
     local function DecodePotentialSecretBoolean(value)
         if Helpers.IsSecretValue(value) then
-            return nil
+            return nil -- @secret-policy: reject-secret-value
         end
         if value == true then return true end
         if value == false then return false end
@@ -251,7 +251,7 @@ do
         local start = cdInfo.startTime
         local duration = cdInfo.duration
         if Helpers.IsSecretValue(start) or Helpers.IsSecretValue(duration) then
-            return nil, nil
+            return nil, nil -- @secret-policy: reject-secret-value
         end
         if type(start) ~= "number" or type(duration) ~= "number" then
             return nil, nil
@@ -377,7 +377,7 @@ do
     local function ChargeInfoMayHaveCharges(chargeInfo)
         local maxCharges = chargeInfo.maxCharges
         if Helpers.IsSecretValue(maxCharges) then
-            return true
+            return true -- @secret-policy: probe-charges-when-unknown
         end
         maxCharges = Helpers.SafeToNumber(maxCharges, 0) or 0
         return maxCharges > 1
@@ -540,9 +540,9 @@ do
                 button.lossOfControlCooldown:Clear()
             end
         else
-            -- Pre-12.0.5 fallback: delegate to Blizzard's handler (pcall for safety)
+            -- Pre-12.0.5 fallback: delegate to Blizzard's handler (SafeCall for safety)
             if ActionButton_UpdateCooldown then
-                pcall(ActionButton_UpdateCooldown, button)
+                ns.SafeCall("compat", ActionButton_UpdateCooldown, button)
             end
         end
     end

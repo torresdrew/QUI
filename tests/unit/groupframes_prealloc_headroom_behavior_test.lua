@@ -127,7 +127,13 @@ local function MakeContainer()
     return c
 end
 
-local ns = {}
+local ns = {
+    -- core/aura_glue.lua now routes its pcall guards through ns.SafeCall
+    -- (Task 45d); mirror the ns-mock stub precedent used across the suite.
+    SafeCall = function(_policy, fn, ...) return pcall(fn, ...) end,
+    SafeCallMethod = function(_policy, obj, name, ...) return pcall(function(...) return obj[name](obj, ...) end, ...) end,
+    SafeCallMethodIfPresent = function(_policy, obj, name, ...) if obj == nil then return nil end local okP, m = pcall(function() return obj[name] end) if not okP then return false end if m == nil then return nil end return pcall(m, obj, ...) end,
+}
 assert(loadfile("core/aura_theme.lua"))("QUI", ns)
 assert(loadfile("core/aura_skin.lua"))("QUI", ns)
 assert(loadfile("core/aura_elements.lua"))("QUI", ns)

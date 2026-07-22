@@ -303,10 +303,10 @@ local function UpdateAuras(frame)
     if not frame or not QUI_UF.GetFrameUnit(frame) then return end
     if InCombatLockdown() then
         -- Mutation of pre-created containers is 12.1-PTR-legal (SetUnit / filters
-        -- / enable); pcall-guard the whole mutable pass (a surprise combat
+        -- / enable); SafeCall-guard the whole mutable pass (a surprise combat
         -- restriction must not error out of the event handler) and STILL queue
         -- the full pass (creation + reconcile) for regen.
-        pcall(ApplyElementPass, frame, false)
+        ns.SafeCall("best-effort-style", ApplyElementPass, frame, false)
         AuraGlue = AuraGlue or ns.AuraGlue
         if AuraGlue then
             AuraGlue.QueueRegenWork(frame, function(f) ApplyElementPass(f, true) end)

@@ -56,9 +56,9 @@ local function drainPendingCombatConsumerOps()
     pendingCombatConsumerOps = {}
     for originKey, bySlot in pairs(snapshot) do
         for _, op in pairs(bySlot) do
-            -- pcall: one throwing consumer must not drop the remaining
-            -- latched operations.
-            pcall(op, originKey)
+            -- one throwing consumer must not drop the remaining latched
+            -- operations — bulkhead isolates each per-owner op.
+            ns.SafeCall("bulkhead", op, originKey)
         end
     end
 end
@@ -477,10 +477,8 @@ function QUI_Anchoring:PositionFrame(frame, anchorTarget, anchorPoint, offsetX, 
                                    VALID_ANCHOR_POINTS[sourceAnchorPoint2] and
                                    VALID_ANCHOR_POINTS[targetAnchorPoint2]
 
-    -- Safely clear points (use pcall to handle secure frames)
-    local success = pcall(function()
-        frame:ClearAllPoints()
-    end)
+    -- Safely clear points (handles secure frames)
+    local success = ns.SafeCallMethod("best-effort-style", frame, "ClearAllPoints")
     if not success then
         -- Frame is secure/managed - defer the call
         C_Timer.After(0, function()
@@ -488,9 +486,7 @@ function QUI_Anchoring:PositionFrame(frame, anchorTarget, anchorPoint, offsetX, 
                 pendingAnchoredFrameUpdateAfterCombat = true
                 return
             end
-            if frame and frame.ClearAllPoints then
-                pcall(frame.ClearAllPoints, frame)
-            end
+            ns.SafeCallMethodIfPresent("best-effort-style", frame, "ClearAllPoints")
         end)
         return false
     end
@@ -683,8 +679,7 @@ anchoredFramesCombatFrame:SetScript("OnEvent", function()
             -- anchor guards, ApplyFrameAnchor, PositionFrame) deferred a
             -- POSITION RE-STAMP; the retired legacy-registry walk that used
             -- to sit here no-oped over an empty table and lost it.
-            local applyOK, status = pcall(
-                QUI_Anchoring.ApplyAllFrameAnchors, QUI_Anchoring,
+            local applyOK, status = ns.SafeCallMethod("best-effort-style", QUI_Anchoring, "ApplyAllFrameAnchors",
                 false, drainPendingCombatConsumerOps)
             if not applyOK then
                 -- The required full reconcile did not complete. Keep both the
@@ -732,9 +727,9 @@ layoutUpdateFrame:SetScript("OnEvent", function()
             -- layout pass overwrites QUI's positions for frames not in the
             -- anchoring system
             local RefreshUnitFrames = _G.QUI_RefreshUnitFrames
-            if RefreshUnitFrames then pcall(RefreshUnitFrames) end
+            if RefreshUnitFrames then ns.SafeCall("bulkhead", RefreshUnitFrames) end
             local RefreshGroupFrames = _G.QUI_RefreshGroupFrames
-            if RefreshGroupFrames then pcall(RefreshGroupFrames) end
+            if RefreshGroupFrames then ns.SafeCall("bulkhead", RefreshGroupFrames) end
         end
     end)
 end)
@@ -854,7 +849,7 @@ if EditModeManagerFrame then
                 QUI_Anchoring:ApplyAllFrameAnchors()
             end
             local RefreshUnitFrames = _G.QUI_RefreshUnitFrames
-            if RefreshUnitFrames then pcall(RefreshUnitFrames) end
+            if RefreshUnitFrames then ns.SafeCall("bulkhead", RefreshUnitFrames) end
         end)
     end)
 end
@@ -943,8 +938,8 @@ local function ReanchorFrameToHolder(key)
     if InCombatLockdown() then return end
     local frame = state.frame
     state.hookingSetPoint = true
-    pcall(frame.ClearAllPoints, frame)
-    pcall(frame.SetPoint, frame, "TOPLEFT", state.holder, "TOPLEFT", 0, 0)
+    ns.SafeCallMethod("best-effort-style", frame, "ClearAllPoints")
+    ns.SafeCallMethod("best-effort-style", frame, "SetPoint", "TOPLEFT", state.holder, "TOPLEFT", 0, 0)
     state.hookingSetPoint = false
     MirrorHolderSize(key)
 end
@@ -1004,15 +999,13 @@ local function InstallManagedReparent(def)
     -- by UIParentManagedFrameContainerMixin. Calling / setting them is a
     -- plain Lua-table op, not a protected call.
     local currentParent = frame.GetParent and frame:GetParent() or nil
-    if currentParent and currentParent.RemoveManagedFrame then
-        pcall(currentParent.RemoveManagedFrame, currentParent, frame)
-    end
+    ns.SafeCallMethodIfPresent("best-effort-style", currentParent, "RemoveManagedFrame", frame)
     -- Prevent Blizzard from re-adding the frame on show / zone transition.
     frame.ignoreFramePositionManager = true
 
     -- Reparent the Blizzard frame into the holder
     state.hookingSetParent = true
-    pcall(frame.SetParent, frame, holder)
+    ns.SafeCallMethod("best-effort-style", frame, "SetParent", holder)
     state.hookingSetParent = false
 
     -- Pin the frame to the holder's TOPLEFT
@@ -1046,7 +1039,7 @@ local function InstallManagedReparent(def)
                 if InCombatLockdown() then return end
                 if state.frame:GetParent() == state.holder then return end
                 state.hookingSetParent = true
-                pcall(state.frame.SetParent, state.frame, state.holder)
+                ns.SafeCallMethod("best-effort-style", state.frame, "SetParent", state.holder)
                 state.hookingSetParent = false
                 QueueManagedReanchor(def.key)
             end)
@@ -1073,7 +1066,7 @@ local function EnsureAllManagedReparents()
     if installedAny and QUI_Anchoring and QUI_Anchoring.ApplyAllFrameAnchors then
         C_Timer.After(0, function()
             if InCombatLockdown() then return end
-            pcall(QUI_Anchoring.ApplyAllFrameAnchors, QUI_Anchoring)
+            ns.SafeCallMethod("best-effort-style", QUI_Anchoring, "ApplyAllFrameAnchors")
         end)
     end
 end
@@ -1691,14 +1684,35 @@ end
 -- Also hooks SetAlpha: some frames (e.g. unit frames controlled by HUD
 -- visibility) fade to alpha 0 instead of calling Hide(). We detect when
 -- the effective alpha crosses the ~0 threshold and re-evaluate anchors.
+-- Member-existence probe body: the resolved anchor target can be a forbidden
+-- frame or a 68675 DenyTaintedAccess child, where even the method LOOKUP
+-- throws — the same hazard SafeCallMethod protects at the call sites below,
+-- so the guard's own lookups must run inside pcall too (round-18b: the
+-- receiver gets indexed in GUARD position, not just at the call).
+local function ProbeVisibilityHookMembers(frame)
+    return frame.HookScript ~= nil, frame.SetAlpha ~= nil
+end
+
+-- GetAlpha lookup + call in one protected step (pre-indexing frame.GetAlpha
+-- outside the pcall re-performs the throwing lookup the pcall exists for).
+local function InvokeGetAlpha(frame)
+    return frame:GetAlpha()
+end
+
 local function InstallVisibilityHook(frame)
-    if not frame or not frame.HookScript then return end
+    -- Probe order: a secret frame value throws on truth-test and table-index
+    -- alike, so issecretvalue runs before the nil check and the map lookup.
+    if (nsHelpers and nsHelpers.IsSecretValue and nsHelpers.IsSecretValue(frame))
+        or frame == nil then
+        return
+    end
+    local okProbe, canHook, wantAlpha = pcall(ProbeVisibilityHookMembers, frame)
+    if not okProbe or not canHook then return end
     local hooked = _visibilityHooked[frame]
     if not hooked then
         hooked = {}
         _visibilityHooked[frame] = hooked
     end
-    local wantAlpha = frame.SetAlpha ~= nil
     if hooked.onShow and hooked.onHide and (hooked.alpha or not wantAlpha) then
         return
     end
@@ -1714,23 +1728,33 @@ local function InstallVisibilityHook(frame)
     -- success, tracked separately, so a failed install retries on the next
     -- call instead of being permanently marked hooked.
     if not hooked.onShow then
-        local ok, success = pcall(frame.HookScript, frame, "OnShow", onVisibilityChanged)
+        local ok, success = ns.SafeCallMethod("best-effort-style", frame, "HookScript", "OnShow", onVisibilityChanged)
         if ok and success then hooked.onShow = true end
     end
     if not hooked.onHide then
-        local ok, success = pcall(frame.HookScript, frame, "OnHide", onVisibilityChanged)
+        local ok, success = ns.SafeCallMethod("best-effort-style", frame, "HookScript", "OnHide", onVisibilityChanged)
         if ok and success then hooked.onHide = true end
     end
     -- Detect alpha-based visibility changes (HUD fade system)
     if wantAlpha and not hooked.alpha then
         -- pcall: GetAlpha can throw on a tainted stack (same hazard as the
         -- hideWithParent visibility read). A throw counts as unknown alpha.
-        local okAlpha, curAlpha = pcall(frame.GetAlpha, frame)
+        local okAlpha, curAlpha = pcall(InvokeGetAlpha, frame)
         -- Secret numbers pass the type check but error on comparison.
         local curAlphaSecret = not okAlpha
             or (nsHelpers and nsHelpers.IsSecretValue and nsHelpers.IsSecretValue(curAlpha))
-        local wasAlphaHidden = (not curAlphaSecret) and type(curAlpha) == "number" and curAlpha < 0.01
-        local okHook = pcall(hooksecurefunc, frame, "SetAlpha", function(self, alpha)
+        -- An UNREADABLE initial alpha stays nil — collapsing it to false
+        -- ("visible") makes an actually-hidden frame's first readable
+        -- SetAlpha(1) look like no transition, so the anchor pass never
+        -- re-runs and a hidden child stays parked after the one-shot
+        -- unreadable retry expires. nil compares unequal to both booleans,
+        -- so the first readable callback below always fires once and then
+        -- latches normal edge detection.
+        local wasAlphaHidden
+        if not curAlphaSecret and type(curAlpha) == "number" then
+            wasAlphaHidden = curAlpha < 0.01
+        end
+        local okHook = ns.SafeCall("best-effort-style", hooksecurefunc, frame, "SetAlpha", function(self, alpha)
             if type(alpha) ~= "number" then return end
             -- Secret numbers pass the type check but error on comparison.
             -- The HUD curve override (hud_visibility.lua) passes secret
@@ -2485,7 +2509,7 @@ local function ApplyAutoSizing(frame, settings, parentFrame, key)
             end
             local adjustedWidth = parentWidth + (settings.widthAdjust or 0)
             if adjustedWidth > 0 then
-                pcall(function() frame:SetWidth(adjustedWidth) end)
+                ns.SafeCallMethod("best-effort-style", frame, "SetWidth", adjustedWidth)
                 -- Resource bars use fragmented power displays (runes, essence)
                 -- that size from bar:GetWidth(). Trigger a module refresh so
                 -- fragments re-layout to match the new width.
@@ -2504,10 +2528,8 @@ local function ApplyAutoSizing(frame, settings, parentFrame, key)
         -- Hook parent OnSizeChanged so auto-width stays in sync when parent resizes
         if not hookedParentFrames[parentFrame] then
             hookedParentFrames[parentFrame] = true
-            pcall(function()
-                parentFrame:HookScript("OnSizeChanged", function()
-                    DebouncedReapplyOverrides()
-                end)
+            ns.SafeCallMethod("best-effort-style", parentFrame, "HookScript", "OnSizeChanged", function()
+                DebouncedReapplyOverrides()
             end)
         end
     elseif settings.autoWidth and CASTBAR_ANCHOR_KEYS[key] then
@@ -2516,7 +2538,7 @@ local function ApplyAutoSizing(frame, settings, parentFrame, key)
         -- keep a stale width from a previous anchor target.
         local fallbackWidth = GetCastbarConfiguredWidth(key)
         if fallbackWidth then
-            pcall(function() frame:SetWidth(fallbackWidth) end)
+            ns.SafeCallMethod("best-effort-style", frame, "SetWidth", fallbackWidth)
         end
     end
 
@@ -2529,17 +2551,15 @@ local function ApplyAutoSizing(frame, settings, parentFrame, key)
             if iconHeight and iconHeight > 0 then
                 local adjustedHeight = iconHeight + (settings.heightAdjust or 0)
                 if adjustedHeight > 0 then
-                    pcall(function() frame:SetHeight(adjustedHeight) end)
+                    ns.SafeCallMethod("best-effort-style", frame, "SetHeight", adjustedHeight)
                 end
             end
 
             -- Hook viewer OnSizeChanged so auto-height stays in sync when CDM resizes
             if not hookedParentFrames[viewer] then
                 hookedParentFrames[viewer] = true
-                pcall(function()
-                    viewer:HookScript("OnSizeChanged", function()
-                        DebouncedReapplyOverrides()
-                    end)
+                ns.SafeCallMethod("best-effort-style", viewer, "HookScript", "OnSizeChanged", function()
+                    DebouncedReapplyOverrides()
                 end)
             end
         end
@@ -2602,8 +2622,8 @@ local function AnchorOrPin(key, frame, pt, parentFrame, relPt, x, y)
     -- never anchor to a forbidden one.
     local live, mover = LiveAuraContainerFor(key)
     if live then
-        pcall(live.ClearAllPoints, live)
-        pcall(live.SetPoint, live, pt, parentFrame, relPt, x, y)
+        ns.SafeCallMethod("best-effort-style", live, "ClearAllPoints")
+        ns.SafeCallMethod("best-effort-style", live, "SetPoint", pt, parentFrame, relPt, x, y)
         if mover then
             local moverParent = parentFrame
             if moverParent and moverParent._quiHostMover then
@@ -2764,9 +2784,9 @@ function QUI_Anchoring:ApplyFrameAnchor(key, settings)
                     or not ns.Helpers.FrameMutationRestricted(resolved)
                 if canMutate then
                     if type(resolved) == "table" and not resolved.GetObjectType then
-                        for _, frame in ipairs(resolved) do pcall(frame.Hide, frame) end
+                        for _, frame in ipairs(resolved) do ns.SafeCallMethod("best-effort-style", frame, "Hide") end
                     else
-                        pcall(resolved.Hide, resolved)
+                        ns.SafeCallMethod("best-effort-style", resolved, "Hide")
                     end
                 end
                 hideWithParentHidden[key] = true
@@ -2778,9 +2798,9 @@ function QUI_Anchoring:ApplyFrameAnchor(key, settings)
                     or not ns.Helpers.FrameMutationRestricted(resolved)
                 if canMutate then
                     if type(resolved) == "table" and not resolved.GetObjectType then
-                        for _, frame in ipairs(resolved) do pcall(frame.Show, frame) end
+                        for _, frame in ipairs(resolved) do ns.SafeCallMethod("best-effort-style", frame, "Show") end
                     else
-                        pcall(resolved.Show, resolved)
+                        ns.SafeCallMethod("best-effort-style", resolved, "Show")
                     end
                 end
                 hideWithParentHidden[key] = nil
@@ -3011,7 +3031,7 @@ function QUI_Anchoring:ApplyFrameAnchor(key, settings)
             end
             if targetParent and not FrameAlreadyAtPosition(frame, targetPt, targetParent, targetRelPt, targetX, targetY) then
                 _editModeReapplyGuard = true
-                pcall(SmoothSetPoint, frame, targetPt, targetParent, targetRelPt, targetX, targetY)
+                ns.SafeCall("best-effort-style", SmoothSetPoint, frame, targetPt, targetParent, targetRelPt, targetX, targetY)
                 _editModeReapplyGuard = false
             end
         end
@@ -3044,7 +3064,7 @@ function QUI_Anchoring:ApplyFrameAnchor(key, settings)
         end
         if not FrameAlreadyAtPosition(resolved, "CENTER", parentFrame, "CENTER", centerX, centerY) then
             _editModeReapplyGuard = true
-            pcall(AnchorOrPin, key, resolved, "CENTER", parentFrame, "CENTER", centerX, centerY)
+            ns.SafeCall("best-effort-style", AnchorOrPin, key, resolved, "CENTER", parentFrame, "CENTER", centerX, centerY)
             _editModeReapplyGuard = false
         end
     else
@@ -3077,7 +3097,7 @@ function QUI_Anchoring:ApplyFrameAnchor(key, settings)
             )
             if not FrameAlreadyAtPosition(resolved, "CENTER", parentFrame, "CENTER", centerX, centerY) then
                 _editModeReapplyGuard = true
-                pcall(AnchorOrPin, key, resolved, "CENTER", parentFrame, "CENTER", centerX, centerY)
+                ns.SafeCall("best-effort-style", AnchorOrPin, key, resolved, "CENTER", parentFrame, "CENTER", centerX, centerY)
                 _editModeReapplyGuard = false
             end
         else
@@ -3090,7 +3110,7 @@ function QUI_Anchoring:ApplyFrameAnchor(key, settings)
             local live = LiveAuraContainerFor(key)
             if live or not FrameAlreadyAtPosition(resolved, point, parentFrame, relative, offsetX, offsetY) then
                 _editModeReapplyGuard = true
-                pcall(AnchorOrPin, key, resolved, point, parentFrame, relative, offsetX, offsetY)
+                ns.SafeCall("best-effort-style", AnchorOrPin, key, resolved, point, parentFrame, relative, offsetX, offsetY)
                 _editModeReapplyGuard = false
             end
         end
@@ -3322,8 +3342,9 @@ function QUI_Anchoring:ApplyAllFrameAnchors(force, afterApply)
         -- hits a still-unreadable link re-arms its own fresh retry episode.
         if replayConsumerOps then
             for _, entry in ipairs(replayConsumerOps) do
-                -- pcall: one throwing consumer must not drop the rest.
-                pcall(entry.op, entry.key)
+                -- one throwing consumer must not drop the rest — bulkhead
+                -- isolates each per-owner replay op.
+                ns.SafeCall("bulkhead", entry.op, entry.key)
             end
         end
     end, function(err)
@@ -3436,9 +3457,9 @@ _G.QUI_ForceReapplyFrameAnchor = function(key)
     local resolved = ResolveApplyFrameForKey(key)
     if resolved then
         if type(resolved) == "table" and not resolved.GetObjectType then
-            for _, frame in ipairs(resolved) do pcall(frame.ClearAllPoints, frame) end
+            for _, frame in ipairs(resolved) do ns.SafeCallMethod("best-effort-style", frame, "ClearAllPoints") end
         else
-            pcall(resolved.ClearAllPoints, resolved)
+            ns.SafeCallMethod("best-effort-style", resolved, "ClearAllPoints")
         end
     end
     QUI_Anchoring:ApplyFrameAnchor(key, settings)
@@ -3521,7 +3542,7 @@ _G.QUI_ReanchorFramePositionOnly = function(key)
     end
 
     local H = nsHelpers or ns.Helpers
-    pcall(function()
+    ns.SafeCall("best-effort-style", function()
         H.BaseClearAllPoints(resolved)
         if useSizeStable then
             local centerX, centerY = ComputeCenterOffsetsForAnchor(
@@ -3676,10 +3697,11 @@ end
 
 local function RunAnchoredFramesPostHooks(...)
     for _, hook in ipairs(anchoredFramesPostHooks) do
-        local ok, err = pcall(hook.fn, ...)
-        if not ok then
-            print("|cFFFF6666QUI:|r anchored-frames hook error [" .. hook.name .. "]: " .. tostring(err))
-        end
+        -- ns.SafeCall's bulkhead policy probes err for secrecy BEFORE any
+        -- tostring/format and already reports+dedups via the classified
+        -- error handler; the manual print(tostring(err)) this replaced
+        -- skipped that probe (hooks here can touch secret aura/unit data).
+        ns.SafeCall("bulkhead", hook.fn, ...)
     end
 end
 

@@ -68,10 +68,10 @@ assert(src:find("function ApplyStripContainers(frame)", 1, true),
 assert(src:find("ApplyElementPass(frame, not InCombatLockdown())", 1, true),
     "ApplyStripContainers replays the full pass (OOC at regen)")
 
--- UpdateStripContainers: combat = pcall'd mutable pass now + STILL queue.
+-- UpdateStripContainers: combat = SafeCall'd mutable pass now + STILL queue.
 local update = slice("local function UpdateStripContainers(frame)")
-assert(update:find("pcall(ApplyElementPass, frame, false)", 1, true),
-    "UpdateStripContainers must pcall the mutation-only pass immediately in combat")
+assert(update:find('ns.SafeCall("best-effort-style", ApplyElementPass, frame, false)', 1, true),
+    "UpdateStripContainers must SafeCall-guard the mutation-only pass immediately in combat")
 assert(update:find("QueueContainerCombatWork(frame)", 1, true),
     "UpdateStripContainers must STILL queue the full pass for regen (self-heal)")
 assert(update:find("ApplyElementPass(frame, true)", 1, true),
@@ -84,13 +84,13 @@ assert(retire:find("AuraGlue.RunConfigPass", 1, true) and retire:find("AuraSlots
 assert(retire:find("SetEnabled(false)", 1, true) and retire:find(":Hide()", 1, true),
     "retire disables + hides the container")
 
--- DisableStripContainers: retire every pooled container; combat pcall-guards
+-- DisableStripContainers: retire every pooled container; combat SafeCall-guards
 -- the live retire and still queues a regen replay.
 local disable = slice("local function DisableStripContainers(frame)")
 assert(disable:find("frame._quiAuraContainers", 1, true),
     "DisableStripContainers iterates the per-element pool")
-assert(disable:find("pcall(RetireContainer, container, false)", 1, true),
-    "DisableStripContainers must pcall the live retire in combat")
+assert(disable:find('ns.SafeCall("best-effort-style", RetireContainer, container, false)', 1, true),
+    "DisableStripContainers must SafeCall-guard the live retire in combat")
 assert(disable:find("RetireContainer(container, true)", 1, true),
     "DisableStripContainers retires directly OOC")
 assert(disable:find("QueueContainerCombatWork(frame)", 1, true),

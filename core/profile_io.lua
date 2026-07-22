@@ -126,6 +126,20 @@ local function ValidateImportTree(value, label, state, depth)
     return true
 end
 
+-- Deliberately dual-typed settings: defaults declare one type but the runtime
+-- legitimately stores another, so the strict shape check must accept both (a
+-- mismatch here would make the sanitizer strip a genuine setting on import).
+-- dandersFrames.<container>.absolutePoint — defaults ship `false` (container
+-- never explicitly positioned); modules/integrations/dandersframes.lua writes
+-- an anchor-point STRING ("CENTER") once the container is dragged, and
+-- discriminates with type(cfg.absolutePoint) == "string".
+local DUAL_TYPE_PATHS = {}
+for _, containerKey in ipairs({ "party", "raid", "pinned1", "pinned2" }) do
+    DUAL_TYPE_PATHS[("profile.dandersFrames.%s.absolutePoint"):format(containerKey)] = {
+        boolean = true, string = true,
+    }
+end
+
 local function ValidateTableTypeShapeDetailed(candidate, schema, path, errors, depth)
     if #errors >= MAX_DETAIL_TYPE_MISMATCHES then return end
     depth = depth or 0
@@ -142,12 +156,15 @@ local function ValidateTableTypeShapeDetailed(candidate, schema, path, errors, d
             local keyPath = ("%s.%s"):format(path or "profile", tostring(key))
 
             if schemaType ~= candidateType then
-                table.insert(errors, {
-                    kind = "type_mismatch",
-                    path = keyPath,
-                    expected = schemaType,
-                    actual = candidateType,
-                })
+                local allowedTypes = DUAL_TYPE_PATHS[keyPath]
+                if not (allowedTypes and allowedTypes[candidateType]) then
+                    table.insert(errors, {
+                        kind = "type_mismatch",
+                        path = keyPath,
+                        expected = schemaType,
+                        actual = candidateType,
+                    })
+                end
             elseif schemaType == "table" then
                 ValidateTableTypeShapeDetailed(candidateValue, schemaValue, keyPath, errors, depth + 1)
             end
@@ -943,14 +960,14 @@ local function GetTrackerEntryResolvedName(entry)
 
     if entry.type == "item" then
         if C_Item and C_Item.GetItemNameByID then
-            local ok, itemName = pcall(C_Item.GetItemNameByID, entryID)
+            local ok, itemName = ns.SafeCall("chain-next", C_Item.GetItemNameByID, entryID)
             if ok and type(itemName) == "string" and itemName ~= "" then
                 return itemName
             end
         end
 
         if GetItemInfo then
-            local ok, itemName = pcall(GetItemInfo, entryID)
+            local ok, itemName = ns.SafeCall("chain-next", GetItemInfo, entryID)
             if ok and type(itemName) == "string" and itemName ~= "" then
                 return itemName
             end
@@ -961,14 +978,14 @@ local function GetTrackerEntryResolvedName(entry)
 
     if entry.type == "spell" then
         if C_Spell and C_Spell.GetSpellName then
-            local ok, spellName = pcall(C_Spell.GetSpellName, entryID)
+            local ok, spellName = ns.SafeCall("chain-next", C_Spell.GetSpellName, entryID)
             if ok and type(spellName) == "string" and spellName ~= "" then
                 return spellName
             end
         end
 
         if GetSpellInfo then
-            local ok, spellName = pcall(GetSpellInfo, entryID)
+            local ok, spellName = ns.SafeCall("chain-next", GetSpellInfo, entryID)
             if ok and type(spellName) == "string" and spellName ~= "" then
                 return spellName
             end

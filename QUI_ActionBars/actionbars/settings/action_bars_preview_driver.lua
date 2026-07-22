@@ -149,9 +149,13 @@ end
 
 local IsPreviewSecretValue = IsSecretValue
 
+-- ACTION POLICY, not a truth claim: returns "route this value to the text
+-- sink". A SECRET value is INDETERMINATE (it may wrap an empty string) —
+-- it routes to SetText so the C side renders whatever it truly is; only
+-- readable emptiness is treated as no-display.
 local function HasPreviewTextValue(value)
     if IsSecretValue(value) then
-        return true
+        return true -- @secret-policy: route-to-text-sink
     end
     if value == nil then return false end
     return value ~= ""

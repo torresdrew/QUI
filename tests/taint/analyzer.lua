@@ -30,6 +30,18 @@
 -- chrome) before broad aspect_paths can be enabled; see tests/.taintrc.lua.
 -- Handler factories with arbitrary interprocedural control/data flow remain
 -- outside this intrafile analyzer; direct returned closures are modeled.
+--
+-- ROUND-13/13b (2026-07-18, Drew's "secret-to-state collapse" audit): new
+-- <secret-collapse> rule — guard-secret-dominated branches flag literal
+-- returns and literal member/index state writes; the only suppression is
+-- `-- @secret-policy: <name>` (a named ACTION POLICY), `@secret-safe` does
+-- not apply to this sink. Unknown METHOD consumers now default-reject
+-- (matching the existing FUNCTION default), with a sink allowlist
+-- generated from the api-index instead of the hand-kept registry. Known
+-- non-goals (call-shaped Show()/Hide(), literal-through-local laundering,
+-- stored-boolean guards, untaint-then-fall-through, non-interprocedural
+-- FUNCTION consumers) are enumerated in tests/.taintrc.lua rather than
+-- silently accepted.
 
 local Parser = dofile("tests/taint/parser/init.lua")
 local Annotations = dofile("tests/taint/annotations.lua")
@@ -3423,6 +3435,55 @@ local function analyzeGuard(cond, registry)
         end
     end
 
+    -- All-guard OR-chain (round-12): `Guard(x) or Guard(y) or Guard(z)` —
+    -- the canonical multi-value probe bail (`if RSV(a) or RSV(b) then
+    -- return nil end`). Condition FALSE means EVERY disjunct was false,
+    -- i.e. every probed value proved non-secret — exactly untaint-else
+    -- semantics (else/elseif/fall-through). The taken branch proves only
+    -- "some disjunct true", so no untaint-then. ANY non-guard-call
+    -- disjunct disqualifies the shape (a mixed chain's later disjuncts
+    -- prove nothing about values the earlier guards didn't probe).
+    if not negated and inner and inner.AstType == "BinopExpr" and inner.Op == "or" then
+        local disjuncts = {}
+        local function flattenOr(n)
+            n = stripParens(n)
+            if type(n) == "table" and n.AstType == "BinopExpr" and n.Op == "or" then
+                flattenOr(n.Lhs)
+                flattenOr(n.Rhs)
+            else
+                disjuncts[#disjuncts + 1] = n
+            end
+        end
+        flattenOr(inner)
+        local locals, refs = {}, {}
+        for _, d in ipairs(disjuncts) do
+            d = stripParens(d)
+            local isGuardCall = false
+            if type(d) == "table" and d.AstType == "CallExpr" then
+                local gname = callTargetName(d.Base)
+                if gname and isGuardName(gname, registry) then
+                    isGuardCall = true
+                    for _, a in ipairs(d.Arguments or {}) do
+                        if isVarRef(a) then
+                            locals[#locals + 1] = a.Name
+                        elseif chainRefKeyFwd then
+                            local rawKey = chainRefKeyFwd(a)
+                            if rawKey then
+                                refs[#refs + 1] = canonChainKeyFwd
+                                    and canonChainKeyFwd(rawKey) or rawKey
+                            end
+                        end
+                    end
+                end
+            end
+            if not isGuardCall then return nil end
+        end
+        if #locals > 0 or #refs > 0 then
+            return { kind = "untaint-else", locals = locals, refs = refs }
+        end
+        return nil
+    end
+
     -- Probe idiom (round-6, tightened round-7): `issecretvalue and
     -- issecretvalue(x)` — the RIGHTMOST conjunct is the guard call; every
     -- leading conjunct must be a dotted prefix of the guard's own call chain
@@ -4637,10 +4698,49 @@ walkExpr = function(expr, taintSet, fieldTaintSet, findings, registry, filePath)
                 return true
             end
         end
-        -- Non-source, non-builtin call: still recurse into arguments
+        -- Non-source, non-builtin call: recurse into arguments. Round-13
+        -- default-reject (backlog item 2): a tainted value handed to an
+        -- UNDOCUMENTED method consumer — or to a documented API whose
+        -- SecretArguments forbids tainted callers — leaves the taint model
+        -- with no evidence it reaches a C sink, so it flags instead of
+        -- traversing silently. Plain UNDOCUMENTED function calls stay
+        -- traversal-only: unique local helpers resolve via intra-file
+        -- summaries above, and cross-file helpers are the documented
+        -- non-interprocedural boundary (hand-audit; see .taintrc header).
         if expr.Arguments then
-            for _, a in ipairs(expr.Arguments) do
-                walkExpr(a, taintSet, fieldTaintSet, findings, registry, filePath)
+            local nArgs = #expr.Arguments
+            for i, a in ipairs(expr.Arguments) do
+                local argHadSource = walkExpr(a, taintSet, fieldTaintSet, findings, registry, filePath)
+                if argHadSource and isProtectedCallExpr(a)
+                    and (i < nArgs or a.AstType == "Parentheses") then
+                    argHadSource = false
+                end
+                if name and (argHadSource
+                    or isValueTainted(a, taintSet, fieldTaintSet, registry)) then
+                    local restriction
+                    local rejects = false
+                    if kind == "method" then
+                        restriction = registry:docArgRestrictionMethod(
+                            getMethodNameFromQualified(name))
+                        rejects = true
+                    else
+                        restriction = registry:docArgRestrictionFunction(name)
+                        rejects = restriction ~= nil
+                    end
+                    if rejects then
+                        emit(findings, filePath, nodeLine(expr), 1,
+                            "<consumer:" .. name .. ">", "<tainted-local>",
+                            restriction
+                            and ("tainted value passed to " .. name
+                                .. " — documented SecretArguments="
+                                .. restriction
+                                .. ": tainted code cannot pass secrets here")
+                            or ("tainted value passed to unknown method consumer "
+                                .. name .. " — not an index-documented"
+                                .. " secret-accepting sink; route through a"
+                                .. " documented C sink or probe first"))
+                    end
+                end
             end
         end
         return false
@@ -7145,6 +7245,118 @@ walkStatements = function(stmts, taintSet, fieldTaintSet, findings, registry,
             local remainingSecretEvents = fnEventCtx and copyEventSet(
                 fnEventCtx.activeSecretEvents or fnEventCtx.secretEvents) or nil
 
+            -- Round-13b (Drew's 12d canon): a guard-secret-dominated branch
+            -- may route the opaque value to a documented C sink or
+            -- reject/defer — it must NOT manufacture ordinary truth/
+            -- presence/activity. Literal returns and literal state writes in
+            -- the region flag <secret-collapse>; deliberate policies carry
+            -- `-- @secret-policy: <name>` (the ONLY suppression that works
+            -- on this sink — @secret-safe deliberately does not).
+            -- Known non-goals (documented in the .taintrc header): bare
+            -- Show()/Hide() calls in the region, literals laundered through
+            -- a local, stored-boolean guards.
+            -- 60-upvalue rule: these closures capture ONLY names already
+            -- referenced by walkStatements (emit, nodeLine, stripParens are
+            -- existing upvalues; findings/filePath are parameters) — zero
+            -- new upvalues on the walker.
+            local function collapseLiteralish(e)
+                e = stripParens(e)
+                if type(e) ~= "table" then return false end
+                local at = e.AstType
+                if at == "NilExpr" or at == "BooleanExpr"
+                    or at == "NumberExpr" or at == "StringExpr" then
+                    return true
+                end
+                if at == "UnopExpr" then return collapseLiteralish(e.Rhs) end
+                if at == "ConstructorExpr" then
+                    for _, en in ipairs(e.EntryList or {}) do
+                        if en.Value and not collapseLiteralish(en.Value) then
+                            return false
+                        end
+                    end
+                    return true
+                end
+                return false
+            end
+            -- Dedup is two-layered: collapseSeen dedupes within THIS
+            -- IfStatement visit; the findings linear scan dedupes across
+            -- visits (an outer region scan descending into a nested guard-if
+            -- and that nested if's own visit hold DIFFERENT collapseSeen
+            -- tables but can flag the same statement).
+            local collapseSeen = {}
+            local function emitCollapse(key, ln, msg)
+                if collapseSeen[key] then return end
+                collapseSeen[key] = true
+                for _, prior in ipairs(findings) do
+                    if prior.line == ln and prior.file == filePath
+                        and prior.sink == "<secret-collapse>" then
+                        return
+                    end
+                end
+                emit(findings, filePath, ln, 1,
+                    "<secret-collapse>", "<tainted-local>", msg)
+            end
+            local function scanCollapse(body)
+                for _, s in ipairs(body or {}) do
+                    local at = s.AstType
+                    if at == "ReturnStatement" then
+                        local args = s.Arguments or {}
+                        if #args > 0 then
+                            local allLit = true
+                            for _, e in ipairs(args) do
+                                if not collapseLiteralish(e) then allLit = false break end
+                            end
+                            if allLit then
+                                local ln = nodeLine(s) or 0
+                                emitCollapse("r" .. ln, ln,
+                                    "guard-secret branch manufactures ordinary"
+                                    .. " state (returns literal(s)) — secrecy is"
+                                    .. " indeterminate: route the value to a"
+                                    .. " documented C sink or reject/defer;"
+                                    .. " a deliberate policy needs"
+                                    .. " `-- @secret-policy: <name>`")
+                            end
+                        end
+                    elseif at == "AssignmentStatement" then
+                        local stateLhs = false
+                        for _, l in ipairs(s.Lhs or {}) do
+                            local lt = stripParens(l)
+                            if lt and (lt.AstType == "MemberExpr"
+                                or lt.AstType == "IndexExpr") then
+                                stateLhs = true
+                                break
+                            end
+                        end
+                        if stateLhs and #(s.Rhs or {}) > 0 then
+                            local allLit = true
+                            for _, e in ipairs(s.Rhs) do
+                                if not collapseLiteralish(e) then allLit = false break end
+                            end
+                            if allLit then
+                                local ln = nodeLine(s) or 0
+                                emitCollapse("a" .. ln, ln,
+                                    "guard-secret branch writes literal state —"
+                                    .. " secrecy is indeterminate: reject/defer or"
+                                    .. " name the policy with"
+                                    .. " `-- @secret-policy: <name>`")
+                            end
+                        end
+                    elseif at == "IfStatement" then
+                        for _, c in ipairs(s.Clauses or {}) do
+                            if c.Body then scanCollapse(c.Body.Body) end
+                        end
+                    elseif at == "DoStatement" or at == "WhileStatement"
+                        or at == "RepeatStatement"
+                        or at == "NumericForStatement"
+                        or at == "GenericForStatement" then
+                        if s.Body then scanCollapse(s.Body.Body) end
+                    end
+                    -- Function statements / closures deliberately skipped:
+                    -- deferred bodies execute outside the guard's dominance.
+                end
+            end
+            local collapseRegionForLater = false
+
             for _, clause in ipairs(stmt.Clauses) do
                 if provEntry then setProvState(fnEventCtx, provEntry) end
                 safeRefSet = {}
@@ -7162,6 +7374,10 @@ walkStatements = function(stmts, taintSet, fieldTaintSet, findings, registry,
                 local branchSecretEvents = remainingSecretEvents
                     and copyEventSet(remainingSecretEvents) or nil
                 local branchVarargSecret
+                -- Round-13b: an else/elseif clause AFTER an untaint-then
+                -- guard (`if not issecretvalue(x)`) runs only when the value
+                -- WAS secret — it inherits the secret region.
+                local scanCollapseHere = collapseRegionForLater
                 if clause.Condition then
                     if remainingSecretEvents then
                         local onTrue, onFalse = refineSecretEvents(
@@ -7184,6 +7400,9 @@ walkStatements = function(stmts, taintSet, fieldTaintSet, findings, registry,
                                 branchTaint[n] = nil
                             end
                             markSafeRefs(guarded.refs)
+                            -- Round-13b: every LATER clause of this
+                            -- if-statement runs when the probe said SECRET.
+                            collapseRegionForLater = true
                         elseif guarded.kind == "untaint-else" then
                             -- `Guard(x)` → x stays tainted in this branch;
                             -- every LATER clause and the fall-through path
@@ -7196,6 +7415,9 @@ walkStatements = function(stmts, taintSet, fieldTaintSet, findings, registry,
                                 subsequentSafeRefs[key] = true
                                 fallThroughSafeRefs[key] = true
                             end
+                            -- Round-13b: THIS clause body is the secret
+                            -- region (`if issecretvalue(x) then` was TRUE).
+                            scanCollapseHere = true
                         end
                     else
                         -- Not a guard pattern — walk condition normally for sinks
@@ -7219,6 +7441,9 @@ walkStatements = function(stmts, taintSet, fieldTaintSet, findings, registry,
                 end
 
                 if clause.Body and clause.Body.Body then
+                    if scanCollapseHere then
+                        scanCollapse(clause.Body.Body)
+                    end
                     local prevSuppress = fnEventCtx and fnEventCtx.suppressSpill
                     local prevVararg = fnEventCtx and fnEventCtx.varargSecret
                     local prevActiveEvents = fnEventCtx and fnEventCtx.activeSecretEvents
@@ -9679,8 +9904,9 @@ function M.analyze(source, filePath, registry, config, opts)
             for _, f in ipairs(findings) do
                 if f.line == line then
                     debugInfo.warnings[#debugInfo.warnings + 1] = string.format(
-                        "%s:%d: @secret-safe annotation requires a reason",
-                        filePath, line)
+                        "%s:%d: %s annotation requires a reason",
+                        filePath, line,
+                        a.kind == "policy" and "@secret-policy" or "@secret-safe")
                     break
                 end
             end

@@ -28,6 +28,8 @@
 ---------------------------------------------------------------------------
 local ADDON_NAME, ns = ...
 
+local issecretvalue = _G.issecretvalue
+
 local AddonLoader = {}
 ns.AddonLoader = AddonLoader
 
@@ -56,6 +58,13 @@ function AddonLoader.IsModuleAddonEnabled(folder)
     -- "Some" means enabled on OTHER characters only and must NOT gate as
     -- enabled here (the AddOns-list per-character boundary is hard).
     local guid = UnitGUID and UnitGUID("player")
+    -- UnitGUID is secret-capable under identity restriction, and
+    -- GetAddOnEnableState is SecretArguments=AllowedWhenUntainted — a secret
+    -- GUID must not reach it. Unknown GUID falls through to the aggregate
+    -- no-arg query below.
+    if issecretvalue and issecretvalue(guid) then
+        guid = nil -- @secret-policy: reject-secret-value (aggregate-query fallback)
+    end
     if guid then
         local state = C_AddOns.GetAddOnEnableState(folder, guid)
         local all = Enum and Enum.AddOnEnableState and Enum.AddOnEnableState.All or 2

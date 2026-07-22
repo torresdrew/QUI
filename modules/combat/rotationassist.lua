@@ -440,7 +440,7 @@ local function DoUpdate(overrideSpellID)
     -- base spell ID while talents have replaced it with an override.
     -- The texture, keybind, and usability should reflect the override.
     if spellID and C_Spell and C_Spell.GetOverrideSpell then
-        local okOvr, overrideID = pcall(C_Spell.GetOverrideSpell, spellID)
+        local okOvr, overrideID = ns.SafeCall("chain-next", C_Spell.GetOverrideSpell, spellID)
         if okOvr and overrideID and overrideID ~= spellID then
             spellID = overrideID
         end
@@ -479,7 +479,7 @@ RefreshIconFrame = function()
     -- Size (guard with pcall to prevent secret value crash when backdrop recalculates)
     -- SetSize triggers backdrop texture coordinate recalculation which can fail during combat
     local size = db.iconSize or 56
-    pcall(iconFrame.SetSize, iconFrame, size, size)
+    ns.SafeCallMethod("best-effort-style", iconFrame, "SetSize", size, size)
 
     -- Position (manual only when no frame-anchoring override is active)
     local isAnchoredOverride = _G.QUI_HasFrameAnchor and _G.QUI_HasFrameAnchor("rotationAssistIcon")

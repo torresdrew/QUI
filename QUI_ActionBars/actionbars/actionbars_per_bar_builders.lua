@@ -38,7 +38,7 @@ do
                             UpdateEmptySlotVisibility(btn, settings)
                         end
                     end
-                    pcall(LayoutNativeButtons, bk)
+                    ns.SafeCall("best-effort-style", LayoutNativeButtons, bk)
                 end
             end
         end
