@@ -166,3 +166,74 @@ do
 end
 
 print("builtin-vs-index pin test passed")
+
+-- Element-secret container track (round-23)
+do
+    local r = Registry.new()
+    assert(not r:isElementSecretFunction("C_UnitAuras.GetUnitAuras"),
+        "element track empty by default")
+    r:addElementSecretFunction("C_UnitAuras.GetUnitAuras")
+    assert(r:isElementSecretFunction("C_UnitAuras.GetUnitAuras"),
+        "element track registers")
+    assert(not r:isSource("C_UnitAuras.GetUnitAuras"),
+        "element registration must NOT make the name a whole-call source")
+end
+print("registry element-secret track test passed")
+
+-- Helper-param seeding track (round-23): declared-name → container-param
+-- positions. Positions index the DECLARED argument list (the parser omits a
+-- colon method's implicit `self`, so position 1 of `function M:Copy(src)`
+-- is `src` — analyzer E22 pins that end-to-end).
+do
+    local r = Registry.new()
+    assert(r:elementContainerParams("CopyReadableAuras") == nil,
+        "param track empty by default")
+    r:addElementContainerParams("CopyReadableAuras", { 1 })
+    local p = r:elementContainerParams("CopyReadableAuras")
+    assert(type(p) == "table" and p[1] == 1 and #p == 1,
+        "param track registers position array")
+    assert(r:elementContainerParams("OtherCopy") == nil,
+        "unregistered name stays nil")
+    r:addElementContainerParams("M.Copy", { 2 })
+    local q = r:elementContainerParams("M.Copy")
+    assert(type(q) == "table" and q[1] == 2,
+        "dotted spelling keys exactly as registered")
+    assert(r:elementContainerParams("Copy") == nil,
+        "dotted registration never answers for the bare tail")
+    assert(not r:isElementSecretFunction("CopyReadableAuras"),
+        "param track never leaks onto the element call-name track")
+    assert(not r:isSource("CopyReadableAuras"),
+        "param registration must NOT make the name a source")
+    local r2 = Registry.new()
+    assert(r2:elementContainerParams("CopyReadableAuras") == nil,
+        "instances do not share param registrations")
+end
+print("registry element-container-params track test passed")
+
+-- Round-23: conditionalSecretContents registers element track, stays non-source
+do
+    local IndexLoad = dofile("tests/taint/index_load.lua")
+    local Config = dofile("tests/taint/config.lua")
+    local r = Registry.new()
+    local cfg = Config.loadFromString(nil)
+    IndexLoad.populate(r, {
+        ["C_UnitAuras.GetUnitAuras"] = {
+            secretArguments = "AllowedWhenUntainted",
+            conditionalSecretContents = true,
+            preconditions = { "RequiresUnitAuraAccess" },
+        },
+    }, cfg, function() end)
+    assert(r:isElementSecretFunction("C_UnitAuras.GetUnitAuras"),
+        "index flag registers element track")
+    assert(not r:isSource("C_UnitAuras.GetUnitAuras"),
+        "index flag still non-source (no whole-call FP)")
+    local rOff = Registry.new()
+    local cfgOff = Config.loadFromString(
+        "return { coverage = { conditionalSecretContents = false } }")
+    IndexLoad.populate(rOff, {
+        ["C_UnitAuras.GetUnitAuras"] = { conditionalSecretContents = true },
+    }, cfgOff, function() end)
+    assert(not rOff:isElementSecretFunction("C_UnitAuras.GetUnitAuras"),
+        "coverage off disables element registration")
+end
+print("index_load element track test passed")

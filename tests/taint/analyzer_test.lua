@@ -4400,7 +4400,7 @@ local expressionCases = {
     { [[local t = {}; t.sub.x = S(); t.sub = { x = 1 }; print(t.sub.x)]], 0,
         "known constructor replacement clears stale descendant taint" },
     { [[local t = { x = S() }; for k, v in pairs(t) do print(v) end]], 1,
-        "content-reading iterator still diagnoses a tainted constructor" },
+        "tainted constructor content diagnoses at the use-site sink (print)" },
     { [[local t = { x = S() }; rawget(t, "x")]], 1,
         "rawget still diagnoses tainted constructor contents" },
     { [[local t = { pcall(S) }; print(t[1])]], 0,
@@ -8458,3 +8458,704 @@ end
     assert_eq(n, 0, "forwarding the opaque value is not a collapse")
 end
 print("round-13b secret-collapse tests passed")
+
+-- ===== Round-23: element-taint (conditionalSecretContents) =====
+do
+    local rE = Registry.new()
+    rE:addElementSecretFunction("C_UnitAuras.GetUnitAuras")
+    rE:addGuard("issecretvalue")
+    local srcE, fE
+
+    -- E1: bind records marker; container truth-test + # + arg-pass clean
+    srcE = [[
+local auras = C_UnitAuras.GetUnitAuras("player", "HELPFUL")
+if auras then
+    local n = #auras
+    Consume(auras)
+end
+return 0
+]]
+    fE = Analyzer.analyze(srcE, "modules/foo.lua", rE, cfg)
+    assert_eq(#fE, 0, "E1: container-level ops all clean")
+
+    -- E2: element read flags
+    srcE = [[
+local auras = C_UnitAuras.GetUnitAuras("player", "HELPFUL")
+if auras then
+    local a = auras[1]
+    if a then return 1 end
+end
+return 0
+]]
+    fE = Analyzer.analyze(srcE, "modules/foo.lua", rE, cfg)
+    assert(#fE >= 1, "E2: unprobed element read flags")
+
+    -- E3: deep read through element flags
+    -- (Plan deviation, documented: the plan spelled E3/E5/E6 as
+    -- `return X and X[1]` — a pure VALUE-yield return. No consumer emits
+    -- there for ANY taint kind: forwarding an opaque possibly-secret value
+    -- is legal and pinned clean (round-13b case 10), and the design spec's
+    -- Consumption section mandates marker-mediated reads flow through
+    -- EXISTING consumers only. Each case keeps its tested semantics —
+    -- deep-read matching / alias hop / source-alias binding — with the
+    -- read moved to condition position, where the and-chain truth-tests
+    -- the yielded element and the round-8 consumer emits.)
+    srcE = [[
+local auras = C_UnitAuras.GetUnitAuras("player", "HELPFUL")
+if auras and auras[1].spellId then return 1 end
+return 0
+]]
+    fE = Analyzer.analyze(srcE, "modules/foo.lua", rE, cfg)
+    assert(#fE >= 1, "E3: deep read through slot flags")
+
+    -- E4: probed element (runtime canon shape) scans clean
+    srcE = [[
+local auras = C_UnitAuras.GetUnitAuras("player", "HELPFUL")
+if auras then
+    for i = 1, #auras do
+        local a = auras[i]
+        if issecretvalue(a) then a = nil end
+        if a ~= nil then Use(a) end
+    end
+end
+return 0
+]]
+    fE = Analyzer.analyze(srcE, "modules/foo.lua", rE, cfg)
+    assert_eq(#fE, 0, "E4: probe + nil-rebind discipline scans clean")
+
+    -- E5: alias hop — copy of container carries markers
+    srcE = [[
+local auras = C_UnitAuras.GetUnitAuras("player", "HELPFUL")
+local list = auras
+if list and list[1] then return 1 end
+return 0
+]]
+    fE = Analyzer.analyze(srcE, "modules/foo.lua", rE, cfg)
+    assert(#fE >= 1, "E5: element read through alias flags")
+
+    -- E6: value-copy source alias (and-chain shape) binds marker
+    srcE = [[
+local Get = C_UnitAuras and C_UnitAuras.GetUnitAuras
+local auras = Get("player", "HELPFUL")
+if auras and auras[1] then return 1 end
+return 0
+]]
+    fE = Analyzer.analyze(srcE, "modules/foo.lua", rE, cfg)
+    assert(#fE >= 1, "E6: aliased source call binds marker, read flags")
+
+    -- E7: clean overwrite clears. Positive control first: the SAME read
+    -- without the overwrite must flag, so the 0 below proves the sweep —
+    -- not a read shape that never emits (return-position reads are
+    -- non-emitting, so the plan's `return auras[1]` spelling was vacuous).
+    srcE = [[
+local auras = C_UnitAuras.GetUnitAuras("player", "HELPFUL")
+if auras[1] then return 1 end
+return 0
+]]
+    fE = Analyzer.analyze(srcE, "modules/foo.lua", rE, cfg)
+    assert(#fE >= 1, "E7-control: same read without overwrite flags")
+    srcE = [[
+local auras = C_UnitAuras.GetUnitAuras("player", "HELPFUL")
+auras = {}
+if auras[1] then return 1 end
+return 0
+]]
+    fE = Analyzer.analyze(srcE, "modules/foo.lua", rE, cfg)
+    assert_eq(#fE, 0, "E7: content-clean overwrite clears markers")
+
+    -- E8: unregistered function control (consuming read position, so a
+    -- spurious marker WOULD flag — non-vacuous no-FP control)
+    srcE = [[
+local auras = C_UnitAuras.GetOtherThing("player")
+if auras and auras[1] then return 1 end
+return 0
+]]
+    fE = Analyzer.analyze(srcE, "modules/foo.lua", rE, cfg)
+    assert_eq(#fE, 0, "E8: unregistered call binds nothing")
+
+    print("round-23 element-taint bind/read tests passed")
+
+    -- E9: pcall spill — result 2 is the container
+    srcE = [[
+local ok, auras = pcall(C_UnitAuras.GetUnitAuras, "player", "HELPFUL")
+if ok and auras then
+    if auras[1] then return 1 end
+end
+return 0
+]]
+    fE = Analyzer.analyze(srcE, "modules/foo.lua", rE, cfg)
+    assert(#fE >= 1, "E9: pcall-spilled container element read flags")
+
+    -- E9b: multi-assign direct call — result 1 only
+    srcE = [[
+local a, b = C_UnitAuras.GetUnitAuras("player", "HELPFUL")
+if a and a[1] then return 1 end
+if b and b[1] then return 2 end
+return 0
+]]
+    fE = Analyzer.analyze(srcE, "modules/foo.lua", rE, cfg)
+    assert_eq(#fE, 1, "E9b: exactly result 1 carries the marker")
+
+    -- E10: ok boolean + truncation controls stay clean. The t1[2]/t2[2]
+    -- reads (Task-4 extension, review-approved) READ the would-be marker
+    -- slots in consuming position: a marker wrongly recorded past the
+    -- truncating parentheses (t1) or at a non-final pcall (t2) would flag
+    -- here — locks both truncation guards against regression.
+    srcE = [[
+local ok, auras = pcall(C_UnitAuras.GetUnitAuras, "player", "HELPFUL")
+local t1 = { (pcall(C_UnitAuras.GetUnitAuras, "player")) }
+local t2 = { pcall(C_UnitAuras.GetUnitAuras, "player"), 5 }
+if ok and t1[1] and t2[1] then return 1 end
+if t1[2] and t1[2][1] then return 2 end
+if t2[2] and t2[2][1] then return 3 end
+return 0
+]]
+    fE = Analyzer.analyze(srcE, "modules/foo.lua", rE, cfg)
+    assert_eq(#fE, 0, "E10: ok/truncated slots clean")
+
+    -- E11: constructor expansion records slot marker
+    srcE = [[
+local t = { pcall(C_UnitAuras.GetUnitAuras, "player", "HELPFUL") }
+if t[2][1] then return 1 end
+return 0
+]]
+    fE = Analyzer.analyze(srcE, "modules/foo.lua", rE, cfg)
+    assert(#fE >= 1, "E11: {pcall(Src)} slot-2 element read flags")
+
+    -- E12: bare constructor expansion
+    srcE = [[
+local t = { C_UnitAuras.GetUnitAuras("player", "HELPFUL") }
+if t[1][1] then return 1 end
+return 0
+]]
+    fE = Analyzer.analyze(srcE, "modules/foo.lua", rE, cfg)
+    assert(#fE >= 1, "E12: {Src()} slot-1 element read flags")
+
+    print("round-23 spill/constructor tests passed")
+
+    -- E13: direct-expression element read
+    srcE = [[
+return C_UnitAuras.GetUnitAuras("player", "HELPFUL")[1]
+]]
+    fE = Analyzer.analyze(srcE, "modules/foo.lua", rE, cfg)
+    assert(#fE >= 1, "E13: Src(u)[1] flags")
+    do
+        local found = false
+        for _, f in ipairs(fE) do
+            if tostring(f.message):find("secret-content container", 1, true) then
+                found = true
+            end
+        end
+        assert(found, "E13: distinct class message present")
+    end
+
+    -- E14: probed ipairs loop scans ZERO (header FP suppression)
+    srcE = [[
+local auras = C_UnitAuras.GetUnitAuras("player", "HELPFUL")
+if auras then
+    for _, a in ipairs(auras) do
+        if issecretvalue(a) then a = nil end
+        if a ~= nil then Use(a) end
+    end
+end
+return 0
+]]
+    fE = Analyzer.analyze(srcE, "modules/foo.lua", rE, cfg)
+    assert_eq(#fE, 0, "E14: probed ipairs loop clean — header emit suppressed")
+
+    -- E15: unprobed loop-var use flags
+    srcE = [[
+local auras = C_UnitAuras.GetUnitAuras("player", "HELPFUL")
+if auras then
+    for _, a in ipairs(auras) do
+        if a.spellId then return 1 end
+    end
+end
+return 0
+]]
+    fE = Analyzer.analyze(srcE, "modules/foo.lua", rE, cfg)
+    assert(#fE >= 1, "E15: unprobed loop value flags")
+
+    -- E16: key var stays clean
+    srcE = [[
+local auras = C_UnitAuras.GetUnitAuras("player", "HELPFUL")
+local n = 0
+if auras then
+    for i in ipairs(auras) do n = n + i end
+end
+return n
+]]
+    fE = Analyzer.analyze(srcE, "modules/foo.lua", rE, cfg)
+    assert_eq(#fE, 0, "E16: key/index var clean")
+
+    -- E17: directly-tainted table into ipairs keeps header emit (control)
+    do
+        local rT = Registry.new()
+        rT:addSource("C_Spell.GetSpellCharges")
+        srcE = [[
+local info = C_Spell.GetSpellCharges(1)
+for _, v in ipairs(info) do Use(v) end
+return 0
+]]
+        fE = Analyzer.analyze(srcE, "modules/foo.lua", rT, cfg)
+        assert(#fE >= 1, "E17: whole-tainted ref into ipairs still emits")
+    end
+
+    -- E18: iterator over direct source call taints loop value
+    srcE = [[
+for _, a in ipairs(C_UnitAuras.GetUnitAuras("player", "HELPFUL") or {}) do
+    if a then return 1 end
+end
+return 0
+]]
+    fE = Analyzer.analyze(srcE, "modules/foo.lua", rE, cfg)
+    assert(#fE >= 1, "E18: ipairs(Src(u)) loop value tainted, use flags")
+
+    print("round-23 expression/loop tests passed")
+
+    -- ===== Round-23 Task 5: helper-param seeding =====
+
+    -- E19: seeded param — unprobed element read flags
+    rE:addElementContainerParams("CopyReadableAuras", { 1 })
+    srcE = [[
+local function CopyReadableAuras(src, dst)
+    local a = src[1]
+    if a then dst[1] = a end
+end
+return CopyReadableAuras
+]]
+    fE = Analyzer.analyze(srcE, "modules/foo.lua", rE, cfg)
+    assert(#fE >= 1, "E19: seeded param element read flags")
+
+    -- E20: probed body scans clean (runtime canon)
+    srcE = [[
+local function CopyReadableAuras(src, dst)
+    local n = 0
+    for i = 1, #src do
+        local a = src[i]
+        if issecretvalue(a) then a = nil end
+        if a ~= nil then n = n + 1 dst[n] = a end
+    end
+end
+return CopyReadableAuras
+]]
+    fE = Analyzer.analyze(srcE, "modules/foo.lua", rE, cfg)
+    assert_eq(#fE, 0, "E20: probed seeded-param body clean")
+
+    -- E21: unrelated same-shape function unseeded (control)
+    -- (Plan deviation, documented: the plan spelled the body as
+    -- `dst[1] = src[1]` — a pure propagation write. Assignments RECORD
+    -- taint, they never emit, for ANY taint kind, so a 0 there could not
+    -- distinguish "unseeded" from "seeded but non-emitting shape". The
+    -- read moves to consuming condition position — same rationale as the
+    -- E8 control — and a positive control with the SAME body under a
+    -- registered spelling pins non-vacuity first.)
+    rE:addElementContainerParams("OtherCopyControl", { 1 })
+    srcE = [[
+local function OtherCopyControl(src, dst)
+    if src[1] then dst[1] = src[1] end
+end
+return OtherCopyControl
+]]
+    fE = Analyzer.analyze(srcE, "modules/foo.lua", rE, cfg)
+    assert(#fE >= 1, "E21-control: same shape with registered name flags")
+    srcE = [[
+local function OtherCopy(src, dst)
+    if src[1] then dst[1] = src[1] end
+end
+return OtherCopy
+]]
+    fE = Analyzer.analyze(srcE, "modules/foo.lua", rE, cfg)
+    assert_eq(#fE, 0, "E21: unseeded helper unaffected")
+
+    -- E22: colon method — implicit self shifts declared positions
+    -- (Plan deviation, documented: the plan spelled the body as
+    -- `return src[1]` — a pure value-yield return. Return-position reads
+    -- are non-emitting for EVERY taint kind (round-13b case 10; the E3/E7
+    -- deviation notes above), so the assert could never fire. The read
+    -- moves to condition position; the tested semantics — position 1 maps
+    -- to the first DECLARED param, never implicit self — is unchanged and
+    -- still discriminates: a wrongly argOffset-compensated mapping seeds
+    -- nothing onto `src` and this scans clean.)
+    rE:addElementContainerParams("M.Copy", { 1 })
+    srcE = [[
+local M = {}
+function M:Copy(src)
+    if src[1] then return 1 end
+    return 0
+end
+return M
+]]
+    fE = Analyzer.analyze(srcE, "modules/foo.lua", rE, cfg)
+    assert(#fE >= 1,
+        "E22: colon method position 1 = first DECLARED param (not self)")
+
+    print("round-23 param-seed tests passed")
+
+    -- ===== Round-23 final review (F1): keyed / non-final constructor =====
+
+    -- E23: keyed constructor entry binds the slot marker (whole-branch
+    -- review verified FN: `{ auras = Src(u) }` then `state.auras[1]`
+    -- scanned clean — only final list position expanded).
+    srcE = [[
+local state = { auras = C_UnitAuras.GetUnitAuras("player", "HELPFUL") }
+if state.auras[1] then return 1 end
+return 0
+]]
+    fE = Analyzer.analyze(srcE, "modules/foo.lua", rE, cfg)
+    assert(#fE >= 1, "E23: keyed-entry element read flags")
+
+    -- E24: probed keyed-entry element scans clean (runtime canon shape)
+    srcE = [[
+local state = { auras = C_UnitAuras.GetUnitAuras("player", "HELPFUL") }
+local a = state.auras[1]
+if issecretvalue(a) then a = nil end
+if a ~= nil then Use(a) end
+return 0
+]]
+    fE = Analyzer.analyze(srcE, "modules/foo.lua", rE, cfg)
+    assert_eq(#fE, 0, "E24: probed keyed-entry element stays clean")
+
+    -- E25: non-final LIST entry truncates to result 1 — which IS the
+    -- container — at the entry's OWN slot (not the pcall +1 arithmetic)
+    srcE = [[
+local t = { C_UnitAuras.GetUnitAuras("player", "HELPFUL"), 5 }
+if t[1][1] then return 1 end
+return 0
+]]
+    fE = Analyzer.analyze(srcE, "modules/foo.lua", rE, cfg)
+    assert(#fE >= 1, "E25: non-final list slot element read flags")
+
+    -- E26: non-final PCALL entry still yields ONLY the clean ok boolean
+    -- at its own slot (control — consuming read of the would-be marker
+    -- slot, so a wrongly recorded marker WOULD flag here)
+    srcE = [[
+local t = { pcall(C_UnitAuras.GetUnitAuras, "player"), 5 }
+if t[1] and t[1][1] then return 1 end
+return 0
+]]
+    fE = Analyzer.analyze(srcE, "modules/foo.lua", rE, cfg)
+    assert_eq(#fE, 0, "E26: non-final pcall entry ok-slot stays clean")
+
+    print("round-23 final-review F1 constructor tests passed")
+
+    -- ===== Round-23 final review (F2): soundness pins =====
+
+    -- E27: restriction-gate bail does NOT clear element markers — the
+    -- gate governs payload-class taint, while element secrecy is
+    -- per-entry and gate-INDEPENDENT (independentFields provenance);
+    -- the post-bail element read must still flag.
+    rE:addRestrictionGate("SomeGate")
+    srcE = [[
+local auras = C_UnitAuras.GetUnitAuras("player", "HELPFUL")
+if SomeGate() then return 0 end
+if auras[1] then return 1 end
+return 0
+]]
+    fE = Analyzer.analyze(srcE, "modules/foo.lua", rE, cfg)
+    assert_eq(#fE, 1, "E27: gate bail leaves element marker live")
+
+    -- E28: terminating guard bail on the extracted element proves the
+    -- fall-through (round-8 terminator-aware untaint applies to markers)
+    srcE = [[
+local auras = C_UnitAuras.GetUnitAuras("player", "HELPFUL")
+local a = auras[1]
+if issecretvalue(a) then return end
+if a then return 1 end
+return 0
+]]
+    fE = Analyzer.analyze(srcE, "modules/foo.lua", rE, cfg)
+    assert_eq(#fE, 0, "E28: guard-bail on element proves fall-through")
+
+    -- E29: statement-split KEYED probe proves exactly its slot (round-7j
+    -- keyed-ref identity); the unprobed sibling slot still flags.
+    srcE = [[
+local auras = C_UnitAuras.GetUnitAuras("player", "HELPFUL")
+if issecretvalue(auras[1]) then return end
+if auras[1] then return 1 end
+if auras[2] then return 2 end
+return 0
+]]
+    fE = Analyzer.analyze(srcE, "modules/foo.lua", rE, cfg)
+    assert_eq(#fE, 1, "E29: keyed probe scopes to its slot; sibling flags")
+
+    -- E30: config-registered wrapper spelling (receiver-import shape, no
+    -- value-copy alias involved) binds the marker like the index track
+    rE:addElementSecretFunction("Sources.QueryUnitAuras")
+    srcE = [[
+local auras = Sources.QueryUnitAuras("player")
+if auras and auras[1] then return 1 end
+return 0
+]]
+    fE = Analyzer.analyze(srcE, "modules/foo.lua", rE, cfg)
+    assert_eq(#fE, 1, "E30: config wrapper spelling binds marker")
+
+    -- E31: slot write then read through ANOTHER spelling — the heap slot
+    -- `t.list` carries the marker and the local copy reads it back
+    -- (alias/chainAlias unification, same path as round-10d)
+    srcE = [[
+local t = {}
+t.list = C_UnitAuras.GetUnitAuras("player", "HELPFUL")
+local l = t.list
+if l[1] then return 1 end
+return 0
+]]
+    fE = Analyzer.analyze(srcE, "modules/foo.lua", rE, cfg)
+    assert_eq(#fE, 1, "E31: aliased spelling of marked slot flags")
+
+    -- E32: shadowed-param control — a nested closure declares its OWN
+    -- param spelled like the seeded helper param. Param seeding is
+    -- spelling-keyed (chunk-wide union, scoping not modeled — same
+    -- boundary as the round-8 shadowed-`error` rule), so the inner read
+    -- INHERITS the seed and flags: a conservative KNOWN false positive
+    -- (T5 review), pinned here as current behavior, not as a contract.
+    rE:addElementContainerParams("ShadowedCopy", { 1 })
+    srcE = [[
+local function ShadowedCopy(src, dst)
+    local inner = function(src)
+        if src[1] then return 1 end
+        return 0
+    end
+    return inner(dst)
+end
+return ShadowedCopy
+]]
+    fE = Analyzer.analyze(srcE, "modules/foo.lua", rE, cfg)
+    assert_eq(#fE, 1,
+        "E32: shadowing closure param inherits seed (known-FP pin)")
+
+    print("round-23 final-review F2 soundness pins passed")
+
+    -- ===== Round-23 final review (F5): pcall spill into member/index =====
+
+    -- E33: protected-call spill into a MEMBER target binds the marker on
+    -- the target's canonical chain key (Codex stop-gate: `ok, state.auras
+    -- = pcall(Src, ...)` landed the container with ZERO findings — the
+    -- spill path was VarExpr-only).
+    srcE = [[
+local state = {}
+local ok
+ok, state.auras = pcall(C_UnitAuras.GetUnitAuras, "player", "HELPFUL")
+if ok and state.auras[1] then return 1 end
+return 0
+]]
+    fE = Analyzer.analyze(srcE, "modules/foo.lua", rE, cfg)
+    assert_eq(#fE, 1, "E33: member-target pcall spill binds element marker")
+
+    -- E34: index-target twin (stable literal key)
+    srcE = [[
+local state = {}
+local ok
+ok, state[1] = pcall(C_UnitAuras.GetUnitAuras, "player", "HELPFUL")
+if ok and state[1][1] then return 1 end
+return 0
+]]
+    fE = Analyzer.analyze(srcE, "modules/foo.lua", rE, cfg)
+    assert_eq(#fE, 1, "E34: index-target pcall spill binds element marker")
+
+    -- E35: controls — the ok slot, a results-3+ member target, and a
+    -- NON-element pcall member spill all record nothing (consuming reads
+    -- of every would-be marker slot; state.auras — the one slot that DOES
+    -- carry the marker — is deliberately left unread)
+    srcE = [[
+local state = {}
+local ok
+ok, state.auras, state.extra = pcall(C_UnitAuras.GetUnitAuras, "player", "HELPFUL")
+local s2 = {}
+local ok2
+ok2, s2.data = pcall(C_Other.GetThing, "x")
+if ok and state.extra[1] then return 1 end
+if ok2 and s2.data[1] then return 2 end
+return 0
+]]
+    fE = Analyzer.analyze(srcE, "modules/foo.lua", rE, cfg)
+    assert_eq(#fE, 0, "E35: ok slot / result-3 / non-element spill clean")
+
+    print("round-23 final-review F5 member-spill tests passed")
+
+    -- ===== Round-23 final review (F5b): spill = full member-write =====
+    -- Codex verified F5's first cut recorded the marker but BYPASSED the
+    -- member-write lifecycle (slot retarget/alias drop + strong-update
+    -- clearing). PARITY IS THE CONTRACT: a spill write must behave
+    -- exactly like the direct assignment twin.
+
+    -- E36 (Bug 1, alias retarget): earlier `state.auras = other` recorded
+    -- a chainAlias; without the retarget the spill's marker was recorded
+    -- under a spelling reads never reach (verified FN: 0 findings).
+    -- Direct twin FIRST — its observed count (1: the slot's own read
+    -- flags via the fresh marker, `other[1]` stays clean per round-9g)
+    -- is the contract the spill twin must match exactly.
+    srcE = [[
+local other = {}
+local state = {}
+state.auras = other
+state.auras = C_UnitAuras.GetUnitAuras("player", "HELPFUL")
+if state.auras[1] then return 1 end
+if other[1] then return 2 end
+return 0
+]]
+    fE = Analyzer.analyze(srcE, "modules/foo.lua", rE, cfg)
+    assert_eq(#fE, 1, "E36-twin: direct overwrite of aliased slot flags once")
+    srcE = [[
+local other = {}
+local state = {}
+state.auras = other
+local ok
+ok, state.auras = pcall(C_UnitAuras.GetUnitAuras, "player", "HELPFUL")
+if ok and state.auras[1] then return 1 end
+if other[1] then return 2 end
+return 0
+]]
+    fE = Analyzer.analyze(srcE, "modules/foo.lua", rE, cfg)
+    assert_eq(#fE, 1, "E36: spill overwrite matches the direct twin exactly")
+
+    -- E37 (Bug 2, stale-marker FP): result position 3 receives NIL at
+    -- runtime (single-container contract) — a previously marked slot
+    -- there must be strong-update CLEARED, not keep flagging. Control
+    -- without the spill pins non-vacuity first.
+    srcE = [[
+local state = {}
+state.x = C_UnitAuras.GetUnitAuras("player", "HELPFUL")
+if state.x[1] then return 1 end
+return 0
+]]
+    fE = Analyzer.analyze(srcE, "modules/foo.lua", rE, cfg)
+    assert_eq(#fE, 1, "E37-control: marked slot read flags without the spill")
+    srcE = [[
+local state = {}
+state.x = C_UnitAuras.GetUnitAuras("player", "HELPFUL")
+local ok, other
+ok, other, state.x = pcall(C_UnitAuras.GetUnitAuras, "player", "HELPFUL")
+if state.x[1] then return 1 end
+return 0
+]]
+    fE = Analyzer.analyze(srcE, "modules/foo.lua", rE, cfg)
+    assert_eq(#fE, 0, "E37: result-3 nil overwrite clears the stale marker")
+
+    -- E38: the ok BOOLEAN landing on a previously marked member slot is
+    -- provably content-clean (pcall result 1 is always a boolean) —
+    -- strong update clears the old marker.
+    srcE = [[
+local state = {}
+state.ok = C_UnitAuras.GetUnitAuras("player", "HELPFUL")
+local x
+state.ok, x = pcall(C_UnitAuras.GetUnitAuras, "player", "HELPFUL")
+if state.ok[1] then return 1 end
+return 0
+]]
+    fE = Analyzer.analyze(srcE, "modules/foo.lua", rE, cfg)
+    assert_eq(#fE, 0, "E38: ok-boolean overwrite clears the stale marker")
+
+    print("round-23 final-review F5b lifecycle-parity tests passed")
+
+    -- ===== Round-23 final review (F5c): parenthesized pcall rhs =====
+
+    -- E39: `t.x = (pcall(F))` assigns the SAME ok boolean the bare
+    -- spelling does (parentheses truncate to one value) — the
+    -- content-clean strong update must not depend on the spelling
+    -- (Codex verified stale-marker FP: raw-RHS classification missed
+    -- the Parentheses node). Control pins non-vacuity first.
+    srcE = [[
+local t = {}
+t.x = C_UnitAuras.GetUnitAuras("player", "HELPFUL")
+if t.x[1] then return 1 end
+return 0
+]]
+    fE = Analyzer.analyze(srcE, "modules/foo.lua", rE, cfg)
+    assert_eq(#fE, 1, "E39-control: marked slot flags without the overwrite")
+    srcE = [[
+local t = {}
+t.x = C_UnitAuras.GetUnitAuras("player", "HELPFUL")
+t.x = (pcall(C_UnitAuras.GetUnitAuras, "player"))
+if t.x[1] then return 1 end
+return 0
+]]
+    fE = Analyzer.analyze(srcE, "modules/foo.lua", rE, cfg)
+    assert_eq(#fE, 0,
+        "E39: parenthesized pcall overwrite clears like the bare spelling")
+
+    print("round-23 final-review F5c paren-pcall tests passed")
+
+    -- ===== Round-23 final review (F5d): LocalStatement paren pcall =====
+
+    -- E40: the LocalStatement classification twin of F5c — `local ok =
+    -- (pcall(Src, 1))` binds the SAME clean ok boolean as the bare
+    -- spelling (parentheses truncate to result 1), so pcallOfSource must
+    -- classify the STRIPPED rhs (raw-RHS check was a probe-verified FP
+    -- taint on ok). Ordinary-source registry per the E17 convention.
+    do
+        local rT = Registry.new()
+        rT:addSource("C_Spell.GetSpellCharges")
+        srcE = [[
+local ok = (pcall(C_Spell.GetSpellCharges, 1))
+if ok then return 1 end
+return 0
+]]
+        fE = Analyzer.analyze(srcE, "modules/foo.lua", rT, cfg)
+        assert_eq(#fE, 0, "E40: parenthesized pcall ok-local stays clean")
+        -- Control: the unparenthesized SPILL still taints (result 2 of a
+        -- pcall-of-source) — pins that the strip narrows only the ok
+        -- classification, not the spill rule.
+        srcE = [[
+local ok, v = pcall(C_Spell.GetSpellCharges, 1)
+if v then return 1 end
+return 0
+]]
+        fE = Analyzer.analyze(srcE, "modules/foo.lua", rT, cfg)
+        assert(#fE >= 1, "E40-control: bare pcall source spill still flags")
+    end
+
+    print("round-23 final-review F5d local-paren-pcall tests passed")
+
+    -- ===== Round-23 final review (F5e): parenthesized CALLEE =====
+    -- `(pcall)(f, ...)` ≡ `pcall(f, ...)` at runtime (a paren wrap
+    -- around the callee is identity — truncation only matters in
+    -- value-list positions, never callee position), so classification
+    -- must not depend on the callee spelling (Codex verified FP + FN).
+
+    -- E41a: paren-callee pcall overwrite of a marked member slot
+    -- strong-updates like the bare spelling (control pins non-vacuity)
+    srcE = [[
+local t = {}
+t.x = C_UnitAuras.GetUnitAuras("player", "HELPFUL")
+if t.x[1] then return 1 end
+return 0
+]]
+    fE = Analyzer.analyze(srcE, "modules/foo.lua", rE, cfg)
+    assert_eq(#fE, 1, "E41a-control: marked slot flags without overwrite")
+    srcE = [[
+local t = {}
+t.x = C_UnitAuras.GetUnitAuras("player", "HELPFUL")
+t.x = (pcall)(F)
+if t.x[1] then return 1 end
+return 0
+]]
+    fE = Analyzer.analyze(srcE, "modules/foo.lua", rE, cfg)
+    assert_eq(#fE, 0, "E41a: paren-callee pcall overwrite clears the marker")
+
+    -- E41c: paren-callee ELEMENT pcall spill still binds the container
+    -- marker at result 2
+    srcE = [[
+local ok, auras = (pcall)(C_UnitAuras.GetUnitAuras, "player")
+if ok and auras[1] then return 1 end
+return 0
+]]
+    fE = Analyzer.analyze(srcE, "modules/foo.lua", rE, cfg)
+    assert_eq(#fE, 1, "E41c: paren-callee element pcall spill binds marker")
+
+    -- E41b: paren-callee pcall of an ordinary SOURCE — the spilled v is
+    -- secret and must flag (was a verified FN: spill never classified)
+    do
+        local rT = Registry.new()
+        rT:addSource("C_Spell.GetSpellCharges")
+        srcE = [[
+local ok, v = (pcall)(C_Spell.GetSpellCharges, 1)
+if v then return 1 end
+return 0
+]]
+        fE = Analyzer.analyze(srcE, "modules/foo.lua", rT, cfg)
+        assert_eq(#fE, 1, "E41b: paren-callee source pcall spill flags")
+    end
+
+    print("round-23 final-review F5e paren-callee tests passed")
+end  -- closes the round-23 do…end block

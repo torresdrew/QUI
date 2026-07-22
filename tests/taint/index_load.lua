@@ -100,6 +100,15 @@ function M.populate(registry, indexTable, cfg, warn)
                 registry:addAspectReturningMethod(method, meta.secretReturnsForAspect)
             end
         end
+        -- conditionalSecretContents (round-23): container return readable,
+        -- ELEMENTS secretize. Registers on the element track only — the
+        -- nonSourceKeys entry above keeps it off the whole-call source
+        -- track (container truth-tests are safe).
+        if type(meta) == "table" and meta.conditionalSecretContents == true
+            and cfg.coverage.conditionalSecretContents
+            and not funcName:match("^event:") then
+            registry:addElementSecretFunction(funcName)
+        end
     end
 
     -- Reverse check: index events carrying an aura-restriction flag that have

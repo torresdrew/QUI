@@ -28,6 +28,10 @@ local DEFAULT_COVERAGE = {
     -- aspect_paths — these getters are ubiquitous, so tainting them repo-wide
     -- would drown the tiers.
     secretReturnsForAspect = true,
+    -- conditionalSecretContents (round-23): container return stays a safe
+    -- truth-test, but registers the call on the element-secret track (see
+    -- registry.lua) so later tasks can taint the ELEMENTS pulled back out.
+    conditionalSecretContents = true,
 }
 
 local function defaults()
@@ -42,6 +46,7 @@ local function defaults()
             secretArguments_restricted = DEFAULT_COVERAGE.secretArguments_restricted,
             preconditions = DEFAULT_COVERAGE.preconditions,
             secretReturnsForAspect = DEFAULT_COVERAGE.secretReturnsForAspect,
+            conditionalSecretContents = DEFAULT_COVERAGE.conditionalSecretContents,
         },
         -- File prefixes where aspect-returning widget getters (index
         -- secretReturnsForAspect) taint their results. Empty by default:
@@ -57,6 +62,11 @@ local function defaults()
         -- non-interprocedural, so wrapper FUNCTIONS must be registered by
         -- name to participate in guard proofs.
         extra_guards = {},
+        -- Round-23 element-secret container track: call-site spellings whose
+        -- container return is safe but whose ELEMENTS secretize, plus the
+        -- argument positions (per function name) that hold the container.
+        element_secret_functions = {},
+        element_container_params = {},
         extra_restriction_gates = {},
         restriction_preconditions = {},
         precondition_only_paths = {},

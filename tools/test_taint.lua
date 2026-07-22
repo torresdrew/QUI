@@ -290,6 +290,25 @@ if cfg.extra_guards then
         registry:addGuard(name)
     end
 end
+-- Round-23 element-secret container track: config-listed call-site spellings
+-- register on the element track (same shape as extra_guards above).
+if cfg.element_secret_functions then
+    for _, name in ipairs(cfg.element_secret_functions) do
+        registry:addElementSecretFunction(name)
+    end
+end
+-- Round-23 helper-param seeding: declared function name → DECLARED argument
+-- positions holding element-secret containers ("<param>[*]" seeds in the
+-- analyzer's walkFunctionBody). Spellings should be exact — "M.Copy" covers
+-- both `function M.Copy` and `function M:Copy` (positions index the declared
+-- list, which omits the implicit colon `self`).
+if cfg.element_container_params then
+    for fnName, positions in pairs(cfg.element_container_params) do
+        if type(positions) == "table" and #positions > 0 then
+            registry:addElementContainerParams(fnName, positions)
+        end
+    end
+end
 if cfg.extra_restriction_gates then
     for _, name in ipairs(cfg.extra_restriction_gates) do
         registry:addRestrictionGate(name)

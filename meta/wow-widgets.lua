@@ -343,10 +343,6 @@ function __WowWidget:FreezeAnimation(anim, variation, frame, ...) end
 ---@param ... any
 ---@return table data
 function __WowWidget:GetAbbreviateNumberData(...) end
----@param ... any
----@return any boxBottom
----@return any boxTop
-function __WowWidget:GetActiveBoundingBox(...) end
 ---@param index? number
 ---@param ... any
 function __WowWidget:GetActorAtIndex(index, ...) end
@@ -358,20 +354,11 @@ function __WowWidget:GetAllSearchItems(...) end
 ---@return boolean allowOverlappedModels
 function __WowWidget:GetAllowOverlappedModels(...) end
 ---@param ... any
----@return number alpha
+---@return any alpha
 function __WowWidget:GetAlpha(...) end
----@param ... any
----@return any animation
-function __WowWidget:GetAnimation(...) end
----@param ... any
----@return any blendOp
-function __WowWidget:GetAnimationBlendOperation(...) end
 ---@param ... any
 ---@return any groups
 function __WowWidget:GetAnimationGroups(...) end
----@param ... any
----@return number variation
-function __WowWidget:GetAnimationVariation(...) end
 --- Returns the threshold below which numeric values are formatted as approximated strings.
 ---@param ... any
 ---@return any approximationSeconds
@@ -666,9 +653,6 @@ function __WowWidget:GetFormattedText(...) end
 ---@return any color
 function __WowWidget:GetFormattedTextColor(...) end
 ---@param ... any
----@return number normalizedAlpha
-function __WowWidget:GetFromAlpha(...) end
----@param ... any
 ---@return number percent
 function __WowWidget:GetFromPercent(...) end
 --- Returns the configured heal absorb clamping mode.
@@ -774,10 +758,6 @@ function __WowWidget:GetMapID(...) end
 ---@return number scalar
 function __WowWidget:GetMaskScalar(...) end
 ---@param ... any
----@return any boxBottom
----@return any boxTop
-function __WowWidget:GetMaxBoundingBox(...) end
----@param ... any
 ---@return number maxCharacterSlotCount
 function __WowWidget:GetMaxCharacterSlotCount(...) end
 ---@param ... any
@@ -850,17 +830,11 @@ function __WowWidget:GetModelAlpha(...) end
 ---@return number sublayer
 function __WowWidget:GetModelDrawLayer(...) end
 ---@param ... any
----@return number file
+---@return number modelFileID
 function __WowWidget:GetModelFileID(...) end
----@param ... any
----@return string path
-function __WowWidget:GetModelPath(...) end
 ---@param ... any
 ---@return number scale
 function __WowWidget:GetModelScale(...) end
----@param ... any
----@return string guid
-function __WowWidget:GetModelUnitGUID(...) end
 ---@param ... any
 ---@return any units
 function __WowWidget:GetMouseOverUnits(...) end
@@ -898,9 +872,6 @@ function __WowWidget:GetOrientation(...) end
 ---@return number originX
 ---@return number originY
 function __WowWidget:GetOrigin(...) end
----@param ... any
----@return number scale
-function __WowWidget:GetParticleOverrideScale(...) end
 ---@param ... any
 ---@return boolean paused
 ---@return boolean globalPaused
@@ -975,7 +946,8 @@ function __WowWidget:GetRoomName(...) end
 ---@return number svgFile
 function __WowWidget:GetSVGFileID(...) end
 ---@param ... any
----@return number scale
+---@return number scaleX
+---@return number scaleY
 function __WowWidget:GetScale(...) end
 ---@param ... any
 ---@return number scaleX
@@ -1017,9 +989,6 @@ function __WowWidget:GetSortType(...) end
 ---@param ... any
 ---@return number spacing
 function __WowWidget:GetSpacing(...) end
----@param ... any
----@return number spellVisualKitID
-function __WowWidget:GetSpellVisualKit(...) end
 ---@param ... any
 ---@return any color
 function __WowWidget:GetStartColor(...) end
@@ -1069,9 +1038,6 @@ function __WowWidget:GetTimeModifier(...) end
 ---@param ... any
 ---@return number timeVisibleSeconds
 function __WowWidget:GetTimeVisible(...) end
----@param ... any
----@return number normalizedAlpha
-function __WowWidget:GetToAlpha(...) end
 ---@param ... any
 ---@return number percent
 function __WowWidget:GetToPercent(...) end
@@ -1145,9 +1111,6 @@ function __WowWidget:GetViewTranslation(...) end
 ---@param ... any
 ---@return number worldScale
 function __WowWidget:GetWorldScale(...) end
----@param ... any
----@return number yaw
-function __WowWidget:GetYaw(...) end
 --- Returns the text shown when the duration is not configured, or represents a zero-duration time span.
 ---@param ... any
 ---@return string text
@@ -1192,8 +1155,6 @@ function __WowWidget:HasSecretValues(...) end
 ---@param ... any
 ---@return boolean hasStarted
 function __WowWidget:HasStarted(modifier, ...) end
----@param ... any
-function __WowWidget:Hide(...) end
 ---@param scaleFactor? number
 ---@param ... any
 function __WowWidget:InitializeCamera(scaleFactor, ...) end
@@ -1248,9 +1209,6 @@ function __WowWidget:IsGuildTabard(...) end
 ---@param ... any
 ---@return boolean isVisible
 function __WowWidget:IsLightVisible(...) end
----@param ... any
----@return boolean isLoaded
-function __WowWidget:IsLoaded(...) end
 --- Will be nil if pin is not a Door
 ---@param ... any
 ---@return boolean isOccupied
@@ -1259,17 +1217,11 @@ function __WowWidget:IsOccupiedDoor(...) end
 ---@return boolean isPartOfDraggingRoom
 function __WowWidget:IsPartOfDraggingRoom(...) end
 ---@param ... any
----@return boolean preferringCollisionBounds
-function __WowWidget:IsPreferringModelCollisionBounds(...) end
----@param ... any
 ---@return boolean isSearchInProgress
 function __WowWidget:IsSearchInProgress(...) end
 ---@param ... any
 ---@return boolean isSelected
 function __WowWidget:IsSelected(...) end
----@param ... any
----@return boolean isShown
-function __WowWidget:IsShown(...) end
 ---@param slot? number
 ---@param ... any
 ---@return boolean allowed
@@ -1289,11 +1241,6 @@ function __WowWidget:IsStoredOnlyActive(...) end
 ---@return boolean isActive
 function __WowWidget:IsUncollectedActive(...) end
 ---@param ... any
----@return boolean x
----@return boolean y
----@return boolean z
-function __WowWidget:IsUsingCenterForOrigin(...) end
----@param ... any
 ---@return boolean useCenter
 function __WowWidget:IsUsingModelCenterToTransform(...) end
 ---@param ... any
@@ -1302,9 +1249,6 @@ function __WowWidget:IsValid(...) end
 ---@param ... any
 ---@return boolean isValid
 function __WowWidget:IsValidForSelectedFloorplan(...) end
----@param ... any
----@return boolean isVisible
-function __WowWidget:IsVisible(...) end
 --- Returns true if the duration object is measuring a zero duration time span.
 ---@param ... any
 ---@return boolean isZero
@@ -1339,10 +1283,6 @@ function __WowWidget:PingLocation(locationX, locationY, ...) end
 ---@param loop? boolean
 ---@param ... any
 function __WowWidget:PlayAnimKit(animKit, loop, ...) end
----@param animationKit? number
----@param isLooping? boolean
----@param ... any
-function __WowWidget:PlayAnimationKit(animationKit, isLooping, ...) end
 ---@param pointX? number
 ---@param pointY? number
 ---@param pointZ? number
@@ -1422,7 +1362,7 @@ function __WowWidget:SetAllowedIndoors(isActive, ...) end
 ---@param isActive? boolean
 ---@param ... any
 function __WowWidget:SetAllowedOutdoors(isActive, ...) end
----@param alpha? number
+---@param alpha? any
 ---@param ... any
 function __WowWidget:SetAlpha(alpha, ...) end
 ---@param offset? number
@@ -1432,9 +1372,6 @@ function __WowWidget:SetAnimOffset(offset, ...) end
 ---@param variation? number
 ---@param ... any
 function __WowWidget:SetAnimation(anim, variation, ...) end
----@param blendOp? any
----@param ... any
-function __WowWidget:SetAnimationBlendOperation(blendOp, ...) end
 --- Configures the formatter to render numeric values between zero and this value as approximated strings (eg. '< 1m').
 ---@param seconds? any
 ---@param ... any
@@ -1776,9 +1713,6 @@ function __WowWidget:SetFontString(fontString, ...) end
 ---@param formatter? any
 ---@param ... any
 function __WowWidget:SetFormatter(formatter, ...) end
----@param normalizedAlpha? number
----@param ... any
-function __WowWidget:SetFromAlpha(normalizedAlpha, ...) end
 ---@param percent? number
 ---@param ... any
 function __WowWidget:SetFromPercent(percent, ...) end
@@ -1789,17 +1723,12 @@ function __WowWidget:SetFrontEndLobbyModelFromDefaultCharacterDisplay(characterI
 ---@param glow? number
 ---@param ... any
 function __WowWidget:SetGlow(glow, ...) end
----@param gradientIndex0? number
----@param gradientIndex1? number
----@param gradientIndex2? number
----@param gradientIndex3? number
+---@param grad0? number
+---@param grad1? number
+---@param grad2? number
+---@param grad3? number
 ---@param ... any
-function __WowWidget:SetGradientMask(gradientIndex0, gradientIndex1, gradientIndex2, gradientIndex3, ...) end
----@param grad0DyeColorID? number
----@param grad1DyeColorID? number
----@param grad2DyeColorID? number
----@param ... any
-function __WowWidget:SetGradientMaskWithDyes(grad0DyeColorID, grad1DyeColorID, grad2DyeColorID, ...) end
+function __WowWidget:SetGradientMask(grad0, grad1, grad2, grad3, ...) end
 --- Changes the clamping mode used when calculating heal absorb amounts.
 ---@param healAbsorbClampMode? any
 ---@param ... any
@@ -1947,35 +1876,10 @@ function __WowWidget:SetModel(asset, noMip, ...) end
 ---@param alpha? number
 ---@param ... any
 function __WowWidget:SetModelAlpha(alpha, ...) end
----@param creatureDisplayID? number
----@param useActivePlayerCustomizations? boolean
----@param ... any
----@return boolean success
-function __WowWidget:SetModelByCreatureDisplayID(creatureDisplayID, useActivePlayerCustomizations, ...) end
----@param asset? any
----@param useMips? boolean
----@param ... any
----@return boolean success
-function __WowWidget:SetModelByFileID(asset, useMips, ...) end
 ---@param link? string
 ---@param ... any
 ---@return boolean success
 function __WowWidget:SetModelByHyperlink(link, ...) end
----@param asset? any
----@param useMips? boolean
----@param ... any
----@return boolean success
-function __WowWidget:SetModelByPath(asset, useMips, ...) end
----@param unit? any
----@param sheatheWeapons? boolean
----@param autoDress? boolean
----@param hideWeapons? boolean
----@param usePlayerNativeForm? boolean
----@param holdBowString? boolean
----@param customRaceID? number
----@param ... any
----@return boolean success
-function __WowWidget:SetModelByUnit(unit, sheatheWeapons, autoDress, hideWeapons, usePlayerNativeForm, holdBowString, customRaceID, ...) end
 ---@param layer? any
 ---@param ... any
 function __WowWidget:SetModelDrawLayer(layer, ...) end
@@ -2013,9 +1917,6 @@ function __WowWidget:SetPanDistance(scale, ...) end
 ---@param order? number
 ---@param ... any
 function __WowWidget:SetParent(parent, order, ...) end
----@param scale? number
----@param ... any
-function __WowWidget:SetParticleOverrideScale(scale, ...) end
 ---@param enabled? boolean
 ---@param ... any
 function __WowWidget:SetParticlesEnabled(enabled, ...) end
@@ -2026,15 +1927,6 @@ function __WowWidget:SetPaused(paused, affectsGlobalPause, ...) end
 ---@param pitch? number
 ---@param ... any
 function __WowWidget:SetPitch(pitch, ...) end
----@param characterIndex? number
----@param sheatheWeapons? boolean
----@param autoDress? boolean
----@param hideWeapons? boolean
----@param usePlayerNativeForm? boolean
----@param customRaceID? number
----@param ... any
----@return boolean success
-function __WowWidget:SetPlayerModelFromGlues(characterIndex, sheatheWeapons, autoDress, hideWeapons, usePlayerNativeForm, customRaceID, ...) end
 ---@param scale? number
 ---@param ... any
 function __WowWidget:SetPlayerPingScale(scale, ...) end
@@ -2071,10 +1963,6 @@ function __WowWidget:SetPosition(positionX, positionY, positionZ, ...) end
 ---@param predictedValues? any
 ---@param ... any
 function __WowWidget:SetPredictedValues(predictedValues, ...) end
---- If true, will try to use the collision bounds of models for sizing and centering. Will fall back to default model bounds if set to False, or if collision bounds are unavailable.
----@param preferCollisionBounds? boolean
----@param ... any
-function __WowWidget:SetPreferModelCollisionBounds(preferCollisionBounds, ...) end
 ---@param alpha? number
 ---@param ... any
 function __WowWidget:SetQuestBlobInsideAlpha(alpha, ...) end
@@ -2113,9 +2001,10 @@ function __WowWidget:SetRotation(radians, animate, ...) end
 ---@param ... any
 ---@return boolean success
 function __WowWidget:SetSVG(svgAsset, ...) end
----@param scale? number
+---@param scaleX? number
+---@param scaleY? number
 ---@param ... any
-function __WowWidget:SetScale(scale, ...) end
+function __WowWidget:SetScale(scaleX, scaleY, ...) end
 ---@param scaleX? number
 ---@param scaleY? number
 ---@param ... any
@@ -2156,9 +2045,6 @@ function __WowWidget:SetSheathed(sheathed, hideWeapons, ...) end
 ---@param category? any
 ---@param ... any
 function __WowWidget:SetSheathedCategory(inventorySlots, category, ...) end
----@param show? boolean
----@param ... any
-function __WowWidget:SetShown(show, ...) end
 ---@param x? number
 ---@param y? number
 ---@param ... any
@@ -2269,9 +2155,6 @@ function __WowWidget:SetTimeSpan(startTime, endTime, ...) end
 ---@param timeVisibleSeconds? number
 ---@param ... any
 function __WowWidget:SetTimeVisible(timeVisibleSeconds, ...) end
----@param normalizedAlpha? number
----@param ... any
-function __WowWidget:SetToAlpha(normalizedAlpha, ...) end
 --- Resets this duration text binding to its default state, clearing the configured font string, duration, format, formatter, and fallback text.
 ---@param ... any
 function __WowWidget:SetToDefaults(...) end
@@ -2314,11 +2197,6 @@ function __WowWidget:SetUpdateCallback(cb, ...) end
 ---@param updateInterval? number
 ---@param ... any
 function __WowWidget:SetUpdateInterval(updateInterval, ...) end
----@param x? boolean
----@param y? boolean
----@param z? boolean
----@param ... any
-function __WowWidget:SetUseCenterForOrigin(x, y, z, ...) end
 ---@param useGBuffer? boolean
 ---@param ... any
 function __WowWidget:SetUseGBuffer(useGBuffer, ...) end
@@ -2345,9 +2223,6 @@ function __WowWidget:SetViewTranslation(translationX, translationY, ...) end
 ---@param width? number
 ---@param ... any
 function __WowWidget:SetWidth(width, ...) end
----@param yaw? number
----@param ... any
-function __WowWidget:SetYaw(yaw, ...) end
 --- Configures the text shown when the duration is not configured, or represents a zero-duration time span.
 ---@param text? string
 ---@param ... any
@@ -2355,8 +2230,6 @@ function __WowWidget:SetZeroDurationText(text, ...) end
 ---@param zoomLevel? number
 ---@param ... any
 function __WowWidget:SetZoom(zoomLevel, ...) end
----@param ... any
-function __WowWidget:Show(...) end
 ---@param movieID? number
 ---@param looping? boolean
 ---@param ... any
@@ -2386,8 +2259,6 @@ function __WowWidget:StartPlayerPing(duration, fadeDuration, ...) end
 function __WowWidget:StopAnimKit(...) end
 ---@param ... any
 function __WowWidget:StopAnimating(...) end
----@param ... any
-function __WowWidget:StopAnimationKit(...) end
 ---@param ... any
 function __WowWidget:StopMovie(...) end
 ---@param ... any

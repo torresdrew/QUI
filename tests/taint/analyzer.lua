@@ -58,6 +58,16 @@ local M = {}
 ---   MemberExpr "obj:GetMethod" (Indexer=":") → "obj:GetMethod", "method"
 local function callTargetName(baseNode)
     if not baseNode then return nil, nil end
+    -- F5e: a paren wrap around the resolved expression is IDENTITY in
+    -- callee/base position — `(f)(x)` ≡ `f(x)`, `(obj).f` ≡ `obj.f`
+    -- (multi-value truncation only matters in value-list positions,
+    -- never here) — so the spelling must not defeat resolution
+    -- (verified: `(pcall)(Src, 1)` escaped every pcall classification:
+    -- stale-marker FP on member overwrites, unclassified secret spill
+    -- FN). Inline strip: stripParens is defined later in the file.
+    while type(baseNode) == "table" and baseNode.AstType == "Parentheses" do
+        baseNode = baseNode.Inner
+    end
     local t = baseNode.AstType
     if t == "VarExpr" then
         return baseNode.Name, "function"
@@ -1209,6 +1219,25 @@ local function isGuardName(name, registry, aliases)
     return false
 end
 
+-- Element-secret container calls (round-23): the RESULT is a readable
+-- container whose elements secretize (conditionalSecretContents).
+-- Permissive alias resolution (finding-emission tier, like the
+-- precondition scan's map/ns use — not protection-granting).
+local function isElementSecretCallName(name, registry)
+    if not name then return false end
+    if registry:isElementSecretFunction(name) then return true end
+    local aliases = fnAliases
+    if not aliases then return false end
+    if aliases.map[name] then
+        return registry:isElementSecretFunction(aliases.map[name])
+    end
+    local prefix, rest = name:match("^([%w_]+)([.:].+)$")
+    if prefix and aliases.ns[prefix] then
+        return registry:isElementSecretFunction(aliases.ns[prefix] .. rest)
+    end
+    return false
+end
+
 local function stripParens(expr)
     while type(expr) == "table" and expr.AstType == "Parentheses" do
         expr = expr.Inner
@@ -2050,7 +2079,16 @@ local function collectOuterVarNodes(funcNode)
     end
     local scopes = { {} }
     for _, arg in ipairs(funcNode.Arguments or {}) do
-        if arg.Name then scopes[1][arg.Name] = newBindingId() end
+        if arg.Name then
+            local id = newBindingId()
+            scopes[1][arg.Name] = id
+            -- Declared-param binding annotation (round-23 helper-param
+            -- seeding): the Argument NODE keys its own binding ID, the
+            -- same way LocalStatement declaration targets are annotated
+            -- below. Argument nodes are never read roots, so no other
+            -- fnOuterVarNodes consumer can see these entries.
+            outer[arg] = id
+        end
     end
     if funcNode.VarArg then scopes[1]["..."] = newBindingId() end
     if isColonFunction(funcNode) then
@@ -3095,6 +3133,73 @@ local function clearAliasFlowBinding(ctx, name)
     end
 end
 
+-- Helper-param seeding (round-23): a function STATEMENT whose DECLARED
+-- name is registered via Registry:addElementContainerParams gets a
+-- "<param>[*]" contamination marker seeded for each listed DECLARED
+-- argument position. Marker only — the param name itself never enters
+-- taintSet (the container reference stays truth-testable, `#`-able and
+-- passable, exactly like a bind-site container), so only element reads
+-- flag and the probed discipline scans clean. Positions index the
+-- parser's Arguments list, which OMITS a colon declaration's implicit
+-- `self` — position 1 of `function M:Copy(src)` is `src` (E22 pins it).
+-- Name resolution covers the three statement shapes (`local function f`,
+-- `function f`, `function M.f`/`M:f` — colon spellings normalize to the
+-- dotted key); anonymous closures have no Name and never seed. Exact
+-- spelling first; bare-tail fallback ONLY when the exact lookup missed
+-- and the bare name itself is registered — a dotted registration never
+-- answers for an unrelated declaration's tail. Provenance is the param's
+-- OWN binding ID (the Argument-node annotation in collectOuterVarNodes),
+-- so a fresh same-named shadow inside the body drops the evidence like
+-- any param-rooted state. The marker is deliberately NEVER exported:
+-- params are per-invocation locals, and exportPersistentKey refuses
+-- param roots anyway (fnLocalNames covers every Argument name; a
+-- param-rooted write resolves to a non-"outer" binding). Independent
+-- provenance mirrors recordElementContainerMarker — a falsy restriction
+-- gate does not prove elements readable.
+local function seedElementContainerParams(funcNode, fieldTaintSet, registry)
+    if not registry.elementContainerParams then return end
+    local nameNode = funcNode.Name
+    if type(nameNode) ~= "table" then return end
+    local declName
+    if funcNode.IsLocal then
+        -- `local function f` — Name is the parser's scope-local record
+        -- (no AstType); anonymous function EXPRESSIONS also carry
+        -- IsLocal=true but have no Name table and bailed above.
+        declName = nameNode.Name
+    elseif nameNode.AstType == "VarExpr" then
+        declName = nameNode.Name          -- `function f`
+    elseif nameNode.AstType == "MemberExpr" then
+        declName = callTargetName(nameNode)
+        if declName then declName = declName:gsub(":", ".") end
+    end
+    if type(declName) ~= "string" then return end
+    local positions = registry:elementContainerParams(declName)
+    if not positions then
+        local tail = declName:match("([%w_]+)$")
+        if tail and tail ~= declName then
+            positions = registry:elementContainerParams(tail)
+        end
+    end
+    if type(positions) ~= "table" then return end
+    for _, pos in ipairs(positions) do
+        local arg = funcNode.Arguments and funcNode.Arguments[pos]
+        local name = arg and arg.Name
+        if name then
+            local marker = name .. "[*]"
+            fieldTaintSet[marker] = true
+            if fnKeyProvenance and fnOuterVarNodes then
+                local id = fnOuterVarNodes[arg]
+                if id then fnKeyProvenance[marker] = id end
+            end
+            if fnEventCtx then
+                fnEventCtx.independentFields =
+                    fnEventCtx.independentFields or {}
+                fnEventCtx.independentFields[marker] = true
+            end
+        end
+    end
+end
+
 local function walkFunctionBody(funcNode, taintSet, fieldTaintSet, findings, registry, filePath, debug)
     if not (funcNode.Body and funcNode.Body.Body) then return end
     local prevFresh = fnFreshTables
@@ -3282,6 +3387,10 @@ local function walkFunctionBody(funcNode, taintSet, fieldTaintSet, findings, reg
         if arg.Name then clearAliasFlowBinding(fnEventCtx, arg.Name) end
     end
     if isColonFunction(funcNode) then clearAliasFlowBinding(fnEventCtx, "self") end
+    -- Helper-param seeding (round-23): AFTER clearParamTaint above — the
+    -- seed must survive the parameter clear — and after the flow-context
+    -- swap so the independent-provenance mark lands on THIS body's ctx.
+    seedElementContainerParams(funcNode, closureFieldTaint, registry)
     walkStatements(funcNode.Body.Body, closureTaint, closureFieldTaint, findings, registry, filePath, debug)
     fnEventCtx = prevCtx
     fnFreshTables = prevFresh
@@ -3342,12 +3451,23 @@ end
 -- Taint of a particular return from a multi-return RHS.  nil means the
 -- shape has no special positional model and the caller may use its ordinary
 -- conservative spill rule.
+-- Second return (round-23 F5b) classifies PROVABLE spill values for the
+-- member-write strong update — element knowledge lives here so
+-- walkStatements (at Lua 5.1's 60-upvalue ceiling) reaches it through an
+-- already-captured helper: "element" = the fresh container lands at this
+-- index (clear-then-record-marker); "nil" = provably nil (truncating
+-- parentheses, or past the single-container contract); "boolean" = the
+-- pcall ok flag. nil kind = unknown content (conservative, no strong
+-- update). Element shapes report taint FALSE, never nil: the container
+-- reference itself is never secret (marker track), and the origin
+-- fallback must not re-taint it.
 local function multiReturnTaint(expr, resultIndex, registry)
     local selected = selectVarargTaint(expr, resultIndex)
     if selected ~= nil then return selected end
     if type(expr) == "table" and expr.AstType == "Parentheses"
         and resultIndex > 1 then
-        return false -- parentheses truncate a call to one result
+        -- parentheses truncate a call to one result: spill slots are nil
+        return false, "nil"
     end
     local call = stripParens(expr)
     if type(call) ~= "table" or call.AstType ~= "CallExpr" then return nil end
@@ -3358,8 +3478,15 @@ local function multiReturnTaint(expr, resultIndex, registry)
         if fnName and registry:isSource(fnName) then
             return resultIndex > 1 -- first result is the clean success boolean
         end
+        if fnName and isElementSecretCallName(fnName, registry) then
+            if resultIndex == 1 then return false, "boolean" end
+            if resultIndex == 2 then return false, "element" end
+            return false, "nil"
+        end
     elseif name and registry:isSource(name) then
         return true
+    elseif name and isElementSecretCallName(name, registry) then
+        return false, resultIndex == 1 and "element" or "nil"
     end
     return nil
 end
@@ -4376,6 +4503,101 @@ local function walkNumericForExpr(expr, taintSet, fieldTaintSet, findings,
     end
 end
 
+-- Does an ipairs/pairs generator ARGUMENT resolve to an element-secret
+-- container call (round-23)? Strips `or`-chain defaults — `Src(u) or {}`
+-- iterates the container when present; a plain-ref/constructor default is
+-- legal in that position (the container REFERENCE is never secret).
+local function orChainHasElementSecretCall(n, registry)
+    n = stripParens(n)
+    if type(n) ~= "table" then return false end
+    if n.AstType == "BinopExpr" and n.Op == "or" then
+        return orChainHasElementSecretCall(n.Lhs, registry)
+            or orChainHasElementSecretCall(n.Rhs, registry)
+    end
+    if n.AstType == "CallExpr" then
+        local cn = callTargetName(n.Base)
+        return (cn and isElementSecretCallName(cn, registry)) or false
+    end
+    return false
+end
+
+-- Loop-HEADER expression walk, hoisted to file scope (round-23):
+-- walkStatements sits at Lua 5.1's 60-upvalue ceiling, so the generic-for
+-- element handling lives here and this helper REPLACES walkStatements'
+-- direct walkNumericForExpr capture (net zero upvalues there).
+--
+-- Generic-for FP suppression (the reproduced Codex FP): `ipairs(auras)`
+-- where auras carries ONLY a contamination marker emitted "tainted value
+-- passed to ipairs" via CONTENT_READER_FUNCTIONS + refHasTaintedDescendant
+-- — but iterating a READABLE element-secret container is the engine-legal
+-- scan idiom; only the yielded ELEMENTS are possibly secret. When the
+-- single generator is an ipairs/pairs call whose argument is (1) a ref NOT
+-- itself tainted but with marker/descendant evidence, or (2) an
+-- element-secret container call (possibly behind an `or`-chain default),
+-- the header call node is skipped: each ARGUMENT is walked individually so
+-- nested sinks still surface, the content-reader emit never fires, and the
+-- returned VALUE-binder name (VariableList position 2) is tainted by the
+-- caller AFTER its loop-var shadow-clear. The KEY binder (position 1)
+-- stays clean — ipairs indices / pairs keys are plain. A whole-tainted
+-- argument (in taintSet / value-tainted chain) keeps the existing header
+-- emit: iterating a SECRET reference still throws (E17 pins it).
+--
+-- Returns: valueVarName (string) when suppression applied and a value
+-- binder exists; true when suppression applied with no value binder;
+-- nil when the ordinary header walk ran.
+local function walkLoopHeaderExprs(t, stmt, taintSet, fieldTaintSet, findings,
+        registry, filePath)
+    if t == "NumericForStatement" then
+        if stmt.Start then walkNumericForExpr(stmt.Start, taintSet, fieldTaintSet, findings, registry, filePath) end
+        if stmt.End   then walkNumericForExpr(stmt.End,   taintSet, fieldTaintSet, findings, registry, filePath) end
+        if stmt.Step  then walkNumericForExpr(stmt.Step,  taintSet, fieldTaintSet, findings, registry, filePath) end
+        return nil
+    end
+    if t ~= "GenericForStatement" or not stmt.Generators then return nil end
+    local gens = stmt.Generators
+    local call
+    if #gens == 1 then
+        local c = stripParens(gens[1])
+        if type(c) == "table" and c.AstType == "CallExpr" then
+            local gname = callTargetName(c.Base)
+            if gname == "ipairs" or gname == "pairs" then call = c end
+        end
+    end
+    local suppressed = false
+    local arg = call and call.Arguments and call.Arguments[1]
+    if arg then
+        local sarg = stripParens(arg)
+        local at = type(sarg) == "table" and sarg.AstType or nil
+        if at == "VarExpr" or at == "MemberExpr" or at == "IndexExpr" then
+            -- Marker-only container ref: the whole ref must NOT be tainted
+            -- (a secret reference into ipairs throws — existing emit owns
+            -- that), with element/descendant evidence present.
+            suppressed = not isTaintedRef(sarg, taintSet, fieldTaintSet, registry)
+                and refHasTaintedDescendant(sarg, taintSet, fieldTaintSet, registry)
+        elseif at then
+            -- Direct container call (possibly `or`-defaulted). A chain that
+            -- can also YIELD a tainted value keeps the existing emit.
+            suppressed = orChainHasElementSecretCall(sarg, registry)
+                and not isValueTainted(sarg, taintSet, fieldTaintSet, registry)
+        end
+    end
+    if not suppressed then
+        for _, g in ipairs(gens) do
+            walkExprTop(g, taintSet, fieldTaintSet, findings, registry, filePath)
+        end
+        return nil
+    end
+    -- Suppressed header: walk the argument subtrees only (nested sinks
+    -- still surface; the ipairs/pairs call node itself is never walked, so
+    -- the content-reader rule cannot fire).
+    for _, a in ipairs(call.Arguments) do
+        walkExprTop(a, taintSet, fieldTaintSet, findings, registry, filePath)
+    end
+    local vlist = stmt.VariableList
+    local valueVar = vlist and vlist[2] and vlist[2].Name
+    return valueVar or true
+end
+
 --- Walk an expression for unsafe sinks consuming tainted locals.
 --- Returns true if the expression itself is (or contains) a source call —
 --- the caller uses this to decide whether the assigned-to variable is tainted.
@@ -4777,6 +4999,23 @@ walkExpr = function(expr, taintSet, fieldTaintSet, findings, registry, filePath)
             or isValueTainted(expr.Index, taintSet, fieldTaintSet, registry) then
             emit(findings, filePath, nodeLine(expr.Index), 1, "<index>",
                 "<tainted-local>", "tainted value used as a table index")
+        end
+        -- Direct-expression element read (round-23): indexing the RESULT of
+        -- an element-secret call without ever binding the container
+        -- (`Src(u)[1]`) yields a possibly-secret element with no name the
+        -- marker machinery could track, so the read itself is the finding.
+        -- This is the ONE sanctioned direct emit for the element class —
+        -- marker-mediated reads flow through existing consumers only (see
+        -- recordElementContainerMarker). Fires in value AND condition
+        -- contexts: both route through this walker.
+        local elemBase = stripParens(expr.Base)
+        if type(elemBase) == "table" and elemBase.AstType == "CallExpr" then
+            local elemName = callTargetName(elemBase.Base)
+            if elemName and isElementSecretCallName(elemName, registry) then
+                emit(findings, filePath, nodeLine(expr), 1, "<element-read>",
+                    elemName,
+                    "element of a readable secret-content container used without probe")
+            end
         end
         -- Indexing a source-returned table carries the source value forward;
         -- a tainted INDEX is consumed here but does not taint the table value.
@@ -5924,6 +6163,28 @@ local function constructorTargetProvenance(targetNode)
     return id
 end
 
+-- Element-secret container bind (round-23): the bound NAME stays out of
+-- taintSet — the container reference is never secret (truth-tests, `#`,
+-- whole-value passes all stay clean) — but its ELEMENTS are possibly
+-- secret, which is exactly the round-9d contamination-marker contract.
+-- Field-for-field the marker-recording block inside recordConstructorFields:
+-- fieldTaintSet marker + binding provenance + persistent export +
+-- INDEPENDENT provenance (a falsy restriction gate does not prove elements
+-- readable, so gate clears must never bless the marker).
+local function recordElementContainerMarker(baseKey, targetNode, fieldTaintSet)
+    if not baseKey then return end
+    local marker = baseKey .. "[*]"
+    fieldTaintSet[marker] = true
+    if fnKeyProvenance then
+        fnKeyProvenance[marker] = constructorTargetProvenance(targetNode)
+    end
+    exportPersistentKey(marker, targetNode)
+    if fnEventCtx then
+        fnEventCtx.independentFields = fnEventCtx.independentFields or {}
+        fnEventCtx.independentFields[marker] = true
+    end
+end
+
 local function recordConstructorFields(baseKey, ctor, targetNode, taintSet,
         fieldTaintSet, registry)
     local anyTaint, anyPayload = false, false
@@ -6009,6 +6270,25 @@ local function recordConstructorFields(baseKey, ctor, targetNode, taintSet,
             end
             anyTaint = true
             anyPayload = anyPayload or payloadOnly
+        elseif suffix and type(value) == "table" and value.AstType == "CallExpr"
+            and not (entry.Type == "Value" and entryIndex == #entries) then
+            -- Round-23 (final review F1): a KEYED or NON-FINAL list entry
+            -- calling an element-secret function sits in single-value
+            -- context — the call truncates to result 1, which IS the
+            -- container — so the entry's OWN slot binds the marker.
+            -- stripParens above already unwrapped truncating parentheses;
+            -- they do not suppress here (result 1 is still the container,
+            -- mirroring the bare-final branch below). pcall/xpcall stay
+            -- excluded: truncated to one value they yield only the clean
+            -- ok boolean (pinned by the round-10/E10 non-final-pcall
+            -- cases). Final LIST entries are owned by the expansion tail
+            -- below (multi-return position, not single-value).
+            local callName = callTargetName(value.Base)
+            if callName and callName ~= "pcall" and callName ~= "xpcall"
+                and isElementSecretCallName(callName, registry) then
+                recordElementContainerMarker(baseKey .. suffix, targetNode,
+                    fieldTaintSet)
+            end
         end
         -- A final list-style pcall/xpcall expands its returns into the
         -- constructor.  Slot N is the clean success boolean; slot N+1 is
@@ -6018,6 +6298,14 @@ local function recordConstructorFields(baseKey, ctor, targetNode, taintSet,
             local callName = callTargetName(value.Base)
             local fnArg = value.Arguments and value.Arguments[1]
             local fnName = fnArg and callTargetName(fnArg)
+            -- stripParens above hid any truncating parentheses around the
+            -- entry: `{ (pcall(...)) }` yields ONLY the clean ok boolean,
+            -- so the round-23 protected branch below must not expand it.
+            -- (A parenthesized BARE call keeps result 1 — for an element-
+            -- secret call that IS the container, so only the pcall branch
+            -- needs the guard.)
+            local truncated = type(entry.Value) == "table"
+                and entry.Value.AstType == "Parentheses"
             if (callName == "pcall" or callName == "xpcall")
                 and fnName and registry:isSource(fnName) then
                 local spillKey = baseKey .. "[" .. tostring(listIndex) .. "]"
@@ -6033,6 +6321,32 @@ local function recordConstructorFields(baseKey, ctor, targetNode, taintSet,
                     fnEventCtx.independentFields[spillKey] = true
                 end
                 anyTaint = true
+            elseif (callName == "pcall" or callName == "xpcall")
+                and not truncated
+                and fnName and isElementSecretCallName(fnName, registry) then
+                -- Round-23: a final protected ELEMENT-SECRET call expands
+                -- its container into the slot after the ok boolean.
+                -- listIndex is POST-advance here — the entry's own slot
+                -- was listIndex-1 (the ok boolean), so listIndex names
+                -- ok+1: the same arithmetic as spillKey above, pinned by
+                -- the round-10 `{ pcall(S) }` t[1]-clean / t[2]-tainted
+                -- cases. Marker only (independent provenance); the slot
+                -- itself never enters the plain taint keys, and anyTaint
+                -- stays false — the container reference is not secret.
+                recordElementContainerMarker(
+                    baseKey .. "[" .. tostring(listIndex) .. "]",
+                    targetNode, fieldTaintSet)
+            elseif callName ~= "pcall" and callName ~= "xpcall"
+                and callName
+                and isElementSecretCallName(callName, registry) then
+                -- Round-23 bare final call: `{ Src(u) }` expands the
+                -- container at the entry's OWN slot — listIndex-1
+                -- post-advance; no ok boolean precedes it. Truncating
+                -- parentheses keep result 1, which IS the container, so
+                -- this branch needs no paren guard.
+                recordElementContainerMarker(
+                    baseKey .. "[" .. tostring(listIndex - 1) .. "]",
+                    targetNode, fieldTaintSet)
             end
         end
     end
@@ -6040,13 +6354,56 @@ local function recordConstructorFields(baseKey, ctor, targetNode, taintSet,
 end
 
 local function recordConstructorExprFields(baseKey, expr, targetNode, taintSet,
-        fieldTaintSet, registry)
+        fieldTaintSet, registry, resultIndex)
+    -- Multi-return SPILL position (round-23, resultIndex >= 2): the only
+    -- bind that reaches past result 1 is the protected-call spill —
+    -- `local ok, auras = pcall(Src, ...)` lands the element-secret
+    -- CONTAINER at result 2 (mirrors multiReturnTaint's pcall branch: the
+    -- ok boolean at result 1 stays clean, and a single container-returning
+    -- call has nothing at results 3+). A parenthesized RHS truncates to
+    -- one value, so no spill position ever binds from it. Marker recording
+    -- only — the container reference is never taintSet-tainted, and
+    -- constructor semantics never apply at a spill position (a constructor
+    -- RHS yields exactly one value, so its spill vars are plain nil).
+    if resultIndex and resultIndex > 1 then
+        if resultIndex == 2 and type(expr) == "table"
+            and expr.AstType == "CallExpr" then
+            local callName = callTargetName(expr.Base)
+            if callName == "pcall" or callName == "xpcall" then
+                local fnArg = expr.Arguments and expr.Arguments[1]
+                local fnName = fnArg and callTargetName(fnArg)
+                if fnName and isElementSecretCallName(fnName, registry) then
+                    recordElementContainerMarker(baseKey, targetNode,
+                        fieldTaintSet)
+                end
+            end
+        end
+        return false, false, false
+    end
     expr = stripParens(expr)
     if type(expr) ~= "table" then return false, false, false end
     if expr.AstType == "ConstructorExpr" then
         local dirty, payload = recordConstructorFields(baseKey, expr,
             targetNode, taintSet, fieldTaintSet, registry)
         return dirty, payload, true
+    end
+    -- Element-secret bind site (round-23): an RHS calling a registered
+    -- element-secret function (direct spelling or fnAliases value-copy)
+    -- binds a readable container — record the contamination marker under
+    -- the bind target's canonical key and NOTHING else (no taintSet entry,
+    -- no constructor semantics: returns all-false so callers never treat
+    -- the call as a constructor or reclassify the bound name). This runs
+    -- from here rather than the LocalStatement/AssignmentStatement walk
+    -- because walkStatements sits at Lua 5.1's 60-upvalue ceiling and
+    -- already routes every bind shape (local, var-assign, keyed member
+    -- write) through this helper with the stripped RHS. Only result
+    -- position 1 binds the marker: spill LHS vars never reach this call.
+    if expr.AstType == "CallExpr" then
+        local callName = callTargetName(expr.Base)
+        if callName and isElementSecretCallName(callName, registry) then
+            recordElementContainerMarker(baseKey, targetNode, fieldTaintSet)
+        end
+        return false, false, false
     end
     if expr.AstType == "BinopExpr"
         and (expr.Op == "and" or expr.Op == "or") then
@@ -6381,14 +6738,23 @@ walkStatements = function(stmts, taintSet, fieldTaintSet, findings, registry,
                             p.dotsNode = rhs
                         elseif rhs then
                             dotsAt = nil
+                            local strippedRhs = stripParens(rhs)
                             -- Detect pcall/xpcall(<source>, ...): the FIRST
                             -- return is always a clean boolean (success
                             -- flag), only the spilled subsequent LHS vars
-                            -- carry the source's tainted result.
-                            if rhs.AstType == "CallExpr" then
-                                local pname = callTargetName(rhs.Base)
+                            -- carry the source's tainted result. F5d:
+                            -- classified on the STRIPPED rhs (F5c twin) —
+                            -- `local ok = (pcall(Src, 1))` binds the same
+                            -- boolean the bare spelling does; the raw-RHS
+                            -- check FP-tainted ok. p.multiExpr below stays
+                            -- RAW: the Parentheses node carries the
+                            -- truncation semantics multiReturnTaint
+                            -- decodes for spill positions.
+                            if strippedRhs.AstType == "CallExpr" then
+                                local pname = callTargetName(strippedRhs.Base)
                                 if pname == "pcall" or pname == "xpcall" then
-                                    local fnArg = rhs.Arguments and rhs.Arguments[1]
+                                    local fnArg = strippedRhs.Arguments
+                                        and strippedRhs.Arguments[1]
                                     if fnArg then
                                         local fnName = callTargetName(fnArg)
                                         if fnName and registry:isSource(fnName) then
@@ -6398,7 +6764,6 @@ walkStatements = function(stmts, taintSet, fieldTaintSet, findings, registry,
                                 end
                             end
                             p.hadSource = walkExprTop(rhs, taintSet, fieldTaintSet, findings, registry, filePath)
-                            local strippedRhs = stripParens(rhs)
                             if type(strippedRhs) == "table"
                                 and strippedRhs.AstType == "ConstructorExpr" then
                                 p.constructor = strippedRhs
@@ -6535,6 +6900,19 @@ walkStatements = function(stmts, taintSet, fieldTaintSet, findings, registry,
                         taintSet[varName] = nil
                         recordAliasBinding(varName, nil)
                     end
+                    -- Round-23 protected-call spill: `local ok, auras =
+                    -- pcall(Src, ...)` lands the element-secret CONTAINER
+                    -- at result 2 — a spill position the rhs bind site
+                    -- above never sees. Routed through the shared helper
+                    -- (upvalue-neutral: this walker sits at Lua 5.1's
+                    -- 60-upvalue ceiling); resultIndex confines recording
+                    -- to the exact pcall/xpcall-of-element shape at
+                    -- result 2, so every other spill stays untouched.
+                    if not rhs and p.multiExpr and p.multiIndex then
+                        recordConstructorExprFields(varName, p.multiExpr,
+                            varEntry, taintSet, fieldTaintSet, registry,
+                            p.multiIndex)
+                    end
                 end
             end
             -- Extra RHS expressions beyond the LHS count are still evaluated
@@ -6590,10 +6968,29 @@ walkStatements = function(stmts, taintSet, fieldTaintSet, findings, registry,
                         p.dotsNode = rhs
                     elseif rhs then
                         dotsAt = nil
-                        if rhs.AstType == "CallExpr" then
-                            local pname = callTargetName(rhs.Base)
+                        local strippedRhs = stripParens(rhs)
+                        -- F5c: classify pcall on the STRIPPED rhs, like
+                        -- the sibling constructor classifications below —
+                        -- `x = (pcall(F))` assigns the SAME ok boolean
+                        -- the bare spelling does (parentheses truncate to
+                        -- result 1, which for pcall IS the boolean), so
+                        -- the spelling must not change the verdict (the
+                        -- raw-RHS check was a verified stale-marker FP on
+                        -- member slots, and made the assignment spelling
+                        -- `ok = (pcall(Src, 1))` taint the ok boolean).
+                        -- The LocalStatement classification twin got the
+                        -- same treatment (F5d).
+                        if strippedRhs.AstType == "CallExpr" then
+                            local pname = callTargetName(strippedRhs.Base)
                             if pname == "pcall" or pname == "xpcall" then
-                                local fnArg = rhs.Arguments and rhs.Arguments[1]
+                                -- Round-23 F5b: result 1 of pcall/xpcall
+                                -- is ALWAYS a boolean, whatever the callee
+                                -- — a member slot receiving it directly is
+                                -- provably content-clean (stale-marker
+                                -- strong update, E38).
+                                p.pcallCall = true
+                                local fnArg = strippedRhs.Arguments
+                                    and strippedRhs.Arguments[1]
                                 local fnName = fnArg and callTargetName(fnArg)
                                 if fnName and registry:isSource(fnName) then
                                     p.pcallOfSource = true
@@ -6601,7 +6998,6 @@ walkStatements = function(stmts, taintSet, fieldTaintSet, findings, registry,
                             end
                         end
                         p.hadSource = walkExprTop(rhs, taintSet, fieldTaintSet, findings, registry, filePath)
-                        local strippedRhs = stripParens(rhs)
                         if type(strippedRhs) == "table"
                             and strippedRhs.AstType == "ConstructorExpr" then
                             p.constructor = strippedRhs
@@ -6626,6 +7022,7 @@ walkStatements = function(stmts, taintSet, fieldTaintSet, findings, registry,
                                 p.key = canonChainKey(rawKey)
                                 p.contentClean = isContentCleanExpr(rhs)
                                     or p.constructor ~= nil
+                                    or p.pcallCall == true
                             else
                                 local prefix, segs = stableChainPrefix(lhsExpr)
                                 p.prefix = prefix
@@ -6658,6 +7055,60 @@ walkStatements = function(stmts, taintSet, fieldTaintSet, findings, registry,
                         p.spillPayloadEvents = payloadEventsForSelect(
                             p.multiExpr, p.multiIndex)
                         p.spillNode = p.multiExpr
+                    elseif (lhsExpr.AstType == "MemberExpr"
+                        or lhsExpr.AstType == "IndexExpr")
+                        and #rhsList > 0 and i > #rhsList then
+                        -- Round-23 (final review F5/F5b): multi-return
+                        -- spill into a MEMBER/INDEX target. The var-LHS
+                        -- spill branch above never covered these, so
+                        -- `ok, state.auras = pcall(ElementSrc, ...)` bound
+                        -- the container with NO marker (verified FN); the
+                        -- F5 first cut then recorded the marker but
+                        -- BYPASSED the member-write lifecycle (Codex:
+                        -- alias-retarget FN + stale-marker FP). Classify
+                        -- the spill exactly like the var-spill branch
+                        -- (positional taint, origin fallback, payload
+                        -- selection) so pass 2 can run the FULL direct-
+                        -- write lifecycle; multiReturnTaint's spill kind
+                        -- drives the strong update ("nil"/"boolean" =
+                        -- provably clean scalar lands, "element" = fresh
+                        -- container: clear-then-record-marker).
+                        local origin = pre[#rhsList]
+                        p.multiExpr = rhsList[#rhsList]
+                        p.multiIndex = i - #rhsList + 1
+                        local selected = selectVarargTaint(p.multiExpr,
+                            p.multiIndex)
+                        local positional, spillKind = multiReturnTaint(
+                            p.multiExpr, p.multiIndex, registry)
+                        p.tainted = positional
+                        if p.tainted == nil then
+                            p.tainted = origin and origin.tainted or false
+                        end
+                        p.payloadOnly = selected == true
+                        p.payloadEvents = payloadEventsForSelect(
+                            p.multiExpr, p.multiIndex)
+                        p.contentClean = spillKind ~= nil
+                        local rawKey, volatile = chainRefKey(lhsExpr)
+                        if rawKey and not volatile then
+                            p.key = canonChainKey(rawKey)
+                        else
+                            -- Volatile/unkeyable chain: mirror the
+                            -- direct-write keyless convention (round-9b)
+                            -- — a TAINTED spill contaminates the deepest
+                            -- stable prefix; clean/unknown spills record
+                            -- nothing.
+                            local prefix, segs = stableChainPrefix(lhsExpr)
+                            p.prefix = prefix
+                            if prefix then
+                                local slot = prefix
+                                for _, seg in ipairs(segs or {}) do
+                                    slot = slot .. (seg == "*" and "[*]" or seg)
+                                end
+                                p.wildAliasSlot = slot
+                            end
+                            p.rawRoot = chainRootName(lhsExpr)
+                            p.canonRoot = p.rawRoot and canonFieldBase(p.rawRoot)
+                        end
                     end
                 end
             end
@@ -6939,6 +7390,16 @@ walkStatements = function(stmts, taintSet, fieldTaintSet, findings, registry,
                         taintSet[varName] = nil
                         recordAliasBinding(varName, nil)
                     end
+                    -- Round-23 protected-call spill (twin of the
+                    -- LocalStatement site — round-6b taught that modeling
+                    -- spills only for locals leaves plain assignments as
+                    -- false negatives). Marker-only recording via the
+                    -- shared helper; resultIndex gates the shape.
+                    if not rhs and p.multiExpr and p.multiIndex then
+                        recordConstructorExprFields(varName, p.multiExpr,
+                            lhsExpr, taintSet, fieldTaintSet, registry,
+                            p.multiIndex)
+                    end
                 elseif lhsExpr.AstType == "MemberExpr"
                     or lhsExpr.AstType == "IndexExpr" then
                     -- Alias-canonical key (round-8d, resolved in pass 1):
@@ -6953,7 +7414,15 @@ walkStatements = function(stmts, taintSet, fieldTaintSet, findings, registry,
                     -- index in the chain) have no sound identity — see the
                     -- keyless fallback below.
                     if p.key then
-                        if rhs then
+                        -- F5b: member/index SPILL writes (no rhs; pass-1
+                        -- snapshot carries multiExpr/multiIndex) run the
+                        -- SAME lifecycle as a direct assignment, in the
+                        -- same order — safe-key invalidation, slot
+                        -- retarget + chainAlias drop + descendant
+                        -- respell, provenance re-record, tainted set /
+                        -- content-clean strong update — parity is the
+                        -- contract (a spill IS a write to the slot).
+                        if rhs or (p.multiExpr and p.multiIndex) then
                             invalidateSafeKey(p.key)
                             -- ANY write to the slot re-binds what the chain
                             -- denotes: existing chain aliases for the slot
@@ -7092,6 +7561,17 @@ walkStatements = function(stmts, taintSet, fieldTaintSet, findings, registry,
                             if p.constructorExpr then
                                 recordConstructorExprFields(p.key, p.constructorExpr,
                                     lhsExpr, taintSet, fieldTaintSet, registry)
+                            elseif not rhs and p.multiExpr and p.multiIndex then
+                                -- F5b: spill twin of the record above —
+                                -- runs AFTER the strong-update clearing,
+                                -- so result 2 of an element-secret
+                                -- pcall/xpcall is clear-then-record: the
+                                -- fresh container's marker replaces
+                                -- whatever the slot held. Non-element
+                                -- shapes record nothing here.
+                                recordConstructorExprFields(p.key, p.multiExpr,
+                                    lhsExpr, taintSet, fieldTaintSet, registry,
+                                    p.multiIndex)
                             end
                             if not p.tainted
                                 and (p.contentClean or p.aliasRecorded) then
@@ -7104,7 +7584,7 @@ walkStatements = function(stmts, taintSet, fieldTaintSet, findings, registry,
                                     p.key, true)
                             end
                         end
-                    elseif rhs then
+                    elseif rhs or (p.multiExpr and p.multiIndex) then
                         -- Keyless (volatile/unkeyable) write of a TAINTED
                         -- value (round-9b/9d): no sound key exists to record
                         -- the write (`updateInfo.sub[k] = Source()`), so
@@ -7682,15 +8162,15 @@ walkStatements = function(stmts, taintSet, fieldTaintSet, findings, registry,
             -- Numeric/generic headers execute once before the loop. A while
             -- condition executes at the head on every back-edge and is walked
             -- by the transfer below against the converged head state.
-            if t == "NumericForStatement" then
-                if stmt.Start then walkNumericForExpr(stmt.Start, taintSet, fieldTaintSet, findings, registry, filePath) end
-                if stmt.End   then walkNumericForExpr(stmt.End,   taintSet, fieldTaintSet, findings, registry, filePath) end
-                if stmt.Step  then walkNumericForExpr(stmt.Step,  taintSet, fieldTaintSet, findings, registry, filePath) end
-            elseif t == "GenericForStatement" and stmt.Generators then
-                for _, g in ipairs(stmt.Generators) do
-                    walkExprTop(g, taintSet, fieldTaintSet, findings, registry, filePath)
-                end
-            end
+            -- Header walk is hoisted to walkLoopHeaderExprs (round-23:
+            -- walkStatements sits at the 60-upvalue ceiling; the helper
+            -- replaces the walkNumericForExpr capture net-zero).
+            -- elementForValueVar: generic-for VALUE binder to taint after
+            -- each loop-var shadow-clear when the header was the suppressed
+            -- element-container shape (true = suppressed, no value binder).
+            local elementForValueVar = walkLoopHeaderExprs(t, stmt, taintSet,
+                fieldTaintSet, findings, registry, filePath)
+            if elementForValueVar == true then elementForValueVar = nil end
 
             local body = stmt.Body
             if body and body.Body then
@@ -7824,6 +8304,14 @@ walkStatements = function(stmts, taintSet, fieldTaintSet, findings, registry,
                             fieldTaintSet, outFindings, registry, filePath)
                     end
                     local loopVars = shadowLoopVariables()
+                    -- Round-23: elements of the iterated container are
+                    -- possibly secret — taint the VALUE binder for the body
+                    -- walk, AFTER the shadow-clear so the fresh per-iteration
+                    -- binding (not the shadowed outer spelling) carries it.
+                    -- The KEY binder (VariableList position 1) stays clean.
+                    if elementForValueVar then
+                        taintSet[elementForValueVar] = true
+                    end
                     local previousCollector =
                         fnEventCtx and fnEventCtx.breakExitCollector
                     local breakExits = {}
@@ -8276,12 +8764,14 @@ local function collectPreconditionAliases(node, registry, aliases, visited)
         if t == "BinopExpr" and (init.Op == "and" or init.Op == "or") then
             local n = resolveInit(init.Rhs)
             if n and (registry:preconditionFlags(n) or registry:isRestrictionGate(n)
-                or registry:isGuard(n) or registry.preconditionNamespaces[n]) then
+                or registry:isGuard(n) or registry:isElementSecretFunction(n)
+                or registry.preconditionNamespaces[n]) then
                 return n
             end
             n = resolveInit(init.Lhs)
             if n and (registry:preconditionFlags(n) or registry:isRestrictionGate(n)
-                or registry:isGuard(n) or registry.preconditionNamespaces[n]) then
+                or registry:isGuard(n) or registry:isElementSecretFunction(n)
+                or registry.preconditionNamespaces[n]) then
                 return n
             end
         end
@@ -8300,7 +8790,8 @@ local function collectPreconditionAliases(node, registry, aliases, visited)
                 -- only blocks gate/guard protection and chain hops.
                 if resolved and (registry:preconditionFlags(resolved)
                     or registry:isRestrictionGate(resolved)
-                    or registry:isGuard(resolved)) then
+                    or registry:isGuard(resolved)
+                    or registry:isElementSecretFunction(resolved)) then
                     canonical = resolved
                     aliases.map[localName] = resolved
                 elseif resolved and registry.preconditionNamespaces[resolved] then
@@ -9752,6 +10243,18 @@ function M.analyze(source, filePath, registry, config, opts)
     end
     if not needAliases then
         for gname in pairs(registry.guards or {}) do
+            if source:find(getMethodNameFromQualified(gname), 1, true) then
+                needAliases = true
+                break
+            end
+        end
+    end
+    -- Element-secret functions (round-23) ride the same alias machinery:
+    -- real call sites go through value-copy locals (`local Get =
+    -- C_UnitAuras and C_UnitAuras.GetUnitAuras`), so a file naming one
+    -- must build the maps or the element track resolves nothing.
+    if not needAliases then
+        for gname in pairs(registry.elementSecretFunctions or {}) do
             if source:find(getMethodNameFromQualified(gname), 1, true) then
                 needAliases = true
                 break

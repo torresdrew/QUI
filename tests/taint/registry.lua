@@ -89,6 +89,11 @@ function M.new()
     self.aspectReturningMethods = {}
     self.preconditionAPIs  = {}
     self.restrictionGates  = {}
+    self.elementSecretFunctions = {}
+    -- Storage for the helper-param seed track. Named apart from its getter
+    -- (`elementContainerParams`) because Registry.__index = Registry: an
+    -- instance field spelled like the method would shadow it.
+    self.elementContainerParamPositions = {}
     self.secretEventParams = {}
     -- First dotted component of every guarded API / gate name ("C_UnitAuras",
     -- "C_Secrets") — feeds the analyzer's namespace-alias detection
@@ -138,6 +143,30 @@ function Registry:addGuard(name)
     if ns then self.preconditionNamespaces[ns] = true end
 end
 function Registry:isGuard(name)             return self.guards[name]            == true end
+
+-- Element-secret container track (round-23): functions whose CONTAINER return
+-- is safe to truth-test but whose ELEMENTS secretize (conditionalSecretContents
+-- in the api-index). Deliberately separate from `sources` — registering here
+-- must never make the call a whole-call taint source (container checks like
+-- `if auras then` stay clean); later tasks consume this track to taint only
+-- the elements pulled back out of the container.
+function Registry:addElementSecretFunction(name) self.elementSecretFunctions[name] = true end
+function Registry:isElementSecretFunction(name)  return self.elementSecretFunctions[name] == true end
+
+-- Helper-param seeding (round-23): functions whose DECLARED name is
+-- registered here get "<param>[*]" contamination markers seeded on the
+-- listed parameter positions (analyzer walkFunctionBody). Positions index
+-- the DECLARED argument list — the parser omits a colon method's implicit
+-- `self` from Arguments, so position 1 of `function M:Copy(src)` is `src`.
+-- Config spellings should be exact ("M.Copy" for both `function M.Copy`
+-- and `function M:Copy`); the analyzer falls back to a bare-tail lookup
+-- only when the exact spelling missed AND the bare name is registered.
+function Registry:addElementContainerParams(fnName, positions)
+    self.elementContainerParamPositions[fnName] = positions
+end
+function Registry:elementContainerParams(fnName)
+    return self.elementContainerParamPositions[fnName]
+end
 
 function Registry:addUnwrap(name)           self.unwraps[name]           = true end
 function Registry:isUnwrap(name)            return self.unwraps[name]           == true end

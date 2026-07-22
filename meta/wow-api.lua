@@ -1310,6 +1310,12 @@ function C_AuctionHouse.StartCommoditiesPurchase(itemID, quantity, ...) end
 ---@return boolean supportsCopperValues
 function C_AuctionHouse.SupportsCopperValues(...) end
 
+C_AuraContainerUtil = {}
+---@param options? any
+---@param ... any
+---@return any result
+function C_AuraContainerUtil.ProcessCustomAuraButtonBorderOptions(options, ...) end
+
 C_AutoComplete = {}
 ---@param name? string
 ---@param ... any
@@ -1779,12 +1785,19 @@ function C_BattleNet.IsBattleNetFriendsListEnabled(...) end
 ---@param ... any
 ---@return boolean isBattleNetFriendsListSupported
 function C_BattleNet.IsBattleNetFriendsListSupported(...) end
+---@param searchInfo? any
+---@param ... any
+---@return table friendsData
+function C_BattleNet.SearchFriends(searchInfo, ...) end
 ---@param gameAccountID? number
 ---@param prefix? any
 ---@param data? any
 ---@param ... any
 ---@return any result
 function C_BattleNet.SendGameData(gameAccountID, prefix, data, ...) end
+---@param name? string
+---@param ... any
+function C_BattleNet.SendTitleFriendInviteByName(name, ...) end
 ---@param ... any
 function C_BattleNet.SendVerifiedBattleNetFriendInvite(...) end
 ---@param bnetAccountID? number
@@ -7793,11 +7806,14 @@ function C_HousingLayout.DeselectRoomOrDoor(...) end
 ---@return number floor
 function C_HousingLayout.GetBaseRoomFloor(...) end
 ---@param ... any
+---@return number highestFloorIndex
+function C_HousingLayout.GetHighestOccupiedFloorIndex(...) end
+---@param ... any
+---@return number lowestFloorIndex
+function C_HousingLayout.GetLowestOccupiedFloorIndex(...) end
+---@param ... any
 ---@return number numRooms
 function C_HousingLayout.GetNumActiveRooms(...) end
----@param ... any
----@return number numFloors
-function C_HousingLayout.GetNumFloors(...) end
 --- Returns the max room placement budget for the current owned house's interior; Can be increased via house level
 ---@param ... any
 ---@return number placementBudget
@@ -9634,6 +9650,7 @@ function C_Map.OpenWorldMap(uiMapID, ...) end
 function C_Map.RequestPreloadMap(uiMapID, ...) end
 ---@param point? any
 ---@param ... any
+---@return boolean wasSet
 function C_Map.SetUserWaypoint(point, ...) end
 
 C_MapExplorationInfo = {}
@@ -10189,6 +10206,11 @@ function C_NeighborhoodInitiative.GetInitiativeTaskChatLink(initiativeTaskID, ..
 ---@param ... any
 ---@return any info
 function C_NeighborhoodInitiative.GetInitiativeTaskInfo(initiativeTaskID, ...) end
+---@param taskID? number
+---@param numItems? number
+---@param ... any
+---@return number scaledAmount
+function C_NeighborhoodInitiative.GetInitiativeTaskRewardScaling(taskID, numItems, ...) end
 ---@param ... any
 ---@return any info
 function C_NeighborhoodInitiative.GetNeighborhoodInitiativeInfo(...) end
@@ -10248,6 +10270,10 @@ function C_PaperDollInfo.CanAutoEquipCursorItem(...) end
 ---@param ... any
 ---@return boolean canOccupySlot
 function C_PaperDollInfo.CanCursorCanGoInSlot(slotIndex, ...) end
+--- Cancels active temporary enchantments on inventory slot items.
+---@param slot? any
+---@param ... any
+function C_PaperDollInfo.CancelTemporaryEnchantment(slot, ...) end
 ---@param armor? number
 ---@param attackerLevel? number
 ---@param ... any
@@ -11627,7 +11653,9 @@ function C_PvP.JoinBattlefield(battlemasterListId, ...) end
 ---@param ... any
 function C_PvP.JoinBrawl(isSpecialBrawl, ...) end
 ---@param ... any
-function C_PvP.JoinRandomTrainingGround(...) end
+function C_PvP.JoinRandomTrainingGroundArena(...) end
+---@param ... any
+function C_PvP.JoinRandomTrainingGroundBattleground(...) end
 ---@param ... any
 function C_PvP.JoinRatedBGBlitz(...) end
 ---@param trainingGroundID? number
@@ -12237,6 +12265,10 @@ function C_RecentAllies.IsSystemEnabled(...) end
 ---@param ... any
 ---@return boolean isRecentAllySystemSupported
 function C_RecentAllies.IsSystemSupported(...) end
+---@param searchInfo? any
+---@param ... any
+---@return table recentAlliesData
+function C_RecentAllies.SearchRecentAllies(searchInfo, ...) end
 ---@param characterGUID? string
 ---@param note? string
 ---@param ... any
@@ -12519,6 +12551,14 @@ C_Roleset = {}
 ---@param allowedRolesets? table
 ---@param ... any
 function C_Roleset.ApplyRolesetFilters(blockedRolesets, allowedRolesets, ...) end
+--- Returns the rolesets in the currently active allowlist.
+---@param ... any
+---@return table allowedRolesets
+function C_Roleset.GetActiveAllowedRolesets(...) end
+--- Returns the rolesets in the currently active blocklist.
+---@param ... any
+---@return table blockedRolesets
+function C_Roleset.GetActiveBlockedRolesets(...) end
 
 C_ScenarioInfo = {}
 ---@param criteriaIndex? number
@@ -13217,6 +13257,12 @@ function C_Spell.GetDeadlyDebuffInfo(spellIdentifier, ...) end
 ---@param ... any
 ---@return table itemModifiedAppearanceIDs
 function C_Spell.GetItemModifiedAppearancesApplied(spellID, ...) end
+--- Searches for the most recent spellID and itemID that started a cooldown in this category
+---@param spellCategory? number
+---@param ... any
+---@return number spellID
+---@return number itemID
+function C_Spell.GetLastCategoryCooldownSource(spellCategory, ...) end
 ---@param spellID? any
 ---@param ... any
 ---@return string link
@@ -15880,6 +15926,9 @@ function C_TransmogOutfitInfo.IsLockedOutfit(outfitID, ...) end
 ---@return boolean isWeaponSlot
 function C_TransmogOutfitInfo.IsSlotWeaponSlot(slot, ...) end
 ---@param ... any
+---@return boolean enabled
+function C_TransmogOutfitInfo.IsTransmogEnabled(...) end
+---@param ... any
 ---@return boolean isAvailable
 function C_TransmogOutfitInfo.IsUsableDiscountAvailable(...) end
 ---@param name? string
@@ -16319,10 +16368,11 @@ function C_UIWidgetManager.SetProcessingUnitGuid(unit, ...) end
 function C_UIWidgetManager.UnregisterUnitForWidgetUpdates(unitToken, isGuid, ...) end
 
 C_UnitAuras = {}
+---@param trigger? any
 ---@param sound? any
 ---@param ... any
----@return number auraAppliedSoundID
-function C_UnitAuras.AddAuraAppliedSound(sound, ...) end
+---@return number auraSoundID
+function C_UnitAuras.AddAuraSound(trigger, sound, ...) end
 ---@param unit? any
 ---@param auraInstanceID? number
 ---@param ... any
@@ -16470,9 +16520,9 @@ function C_UnitAuras.GetUnitAuras(unit, filter, maxCount, sortRule, sortDirectio
 ---@param ... any
 ---@return boolean isFiltered
 function C_UnitAuras.IsAuraFilteredOutByInstanceID(unit, auraInstanceID, filter, ...) end
----@param auraAppliedSoundID? number
+---@param auraSoundID? number
 ---@param ... any
-function C_UnitAuras.RemoveAuraAppliedSound(auraAppliedSoundID, ...) end
+function C_UnitAuras.RemoveAuraSound(auraSoundID, ...) end
 ---@param anchorID? number
 ---@param ... any
 function C_UnitAuras.RemovePrivateAuraAnchor(anchorID, ...) end
