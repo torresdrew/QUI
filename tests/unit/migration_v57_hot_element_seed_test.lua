@@ -59,7 +59,7 @@ do
     }
     M.RunOnProfile(profile)
 
-    check("stamped to current (57)", profile._schemaVersion == 57, tostring(profile._schemaVersion))
+    check("stamped to current (58)", profile._schemaVersion == 58, tostring(profile._schemaVersion))
 
     for _, key in ipairs({ "party", "raid" }) do
         local bucket = profile.quiGroupFrames[key].auras.elements["*"]
@@ -221,6 +221,20 @@ end
 --    that's empty, instance bucket "i2810" with curated content, encounter
 --    bucket "e999" empty. "*" itself is still seeded exactly once, and a
 --    non-matching string key ("custom") is left completely alone.
+--
+--    CASCADE NOTE (2026-07-22, v58 round 2): this profile's RunOnProfile
+--    call cascades all the way to CURRENT, which now also runs v58's
+--    Migrations.RepairSoleHoTOverrideBuckets (see core/migrations.lua's v58
+--    version doc) immediately after this v57 fan-out, in the SAME pass.
+--    That repair removes the _quiHoTSeed element from any override bucket
+--    whose ONLY content is that element -- exactly the [106] and "e999"
+--    buckets below, which started completely empty. This is v57's OWN
+--    fan-out shape unchanged (still unconditionally seeds every empty
+--    override bucket, pinned by the assertions immediately below); the
+--    updated expectations further down for [106]/"e999" pin the CORRECTED
+--    end state of the full pipeline (empty, not sole-seeded), not a change
+--    to this function itself. "i2810" and [105] are non-empty and stay
+--    exactly as this section always pinned them.
 ----------------------------------------------------------------------------
 do
     local profile = {
@@ -253,10 +267,31 @@ do
             specHoT ~= findByFlag(elements["*"]))
     end
 
-    check("spec bucket [106] (empty): got exactly one HoT element", #elements[106] == 1,
-        tostring(#elements[106]))
-    check("spec bucket [106] (empty): the one element is the HoT element",
-        elements[106][1] and elements[106][1]._quiHoTSeed == true)
+    -- FLIPPED (v58 round 2, see the CASCADE NOTE above): this pair used to
+    -- pin v57's fan-out landing its sole HoT element in a bucket that
+    -- started empty. Over the FULL pipeline (this profile cascades to
+    -- CURRENT in one RunOnProfile call) that is no longer the end state --
+    -- v58's Migrations.RepairSoleHoTOverrideBuckets strips the same element
+    -- back out immediately afterward, in this same pass, because the
+    -- bucket's ONLY content was the seed. v57's own fan-out still ran (see
+    -- the adversarial check below, which proves it via [105]'s sibling
+    -- clone) -- it is the pipeline's END STATE that changed.
+    check("spec bucket [106] (empty): repaired back to EMPTY by v58 (was: got the HoT element)",
+        #elements[106] == 0, tostring(#elements[106]))
+    check("spec bucket [106] (empty): no lingering HoT element",
+        findByFlag(elements[106]) == nil)
+
+    -- ADVERSARIAL: prove [106] ending empty is the v58 repair undoing a REAL
+    -- v57 injection (not v57 skipping this bucket) by manually re-seeding it
+    -- with the same shape and confirming discrimination, then restoring
+    -- byte-identical to the empty state RunOnProfile actually left.
+    local scratch106 = { id = "healerHoTs", mode = "tracked", _quiHoTSeed = true, spells = { 1 } }
+    elements[106][1] = scratch106
+    check("adversarial: manually re-seeding [106] is visible to findByFlag",
+        findByFlag(elements[106]) == scratch106)
+    elements[106][1] = nil
+    check("adversarial: removing the scratch seed restores [106] byte-identical to empty",
+        #elements[106] == 0 and findByFlag(elements[106]) == nil)
 
     check("'*' still seeded exactly once", elements["*"] and #elements["*"] == 2
         and findByFlag(elements["*"]) ~= nil, tostring(elements["*"] and #elements["*"]))
@@ -276,11 +311,22 @@ do
             instHoT ~= findByFlag(elements["*"]))
     end
 
-    -- Encounter bucket "e999" (empty): got exactly the HoT element.
-    check("encounter bucket 'e999' (empty): got exactly one HoT element", #elements["e999"] == 1,
-        tostring(#elements["e999"]))
-    check("encounter bucket 'e999' (empty): the one element is the HoT element",
-        elements["e999"][1] and elements["e999"][1]._quiHoTSeed == true)
+    -- FLIPPED (v58 round 2, see the CASCADE NOTE above): same as [106] --
+    -- was: got exactly the HoT element; now (full-pipeline end state):
+    -- repaired back to empty.
+    check("encounter bucket 'e999' (empty): repaired back to EMPTY by v58 (was: got the HoT element)",
+        #elements["e999"] == 0, tostring(#elements["e999"]))
+    check("encounter bucket 'e999' (empty): no lingering HoT element",
+        findByFlag(elements["e999"]) == nil)
+
+    -- ADVERSARIAL: same re-seed/restore discrimination proof as [106] above.
+    local scratchE999 = { id = "healerHoTs", mode = "tracked", _quiHoTSeed = true, spells = { 1 } }
+    elements["e999"][1] = scratchE999
+    check("adversarial: manually re-seeding 'e999' is visible to findByFlag",
+        findByFlag(elements["e999"]) == scratchE999)
+    elements["e999"][1] = nil
+    check("adversarial: removing the scratch seed restores 'e999' byte-identical to empty",
+        #elements["e999"] == 0 and findByFlag(elements["e999"]) == nil)
 
     -- Non-matching string key: NEVER touched by the fan-out.
     check("non-matching string bucket 'custom': untouched (still exactly its curated element)",
@@ -481,6 +527,16 @@ end
 --     starts with curated content, "e456" starts empty. A sibling numeric
 --     spec bucket and "*" are unaffected, and a non-matching string key
 --     ("custom") is never touched. Running twice never doubles either.
+--
+--     CASCADE NOTE (2026-07-22, v58 round 2): same as section 6 above --
+--     this profile cascades to CURRENT in one RunOnProfile call, so "e456"
+--     (which starts and stays completely empty as an override bucket) gets
+--     v57's HoT element injected and then v58's
+--     Migrations.RepairSoleHoTOverrideBuckets strips it back out in the
+--     same pass, ending EMPTY rather than sole-seeded. "i123" keeps its
+--     curated content plus the HoT element (2 elements, not sole-seeded, so
+--     the repair's `#bucket == 1` guard never matches it) exactly as this
+--     section always pinned.
 ----------------------------------------------------------------------------
 do
     local profile = {
@@ -511,12 +567,13 @@ do
     check("'i123': is a copy, not an alias of '*'s element",
         i123HoT ~= nil and i123HoT ~= findByFlag(elements["*"]))
 
-    -- "e456" (empty): the one element it ends up with is the HoT element.
-    check("'e456' (empty): exactly one element present", #elements["e456"] == 1,
-        tostring(#elements["e456"]))
-    local e456HoT = findByFlag(elements["e456"])
-    check("'e456': the element is the fixed-id healerHoTs HoT element",
-        e456HoT ~= nil and e456HoT.id == "healerHoTs", e456HoT and tostring(e456HoT.id))
+    -- FLIPPED (v58 round 2, see the CASCADE NOTE above): "e456" (empty) --
+    -- was: the one element it ends up with is the HoT element; now
+    -- (full-pipeline end state): repaired back to empty.
+    check("'e456' (empty): repaired back to EMPTY by v58 (was: exactly one element present)",
+        #elements["e456"] == 0, tostring(#elements["e456"]))
+    check("'e456': no lingering HoT element",
+        findByFlag(elements["e456"]) == nil)
 
     -- "*" and a sibling numeric spec bucket: unaffected/normal fan-out.
     check("'*' still seeded exactly once", #elements["*"] == 2 and findByFlag(elements["*"]) ~= nil,
@@ -538,8 +595,12 @@ do
     M.RunOnProfile(profile)
     check("idempotent: 'i123' bucket length unchanged on second pass", #elements["i123"] == 2,
         tostring(#elements["i123"]))
-    check("idempotent: 'e456' bucket length unchanged on second pass", #elements["e456"] == 1,
-        tostring(#elements["e456"]))
+    -- FLIPPED (v58 round 2): 'e456' is repaired back to empty on the FIRST
+    -- pass already; the second pass must not re-inject the HoT element (v57
+    -- would find it absent again since the repair removed it) NOR error on
+    -- an already-empty bucket -- it must simply stay empty.
+    check("idempotent: 'e456' stays EMPTY on second pass too (no re-injection, no error)",
+        #elements["e456"] == 0, tostring(#elements["e456"]))
     local i123FlaggedCount = 0
     for _, e in ipairs(elements["i123"]) do if e._quiHoTSeed then i123FlaggedCount = i123FlaggedCount + 1 end end
     check("idempotent: 'i123' has exactly one flagged element after two passes, not a length coincidence",
@@ -556,20 +617,29 @@ do
     check("adversarial: restoring 'i123' clone's flag (byte-identical) makes it visible again",
         findByFlag(elements["i123"]) == i123HoT)
 
-    -- ADVERSARIAL: same discrimination proof for "e456"'s clone.
-    e456HoT._quiHoTSeed = false
-    check("adversarial: flipping 'e456' clone's flag false makes it invisible to findByFlag",
-        findByFlag(elements["e456"]) == nil)
-    e456HoT._quiHoTSeed = true
-    check("adversarial: restoring 'e456' clone's flag (byte-identical) makes it visible again",
-        findByFlag(elements["e456"]) == e456HoT)
+    -- ADVERSARIAL (v58 round 2 replacement -- "e456"'s clone no longer
+    -- exists post-repair, so the old flag-toggle proof doesn't apply):
+    -- prove "e456" ending empty is the v58 repair genuinely undoing a REAL
+    -- v57 injection each pass (not v57 skipping this bucket) by manually
+    -- re-seeding it with the same shape findByFlag looks for and confirming
+    -- discrimination, then restoring byte-identical to the empty state
+    -- RunOnProfile actually left.
+    local scratchE456 = { id = "healerHoTs", mode = "tracked", _quiHoTSeed = true, spells = { 1 } }
+    elements["e456"][1] = scratchE456
+    check("adversarial: manually re-seeding 'e456' is visible to findByFlag",
+        findByFlag(elements["e456"]) == scratchE456)
+    elements["e456"][1] = nil
+    check("adversarial: removing the scratch seed restores 'e456' byte-identical to empty",
+        #elements["e456"] == 0 and findByFlag(elements["e456"]) == nil)
 
     -- ADVERSARIAL: prove "custom" is skipped by the KEY SHAPE, not by
-    -- accident (e.g. an empty-bucket special case) -- empty it out exactly
-    -- like "e456" was, re-run, and confirm it STAYS empty (unlike "e456",
-    -- which received the seed) purely because "custom" doesn't match
-    -- IsHoTOverrideBucketKey's i%d+/e%d+ pattern. Restore its original
-    -- curated content afterward (byte-identical to pre-mutation).
+    -- accident (e.g. an empty-bucket special case) -- empty it out and
+    -- re-run, and confirm it STAYS empty purely because "custom" doesn't
+    -- match IsHoTOverrideBucketKey's i%d+/e%d+ pattern (unlike "e456" above,
+    -- whose key shape DOES match -- it only ends up empty too because v57's
+    -- injection is transient, immediately undone by v58's repair in the
+    -- same pass; "custom" never gets injected into at all). Restore its
+    -- original curated content afterward (byte-identical to pre-mutation).
     local customOriginal = elements["custom"][1]
     elements["custom"] = {}
     profile._schemaVersion = 56

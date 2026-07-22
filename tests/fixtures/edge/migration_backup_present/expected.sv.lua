@@ -6479,7 +6479,7 @@ return {
     profiles = {
       Default = {
         _defaultsVersion = 3,
-        _schemaVersion = 57,
+        _schemaVersion = 58,
         quiUnitFrames = {
           focus = {
             castbar = {

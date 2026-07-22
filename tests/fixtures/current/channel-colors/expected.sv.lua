@@ -6480,7 +6480,7 @@ return {
       Default = {
         _defaultsVersion = 3,
         _needsLateAbImport = true,
-        _schemaVersion = 57,
+        _schemaVersion = 58,
         chat = {
           channelColors = {
             RAID = {

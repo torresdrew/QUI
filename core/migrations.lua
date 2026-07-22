@@ -182,11 +182,91 @@ local _currentGlobalDB     = nil  -- db.global; for cross-profile reads (v32+)
 --        means only the player's own current spec's ids ever have anything to
 --        bind (the rest sit dormant, not truncated).
 --
+--   v58: ExtendDefensivesToInstanceEncounterBuckets — v54's
+--        ExtendDefensivesToSpecBuckets backfilled the shipped "defensives"
+--        strip into pre-existing NUMERIC spec-override buckets only,
+--        deliberately excluding the string "i"..mapID / "e"..encounterID
+--        context buckets (E.InstanceBucketKey / E.EncounterBucketKey, tried
+--        by core/aura_context.lua ahead of specID) — see that function's own
+--        comment, and the v57 version doc's note above that the gap was "a
+--        released-profile backfill and out of scope" for v57. This migration
+--        closes it: mirroring v57's SeedHealerHoTElements fan-out shape
+--        (IsHoTOverrideBucketKey) but scoped to the i/e subset only —
+--        numeric buckets are NOT touched here, since v54 already covers
+--        every pre-existing one and EnableSpecOverride clones the CURRENT
+--        "*" element (already carrying "defensives" since v51(e)/v54) into
+--        any spec bucket created after v54 shipped, so there is nothing left
+--        to backfill on that axis. Same LATCHED "*"-bucket-only source scope
+--        as v54/v57 (elementsSeeded-gated); if "*" isn't a table or carries
+--        no "defensives" element, base stays nil and the fan-out is skipped
+--        for that surface entirely, exactly like v54's `if base then` guard.
+--        The presence check that decides whether an i/e bucket already has
+--        an equivalent strip is BYTE-IDENTICAL to
+--        ExtendDefensivesToSpecBuckets' inline classify-equivalence check
+--        (fixed "defensives" id, OR a hand-built classify strip carrying
+--        both bigDefensive+externalDefensive) — v54 never extracted that
+--        check into its own helper, so this migration replicates it exactly
+--        rather than inventing new detection (tests/unit/migration_v58_defensives_ie_buckets_test.lua
+--        pins the two copies staying in lockstep).
+--
+--        2026-07-22 round 2 (empty-override-bucket suppress-intent):
+--        E.EnableSpecOverride (core/aura_elements.lua) is the ONLY place
+--        that ever creates a NEW override-bucket key — a numeric specID or
+--        an "i"../"e".. context key (re-grepped every `elements[` writer in
+--        the repo to confirm: every other site either targets "*" or an
+--        ALREADY-existing bucket — QUI_Options/aura_elements_editor.lua's
+--        "Spec buckets must NOT be created merely by viewing/editing"
+--        comment, and core/aura_wizard.lua's W.ActiveBucketKey, which only
+--        ever returns a bucketKey E.HasSpecOverride already reports true
+--        for, never mints one). Because the render cascade's override
+--        semantics REPLACE "*" rather than merge with it
+--        (E.ActiveElementsForSpec), a bucket that EXISTS with ZERO elements
+--        is the user's own deliberate "render nothing in this context" —
+--        the cascade stops at that bucket and shows nothing, on purpose.
+--        This function's fan-out loop below now SKIPS any i/e bucket with
+--        zero element entries (a real count via ipairs/#bucket, not a
+--        truthiness check — an empty table is still a table) instead of
+--        injecting "defensives" into it, which would silently turn a
+--        deliberate "show nothing on this boss" into "defensives-only".
+--
+--        The identical defect was already shipped by LANDED v57's
+--        SeedHealerHoTElements (commit 8806a9ffbf, hours before this fix) —
+--        its fan-out (IsHoTOverrideBucketKey) is a SUPERSET of this
+--        function's scope: numeric spec buckets AND i/e context buckets,
+--        both used unconditionally. v57 itself is NOT edited (already
+--        landed; profiles in the wild may already be stamped 57) — instead
+--        Migrations.RepairSoleHoTOverrideBuckets runs FIRST in this same
+--        `stored < 58` gate (see RunOnProfile below), removing the
+--        _quiHoTSeed element from any override bucket (numeric, "i"..,
+--        "e".. — via IsHoTOverrideBucketKey; "*" is never a candidate, it's
+--        the fan-out's source, never a target) whose ONLY element is that
+--        seed, restoring the suppress-intent BEFORE this function's own
+--        fan-out below ever sees the bucket — a bucket the repair just
+--        emptied is then correctly skipped by the guard above rather than
+--        getting a fresh "defensives" clone injected into the
+--        freshly-repaired-empty bucket. Net effect: a profile crossing both
+--        v57 and v58 in one Migrations.Run pass gets healerHoTs injected
+--        then immediately stripped back out of any bucket that was empty —
+--        correct end state, no user-visible flicker; a profile already
+--        stamped 57 (from an earlier session) gets the same repair applied
+--        when it crosses 58.
+--
+--        Accepted edge case: a user who enabled an override bucket during
+--        the brief v57-only window (both same-day 2026-07-21 dev builds;
+--        no tagged release ever shipped v57 without this v58 repair
+--        alongside it, so the population is effectively zero) and
+--        deliberately kept ONLY the seeded healerHoTs element in it loses
+--        that element here too — indistinguishable from the injection this
+--        repair exists to undo. Any bucket carrying MORE than that one
+--        element (curated content alongside the seed, multiple elements,
+--        etc.) is left completely alone by the repair — see its own
+--        `#bucket == 1` guard.
+--
 -- When adding a new migration: bump CURRENT_SCHEMA_VERSION (next free number
--- is 58 — see the burned-numbers rule above), add a single linear gate in
+-- is 59 — see the burned-numbers rule above), add a single linear gate in
 -- RunOnProfile, and document the version above.
 ---------------------------------------------------------------------------
-local CURRENT_SCHEMA_VERSION = 57
+local CURRENT_SCHEMA_VERSION = 58
 
 -- The oldest schema we still carry forward. The last 4.x stable release and
 -- 5.0 alpha4 both shipped schema 47, and every step-by-step migration through
@@ -1013,6 +1093,12 @@ end
 -- classify-equivalent) so a user's own defensives strip in a spec bucket
 -- never gets a duplicate. Runs once — the schema stamp is the one-shot, so
 -- deletions made after this pass stick.
+-- RECIPROCAL: this inline presence-check loop is replicated verbatim in
+-- Migrations.ExtendDefensivesToInstanceEncounterBuckets (v58, below) — that
+-- function has no helper of its own to call, so it copies this loop body
+-- instead of inventing new detection. Keep BOTH copies in lockstep if this
+-- one ever changes (tests/unit/migration_v58_defensives_ie_buckets_test.lua
+-- pins the two copies textually equal).
 function Migrations.ExtendDefensivesToSpecBuckets(profile)
     local gf = profile.quiGroupFrames
     if type(gf) ~= "table" then return true end
@@ -1276,6 +1362,137 @@ function Migrations.SeedHealerHoTElements(profile)
                         end
                         if not specPresent then
                             overrideBucket[#overrideBucket + 1] = CloneValue(base)
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return true
+end
+
+-- True for the string context bucket keys ("i"..mapID / "e"..encounterID)
+-- E.InstanceBucketKey / E.EncounterBucketKey produce (core/aura_context.lua)
+-- — the SUBSET of IsHoTOverrideBucketKey's override-bucket shapes that v54's
+-- ExtendDefensivesToSpecBuckets did NOT already cover. Numeric spec buckets
+-- are deliberately excluded here: v54 already backfilled every pre-existing
+-- one, and EnableSpecOverride clones the CURRENT "*" element (which already
+-- carries "defensives" on every profile that reaches this migration) into
+-- any spec bucket created since, so there is nothing left there to close.
+-- "*" itself is excluded too — it is the fan-out's SOURCE bucket, never a
+-- target. No other key shape exists in this table (see IsHoTOverrideBucketKey's
+-- comment: only "*", numeric specID, and "i"/"e" context keys are ever
+-- assigned — grepped writers confirm it).
+local function IsInstanceOrEncounterBucketKey(bucketKey)
+    if type(bucketKey) ~= "string" or bucketKey == "*" then return false end
+    return bucketKey:match("^i%d+$") ~= nil or bucketKey:match("^e%d+$") ~= nil
+end
+
+-- v58 repair: see the "round 2" note in the v58 version doc at the top of
+-- the file. LANDED v57's SeedHealerHoTElements fan-out
+-- (IsHoTOverrideBucketKey, just above — covers numeric spec buckets AND
+-- "i"../"e".. context buckets, "*" excluded) injected its _quiHoTSeed
+-- "healerHoTs" clone into EVERY override bucket lacking one, including
+-- buckets that were EMPTY before the injection. An override bucket is only
+-- ever CREATED by E.EnableSpecOverride (core/aura_elements.lua) — no other
+-- site in the repo mints a new override-bucket key (see the version doc's
+-- grep evidence) — so a bucket that exists with zero elements is never an
+-- accident; it is the user's own "render nothing in this context", and the
+-- render cascade's override semantics (REPLACE "*", never merge) actually
+-- honor that. v57 is not edited (already landed; do not touch its gate or
+-- its own tests) — this repair undoes the damage instead: any override
+-- bucket whose ONLY element is the _quiHoTSeed clone gets that element
+-- removed, leaving the bucket empty again exactly as it was before v57's
+-- fan-out touched it. A bucket carrying the seed ALONGSIDE anything else
+-- (curated content, multiple elements) is left completely alone — the
+-- `#bucket == 1` guard only ever matches a bucket whose sole content is the
+-- injected clone.
+--
+-- Called FIRST in the `stored < 58` gate (see RunOnProfile below), before
+-- ExtendDefensivesToInstanceEncounterBuckets, so a bucket this repair
+-- empties is then correctly skipped by that function's own empty-bucket
+-- guard rather than getting a "defensives" clone injected into the
+-- freshly-repaired-empty bucket.
+function Migrations.RepairSoleHoTOverrideBuckets(profile)
+    local gf = profile.quiGroupFrames
+    if type(gf) ~= "table" then return true end
+    for _, key in ipairs({ "party", "raid" }) do
+        local surface = gf[key]
+        local a = type(surface) == "table" and surface.auras
+        local elements = type(a) == "table" and a.elementsSeeded
+            and type(a.elements) == "table" and a.elements
+        if elements then
+            for bucketKey, bucket in pairs(elements) do
+                if IsHoTOverrideBucketKey(bucketKey) and type(bucket) == "table" then
+                    if #bucket == 1 and type(bucket[1]) == "table" and bucket[1]._quiHoTSeed then
+                        table.remove(bucket, 1)
+                    end
+                end
+            end
+        end
+    end
+    return true
+end
+
+-- v58: see the version doc at the top of the file. v54's ExtendDefensivesToSpecBuckets
+-- deliberately excluded the string "i"..mapID / "e"..encounterID context
+-- buckets (see that function's own comment, and the v57 version doc's note
+-- that the gap was "a released-profile backfill and out of scope" there) —
+-- this migration closes exactly that gap, mirroring v57's fan-out shape
+-- (IsHoTOverrideBucketKey) but scoped to the i/e subset only, since v54
+-- already covers numeric spec buckets.
+--
+-- The presence check below is BYTE-IDENTICAL to
+-- Migrations.ExtendDefensivesToSpecBuckets' inline classify-equivalence
+-- check (a fixed "defensives" id, OR a hand-built classify strip carrying
+-- both bigDefensive+externalDefensive) — that function has no extracted
+-- helper to call (the check is inlined in its own bucket loop), so this
+-- replicates it EXACTLY rather than inventing new detection. Keep both
+-- copies in lockstep if either ever changes.
+function Migrations.ExtendDefensivesToInstanceEncounterBuckets(profile)
+    local gf = profile.quiGroupFrames
+    if type(gf) ~= "table" then return true end
+    for _, key in ipairs({ "party", "raid" }) do
+        local surface = gf[key]
+        local a = type(surface) == "table" and surface.auras
+        local elements = type(a) == "table" and a.elementsSeeded
+            and type(a.elements) == "table" and a.elements
+        if elements then
+            local base
+            local star = elements["*"]
+            if type(star) == "table" then
+                for _, e in ipairs(star) do
+                    if type(e) == "table" and e.id == "defensives" then base = e break end
+                end
+            end
+            if base then
+                for bucketKey, bucket in pairs(elements) do
+                    if IsInstanceOrEncounterBucketKey(bucketKey) and type(bucket) == "table" then
+                        -- Empty-override-bucket suppress-intent (see the v58
+                        -- version doc's "round 2" note above): EnableSpecOverride
+                        -- is the only thing that ever creates one of these
+                        -- keys, and a bucket that exists with ZERO elements is
+                        -- the user's own deliberate "render nothing in this
+                        -- context" (the render cascade's override semantics
+                        -- REPLACE "*", never merge). Injecting "defensives"
+                        -- here would silently turn that into
+                        -- "defensives-only" — skip it entirely. #bucket is a
+                        -- real array-length count, not a truthiness check —
+                        -- an empty table is still a table and still reaches
+                        -- this branch, it just does nothing once inside.
+                        if #bucket > 0 then
+                            local present = false
+                            for _, e in ipairs(bucket) do
+                                if type(e) == "table" and (e.id == "defensives"
+                                    or (e.filterMode == "classify" and type(e.classifications) == "table"
+                                        and e.classifications.bigDefensive and e.classifications.externalDefensive)) then
+                                    present = true
+                                    break
+                                end
+                            end
+                            if not present then
+                                bucket[#bucket + 1] = CloneValue(base)
+                            end
                         end
                     end
                 end
@@ -2466,6 +2683,21 @@ function Migrations.RunOnProfile(profile)
     -- of load order.
     if stored < 57 then
         Migrations.SeedHealerHoTElements(profile)
+    end
+
+    -- v58: backfill the defensives strip into the string i/e context buckets
+    -- that v54's ExtendDefensivesToSpecBuckets deliberately excluded (see
+    -- the version doc above). Same LATCHED "*"-bucket-only scope as
+    -- v51(e)/v54/v57; the migration's own classify-equivalence presence
+    -- check guards against a double. The repair runs FIRST, restoring
+    -- suppress-intent on any override bucket LANDED v57 reduced to
+    -- "sole-healerHoTs" (see the version doc's "round 2" note), so the
+    -- defensives fan-out below sees the bucket in its post-repair state —
+    -- empty override buckets stay empty rather than getting a "defensives"
+    -- clone injected on top.
+    if stored < 58 then
+        Migrations.RepairSoleHoTOverrideBuckets(profile)
+        Migrations.ExtendDefensivesToInstanceEncounterBuckets(profile)
     end
 
     profile._schemaVersion = CURRENT_SCHEMA_VERSION
