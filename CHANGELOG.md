@@ -9,6 +9,41 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v5.0.0-alpha20 - 2026-07-22
+
+> ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will
+> not load on the 12.0.x live client. Stay on the v4.x beta line for live realms.
+
+> 🔄 **Profile schema migrated to v58.** Seeds the new Healer HoTs element into
+> existing profiles and extends the shipped defensives element to instance- and
+> encounter-specific override setups. Your profile is backed up automatically
+> before it runs.
+
+### Added
+- New **Healer HoTs** tracked aura element on group frames, pre-seeded with the
+  healing-over-time spells of every healer specialization so HoT tracking works
+  out of the box. Existing profiles receive it via migration; deleting it is
+  respected and it will not re-seed.
+
+### Changed
+- Aura tracking adopted the latest 12.1 PTR aura API (build 68824): aura groups
+  keep stable identities across updates, filtering uses the native filter
+  string, and weapon enchant frames are enumerated through the engine rather
+  than tracked ad hoc.
+- Buff presence checks now treat combat-hidden ("secret") results as unknown
+  instead of missing, so indicators no longer flicker off when the client
+  withholds aura data mid-combat.
+
+### Fixed
+- Broad 12.1 secret-value hardening (rounds 18–23): class colors, tooltips, the
+  character pane, on-screen error messages, and aura scans no longer error when
+  the client hides unit or aura data during combat.
+- The shipped defensives element now also applies inside instance- and
+  encounter-specific override setups, where it previously vanished.
+- Repairs profiles where an earlier dev build injected a lone Healer HoTs
+  element into spec, instance, or encounter overrides that were deliberately
+  left empty.
+
 ## v5.0.0-alpha19 - 2026-07-18
 
 > ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will
