@@ -9,6 +9,43 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v5.0.0-alpha21 - 2026-07-23
+
+> ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will
+> not load on the 12.0.x live client. Stay on the v4.x beta line for live realms.
+
+### Removed
+- The **Encounters** browser under the Auras tab, along with instance- and
+  encounter-specific aura setups. 12.1 no longer exposes the encounter
+  identity they keyed on. The boss and role-on-boss visibility conditions
+  remain, and per-element boss strips you created keep working; instance- or
+  encounter-specific setups saved by older profiles are ignored.
+
+### Changed
+- Modules now repaint only what an event actually changed instead of doing a
+  full render per event: **Bags** re-dress changed slots in place when the
+  layout provably didn't move, **Resource Bars** route power ticks through a
+  value-only path, **Unit Frames** coalesce rapid power updates, the
+  **Damage Meter** restyles bars only when appearance actually changed and
+  follows the session's own clock for Current-session rates, the **Minimap**
+  clock wakes once a minute instead of once a second, and the consumable
+  check reuses a cached inventory snapshot on aura ticks.
+- **Bags** skip their loading-screen compile entirely when the module is
+  disabled in the profile.
+
+### Fixed
+- Adopted the 12.1 PTR build 68824 API changes: action button cooldown
+  updates, flyout lookups (which now hard-error on unknown IDs), and cast
+  bar suppression no longer error or risk taint.
+- Moving or saving frame positions while the client withholds anchor data
+  ("secret" values) no longer errors, and the extra action button position
+  save skips unreadable coordinates instead of writing 0,0.
+- Several spots that silently treated combat-hidden values as 0 now handle
+  them properly: unknown unit reactions fall through to class colors instead
+  of hostile red, and tooltips with unreadable alpha are treated as visible.
+- Profiles version-stamped by earlier dev builds now re-run all repair
+  migrations, healing states those builds may have left behind.
+
 ## v5.0.0-alpha20 - 2026-07-22
 
 > ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will
