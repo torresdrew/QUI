@@ -776,9 +776,12 @@ local function RunGlobalActionButtonSweep()
     -- This catches most action bar addons.
     for globalName, frame in pairs(_G) do
         if type(globalName) == "string" and type(frame) == "table" then
-            -- Fast-path: skip forbidden tables without pcall overhead (12.0.x+)
-            if not Helpers.CanAccessTable(frame) then
-                -- Forbidden table, skip
+            -- Fast-path: skip forbidden tables without pcall overhead (12.0.x+).
+            -- 12.1 adds fully locked-down objects whose methods throw on call
+            -- even though the table itself indexes fine — canaccessvalue is the
+            -- documented probe for those.
+            if not Helpers.CanAccessTable(frame) or not Helpers.CanAccessValue(frame) then
+                -- Forbidden/locked-down table, skip
             elseif type(frame.GetObjectType) ~= "function" then
                 -- Not a WoW widget, skip
             else

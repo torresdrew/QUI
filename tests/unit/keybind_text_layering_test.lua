@@ -244,6 +244,9 @@ local addon = {
         CanAccessTable = function()
             return true
         end,
+        CanAccessValue = function()
+            return true
+        end,
         CreateStateTable = function()
             return setmetatable({}, { __mode = "k" })
         end,

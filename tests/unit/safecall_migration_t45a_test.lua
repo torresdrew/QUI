@@ -238,13 +238,14 @@ check("castbar.lua: SKIP — UnitHasAuraBySpellID @secret-policy probe untouched
 
 ---------------------------------------------------------------------------
 -- File: QUI_UnitFrames/unitframes/unitframe_blizzard.lua
--- All 9 sites, best-effort-style
+-- 8 sites, best-effort-style (was 9; the SetUnit(nil) suppression site was
+-- removed — 12.1 taint-blocks CastingBarTypeInfo iteration inside SetUnit)
 ---------------------------------------------------------------------------
 local ufb = readAll("QUI_UnitFrames/unitframes/unitframe_blizzard.lua")
 
-check("unitframe_blizzard.lua: 9x SafeCall/SafeCallMethod(\"best-effort-style\", ...)",
+check("unitframe_blizzard.lua: 8x SafeCall/SafeCallMethod(\"best-effort-style\", ...)",
     countOf(ufb, 'ns.SafeCall("best-effort-style"') + countOf(ufb, 'ns.SafeCallMethod("best-effort-style"')
-    + countOf(ufb, 'ns.SafeCallMethodIfPresent("best-effort-style"') == 9)
+    + countOf(ufb, 'ns.SafeCallMethodIfPresent("best-effort-style"') == 8)
 check("unitframe_blizzard.lua: NO bare pcall( remains anywhere in file",
     ufb:find("pcall(", 1, true) == nil)
 check("unitframe_blizzard.lua: PetFrame SetAlpha/EnableMouse converted",

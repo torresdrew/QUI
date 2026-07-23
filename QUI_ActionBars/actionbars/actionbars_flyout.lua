@@ -401,10 +401,39 @@ function PopulateOwnedFlyoutInfoEntry(info, flyoutID, numSlots, isKnown)
     end
 end
 
+-- 12.1: GetFlyoutInfo hard-errors ("No flyout found for ID=%i") for IDs the
+-- client has no record of, so the old blind 1..300 ID probe is no longer
+-- viable. Mirror Blizzard's IconDataProviderMixin:FillOutExtraIconsMapWithSpells:
+-- the player spellbook is the authority for which flyouts the character owns
+-- (GetSpellBookItemType's actionID return is the flyoutID for FLYOUT items).
+local ownedFlyoutIDScratch = {}
+local function CollectOwnedFlyoutIDs(out)
+    wipe(out)
+    if not (C_SpellBook and C_SpellBook.GetNumSpellBookSkillLines) then return out end
+    local playerBank = Enum.SpellBookSpellBank and Enum.SpellBookSpellBank.Player or 0
+    local flyoutType = Enum.SpellBookItemType and Enum.SpellBookItemType.Flyout or 4
+    for lineIndex = 1, C_SpellBook.GetNumSpellBookSkillLines() do
+        local lineInfo = C_SpellBook.GetSpellBookSkillLineInfo(lineIndex)
+        if lineInfo and lineInfo.numSpellBookItems then
+            for i = 1, lineInfo.numSpellBookItems do
+                local slotIndex = (lineInfo.itemIndexOffset or 0) + i
+                local itemType, actionID = C_SpellBook.GetSpellBookItemType(slotIndex, playerBank)
+                if (itemType == flyoutType or itemType == "FLYOUT")
+                    and type(actionID) == "number" and actionID > 0 then
+                    out[#out + 1] = actionID
+                end
+            end
+        end
+    end
+    return out
+end
+
 function DiscoverOwnedFlyoutInfo()
     wipe(ownedFlyoutInfo)
 
-    for flyoutID = 1, 300 do
+    CollectOwnedFlyoutIDs(ownedFlyoutIDScratch)
+    for i = 1, #ownedFlyoutIDScratch do
+        local flyoutID = ownedFlyoutIDScratch[i]
         local ok, _, _, numSlots, isKnown = ns.SafeCall("best-effort-style", GetFlyoutInfo, flyoutID)
         if ok and type(numSlots) == "number" and numSlots > 0 then
             local info = { slots = {} }
@@ -424,7 +453,9 @@ function UpdateOwnedFlyoutInfo()
 
     local seen = ownedFlyoutSeen
     wipe(seen)
-    for flyoutID = 1, 300 do
+    CollectOwnedFlyoutIDs(ownedFlyoutIDScratch)
+    for i = 1, #ownedFlyoutIDScratch do
+        local flyoutID = ownedFlyoutIDScratch[i]
         local ok, _, _, numSlots, isKnown = ns.SafeCall("best-effort-style", GetFlyoutInfo, flyoutID)
         if ok and type(numSlots) == "number" and numSlots > 0 then
             local info = ownedFlyoutInfo[flyoutID] or { slots = {} }

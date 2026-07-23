@@ -33,6 +33,7 @@ local EXPECTED = {
     "Cannot use SecureHandlers API on forbidden frames",
     "Cannot use SecureHandlers API during combat",
     "forbidden object",
+    "locked-down object", -- 12.1: "Attempt to access fully locked-down object"
     "attempted to store a secret",
     "combat lockdown",
     "ADDON_ACTION_BLOCKED",

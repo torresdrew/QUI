@@ -340,9 +340,11 @@ function ActionBarsOwned.SafeUpdate(self)
             self.Name:SetText("")
         end
 
-        -- Delegated to shadowed methods
+        -- Count via Blizzard's mixin; cooldown via QUI's owned pipeline —
+        -- 12.1 removed ActionBarActionButtonMixin:UpdateCooldown (only the
+        -- free function ActionButton_UpdateCooldown remains).
         self:UpdateCount()
-        self:UpdateCooldown()
+        ActionBarsOwned.UpdateCooldown(self)
 
         -- Proc glow (spell activation overlay)
         ActionBarsOwned.UpdateOverlayGlow(self)

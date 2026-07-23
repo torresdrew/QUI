@@ -59,6 +59,14 @@ function Helpers.CanAccessTable(tbl)
     return not canaccesstable or canaccesstable(tbl)
 end
 
+--- Check if a value can be accessed and operated on (secret values and
+--- fully locked-down objects fail this probe on 12.1+ clients)
+--- @param value any The value to check
+--- @return boolean True if value can be accessed safely
+function Helpers.CanAccessValue(value)
+    return not canaccessvalue or canaccessvalue(value)
+end
+
 --- Safely get a value, returning fallback if it's a secret
 --- @param value any The potentially secret value
 --- @param fallback any Value to return if secret (default: nil)
