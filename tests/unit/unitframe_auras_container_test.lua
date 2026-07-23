@@ -84,10 +84,8 @@ assert(src:find("local function DefaultUnitAuraBucket()", 1, true),
 assert(src:find("EnsureSeeded(auras, DefaultUnitAuraBucket)", 1, true),
     "the element store must be seeded through E.EnsureSeeded with the file-local bucket")
 -- Unit frames never use per-spec buckets: the resolve always passes a nil spec.
--- It DOES pass the encounter/instance cascade keys (core/aura_context.lua) as the
--- 4th arg so a boss/zone delta overrides the base "*" bucket on the unit surface.
-assert(src:find("ActiveElementsForSpec(auras, nil, nil, ck)", 1, true),
-    "unit frames resolve elements spec-less with the cascade rung (ActiveElementsForSpec(auras, nil, nil, ck))")
+assert(src:find("ActiveElementsForSpec(auras, nil)", 1, true),
+    "unit frames resolve elements spec-less (ActiveElementsForSpec(auras, nil))")
 -- healthTint tracked feeder is skipped defensively (UF has no tint display).
 assert(src:find('e.displayType ~= "healthTint"', 1, true),
     "healthTint tracked elements must be skipped defensively")

@@ -140,11 +140,6 @@ end
 -- them at the editor). Returns a SHARED module scratch — do not retain across a
 -- re-resolve.
 local _activeElems = {}
--- Encounter/instance cascade key scratch (core/aura_context.lua). Unit frames
--- have no spec buckets (allowSpecOverride=false), but the encounter/instance
--- rungs still apply: a boss/zone delta overrides the base "*" bucket on the
--- unit surface too. nil outside an encounter/instance → base bucket, unchanged.
-local _ckScratch = {}
 local function ResolveContainerElements(frame)
     for i = #_activeElems, 1, -1 do _activeElems[i] = nil end
     local auras = GetFrameAuraSettings(frame)
@@ -152,8 +147,7 @@ local function ResolveContainerElements(frame)
     AuraElements = AuraElements or ns.AuraElements
     if not AuraElements then return _activeElems end
     AuraElements.EnsureSeeded(auras, DefaultUnitAuraBucket)
-    local ck = ns.QUI_AuraContext and ns.QUI_AuraContext.FillContextKeys(_ckScratch) or nil
-    local elements = AuraElements.ActiveElementsForSpec(auras, nil, nil, ck)
+    local elements = AuraElements.ActiveElementsForSpec(auras, nil)
     for i = 1, #elements do
         local e = elements[i]
         if e.mode == "filterStrip"
@@ -318,11 +312,10 @@ end
 QUI_UF.UpdateAuras = UpdateAuras
 
 -- Combat-SAFE aura-only refresh across every unit frame: re-resolves each
--- frame's element list (picking up a changed encounter/instance cascade rung)
--- and re-applies it through UpdateAuras' combat split (mutation live, creation
--- queued to PLAYER_REGEN_ENABLED). Driven by core/aura_context.lua on
--- ENCOUNTER_START/_END so a boss bucket goes live on the unit surface on pull.
--- Exported on the shared suite `ns` (not _G) per the global-assignment ratchet.
+-- frame's element list and re-applies it through UpdateAuras' combat split
+-- (mutation live, creation queued to PLAYER_REGEN_ENABLED). Driven by
+-- core/aura_context.lua on PLAYER_SPECIALIZATION_CHANGED. Exported on the
+-- shared suite `ns` (not _G) per the global-assignment ratchet.
 local function RefreshAllAuraContainers()
     local frames = QUI_UF and QUI_UF.frames
     if not frames then return end

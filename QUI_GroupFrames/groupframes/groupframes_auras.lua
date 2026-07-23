@@ -1144,11 +1144,6 @@ end
 local _activeElementsScratch = {}
 local _trackedMatchesScratch = {}
 local _missingRaidBuffMatchesScratch = {}
-local _ckScratch = {}
--- Separate cascade-key scratch for the container-resolve path (ResolveContainerElements
--- runs in a different pass than RenderFrameElements' _ckScratch; keeping them
--- distinct avoids any accidental cross-pass aliasing).
-local _ckScratchContainer = {}
 
 -- Resolve a frame's role gate inputs for AuraElements.ElementAppliesToRole:
 -- assigned group role ("TANK"/"HEALER"/"DAMAGER"/nil) + whether the frame is the
@@ -1201,15 +1196,8 @@ local _relGeneration = 0
 QUI_GFA._configGeneration = 0  -- public mirror of _relGeneration for the renderer's icon-config gate
 local _relCache = setmetatable({}, { __mode = "k" })
 local function GetAuraRelevance(auras, specID)
-    -- Encounter + instance cascade rungs (core/aura_context.lua): nil outside a
-    -- boss pull / instance (or before the tracker's first event), in which case
-    -- the resolver falls through to spec/"*" exactly as before.
-    local AC = ns.QUI_AuraContext
-    local encKey = AC and AC.EncounterKey() or nil
-    local curKey = AC and AC.InstanceKey() or nil
     local rel = _relCache[auras]
-    if rel and rel.gen == _relGeneration and rel.specID == specID
-        and rel.instanceKey == curKey and rel.encounterKey == encKey then
+    if rel and rel.gen == _relGeneration and rel.specID == specID then
         return rel
     end
     if not rel then
@@ -1218,8 +1206,6 @@ local function GetAuraRelevance(auras, specID)
     end
     rel.gen = _relGeneration
     rel.specID = specID
-    rel.instanceKey = curKey
-    rel.encounterKey = encKey
     rel.hasMissingRaidBuff = false
     rel.hasTracked = false
     wipe(rel.trackedSpells)
@@ -1227,8 +1213,7 @@ local function GetAuraRelevance(auras, specID)
     -- Strips + tracked icon/square/bar are container-driven (self-drive
     -- UNIT_AURA), so the relevance descriptor only tracks the engine's remaining
     -- emitters — MRB (helpful-dirty), the healthTint + border tracked feeders.
-    local ck = AC and AC.FillContextKeys({}) or nil
-    local elements = AuraModel.ActiveElementsForSpec(auras, specID, nil, ck)
+    local elements = AuraModel.ActiveElementsForSpec(auras, specID)
     for i = 1, #elements do
         local e = elements[i]
         if EngineRendersElement(e) then
@@ -1293,11 +1278,7 @@ local function RenderFrameElements(frame, cache, dirty)
     -- Zero-alloc render: iterate the active elements directly into reusable
     -- scratch tables. Render:Dispatch only reads matches synchronously and never
     -- retains them, so the scratch is safe to reuse across frames/events.
-    -- Encounter + instance cascade rungs (core/aura_context.lua) -- see
-    -- GetAuraRelevance above. FillContextKeys compacts into the shared scratch
-    -- (no alloc) and returns nil when neither rung is active.
-    local ck = ns.QUI_AuraContext and ns.QUI_AuraContext.FillContextKeys(_ckScratch) or nil
-    local elements = AuraModel.ActiveElementsForSpec(auras, specID, _activeElementsScratch, ck)
+    local elements = AuraModel.ActiveElementsForSpec(auras, specID, _activeElementsScratch)
 
     local rendered = frame._quiRenderedAuraElementIDs
     if not rendered then
@@ -1509,13 +1490,7 @@ local function ResolveContainerElements(frame)
     if not auras or auras.enabled == false then return _activeElems end
     AuraModel.EnsureSeeded(auras, BucketFnFor(frame))
     local specID = GetPlayerSpecID()
-    -- Instance-context cascade rung (core/aura_context.lua) -- this is the
-    -- container-render path (filterStrip + tracked icon/square/bar), the
-    -- primary visible-aura path, so it needs the same rung as GetAuraRelevance
-    -- and RenderFrameElements above; it already re-resolves every call
-    -- (no cache), so no extra invalidation is needed here.
-    local ck = ns.QUI_AuraContext and ns.QUI_AuraContext.FillContextKeys(_ckScratchContainer) or nil
-    local elements = AuraModel.ActiveElementsForSpec(auras, specID, nil, ck)
+    local elements = AuraModel.ActiveElementsForSpec(auras, specID)
     local role, isSelf = FrameRoleGate(frame)
     for i = 1, #elements do
         local e = elements[i]
@@ -1721,10 +1696,11 @@ function QUI_GFA.EnsureContainersForFrame(frame)
     if not ResolveAuraDeps() or not CreateFrame then return end
     local elems = ResolveContainerElements(frame)
     local want = #elems
-    -- Union pre-stage: size the pool to the LARGEST bucket in the store, not just
-    -- the currently-active one, so an encounter bucket that adds boss-ability
-    -- indicators finds its containers ALREADY created when it goes live on pull
-    -- (creation is combat-forbidden; the on-pull switch is then pure mutation).
+    -- Union pre-stage: size the pool to the LARGEST reachable bucket ("*" +
+    -- spec buckets; MaxBucketElementCount skips dormant legacy context
+    -- buckets), not just the currently-active one, so a spec swap landing near
+    -- a combat edge finds its containers ALREADY created (creation is
+    -- combat-forbidden; the switch is then pure mutation).
     -- Over-provisioned slots stay disabled until a bucket actually uses them.
     local auras = GetFrameAuraSettings(frame)
     if auras and AuraModel.MaxBucketElementCount then
@@ -1837,9 +1813,11 @@ local function HasActiveAuraElements(vdb)
     if type(elements) ~= "table" then return false end
     -- The "*" bucket plus any per-spec bucket can carry enabled elements. We do
     -- not resolve the live spec here (this is a cheap activity gate); any
-    -- enabled element in any bucket keeps the aura pipeline alive for the unit.
-    for _, bucket in pairs(elements) do
-        if type(bucket) == "table" then
+    -- enabled element in any REACHABLE bucket keeps the aura pipeline alive for
+    -- the unit. Dormant legacy "i"/"e" context buckets (removed Encounters
+    -- cascade) are skipped — the resolver can never activate them.
+    for key, bucket in pairs(elements) do
+        if (key == "*" or type(key) == "number") and type(bucket) == "table" then
             for _, e in ipairs(bucket) do
                 if type(e) == "table" and e.enabled ~= false then
                     return true

@@ -1,27 +1,6 @@
 local ns = dofile("tools/_addon_env.lua").LoadCore(); local E = ns.AuraElements
 local failures=0; local function check(n,ok,d) if ok then print("  ok  "..n) else failures=failures+1; print("FAIL  "..n.." "..(d or "")) end end
 
--- ── EncounterBucketKey ──────────────────────────────────────────────────────
-do
-  check("EncounterBucketKey positive", E.EncounterBucketKey(3470)=="e3470")
-  check("EncounterBucketKey nil", E.EncounterBucketKey(nil)==nil)
-  check("EncounterBucketKey zero", E.EncounterBucketKey(0)==nil)
-  check("EncounterBucketKey string", E.EncounterBucketKey("x")==nil)
-end
-
--- ── Encounter rung wins over instance (contextKeys order) ───────────────────
-do
-  local a = { elements = {
-    ["*"]     = { { id="star",   enabled=true, mode="filterStrip" } },
-    ["i2549"] = { { id="inst",   enabled=true, mode="filterStrip" } },
-    ["e3470"] = { { id="boss",   enabled=true, mode="filterStrip" } },
-  } }
-  -- encounter first in the key list, present -> wins over instance + spec
-  check("encounter beats instance", E.ActiveElementsForSpec(a, 268, nil, {"e3470","i2549"})[1].id=="boss")
-  -- encounter absent -> falls through to instance
-  check("absent encounter falls to instance", E.ActiveElementsForSpec(a, 268, nil, {"e9999","i2549"})[1].id=="inst")
-end
-
 -- ── ElementAppliesToRole ────────────────────────────────────────────────────
 do
   check("nil gate = applies", E.ElementAppliesToRole({}, "TANK", false)==true)
@@ -38,12 +17,19 @@ end
 
 -- ── MaxBucketElementCount (union pre-stage sizing) ──────────────────────────
 do
+  -- "e3470"/"i2549" are legacy context buckets (the removed Encounters
+  -- cascade's key shapes) that can still sit in old profiles: the resolver
+  -- can never select them, so union sizing must SKIP them — counting them
+  -- would pre-create permanently-unreachable containers per frame.
   local a = { elements = {
     ["*"]     = { {id=1}, {id=2} },
+    [105]     = { {id=1}, {id=2}, {id=3} },
     ["e3470"] = { {id=1}, {id=2}, {id=3}, {id=4} },
     ["i2549"] = { {id=1} },
   } }
-  check("MaxBucketElementCount union", E.MaxBucketElementCount(a)==4)
+  check("MaxBucketElementCount reachable union", E.MaxBucketElementCount(a)==3)
+  check("MaxBucketElementCount skips legacy context buckets",
+    E.MaxBucketElementCount({elements={["*"]={{id=1}}, ["e9"]={{id=1},{id=2}}}})==1)
   check("MaxBucketElementCount empty store", E.MaxBucketElementCount({elements={}})==0)
   check("MaxBucketElementCount nil", E.MaxBucketElementCount(nil)==0)
 end
@@ -72,4 +58,4 @@ do
   check("normalize strip applyToRoles", legacyStrip.applyToRoles=="all")
 end
 
-print("aura_encounter_role_border_test "..(failures==0 and "OK" or "FAILED")); os.exit(failures==0 and 0 or 1)
+print("aura_role_border_test "..(failures==0 and "OK" or "FAILED")); os.exit(failures==0 and 0 or 1)

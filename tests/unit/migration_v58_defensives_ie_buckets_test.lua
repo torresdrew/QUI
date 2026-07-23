@@ -5,9 +5,9 @@
 -- ExtendDefensivesToSpecBuckets backfilled the shipped "defensives" strip
 -- into pre-existing NUMERIC spec-override buckets only, deliberately
 -- excluding the string "i"..mapID / "e"..encounterID context buckets
--- (E.InstanceBucketKey / E.EncounterBucketKey, tried by
--- core/aura_context.lua ahead of specID) — those REPLACE "*" at render time
--- exactly like a numeric spec bucket, so a pre-existing one silently lost
+-- (produced by the since-removed Encounters cascade, which at v58 time was
+-- tried ahead of specID) — those REPLACED "*" at render time exactly like a
+-- numeric spec bucket, so a pre-existing one silently lost
 -- the "defensives" strip. This migration closes that gap, mirroring v57's
 -- SeedHealerHoTElements fan-out shape (IsHoTOverrideBucketKey) but scoped to
 -- the i/e subset only:

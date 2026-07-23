@@ -272,8 +272,11 @@ local function ContextHasMissingRaidBuffElement(contextDB)
     if not auras or auras.enabled == false or type(auras.elements) ~= "table" then
         return false
     end
-    for _, bucket in pairs(auras.elements) do
-        if type(bucket) == "table" then
+    -- Reachable buckets only ("*" + numeric spec): a dormant legacy "i"/"e"
+    -- context bucket (removed Encounters cascade) must not keep the MRB
+    -- machinery alive for an element the resolver can never activate.
+    for key, bucket in pairs(auras.elements) do
+        if (key == "*" or type(key) == "number") and type(bucket) == "table" then
             for _, element in ipairs(bucket) do
                 if type(element) == "table"
                     and element.mode == "missingRaidBuff"

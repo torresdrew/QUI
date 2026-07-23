@@ -11,10 +11,6 @@
     labelled "Buff/Debuff Frames". Fifth sub-page mounts the group-frame
     dispel-overlay settings + role-aware dispel hints (aurasDispelPage,
     core/settings/content/auras_dispel_page.lua).
-    Sixth sub-page is the Encounters browser: pick a raid/Mythic+ instance
-    and boss, check off Journal-documented abilities to track as
-    instance-scoped group-frame elements (aurasEncountersPage,
-    core/settings/content/auras_encounters_page.lua).
     More sub-pages (CDM, ...) land in later tasks.
 ]]
 
@@ -103,18 +99,6 @@ function ns.QUI_AurasTile.Register(frame)
                     tabName = ns.L["Auras"],
                     subTabIndex = 5,
                     subTabName = ns.L["Dispel Colors"],
-                },
-            },
-            {
-                id = "aurasEncounters",
-                name = ns.L["Encounters"],
-                featureId = "aurasEncountersPage",
-                navRoutes = { { tabIndex = 21, subTabIndex = 6 } },
-                searchContext = {
-                    tabIndex = 21,
-                    tabName = ns.L["Auras"],
-                    subTabIndex = 6,
-                    subTabName = ns.L["Encounters"],
                 },
             },
         },

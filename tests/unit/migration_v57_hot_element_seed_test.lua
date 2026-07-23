@@ -518,11 +518,11 @@ end
 
 ----------------------------------------------------------------------------
 -- 11) The exact instance/encounter bucket keys named in the gap this
---     migration extends into: "i123" (a Journal mapID via
---     E.InstanceBucketKey) and "e456" (a Journal/ENCOUNTER_START encounterID
---     via E.EncounterBucketKey). Both REPLACE "*" at render time exactly
---     like a numeric spec bucket (core/aura_context.lua feeds them into
---     E.ActiveElementsForSpec's contextKeys ahead of specID/"*"), so a
+--     migration extends into: "i123" (a Journal mapID) and "e456" (a
+--     Journal/ENCOUNTER_START encounterID) — the key shapes the
+--     since-removed Encounters cascade produced. At v57 time both REPLACED
+--     "*" at render time exactly like a numeric spec bucket (they were tried
+--     ahead of specID/"*"), so a
 --     pre-existing one of either shape must get the fan-out too. "i123"
 --     starts with curated content, "e456" starts empty. A sibling numeric
 --     spec bucket and "*" are unaffected, and a non-matching string key

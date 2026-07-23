@@ -40,18 +40,3 @@ encode_gse.py
 /node_modules
 /.tmp_debug
 
-# CASC datamining caches (online client data pulled by tools/encounter_aura_gen
-# — hundreds of MB, build-specific, auto-refetched by client.init(); never
-# commit. node_modules IS vendored (2.8 MB) so regen needs no npm install,
-# but generation itself ALWAYS contacts Blizzard's CDN (client.init()) —
-# vendoring buys dependency reproducibility, not offline operation. Only the
-# cache stays out.
-/cache/
-tools/encounter_aura_gen/cache/
-# the regen tool's manifest + lockfile ARE tracked (line-1/2 global ignores
-# exempted), and so is every vendored dependency's package.json — without
-# those manifests Node can't resolve ESM exports (a fresh checkout fails
-# with ERR_MODULE_NOT_FOUND).
-!tools/encounter_aura_gen/package.json
-!tools/encounter_aura_gen/package-lock.json
-!tools/encounter_aura_gen/node_modules/**/package.json

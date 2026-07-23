@@ -1137,15 +1137,17 @@ end
 -- latch-then-migration) makes the other a no-op — the stamp-anyway behavior
 -- below is safe BY DESIGN now, not by accident.
 
--- True for any elements-table key that is an OVERRIDE bucket the render
--- cascade (E.ActiveElementsForSpec, via core/aura_context.lua's contextKeys)
--- would pick INSTEAD OF "*" — i.e. every bucket shape "*" is not: numeric
--- specID buckets, plus the string context buckets E.InstanceBucketKey
--- ("i"..mapID) / E.EncounterBucketKey ("e"..encounterID) produce. "*" itself
--- always returns false here — it is the fan-out's SOURCE bucket, never a
--- target. No other key shape exists in this table (see core/aura_elements.lua
+-- True for any elements-table key that was an OVERRIDE bucket the render
+-- cascade at v57/v58 time would pick INSTEAD OF "*" — i.e. every bucket shape
+-- "*" is not: numeric specID buckets, plus the string context buckets
+-- ("i"..mapID / "e"..encounterID) the since-removed Encounters cascade
+-- produced (removed with the Auras > Encounters browser; the resolver never
+-- selects them anymore, but old profiles still carry them and this migration
+-- must keep matching the shapes it shipped against). "*" itself always
+-- returns false here — it is the fan-out's SOURCE bucket, never a target.
+-- No other key shape exists in this table (see core/aura_elements.lua
 -- file header + E.EnsureSeeded/ActiveElementsForSpec; grepped writers confirm
--- only "*", numeric specID, and "i"/"e" context keys are ever assigned).
+-- only "*", numeric specID, and "i"/"e" context keys were ever assigned).
 local function IsHoTOverrideBucketKey(bucketKey)
     if type(bucketKey) == "number" then return true end
     if type(bucketKey) ~= "string" or bucketKey == "*" then return false end
@@ -1240,7 +1242,7 @@ function Migrations.SeedHealerHoTElements(profile)
 end
 
 -- True for the string context bucket keys ("i"..mapID / "e"..encounterID)
--- E.InstanceBucketKey / E.EncounterBucketKey produce (core/aura_context.lua)
+-- the since-removed Encounters cascade produced (see IsHoTOverrideBucketKey)
 -- — the SUBSET of IsHoTOverrideBucketKey's override-bucket shapes that
 -- ExtendDefensivesToSpecBuckets (step (g)) did NOT already cover. Numeric spec
 -- buckets are deliberately excluded here: step (g) already backfilled every pre-existing

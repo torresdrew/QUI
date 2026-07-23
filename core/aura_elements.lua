@@ -1011,11 +1011,8 @@ end
 
 -- OVERRIDE (either/or) semantics: a present spec bucket REPLACES "*" for that
 -- spec, never a union. `out` (optional) is a reusable scratch array for the
--- zero-alloc render fan-out. `contextKeys` (optional) is an array of string
--- bucket keys tried in order BEFORE specID; the first present bucket wins
--- and specID/"*" are skipped entirely. Behavior is identical to the 2/3-arg
--- form when `contextKeys` is nil (or resolves to no match).
-function E.ActiveElementsForSpec(auras, specID, out, contextKeys)
+-- zero-alloc render fan-out.
+function E.ActiveElementsForSpec(auras, specID, out)
     if out then
         for i = #out, 1, -1 do out[i] = nil end
     else
@@ -1024,15 +1021,8 @@ function E.ActiveElementsForSpec(auras, specID, out, contextKeys)
     local elements = auras and auras.elements
     if not elements then return out end
     local bucket
-    if type(contextKeys) == "table" then
-        for _, k in ipairs(contextKeys) do
-            if k ~= nil and elements[k] ~= nil then bucket = elements[k]; break end
-        end
-    end
-    if not bucket then
-        if specID ~= nil and elements[specID] ~= nil then bucket = elements[specID]
-        else bucket = elements["*"] end
-    end
+    if specID ~= nil and elements[specID] ~= nil then bucket = elements[specID]
+    else bucket = elements["*"] end
     if bucket then
         for _, e in ipairs(bucket) do
             if e.enabled ~= false then out[#out + 1] = e end
@@ -1041,42 +1031,29 @@ function E.ActiveElementsForSpec(auras, specID, out, contextKeys)
     return out
 end
 
--- Largest element count across EVERY bucket in the store ("*", spec, instance,
--- encounter). Callers size a per-frame container pool to this so a bucket switch
--- that ADDS elements (e.g. an encounter's boss-ability indicators) never needs
--- forbidden container CREATION mid-combat -- the union is pre-created out of
--- combat and the switch is pure mutation on pull. Over-counts harmlessly:
--- health-tint / border elements draw no container, so a pool sized to the raw
--- max simply leaves a few slots disabled. Returns 0 for an empty/absent store.
+-- Largest element count across every REACHABLE bucket in the store ("*" plus
+-- numeric specID buckets — the only shapes the resolver can still select).
+-- Callers size a per-frame container pool to this so a bucket switch that ADDS
+-- elements (a spec swap landing near a combat edge) never needs forbidden
+-- container CREATION mid-combat -- the union is pre-created out of combat and
+-- the switch is pure mutation. Legacy "i"/"e" context buckets (the removed
+-- Encounters cascade's shapes) still sitting in old profiles are SKIPPED:
+-- the resolver can never activate them, so sizing pools to them would create
+-- permanently-unreachable containers. Over-counts among reachable buckets
+-- harmlessly: health-tint / border elements draw no container, so a pool sized
+-- to the raw max simply leaves a few slots disabled. Returns 0 for an
+-- empty/absent store.
 function E.MaxBucketElementCount(auras)
     local elements = auras and auras.elements
     if type(elements) ~= "table" then return 0 end
     local max = 0
-    for _, bucket in pairs(elements) do
-        if type(bucket) == "table" and #bucket > max then max = #bucket end
+    for key, bucket in pairs(elements) do
+        if (key == "*" or type(key) == "number")
+            and type(bucket) == "table" and #bucket > max then
+            max = #bucket
+        end
     end
     return max
-end
-
--- Builds the elements-table bucket key for an instance/context (e.g. a
--- Journal mapID), used as an optional cascade rung tried before specID via
--- `contextKeys`. Returns nil for anything that isn't a positive number so
--- callers can pass it straight through without a guard.
-function E.InstanceBucketKey(mapID)
-    if type(mapID) == "number" and mapID > 0 then
-        return "i" .. mapID
-    end
-    return nil
-end
-
--- Builds the elements-table bucket key for a specific encounter (Journal /
--- ENCOUNTER_START encounterID). Tried BEFORE the instance key in the cascade so
--- a boss delta overrides its instance's delta. Returns nil for non-positive ids.
-function E.EncounterBucketKey(encounterID)
-    if type(encounterID) == "number" and encounterID > 0 then
-        return "e" .. encounterID
-    end
-    return nil
 end
 
 function E.HasSpecOverride(elements, bucketKey)

@@ -147,7 +147,6 @@ aura_elements_editor.lua
 ..\QUI\core\settings\content\auras_actionbar_page.lua
 ..\QUI\core\settings\content\auras_dispel_page.lua
 ..\QUI\core\settings\content\auras_wizard_page.lua
-..\QUI\core\settings\content\auras_encounters_page.lua
 init.lua
 tiles\related.lua
 tiles\minimap.lua
