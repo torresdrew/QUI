@@ -538,17 +538,17 @@ function Utils.BuildOpenFullSettingsLink(content, providerKey, sections, relayou
     row:SetScript("OnLeave", function() SetLinkColor(accent[1], accent[2], accent[3], 1) end)
     row:SetScript("OnClick", function()
         if feature and type(feature.onNavigate) == "function" then
-            pcall(feature.onNavigate, providerKey, route, {
+            ns.SafeCall("bulkhead", feature.onNavigate, providerKey, route, {
                 source = "layoutmode",
             })
         end
         if _G.QUI_ToggleLayoutMode then
-            pcall(_G.QUI_ToggleLayoutMode)
+            ns.SafeCall("bulkhead", _G.QUI_ToggleLayoutMode)
         end
         if QUI and QUI.SlashCommandOpen then
-            pcall(QUI.SlashCommandOpen, QUI, "")
+            QUI:SlashCommandOpen("")
         elseif GUI and GUI.Toggle then
-            pcall(GUI.Toggle, GUI)
+            GUI:Toggle()
         end
         local frame = GUI and GUI.MainFrame
         if frame and GUI.FindV2TileByID and GUI.SelectFeatureTile then

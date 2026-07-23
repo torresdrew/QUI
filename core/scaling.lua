@@ -59,17 +59,20 @@ local cachedPhysicalHeight = select(2, GetPhysicalScreenSize())
 --- @param frame? Frame The frame context (defaults to UIParent)
 --- @return number The size of 1 physical pixel in the frame's coordinate space
 function QUICore:GetPixelSize(frame)
+    -- A secret GetEffectiveScale return is a SUCCESSFUL pcall return, so
+    -- `ok and val or nil` would truth-test the secret OUTSIDE the pcall and
+    -- throw. Probe before any truthiness laundering; secret scales can't be
+    -- used in Lua arithmetic → fall back to 1.
     local es
     if frame then
         local ok, val = pcall(frame.GetEffectiveScale, frame)
-        es = ok and val or nil
+        if ok and not (issecretvalue and issecretvalue(val)) then es = val end
     end
     if not es then
         local ok2, val2 = pcall(UIParent.GetEffectiveScale, UIParent)
-        es = ok2 and val2 or nil
+        if ok2 and not (issecretvalue and issecretvalue(val2)) then es = val2 end
     end
-    -- Secret values from GetEffectiveScale can't be used in Lua arithmetic
-    if not es or (issecretvalue and issecretvalue(es)) then return 1 end
+    if not es then return 1 end
     if es == 0 then return 1 end
     if cachedPhysicalHeight == 0 then return 1 end
     return 768 / (cachedPhysicalHeight * es)
@@ -409,7 +412,7 @@ function QUICore:ApplyUIScale()
         end
     end
 
-    local success = pcall(function() UIParent:SetScale(scaleToApply) end)
+    local success = ns.SafeCallMethod("defer-ooc", UIParent, "SetScale", scaleToApply)
     if not success then
         DeferUIScaleToRegen(self)
         return

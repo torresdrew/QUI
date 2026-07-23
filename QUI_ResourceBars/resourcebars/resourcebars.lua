@@ -37,6 +37,7 @@ local GetTime = GetTime
 local UnitCanAttack = UnitCanAttack
 local tostring = tostring
 local wipe = wipe
+local issecretvalue = issecretvalue -- nil-safe: absent on pre-12.1 clients
 local table_insert = table.insert
 local table_remove = table.remove
 local string_format = string.format
@@ -65,14 +66,6 @@ if not _G["QUIResourceBars"] then
     if proxy.SetMouseClickEnabled then proxy:SetMouseClickEnabled(false) end
     if proxy.SetMouseMotionEnabled then proxy:SetMouseMotionEnabled(false) end
     proxy:Show()
-end
-
--- Pixel-perfect scaling helper
-local function Scale(x, frame)
-    if QUICore and QUICore.Scale then
-        return QUICore:Scale(x, frame)
-    end
-    return x
 end
 
 -- QUI_GetCDMViewerFrame lives in the CDM sub-addon; nil-safe wrapper so
@@ -255,6 +248,42 @@ Enum.PowerType.TipOfTheSpear = 103   -- Survival Hunter Tip of the Spear stacks
 Enum.PowerType.RenewingMistCharges = 104 -- Mistweaver Monk Renewing Mist charges
 
 ---------------------------------------------------------------------------
+-- UNIT_SPELLCAST_SUCCEEDED SECRET-BOUNDARY PROBE (shared, Wave 2b Task E)
+--
+-- tests/api-docs/blizzard/UnitDocumentation.lua:4663-4674:
+-- UnitSpellcastSucceeded carries SecretWhenUnitSpellCastRestricted = true;
+-- payload unitTarget/castGUID/spellID are all secretizable (only castBarID
+-- is NeverSecret, and this file never reads castBarID). A secret spellID
+-- or castGUID throws as a table key and in `==` against a number
+-- (cdm-auraphase-secret-spellid-table-index rule) - every tracker below
+-- indexes GENERATORS/SPENDERS[spellID] and/or compares spellID with `==`,
+-- and WhirlwindTracker additionally indexes seenGUID[castGUID].
+--
+-- Four separate frames (wwFrame/tipFrame/mwFrame/powerEventFrame) each own
+-- their own UNIT_SPELLCAST_SUCCEEDED dispatch below - there is no single
+-- physical choke point in this file's structure to place one probe at, so
+-- this shared helper is reused at each of the four call sites instead of
+-- hand-rolling the same check four times. All four registrations already
+-- use RegisterUnitEvent(..., "player") (C-level filtered), so the payload's
+-- `unit` token is trusted by registration (registered-token discipline,
+-- matching Wave 2b Tasks A-D) and not re-compared here; only the values
+-- actually indexed/compared downstream (spellID, and castGUID where used)
+-- are probed. Secret cast = skip; each tracker's own drift/resync semantics
+-- (documented in the MaelstromWeaponTracker header below, and equivalently
+-- via WhirlwindTracker/TipOfTheSpearTracker's timed stack decay) already
+-- cover the resulting undercount - no new recovery path invented here.
+local function IsSecretSpellcastPayload(spellID, castGUID)
+    if not issecretvalue then return false end
+    -- The literal reports SECRECY itself (callers skip the cast), never a
+    -- semantic cast state.
+    if issecretvalue(spellID) then return true end -- @secret-policy: report-secret-detected
+    -- No nil pre-check: issecretvalue(nil) is safe, and a `~= nil` compare
+    -- on a possibly-secret value is exactly the operation being guarded.
+    if issecretvalue(castGUID) then return true end -- @secret-policy: report-secret-detected
+    return false
+end
+
+---------------------------------------------------------------------------
 -- WHIRLWIND STACK TRACKER (event-driven)
 --
 -- C_UnitAuras.GetPlayerAuraBySpellID(85739) is unreliable during combat.
@@ -390,8 +419,11 @@ do
                 WhirlwindTracker:Reset()
             end
         elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
-            local unit, castGUID, spellID = ...
-            if unit == "player" then
+            -- unit trusted via registration (:416 RegisterUnitEvent player-only);
+            -- spellID/castGUID probed before OnSpellCast's GENERATORS/SPENDERS[spellID]
+            -- and seenGUID[castGUID] table indexing (:358, :381, :354-355 below).
+            local _, castGUID, spellID = ...
+            if not IsSecretSpellcastPayload(spellID, castGUID) then
                 WhirlwindTracker:OnSpellCast(spellID, castGUID)
             end
         elseif event == "PLAYER_DEAD" then
@@ -527,8 +559,11 @@ do
                 TipOfTheSpearTracker:Reset()
             end
         elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
-            local unit, _, spellID = ...
-            if unit == "player" then
+            -- unit trusted via registration (:558 RegisterUnitEvent player-only);
+            -- spellID probed before OnSpellCast's == compares and SPENDERS[spellID]
+            -- indexing (:511, :522, :532 below).
+            local _, _, spellID = ...
+            if not IsSecretSpellcastPayload(spellID) then
                 TipOfTheSpearTracker:OnSpellCast(spellID)
             end
         elseif event == "PLAYER_DEAD" then
@@ -537,6 +572,156 @@ do
     end)
     tipFrame:RegisterEvent("ACTIVE_PLAYER_SPECIALIZATION_CHANGED")
     tipFrame:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
+end
+
+---------------------------------------------------------------------------
+-- MAELSTROM WEAPON STACK TRACKER (event-driven, safe-resync)
+--
+-- Enum.PowerType.MaelstromWeapon (=100, defined above) is a synthetic ID this
+-- addon invents; Blizzard's real PowerType enum has no such member (see
+-- tests/api-docs/blizzard/PowerTypeConstantsDocumentation.lua: the PowerType
+-- table lists exactly 30 fields, values 0-29, and "Maelstrom"=11 is the
+-- *Elemental* resource bar - a different mechanic. Nothing in tests/framexml/
+-- reads Maelstrom Weapon via UnitPower either.). So Maelstrom Weapon stacks
+-- are only observable as an aura application count (spell 344179), and every
+-- aura-by-spellID getter is SecretWhenUnitAuraRestricted - GetPlayerAuraBySpellID
+-- (tests/api-docs/blizzard/UnitAuraDocumentation.lua:376) and GetUnitAuraBySpellID
+-- (same file:414) both carry the tag, so there is no unrestricted aura read to
+-- fall back to. Track it manually via UNIT_SPELLCAST_SUCCEEDED instead.
+--
+-- Unlike Whirlwind/Tip of the Spear (decrement-by-one spenders, timed decay),
+-- Maelstrom Weapon has no duration and its spenders consume ALL current
+-- stacks on cast, not one. The GENERATORS list below intentionally covers
+-- only the long-standing, high-confidence core builders (Stormstrike/
+-- Windstrike/Lava Lash) - this repo has no local doc naming every talent that
+-- can also grant a stack, and guessing extra spell IDs risks a wrong ID
+-- colliding with an unrelated cast. Known-partial coverage: the tracker can
+-- therefore undercount mid-combat; to bound that drift it resyncs from the
+-- real aura value whenever it's actually safe to read it:
+-- C_Secrets.ShouldAurasBeSecret() "Returns true if queries for aura data
+-- will generally produce secret values." (SecretPredicateAPIDocumentation
+-- .lua:121).
+---------------------------------------------------------------------------
+local MaelstromWeaponTracker = {}
+do
+    local MW_MAX_STACKS = 10
+    local MAELSTROM_WEAPON_SPELL_ID = 344179
+
+    -- Generators: +1 stack. Core, high-confidence builders only (see header).
+    local GENERATORS = {
+        [17364]  = true, -- Stormstrike
+        [115356] = true, -- Windstrike (Stormbringer-empowered Stormstrike)
+        [60103]  = true, -- Lava Lash
+    }
+
+    -- Spenders: consume ALL current stacks (not one) on cast.
+    -- 188196 and 8004 are grounded in the local FrameXML snapshot
+    -- (Blizzard_TutorialData.lua SHAMAN block: "188196, -- Start with
+    -- Lightning Bolt" / "8004, -- Healing Surge, level 4"); 188443 and 1064
+    -- have no local doc entry and are long-standing baseline IDs pending
+    -- in-game confirm. Talent spenders (e.g. Elemental Blast) deliberately
+    -- omitted pending in-game ID verification.
+    local SPENDERS = {
+        [188196] = true, -- Lightning Bolt
+        [188443] = true, -- Chain Lightning
+        [8004]   = true, -- Healing Surge
+        [1064]   = true, -- Chain Heal
+    }
+
+    local stacks = 0
+
+    function MaelstromWeaponTracker:GetStacks()
+        return MW_MAX_STACKS, stacks
+    end
+
+    function MaelstromWeaponTracker:Reset()
+        stacks = 0
+    end
+
+    -- Resync from the live aura value when it's safe to read it (i.e. not
+    -- SecretWhenUnitAuraRestricted right now). No-ops otherwise, leaving the
+    -- event-tracked estimate in place rather than touching restricted data.
+    function MaelstromWeaponTracker:Resync()
+        if not (C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID) then return end
+        if C_Secrets and C_Secrets.ShouldAurasBeSecret and C_Secrets.ShouldAurasBeSecret() then
+            return
+        end
+        local ok, aura = pcall(C_UnitAuras.GetPlayerAuraBySpellID, MAELSTROM_WEAPON_SPELL_ID)
+        if not ok then return end
+        if aura and type(aura.applications) == "number" then -- @secret-safe: GetPlayerAuraBySpellID is RequiresNonSecretAura — it returns NO values for a secret aura instead of secret AuraData, so `aura` is plain table-or-nil
+            stacks = math_min(MW_MAX_STACKS, aura.applications)
+        else
+            stacks = 0
+        end
+    end
+
+    function MaelstromWeaponTracker:OnSpellCast(spellID)
+        if GENERATORS[spellID] then
+            if stacks < MW_MAX_STACKS then
+                stacks = stacks + 1
+                if QUICore and QUICore.UpdateSecondaryPowerBar then
+                    QUICore:UpdateSecondaryPowerBar()
+                end
+            end
+            return
+        end
+
+        if SPENDERS[spellID] then
+            if stacks > 0 then
+                stacks = 0
+                if QUICore and QUICore.UpdateSecondaryPowerBar then
+                    QUICore:UpdateSecondaryPowerBar()
+                end
+            end
+            return
+        end
+    end
+
+    -- Event frame: only active for Enhancement Shamans.
+    local mwFrame = CreateFrame("Frame")
+    mwFrame:RegisterEvent("ADDON_LOADED")
+    mwFrame:SetScript("OnEvent", function(self, event, ...)
+        if event == "ADDON_LOADED" then
+            local addonName = ...
+            if addonName ~= ADDON_NAME then return end
+            self:UnregisterEvent("ADDON_LOADED")
+        end
+        if event == "ADDON_LOADED" or event == "ACTIVE_PLAYER_SPECIALIZATION_CHANGED"
+            or event == "PLAYER_SPECIALIZATION_CHANGED" then
+            local _, class = UnitClass("player")
+            local spec = GetSpecialization()
+            -- Enhancement = spec 2
+            if class == "SHAMAN" and spec == 2 then
+                self:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
+                self:RegisterEvent("PLAYER_DEAD")
+                self:RegisterEvent("PLAYER_REGEN_ENABLED")
+                MaelstromWeaponTracker:Resync()
+            else
+                self:UnregisterEvent("UNIT_SPELLCAST_SUCCEEDED")
+                self:UnregisterEvent("PLAYER_DEAD")
+                self:UnregisterEvent("PLAYER_REGEN_ENABLED")
+                MaelstromWeaponTracker:Reset()
+            end
+        elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
+            -- unit trusted via registration (:699 RegisterUnitEvent player-only);
+            -- spellID probed before OnSpellCast's GENERATORS/SPENDERS[spellID]
+            -- indexing (:663, :673 below).
+            local _, _, spellID = ...
+            if not IsSecretSpellcastPayload(spellID) then
+                MaelstromWeaponTracker:OnSpellCast(spellID)
+            end
+        elseif event == "PLAYER_DEAD" then
+            MaelstromWeaponTracker:Reset()
+        elseif event == "PLAYER_REGEN_ENABLED" then
+            -- Combat ended: TRY a resync. Resync gates on ShouldAurasBeSecret,
+            -- which also covers encounter/challenge-mode/PvP restrictions —
+            -- inside M+ or an encounter this may stay true past regen, so the
+            -- tracker's undercount can persist until the restriction lifts.
+            MaelstromWeaponTracker:Resync()
+        end
+    end)
+    mwFrame:RegisterEvent("ACTIVE_PLAYER_SPECIALIZATION_CHANGED")
+    mwFrame:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
 end
 
 local VDH_SOUL_FRAGMENTS_POWER = (Enum.PowerType and type(Enum.PowerType.SoulFragments) == "number") and Enum.PowerType.SoulFragments or nil
@@ -563,11 +748,30 @@ local RenewingMistChargeState = {
 }
 
 local function SafeNumberOrNil(value)
-    if value == nil or Helpers.IsSecretValue(value) then
+    -- Probe first: ==/truth-tests on a secret throw, so the nil compare must
+    -- come after IsSecretValue.
+    if Helpers.IsSecretValue(value) or value == nil then
         return nil
     end
     local number = tonumber(value)
     return number
+end
+
+-- Probe-first read of a player power pair (UnitPower/UnitPowerMax are
+-- SecretWhenUnitPowerRestricted; NO power type is documented NeverSecret, so
+-- every read here is secret-capable — the player unit is NOT exempt).
+-- Returns (current, max, isSecret): plain numbers with isSecret=false when
+-- readable, the RAW secrets with isSecret=true otherwise. Raw secrets may
+-- ONLY flow to C sinks (SetMinMaxValues/SetValue/SetFormattedText).
+local function ReadPlayerPowerPair(resource, unmodified)
+    local current = UnitPower("player", resource, unmodified)
+    local max = UnitPowerMax("player", resource, unmodified)
+    if Helpers.IsSecretValue(current) or Helpers.IsSecretValue(max) then
+        -- The literal flags SECRECY itself (callers branch to
+        -- sink-passthrough/defer); raw values ride along for C sinks.
+        return current, max, true -- @secret-policy: report-secret-detected
+    end
+    return current, max, false -- @secret-policy: report-secret-detected
 end
 
 local function GetSpellChargesCompat(spellID)
@@ -579,10 +783,14 @@ local function GetSpellChargesCompat(spellID)
             return nil, nil, nil, nil, nil
         end
         if type(a) == "table" then
+            -- cooldownStartTime/cooldownDuration are non-nilable but
+            -- secret-capable (SpellSharedDocumentation SpellChargeInfo): an
+            -- `or`-chain over legacy alias fields would truth-test a secret
+            -- and throw, and those aliases never coexist with the table form.
             return a.currentCharges,
                    a.maxCharges,
-                   a.cooldownStartTime or a.cooldownStart or a.startTime,
-                   a.cooldownDuration or a.duration,
+                   a.cooldownStartTime,
+                   a.cooldownDuration,
                    a.chargeModRate
         end
         return a, b, c, d, e
@@ -714,21 +922,37 @@ local function GetPowerPct(unit, powerType, usePredicted)
         if CurveConstants and CurveConstants.ScaleTo100 then
             ok, pct = pcall(UnitPowerPercent, unit, powerType, usePredicted, CurveConstants.ScaleTo100)
         end
+        -- UnitPowerPercent is SecretWhenUnitPowerRestricted — probe
+        -- UNCONDITIONALLY before the nil-compares below (`secret == nil`
+        -- throws; a pcall error string is never secret so probing it is
+        -- harmless). A secret percent is returned RAW for sink-only
+        -- consumption by the caller.
+        if Helpers.IsSecretValue(pct) then
+            return pct -- @secret-policy: sink-passthrough
+        end
         -- Fallback for older builds
         if not ok or pct == nil then
             ok, pct = pcall(UnitPowerPercent, unit, powerType, usePredicted)
+        end
+        if Helpers.IsSecretValue(pct) then
+            return pct -- @secret-policy: sink-passthrough
         end
         if ok and pct ~= nil then
             return pct
         end
     end
-    -- Manual calculation fallback (UnitPower/UnitPowerMax can return secret values in 12.0.x)
+    -- Manual calculation fallback. Probe before the truth-tests/division —
+    -- the pcall would swallow the throw, but a probed bail is deterministic.
     local ok, result = pcall(function()
         local cur = UnitPower(unit, powerType)
         local max = UnitPowerMax(unit, powerType)
+        if Helpers.IsSecretValue(cur) or Helpers.IsSecretValue(max) then
+            return nil -- @secret-policy: reject-secret-value
+        end
         if cur and max and max > 0 then return (cur / max) * 100 end
     end)
-    return ok and result or nil
+    if not ok then return nil end
+    return result
 end
 
 local tickedPowerTypes = {
@@ -773,10 +997,56 @@ local renewingMistUpdateRunning = false
 local _lastRuneRounded = {}    -- [runeIndex] = last math_floor(remaining * 10) value
 local _lastRuneFormatted = {}  -- [runeIndex] = last formatted string
 
+-- Rune display scratch: pooled records + order array, rewritten in place on
+-- every refresh (RUNE_POWER_UPDATE fires continuously for DKs).
+local runeScratch = {}
+local runeOrder = {}
+-- Total order: ready runes first (stable by rune index), then recharging by
+-- ascending remaining, index tiebreak (table.sort is not stable).
+local function RuneDisplayLess(a, b)
+    if a.ready ~= b.ready then return a.ready end
+    if a.ready then return a.index < b.index end
+    if a.remaining ~= b.remaining then return a.remaining < b.remaining end
+    return a.index < b.index
+end
+
 -- Event throttle (16ms = ~60 FPS, smooth updates while managing CPU)
 local UPDATE_THROTTLE = 0.016
 local lastPrimaryUpdate = 0
 local lastSecondaryUpdate = 0
+
+-- Trailing drain: the leading-edge throttle drops events inside the 16ms
+-- window; one queued C_Timer.After per burst re-renders the final state.
+-- Static closures — no per-event allocation. C_Timer.After callbacks are
+-- uncancellable, so each drain re-checks state when it fires.
+local primaryDrainQueued = false
+local secondaryDrainQueued = false
+
+local function DrainPrimaryPowerUpdate()
+    primaryDrainQueued = false
+    if not (QUICore and QUICore.db) then return end
+    lastPrimaryUpdate = GetTime()
+    QUICore:UpdatePowerBar()
+end
+
+local function DrainSecondaryPowerUpdate()
+    secondaryDrainQueued = false
+    if not (QUICore and QUICore.db) then return end
+    lastSecondaryUpdate = GetTime()
+    QUICore:UpdateSecondaryPowerBar()
+end
+
+local function QueuePrimaryTrailingUpdate()
+    if primaryDrainQueued then return end
+    primaryDrainQueued = true
+    C_Timer.After(UPDATE_THROTTLE, DrainPrimaryPowerUpdate)
+end
+
+local function QueueSecondaryTrailingUpdate()
+    if secondaryDrainQueued then return end
+    secondaryDrainQueued = true
+    C_Timer.After(UPDATE_THROTTLE, DrainSecondaryPowerUpdate)
+end
 
 -- Discrete resources that need instant feedback (no throttle)
 -- These change infrequently and users expect immediate visual response
@@ -1044,10 +1314,8 @@ end
 -- the proxy bbox or anchored elements would jump to invisible regions.
 local function IsBarVisuallyShown(bar)
     if not bar then return false end
-    local ok, shown = pcall(function() return bar:IsShown() end)
-    if not ok or not shown then return false end
-    local okA, alpha = pcall(function() return bar:GetEffectiveAlpha() end)
-    if not okA then return false end
+    if not bar:IsShown() then return false end
+    local alpha = bar:GetEffectiveAlpha()
     return type(alpha) == "number" and alpha > 0.01
 end
 
@@ -1056,15 +1324,14 @@ end
 -- UIParent's center.  Returns nil if the frame isn't laid out yet.
 local function GetLiveBarRect(bar)
     if not bar then return nil end
-    local okC, cx, cy = pcall(function() return bar:GetCenter() end)
-    if not okC or type(cx) ~= "number" or type(cy) ~= "number" then return nil end
-    local okW, w = pcall(function() return bar:GetWidth() end)
-    local okH, h = pcall(function() return bar:GetHeight() end)
-    if not okW or not okH or type(w) ~= "number" or type(h) ~= "number" or w <= 1 or h <= 1 then
+    local cx, cy = bar:GetCenter()
+    if type(cx) ~= "number" or type(cy) ~= "number" then return nil end
+    local w, h = bar:GetWidth(), bar:GetHeight()
+    if type(w) ~= "number" or type(h) ~= "number" or w <= 1 or h <= 1 then
         return nil
     end
-    local okU, scx, scy = pcall(function() return UIParent:GetCenter() end)
-    if not okU or type(scx) ~= "number" or type(scy) ~= "number" then return nil end
+    local scx, scy = UIParent:GetCenter()
+    if type(scx) ~= "number" or type(scy) ~= "number" then return nil end
     return cx - scx, cy - scy, w, h
 end
 
@@ -1355,13 +1622,13 @@ local function SyncSwapAnchorOwnership(active)
     -- "anchor follows the bbox slot" behavior in GetSwapAwareBarFor.
     if transitioning then
         if _G.QUI_UpdateAnchoredUnitFrames then
-            pcall(_G.QUI_UpdateAnchoredUnitFrames)
+            ns.SafeCall("bulkhead", _G.QUI_UpdateAnchoredUnitFrames)
         end
         if _G.QUI_UpdateAnchoredFrames then
-            pcall(_G.QUI_UpdateAnchoredFrames)
+            ns.SafeCall("bulkhead", _G.QUI_UpdateAnchoredFrames)
         end
         if _G.QUI_RefreshCDMBuffLayout then
-            pcall(_G.QUI_RefreshCDMBuffLayout)
+            ns.SafeCall("bulkhead", _G.QUI_RefreshCDMBuffLayout)
         end
     end
 end
@@ -1540,9 +1807,9 @@ end
 
 -- RESOURCE DETECTION
 
-local function GetPrimaryResource()
-    local playerClass = select(2, UnitClass("player"))
-    local primaryResources = {
+-- Immutable class/spec resource maps. The getters below run on every power
+-- event; these tables must stay file-scope, never rebuilt per call.
+local primaryResources = {
         ["DEATHKNIGHT"] = Enum.PowerType.RunicPower,
         ["DEMONHUNTER"] = Enum.PowerType.Fury,
         ["DRUID"]       = {
@@ -1576,8 +1843,10 @@ local function GetPrimaryResource()
         },
         ["WARLOCK"]     = Enum.PowerType.Mana,
         ["WARRIOR"]     = Enum.PowerType.Rage,
-    }
+}
 
+local function GetPrimaryResource()
+    local playerClass = select(2, UnitClass("player"))
     local spec = GetSpecialization()
     if not spec then return Enum.PowerType.Mana end
     local specID = GetSpecializationInfo(spec)
@@ -1602,9 +1871,7 @@ local function GetPrimaryResource()
     end
 end
 
-local function GetSecondaryResource()
-    local playerClass = select(2, UnitClass("player"))
-    local secondaryResources = {
+local secondaryResources = {
         ["DEATHKNIGHT"] = Enum.PowerType.Runes,
         ["DEMONHUNTER"] = {
             [581] = VDH_SOUL_FRAGMENTS_POWER or Enum.PowerType.VengSoulFragments, -- Vengeance
@@ -1639,8 +1906,10 @@ local function GetSecondaryResource()
         ["WARRIOR"]     = {
             [72] = Enum.PowerType.Whirlwind, -- Fury
         },
-    }
+}
 
+local function GetSecondaryResource()
+    local playerClass = select(2, UnitClass("player"))
     local spec = GetSpecialization()
     if not spec then return nil end
     local specID = GetSpecializationInfo(spec)
@@ -1676,18 +1945,28 @@ local function GetResourceColor(resource)
         local customColor = nil
 
         if resource == "STAGGER" then
-            -- Dynamic stagger level colors (Light/Moderate/Heavy)
+            -- Dynamic stagger level colors (Light/Moderate/Heavy). Probe
+            -- BEFORE the `or` fallbacks/division — both reads secretize
+            -- under restriction.
             if pc.useStaggerLevelColors then
-                local stagger = UnitStagger("player") or 0
-                local maxHealth = UnitHealthMax("player") or 1
-                local staggerPercent = (stagger / maxHealth) * 100
-
-                if staggerPercent >= 60 then
-                    customColor = pc.staggerHeavy
-                elseif staggerPercent >= 30 then
-                    customColor = pc.staggerModerate
+                local stagger = UnitStagger("player")
+                local maxHealth = UnitHealthMax("player")
+                if Helpers.IsSecretValue(stagger) or Helpers.IsSecretValue(maxHealth) then
+                    -- @secret-policy: keep-visible-when-unknown — level
+                    -- thresholds are unknowable; fall back to the base color.
+                    customColor = pc.stagger
                 else
-                    customColor = pc.staggerLight
+                    if stagger == nil then stagger = 0 end
+                    if maxHealth == nil or maxHealth <= 0 then maxHealth = 1 end
+                    local staggerPercent = (stagger / maxHealth) * 100
+
+                    if staggerPercent >= 60 then
+                        customColor = pc.staggerHeavy
+                    elseif staggerPercent >= 30 then
+                        customColor = pc.staggerModerate
+                    else
+                        customColor = pc.staggerLight
+                    end
                 end
             else
                 customColor = pc.stagger
@@ -1813,17 +2092,30 @@ local function EnsureDemonHunterSoulBar()
     return soulBar
 end
 
+-- valueType contract: "number" | "percent" | "shards" = plain displayValue;
+-- "secret" = max/current are RAW SECRETS for C sinks only, displayValue is
+-- nil-or-secret and must never be truth-tested/formatted in Lua.
 local function GetPrimaryResourceValue(resource, cfg)
     if not resource then return nil, nil, nil, nil end
 
-    local current = UnitPower("player", resource)
-    local max = UnitPowerMax("player", resource)
+    local current, max, secret = ReadPlayerPowerPair(resource)
+    if secret then
+        -- @secret-policy: sink-passthrough — the bar keeps rendering from the
+        -- raw values C-side; derived text is uncomputable this tick.
+        return max, current, current, "secret"
+    end
     if max <= 0 then return nil, nil, nil, nil end
 
     -- Check both old (showManaAsPercent) and new (showPercent) field names
     if (cfg.showPercent or cfg.showManaAsPercent) and resource == Enum.PowerType.Mana then
         if HAS_UNIT_POWER_PERCENT then
-            return max, current, GetPowerPct("player", resource, false), "percent"
+            local pct = GetPowerPct("player", resource, false)
+            if Helpers.IsSecretValue(pct) then
+                -- @secret-policy: sink-passthrough — percent unreadable,
+                -- degrade the text to the raw number via the sink.
+                return max, current, current, "secret"
+            end
+            return max, current, pct, "percent"
         else
             return max, current, math_floor((current / max) * 100 + 0.5), "percent"
         end
@@ -1836,8 +2128,18 @@ local function GetSecondaryResourceValue(resource)
     if not resource then return nil, nil, nil, nil end
 
     if resource == "STAGGER" then
-        local stagger = UnitStagger("player") or 0
-        local maxHealth = UnitHealthMax("player") or 1
+        -- UnitStagger/UnitHealthMax are secret-capable (SecretReturns /
+        -- SecretWhenUnitHealthMaxRestricted) — probe BEFORE the `or`
+        -- fallbacks and division. Secret pair: hand both raw to the sinks;
+        -- the StatusBar renders the correct RATIO C-side.
+        local stagger = UnitStagger("player")
+        local maxHealth = UnitHealthMax("player")
+        if Helpers.IsSecretValue(stagger) or Helpers.IsSecretValue(maxHealth) then
+            -- @secret-policy: sink-passthrough
+            return maxHealth, stagger, nil, "secret"
+        end
+        if stagger == nil then stagger = 0 end
+        if maxHealth == nil or maxHealth <= 0 then maxHealth = 1 end
         local staggerPercent = (stagger / maxHealth) * 100
         return 100, staggerPercent, staggerPercent, "percent"
     end
@@ -1847,6 +2149,12 @@ local function GetSecondaryResourceValue(resource)
         if soulBar and soulBar.GetValue and soulBar.GetMinMaxValues then
             local current = soulBar:GetValue()
             local _, max = soulBar:GetMinMaxValues()
+            -- Widget getters mirror whatever the secure bar was fed — probe
+            -- before the compares.
+            if Helpers.IsSecretValue(current) or Helpers.IsSecretValue(max) then
+                -- @secret-policy: sink-passthrough
+                return max, current, current, "secret"
+            end
             if max and max > 0 then
                 return max, current, current, "number"
             end
@@ -1854,25 +2162,36 @@ local function GetSecondaryResourceValue(resource)
     end
 
     if VDH_SOUL_FRAGMENTS_POWER and resource == VDH_SOUL_FRAGMENTS_POWER then
-        local current = UnitPower("player", resource) or 0
-        local max = UnitPowerMax("player", resource) or 0
-        if max > 0 then
+        local current, max, secret = ReadPlayerPowerPair(resource)
+        if secret then
+            -- @secret-policy: sink-passthrough
+            return max, current, current, "secret"
+        end
+        if current == nil then current = 0 end
+        if max ~= nil and max > 0 then
             return max, current, current, "number"
         end
     end
 
     if resource == Enum.PowerType.VengSoulFragments then
-        local current = C_Spell.GetSpellCastCount(228477) or 0
+        -- GetSpellCastCount is SecretWhenCooldownsRestricted; a bare `or 0`
+        -- would truth-test the secret and throw.
+        local current = SafeNumberOrNil(C_Spell.GetSpellCastCount(228477)) or 0
         local max = 6
 
         return max, current, current, "number"
     end
 
     if resource == Enum.PowerType.MaelstromWeapon then
-        -- Enhancement Shaman Maelstrom Weapon stacks (aura-based, spell ID 344179)
-        local aura = C_UnitAuras.GetPlayerAuraBySpellID(344179)
-        local current = aura and aura.applications or 0
-        return 10, current, current, "number"
+        -- Enhancement Shaman Maelstrom Weapon stacks.
+        -- GetPlayerAuraBySpellID(344179) is SecretWhenUnitAuraRestricted and
+        -- returns stale/secret data while restricted (RequiresNonSecretAura
+        -- returns no values, no error); there's no UnitPower path either (this
+        -- power ID is a synthetic constant this addon defines, not a real
+        -- Blizzard PowerType - see MaelstromWeaponTracker header comment).
+        -- Manual tracker (UNIT_SPELLCAST_SUCCEEDED) with safe resync instead.
+        local max, current = MaelstromWeaponTracker:GetStacks()
+        return max, current, current, "number"
     end
 
     if resource == Enum.PowerType.Whirlwind then
@@ -1912,10 +2231,21 @@ local function GetSecondaryResourceValue(resource)
     if resource == Enum.PowerType.Runes then
         local current = 0
         local max = UnitPowerMax("player", resource)
+        -- Probe before the <= compare / loop bound. A secret max makes the
+        -- Lua rune count underivable: DEFER — the caller keeps the last
+        -- rendered state and the next readable event resyncs.
+        if Helpers.IsSecretValue(max) then
+            -- @secret-policy: defer-until-readable
+            return nil, nil, nil, "defer"
+        end
         if max <= 0 then return nil, nil, nil, nil end
 
         for i = 1, max do
             local runeReady = select(3, GetRuneCooldown(i))
+            if Helpers.IsSecretValue(runeReady) then
+                -- @secret-policy: defer-until-readable — readiness unknowable
+                return nil, nil, nil, "defer"
+            end
             if runeReady then
                 current = current + 1
             end
@@ -1931,8 +2261,12 @@ local function GetSecondaryResourceValue(resource)
 
             -- Destruction: fragments for bar fill, divided by 10 for display
             if spec == 3 then
-                local fragments = UnitPower("player", resource, true)        -- 0–50
-                local maxFragments = UnitPowerMax("player", resource, true)  -- 50
+                local fragments, maxFragments, fragSecret = ReadPlayerPowerPair(resource, true)
+                if fragSecret then
+                    -- @secret-policy: sink-passthrough — bar ratio renders
+                    -- C-side; the /10 shard text is uncomputable this tick.
+                    return maxFragments, fragments, fragments, "secret"
+                end
                 if maxFragments <= 0 then return nil, nil, nil, nil end
 
                 -- bar fill = fragments (0-50), display = decimal shards (0.0-5.0)
@@ -1942,8 +2276,11 @@ local function GetSecondaryResourceValue(resource)
 
         -- Any other spec/class that somehow hits SoulShards:
         -- use NORMAL shard count (0–5) for both bar + text
-        local current = UnitPower("player", resource)             -- 0–5
-        local max     = UnitPowerMax("player", resource)          -- 0–5
+        local current, max, secret = ReadPlayerPowerPair(resource)
+        if secret then
+            -- @secret-policy: sink-passthrough
+            return max, current, current, "secret"
+        end
         if max <= 0 then return nil, nil, nil, nil end
 
         -- bar = 0–5, text = 3, 4, 5 etc.
@@ -1951,8 +2288,11 @@ local function GetSecondaryResourceValue(resource)
     end
 
     -- Default case for all other power types (ComboPoints, Chi, HolyPower, etc.)
-    local current = UnitPower("player", resource)
-    local max = UnitPowerMax("player", resource)
+    local current, max, secret = ReadPlayerPowerPair(resource)
+    if secret then
+        -- @secret-policy: sink-passthrough
+        return max, current, current, "secret"
+    end
     if max <= 0 then return nil, nil, nil, nil end
 
     return max, current, current, "number"
@@ -2433,8 +2773,28 @@ function QUICore:UpdatePowerBar()
         bar._cachedTex = tex
     end
 
-    -- Get resource values
+    -- Get resource values. valueType is ALWAYS a plain string — branch on it
+    -- BEFORE touching max/current, which are raw secrets when "secret" (a
+    -- truth-test like `not max` on a secret throws).
     local max, current, displayValue, valueType = GetPrimaryResourceValue(resource, cfg)
+    if valueType == "secret" then
+        -- @secret-policy: keep-visible-when-unknown + sink-passthrough — the
+        -- StatusBar and text sinks read the secrets C-side; Lua-derived
+        -- decorations (ticks/indicators) keep their last layout this tick.
+        bar.StatusBar:SetMinMaxValues(0, max)
+        bar.StatusBar:SetValue(current)
+        bar.TextValue:SetFormattedText("%d", displayValue)
+        bar:SetAlpha(1)
+        SafeShow(bar)
+        local secondaryCfgS = self.db.profile.secondaryPowerBar
+        if secondaryCfgS and secondaryCfgS.lockedToPrimary then
+            self:UpdateSecondaryPowerBar()
+        end
+        if self.UpdateResourceBarsProxy then self:UpdateResourceBarsProxy() end
+        ScheduleNaturalSlotCapture()
+        TriggerSwapReciprocalUpdate()
+        return
+    end
     if not max then
         SafeHide(bar)
         return
@@ -3106,6 +3466,11 @@ end
 function QUICore:CreateFragmentedPowerBars(bar, resource, isVertical)
     local cfg = self.db.profile.secondaryPowerBar
     local maxPower = UnitPowerMax("player", resource)
+    -- Probe before the loop bound — a secret max is uncountable.
+    if Helpers.IsSecretValue(maxPower) then
+        -- @secret-policy: defer-until-readable — keep the existing pool.
+        return
+    end
 
     for i = 1, maxPower do
         if not bar.FragmentedPowerBars[i] then
@@ -3131,6 +3496,11 @@ end
 function QUICore:UpdateFragmentedPowerDisplay(bar, resource, isVertical)
     local cfg = self.db.profile.secondaryPowerBar
     local maxPower = UnitPowerMax("player", resource)
+    -- Probe before the <= compare / per-fragment layout math.
+    if Helpers.IsSecretValue(maxPower) then
+        -- @secret-policy: defer-until-readable — hold the last fragment layout.
+        return
+    end
     if maxPower <= 0 then return end
 
     local barWidth = bar:GetWidth()
@@ -3182,49 +3552,44 @@ function QUICore:UpdateFragmentedPowerDisplay(bar, resource, isVertical)
 
 
     if resource == Enum.PowerType.Runes then
-        -- Collect rune states: ready and recharging
-        local readyList = {}
-        local cdList = {}
+        -- Pooled rune records: rewritten in place each refresh, no per-event
+        -- allocation.
         local now = GetTime()
-
         for i = 1, maxPower do
+            local rec = runeScratch[i]
+            if not rec then
+                rec = {}
+                runeScratch[i] = rec
+            end
             local start, duration, runeReady = GetRuneCooldown(i)
+            rec.index = i
             if runeReady then
-                table_insert(readyList, { index = i })
+                rec.ready = true
+                rec.remaining = 0
+                rec.frac = 1
             else
+                rec.ready = false
                 if start and duration and duration > 0 then
                     local elapsed = now - start
-                    local remaining = math_max(0, duration - elapsed)
-                    local frac = math_max(0, math_min(1, elapsed / duration))
-                    table_insert(cdList, { index = i, remaining = remaining, frac = frac })
+                    rec.remaining = math_max(0, duration - elapsed)
+                    rec.frac = math_max(0, math_min(1, elapsed / duration))
                 else
-                    table_insert(cdList, { index = i, remaining = math.huge, frac = 0 })
+                    rec.remaining = math.huge
+                    rec.frac = 0
                 end
             end
+            runeOrder[i] = rec
+        end
+        for i = maxPower + 1, #runeOrder do
+            runeOrder[i] = nil
         end
 
-        -- Sort cdList by ascending remaining time
-        table.sort(cdList, function(a, b)
-            return a.remaining < b.remaining
-        end)
+        -- Ready runes first, then recharging by ascending remaining time
+        table.sort(runeOrder, RuneDisplayLess)
 
-        -- Build final display order: ready runes first, then CD runes sorted
-        local displayOrder = {}
-        local readyLookup = {}
-        local cdLookup = {}
-
-        for _, v in ipairs(readyList) do
-            table_insert(displayOrder, v.index)
-            readyLookup[v.index] = true
-        end
-
-        for _, v in ipairs(cdList) do
-            table_insert(displayOrder, v.index)
-            cdLookup[v.index] = v
-        end
-
-        for pos = 1, #displayOrder do
-            local runeIndex = displayOrder[pos]
+        for pos = 1, maxPower do
+            local rec = runeOrder[pos]
+            local runeIndex = rec.index
             local runeFrame = bar.FragmentedPowerBars[runeIndex]
             local runeText = bar.FragmentedPowerBarTexts[runeIndex]
 
@@ -3245,33 +3610,25 @@ function QUICore:UpdateFragmentedPowerDisplay(bar, resource, isVertical)
                     runeText:SetShadowOffset(0, 0)
                 end
 
-                if readyLookup[runeIndex] then
+                if rec.ready then
                     -- Ready rune
                     runeFrame:SetMinMaxValues(0, 1)
                     runeFrame:SetValue(1)
                     runeText:SetText("")
                     runeFrame:SetStatusBarColor(color.r, color.g, color.b)
                 else
-                    -- Recharging rune
-                    local cdInfo = cdLookup[runeIndex]
-                    if cdInfo then
-                        runeFrame:SetMinMaxValues(0, 1)
-                        runeFrame:SetValue(cdInfo.frac)
+                    -- Recharging rune (rec carries remaining/frac)
+                    runeFrame:SetMinMaxValues(0, 1)
+                    runeFrame:SetValue(rec.frac)
 
-                        -- Only show timer text if enabled
-                        if cfg.showFragmentedPowerBarText ~= false then
-                            runeText:SetFormattedText("%.1f", math_max(0, cdInfo.remaining))
-                        else
-                            runeText:SetText("")
-                        end
-
-                        runeFrame:SetStatusBarColor(color.r * 0.5, color.g * 0.5, color.b * 0.5)
+                    -- Only show timer text if enabled
+                    if cfg.showFragmentedPowerBarText ~= false then
+                        runeText:SetFormattedText("%.1f", math_max(0, rec.remaining))
                     else
-                        runeFrame:SetMinMaxValues(0, 1)
-                        runeFrame:SetValue(0)
                         runeText:SetText("")
-                        runeFrame:SetStatusBarColor(color.r * 0.5, color.g * 0.5, color.b * 0.5)
                     end
+
+                    runeFrame:SetStatusBarColor(color.r * 0.5, color.g * 0.5, color.b * 0.5)
                 end
 
                 runeFrame:Show()
@@ -3329,13 +3686,26 @@ function QUICore:UpdateFragmentedPowerDisplay(bar, resource, isVertical)
 
     elseif resource == Enum.PowerType.Essence then
         -- Evoker Essence with timer-based regen extrapolation on the recharging segment
-        local current = UnitPower("player", Enum.PowerType.Essence) or 0
+        local current = UnitPower("player", Enum.PowerType.Essence)
+        -- Probe before the `or` fallback — the read secretizes under restriction.
+        if Helpers.IsSecretValue(current) then
+            -- @secret-policy: defer-until-readable — extrapolation state is
+            -- Lua-derived; hold it until the value is readable again.
+            return
+        end
+        if current == nil then current = 0 end
         local now = GetTime()
 
         -- Calculate tick duration from regen rate (cache outside combat, may be secret in combat)
         if not InCombatLockdown() then
             local regenRate = GetPowerRegenForPowerType(Enum.PowerType.Essence)
-            if regenRate and not Helpers.IsSecretValue(regenRate) and regenRate > 0 then
+            -- Statement-split probe FIRST: `regenRate and IsSecretValue(...)`
+            -- would truth-test the secret before the probe runs.
+            if Helpers.IsSecretValue(regenRate) then
+                -- @secret-policy: defer-until-readable — keep the cached
+                -- tick duration until the regen rate is readable again.
+                regenRate = nil
+            elseif regenRate ~= nil and regenRate > 0 then
                 essenceTickDuration = 1 / regenRate
             end
         end
@@ -3514,9 +3884,16 @@ local function EssenceTimerOnUpdate(bar, delta)
     essenceUpdateElapsed = 0
 
     local maxPower = UnitPowerMax("player", Enum.PowerType.Essence)
+    local current = UnitPower("player", Enum.PowerType.Essence)
+    -- Probe before the compares/`or` fallback — both reads secretize under
+    -- power restriction (OnUpdate keeps polling in combat).
+    if Helpers.IsSecretValue(maxPower) or Helpers.IsSecretValue(current) then
+        -- @secret-policy: defer-until-readable — keep the timer running; the
+        -- next readable poll reconciles the segments.
+        return
+    end
     if maxPower <= 0 then return end
-
-    local current = UnitPower("player", Enum.PowerType.Essence) or 0
+    if current == nil then current = 0 end
 
     -- At max essence, disable the timer
     if current >= maxPower then
@@ -3664,7 +4041,13 @@ function QUICore:UpdateSecondaryPowerBarTicks(bar, resource, max)
     -- For Soul Shards, use the display max (not the internal fractional max)
     local displayMax = max
     if resource == Enum.PowerType.SoulShards then
-        displayMax = UnitPowerMax("player", resource) -- non-fractional max (usually 5)
+        local shardMax = UnitPowerMax("player", resource) -- non-fractional max (usually 5)
+        -- Probe before the tick-layout arithmetic below.
+        if Helpers.IsSecretValue(shardMax) then
+            -- @secret-policy: defer-until-readable — hold the last tick layout.
+            return
+        end
+        displayMax = shardMax
     end
 
     local genTickPx = QUICore:GetPixelSize(bar)
@@ -3728,8 +4111,14 @@ function QUICore:UpdateChargedComboPoints(bar, resource, max, current, isVertica
     if resource ~= Enum.PowerType.ComboPoints then return end
     if not max or max <= 0 then return end
 
-    -- Query charged power points from the WoW API
+    -- Query charged power points from the WoW API.
+    -- SecretWhenUnitPowerRestricted: probe BEFORE the truth-test/#.
     local chargedPoints = GetUnitChargedPowerPoints and GetUnitChargedPowerPoints("player")
+    if Helpers.IsSecretValue(chargedPoints) then
+        -- @secret-policy: defer-until-readable — charged indices unknowable;
+        -- overlays stay hidden this tick (they were hidden above).
+        return
+    end
     if not chargedPoints or #chargedPoints == 0 then return end
 
     local pc = self.db.profile.powerColors
@@ -3744,8 +4133,9 @@ function QUICore:UpdateChargedComboPoints(bar, resource, max, current, isVertica
     local segmentSize = isVertical and (height / max) or (width / max)
 
     for idx, cpIndex in ipairs(chargedPoints) do
-        -- cpIndex is 1-based combo point index
-        if cpIndex >= 1 and cpIndex <= max then
+        -- cpIndex is 1-based combo point index; probe each element before the
+        -- range compares (array-readable ≠ elements-readable).
+        if not Helpers.IsSecretValue(cpIndex) and cpIndex >= 1 and cpIndex <= max then
             local overlay = bar.chargedOverlays[idx]
             if not overlay then
                 overlay = CreateFrame("Frame", nil, bar, "BackdropTemplate")
@@ -4294,8 +4684,39 @@ function QUICore:UpdateSecondaryPowerBar()
         bar._cachedTex = tex
     end
 
-    -- Get resource values
+    -- Get resource values. valueType is ALWAYS a plain string — branch on it
+    -- BEFORE truth-testing max/current (raw secrets when "secret").
     local max, current, displayValue, valueType = GetSecondaryResourceValue(resource)
+    if valueType == "defer" then
+        -- @secret-policy: defer-until-readable — Lua-derived state (rune
+        -- counts) is unknowable this tick; keep the last rendered state and
+        -- resync on the next readable event.
+        return
+    end
+    if valueType == "secret" then
+        -- @secret-policy: keep-visible-when-unknown + sink-passthrough — the
+        -- StatusBar renders the raw ratio C-side. Fragment layouts are
+        -- Lua-derived and CANNOT track a secret value — hide them, otherwise
+        -- the stale segments from the last readable tick overlay the live
+        -- main bar (continuous-bar degrade until the value is readable;
+        -- fragment texts are children of the fragment bars and hide with
+        -- them).
+        if bar.FragmentedPowerBars then
+            for _, fragmentBar in ipairs(bar.FragmentedPowerBars) do
+                fragmentBar:Hide()
+            end
+        end
+        bar.StatusBar:SetAlpha(1)
+        bar.StatusBar:SetMinMaxValues(0, max)
+        bar.StatusBar:SetValue(current)
+        if Helpers.IsSecretValue(displayValue) then
+            bar.TextValue:SetFormattedText("%d", displayValue)
+        else
+            bar.TextValue:SetText("")
+        end
+        SafeShow(bar)
+        return
+    end
     if not max then
         if renewingMistUpdateRunning then
             bar:SetScript("OnUpdate", nil)
@@ -4323,11 +4744,16 @@ function QUICore:UpdateSecondaryPowerBar()
         self:CreateFragmentedPowerBars(bar, resource, isVertical)
         self:UpdateFragmentedPowerDisplay(bar, resource, isVertical)
 
-        -- Essence regen animation timer
+        -- Essence regen animation timer. Probe-first re-read: the old
+        -- `UnitPower(...) or 0` truth-tested a possibly-secret value and the
+        -- `<` compare threw under power restriction.
         if resource == Enum.PowerType.Essence then
-            local essenceMax = UnitPowerMax("player", Enum.PowerType.Essence) or 0
-            local essenceCur = UnitPower("player", Enum.PowerType.Essence) or 0
-            if essenceCur < essenceMax and not essenceUpdateRunning then
+            local essenceCur, essenceMax, essSecret = ReadPlayerPowerPair(Enum.PowerType.Essence)
+            if essSecret then
+                -- @secret-policy: defer-until-readable — leave the animation
+                -- state as-is; the next readable tick reconciles it.
+                essenceCur = nil
+            elseif essenceCur < essenceMax and not essenceUpdateRunning then
                 essenceUpdateRunning = true
                 essenceUpdateElapsed = 0
                 bar:SetScript("OnUpdate", EssenceTimerOnUpdate)
@@ -4403,9 +4829,15 @@ function QUICore:UpdateSecondaryPowerBar()
     elseif valueType == "percent" and textCfg.showPercent then
         bar.TextValue:SetText(FormatPercentValue(displayValue, textCfg))
     elseif valueType == "percent" then
-        -- Stagger with showPercent off: show raw stagger amount
-        local stagger = UnitStagger("player") or 0
-        bar.TextValue:SetText(tostring(math_floor(stagger)))
+        -- Stagger with showPercent off: show raw stagger amount. Probe the
+        -- fresh read — `or 0` truth-tests a secret and throws.
+        local stagger = UnitStagger("player")
+        if Helpers.IsSecretValue(stagger) then
+            bar.TextValue:SetFormattedText("%d", stagger) -- @secret-policy: sink-passthrough
+        else
+            if stagger == nil then stagger = 0 end
+            bar.TextValue:SetText(tostring(math_floor(stagger)))
+        end
     else
         bar.TextValue:SetText(tostring(displayValue or 0))
     end
@@ -4416,8 +4848,8 @@ function QUICore:UpdateSecondaryPowerBar()
     end
 end
 
-    -- Apply text styling (pcall-guarded so errors here cannot prevent the bar from showing)
-    pcall(function()
+    -- Apply text styling (SafeCall-guarded so errors here cannot prevent the bar from showing)
+    ns.SafeCall("best-effort-style", function()
         CJKFont(bar.TextValue, GetGeneralFont(), QUICore:PixelRound(textCfg.textSize or 12, bar.TextValue), GetGeneralFontOutline())
         bar.TextValue:SetShadowOffset(0, 0)
         ApplyPowerBarTextPlacement(bar, textCfg)
@@ -4496,6 +4928,8 @@ function QUICore:OnUnitPower(_, unit)
     if unthrottled or (now - lastPrimaryUpdate >= UPDATE_THROTTLE) then
         self:UpdatePowerBar()
         lastPrimaryUpdate = now
+    else
+        QueuePrimaryTrailingUpdate()
     end
 
     -- Secondary bar: instant for discrete resources, unthrottled mode, or throttled otherwise
@@ -4505,16 +4939,39 @@ function QUICore:OnUnitPower(_, unit)
     elseif now - lastSecondaryUpdate >= UPDATE_THROTTLE then
         self:UpdateSecondaryPowerBar()
         lastSecondaryUpdate = now
+    else
+        QueueSecondaryTrailingUpdate()
     end
 end
 
 
 -- UNIT_AURA handler for aura-based resources (Maelstrom Weapon stacks)
-function QUICore:OnUnitAura(_, unit)
-    if unit and unit ~= "player" then return end
+-- Registered via powerEventFrame:RegisterUnitEvent("UNIT_AURA", "player")
+-- (see InitializeResourceBars below): the C-level unit filter already
+-- restricts delivery to the player unit, so the payload `unit` is never
+-- read here — comparing it (`unit ~= "player"`) would be secret-unsafe if
+-- the API ever hands back a real secret sentinel instead of a plain
+-- string. `updateInfo` is probed and dropped defensively before any
+-- possible field access; every branch below only consults
+-- GetSecondaryResource() and the tracker's own retained stacks, so a nil
+-- updateInfo is always tolerated (a full-update-without-detail was
+-- already a possible payload shape pre-12.1).
+function QUICore:OnUnitAura(_, _, updateInfo)
+    -- Probe unconditionally: a whole-secret payload throws on the truth-test
+    -- itself, so `updateInfo and issecretvalue(updateInfo)` is the bug it
+    -- guards against. issecretvalue(nil) is false.
+    if issecretvalue and issecretvalue(updateInfo) then
+        updateInfo = nil
+    end
     local resource = GetSecondaryResource()
-    if resource == Enum.PowerType.MaelstromWeapon
-        or resource == Enum.PowerType.VengSoulFragments
+    if resource == Enum.PowerType.MaelstromWeapon then
+        -- Opportunistic resync (see MaelstromWeaponTracker header): only
+        -- touches the real aura value when it's not SecretWhenUnitAuraRestricted.
+        MaelstromWeaponTracker:Resync()
+        self:UpdateSecondaryPowerBar()
+        return
+    end
+    if resource == Enum.PowerType.VengSoulFragments
         or (VDH_SOUL_FRAGMENTS_POWER and resource == VDH_SOUL_FRAGMENTS_POWER)
         or resource == "SOUL"
         or resource == Enum.PowerType.Whirlwind
@@ -4526,13 +4983,22 @@ end
 function QUICore:OnSpellChargeUpdate(event, spellID)
     if GetSecondaryResource() == Enum.PowerType.RenewingMistCharges then
         if event == "UNIT_SPELLCAST_SUCCEEDED" then
+            -- UNIT_SPELLCAST_SUCCEEDED payload spellID is
+            -- SecretWhenUnitSpellCastRestricted even with the "player" unit
+            -- filter — probe BEFORE the == compares / table index.
+            if Helpers.IsSecretValue(spellID) then
+                -- @secret-policy: refresh-without-attribution — the cast
+                -- can't be identified; skip the per-spell bookkeeping and
+                -- fall through to the unconditional bar refresh below.
+                spellID = nil
+            end
             for _, renewingMistSpellID in ipairs(RENEWING_MIST_SPELL_IDS) do
                 if spellID == renewingMistSpellID then
                     NoteRenewingMistCast()
                     break
                 end
             end
-            if RUSHING_WIND_KICK_SPELL_IDS[spellID] then
+            if spellID ~= nil and RUSHING_WIND_KICK_SPELL_IDS[spellID] then
                 AdvanceRenewingMistRecharge(RUSHING_WIND_KICK_RENEWING_MIST_REDUCTION)
             end
         end
@@ -4541,6 +5007,13 @@ function QUICore:OnSpellChargeUpdate(event, spellID)
 end
 
 function QUICore:OnUnitPowerPointCharge(_, unit)
+    -- UNIT_POWER_POINT_CHARGE is SecretWhenUnitPowerRestricted — the payload
+    -- unit can arrive secret; `unit and unit ~= "player"` throws on it.
+    -- Probe first; an unattributable event refreshes anyway (the update reads
+    -- live player data itself, so refreshing is a safe superset).
+    if Helpers.IsSecretValue(unit) then
+        unit = nil -- @secret-policy: refresh-without-attribution
+    end
     if unit and unit ~= "player" then return end
     if GetSecondaryResource() == Enum.PowerType.ComboPoints then
         self:UpdateSecondaryPowerBar()
@@ -4566,6 +5039,7 @@ end
 function QUICore:OnRunePowerUpdate()
     local now = GetTime()
     if now - lastSecondaryUpdate < UPDATE_THROTTLE then
+        QueueSecondaryTrailingUpdate()
         return
     end
     lastSecondaryUpdate = now
@@ -4650,16 +5124,22 @@ local function InitializeResourceBars(self)
     powerEventFrame:RegisterEvent("RUNE_POWER_UPDATE")  -- DK rune updates (no unit filter available)
     powerEventFrame:SetScript("OnEvent", function(_, event, unit, ...)
         if event == "RUNE_POWER_UPDATE" then
-            self:OnRunePowerUpdate(event, unit, ...)
+            self:OnRunePowerUpdate(event, unit, ...) -- @secret-safe: callee signature is `()` — the always-secret RUNE_POWER_UPDATE payload (SecretPayloads) is dropped at the call boundary; rune state re-reads via GetRuneCooldown
         elseif event == "UNIT_AURA" then
-            self:OnUnitAura(event, unit, ...)
+            self:OnUnitAura(event, unit, ...) -- @secret-safe: callee ignores the unit arg entirely (signature `_, _, updateInfo`) and probes updateInfo unconditionally at entry before any truth-test
         elseif event == "UNIT_POWER_POINT_CHARGE" then
-            self:OnUnitPowerPointCharge(event, unit, ...)
+            self:OnUnitPowerPointCharge(event, unit, ...) -- @secret-safe: callee probes the payload unit at entry (IsSecretValue) before its truth-test/compare; secret unit degrades to refresh-without-attribution
         elseif event == "SPELL_UPDATE_CHARGES" or event == "SPELL_UPDATE_COOLDOWN" then
             self:OnSpellChargeUpdate(event)
         elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
+            -- unit trusted via registration (:4861 RegisterUnitEvent player-only);
+            -- spellID probed before RUSHING_WIND_KICK_SPELL_IDS[spellID] indexing
+            -- and the == compare below, and before it's forwarded into
+            -- OnSpellChargeUpdate (:4738) which re-indexes/compares it again -
+            -- this is that helper's only UNIT_SPELLCAST_SUCCEEDED-sourced spellID
+            -- call site, so probing here covers it too.
             local _, spellID = ...
-            if unit == "player" then
+            if not IsSecretSpellcastPayload(spellID) then
                 local shouldUpdate = RUSHING_WIND_KICK_SPELL_IDS[spellID]
                 if not shouldUpdate then
                     for _, renewingMistSpellID in ipairs(RENEWING_MIST_SPELL_IDS) do
@@ -4673,6 +5153,9 @@ local function InitializeResourceBars(self)
                     self:OnSpellChargeUpdate(event, spellID)
                 end
             end
+            -- Secret cast: skip. SPELL_UPDATE_CHARGES/SPELL_UPDATE_COOLDOWN
+            -- (:4859-4860) still drive charge updates independently of this
+            -- event, so the Renewing Mist charge tracker isn't left stale.
         else
             self:OnUnitPower(event, unit, ...)
         end

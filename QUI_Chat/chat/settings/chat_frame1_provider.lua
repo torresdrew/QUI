@@ -84,8 +84,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
     local FORM_ROW = ctx.FORM_ROW
     local NotifyProviderFor = ctx.NotifyProviderFor
     local PAD = (ns.QUI_Options and ns.QUI_Options.PADDING) or 15
-    local HEADER_GAP = 26
-    local SECTION_GAP = 14
     local function RegisterSharedOnly(providerKey, provider)
         ctx.RegisterShared(providerKey, provider)
     end
@@ -95,50 +93,7 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
     -- y cursor while sections{}/relayoutSections support legacy V2 collapsibles
     -- (Position, OpenFullSettings) at the bottom of the panel.
     local function MakeLayout(content)
-        local Opts = ns.QUI_Options
-        local y = -10
-        local L = {}
-        local sections = {}
-        function L.headerAt(text)
-            local h = Opts.CreateAccentDotLabel(content, text, y)
-            h:ClearAllPoints()
-            h:SetPoint("TOPLEFT", content, "TOPLEFT", PAD, y)
-            h:SetPoint("TOPRIGHT", content, "TOPRIGHT", -PAD, y)
-            y = y - HEADER_GAP
-        end
-        function L.sectionAt()
-            local c = Opts.CreateSettingsCardGroup(content, y)
-            c.frame:ClearAllPoints()
-            c.frame:SetPoint("TOPLEFT", content, "TOPLEFT", PAD, y)
-            c.frame:SetPoint("TOPRIGHT", content, "TOPRIGHT", -PAD, y)
-            return c
-        end
-        function L.closeSection(c)
-            c.Finalize()
-            y = y - c.frame:GetHeight() - SECTION_GAP
-        end
-        function L.placeCustom(frame, height)
-            frame:ClearAllPoints()
-            frame:SetPoint("TOPLEFT", content, "TOPLEFT", PAD, y)
-            frame:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
-            frame:SetHeight(height)
-            y = y - height - SECTION_GAP
-        end
-        local function relayoutSections()
-            local cy = y
-            for _, s in ipairs(sections) do
-                s:ClearAllPoints()
-                s:SetPoint("TOPLEFT", content, "TOPLEFT", PAD, cy)
-                s:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
-                cy = cy - s:GetHeight() - 4
-            end
-            content:SetHeight(math.abs(cy) + 16)
-        end
-        L.sections = sections
-        L.relayoutSections = relayoutSections
-        function L.getY() return y end
-        function L.setY(newY) y = newY end
-        return L
+        return ns.QUI_SettingsLayoutShared.MakeLayout(content)
     end
 
     local function row(parent, label, widget, desc)
@@ -508,7 +463,7 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             local TabFilters = ns.QUI and ns.QUI.Chat and ns.QUI.Chat.TabFilters
             local rawGroups = (TabFilters and TabFilters.GetStandardGroups and TabFilters.GetStandardGroups()) or {
                 "SAY", "EMOTE", "YELL",
-                "GUILD", "OFFICER", "GUILD_ACHIEVEMENT", "ACHIEVEMENT",
+                "GUILD", "OFFICER", "GUILD_DISCORD", "GUILD_ACHIEVEMENT", "ACHIEVEMENT",
                 "WHISPER", "WHISPER_INFORM", "BN_WHISPER", "BN_WHISPER_INFORM",
                 "AFK", "DND",
                 "PARTY", "PARTY_LEADER",
@@ -529,14 +484,18 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
                 return tabs[selectedCustomDisplayTabIndex]
             end
 
-            -- Set-shaped binding. Groups write nil (not false) on uncheck so
-            -- an empty selection reads as "no constraint" rather than an
-            -- all-blocking whitelist. Channels pass explicitFalse=true and
-            -- persist false instead: "user deselected this channel" must
-            -- survive in storage, or a fully-unchecked list is identical to a
-            -- never-curated one and the CHANNEL-group default fallback
-            -- resurrects Trade/Services (TabManager.BuildFilter consumes the
-            -- false keys as explicit blocks).
+            -- Set-shaped binding. Both groups and channels pass
+            -- explicitFalse=true and persist false (not nil) on uncheck:
+            -- "user deselected this" must survive in storage. Channels need
+            -- it or a fully-unchecked list is identical to a never-curated
+            -- one and the CHANNEL-group default fallback resurrects
+            -- Trade/Services; groups need it or the GUILD_DISCORD->GUILD
+            -- family fallback (TabManager GROUP_FAMILY_FALLBACK) cannot tell
+            -- "user unchecked GUILD_DISCORD" from "tab predates the group"
+            -- and would resurrect the Discord stream through the tab's GUILD
+            -- verdict. "Leave all unchecked = no constraint" is preserved:
+            -- TabManager's NormalizeSet drops false-valued keys, so a groups
+            -- table holding only falses still reads as unconstrained.
             local function makeSetBinding(getSet, explicitFalse)
                 return MarkTransientOptionsBinding(setmetatable({}, {
                     __index = function(_, k)
@@ -548,8 +507,14 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
                         if not s then return end
                         if v then
                             s[k] = true
+                        elseif explicitFalse then
+                            -- NOT `explicitFalse and false or nil`: that
+                            -- and-or collapses to nil for every input (the
+                            -- classic false-middle trap) and silently broke
+                            -- deselect persistence.
+                            s[k] = false
                         else
-                            s[k] = explicitFalse and false or nil
+                            s[k] = nil
                         end
                     end,
                 }))
@@ -630,7 +595,7 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
                         return
                     end
                     for i = 1, #refreshList do
-                        pcall(refreshList[i])
+                        ns.SafeCall("bulkhead", refreshList[i])
                     end
                 end, { description = ns.L["Pick which custom tab to edit. Each tab stores its own name, group filter, and channel filter."] })
                 selectorCard.AddRow(row(selectorCard.frame, ns.L["Editing tab"], frameSelector))
@@ -739,7 +704,8 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
                 end
 
                 -- Message groups card: two-column checkboxes bound via
-                -- makeSetBinding writing nil-not-false into ct.groups.
+                -- makeSetBinding writing explicit false into ct.groups on
+                -- uncheck (see the makeSetBinding comment for why).
                 ns.QUI_Options.CreateAccentDotLabel(body, ns.L["Message groups"], sy)
                 sy = sy - 30
 
@@ -748,11 +714,18 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
                     if not t then return nil end
                     if type(t.groups) ~= "table" then t.groups = {} end
                     return t.groups
-                end)
+                end, true)
                 local groupsCard = ns.QUI_Options.CreateSettingsCardGroup(body, sy)
                 local function makeGroupCheckbox(groupKey)
+                    local desc = ns.L["Include %s messages on this custom tab. Leave all unchecked to show all groups."]:format(groupKey)
+                    if groupKey == "GUILD_DISCORD" then
+                        -- Family-fallback semantics (TabManager
+                        -- GROUP_FAMILY_FALLBACK): a tab saved before this
+                        -- group existed follows GUILD until the user decides.
+                        desc = ns.L["Include Discord guild-chat messages on this custom tab. Tabs saved before this option existed follow their GUILD setting until you check or uncheck this box; after that, this box alone decides."]
+                    end
                     local cb = GUI:CreateFormCheckbox(groupsCard.frame, nil, groupKey, groupsBinding, Refresh,
-                        { description = ns.L["Include %s messages on this custom tab. Leave all unchecked to show all groups."]:format(groupKey) })
+                        { description = desc })
                     refreshList[#refreshList + 1] = function() if cb.Refresh then cb:Refresh() end end
                     return cb
                 end

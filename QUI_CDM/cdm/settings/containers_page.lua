@@ -232,17 +232,7 @@ local DISPLAY_MODE_OPTIONS = {
     { value = "combat", text = ns.L["Combat Only"] },
 }
 
-local TEXT_ANCHOR_OPTIONS = {
-    { value = "TOPLEFT", text = ns.L["Top Left"] },
-    { value = "TOP", text = ns.L["Top"] },
-    { value = "TOPRIGHT", text = ns.L["Top Right"] },
-    { value = "LEFT", text = ns.L["Left"] },
-    { value = "CENTER", text = ns.L["Center"] },
-    { value = "RIGHT", text = ns.L["Right"] },
-    { value = "BOTTOMLEFT", text = ns.L["Bottom Left"] },
-    { value = "BOTTOM", text = ns.L["Bottom"] },
-    { value = "BOTTOMRIGHT", text = ns.L["Bottom Right"] },
-}
+local TEXT_ANCHOR_OPTIONS = ns.QUI_SettingsLayoutShared.BuildNinePointAnchorOptions()
 
 local AURA_GROWTH_DIRECTION_OPTIONS = {
     { value = "CENTERED_HORIZONTAL", text = ns.L["Centered"] },

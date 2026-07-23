@@ -115,7 +115,20 @@ local function loadModule()
 
     function hooksecurefunc() end
 
+    -- core/safecall.lua stub: silent pcall passthrough matches the pre-SafeCall
+    -- shape this test was written against (Task 45a: all 9 protected-frame
+    -- guards in unitframe_blizzard.lua now route through
+    -- ns.SafeCall("best-effort-style", ...)).
+    local function safeCallStub(_policy, fn, ...) return pcall(fn, ...) end
+local function safeCallMethodStub(_policy, obj, name, ...)
+    return pcall(function(...) return obj[name](obj, ...) end, ...)
+end
+local safeCallMethodIfPresentStub = function(_policy, obj, name, ...) if obj == nil then return nil end local okP, m = pcall(function() return obj[name] end) if not okP then return false end if m == nil then return nil end return pcall(m, obj, ...) end
+
     local ns = {
+        SafeCall = safeCallStub,
+        SafeCallMethod = safeCallMethodStub,
+    SafeCallMethodIfPresent = safeCallMethodIfPresentStub,
         QUI_UnitFrames = {},
         Helpers = {
             CreateDBGetter = function()

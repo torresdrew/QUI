@@ -234,6 +234,9 @@ local core = {
 
 local addon = {
     QUICore = core,
+    SafeCall = function(_policy, fn, ...) return pcall(fn, ...) end,
+    SafeCallMethod = function(_policy, obj, name, ...) return pcall(function(...) return obj[name](obj, ...) end, ...) end,
+    SafeCallMethodIfPresent = function(_policy, obj, name, ...) if obj == nil then return nil end local okP, m = pcall(function() return obj[name] end) if not okP then return false end if m == nil then return nil end return pcall(m, obj, ...) end,
     Helpers = {
         GetCore = function()
             return core
@@ -273,7 +276,7 @@ do
     addon.FormatKeybind = coreNs.FormatKeybind
 end
 
-assert(loadfile("QUI_QoL/utility/keybinds.lua"))("QUI", addon)
+assert(loadfile("modules/utility/keybinds.lua"))("QUI", addon)
 
 addon.Keybinds.UpdateViewer("customQuality")
 

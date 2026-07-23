@@ -57,4 +57,18 @@ local sortPos = source:find("table.sort(result", buildStart, true)
 assert(not sortPos or sortPos > buildEnd,
     "BuildSpellListFromOwned should preserve saved entry order; row grouping belongs to CDMLayout")
 
+local wrapperRows = {
+    { rowNum = 1, count = 1 },
+    { rowNum = 2, count = 2 },
+}
+local wrapperSorted = Layout.SortIconsByAssignedRow({
+    { name = "native-row2", _assignedRow = 2 },
+    { name = "owned-row1", _spellEntry = { _assignedRow = 1 } },
+}, wrapperRows)
+
+assert(names(wrapperSorted) == "owned-row1,native-row2",
+    "reanchor wrappers must honor their direct _assignedRow when row-sorting")
+assert(wrapperRows[1]._actualCount == 1, "row 1 should contain the owned row-1 icon")
+assert(wrapperRows[2]._actualCount == 1, "row 2 should contain the native row-2 wrapper")
+
 print("OK: cdm_layout_row_order_test")

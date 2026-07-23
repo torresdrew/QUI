@@ -44,13 +44,56 @@ jobs:
         run: |
           set -euo pipefail
 
-          # All shipped sub-addon sibling folders (QUI_Debug is NOT listed here).
-          suite_folders=(
-            QUI_Options QUI_OptionsSearch
-            QUI_ActionBars QUI_CDM QUI_Chat QUI_GroupFrames QUI_ResourceBars QUI_UnitFrames
-            QUI_Skinning QUI_Datatexts QUI_Minimap QUI_QoL QUI_DamageMeter QUI_InfoBar QUI_Bags
-            QUI_Alts
+          # Discover every shipped sibling addon. A top-level QUI_* folder ships
+          # when it has a matching TOC file, e.g. QUI_Bags/QUI_Bags.toc. This
+          # mirrors release.yml so dev and release builds stay structurally
+          # identical and neither drifts when suite addons are added or merged.
+          excluded_suite_folders=(
+            QUI_Debug
+            QUI_Logger
           )
+
+          common_rsync_excludes=(
+            --exclude='.DS_Store'
+            --exclude='.git'
+            --exclude='.github'
+            --exclude='docs'
+            --exclude='tests'
+            --exclude='tools'
+          )
+
+          is_excluded_suite_folder() {
+            local candidate="$1"
+            local excluded
+            for excluded in "${excluded_suite_folders[@]}"; do
+              if [[ "$candidate" == "$excluded" ]]; then
+                return 0
+              fi
+            done
+            return 1
+          }
+
+          suite_folders=()
+          while IFS= read -r folder; do
+            suite_folders+=("$folder")
+          done < <(
+            find . -maxdepth 1 -type d -name 'QUI_*' -print \
+              | sed 's#^\./##' \
+              | while IFS= read -r folder; do
+                  if [[ -f "$folder/$folder.toc" ]] && ! is_excluded_suite_folder "$folder"; then
+                    printf '%s\n' "$folder"
+                  fi
+                done \
+              | sort
+          )
+
+          if [[ ${#suite_folders[@]} -eq 0 ]]; then
+            echo "No suite addon folders discovered" >&2
+            exit 1
+          fi
+
+          echo "Discovered suite folders:"
+          printf '  %s\n' "${suite_folders[@]}"
 
           rm -rf build
           mkdir -p build/QUI
@@ -78,11 +121,11 @@ jobs:
           for dir in "${main_runtime_dirs[@]}"; do
             test -d "$dir"
             mkdir -p "build/QUI/$dir"
-            rsync -a --exclude='.DS_Store' "$dir/" "build/QUI/$dir/"
+            rsync -a "${common_rsync_excludes[@]}" "$dir/" "build/QUI/$dir/"
           done
 
           for folder in "${suite_folders[@]}"; do
-            rsync -a --exclude='.DS_Store' "$folder/" "build/$folder/"
+            rsync -a "${common_rsync_excludes[@]}" "$folder/" "build/$folder/"
           done
 
           cp README.md build/QUI/ 2>/dev/null || true
@@ -96,41 +139,23 @@ jobs:
             build/QUI/libs/LibStub/LibStub.lua
             build/QUI/importstrings/qui_editmode_base.lua
             build/QUI/assets/QUI.tga
-            build/QUI_Options/QUI_Options.toc
-            build/QUI_Options/bootstrap.lua
             build/QUI_Options/init.lua
+            build/QUI_Options/framework.lua
+            build/QUI_Options/shared.lua
             build/QUI_Options/tiles/action_bars.lua
-            build/QUI_OptionsSearch/QUI_OptionsSearch.toc
-            build/QUI_OptionsSearch/search_cache.lua
-            build/QUI_ActionBars/QUI_ActionBars.toc
-            build/QUI_ActionBars/bootstrap.lua
-            build/QUI_CDM/QUI_CDM.toc
-            build/QUI_CDM/bootstrap.lua
-            build/QUI_Chat/QUI_Chat.toc
-            build/QUI_Chat/bootstrap.lua
-            build/QUI_GroupFrames/QUI_GroupFrames.toc
-            build/QUI_GroupFrames/bootstrap.lua
-            build/QUI_ResourceBars/QUI_ResourceBars.toc
-            build/QUI_ResourceBars/bootstrap.lua
-            build/QUI_UnitFrames/QUI_UnitFrames.toc
-            build/QUI_UnitFrames/bootstrap.lua
-            build/QUI_Skinning/QUI_Skinning.toc
-            build/QUI_Skinning/bootstrap.lua
-            build/QUI_Datatexts/QUI_Datatexts.toc
-            build/QUI_Datatexts/bootstrap.lua
-            build/QUI_Minimap/QUI_Minimap.toc
-            build/QUI_Minimap/bootstrap.lua
-            build/QUI_QoL/QUI_QoL.toc
-            build/QUI_QoL/bootstrap.lua
-            build/QUI_DamageMeter/QUI_DamageMeter.toc
-            build/QUI_DamageMeter/bootstrap.lua
-            build/QUI_InfoBar/QUI_InfoBar.toc
-            build/QUI_InfoBar/bootstrap.lua
-            build/QUI_Bags/QUI_Bags.toc
-            build/QUI_Bags/bootstrap.lua
-            build/QUI_Alts/QUI_Alts.toc
-            build/QUI_Alts/bootstrap.lua
           )
+
+          for folder in "${suite_folders[@]}"; do
+            required_paths+=("build/$folder/$folder.toc")
+            case "$folder" in
+              QUI_OptionsSearch*)
+                required_paths+=("build/$folder/search_cache.lua")
+                ;;
+              *)
+                required_paths+=("build/$folder/bootstrap.lua")
+                ;;
+            esac
+          done
 
           for required_path in "${required_paths[@]}"; do
             if [[ ! -e "$required_path" ]]; then
@@ -145,9 +170,11 @@ jobs:
             build/QUI/docs
             build/QUI/tests
             build/QUI/tools
-            build/QUI/QUI_Options
             build/QUI/QUI_Debug
+            build/QUI/QUI_Logger
             build/QUI_Debug
+            build/QUI_Logger
+            build/QUI/modules/debug
           )
 
           for forbidden_path in "${forbidden_paths[@]}"; do
@@ -156,6 +183,12 @@ jobs:
               exit 1
             fi
           done
+
+          nested_suite="$(find build/QUI -maxdepth 1 -type d -name 'QUI_*' -print | head -n 1)"
+          if [[ -n "$nested_suite" ]]; then
+            echo "Non-runtime path packaged inside main addon: $nested_suite" >&2
+            exit 1
+          fi
 
           rm -f ${{ steps.info.outputs.filename }}
           cd build

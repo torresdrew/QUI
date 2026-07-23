@@ -335,12 +335,8 @@ local function CreatePanel()
     scrollFrame:SetScript("OnMouseWheel", function(self, delta)
         local currentScroll = SafeGetVerticalScroll(self)
         local maxScroll = SafeGetVerticalScrollRange(self)
-        local okNew, newScroll = pcall(function()
-            return math.max(0, math.min(currentScroll - (delta * SCROLL_STEP), maxScroll))
-        end)
-        if okNew then
-            pcall(self.SetVerticalScroll, self, newScroll)
-        end
+        local newScroll = math.max(0, math.min(currentScroll - (delta * SCROLL_STEP), maxScroll))
+        self:SetVerticalScroll(newScroll)
     end)
 
     panel._scrollFrame = scrollFrame
@@ -555,7 +551,7 @@ local function BuildContent(panel, key)
 
     if feature and Renderer and type(Renderer.RenderFeature) == "function" then
         if type(feature.onNavigate) == "function" then
-            pcall(feature.onNavigate, key, nil, {
+            ns.SafeCall("bulkhead", feature.onNavigate, key, nil, {
                 source = "layoutmode-drawer",
             })
         end
@@ -570,7 +566,7 @@ local function BuildContent(panel, key)
                 U._useMinimalDrawerChrome = true
                 U._layoutModePositionOnly = usePositionOnly
             end
-            local ok2, h = pcall(Renderer.RenderFeature, Renderer, feature, content, {
+            local ok2, h = ns.SafeCallMethod("bulkhead", Renderer, "RenderFeature", feature, content, {
                 surface = "layout",
                 width = contentWidth,
                 includePosition = true,
@@ -622,7 +618,7 @@ local function BuildContent(panel, key)
         local statusText
         local customStatus
         if feature and type(feature.getAnchorStatus) == "function" then
-            local ok, result = pcall(feature.getAnchorStatus, key)
+            local ok, result = ns.SafeCall("bulkhead", feature.getAnchorStatus, key)
             if ok and type(result) == "table" then
                 customStatus = result
             end

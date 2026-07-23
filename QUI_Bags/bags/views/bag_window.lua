@@ -16,6 +16,7 @@
 -- luacheck: read globals MenuUtil BAG_FILTER_CLEANUP SELL_ALL_JUNK_ITEMS_EXCLUDE_FLAG
 local ADDON_NAME, ns = ...
 local Bags = ns.Bags or {}; ns.Bags = Bags
+local Storage = ns.Storage
 local UIKit = ns.UIKit
 local Helpers = ns.Helpers
 local GetSettings = Helpers.CreateDBGetter("bags")
@@ -200,9 +201,9 @@ local ScheduleRefresh = Bags.Chassis.MakeScheduleRefresh(
 --- the current character's (live mode) when no offline owner is selected.
 local function ViewedRecord()
     if viewedCharacter then
-        return Bags.Store.GetCharacter(viewedCharacter)
+        return Storage.Store.GetCharacter(viewedCharacter)
     end
-    return Bags.Store.GetCurrentCharacter()
+    return Storage.Store.GetCurrentCharacter()
 end
 
 local function UpdateMoneyText()
@@ -555,10 +556,10 @@ local function EnsureWindow()
         tooltip = ns.L["View another character's bags"],
         listOwners = function()
             return Bags.OwnerSelect.BuildOwnerList(
-                Bags.Store.ListCharacters(), Bags.Store.GetCurrentCharacterKey())
+                Storage.Store.ListCharacters(), Storage.Store.GetCurrentCharacterKey())
         end,
         current = function()
-            return viewedCharacter or Bags.Store.GetCurrentCharacterKey()
+            return viewedCharacter or Storage.Store.GetCurrentCharacterKey()
         end,
         onSelect = function(key) BagWindow.SetViewedCharacter(key) end,
     })
@@ -908,7 +909,7 @@ function BagWindow.Refresh()
                 dep:SetFrameLevel(btn:GetFrameLevel() + 4)
                 dep:RegisterForClicks("RightButtonUp")
                 if InCombatLockdown()
-                    or not pcall(dep.SetPassThroughButtons, dep, "LeftButton") then
+                    or not ns.SafeCallMethod("defer-ooc", dep, "SetPassThroughButtons", "LeftButton") then
                     dep._quiPassThroughFailed = true
                 end
                 dep:SetScript("OnClick", function()
@@ -993,7 +994,7 @@ function BagWindow.Refresh()
             local dep = btn._quiDepositCatcher
             -- retry the pass-through arming if creation happened in combat
             if dep._quiPassThroughFailed and not InCombatLockdown() then
-                if pcall(dep.SetPassThroughButtons, dep, "LeftButton") then
+                if ns.SafeCallMethod("defer-ooc", dep, "SetPassThroughButtons", "LeftButton") then
                     dep._quiPassThroughFailed = nil
                 end
             end
@@ -1071,7 +1072,7 @@ function BagWindow.FocusItem(itemID, ownerKey)
             PlaySound(SOUNDKIT.IG_BACKPACK_OPEN)
         end
     end
-    if ownerKey == nil or ownerKey == Bags.Store.GetCurrentCharacterKey() then
+    if ownerKey == nil or ownerKey == Storage.Store.GetCurrentCharacterKey() then
         viewedCharacter = nil
     else
         viewedCharacter = ownerKey
@@ -1099,7 +1100,7 @@ end
 --- Owner-selector entry: nil/current key → live mode (your own bags),
 --- any other cached character → offline cached render from the store.
 function BagWindow.SetViewedCharacter(key)
-    if key == nil or key == Bags.Store.GetCurrentCharacterKey() then
+    if key == nil or key == Storage.Store.GetCurrentCharacterKey() then
         viewedCharacter = nil
     else
         viewedCharacter = key
@@ -1118,14 +1119,14 @@ end
 -- fields, since item-data loads re-publish BagsChanged via the scanners;
 -- GetExtended itself never requests a load; a name-pending term can stay
 -- visible until the next bag activity — acceptable)
-Bags.Bus.Subscribe("BagsChanged", function()
+Storage.Bus.Subscribe("BagsChanged", function()
     ScheduleRefresh()
 end)
 
 -- money-only changes (repairs, flight paths) don't touch bags; update just
 -- the footer. Live-only: cached mode shows the VIEWED character's stored
 -- gold, which this event doesn't change.
-Bags.Bus.Subscribe("MoneyChanged", function()
+Storage.Bus.Subscribe("MoneyChanged", function()
     if win and win:IsShown() and win._money and not viewedCharacter then
         UpdateMoneyText()
     end
@@ -1134,19 +1135,19 @@ end)
 -- merchant open/close toggles the Sell Junk button; visibility is computed
 -- in Refresh next to the footer-text update (ScheduleRefresh no-ops while
 -- hidden — the autoopen path re-renders on show anyway)
-Bags.Bus.Subscribe("MerchantChanged", function()
+Storage.Bus.Subscribe("MerchantChanged", function()
     ScheduleRefresh()
 end)
 
 -- auctioneer open/close flips the right-click sell-post catcher; same shape
 -- as MerchantChanged, and the deferred refresh reads the live
 -- AuctionHouseFrame:IsShown() a frame later, past any event-order ambiguity
-Bags.Bus.Subscribe("AuctionHouseChanged", function()
+Storage.Bus.Subscribe("AuctionHouseChanged", function()
     ScheduleRefresh()
 end)
 
 -- currency-scanner drains land on the currency bar; a full refresh (not a
 -- bar-only update) keeps SetContentSize in step with bar visibility flips
-Bags.Bus.Subscribe("CurrenciesChanged", function()
+Storage.Bus.Subscribe("CurrenciesChanged", function()
     ScheduleRefresh()
 end)

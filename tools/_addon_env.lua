@@ -212,6 +212,11 @@ local function LoadCore()
     -- BackwardsCompat can call self:DebugPrint() without erroring.
     _G.QUI = _G.QUI or {}
     _G.QUI.DebugPrint = _G.QUI.DebugPrint or function() end
+    -- init.lua isn't loaded here; provide the raw loader registry so
+    -- importstrings/starter_profile.lua can register and
+    -- core/new_profile_defaults.lua can decode the seed (no QUI.imports
+    -- memoizing proxy in the harness — the module falls back to the loader).
+    _G.QUI._importLoaders = _G.QUI._importLoaders or {}
 
     SHARED_NS = {}
     SHARED_NS.Addon = {}  -- profile_io.lua does `local QUICore = ns.Addon`
@@ -225,9 +230,20 @@ local function LoadCore()
     LoadAddonFile("core/locale/locale.lua",  "QUI", SHARED_NS)
 
     -- Load order matches QUI.toc: utils first, then defaults, then
-    -- migration / compat / io machinery.
+    -- migration / compat / io machinery. safecall.lua defines ns.SafeCall
+    -- used (in function bodies, evaluated lazily) by utils.lua/migrations.lua
+    -- /profile_io.lua below — load it first so LoadCore()'s harness ns has
+    -- SafeCall available before anything in this list could invoke it.
+    LoadAddonFile("core/safecall.lua",       "QUI", SHARED_NS)
     LoadAddonFile("core/utils.lua",          "QUI", SHARED_NS)
     LoadAddonFile("core/ns_export_guard.lua", "QUI", SHARED_NS)
+    LoadAddonFile("core/aura_elements.lua",  "QUI", SHARED_NS)
+    LoadAddonFile("core/encounter_catalog.lua", "QUI", SHARED_NS)
+    LoadAddonFile("core/aura_context.lua",   "QUI", SHARED_NS)
+    LoadAddonFile("core/aura_wizard.lua",    "QUI", SHARED_NS)
+    LoadAddonFile("core/dispel_roles.lua",   "QUI", SHARED_NS)
+    LoadAddonFile("core/aura_glue.lua",      "QUI", SHARED_NS)
+    LoadAddonFile("importstrings/starter_profile.lua", "QUI", SHARED_NS)
     LoadAddonFile("core/new_profile_defaults.lua", "QUI", SHARED_NS)
     LoadAddonFile("core/border_registry.lua", "QUI", SHARED_NS)
     LoadAddonFile("core/defaults.lua",       "QUI", SHARED_NS)

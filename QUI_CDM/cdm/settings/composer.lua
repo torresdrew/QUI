@@ -452,6 +452,14 @@ local function GetEntryIcon(entry)
                 if texID then return texID end
             end
         end
+    elseif etype == "consumable" then
+        -- entry.id is a spell CATEGORY id (combat pot / health pot /
+        -- healthstone) — resolve through the catalog meta, never spell/item
+        -- queries.
+        local Catalog = ns.CDMCatalog
+        local meta = Catalog and Catalog.GetConsumableCategoryMeta
+            and Catalog.GetConsumableCategoryMeta(entry.id)
+        if meta and meta.icon then return meta.icon end
     end
     return "Interface\\Icons\\INV_Misc_QuestionMark"
 end
@@ -487,6 +495,13 @@ local function GetEntryName(entry)
         return string.format(ns.L["Trinket Slot %s"], tostring(entry.id or "?"))
     elseif etype == "macro" then
         return entry.macroName or ns.L["Macro"]
+    elseif etype == "consumable" then
+        local Catalog = ns.CDMCatalog
+        local meta = Catalog and Catalog.GetConsumableCategoryMeta
+            and Catalog.GetConsumableCategoryMeta(entry.id)
+        local L = ns.L
+        return (meta and ((L and L[meta.name]) or meta.name))
+            or ("Category " .. tostring(entry.id or "?"))
     end
     return ns.L["Unknown"]
 end
@@ -2138,8 +2153,7 @@ StopDrag = function()
     if not spellData or not activeContainer then return end
 
     if fromSpecKey ~= targetSpecKey then
-        UIErrorsFrame:AddMessage(ns.L["Can only reorder within the same source spec"], 1.0, 0.3, 0.3, 1.0, 3)
-        UIErrorsFrame:SetFrameStrata("TOOLTIP")
+        if UIErrorsFrame then UIErrorsFrame:AddMessage(ns.L["Can only reorder within the same source spec"], 1.0, 0.3, 0.3, 1.0, 3); UIErrorsFrame:SetFrameStrata("TOOLTIP") end
         return
     end
 
@@ -2170,8 +2184,7 @@ StopDrag = function()
                 end
             end
             if count >= rd.iconCount then
-                UIErrorsFrame:AddMessage(string.format(ns.L["Row %1$d is full (%2$d/%3$d)"], targetRow, rd.iconCount, rd.iconCount), 1.0, 0.3, 0.3, 1.0, 3)
-                UIErrorsFrame:SetFrameStrata("TOOLTIP")
+                if UIErrorsFrame then UIErrorsFrame:AddMessage(string.format(ns.L["Row %1$d is full (%2$d/%3$d)"], targetRow, rd.iconCount, rd.iconCount), 1.0, 0.3, 0.3, 1.0, 3); UIErrorsFrame:SetFrameStrata("TOOLTIP") end
                 return
             end
         end
@@ -2307,10 +2320,7 @@ local function ShowEntryContextMenu(anchorCell, entry, entryIndex)
                     items[#items + 1] = {
                         label = lbl,
                         color = isFull and { 0.4, 0.4, 0.4 } or { ACCENT_R, ACCENT_G, ACCENT_B },
-                        action = isFull and function()
-                            UIErrorsFrame:AddMessage(string.format(ns.L["Row %1$d is full (%2$d/%3$d)"], rn, rowMax[rn], rowMax[rn]), 1.0, 0.3, 0.3, 1.0, 3)
-                            UIErrorsFrame:SetFrameStrata("TOOLTIP")
-                        end or function()
+                        action = isFull and function() if UIErrorsFrame then UIErrorsFrame:AddMessage(string.format(ns.L["Row %1$d is full (%2$d/%3$d)"], rn, rowMax[rn], rowMax[rn]), 1.0, 0.3, 0.3, 1.0, 3); UIErrorsFrame:SetFrameStrata("TOOLTIP") end end or function()
                             if InCombatLockdown() then return end
                             spellData:SetEntryRow(activeContainer, entryIndex, rn)
                             C_Timer.After(0.02, function()
@@ -2427,7 +2437,7 @@ local function ShowEntryContextMenu(anchorCell, entry, entryIndex)
     end
 
     menu:SetScript("OnUpdate", function(self)
-        if not MouseIsOver(self) and (IsMouseButtonDown("LeftButton") or IsMouseButtonDown("RightButton")) then
+        if not self:IsMouseOver() and (IsMouseButtonDown("LeftButton") or IsMouseButtonDown("RightButton")) then
             self:Hide()
         end
     end)
@@ -2933,9 +2943,14 @@ local function BuildAddSection(parent)
     -- Auto-refresh the add list when the player's auras change AND the
     -- user is looking at the Active Buffs/Debuffs tab. Cheap guard so the
     -- event has zero cost on other tabs.
+    -- Player-only registration — never read the payload unit; the
+    -- C-level filter already restricts delivery to "player". PTR 68569
+    -- marks UNIT_AURA event-wide SecretWhenAurasRestricted, so the
+    -- payload unit may arrive as an opaque secret value in combat;
+    -- updateInfo is never consumed here so no probe is needed for it.
     container:RegisterUnitEvent("UNIT_AURA", "player")
-    container:SetScript("OnEvent", function(self, event, unit)
-        if event == "UNIT_AURA" and unit == "player"
+    container:SetScript("OnEvent", function(self, event)
+        if event == "UNIT_AURA"
            and (activeAddTab == "active_buffs" or activeAddTab == "active_debuffs")
            and self:IsVisible() then
             RefreshAddList()
@@ -3442,8 +3457,7 @@ RefreshAddList = function()
                                 end
                             end
                             if not targetRow then
-                                UIErrorsFrame:AddMessage(ns.L["All rows are full — remove a spell or increase row size"], 1.0, 0.3, 0.3, 1.0, 3)
-                                UIErrorsFrame:SetFrameStrata("TOOLTIP")
+                                if UIErrorsFrame then UIErrorsFrame:AddMessage(ns.L["All rows are full — remove a spell or increase row size"], 1.0, 0.3, 0.3, 1.0, 3); UIErrorsFrame:SetFrameStrata("TOOLTIP") end
                                 return
                             end
                         end
@@ -3510,7 +3524,12 @@ RefreshAddList = function()
                             if containerDB.removedSpells then
                                 ns.CDMSpellData:ClearRemoved(containerDB, entryRef._slotID)
                             end
-                            addResult = spellData:AddTrinketSlot(activeContainer, entryRef._slotID, targetRow, itemKind)
+                            addResult = spellData:AddTrinketSlot(activeContainer, entryRef._slotID, targetRow, itemKind, entrySource)
+                        elseif addType == "consumable" then
+                            if containerDB.removedSpells then
+                                ns.CDMSpellData:ClearRemoved(containerDB, addID)
+                            end
+                            addResult = spellData:AddConsumable(activeContainer, addID, targetRow, itemKind, entrySource)
                         elseif addType == "item" then
                             addResult = spellData:AddItem(activeContainer, addID, targetRow, itemKind)
                         else
@@ -3962,7 +3981,7 @@ local function ShowContainerContextMenu(containerKey, anchorFrame)
 
     -- Auto-hide when clicking elsewhere
     menu:SetScript("OnUpdate", function(self)
-        if not MouseIsOver(self) and IsMouseButtonDown("LeftButton") then
+        if not self:IsMouseOver() and IsMouseButtonDown("LeftButton") then
             self:Hide()
         end
     end)

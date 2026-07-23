@@ -26,6 +26,7 @@
 -- luacheck: read globals CursorHasItem
 local ADDON_NAME, ns = ...
 local Bags = ns.Bags or {}; ns.Bags = Bags
+local Storage = ns.Storage
 
 local Helpers = ns.Helpers
 local GetSettings = Helpers.CreateDBGetter("bags")
@@ -115,7 +116,7 @@ local ITEM_CLASS_CONTAINER = (Enum and Enum.ItemClass and Enum.ItemClass.Contain
 local REAGENT_BAG_ID = (Enum and Enum.BagIndex and Enum.BagIndex.ReagentBag) or 5
 
 local function BuildContainers(scope)
-    local ItemInfo = Bags.ItemInfo
+    local ItemInfo = Storage.ItemInfo
     local containers = {}
     for bagID = scope.first, scope.last do
         local size = C_Container.GetContainerNumSlots(bagID) or 0
@@ -189,7 +190,7 @@ local function Finish(ok, reason)
     local run = state
     state = nil
     for _, ev in ipairs(run.scope.events) do
-        Bags.Bus.Unsubscribe(ev, run.busHandler)
+        Storage.Bus.Unsubscribe(ev, run.busHandler)
     end
     if ok then
         print(("%s " .. ns.L["Sorted %s: %d move%s in %d pass%s."]):format(
@@ -350,7 +351,7 @@ function SortExecutor.Start(which, onDone, opts)
         if state and state.waitToken then RunPass() end
     end
     for _, ev in ipairs(scope.events) do
-        Bags.Bus.Subscribe(ev, state.busHandler)
+        Storage.Bus.Subscribe(ev, state.busHandler)
     end
     RunPass() -- may converge (and Finish) synchronously on a sorted bag
     return true

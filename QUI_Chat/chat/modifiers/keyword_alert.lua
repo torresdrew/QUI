@@ -43,7 +43,7 @@ end
 
 -- Strip "-Realm" suffix.
 local function bareName(author)
-    if IsSecret(author) then return nil end
+    if IsSecret(author) then return nil end -- @secret-policy: reject-secret-ids
     if type(author) ~= "string" or author == "" then return nil end
     local hyphen = author:find("-", 1, true)
     if hyphen then return author:sub(1, hyphen - 1) end
@@ -214,7 +214,7 @@ local function PlayAlertSound(s)
     local soundFile = s and s.soundFile
     local resolved = (LSM and soundFile) and LSM:Fetch("sound", soundFile) or soundFile
     if resolved and PlaySoundFile then
-        pcall(PlaySoundFile, resolved, "Master")
+        ns.SafeCall("best-effort-style", PlaySoundFile, resolved, "Master")
     end
 end
 

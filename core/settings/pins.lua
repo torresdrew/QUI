@@ -30,7 +30,7 @@ Pins._autoApplySuppressed = Pins._autoApplySuppressed or 0
 
 local function GetTimeStamp()
     if type(time) == "function" then
-        local ok, value = pcall(time)
+        local ok, value = ns.SafeCall("chain-next", time)
         if ok and type(value) == "number" then
             return value
         end
@@ -106,15 +106,6 @@ local function IsSupportedPinnedValue(value)
         return true
     end
     return IsColorValue(value)
-end
-
-local function EnsureTable(parent, key)
-    local child = parent[key]
-    if type(child) ~= "table" then
-        child = {}
-        parent[key] = child
-    end
-    return child
 end
 
 local function IsPathExactOrNested(path, candidate)
@@ -227,10 +218,9 @@ local UNIT_FRAMES_FEATURE_ROUTE = {
     unitFramesFrameTab = { surfaceTabKey = "frame", subTabName = "Frame" },
     unitFramesBarsTab = { surfaceTabKey = "bars", subTabName = "Bars" },
     unitFramesTextTab = { surfaceTabKey = "text", subTabName = "Text" },
-    unitFramesIconsTab = { surfaceTabKey = "icons", subTabName = "Icons" },
+    unitFramesIconsTab = { surfaceTabKey = "icons", subTabName = "Auras" },
     unitFramesPortraitTab = { surfaceTabKey = "portrait", subTabName = "Portrait" },
     unitFramesIndicatorsTab = { surfaceTabKey = "indicators", subTabName = "Indicators" },
-    unitFramesPrivateAurasTab = { surfaceTabKey = "privateAuras", subTabName = "Priv. Auras" },
 }
 
 local CHAT_SEARCH_CONTEXT = {
@@ -500,10 +490,9 @@ local function SafeForEachEntry(store, callback)
     end
 
     for path, entry in pairs(store.entries) do
-        local ok, result = pcall(callback, path, entry)
-        if not ok then
-            DebugLog("Pinned settings callback failed for", tostring(path), tostring(result))
-        end
+        -- ns.SafeCall's bulkhead policy already reports+dedups a failure via
+        -- the classified error handler; no manual error-forward needed here.
+        ns.SafeCall("bulkhead", callback, path, entry)
     end
 end
 
@@ -612,7 +601,7 @@ function Pins:GetCurrentProfileName(db)
     if not db or type(db.GetCurrentProfile) ~= "function" then
         return nil
     end
-    local ok, profileName = pcall(db.GetCurrentProfile, db)
+    local ok, profileName = ns.SafeCallMethod("chain-next", db, "GetCurrentProfile")
     if ok and type(profileName) == "string" and profileName ~= "" then
         return profileName
     end
@@ -832,10 +821,9 @@ local function NotifySubscribersForPath(subscribers, path)
         if owner and owner.GetParent and owner:GetParent() == nil then
             table_remove(subscribers, index)
         elseif subscription and type(subscription.callback) == "function" then
-            local ok, err = pcall(subscription.callback, path)
-            if not ok then
-                DebugLog("Pinned settings subscriber failed:", tostring(err))
-            end
+            -- ns.SafeCall's bulkhead policy already reports+dedups a failure
+            -- via the classified error handler; no manual error-forward needed.
+            ns.SafeCall("bulkhead", subscription.callback, path)
         end
     end
 end

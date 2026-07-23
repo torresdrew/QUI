@@ -183,7 +183,10 @@ local function RenderCompanion(frame)
     -- Color: class color only when the class string is non-secret; else fixed.
     local r, g, b = FALLBACK_COLOR[1], FALLBACK_COLOR[2], FALLBACK_COLOR[3]
     local _, class = UnitClass(unit)
-    if class and not issecretvalue(class) then
+    -- Probe FIRST — `class and issecretvalue(class)` truth-tests the secret.
+    -- @secret-policy: collapse-only — fixed fallback color
+    local classIsSecret = issecretvalue and issecretvalue(class)
+    if not classIsSecret and class then
         local cc = RAID_CLASS_COLORS[class]
         if cc then r, g, b = cc.r, cc.g, cc.b end
     end

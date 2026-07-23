@@ -456,7 +456,7 @@ function ItemButtons.Dress(button, entry, searchResult, newGuid)
         local upgradeTrack
         if WantsCornerWidget(appearance, "upgrade_track")
             and entry.link and C_Item and C_Item.GetItemUpgradeInfo then
-            local okU, u = pcall(C_Item.GetItemUpgradeInfo, entry.link)
+            local okU, u = ns.SafeCall("best-effort-style", C_Item.GetItemUpgradeInfo, entry.link)
             if okU and u and u.trackString and u.trackString ~= ""
                 and u.currentLevel and u.maxLevel then
                 -- first UTF-8 char of the localized track name + progression

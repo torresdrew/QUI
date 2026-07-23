@@ -46,7 +46,7 @@ function QUICore.SafeSetBackdrop(frame, backdropInfo, borderColor, bgColor)
     -- Check if frame has valid (non-secret) dimensions
     -- SetBackdrop internally calls GetWidth/GetHeight which can error on secret values
     local hasValidSize = false
-    local ok, result = pcall(_CheckFrameHasValidSize, frame)
+    local ok, result = ns.SafeCall("defer-ooc", _CheckFrameHasValidSize, frame)
     if ok and result then
         hasValidSize = true
     end
@@ -65,6 +65,9 @@ function QUICore.SafeSetBackdrop(frame, backdropInfo, borderColor, bgColor)
                 elapsed = elapsed + delta
                 if elapsed < 0.1 then return end  -- Check every 0.1s
                 elapsed = 0
+                -- Combat blocks SetBackdrop regardless of size; waiting out
+                -- combat must not consume the invalid-size retry budget.
+                if InCombatLockdown() then return end
 
                 -- Performance: reuse module-level scratch table instead of allocating per tick.
                 -- Track total vs processed count to avoid a second pairs() scan to check emptiness.
@@ -87,10 +90,10 @@ function QUICore.SafeSetBackdrop(frame, backdropInfo, borderColor, bgColor)
                             processed[#processed + 1] = pendingFrame
                         else
                             -- Re-check if dimensions are now valid (reuse named function)
-                            local checkOk, checkResult = pcall(_CheckFrameHasValidSize, pendingFrame)
+                            local checkOk, checkResult = ns.SafeCall("defer-ooc", _CheckFrameHasValidSize, pendingFrame)
 
                             if checkOk and checkResult and not InCombatLockdown() then
-                                local setOk = pcall(pendingFrame.SetBackdrop, pendingFrame, pendingData.info)
+                                local setOk = ns.SafeCallMethod("defer-ooc", pendingFrame, "SetBackdrop", pendingData.info)
                                 if setOk then
                                     if pendingData.info and pendingData.borderColor then
                                         local c = pendingData.borderColor
@@ -148,7 +151,7 @@ function QUICore.SafeSetBackdrop(frame, backdropInfo, borderColor, bgColor)
                         local pendingData = _pendingBackdropData[pendingFrame]
                         if pendingFrame and pendingData then
                             if not InCombatLockdown() then
-                                local setOk = pcall(pendingFrame.SetBackdrop, pendingFrame, pendingData.info)
+                                local setOk = ns.SafeCallMethod("defer-ooc", pendingFrame, "SetBackdrop", pendingData.info)
                                 if setOk then
                                     if pendingData.info and pendingData.borderColor then
                                         local c = pendingData.borderColor
@@ -194,7 +197,7 @@ function QUICore.SafeSetBackdrop(frame, backdropInfo, borderColor, bgColor)
     end
 
     -- Safe to set backdrop now
-    local setOk = pcall(frame.SetBackdrop, frame, backdropInfo)
+    local setOk = ns.SafeCallMethod("defer-ooc", frame, "SetBackdrop", backdropInfo)
     if setOk and backdropInfo then
         if borderColor then
             frame:SetBackdropBorderColor(borderColor[1], borderColor[2], borderColor[3], borderColor[4] or 1)

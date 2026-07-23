@@ -126,6 +126,20 @@ local function ValidateImportTree(value, label, state, depth)
     return true
 end
 
+-- Deliberately dual-typed settings: defaults declare one type but the runtime
+-- legitimately stores another, so the strict shape check must accept both (a
+-- mismatch here would make the sanitizer strip a genuine setting on import).
+-- dandersFrames.<container>.absolutePoint — defaults ship `false` (container
+-- never explicitly positioned); modules/integrations/dandersframes.lua writes
+-- an anchor-point STRING ("CENTER") once the container is dragged, and
+-- discriminates with type(cfg.absolutePoint) == "string".
+local DUAL_TYPE_PATHS = {}
+for _, containerKey in ipairs({ "party", "raid", "pinned1", "pinned2" }) do
+    DUAL_TYPE_PATHS[("profile.dandersFrames.%s.absolutePoint"):format(containerKey)] = {
+        boolean = true, string = true,
+    }
+end
+
 local function ValidateTableTypeShapeDetailed(candidate, schema, path, errors, depth)
     if #errors >= MAX_DETAIL_TYPE_MISMATCHES then return end
     depth = depth or 0
@@ -142,12 +156,15 @@ local function ValidateTableTypeShapeDetailed(candidate, schema, path, errors, d
             local keyPath = ("%s.%s"):format(path or "profile", tostring(key))
 
             if schemaType ~= candidateType then
-                table.insert(errors, {
-                    kind = "type_mismatch",
-                    path = keyPath,
-                    expected = schemaType,
-                    actual = candidateType,
-                })
+                local allowedTypes = DUAL_TYPE_PATHS[keyPath]
+                if not (allowedTypes and allowedTypes[candidateType]) then
+                    table.insert(errors, {
+                        kind = "type_mismatch",
+                        path = keyPath,
+                        expected = schemaType,
+                        actual = candidateType,
+                    })
+                end
             elseif schemaType == "table" then
                 ValidateTableTypeShapeDetailed(candidateValue, schemaValue, keyPath, errors, depth + 1)
             end
@@ -469,6 +486,17 @@ local PROFILE_QOL_GENERAL_KEYS = {
     "merchantKnownPetMark",
     "lootToastFilter",
     "cursorTrail",
+    "ejLootSpecIcons",
+    "communitiesPrivacy",
+    "gemSocketPicker",
+    "mailContactsPanel",
+    "mailRememberRecipient",
+    "vendorRules",
+    "tradeMailLog",
+    "worldMapTeleports",
+    "focusMarker",
+    "healerMana",
+    "deathAlert",
     "popupBlocker",
     "petCombatWarning",
     "petWarningOffsetX",
@@ -932,14 +960,14 @@ local function GetTrackerEntryResolvedName(entry)
 
     if entry.type == "item" then
         if C_Item and C_Item.GetItemNameByID then
-            local ok, itemName = pcall(C_Item.GetItemNameByID, entryID)
+            local ok, itemName = ns.SafeCall("chain-next", C_Item.GetItemNameByID, entryID)
             if ok and type(itemName) == "string" and itemName ~= "" then
                 return itemName
             end
         end
 
         if GetItemInfo then
-            local ok, itemName = pcall(GetItemInfo, entryID)
+            local ok, itemName = ns.SafeCall("chain-next", GetItemInfo, entryID)
             if ok and type(itemName) == "string" and itemName ~= "" then
                 return itemName
             end
@@ -950,14 +978,14 @@ local function GetTrackerEntryResolvedName(entry)
 
     if entry.type == "spell" then
         if C_Spell and C_Spell.GetSpellName then
-            local ok, spellName = pcall(C_Spell.GetSpellName, entryID)
+            local ok, spellName = ns.SafeCall("chain-next", C_Spell.GetSpellName, entryID)
             if ok and type(spellName) == "string" and spellName ~= "" then
                 return spellName
             end
         end
 
         if GetSpellInfo then
-            local ok, spellName = pcall(GetSpellInfo, entryID)
+            local ok, spellName = ns.SafeCall("chain-next", GetSpellInfo, entryID)
             if ok and type(spellName) == "string" and spellName ~= "" then
                 return spellName
             end
@@ -1319,7 +1347,7 @@ local PROFILE_IMPORT_CATEGORIES = {
         label = "QoL / Automation",
         description = "Automation helpers, popup blocker, consumables, and utility toggles.",
         recommended = true,
-        topLevelKeys = { "uiHider", "configPanelWidth", "configPanelAlpha", "configPanelScale", "optionsPanelCollapsibleStates", "merchantGrid" },
+        topLevelKeys = { "qol", "uiHider", "configPanelWidth", "configPanelAlpha", "configPanelScale", "optionsPanelCollapsibleStates", "merchantGrid" },
         generalKeys = PROFILE_QOL_GENERAL_KEYS,
     },
     {
@@ -1327,7 +1355,7 @@ local PROFILE_IMPORT_CATEGORIES = {
         label = "Skinning / Blizzard UI",
         description = "Tooltip, alerts, character pane, and Blizzard skinning options.",
         recommended = true,
-        topLevelKeys = { "alerts", "tooltip", "character", "loot", "lootRoll", "lootResults" },
+        topLevelKeys = { "skinning", "alerts", "tooltip", "character", "loot", "lootRoll", "lootResults" },
         generalKeys = PROFILE_SKINNING_GENERAL_KEYS,
     },
     {
@@ -1638,15 +1666,16 @@ local function ParseProfileImportString(core, str)
         return false, payloadErr or "Import failed profile validation."
     end
 
-    -- Reject pre-3.5.11 exports. The incremental migrations that would upgrade
-    -- them (v2–v31) were removed in 4.0; if such an export reached the import
-    -- pipeline its RunOnProfile pass would hit the schema floor and wipe the
-    -- ACTIVE profile (it imports in place). A schemaless export (no version) is
-    -- left alone — it takes the normal fresh-data path, not the floor.
+    -- Reject exports below the migration floor (schema 47). The incremental
+    -- migrations that would upgrade them were removed in 5.0; if such an export
+    -- reached the import pipeline its RunOnProfile pass would hit the schema
+    -- floor and wipe the ACTIVE profile (it imports in place). A schemaless
+    -- export (no version) is left alone — it takes the normal fresh-data path,
+    -- not the floor.
     local floor = ns.Migrations and ns.Migrations.MIN_SUPPORTED_SCHEMA
     local importedSchema = tonumber(payload._schemaVersion)
     if floor and importedSchema and importedSchema > 0 and importedSchema < floor then
-        return false, ("This profile is too old to import (it predates 3.5.11). Minimum supported version is %d; this profile is %d.")
+        return false, ("This profile is too old to import. Minimum supported version is %d; this profile is %d.")
             :format(floor, importedSchema)
     end
 
@@ -2407,7 +2436,7 @@ function QUICore:ImportProfileFromValidatedPayload(payload, targetProfileName)
     return RunImportFullProfile(self, payload, targetProfileName)
 end
 
--- NOTE: the pre-3.5.11 floor reseed now lives in core/compatibility.lua
+-- NOTE: the below-floor reseed now lives in core/compatibility.lua
 -- (ReseedStarterFlaggedProfiles), seeding ns.NewProfileSeed onto floored
 -- profiles during BackwardsCompat -- no Starter Profile import, no reload.
 

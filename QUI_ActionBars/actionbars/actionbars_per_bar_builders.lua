@@ -38,7 +38,7 @@ do
                             UpdateEmptySlotVisibility(btn, settings)
                         end
                     end
-                    pcall(LayoutNativeButtons, bk)
+                    ns.SafeCall("best-effort-style", LayoutNativeButtons, bk)
                 end
             end
         end
@@ -690,7 +690,18 @@ end
 
 if ns.Registry then
     ns.Registry:Register("actionbars", {
-        refresh = _G.QUI_RefreshActionBars,
+        refresh = function()
+            if type(_G.QUI_RefreshActionBars) == "function" then
+                _G.QUI_RefreshActionBars()
+            end
+            -- Profile switch/import must also reapply the extra/zone
+            -- surfaces: their settings and holder anchors live outside the
+            -- secure bar rebuild, and each path carries its own combat
+            -- handling (extra defers to regen, zone applies live).
+            if type(_G.QUI_RefreshExtraButtons) == "function" then
+                _G.QUI_RefreshExtraButtons()
+            end
+        end,
         priority = 20,
         group = "frames",
         importCategories = { "actionBars" },

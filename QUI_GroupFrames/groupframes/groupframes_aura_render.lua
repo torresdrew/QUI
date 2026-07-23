@@ -41,6 +41,9 @@ local ADDON_NAME, ns = ...
 local R = ns.QUI_GroupFrameAuraRender or {}
 ns.QUI_GroupFrameAuraRender = R
 
+local IsSecretValue = ns.Helpers and ns.Helpers.IsSecretValue
+    or function() return false end
+
 local function CJKFont(fs, p, s, f)
     if ns.Helpers and ns.Helpers.ApplyFontWithFallback then
         ns.Helpers.ApplyFontWithFallback(fs, p, s, f)
@@ -75,13 +78,16 @@ local function GetSkinBorderColor()
     return 0, 0, 0, 1
 end
 
-local function GetPixelSize(frame)
-    local C = ns.Addon
-    if C and C.GetPixelSize then return C:GetPixelSize(frame) end
-    return 1
-end
-
 local function SkinBase() return ns.SkinBase end
+
+-- Live GroupFrames keep their runtime unit token in weak side state so the
+-- PingableUnitFrameTemplate mixin can read the secure header-owned attribute
+-- without first touching an addon-written frame.unit field. Preview frames use
+-- the same accessor through their separate previewUnit field.
+local function GetFrameUnit(frame)
+    local GF = ns.QUI_GroupFrames
+    return GF and GF.GetFrameUnit and GF.GetFrameUnit(frame) or nil
+end
 
 local function GetFontPath(size)
     local sm = ns.LSM
@@ -160,13 +166,11 @@ end
 -- are hidden and the swipe alone conveys time.
 local function ConfigureCountdown(cd, showText)
     if not cd then return end
-    if cd.SetHideCountdownNumbers then
-        pcall(cd.SetHideCountdownNumbers, cd, showText ~= true)
-    end
-    if showText and cd.SetCountdownFormatter then
+    ns.SafeCallMethodIfPresent("sink-forward", cd, "SetHideCountdownNumbers", showText ~= true)
+    if showText then
         local formatter = GetAuraCountdownFormatter()
         if formatter then
-            pcall(cd.SetCountdownFormatter, cd, formatter)
+            ns.SafeCallMethodIfPresent("sink-forward", cd, "SetCountdownFormatter", formatter)
         end
     end
 end
@@ -174,9 +178,9 @@ end
 -- Style the native countdown FontString (this IS the duration text) per the
 -- element's font size. Mirrors the buff-border StyleIcon countdown styling.
 local function StyleCountdownText(cd, fontSize)
-    if not cd or not cd.GetCountdownFontString then return end
-    local ok, cdText = pcall(cd.GetCountdownFontString, cd)
-    if not ok or not cdText or not cdText.SetFont then return end
+    if not cd then return end
+    local ok, cdText = ns.SafeCallMethodIfPresent("sink-forward", cd, "GetCountdownFontString")
+    if not ok or not cdText then return end
     CJKFont(cdText, GetFontPath(fontSize), fontSize or 9, "OUTLINE")
 end
 
@@ -484,9 +488,7 @@ local function ReleaseIconFrame(item)
     item:ClearAllPoints()
     if item.cooldown then
         item.cooldown:Clear()
-        if item.cooldown.SetHideCountdownNumbers then
-            pcall(item.cooldown.SetHideCountdownNumbers, item.cooldown, true)
-        end
+        ns.SafeCallMethodIfPresent("sink-forward", item.cooldown, "SetHideCountdownNumbers", true)
     end
     if item.icon then
         item.icon:Show()
@@ -615,9 +617,11 @@ local function BindBarDurationObject(bar)
     end
 
     -- A readable, non-secret, non-positive duration means "no live timer".
+    -- Probe FIRST: `<secret> ~= nil` throws, so the IsSecretValue check must
+    -- short-circuit ahead of the nil compare.
     local readableDuration = auraData.duration
-    if readableDuration ~= nil
-        and not IsSecretValue(readableDuration)
+    if not IsSecretValue(readableDuration)
+        and readableDuration ~= nil
         and SafeToNumber(readableDuration, 0) <= 0
     then
         return false
@@ -779,7 +783,11 @@ local function ApplyDebuffTypeBorder(icon, unit, element, auraData, borderCurve)
     local instID = auraData and auraData.auraInstanceID
     if not instID then return false end
     local ok, color = pcall(C_UnitAuras.GetAuraDispelTypeColor, unit, instID, borderCurve)
-    if not ok or not color then return false end
+    if not ok then return false end
+    -- Probe before the truth-test: a secret color OBJECT throws on `not
+    -- color` and on any method call — no border rather than a crash.
+    if IsSecretValue(color) then return false end -- @secret-policy: reject-secret-value
+    if not color then return false end
     ShowTypeBorder(icon, color)
     return true
 end
@@ -846,12 +854,12 @@ local function ApplyIconData(icon, unit, element, auraData, cfgGen, br, bg, bb, 
             icon._cfgElement = element
             icon._cfgGen = cfgGen
             local showText = element.showDurationText == true
-            local swipeStyle = element.swipeStyle or "radial"
-            if cd.SetDrawSwipe then
-                pcall(cd.SetDrawSwipe, cd, swipeStyle == "radial" and element.hideSwipe ~= true)
-            end
-            if cd.SetReverse then
-                pcall(cd.SetReverse, cd, element.reverseSwipe == true)
+            -- Shared radial-suppression rule (core/utils.lua) -- also used by
+            -- core/aura_slots.lua's tracked-slot runtime, so the swipe/reverse
+            -- toggle lives in exactly one place.
+            local H = ns.Helpers
+            if H and H.ApplyCooldownSwipeStyle then
+                H.ApplyCooldownSwipeStyle(cd, element)
             end
             -- Duration TEXT is the native C-side countdown (secret-safe). Configure
             -- visibility/formatter and style its FontString per element font size.
@@ -893,7 +901,9 @@ end
 -- frame[STATE_KEY][element.id].icons; surplus is released.
 ---------------------------------------------------------------------------
 function R.RenderIcon(self, frame, element, matches)
-    if not frame or not frame.unit then return end
+    if not frame then return end
+    local unit = GetFrameUnit(frame)
+    if not unit then return end
     local state = GetElementState(frame, element)
 
     -- Build the ordered list of auras to show. For a tracked element we honor
@@ -1017,7 +1027,7 @@ function R.RenderIcon(self, frame, element, matches)
             icon:SetPoint(iconAnchor, frame, anchor, offX + slotX, offY + slotY)
         end
 
-        ApplyIconData(icon, frame.unit, element, ordered[idx], cfgGen, br, bg, bb, ba, borderCurve)
+        ApplyIconData(icon, unit, element, ordered[idx], cfgGen, br, bg, bb, ba, borderCurve)
         icon:Show()
     end
 
@@ -1035,6 +1045,8 @@ end
 ---------------------------------------------------------------------------
 function R.RenderSquare(self, frame, element, matches)
     if not frame then return end
+    local unit = GetFrameUnit(frame)
+    if not unit then return end
     local state = GetElementState(frame, element)
 
     local auraData
@@ -1089,7 +1101,7 @@ function R.RenderSquare(self, frame, element, matches)
     icon:SetAlpha(1)
     local br, bg, bb, ba = GetSkinBorderColor()
     local borderCurve = ns.QUI_GroupFrameAuraBorderCurve and ns.QUI_GroupFrameAuraBorderCurve(frame._isRaid)
-    if not ApplyDebuffTypeBorder(icon, frame.unit, element, auraData, borderCurve) then
+    if not ApplyDebuffTypeBorder(icon, unit, element, auraData, borderCurve) then
         HideTypeBorder(icon)
         icon:SetBackdropBorderColor(br, bg, bb, ba)
     end
@@ -1101,7 +1113,9 @@ end
 -- Single-spell duration bar; hidden when absent.
 ---------------------------------------------------------------------------
 function R.RenderBar(self, frame, element, matches)
-    if not frame or not frame.unit then return end
+    if not frame then return end
+    local unit = GetFrameUnit(frame)
+    if not unit then return end
     local state = GetElementState(frame, element)
 
     local auraData
@@ -1191,7 +1205,7 @@ function R.RenderBar(self, frame, element, matches)
         end
     end
 
-    bar._unit = frame.unit
+    bar._unit = unit
     bar._auraData = auraData
     bar._element = element
     bar._elapsed = 0
@@ -1270,7 +1284,7 @@ function R.RefreshUpdatedIcons(self, frames, nFrames, unit, updatedAuraInstanceI
     for f = 1, nFrames do
         local frame = frames[f]
         local store = frame and frame[STATE_KEY]
-        if frame and frame:IsShown() and frame.unit == unit and store then
+        if frame and frame:IsShown() and GetFrameUnit(frame) == unit and store then
             for _, st in pairs(store) do
                 local icons = st.icons
                 if icons then
@@ -1283,19 +1297,26 @@ function R.RefreshUpdatedIcons(self, frames, nFrames, unit, updatedAuraInstanceI
                                 if updatedAuraInstanceIDs[j] == instID then hit = true; break end
                             end
                             if hit then
-                                local dObj = GetDuration(unit, instID)
+                                local dObj = GetDuration(unit, instID) -- @secret-safe: caller-gated — the fast-update (1910) and mixed-delta (cacheUpdated) paths both bail behind AurasAreSecret before reseating
                                 local cd = icon.cooldown
-                                if cd and cd.SetCooldownFromDurationObject and dObj then
-                                    pcall(cd.SetCooldownFromDurationObject, cd, dObj, true)
+                                if cd and dObj then
+                                    ns.SafeCallMethodIfPresent("sink-forward", cd, "SetCooldownFromDurationObject", dObj, true)
                                 end
                                 -- Linear swipe (sub-project D): SetTimerDuration is a snapshot,
                                 -- so reseat it on a duration delta too (mirrors the radial cd
                                 -- reseat above and the detached-bar reseat in RefreshUpdatedBars).
                                 -- Only shown for linear-mode icons; _cfgElement carries reverseSwipe.
                                 local sb = icon._swipeBar
-                                if sb and sb:IsShown() and sb.SetTimerDuration and dObj then
+                                if sb and dObj then
+                                    -- IsShown/SetTimerDuration lookups inside the
+                                    -- closure: forbidden aspects PROPAGATE to children
+                                    -- of the engine icon, so even the guard reads throw.
                                     local el = icon._cfgElement
-                                    pcall(sb.SetTimerDuration, sb, dObj, 0, (el and el.reverseSwipe and 0) or 1)
+                                    ns.SafeCall("sink-forward", function()
+                                        if sb:IsShown() then
+                                            sb:SetTimerDuration(dObj, 0, (el and el.reverseSwipe and 0) or 1)
+                                        end
+                                    end)
                                 end
                             end
                         end
@@ -1345,6 +1366,45 @@ local function HideHealthTintOverlay(frame)
     overlay:SetAlpha(1)
     overlay:SetValue(0)
     overlay._quiTintWasShown = nil
+    overlay:Hide()
+end
+
+---------------------------------------------------------------------------
+-- BORDER INDICATOR: colored outline around the frame while a tracked spell
+-- is present. Frame-level like healthTint (one owner per frame), NOT a slot.
+-- SetBackdropBorderColor takes only plain numbers — element.color is config
+-- data (never secret), so it is safe here.
+---------------------------------------------------------------------------
+local BORDER_OVERLAY_TEXTURE = "Interface\\Buttons\\WHITE8x8"
+local function GetOrCreateBorderOverlay(frame, thickness)
+    if not frame then return nil end
+    local anchorTo = frame.healthBar or frame
+    local size = tonumber(thickness) or 2
+    if size < 1 then size = 1 end
+    local overlay = frame._quiAuraRenderBorderOverlay
+    if not overlay then
+        overlay = CreateFrame("Frame", nil, anchorTo, "BackdropTemplate")
+        overlay:EnableMouse(false)
+        overlay:Hide()
+        frame._quiAuraRenderBorderOverlay = overlay
+    end
+    -- Re-apply the backdrop only when the thickness actually changed (SetBackdrop
+    -- is comparatively heavy; the per-pass render calls this every match).
+    if overlay._quiBorderSize ~= size and overlay.SetBackdrop then
+        overlay._quiBorderSize = size
+        overlay:SetBackdrop({ edgeFile = BORDER_OVERLAY_TEXTURE, edgeSize = size })
+    end
+    overlay:ClearAllPoints()
+    -- Outset by the edge thickness so the outline hugs the frame's OUTER edge.
+    overlay:SetPoint("TOPLEFT", anchorTo, "TOPLEFT", -size, size)
+    overlay:SetPoint("BOTTOMRIGHT", anchorTo, "BOTTOMRIGHT", size, -size)
+    overlay:SetFrameLevel(anchorTo:GetFrameLevel() + 2)
+    return overlay
+end
+
+local function HideBorderOverlay(frame)
+    local overlay = frame and frame._quiAuraRenderBorderOverlay
+    if not overlay then return end
     overlay:Hide()
 end
 
@@ -1400,6 +1460,41 @@ function R.RenderHealthTint(self, frame, element, matches)
     end
 end
 
+function R.RenderBorder(self, frame, element, matches)
+    if not frame then return end
+
+    local auraData
+    if element.spells then
+        for _, sid in ipairs(element.spells) do
+            local data = matches and matches[sid]
+            if data then auraData = data; break end
+        end
+    end
+
+    if not auraData then
+        if frame._quiAuraRenderBorderOwner == element.id then
+            frame._quiAuraRenderBorderOwner = nil
+            HideBorderOverlay(frame)
+        end
+        return
+    end
+
+    local bcfg = element.border or nil
+    local thickness = (bcfg and bcfg.thickness) or 2
+    local color = element.color or DEFAULT_HEALTH_COLOR
+
+    frame._quiAuraRenderBorderOwner = element.id
+    local overlay = GetOrCreateBorderOverlay(frame, thickness)
+    if not overlay then return end
+
+    local r = color[1] or 0.2
+    local g = color[2] or 0.8
+    local b = color[3] or 0.2
+    local a = color[4] or 1
+    overlay:SetBackdropBorderColor(r, g, b, a)
+    overlay:Show()
+end
+
 -- Feed live health into an active tint overlay (called by the runtime on
 -- UNIT_HEALTH). `healthPct` may be secret; it is forwarded to SetValue and only
 -- tweened when non-secret.
@@ -1420,7 +1515,15 @@ function R.SyncHealthBarTint(self, frame, healthPct, canShow)
     overlay:SetStatusBarColor(r, g, b, a)
     overlay:Show()
 
-    local targetValue = healthPct or 0
+    -- healthPct comes from UnitHealthPercent (isSecretReturn); `healthPct or 0`
+    -- would truth-test the secret and throw. Probe first: a secret value flows
+    -- untouched to the SetValue sink below (and StartHealthTintAnimation probes
+    -- again); only a readable nil degrades to 0. Short-circuit keeps `== nil`
+    -- off the secret path.
+    local targetValue = healthPct
+    if not IsSecretValue(targetValue) and targetValue == nil then
+        targetValue = 0
+    end
     if not overlay._quiTintWasShown then
         overlay._quiTintWasShown = true
         StartHealthTintAnimation(overlay, frame._quiAuraRenderHealthTintAnimation, targetValue, 1)
@@ -1446,11 +1549,15 @@ function R.Release(self, frame, elementID)
     if not frame then return end
     local store = frame[STATE_KEY]
     if not store then
-        -- Health tint lives on the frame; clear if this element owned it.
+        -- Health tint / border live on the frame; clear if this element owned them.
         if elementID and frame._quiAuraRenderHealthTintOwner == elementID then
             frame._quiAuraRenderHealthTintOwner = nil
             frame._quiAuraRenderHealthTintColor = nil
             HideHealthTintOverlay(frame)
+        end
+        if elementID and frame._quiAuraRenderBorderOwner == elementID then
+            frame._quiAuraRenderBorderOwner = nil
+            HideBorderOverlay(frame)
         end
         return
     end
@@ -1478,6 +1585,11 @@ function R.Release(self, frame, elementID)
         frame._quiAuraRenderHealthTintColor = nil
         HideHealthTintOverlay(frame)
     end
+
+    if frame._quiAuraRenderBorderOwner == elementID then
+        frame._quiAuraRenderBorderOwner = nil
+        HideBorderOverlay(frame)
+    end
 end
 
 -- Release every element's frames on a unit frame (full teardown).
@@ -1494,6 +1606,10 @@ function R.ReleaseAll(self, frame)
         frame._quiAuraRenderHealthTintColor = nil
     end
     HideHealthTintOverlay(frame)
+    if frame._quiAuraRenderBorderOwner then
+        frame._quiAuraRenderBorderOwner = nil
+    end
+    HideBorderOverlay(frame)
 end
 
 ---------------------------------------------------------------------------
@@ -1505,6 +1621,7 @@ local DISPLAY_RENDERER = {
     square = "RenderSquare",
     bar = "RenderBar",
     healthTint = "RenderHealthTint",
+    border = "RenderBorder",
 }
 
 function R.Dispatch(self, frame, element, matches)

@@ -5,6 +5,7 @@
 ---------------------------------------------------------------------------
 local ADDON_NAME, ns = ...
 local Bags = ns.Bags or {}; ns.Bags = Bags
+local Storage = ns.Storage
 
 local Details = {}
 Bags.Details = Details
@@ -16,8 +17,8 @@ Bags.Details = Details
 ---   equipLoc, isEquippable, name, ilvl, expacID, bindType, isReagent.
 function Details.Build(entry)
     if not entry then return nil end
-    local derived = Bags.ItemInfo.GetDerived(entry.itemID)
-    local extended = Bags.ItemInfo.GetExtended(entry.itemID, entry.link)
+    local derived = Storage.ItemInfo.GetDerived(entry.itemID)
+    local extended = Storage.ItemInfo.GetExtended(entry.itemID, entry.link)
     return {
         itemID       = entry.itemID,
         count        = entry.count,

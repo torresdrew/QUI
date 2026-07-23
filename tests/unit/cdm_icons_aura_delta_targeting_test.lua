@@ -42,10 +42,6 @@ local itemAuraReverse
 local itemAuraApplyCount = 0
 local itemAuraActive = true
 local itemAuraPublishesInstanceID = true
-local mirroredBuffTargetDur = { token = "mirrored-buff-target-duration" }
-local mirroredBuffPlayerDur = { token = "mirrored-buff-player-duration" }
-local mirroredBuffAppliedDuration
-local mirroredBuffReverse
 local runtimeBatches = 0
 local buffAuraResolutionUnit = "player"
 local buffAuraResolutionInstanceID = 621
@@ -60,8 +56,6 @@ local function makeIcon(name, cooldownID)
             viewerType = "essential",
             type = "spell",
         },
-        _blizzMirrorCooldownID = cooldownID,
-        _blizzMirrorCategory = "essential",
         Cooldown = {
             Clear = noop,
             SetReverse = noop,
@@ -85,7 +79,12 @@ end
 local matchingIcon = makeIcon("matching", 88001)
 local unrelatedIcon = makeIcon("unrelated", 88002)
 local nonMirrorIcon = makeIcon("nonMirror", 88003)
-nonMirrorIcon._blizzMirrorCooldownID = nil
+-- Live aura-delta targeting matches the icon's stamped aura instance/unit
+-- (previously sourced from the removed Blizzard mirror state lookup).
+matchingIcon._auraInstanceID = 101
+matchingIcon._auraUnit = "target"
+unrelatedIcon._auraInstanceID = 202
+unrelatedIcon._auraUnit = "target"
 local buffAuraIcon = makeIcon("buffAura", 48707)
 buffAuraIcon._spellEntry = {
     id = 48707,
@@ -95,26 +94,7 @@ buffAuraIcon._spellEntry = {
     viewerType = "buff",
     type = "spell",
 }
-buffAuraIcon._blizzMirrorCooldownID = nil
 buffAuraIcon._shown = false
-local mirroredBuffAuraIcon = makeIcon("mirroredBuffAura", 191587)
-mirroredBuffAuraIcon._spellEntry = {
-    id = 191587,
-    spellID = 191587,
-    name = "mirroredBuffAura",
-    kind = "aura",
-    viewerType = "buff",
-    type = "spell",
-}
-mirroredBuffAuraIcon._blizzMirrorCooldownID = 102373
-mirroredBuffAuraIcon._blizzMirrorCategory = "buff"
-mirroredBuffAuraIcon._shown = false
-mirroredBuffAuraIcon.Cooldown.SetCooldownFromDurationObject = function(_, durObj)
-    mirroredBuffAppliedDuration = durObj
-end
-mirroredBuffAuraIcon.Cooldown.SetReverse = function(_, reverse)
-    mirroredBuffReverse = reverse
-end
 local itemAuraIcon = makeIcon("itemAura", 241288)
 itemAuraIcon._spellEntry = {
     id = 241288,
@@ -125,7 +105,6 @@ itemAuraIcon._spellEntry = {
     type = "item",
 }
 itemAuraIcon._runtimeSpellID = 241288
-itemAuraIcon._blizzMirrorCooldownID = nil
 itemAuraIcon.Cooldown.SetCooldownFromDurationObject = function(_, durObj)
     itemAuraApplyCount = itemAuraApplyCount + 1
     itemAuraAppliedDuration = durObj
@@ -133,30 +112,6 @@ end
 itemAuraIcon.Cooldown.SetReverse = function(_, reverse)
     itemAuraReverse = reverse
 end
-
-local mirrorStates = {
-    [88001] = {
-        auraInstanceID = 101,
-        auraUnit = "target",
-        isActive = true,
-    },
-    [88002] = {
-        auraInstanceID = 202,
-        auraUnit = "target",
-        isActive = true,
-    },
-    [102373] = {
-        cooldownID = 102373,
-        viewerCategory = "buff",
-        spellID = 77575,
-        overrideTooltipSpellID = 191587,
-        auraInstanceID = 344,
-        auraUnit = "target",
-        auraDurObj = mirroredBuffTargetDur,
-        auraDurObjSource = "aura-child-frame",
-        mirrorEpoch = 1,
-    },
-}
 
 local ns = {
     Helpers = {
@@ -218,11 +173,6 @@ local ns = {
             return nil
         end,
     },
-    CDMBlizzMirror = {
-        GetStateByCooldownID = function(cooldownID)
-            return mirrorStates[cooldownID]
-        end,
-    },
     CDMResolvers = {
         BuildCooldownStateContext = BuildCooldownStateContext,
         _textureCycleCache = {},
@@ -260,22 +210,6 @@ local ns = {
                     auraInstanceID = buffAuraResolutionInstanceID,
                     auraUnit = buffAuraResolutionUnit,
                     resolvedAuraSpellID = 48707,
-                }
-            end
-            if name == "mirroredBuffAura" then
-                return {
-                    mode = "aura",
-                    active = true,
-                    isActive = true,
-                    sourceID = "aura:direct:191587",
-                    spellID = 191587,
-                    auraResolved = true,
-                    auraInstanceID = 444,
-                    auraUnit = "player",
-                    resolvedAuraSpellID = 77575,
-                    durObj = mirroredBuffPlayerDur,
-                    hasDurationObject = true,
-                    hasRenderableCooldown = true,
                 }
             end
             if name == "itemAura" then
@@ -320,7 +254,7 @@ local ns = {
     CDMIconFactory = {
         _iconPools = {
             essential = { matchingIcon, unrelatedIcon, nonMirrorIcon, itemAuraIcon },
-            buff = { buffAuraIcon, mirroredBuffAuraIcon },
+            buff = { buffAuraIcon },
         },
         _recyclePool = {},
         _FinalizeImports = noop,
@@ -368,7 +302,7 @@ do
 end
 assert(loadfile("QUI_CDM/cdm/cdm_icon_renderer.lua"))("QUI", ns)
 ns.CDMIconFactory._iconPools.essential = { matchingIcon, unrelatedIcon, nonMirrorIcon, itemAuraIcon }
-ns.CDMIconFactory._iconPools.buff = { buffAuraIcon, mirroredBuffAuraIcon }
+ns.CDMIconFactory._iconPools.buff = { buffAuraIcon }
 
 local icons = assert(ns.CDMIcons, "CDMIcons should be exported")
 runtimeBatches = 0
@@ -384,21 +318,6 @@ icons.HandleRuntimeRefresh("UNIT_AURA", "target", {
 assert(resolveCounts.matching == 1, "matching aura-instance icon should be re-resolved")
 assert(resolveCounts.unrelated == nil, "unrelated mirror aura instance should not be re-resolved")
 assert(resolveCounts.nonMirror == nil, "non-mirror icons should not be reached by a target aura-instance delta")
-
-icons.HandleRuntimeRefresh("UNIT_AURA", "target", {
-    updatedAuraInstanceIDs = { 344 },
-})
-
-assert(mirroredBuffAuraIcon._auraUnit == "target",
-    "mirrored buff aura refresh should keep the exact target aura unit")
-assert(mirroredBuffAuraIcon._auraInstanceID == 344,
-    "mirrored buff aura refresh should keep the exact target aura instance")
-assert(mirroredBuffAuraIcon._lastAuraDurObj == mirroredBuffTargetDur,
-    "mirrored buff aura refresh should keep the mirror target DurationObject")
-assert(mirroredBuffAppliedDuration == mirroredBuffTargetDur,
-    "mirrored buff aura refresh should bind the mirror target DurationObject")
-assert(mirroredBuffReverse == true,
-    "mirrored buff aura refresh should use aura/reverse cooldown mode")
 
 icons.HandleRuntimeRefresh("UNIT_AURA", "player", {
     isFullUpdate = false,

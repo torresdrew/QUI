@@ -1,5 +1,6 @@
 -- tests/unit/minimap_drawer_filter_test.lua
 -- Run: lua tests/unit/minimap_drawer_filter_test.lua
+-- luacheck: globals MicroMenuPositionEnum (harness stub for the Blizzard enum)
 
 local function noop() end
 
@@ -115,6 +116,9 @@ C_Timer = {
 
 local ns = {
     Addon = { db = { profile = { minimapButton = { hide = false } } } },
+    SafeCall = function(_policy, fn, ...) return pcall(fn, ...) end,
+    SafeCallMethod = function(_policy, obj, name, ...) return pcall(function(...) return obj[name](obj, ...) end, ...) end,
+    SafeCallMethodIfPresent = function(_policy, obj, name, ...) if obj == nil then return nil end local okP, m = pcall(function() return obj[name] end) if not okP then return false end if m == nil then return nil end return pcall(m, obj, ...) end,
     Helpers = {
         GetModuleDB = function()
             return {
@@ -134,7 +138,7 @@ local ns = {
     },
 }
 
-assert(loadfile("QUI_Minimap/minimap/minimap.lua"))("QUI", ns)
+assert(loadfile("modules/minimap/minimap.lua"))("QUI", ns)
 
 local function findUpvalue(func, wanted, seen)
     seen = seen or {}

@@ -1,8 +1,7 @@
 --[[
     QUI HUD Visibility Controllers
     Manages fade-in/fade-out visibility for CDM viewers and unit frames.
-    Independent of CDM engine — reads frames from ns.CDMProvider (or
-    falls back to well-known Blizzard globals).
+    Independent of CDM engine — reads QUI-owned frames from ns.CDMProvider.
 ]]
 
 local ADDON_NAME, ns = ...
@@ -99,14 +98,6 @@ local function InvalidateCDMFrameCache()
     _cdmFramesDirty = true
 end
 
--- Fallback viewer-global names used when CDMProvider can't supply them.
-local DEFAULT_VIEWER_FRAME_NAMES = {
-    essential = "EssentialCooldownViewer",
-    utility   = "UtilityCooldownViewer",
-    buffIcon  = "BuffIconCooldownViewer",
-    buffBar   = "BuffBarCooldownViewer",
-}
-
 -- Get CDM frames (viewers + power bars) — cached to avoid per-frame allocations
 local function IsCustomCDMBarFrame(frame)
     if not frame then return false end
@@ -131,7 +122,10 @@ local function GetCDMFrames()
 
     wipe(_cdmFramesCache)
 
-    -- Use provider when available, fall back to well-known Blizzard globals
+    -- Use QUI-owned provider frames only. Blizzard CooldownViewer globals are
+    -- deliberately excluded here; visibility fading must not touch native CDM
+    -- viewers during cold login because their UNIT_AURA tables disallow tainted
+    -- access.
     if ns.CDMProvider and ns.CDMProvider.GetViewerFrames then
         local frames = ns.CDMProvider:GetViewerFrames()
         if frames then
@@ -139,14 +133,6 @@ local function GetCDMFrames()
                 if not IsCustomCDMBarFrame(frames[i]) then
                     _cdmFramesCache[#_cdmFramesCache + 1] = frames[i]
                 end
-            end
-        end
-    else
-        local frameNames = ns.CDMProvider and ns.CDMProvider.GetViewerFrameNames and ns.CDMProvider:GetViewerFrameNames()
-        frameNames = frameNames or DEFAULT_VIEWER_FRAME_NAMES
-        for _, blizzName in pairs(frameNames) do
-            if _G[blizzName] then
-                _cdmFramesCache[#_cdmFramesCache + 1] = _G[blizzName]
             end
         end
     end
@@ -185,6 +171,42 @@ local function IsCDMMasterEnabled()
     local profile = QUICore and QUICore.db and QUICore.db.profile
     local ncdm = profile and profile.ncdm
     return not ncdm or ncdm.enabled ~= false
+end
+
+---------------------------------------------------------------------------
+-- RE-ANCHORED BLIZZARD VIEWER FADE
+-- The 12.1 re-anchor engine keeps live Blizzard CooldownViewer item frames
+-- parented to their native viewers (SetPoint bridge, never SetParent), so
+-- fading the QUI containers never reaches the icon art / cooldown swipe /
+-- charge count — those pixels inherit alpha from the viewer, not from the
+-- container the frame is anchored onto. Drive the four viewer frames' alpha
+-- alongside the containers.
+--
+-- Gated on ns._cdmBoot: nil during cold login until the re-anchor runtime
+-- owns the viewers, so this never touches a native viewer pre-boot (the
+-- UNIT_AURA disallow-tainted-access hazard the provider exclusion in
+-- GetCDMFrames protects against). Viewer references come from the boot
+-- wiring, never from Blizzard globals enumerated here. Writes go through a
+-- raw, unhooked SetAlpha under securecall — the bridge's taint-safe recipe.
+-- While the CDM master toggle is off the viewers are Blizzard's own UI
+-- again, so they are pinned to alpha 1 instead of following the fade.
+local _viewerAlphaProxy = CreateFrame and CreateFrame("Frame") or nil
+local _rawViewerSetAlpha = _viewerAlphaProxy and _viewerAlphaProxy.SetAlpha or nil
+local _securecall = securecallfunction or function(fn, ...) return fn(...) end
+local REANCHOR_VIEWER_KEYS = { "essential", "utility", "buff", "trackedBar" }
+
+local function ApplyReanchorViewerAlpha(alpha)
+    if not _rawViewerSetAlpha then return end
+    local boot = ns._cdmBoot
+    local wiring = boot and boot.wiring
+    if not (wiring and wiring.GetViewerForKey) then return end
+    if not IsCDMMasterEnabled() then alpha = 1 end
+    for i = 1, #REANCHOR_VIEWER_KEYS do
+        local viewer = wiring:GetViewerForKey(REANCHOR_VIEWER_KEYS[i])
+        if viewer and (not viewer.IsForbidden or not viewer:IsForbidden()) then
+            _securecall(_rawViewerSetAlpha, viewer, alpha)
+        end
+    end
 end
 
 ---------------------------------------------------------------------------
@@ -262,14 +284,19 @@ local function OnCDMFadeUpdate(self)
     local frames = CDMVisibility.fadeTargets or GetCDMFrames()
     for i = #frames, 1, -1 do
         local frame = frames[i]
+        -- Existence/forbidden probes moved INSIDE the trampoline: the guard's
+        -- own frame.SetAlpha / frame.IsForbidden lookups throw on 68675
+        -- DenyTaintedAccess children. A forbidden SetAlpha errors as the
+        -- expected class (silent) and still prunes via ok=false.
         local ok = false
-        if frame and frame.SetAlpha and (not frame.IsForbidden or not frame:IsForbidden()) then
-            ok = pcall(frame.SetAlpha, frame, alpha)
+        if frame then
+            ok = ns.SafeCallMethodIfPresent("best-effort-style", frame, "SetAlpha", alpha)
         end
         if not ok then
             table.remove(frames, i)
         end
     end
+    ApplyReanchorViewerAlpha(alpha)
 
     if progress >= 1 then
         CDMVisibility.isFading = false
@@ -291,6 +318,10 @@ local function StartCDMFade(targetAlpha)
         CDMVisibility.currentlyHidden = (targetAlpha < 1)
         CDMVisibility.fadeStartAlpha = targetAlpha
         CDMVisibility.fadeTargetAlpha = targetAlpha
+        -- Containers already at target (e.g. the init path pre-sets alpha on
+        -- /reload while mounted, then refreshes) — the viewers still need the
+        -- target applied or the re-anchored icons stay at their old alpha.
+        ApplyReanchorViewerAlpha(targetAlpha)
         return
     end
 
@@ -318,10 +349,11 @@ local function SnapCDMFadeToTarget()
     local frames = CDMVisibility.fadeTargets or GetCDMFrames()
     for i = #frames, 1, -1 do
         local frame = frames[i]
-        if frame and frame.SetAlpha and (not frame.IsForbidden or not frame:IsForbidden()) then
-            pcall(frame.SetAlpha, frame, target)
+        if frame then
+            ns.SafeCallMethodIfPresent("best-effort-style", frame, "SetAlpha", target)
         end
     end
+    ApplyReanchorViewerAlpha(target)
     CDMVisibility.isFading = false
     CDMVisibility.currentlyHidden = (target < 1)
     CDMVisibility.fadeTargets = nil
@@ -362,10 +394,13 @@ UpdateCDMVisibility = function()
         local frames = GetCDMFrames()
         for i = #frames, 1, -1 do
             local frame = frames[i]
-            if frame and frame.SetAlpha and (not frame.IsForbidden or not frame:IsForbidden()) then
-                pcall(frame.SetAlpha, frame, damagedAlpha)
+            if frame then
+                ns.SafeCallMethodIfPresent("sink-forward", frame, "SetAlpha", damagedAlpha)
             end
         end
+        -- Secret curve-resolved alpha forwards straight into SetAlpha — the
+        -- sanctioned secret-forwarding path; it never enters Lua arithmetic.
+        ApplyReanchorViewerAlpha(damagedAlpha)
         if QUICore then
             if QUICore.UpdatePowerBar then QUICore:UpdatePowerBar() end
             if QUICore.UpdateSecondaryPowerBar then QUICore:UpdateSecondaryPowerBar() end
@@ -488,13 +523,6 @@ local function SetupCDMMouseoverDetector()
         viewers = ns.CDMProvider:GetViewerFrames()
     else
         viewers = {}
-        local names = ns.CDMProvider and ns.CDMProvider.GetViewerFrameNames and ns.CDMProvider:GetViewerFrameNames()
-        names = names or DEFAULT_VIEWER_FRAME_NAMES
-        for _, name in pairs(names) do
-            if _G[name] then
-                viewers[#viewers + 1] = _G[name]
-            end
-        end
     end
 
     for _, viewer in ipairs(viewers) do
@@ -577,9 +605,13 @@ local function OnCustomTrackersFadeUpdate(self)
     local frames = CustomTrackersVisibility.fadeTargets or GetCustomTrackerFrames()
     for i = #frames, 1, -1 do
         local frame = frames[i]
+        -- Existence/forbidden probes moved INSIDE the trampoline: the guard's
+        -- own frame.SetAlpha / frame.IsForbidden lookups throw on 68675
+        -- DenyTaintedAccess children. A forbidden SetAlpha errors as the
+        -- expected class (silent) and still prunes via ok=false.
         local ok = false
-        if frame and frame.SetAlpha and (not frame.IsForbidden or not frame:IsForbidden()) then
-            ok = pcall(frame.SetAlpha, frame, alpha)
+        if frame then
+            ok = ns.SafeCallMethodIfPresent("best-effort-style", frame, "SetAlpha", alpha)
         end
         if not ok then
             table.remove(frames, i)
@@ -1156,9 +1188,9 @@ end
 
 local function ApplyBarAlpha(setBarAlpha, barKey, container, alpha)
     if setBarAlpha then
-        pcall(setBarAlpha, barKey, alpha)
-    elseif container and container.SetAlpha then
-        pcall(container.SetAlpha, container, alpha)
+        ns.SafeCall("best-effort-style", setBarAlpha, barKey, alpha)
+    elseif container then
+        ns.SafeCallMethodIfPresent("best-effort-style", container, "SetAlpha", alpha)
     end
 end
 
@@ -1469,9 +1501,7 @@ local function OnChatFadeUpdate(self)
 
     local frames = ChatVisibility.fadeTargets or GetChatFrames()
     for _, frame in ipairs(frames) do
-        if frame and frame.SetAlpha then
-            pcall(frame.SetAlpha, frame, alpha)
-        end
+        ns.SafeCallMethodIfPresent("best-effort-style", frame, "SetAlpha", alpha)
     end
 
     if progress >= 1 then

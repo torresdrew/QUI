@@ -16,7 +16,7 @@ function GetSafeActionSlot(button)
     if action == nil or Helpers.IsSecretValue(action) then
         return nil
     end
-    local ok, numericAction = pcall(tonumber, action)
+    local ok, numericAction = ns.SafeCall("best-effort-style", tonumber, action)
     if not ok or type(numericAction) ~= "number" or numericAction < 1 then
         return nil
     end
@@ -263,7 +263,12 @@ end
 local function GetCurrentInstanceContext()
     local inInstance, instanceType = false, "none"
     if IsInInstance then
-        local ok, isInInstance, kind = pcall(IsInInstance)
+        -- InstanceDocumentation.lua: IsInInstance carries no SecretArguments /
+        -- SecretWhenRestricted annotation (plain bool/cstring returns) — a
+        -- thrown error here is our own bug, not an expected secret/lockdown
+        -- class, and a swallowed failure would silently leave bar visibility
+        -- on stale instance-context data.
+        local ok, isInInstance, kind = ns.SafeCall("report", IsInInstance)
         if ok then
             inInstance = isInInstance and true or false
             instanceType = kind or instanceType
@@ -272,7 +277,10 @@ local function GetCurrentInstanceContext()
 
     local difficultyID
     if GetInstanceInfo then
-        local ok, _, infoType, infoDifficultyID = pcall(GetInstanceInfo)
+        -- InstanceDocumentation.lua: GetInstanceInfo's 11 return values carry
+        -- no SecretArguments / SecretWhenRestricted annotation — same
+        -- surface-must-throw reasoning as the IsInInstance call above.
+        local ok, _, infoType, infoDifficultyID = ns.SafeCall("report", GetInstanceInfo)
         if ok then
             if infoType then instanceType = infoType end
             difficultyID = tonumber(infoDifficultyID)
@@ -290,7 +298,10 @@ local function IsInMythicPlus(difficultyID)
         return true
     end
     if C_ChallengeMode and C_ChallengeMode.IsChallengeModeActive then
-        local ok, active = pcall(C_ChallengeMode.IsChallengeModeActive)
+        -- ChallengeModeInfoDocumentation.lua: IsChallengeModeActive returns a
+        -- single plain bool with no SecretArguments / SecretWhenRestricted
+        -- annotation — same surface-must-throw reasoning as above.
+        local ok, active = ns.SafeCall("report", C_ChallengeMode.IsChallengeModeActive)
         if ok and active then return true end
     end
     return false
