@@ -51,66 +51,16 @@ function GetOriginalBlizzButtons(barKey)
     return buttons
 end
 
-function SharedOwnedButtonUpdateCooldown(self)
-    ActionBarsOwned.UpdateCooldown(self)
-end
-
-function SharedOwnedButtonUpdateCount(self)
-    local action = self.action
-    local count = self.Count
-    if not action or not HasAction(action) then
-        if count then count:SetText("") end
-        return
-    end
-
-    if C_ActionBar and C_ActionBar.GetActionDisplayCount then
-        if count then count:SetText(C_ActionBar.GetActionDisplayCount(action) or "") end
-    elseif count then
-        count:SetText("")
-    end
-end
-
-function SharedOwnedButtonSetTooltip(self)
-    if GetCVar("UberTooltips") == "1" then
-        GameTooltip_SetDefaultAnchor(GameTooltip, self)
-    else
-        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-    end
-    if GameTooltip:SetAction(self.action) then
-        self.UpdateTooltip = self.SetTooltip
-    else
-        self.UpdateTooltip = nil
-    end
-end
-
-function SharedOwnedButtonOnEvent(self, event, ...)
-    if event == "ACTIONBAR_UPDATE_COOLDOWN"
-        or event == "LOSS_OF_CONTROL_ADDED"
-        or event == "LOSS_OF_CONTROL_UPDATE" then
-        ActionBarsOwned.UpdateCooldown(self)
-    else
-        ActionBarsOwned.SafeUpdate(self)
-    end
-end
-
 function SharedOwnedButtonPostDrag(self)
     OwnedButton_PostDrag(self)
 end
-
-ActionBarsOwned._sharedHandlers = ActionBarsOwned._sharedHandlers or {
-    UpdateCooldown = SharedOwnedButtonUpdateCooldown,
-    UpdateCount = SharedOwnedButtonUpdateCount,
-    SetTooltip = SharedOwnedButtonSetTooltip,
-    OnEvent = SharedOwnedButtonOnEvent,
-    PostDrag = SharedOwnedButtonPostDrag,
-}
 
 function EnsureOwnedActionButton(container, barKey, btnName, index)
     local btn = _G[btnName]
     local existed = btn ~= nil
     if not btn then
         local ok
-        ok, btn = pcall(CreateFrame, "CheckButton", btnName, container, "ActionButtonTemplate, SecureActionButtonTemplate")
+        ok, btn = ns.SafeCall("best-effort-style", CreateFrame, "CheckButton", btnName, container, "ActionBarButtonTemplate")
         if not ok then btn = _G[btnName] end
         btn:SetAttribute("type", "action")
         btn:SetAttribute("checkselfcast", true)
@@ -141,6 +91,7 @@ function EnsureOwnedActionButton(container, barKey, btnName, index)
         end
         btn.flashing = 0
         btn.flashtime = 0
+
     else
         btn:SetParent(container)
     end
@@ -153,19 +104,18 @@ function EnsureOwnedActionButton(container, barKey, btnName, index)
     return btn, existed
 end
 
-function SetupPagedOwnedActionButton(btn, index)
+function SetupPagedOwnedActionButton(container, btn, index)
     btn:SetAttribute("index", index)
-    btn:SetAttribute("action", index)
     btn:SetAttribute("_childupdate-offset", [[
         local index = self:GetAttribute("index")
         local newAction = index + (message or 0)
         self:SetAttribute("action", newAction)
         self:RunAttribute("QUI_UpdateActionFlags")
-        self:CallMethod("SafeSyncAction")
     ]])
-    btn.SafeSyncAction = ActionBarsOwned.SafeSyncAction
-    btn.UpdateCooldown = SharedOwnedButtonUpdateCooldown
-    btn.UpdateCount = SharedOwnedButtonUpdateCount
+    -- ActionBarButtonTemplate's clean OnAttributeChanged -> UpdateAction path
+    -- must own both self.action and the ping target. Seed the initial action
+    -- from restricted code for the same reason page changes stay restricted.
+    SetupFixedOwnedActionButton(container, btn, index)
 end
 
 function SetupFixedOwnedActionButton(container, btn, action)
@@ -211,10 +161,7 @@ function BuildStandardOwnedButtons(container, barKey)
             local btnName = "QUI_Bar1Button" .. i
             local btn, existed = EnsureOwnedActionButton(container, barKey, btnName, i)
             if not existed then
-                SetupPagedOwnedActionButton(btn, i)
-                btn.action = i
-            else
-                btn.action = btn:GetAttribute("action") or i
+                SetupPagedOwnedActionButton(container, btn, i)
             end
             btn:Show()
             buttons[i] = btn
@@ -232,7 +179,6 @@ function BuildStandardOwnedButtons(container, barKey)
         if not existed then
             SetupFixedOwnedActionButton(container, btn, action)
         end
-        btn.action = action
         btn:Show()
         buttons[i] = btn
     end
@@ -241,21 +187,6 @@ function BuildStandardOwnedButtons(container, barKey)
 end
 
 function SetupStandardOwnedButtonRuntime(container, btn)
-    btn:UnregisterAllEvents()
-    btn:SetScript("OnEvent", SharedOwnedButtonOnEvent)
-    btn.Update = ActionBarsOwned.SafeUpdate
-    btn.UpdateAction = ActionBarsOwned.SafeSyncAction
-    btn.SafeSyncAction = ActionBarsOwned.SafeSyncAction
-    btn.UpdateCooldown = SharedOwnedButtonUpdateCooldown
-    ---@type fun(...)
-    btn.UpdatePressAndHoldAction = function() end
-    btn.UpdateCount = SharedOwnedButtonUpdateCount
-    if SetActionUIButton and btn.action and btn.cooldown then
-        SetActionUIButton(btn, btn.action, btn.cooldown)
-    end
-
-    btn.SetTooltip = SharedOwnedButtonSetTooltip
-
     btn:SetAttribute("buttonlock", GetCVar("lockActionBars") == "1")
     btn.QUI_PostDrag = SharedOwnedButtonPostDrag
 
@@ -279,11 +210,11 @@ function SetupStandardOwnedButtonRuntime(container, btn)
 
         btn:HookScript("OnEnter", function(self)
             local global = GetGlobalSettings()
-            if global and global.showTooltips == false then return end
-            self:SetTooltip()
+            if global and global.showTooltips == false then
+                GameTooltip:Hide()
+            end
         end)
         btn:HookScript("OnLeave", function(self)
-            self.UpdateTooltip = nil
             GameTooltip:Hide()
         end)
 
@@ -370,7 +301,7 @@ end
 function PrimeStandardOwnedButtonVisuals(buttons)
     for _, btn in ipairs(buttons) do
         if ActionButton_Update then
-            pcall(ActionButton_Update, btn)
+            ns.SafeCall("best-effort-style", ActionButton_Update, btn)
         end
         ActionBarsOwned.UpdateCooldown(btn)
         ActionBarsOwned.UpdateOverlayGlow(btn)
@@ -431,7 +362,7 @@ function BuildBar(barKey)
             local btn = _G[btnName]
             if not btn then
                 local ok
-                ok, btn = pcall(CreateFrame, "CheckButton", btnName, container, template)
+                ok, btn = ns.SafeCall("best-effort-style", CreateFrame, "CheckButton", btnName, container, template)
                 if not ok then btn = _G[btnName] end
                 btn:SetID(i)
             else
@@ -854,7 +785,7 @@ function BuildBar(barKey)
         -- Prevent BagsBar from responding to expand/collapse state changes
         -- which would trigger unnecessary Layout calls.
         if BagsBar and EventRegistry and EventRegistry.UnregisterCallback then
-            pcall(EventRegistry.UnregisterCallback, EventRegistry, "MainMenuBarManager.OnExpandChanged", BagsBar)
+            ns.SafeCallMethod("best-effort-style", EventRegistry, "UnregisterCallback", "MainMenuBarManager.OnExpandChanged", BagsBar)
         end
 
         -- Hook Blizzard's layout to reclaim buttons if it tries to reparent them
@@ -909,23 +840,17 @@ function BuildBar(barKey)
         end
     end
 
-    -- Standard action bars (bar1-8): suppress Blizzard's event handling
-    -- and shadow mixin methods with taint-safe versions.
-    --
-    -- Buttons ARE registered with SetActionUIButton so the C-side can
-    -- push icon/cooldown/state updates (critical for assisted combat
-    -- rotation which has no Lua event).  The taint-unsafe mixin methods
-    -- (Update, UpdateAction, UpdateCooldown) are shadowed below with
-    -- QUI's safe versions, so C-side ForceUpdateAction → btn:Update()
-    -- hits SafeUpdate instead of the original mixin code.
+    -- Standard action bars (bar1-8) retain Blizzard's complete action-button
+    -- method surface. In particular, do not shadow UpdateAction, Update,
+    -- HasAction, or GetActionButtonInfo: the clean FrameXML lifecycle owns the
+    -- action identity consumed by restricted spell/item ping APIs.
     if barKey ~= "pet" and barKey ~= "stance" and barKey ~= "microbar" and barKey ~= "bags" then
         for _, btn in ipairs(buttons) do
             SetupStandardOwnedButtonRuntime(container, btn)
         end
 
-        -- Populate visuals via the mixin (safe — GetActionCount is
-        -- suppressed, and shadows are in place so any internal
-        -- self:Method() calls hit the safe versions).
+        -- QUI still applies its presentation pass independently of Blizzard's
+        -- action identity/update lifecycle.
         PrimeStandardOwnedButtonVisuals(buttons)
     end
 
@@ -992,4 +917,3 @@ function BuildBar(barKey)
     end
 
 end
-

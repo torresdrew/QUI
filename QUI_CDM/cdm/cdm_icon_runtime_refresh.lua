@@ -661,13 +661,6 @@ function CDMIconRuntimeRefresh.Create(callbacks)
                 local matches = iconAuraInstanceID
                     and ids[iconAuraInstanceID]
                     and (not unit or icon._auraUnit == unit)
-                if not matches and icon and icon._blizzMirrorCooldownID and callbacks.getMirrorStateByCooldownID then
-                    local state = callbacks.getMirrorStateByCooldownID(icon._blizzMirrorCooldownID, icon._blizzMirrorCategory)
-                    local mirrorAuraInstanceID = state and state.auraInstanceID
-                    matches = mirrorAuraInstanceID
-                        and ids[mirrorAuraInstanceID]
-                        and (not unit or state.auraUnit == unit or icon._auraUnit == unit)
-                end
                 if not matches
                     and entryMatchesSpellIdentifierSet(callbacks, icon, entry, spellIDs, hasSpellIDs) then
                     matches = true
@@ -746,7 +739,7 @@ function CDMIconRuntimeRefresh.Create(callbacks)
                         batchStarted = true
                     end
                     -- applyResolvedCooldown (ResolveCooldownState → C_UnitAuras) is intentionally
-                    -- NOT called here. The usable tint is applied by cdm_icon_range_policy.lua via
+                    -- NOT called here. The usable tint is applied by the range policy (cdm_icon_policies.lua) via
                     -- updateIconRangesForUsabilityEvent on the same SPELL_UPDATE_USABLE event;
                     -- cooldown swipe and desaturation are live C-side (durObj-bound). The full
                     -- resolve is redundant on the usability path and was the source of ~300 KB/drain
@@ -1029,12 +1022,6 @@ function CDMIconRuntimeRefresh.Create(callbacks)
         return true
     end
 
-    function controller:NoteChargeDurationObjectsUpdated()
-        if callbacks.noteChargeDurationObjectsUpdated then
-            callbacks.noteChargeDurationObjectsUpdated()
-        end
-    end
-
     function controller:ApplyTargetScope(event)
         if callbacks.chargeDebug then
             callbacks.chargeDebug(nil, "EVENT", event, "target-scope-refresh")
@@ -1089,7 +1076,14 @@ function CDMIconRuntimeRefresh.Create(callbacks)
         end
     end
 
-    function controller:HandleFrameEvent(frame, event, arg1, arg2, arg3)
+    -- Signature deliberately mirrors the runtime OnEvent contract
+    -- (self, event, payload...) with the frame LAST, PAST every
+    -- secret-capable payload column: the taint analyzer keys
+    -- event_payload_params positions to that contract, so a leading extra
+    -- arg would shift every column and mis-taint `event` itself, and a frame
+    -- sitting in a wired column (UNIT_SPELLCAST_CHANNEL_STOP taints
+    -- positions 3-6; arg4 = its interruptedBy) would be mis-tainted too.
+    function controller:HandleFrameEvent(event, arg1, arg2, arg3, arg4, frame)
         if not isRuntimeEnabled(callbacks) then
             if callbacks.onRuntimeDisabled then
                 callbacks.onRuntimeDisabled(frame)
@@ -1100,12 +1094,21 @@ function CDMIconRuntimeRefresh.Create(callbacks)
         if event == "UNIT_SPELLCAST_STOP"
            or event == "UNIT_SPELLCAST_CHANNEL_START"
            or event == "UNIT_SPELLCAST_CHANNEL_STOP" then
-            local isPlayerUnit = not (callbacks.isSecretValue and callbacks.isSecretValue(arg1))
-                and arg1 == "player"
+            -- These three events are RegisterUnitEvent("player")-bound
+            -- (cdm_icon_renderer.lua cdEventFrame), so the C-side filter
+            -- already guarantees the unit. The token itself is documented
+            -- SecretWhenUnitSpellCastRestricted — a secret token here is
+            -- still the player; comparing it would throw.
+            local isPlayerUnit
+            if callbacks.isSecretValue and callbacks.isSecretValue(arg1) then
+                isPlayerUnit = true
+            else
+                isPlayerUnit = arg1 == "player" -- @secret-safe: else-branch of the callbacks.isSecretValue(arg1) probe above (callback-indirected guard the analyzer cannot see; tests inject secrets through the stub)
+            end
             if isPlayerUnit then
                 if normalizeSpellIdentifier(callbacks, arg3) ~= nil then
                     if runtimeRefreshStats then runtimeRefreshStats.unitSpellcastCooldownSkips = runtimeRefreshStats.unitSpellcastCooldownSkips + 1 end
-                    controller:QueueResolvedCooldownForSpellID(arg3, nil)
+                    controller:QueueResolvedCooldownForSpellID(arg3, nil) -- @secret-safe: reached only when normalizeSpellIdentifier(callbacks, arg3) ~= nil, and that helper probes isSecretValue and returns nil for secrets — arg3 proven readable here
                 elseif callbacks.scheduleUpdate then
                     if runtimeRefreshStats then runtimeRefreshStats.unitSpellcastCooldownFallbacks = runtimeRefreshStats.unitSpellcastCooldownFallbacks + 1 end
                     callbacks.scheduleUpdate(true, UPDATE_COOLDOWN, "unit_spellcast")
@@ -1236,11 +1239,11 @@ function CDMIconRuntimeRefresh.Create(callbacks)
         end
     end
 
-    function controller:Handle(event, arg1, arg2, arg3, frame)
+    function controller:Handle(event, arg1, arg2, arg3, arg4, frame)
         if event == "UNIT_AURA" then
-            return controller:HandleAuraRefresh(arg1, arg2)
+            return controller:HandleAuraRefresh(arg1, arg2) -- @secret-safe: HandleAuraRefresh is reached only via cdm_spelldata NotifyAuraConsumers, which passes a plain non-secret unit; updateInfo is a plain container table (round-13 hand-audit)
         end
-        return controller:HandleFrameEvent(frame, event, arg1, arg2, arg3)
+        return controller:HandleFrameEvent(event, arg1, arg2, arg3, arg4, frame) -- @secret-safe: HandleFrameEvent probes isSecretValue(arg1) before the unit compare and normalizes arg3 through the secret-probing normalizeSpellIdentifier (round-13 hand-audit)
     end
 
     function controller:HandleCooldownChanged(_, spellID, baseSpellID, kind)
@@ -1307,7 +1310,6 @@ function CDMIconRuntimeRefresh.Create(callbacks)
 
     function controller:HandleChargesChanged(_, spellID)
         if not isRuntimeEnabled(callbacks) then return end
-        controller:NoteChargeDurationObjectsUpdated()
         if callbacks.requestStackTextUpdate then
             callbacks.requestStackTextUpdate()
         end
@@ -1315,10 +1317,15 @@ function CDMIconRuntimeRefresh.Create(callbacks)
             if runtimeRefreshStats then runtimeRefreshStats.chargeCooldownSkips = runtimeRefreshStats.chargeCooldownSkips + 1 end
             controller:QueueResolvedCooldownForSpellID(spellID, nil)
         else
+            -- SPELL_UPDATE_CHARGES carries no payload (SpellBookDocumentation:
+            -- no Payload table), so this branch IS the ordinary charge path,
+            -- not a rare fallback. A synchronous ApplySpellScope here walked
+            -- every icon per charge tick, unthrottled — the exact churn the
+            -- nil-spellID cooldown doctrine above forbids. The coalesced
+            -- scheduled update covers swipe/charge rebinding.
             if callbacks.scheduleUpdate then
-                callbacks.scheduleUpdate(nil, UPDATE_COOLDOWN)
+                callbacks.scheduleUpdate(true, UPDATE_COOLDOWN, "charges")
             end
-            controller:ApplySpellScope()
         end
     end
 

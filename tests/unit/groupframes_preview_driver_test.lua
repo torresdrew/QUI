@@ -6,37 +6,11 @@ local ns = {}
 assert(loadfile("QUI_GroupFrames/groupframes/settings/group_frames_preview_driver.lua"))("QUI_Options", ns)
 local D = ns.QUI_GroupFramesPreview
 local function test(n, f) print(n); f(); print("  ok") end
-local NOW = 1000
-
-test("filterStrip HELPFUL honors maxIcons and marks helpful", function()
-    local m = D._BuildFilterStripMatches({ mode = "filterStrip", auraType = "HELPFUL", maxIcons = 2 }, NOW)
-    assert(#m == 2, "expected 2 got " .. #m)
-    assert(m[1].isHelpful == true and m[1].isHarmful == false)
-    assert(m[1].icon and m[1].duration and m[1].expirationTime >= NOW)
-    assert(m[1].expirationTime <= NOW + m[1].duration)
-end)
-
-test("filterStrip maxIcons=0 shows the full sample pool", function()
-    local m = D._BuildFilterStripMatches({ mode = "filterStrip", auraType = "HELPFUL", maxIcons = 0 }, NOW)
-    assert(#m >= 3, "expected full pool, got " .. #m)
-end)
-
-test("filterStrip HARMFUL sets dispelName and harmful flags", function()
-    local m = D._BuildFilterStripMatches({ mode = "filterStrip", auraType = "HARMFUL", maxIcons = 3 }, NOW)
-    assert(m[1].isHarmful == true and m[1].isHelpful == false)
-    assert(type(m[1].dispelName) == "string")
-end)
-
-test("tracked builds a spellID-keyed map for configured spells", function()
-    local m = D._BuildTrackedMatches({ mode = "tracked", displayType = "bar", spells = { 111, 222 } }, NOW)
-    assert(m[111] and m[222], "both spellIDs keyed")
-    assert(m[111].spellId == 111 and m[111].expirationTime >= NOW)
-end)
-
-test("tracked with no spells yields an empty map", function()
-    local m = D._BuildTrackedMatches({ mode = "tracked", displayType = "icon" }, NOW)
-    assert(next(m) == nil, "empty map when no spells")
-end)
+-- (The _BuildFilterStripMatches / _BuildTrackedMatches fake-match fabricators
+-- were removed in Task 10 — filterStrip + tracked icon/square/bar previews now
+-- render through the shared ns.AuraPreview placeholder renderer. That renderer's
+-- coverage lives in tests/unit/aura_preview_test.lua; MRB fabrication is still
+-- exercised via the live GF render tests.)
 
 test("party grid: 5 units stack downward (grow DOWN), single column", function()
     local p = D._ComputeGridPositions("party", 5, { growDirection = "DOWN", spacing = 2 }, 100, 20)

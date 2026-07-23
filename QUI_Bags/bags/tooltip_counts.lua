@@ -10,6 +10,7 @@
 -- luacheck: read globals ItemRefTooltip
 local ADDON_NAME, ns = ...
 local Bags = ns.Bags or {}; ns.Bags = Bags
+local Storage = ns.Storage
 
 local Helpers = ns.Helpers
 local GetSettings = Helpers.CreateDBGetter("bags")
@@ -111,7 +112,7 @@ end
 --- compare, never parsed: realm names can contain dashes); cross-realm
 --- owners keep the full key for disambiguation.
 local function GetOwnerInfo(ownerKey)
-    local Summaries, Store = Bags.Summaries, Bags.Store
+    local Summaries, Store = Storage.Summaries, Storage.Store
     if ownerKey == Summaries.WARBAND_OWNER then
         return { label = ns.L["Warband"], plainTotal = true }
     end
@@ -161,7 +162,7 @@ local function OnTooltipSetItem(tooltip, data)
     -- counts are information we cannot have: no line is the correct render.
     -- (Guard order per qol/tooltip precedent: type first, then issecretvalue.)
     if type(issecretvalue) == "function" and issecretvalue(itemID) then return end
-    local counts = Bags.Summaries.GetCounts(itemID)
+    local counts = Storage.Summaries.GetCounts(itemID)
     if next(counts) == nil then return end
     local lines = TooltipCounts.BuildCountLines(counts, GetOwnerInfo)
     if #lines == 0 then return end

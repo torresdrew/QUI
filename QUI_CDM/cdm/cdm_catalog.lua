@@ -41,13 +41,42 @@ local KIND_FOR_CATEGORY = {
     [3] = "trackedBar",
 }
 
-local COOLDOWN_CATEGORIES = { 0, 1 }
-local AURA_CATEGORIES = { 2, 3 }
-local ALL_RENDERED_CATEGORIES = { 0, 1, 2, 3 }
+local COOLDOWN_CATEGORIES = { 0, 1 }   -- spell cooldowns (dormancy/identity) — keep narrow
+local BUILTIN_COOLDOWN_PICKER_CATEGORIES = {
+    essential = { 0, 1 },
+    utility = { 1, 0 },
+}
+-- Equipped-item / spec-agnostic categories (12.x): SpecAgnosticEssential(5),
+-- SpecAgnosticTracked(6), EquipSlotEssential(7), EquipSlotTracked(8). Item-ness is
+-- decided per entry by cdInfo.equipSlot, not by category. Picker unions drive the
+-- composer "Blizzard CDM" tab; the spell-only groups above stay narrow so item
+-- on-use spells never pollute spell dormancy/identity.
+local PICKER_COOLDOWN_CATEGORIES = { 0, 1, 5, 7 }
+local PICKER_AURA_CATEGORIES = { 2, 3, 6, 8 }
+local ALL_RENDERED_CATEGORIES = { 0, 1, 2, 3, 5, 6, 7, 8 }
+-- Blizzard spell-category consumables (mirrors spellCategoryMetadataLookup in
+-- FrameXML CooldownViewerItemData.lua). name is English; localized at emit via
+-- ns.L. icon strings are Blizzard's EXACT values (yes, "Warlock_ Healthstone"
+-- has a space) -- the category icon always wins on the native frame
+-- (GetSpellTexture returns it first), so composer cells + preview icons must
+-- use the same strings to match the runtime render.
+local CONSUMABLE_CATEGORY_META = {
+    [4]    = { name = "Combat Potion", icon = "Interface/ICONS/INV_POTION_114" },
+    [30]   = { name = "Health Potion", icon = "Interface/ICONS/INV_POTION_54" },
+    [1711] = { name = "Healthstone",   icon = "Interface/ICONS/Warlock_ Healthstone" },
+}
 local BLIZZARD_CDM_ENTRY_SOURCE = "blizzardCDM"
 
 function CDMCatalog.GetCategoryForKind(kind)
     return CATEGORY_FOR_KIND[kind]
+end
+
+-- Consumable spell-category display meta (icon + English name) for
+-- consumable-typed entries (entry.id = spellCategoryID). Shared by the
+-- composer picker cells, entry rows, and the resolvers' entry-texture path so
+-- every surface renders the same icon as Blizzard's native frame.
+function CDMCatalog.GetConsumableCategoryMeta(catID)
+    return CONSUMABLE_CATEGORY_META[catID]
 end
 
 function CDMCatalog.GetKindForCategory(category)
@@ -56,7 +85,7 @@ end
 
 function CDMCatalog.IsUsableID(id)
     if type(id) ~= "number" then return false end
-    if issecretvalue(id) then return false end
+    if issecretvalue(id) then return false end -- @secret-policy: reject-secret-ids
     return id > 0
 end
 
@@ -153,7 +182,7 @@ local function HasCooldownViewerAPI()
         and api.GetCooldownViewerCooldownInfo
 end
 
-local function IsCooldownViewerReady()
+function CDMCatalog.IsCooldownViewerReady()
     local api = GetCooldownViewerAPI()
     if not api then return false end
     if not api.IsCooldownViewerAvailable then
@@ -162,14 +191,14 @@ local function IsCooldownViewerReady()
 
     local ok, isAvailable = pcall(api.IsCooldownViewerAvailable)
     if not ok then return false end
-    if issecretvalue(isAvailable) then return false end
+    if issecretvalue(isAvailable) then return false end -- @secret-policy: reject-secret-value
     return isAvailable == true
 end
 
 function CDMCatalog.GetCategorySet(category, allowUnlearned)
-    if not HasCooldownViewerAPI() or not IsCooldownViewerReady() then return nil end
+    if not HasCooldownViewerAPI() or not CDMCatalog.IsCooldownViewerReady() then return nil end
     local api = GetCooldownViewerAPI()
-    local ok, ids = pcall(api.GetCooldownViewerCategorySet, category, allowUnlearned and true or false)
+    local ok, ids = ns.SafeCall("best-effort-style", api.GetCooldownViewerCategorySet, category, allowUnlearned and true or false)
     if ok and type(ids) == "table" then
         return ids
     end
@@ -177,14 +206,25 @@ function CDMCatalog.GetCategorySet(category, allowUnlearned)
 end
 
 function CDMCatalog.GetTrackedCategorySet(category, allowUnlearned)
-    if not IsCooldownViewerReady() then
+    if not CDMCatalog.IsCooldownViewerReady() then
         return nil, false
     end
 
     local settings = _G.CooldownViewerSettings
     if settings and settings.GetDataProvider then
-        local okProvider, provider = pcall(settings.GetDataProvider, settings)
+        local okProvider, provider = ns.SafeCallMethod("best-effort-style", settings, "GetDataProvider")
         if not okProvider or not provider then
+            return nil, false
+        end
+
+        -- Cold-boot taint gate (see cdm_index BuildOrderedMaps for the full
+        -- story): GetOrderedCooldownIDsForCategory lazily BUILDS the
+        -- provider's shared displayData cache, and building it on QUI's
+        -- stack taints the cooldownInfo/order tables Blizzard's secure item
+        -- mint reads -- every buff item is then born inactive for the
+        -- session. Read the memo fields RAW (never via getters) and report
+        -- not-ready until a secure consumer has built the cache.
+        if provider.displayDataDirty or provider.displayData == nil then
             return nil, false
         end
 
@@ -214,9 +254,9 @@ function CDMCatalog.GetTrackedCategorySet(category, allowUnlearned)
 end
 
 function CDMCatalog.GetCooldownInfo(cooldownID)
-    if not HasCooldownViewerAPI() or not IsCooldownViewerReady() or not cooldownID then return nil end
+    if not HasCooldownViewerAPI() or not CDMCatalog.IsCooldownViewerReady() or not cooldownID then return nil end
     local api = GetCooldownViewerAPI()
-    local ok, info = pcall(api.GetCooldownViewerCooldownInfo, cooldownID)
+    local ok, info = ns.SafeCall("best-effort-style", api.GetCooldownViewerCooldownInfo, cooldownID)
     if ok then
         return info
     end
@@ -281,19 +321,21 @@ local function SelectPersistentSpellID(info)
 end
 
 local function ResolveContainerCategories(containerKey, containerType)
+    if containerType == "cooldown" and BUILTIN_COOLDOWN_PICKER_CATEGORIES[containerKey] then
+        return BUILTIN_COOLDOWN_PICKER_CATEGORIES[containerKey], true
+    end
+
+    local cat = CATEGORY_FOR_KIND[containerKey]
+    if cat ~= nil then
+        return { cat }, true
+    end
     if containerType == "cooldown" then
-        return COOLDOWN_CATEGORIES
+        return PICKER_COOLDOWN_CATEGORIES, false
     end
     if containerType == "aura" or containerType == "auraBar" then
-        return AURA_CATEGORIES
+        return PICKER_AURA_CATEGORIES, false
     end
-    local cat = CATEGORY_FOR_KIND[containerKey]
-    if cat == 0 or cat == 1 then
-        return COOLDOWN_CATEGORIES
-    elseif cat == 2 or cat == 3 then
-        return AURA_CATEGORIES
-    end
-    return ALL_RENDERED_CATEGORIES
+    return ALL_RENDERED_CATEGORIES, false
 end
 
 function CDMCatalog.SeedFromBlizzard(containerKind)
@@ -311,6 +353,32 @@ function CDMCatalog.SeedFromBlizzard(containerKind)
         local info = CDMCatalog.GetCooldownInfo(cdID)
         if not info then
             missingInfo = true
+        elseif info.equipSlot then
+            -- Categorized trinket/equipped item: seed item-typed so the re-anchor
+            -- engine claims its Blizzard frame (CDMIndex.GetByEquipSlot).
+            local slot = info.equipSlot
+            local key = "slot:" .. slot
+            if not seen[key] then
+                seen[key] = true
+                entries[#entries + 1] = {
+                    type = "slot",
+                    id = slot,
+                    source = BLIZZARD_CDM_ENTRY_SOURCE,
+                }
+            end
+        elseif info.spellCategoryID then
+            -- Categorized consumable (potion/healthstone): seed by spell category
+            -- so the re-anchor engine claims its Blizzard frame (GetByCategory).
+            local catID = info.spellCategoryID
+            local key = "consumable:" .. catID
+            if not seen[key] then
+                seen[key] = true
+                entries[#entries + 1] = {
+                    type = "consumable",
+                    id = catID,
+                    source = BLIZZARD_CDM_ENTRY_SOURCE,
+                }
+            end
         else
             local sid = isAuraCategory and SelectPreferredSpellID(info, true)
                 or SelectPersistentSpellID(info)
@@ -394,9 +462,9 @@ function CDMCatalog.RebuildBlizzardCatalogMaps(spellToCDID, inCooldowns, inAuras
         return false
     end
 
-    for cat = 0, 3 do
+    for _, cat in ipairs(ALL_RENDERED_CATEGORIES) do
         local ids = CDMCatalog.GetCategorySet(cat, true)
-        local isAuraCategory = cat == 2 or cat == 3
+        local isAuraCategory = cat == 2 or cat == 3 or cat == 6 or cat == 8
         local familySet = isAuraCategory and inAuras or inCooldowns
         if ids then
             for _, cdID in ipairs(ids) do
@@ -490,17 +558,69 @@ function CDMCatalog.GetAvailableSpellsForContainer(containerKey, containerType, 
     ownedSet = ownedSet or {}
     correctionMap = correctionMap or {}
 
-    local categories = ResolveContainerCategories(containerKey, containerType)
+    local categories, useTrackedCategories = ResolveContainerCategories(containerKey, containerType)
     local isAuraContainer = containerType == "aura" or containerType == "auraBar"
     local available = {}
     local seen = {}
 
     for _, category in ipairs(categories) do
-        local cooldownIDs = CDMCatalog.GetCategorySet(category, true)
+        local cooldownIDs
+        if useTrackedCategories then
+            cooldownIDs = CDMCatalog.GetTrackedCategorySet(category, true)
+        else
+            cooldownIDs = CDMCatalog.GetCategorySet(category, true)
+        end
         if cooldownIDs then
             for _, cdID in ipairs(cooldownIDs) do
                 local cdInfo = CDMCatalog.GetCooldownInfo(cdID)
-                if cdInfo then
+                if cdInfo and cdInfo.equipSlot then
+                    local slot = cdInfo.equipSlot
+                    local itemKey = "slot:" .. slot
+                    if not seen[itemKey] and not ownedSet[itemKey] and not ownedSet[slot] then
+                        seen[itemKey] = true
+                        local Sources = GetSources()
+                        local itemID = Sources and Sources.QueryInventoryItemID
+                            and Sources.QueryInventoryItemID("player", slot)
+                        local name, icon
+                        if itemID and Sources then
+                            if Sources.QueryItemNameByID then
+                                name = Sources.QueryItemNameByID(itemID)
+                            end
+                            if Sources.QueryItemIconByID then
+                                icon = Sources.QueryItemIconByID(itemID)
+                            end
+                        end
+                        available[#available + 1] = {
+                            spellID    = slot,
+                            name       = name or ("Slot " .. slot),
+                            icon       = icon or 0,
+                            isKnown    = cdInfo.isKnown,
+                            source     = BLIZZARD_CDM_ENTRY_SOURCE,
+                            _entryType = "slot",
+                            _entryID   = slot,
+                            _slotID    = slot,
+                        }
+                    end
+                elseif cdInfo and cdInfo.spellCategoryID then
+                    local catID = cdInfo.spellCategoryID
+                    local consKey = "consumable:" .. catID
+                    if not seen[consKey] and not ownedSet[consKey] and not ownedSet[catID] then
+                        seen[consKey] = true
+                        local meta = CONSUMABLE_CATEGORY_META[catID]
+                        local L = ns.L
+                        local name = meta and ((L and L[meta.name]) or meta.name)
+                            or ("Category " .. catID)
+                        available[#available + 1] = {
+                            spellID    = catID,
+                            name       = name,
+                            icon       = (meta and meta.icon) or 0,
+                            isKnown    = cdInfo.isKnown,
+                            source     = BLIZZARD_CDM_ENTRY_SOURCE,
+                            _entryType = "consumable",
+                            _entryID   = catID,
+                        }
+                    end
+                elseif cdInfo then
                     local sid = correctionMap[cdID]
                     if not sid then
                         sid = isAuraContainer and SelectPreferredSpellID(cdInfo, true)
@@ -562,7 +682,7 @@ function CDMCatalog.CollectKnownCDMSpellIDs(out)
         return out
     end
 
-    for cat = 0, 3 do
+    for _, cat in ipairs(ALL_RENDERED_CATEGORIES) do
         local ids = CDMCatalog.GetCategorySet(cat, true)
         if ids then
             for _, cdID in ipairs(ids) do

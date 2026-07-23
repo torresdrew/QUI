@@ -277,6 +277,16 @@ function FadeLinkedBarDirect(barKey)
     state.delayTimer = C_Timer.NewTimer(delay, TryLinkedFade)
 end
 
+-- Extra button surfaces (Zone Ability, Extra Action) fade only while the
+-- surface is MANAGED and its own fade toggle is explicitly on — they never
+-- inherit the global fade, and a DISABLED surface must not sit at a stale
+-- faded alpha (the dual-mover invariant keeps the zone frame visible on its
+-- own holder even when zone management is off).
+function IsExtraButtonBarFadeActive(barSettings)
+    return (barSettings and barSettings.enabled == true
+        and barSettings.fadeEnabled == true) or false
+end
+
 -- Handle mouse entering the bar area (event-based, no polling)
 function OnBarMouseEnter(barKey)
     local state = GetBarFadeState(barKey)
@@ -303,6 +313,9 @@ function OnBarMouseEnter(barKey)
     local fadeEnabled = barSettings and barSettings.fadeEnabled
     if fadeEnabled == nil then
         fadeEnabled = fadeSettings and fadeSettings.enabled
+    end
+    if barKey == "extraActionButton" or barKey == "zoneAbility" then
+        fadeEnabled = IsExtraButtonBarFadeActive(barSettings)
     end
     if not fadeEnabled then return end
 
@@ -356,6 +369,9 @@ function OnBarMouseLeave(barKey)
     local fadeEnabled = barSettings and barSettings.fadeEnabled
     if fadeEnabled == nil then
         fadeEnabled = fadeSettings and fadeSettings.enabled
+    end
+    if barKey == "extraActionButton" or barKey == "zoneAbility" then
+        fadeEnabled = IsExtraButtonBarFadeActive(barSettings)
     end
     if not fadeEnabled then return end
 
@@ -464,10 +480,17 @@ function SetupBarMouseover(barKey)
 
     if not db then return end
 
-    -- Extra button bars (Zone Ability, Extra Action) should never inherit global fade
-    -- They only fade if explicitly enabled for that specific bar
+    -- Extra button bars (Zone Ability, Extra Action) should never inherit
+    -- global fade — they only fade while MANAGED with the per-bar toggle on.
+    -- When fade goes inactive (surface disabled or fade off), drop any stale
+    -- faded alpha instead of bailing: the frame is either QUI-stock on its
+    -- holder or Blizzard-stock in the container, both fully visible.
     if barKey == "extraActionButton" or barKey == "zoneAbility" then
-        if not barSettings or barSettings.fadeEnabled ~= true then
+        if not IsExtraButtonBarFadeActive(barSettings) then
+            local state = GetBarFadeState(barKey)
+            state.isFading = false
+            CancelBarFadeTimers(state)
+            SetBarAlpha(barKey, 1)
             return
         end
     end

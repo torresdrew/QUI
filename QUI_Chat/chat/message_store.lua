@@ -86,7 +86,7 @@ function Store.RemoveWhere(pred)
     local kept, removed = {}, 0
     for i = 1, #entries do
         local entry = entries[i]
-        local ok, matched = pcall(pred, entry)
+        local ok, matched = ns.SafeCall("bulkhead", pred, entry)
         if ok and matched then
             removed = removed + 1
         else

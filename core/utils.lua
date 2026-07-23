@@ -59,6 +59,14 @@ function Helpers.CanAccessTable(tbl)
     return not canaccesstable or canaccesstable(tbl)
 end
 
+--- Check if a value can be accessed and operated on (secret values and
+--- fully locked-down objects fail this probe on 12.1+ clients)
+--- @param value any The value to check
+--- @return boolean True if value can be accessed safely
+function Helpers.CanAccessValue(value)
+    return not canaccessvalue or canaccessvalue(value)
+end
+
 --- Safely get a value, returning fallback if it's a secret
 --- @param value any The potentially secret value
 --- @param fallback any Value to return if secret (default: nil)
@@ -112,7 +120,7 @@ function Helpers.HasTaintedWidgetContainer(tooltip)
                     or Helpers.IsSecretValue(numWidgetsShowing)
                     or Helpers.IsSecretValue(dirty)
                     or Helpers.IsSecretValue(numPoints) then
-                    return true
+                    return true -- @secret-policy: report-secret-detected (unreadable widget state counts as tainted)
                 end
 
                 if widgetSetID ~= nil or dirty == true then
@@ -185,7 +193,7 @@ local PIN_POINT_FRAC = {
 -- or nil (nil when unanchored / MayReturnNothing, or when the value is a
 -- secret). Never compares/arithmetics a secret.
 local function ReadGeom(value)
-    if issecretvalue and issecretvalue(value) then return nil end
+    if issecretvalue and issecretvalue(value) then return nil end -- @secret-policy: reject-secret-value (geometry read degrades to nil)
     if type(value) ~= "number" then return nil end
     return value
 end
@@ -246,7 +254,7 @@ function Helpers.FrameIsProtected(frame)
     if not frame or not frame.IsProtected then return false end
     local ok, protected = pcall(frame.IsProtected, frame)
     if not ok then return false end
-    if issecretvalue and issecretvalue(protected) then return false end
+    if issecretvalue and issecretvalue(protected) then return false end -- @secret-policy: reject-secret-value (fail-open: absolute-pin only for KNOWN-protected)
     return protected == true
 end
 
@@ -262,8 +270,89 @@ function Helpers.FrameIsAnchoringRestricted(frame)
     if not frame or not frame.IsAnchoringRestricted then return false end
     local ok, restricted = pcall(frame.IsAnchoringRestricted, frame)
     if not ok then return false end
-    if issecretvalue and issecretvalue(restricted) then return false end
+    if issecretvalue and issecretvalue(restricted) then return false end -- @secret-policy: reject-secret-value (fail-open: absolute-pin only for KNOWN-restricted)
     return restricted == true
+end
+
+--- Fail-closed protection probe for gating in-combat MUTATION of a frame
+--- (SetPoint/SetParent/SetScale/Show...). Opposite polarity to the fail-open
+--- FrameIsProtected/FrameIsAnchoringRestricted pair above (those pick the
+--- absolute-pin path, which must only trigger for KNOWN-protected targets):
+--- here a pcall error from either getter or a secret (unreadable) answer
+--- counts as RESTRICTED, because mutating a frame whose protection state
+--- cannot be proven draws ADDON_ACTION_BLOCKED, while deferring to
+--- PLAYER_REGEN_ENABLED is cheap. Truth-tests run only after the
+--- issecretvalue probe (truth-testing a secret itself throws).
+--- @return boolean true when the frame must not be mutated in combat
+function Helpers.FrameMutationRestricted(frame)
+    if not frame then return false end
+    if frame.IsProtected then
+        local ok, answer = pcall(frame.IsProtected, frame)
+        if not ok then return true end
+        if issecretvalue and issecretvalue(answer) then return true end -- @secret-policy: report-secret-detected (fail-closed: unprovable = restricted)
+        if answer then return true end
+    end
+    if frame.IsAnchoringRestricted then
+        local ok, answer = pcall(frame.IsAnchoringRestricted, frame)
+        if not ok then return true end
+        if issecretvalue and issecretvalue(answer) then return true end -- @secret-policy: report-secret-detected (fail-closed: unprovable = restricted)
+        if answer then return true end
+    end
+    return false
+end
+
+--- Secret-safe visibility read for anchor parents (hideWithParent path).
+--- IsShown/GetAlpha can throw on a tainted stack and both can answer with a
+--- secret in 12.1 — truth-testing a secret throws, and a secret number passes
+--- type() == "number" but throws on `<` comparison — so every read is pcalled
+--- and issecretvalue-probed before any truth-test or comparison. Tri-state:
+---   true  — provably visible (shown, and alpha above threshold when readable)
+---   false — provably hidden (missing frame/method, not shown, or alpha ≈ 0;
+---           alpha ≈ 0 counts as hidden because HUD visibility fades frames
+---           to alpha 0 instead of calling Hide)
+---   nil   — unprovable (a getter LOOKUP or call threw, or a member/answer
+---           was secret); callers must defer rather than Hide/Show anything
+---           on a guess.
+--- The candidate can be a forbidden frame / DenyTaintedAccess child where
+--- the member LOOKUP itself throws (guard-position class): each getter is
+--- resolved inside pcall via a statement-split probe and the captured
+--- method value is called — never re-indexed — afterwards. The probes are
+--- SEPARATE so the short-circuit order holds: GetAlpha is only probed
+--- after the frame proves shown — a provably-hidden verdict must never
+--- degrade to nil because the alpha getter's lookup threw or was secret.
+local function ProbeIsShown(frame)
+    return frame.IsShown
+end
+local function ProbeGetAlpha(frame)
+    return frame.GetAlpha
+end
+
+--- @param frame table|nil The candidate parent frame
+--- @param alphaThreshold number|nil Alpha below which the frame counts as hidden (default 0.01)
+--- @return boolean|nil
+function Helpers.FrameVisibleSecure(frame, alphaThreshold)
+    -- Probe order: a secret frame throws on truth-test and index alike.
+    if issecretvalue and issecretvalue(frame) then return nil end -- @secret-policy: defer-until-readable
+    if not frame then return false end
+    local okShownProbe, isShownM = pcall(ProbeIsShown, frame)
+    if not okShownProbe then return nil end
+    if issecretvalue and issecretvalue(isShownM) then return nil end -- @secret-policy: defer-until-readable
+    if not isShownM then return false end
+    local ok, shown = pcall(isShownM, frame)
+    if not ok then return nil end
+    if issecretvalue and issecretvalue(shown) then return nil end -- @secret-policy: defer-until-readable
+    if not shown then return false end
+    local okAlphaProbe, getAlphaM = pcall(ProbeGetAlpha, frame)
+    if not okAlphaProbe then return nil end
+    if issecretvalue and issecretvalue(getAlphaM) then return nil end -- @secret-policy: defer-until-readable
+    if not getAlphaM then return true end
+    local okAlpha, alpha = pcall(getAlphaM, frame)
+    if not okAlpha then return nil end
+    if issecretvalue and issecretvalue(alpha) then return nil end -- @secret-policy: defer-until-readable
+    if type(alpha) == "number" and alpha < (alphaThreshold or 0.01) then
+        return false
+    end
+    return true
 end
 
 --- Safely compare two values (returns false if either is secret)
@@ -279,7 +368,7 @@ end
 
 --- Safely convert to number
 --- @param value any The potentially secret value
---- @param fallback number Value to return if secret or not a number
+--- @param fallback number|nil Value to return if secret or not a number (nil coerces to 0 — use SafeNumberOrNil when nil must survive)
 --- @return number The number or fallback
 function Helpers.SafeToNumber(value, fallback)
     if issecretvalue and issecretvalue(value) then
@@ -291,6 +380,22 @@ function Helpers.SafeToNumber(value, fallback)
         return num
     end
     return fallback or 0
+end
+
+--- Safely convert to number, or nil when that isn't possible. Unlike
+--- SafeToNumber (whose `fallback or 0` makes an explicit nil fallback
+--- impossible), this is the helper for callers that need to DISTINGUISH
+--- "unreadable/absent" from a real 0 — e.g. to reject/defer instead of
+--- folding a secret to 0.
+--- @param value any The potentially secret value
+--- @return number|nil The number, or nil if secret or not coercible
+function Helpers.SafeNumberOrNil(value)
+    -- Probe first: ==/truth-tests on a secret throw, so any nil compare or
+    -- tonumber call must come after the IsSecretValue probe.
+    if issecretvalue and issecretvalue(value) then
+        return nil -- @secret-policy: reject-to-nil — nil IS the reject signal; callers' nil guards defer/skip
+    end
+    return tonumber(value)
 end
 
 --- Safely convert to string
@@ -407,7 +512,7 @@ ns.FormatKeybind = FormatKeybind
 --- @param value any
 --- @return boolean|nil
 local function DecodePotentialSecretBoolean(value)
-    if issecretvalue and issecretvalue(value) then return nil end
+    if issecretvalue and issecretvalue(value) then return nil end -- @secret-policy: reject-secret-value (nil = "can't tell")
     if value == nil then return nil end
     if type(value) == "boolean" then return value end
     return nil
@@ -421,10 +526,13 @@ local function UnitTokenMatches(unitToken, targetUnit)
 end
 
 local function GUIDMatchesUnit(sourceGUID, unit)
-    if issecretvalue and issecretvalue(sourceGUID) then return false end
+    if issecretvalue and issecretvalue(sourceGUID) then return false end -- @secret-policy: reject-secret-value (unproven match)
     if type(sourceGUID) ~= "string" then return false end
     if not UnitGUID then return false end
+    -- UnitGUID is secret-capable under identity restriction — probe before
+    -- the == comparison (readable == secret throws).
     local unitGUID = UnitGUID(unit)
+    if issecretvalue and issecretvalue(unitGUID) then return false end -- @secret-policy: reject-secret-value (unproven match)
     return type(unitGUID) == "string" and sourceGUID == unitGUID
 end
 
@@ -1042,7 +1150,8 @@ Helpers.HUD_MIN_WIDTH_MAX = 500
 --- @param width any
 --- @return number
 function Helpers.ClampHUDMinWidth(width)
-    local rounded = math.floor(Helpers.SafeToNumber(width, Helpers.HUD_MIN_WIDTH_DEFAULT) + 0.5)
+    -- width is addon config, never secret — plain coercion.
+    local rounded = math.floor((tonumber(width) or Helpers.HUD_MIN_WIDTH_DEFAULT) + 0.5)
     if rounded < Helpers.HUD_MIN_WIDTH_MIN then
         return Helpers.HUD_MIN_WIDTH_MIN
     end
@@ -1616,7 +1725,14 @@ function Helpers.GetUnitClassColor(unit)
     -- Player characters: use their actual class color
     if UnitIsPlayer(unit) then
         local _, class = UnitClass(unit)
-        if type(class) == "string" then
+        -- PTR7 (announced in Blizzard's addon-dev notes, next PTR build): classFile
+        -- is SECRET on secret-identity units (nameplates, compound tokens). type()
+        -- is a safe inspection, but the table-index inside GetClassColorTable
+        -- throws on a secret — probe first. Secret class falls through to
+        -- reaction/grey.
+        -- @secret-policy: collapse-only — display fallback color, no state
+        local classIsSecret = issecretvalue and issecretvalue(class)
+        if not classIsSecret and type(class) == "string" then
             local color = Helpers.GetClassColorTable(class)
             if color then
                 return color.r, color.g, color.b, 1
@@ -1762,8 +1878,15 @@ function Helpers.IsPlayerMounted()
     if GetShapeshiftFormID and GetShapeshiftFormID() == 27 then return true end
     -- Dracthyr Evoker Soar (racial flight form; not detected by IsMounted)
     if C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID then
+        -- GetPlayerAuraBySpellID is SecretWhenUnitAuraRestricted — the pcall
+        -- protects the call only; probe the RETURN before truth-testing it.
         local ok, aura = pcall(C_UnitAuras.GetPlayerAuraBySpellID, SOAR_SPELL_ID)
-        if ok and aura then return true end
+        if ok then
+            if issecretvalue and issecretvalue(aura) then
+                return false -- @secret-policy: reject-secret-value (Soar unprovable = not mounted)
+            end
+            if aura then return true end
+        end
     end
     return false
 end
@@ -1842,15 +1965,18 @@ end
  --- @param maxLength number Maximum character count (0 or nil = no limit)
  --- @return string The truncated text, or original if no truncation needed
  function Helpers.TruncateUTF8(text, maxLength)
+     -- Probe FIRST: `text == nil` on a secret throws in-game, and every name
+     -- renderer funnels possibly-secret UnitName returns through here. The
+     -- %.Ns format-truncate is the documented secret-safe path.
+     if Helpers.IsSecretValue(text) then
+         if not maxLength or maxLength <= 0 then return text end
+         return string.format("%." .. maxLength .. "s", text)
+     end
      if text == nil then return "" end
      if type(text) ~= "string" then
          return Helpers.SafeToString(text, "")
      end
      if not maxLength or maxLength <= 0 then return text end
-
-     if Helpers.IsSecretValue(text) then
-         return string.format("%." .. maxLength .. "s", text)
-     end
 
      local lenOk, textLen = pcall(function() return #text end)
      if not lenOk then
@@ -1924,7 +2050,7 @@ local function FlushCombatHideQueue()
     if InCombatLockdown() then return end
     for frame, shouldClearAlpha in pairs(_combatHideQueue) do
         if not (frame.IsForbidden and frame:IsForbidden()) then
-            pcall(frame.Hide, frame)
+            ns.SafeCallMethod("best-effort-style", frame, "Hide")
             if shouldClearAlpha and frame.SetAlpha then frame:SetAlpha(0) end
         end
     end
@@ -1958,7 +2084,7 @@ function Helpers.DeferredHideOnShow(frame, opts)
                 QueueCombatHide(self, clearAlpha)
                 return
             end
-            pcall(self.Hide, self)
+            ns.SafeCallMethod("best-effort-style", self, "Hide")
             if clearAlpha and self.SetAlpha then self:SetAlpha(0) end
         end)
     end)
@@ -2000,7 +2126,7 @@ function Helpers.SafeShow(frame)
     if InCombatLockdown() and frame.IsProtected and frame:IsProtected() then
         return false
     end
-    return pcall(frame.Show, frame)
+    return ns.SafeCallMethod("best-effort-style", frame, "Show")
 end
 
 --- Combat-safe Hide: skips if already hidden or if protected + in combat.
@@ -2012,7 +2138,7 @@ function Helpers.SafeHide(frame)
     if InCombatLockdown() and frame.IsProtected and frame:IsProtected() then
         return false
     end
-    return pcall(frame.Hide, frame)
+    return ns.SafeCallMethod("best-effort-style", frame, "Hide")
 end
 
 --- Normalize spell cooldown returns across 11.x tuple and 12.x table APIs.
@@ -2027,16 +2153,17 @@ function Helpers.ReadSpellCooldown(spellID)
         local a, b, _, d = C_Spell.GetSpellCooldown(spellID)
         if type(a) == "table" then
             local info = a
-            return info.startTime or info.start, info.duration, info.modRate, info.isActive, info
+            -- startTime is non-nilable but secret-capable (SpellSharedDocumentation
+            -- SpellCooldownInfo): an `or info.start` fallback would truth-test a
+            -- secret and throw under cooldown restrictions, and the legacy `.start`
+            -- spelling never coexists with the table form.
+            return info.startTime, info.duration, info.modRate, info.isActive, info
         end
         return a, b, d, nil, nil
     end
 
-    if GetSpellCooldown then
-        local start, duration = GetSpellCooldown(spellID)
-        return start, duration, nil, nil, nil
-    end
-
+    -- No bare GetSpellCooldown fallback: the global was removed in 12.x (C_Spell
+    -- is the only surviving API), so referencing it is dead code.
     return nil, nil, nil, nil, nil
 end
 
@@ -2051,7 +2178,7 @@ function Helpers.IsCooldownActive(start, duration, isActive)
     end
 
     if Helpers.IsSecretValue(start) or Helpers.IsSecretValue(duration) then
-        return true
+        return true -- @secret-policy: assume-cooldown-when-unknown
     end
 
     if not start or not duration then return false end
@@ -2081,7 +2208,7 @@ function Helpers.ApplyCooldownFromStart(cooldownFrame, durationObj, startTime, d
     end
 
     if Helpers.IsSecretValue(startTime) or Helpers.IsSecretValue(duration) or Helpers.IsSecretValue(modRate) then
-        return false
+        return false -- @secret-policy: reject-secret-value (numeric SetCooldown path needs readable args; DurationObject sink already tried above)
     end
     if type(startTime) ~= "number" or type(duration) ~= "number" then
         return false
@@ -2138,7 +2265,7 @@ end
 
 local function ApplyCooldownFromExpiration(cooldownFrame, expirationTime, duration, modRate)
     if Helpers.IsSecretValue(expirationTime) or Helpers.IsSecretValue(duration) or Helpers.IsSecretValue(modRate) then
-        return false
+        return false -- @secret-policy: reject-secret-value (numeric cooldown path needs readable args)
     end
     if expirationTime == nil or duration == nil then
         return false
@@ -2214,6 +2341,27 @@ function Helpers.ApplyCooldownFromAura(cooldownFrame, unit, auraInstanceID, expi
     return false
 end
 
+--- Toggle a Cooldown's native radial swipe per an element's swipeStyle config
+--- (radial / horizontal / vertical). Lifted out of the group-frames aura
+--- renderer (commit 8735c4429b, "linear cooldown swipe option") so
+--- core/aura_slots.lua's tracked-slot runtime can share the exact same
+--- radial-suppression rule instead of re-deriving it: "radial" (the default)
+--- shows the native swipe, honoring hideSwipe; any other style suppresses it
+--- (a linear replacement, where one exists, is a SEPARATE object -- the
+--- native swipe texture has no linear mode of its own). Pure config: no aura
+--- reads, so this is safe to call from any host.
+--- @param cooldownFrame table|nil
+--- @param element table|nil Reads swipeStyle / hideSwipe / reverseSwipe.
+function Helpers.ApplyCooldownSwipeStyle(cooldownFrame, element)
+    if not cooldownFrame then
+        return
+    end
+    local style = (element and element.swipeStyle) or "radial"
+    ns.SafeCallMethodIfPresent("best-effort-style", cooldownFrame, "SetDrawSwipe",
+        style == "radial" and (not element or element.hideSwipe ~= true))
+    ns.SafeCallMethodIfPresent("best-effort-style", cooldownFrame, "SetReverse", element and element.reverseSwipe == true)
+end
+
 ---------------------------------------------------------------------------
 -- FORM LAYOUT HELPERS
 ---------------------------------------------------------------------------
@@ -2248,7 +2396,7 @@ function Helpers.SetFrameBackdropColor(frame, r, g, b, a)
     -- Cache BEFORE the live apply so combat-end recovery has the intended color
     -- even if SetBackdropColor errors on a secret value mid-combat.
     frame._quiBgR, frame._quiBgG, frame._quiBgB, frame._quiBgA = r, g, b, a
-    local ok = pcall(frame.SetBackdropColor, frame, r, g, b, a)
+    local ok = ns.SafeCallMethod("defer-ooc", frame, "SetBackdropColor", r, g, b, a)
     if not ok then
         _backdropColorRecovery[frame] = true
     end
@@ -2258,7 +2406,7 @@ end
 --- cache used by QUI-owned/manual backdrop refresh paths.
 function Helpers.SetFrameBackdropBorderColor(frame, r, g, b, a)
     frame._quiBorderR, frame._quiBorderG, frame._quiBorderB, frame._quiBorderA = r, g, b, a
-    local ok = pcall(frame.SetBackdropBorderColor, frame, r, g, b, a)
+    local ok = ns.SafeCallMethod("defer-ooc", frame, "SetBackdropBorderColor", r, g, b, a)
     if not ok then
         _backdropColorRecovery[frame] = true
     end

@@ -42,7 +42,11 @@ local function newCastbar()
         self.eventsRegistered = false
     end
 
+    -- 12.1: CastingBarMixin:SetUnit iterates CastingBarTypeInfo, which
+    -- taint-blocks from addon execution — suppression must never call it.
+    castbar.setUnitCalls = 0
     function castbar:SetUnit(unit)
+        self.setUnitCalls = self.setUnitCalls + 1
         self.unit = unit
     end
 
@@ -115,7 +119,20 @@ local function loadModule()
 
     function hooksecurefunc() end
 
+    -- core/safecall.lua stub: silent pcall passthrough matches the pre-SafeCall
+    -- shape this test was written against (Task 45a: all 9 protected-frame
+    -- guards in unitframe_blizzard.lua now route through
+    -- ns.SafeCall("best-effort-style", ...)).
+    local function safeCallStub(_policy, fn, ...) return pcall(fn, ...) end
+local function safeCallMethodStub(_policy, obj, name, ...)
+    return pcall(function(...) return obj[name](obj, ...) end, ...)
+end
+local safeCallMethodIfPresentStub = function(_policy, obj, name, ...) if obj == nil then return nil end local okP, m = pcall(function() return obj[name] end) if not okP then return false end if m == nil then return nil end return pcall(m, obj, ...) end
+
     local ns = {
+        SafeCall = safeCallStub,
+        SafeCallMethod = safeCallMethodStub,
+    SafeCallMethodIfPresent = safeCallMethodIfPresentStub,
         QUI_UnitFrames = {},
         Helpers = {
             CreateDBGetter = function()
@@ -141,7 +158,7 @@ local function assertSuppressed(castbar, messagePrefix)
     assert(castbar.alpha == 0, messagePrefix .. " should set the default castbar alpha to zero")
     assert(castbar.scale == 0.0001, messagePrefix .. " should shrink the default castbar")
     assert(castbar.shown == false, messagePrefix .. " should hide the default castbar")
-    assert(castbar.unit == nil, messagePrefix .. " should detach the default castbar unit")
+    assert(castbar.setUnitCalls == 0, messagePrefix .. " must never call SetUnit (12.1 taint-blocked path)")
     assert(castbar.eventsRegistered == false, messagePrefix .. " should unregister the default castbar events")
     assert(castbar.Icon.alpha == 0, messagePrefix .. " should set the default castbar icon alpha to zero")
     assert(castbar.Icon.shown == false, messagePrefix .. " should hide the default castbar icon")

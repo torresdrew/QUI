@@ -174,6 +174,11 @@ local function GetPreviewPowerMax(resource)
     if Helpers and Helpers.SafeToNumber then
         return Helpers.SafeToNumber(maxValue, 0)
     end
+    -- Bare fallback (core/utils.lua always loads first in-game; this arm is
+    -- headless-only): probe before tonumber — the read is secret-capable.
+    if issecretvalue and issecretvalue(maxValue) then
+        return 0 -- @secret-policy: zero-degrade
+    end
     return tonumber(maxValue) or 0
 end
 

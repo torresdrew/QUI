@@ -2,6 +2,7 @@ local DurationTextBindingObjectAPI =
 {
 	Name = "DurationTextBindingObjectAPI",
 	Type = "ScriptObject",
+	ObjectType = "Userdata",
 	Environment = "All",
 
 	Functions =
@@ -32,6 +33,15 @@ local DurationTextBindingObjectAPI =
 			Returns =
 			{
 				{ Name = "canUpdateText", Type = "bool", Nilable = false },
+			},
+		},
+		{
+			Name = "ClearTextColorCurve",
+			Type = "Function",
+			Documentation = { "Clears the text color curve used by this binding." },
+
+			Arguments =
+			{
 			},
 		},
 		{
@@ -106,6 +116,37 @@ local DurationTextBindingObjectAPI =
 			Returns =
 			{
 				{ Name = "text", Type = "string", Nilable = false, ConditionalSecret = true },
+			},
+		},
+		{
+			Name = "GetFormattedTextColor",
+			Type = "Function",
+			MayReturnNothing = true,
+			Documentation = { "Returns the text color that would currently be assigned to the configured font string." },
+
+			Arguments =
+			{
+			},
+
+			Returns =
+			{
+				{ Name = "color", Type = "colorRGBA", Mixin = "ColorMixin", Nilable = false, ConditionalSecret = true },
+			},
+		},
+		{
+			Name = "GetTextColorCurve",
+			Type = "Function",
+			MayReturnNothing = true,
+			Documentation = { "Returns the text color curve used by this binding." },
+
+			Arguments =
+			{
+			},
+
+			Returns =
+			{
+				{ Name = "curve", Type = "LuaColorCurveObject", Nilable = false },
+				{ Name = "property", Type = "DurationTextBindingProperty", Nilable = false },
 			},
 		},
 		{
@@ -232,6 +273,18 @@ local DurationTextBindingObjectAPI =
 			Arguments =
 			{
 				{ Name = "formatter", Type = "NumericFormatter", Nilable = false },
+			},
+		},
+		{
+			Name = "SetTextColorCurve",
+			Type = "Function",
+			SecretArguments = "AllowedWhenUntainted",
+			Documentation = { "Configures this duration text binding to adjust fontstring text color by evaluating a duration property through a curve." },
+
+			Arguments =
+			{
+				{ Name = "curve", Type = "LuaColorCurveObject", Nilable = false },
+				{ Name = "property", Type = "DurationTextBindingProperty", Nilable = false },
 			},
 		},
 		{
