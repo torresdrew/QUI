@@ -224,6 +224,10 @@ function QUICore:SnapFramePosition(frame)
     if not frame then return end
     if InCombatLockdown() then return end
     local point, relativeTo, relativePoint, x, y = frame:GetPoint()
+    -- Probe before the `not point` / `x or 0` truth-tests: GetPoint returns
+    -- are SecretWhenAnchoringSecret and a truth-test on a secret throws.
+    -- Bail exactly like the no-anchor case; callers already handle nil.
+    if ns.Helpers.HasSecretValue(point, relativeTo, relativePoint, x, y) then return end
     if not point then return end
     x = self:PixelRound(x or 0, frame)
     y = self:PixelRound(y or 0, frame)

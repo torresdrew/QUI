@@ -156,17 +156,23 @@ function SaveExtraButtonHolderPosition(buttonType, holder)
         point, relPoint, x, y = snappedPoint, snappedRelPoint, snappedX, snappedY
     end
 
+    -- Probe BEFORE the `not point` truth-tests: EVERY GetPoint return
+    -- (point/relPoint included, not just coords) is SecretWhenAnchoringSecret,
+    -- and a truth-test on a secret itself throws. Reject, never persist: a
+    -- restricted anchor read would otherwise fold to 0 and overwrite the
+    -- SavedVariable position with a bogus origin. Skipping the save keeps the
+    -- last good position; the next OOC save catches up.
+    if Helpers.HasSecretValue(point, relPoint, x, y) then return end
+
     if not point and holder.GetPoint then
         local fallbackPoint, _, fallbackRelPoint, fallbackX, fallbackY = holder:GetPoint(1)
         point, relPoint, x, y = fallbackPoint, fallbackRelPoint, fallbackX, fallbackY
     end
 
-    if not point then return end
+    -- Same probe for the fallback GetPoint read.
+    if Helpers.HasSecretValue(point, relPoint, x, y) then return end
 
-    -- Reject, never persist: a restricted anchor read would fold to 0 here
-    -- and overwrite the SavedVariable position with a bogus origin. Skipping
-    -- the save keeps the last good position; the next OOC save catches up.
-    if Helpers.IsSecretValue(x) or Helpers.IsSecretValue(y) then return end
+    if not point then return end
 
     x = tonumber(x) or 0
     y = tonumber(y) or 0
@@ -273,6 +279,10 @@ function CreateExtraButtonNudgeButton(parent, direction, holder, buttonType)
             holder:AdjustPointsOffset(dx, dy)
         else
             local point, relativeTo, relativePoint, xOfs, yOfs = holder:GetPoint(1)
+            -- Probe before the truth-tests below: GetPoint returns are
+            -- SecretWhenAnchoringSecret; skip the nudge on a restricted read
+            -- (the save below would reject it anyway).
+            if Helpers.HasSecretValue(point, relativeTo, relativePoint, xOfs, yOfs) then return end
             if point then
                 holder:ClearAllPoints()
                 holder:SetPoint(point, relativeTo, relativePoint, (xOfs or 0) + dx, (yOfs or 0) + dy)
