@@ -163,8 +163,13 @@ function SaveExtraButtonHolderPosition(buttonType, holder)
 
     if not point then return end
 
-    x = Helpers.SafeToNumber(x, 0)
-    y = Helpers.SafeToNumber(y, 0)
+    -- Reject, never persist: a restricted anchor read would fold to 0 here
+    -- and overwrite the SavedVariable position with a bogus origin. Skipping
+    -- the save keeps the last good position; the next OOC save catches up.
+    if Helpers.IsSecretValue(x) or Helpers.IsSecretValue(y) then return end
+
+    x = tonumber(x) or 0
+    y = tonumber(y) or 0
     relPoint = relPoint or point
 
     local db = GetExtraButtonDB(buttonType)
@@ -367,7 +372,8 @@ function GetExtraButtonHolderSize(buttonType, blizzFrame, settings, scale)
         end
     end
 
-    scale = Helpers.SafeToNumber(scale, 1)
+    -- scale is addon config, never secret — plain coercion.
+    scale = tonumber(scale) or 1
     if scale <= 0 then scale = 1 end
 
     return math.max(width * scale, 64), math.max(height * scale, 64)
@@ -378,11 +384,12 @@ end
 -- scaled bar's visual center still lands on the holder without repinning the
 -- protected child or replacing Blizzard's layout methods.
 local function GetExtraActionContainerAnchorOffset(container, bar, scale, offsetX, offsetY)
-    scale = Helpers.SafeToNumber(scale, 1)
+    -- scale/offsetX/offsetY are addon config, never secret — plain coercion.
+    scale = tonumber(scale) or 1
     if scale <= 0 then scale = 1 end
 
-    offsetX = Helpers.SafeToNumber(offsetX, 0)
-    offsetY = Helpers.SafeToNumber(offsetY, 0)
+    offsetX = tonumber(offsetX) or 0
+    offsetY = tonumber(offsetY) or 0
     if not container or not bar then return offsetX, offsetY end
 
     local barWidth = Helpers.SafeToNumber(bar:GetWidth(), 0)

@@ -1657,8 +1657,9 @@ local function GetPlayerMythicRating(unit)
     if type(provider) == "table" and type(provider.GetProfile) == "function" then
         local ok, profile = pcall(provider.GetProfile, unit)
         if ok and profile and profile.mythicKeystoneProfile and profile.mythicKeystoneProfile.currentScore then
-            local score = Helpers.SafeToNumber(profile.mythicKeystoneProfile.currentScore, 0)
-            if score and score > 0 then
+            -- Third-party provider table value, never secret — plain coercion.
+            local score = tonumber(profile.mythicKeystoneProfile.currentScore) or 0
+            if score > 0 then
                 local color = provider.GetScoreColor and provider.GetScoreColor(score)
                 if type(color) == "table" and color.r then
                     return math.floor(score), color.r, color.g, color.b

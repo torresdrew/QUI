@@ -628,12 +628,14 @@ end
 -- (so the flyout opens toward screen center, away from the nearest edge).
 ComputeAutoFlyoutDirection = function(btn, isVertical)
     -- GetCenter MayReturnNothing and is SecretWhenAnchoringSecret, so coerce
-    -- through SafeToNumber (nil on a secret/absent center) before comparing —
+    -- through SafeNumberOrNil (nil on a secret/absent center) before comparing —
     -- never compare a possibly-secret coordinate in Lua. Fall back to the
-    -- closed-side default when the position can't be read.
+    -- closed-side default when the position can't be read. (SafeToNumber was
+    -- wrong here: its `fallback or 0` can never yield nil, so the nil guards
+    -- below were dead and a secret center silently compared as 0.)
     local rawX, rawY = btn:GetCenter()
-    local cx = Helpers.SafeToNumber(rawX)
-    local cy = Helpers.SafeToNumber(rawY)
+    local cx = Helpers.SafeNumberOrNil(rawX)
+    local cy = Helpers.SafeNumberOrNil(rawY)
     if isVertical then
         if cx then return cx > (GetScreenWidth() / 2) and "LEFT" or "RIGHT" end
         return "RIGHT"

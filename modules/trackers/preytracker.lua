@@ -133,6 +133,7 @@ local HasTaskAPI = C_TaskQuest and type(C_TaskQuest.GetQuestZoneID) == "function
 ---------------------------------------------------------------------------
 
 local SafeToNumber = Helpers.SafeToNumber
+local SafeNumberOrNil = Helpers.SafeNumberOrNil
 local SafeValue = Helpers.SafeValue
 
 -- Safe currency-quantity read: returns the SafeToNumber'd quantity, or nil.
@@ -327,7 +328,8 @@ local function ExtractProgressPercent(info, tooltip)
     if tooltipStr and type(tooltipStr) == "string" then
         local match = tooltipStr:match("(%d+)%s*%%")
         if match then
-            local pct = SafeToNumber(match, 0)
+            -- Plain tonumber: a Lua pattern capture is never secret.
+            local pct = tonumber(match) or 0
             if pct > 0 then return max(0, min(100, pct)) end
         end
     end
@@ -343,7 +345,9 @@ local function ExtractQuestObjectivePercent(questID)
     local questBarPct = nil
     local ok, rawPct = pcall(GetQuestProgressBarPercent, questID)
     if ok and rawPct then
-        local val = SafeToNumber(rawPct, nil)
+        -- SafeNumberOrNil so the nil guard below is live (SafeToNumber's
+        -- `fallback or 0` can never return nil).
+        local val = SafeNumberOrNil(rawPct)
         if val and val > 0 then
             questBarPct = max(0, min(100, val))
         end
@@ -361,8 +365,11 @@ local function ExtractQuestObjectivePercent(questID)
 
     for _, objective in ipairs(objectives) do
         if type(objective) == "table" then
-            local fulfilled = SafeToNumber(objective.numFulfilled, nil) or SafeToNumber(objective.fulfilled, nil)
-            local required = SafeToNumber(objective.numRequired, nil) or SafeToNumber(objective.required, nil)
+            -- SafeNumberOrNil keeps the alternate-field `or` chains and the
+            -- `fulfilled and required` guards below LIVE — SafeToNumber folded
+            -- absent fields to 0, so the fallbacks and guards were dead code.
+            local fulfilled = SafeNumberOrNil(objective.numFulfilled) or SafeNumberOrNil(objective.fulfilled)
+            local required = SafeNumberOrNil(objective.numRequired) or SafeNumberOrNil(objective.required)
 
             -- Handle boolean finished with no required count
             if fulfilled and not required and objective.finished ~= nil then
@@ -379,15 +386,17 @@ local function ExtractQuestObjectivePercent(questID)
                 local text = objective.text
                 if type(text) == "string" and text ~= "" then
                     local curText, maxText = text:match("(%d+)%s*/%s*(%d+)")
-                    local curVal = SafeToNumber(curText, nil)
-                    local maxVal = SafeToNumber(maxText, nil)
+                    -- Plain tonumber: pattern captures are never secret, and
+                    -- nil must survive for the guards below.
+                    local curVal = tonumber(curText)
+                    local maxVal = tonumber(maxText)
                     if curVal and maxVal and maxVal > 0 then
                         anyNumericObjective = true
                         totalFulfilled = totalFulfilled + max(0, curVal)
                         totalRequired = totalRequired + max(0, maxVal)
                     else
                         local pctText = text:match("(%d+)%s*%%")
-                        local pctVal = SafeToNumber(pctText, nil)
+                        local pctVal = tonumber(pctText)
                         if pctVal then
                             return max(0, min(100, pctVal))
                         end

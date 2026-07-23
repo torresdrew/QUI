@@ -676,7 +676,10 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
                 SalvageButton:Hide()
             end
         elseif GameTooltip:IsShown() and IsModifierActive() then
-            -- Re-trigger tooltip hook when modifier pressed
+            -- Re-trigger tooltip hook when modifier pressed.
+            -- Policy: reject-on-secret — an unreadable IsMouseOver folds to
+            -- false, which simply skips the cosmetic re-trigger (no tooltip
+            -- re-show); never manufactures a positive hover.
             local owner = GameTooltip:GetOwner()
             if owner and Helpers.SafeValue(owner:IsMouseOver(), false) then
                 if owner.GetSlotAndBagID then

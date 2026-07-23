@@ -2063,7 +2063,8 @@ function SkinBase.ApplyTextureBackdrop(frame, bgFile, edgeFile, edgeSize, border
     if not frame then return false end
 
     local data = EnsureManualBackdrop(frame)
-    local px = Helpers.SafeToNumber(edgeSize, 1)
+    -- edgeSize is a skinning config argument, never secret — plain coercion.
+    local px = tonumber(edgeSize) or 1
     if px < 0 then px = 0 end
     local inset = bgInset
     if inset == nil then inset = px end

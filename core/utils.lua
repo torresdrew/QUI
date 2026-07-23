@@ -360,7 +360,7 @@ end
 
 --- Safely convert to number
 --- @param value any The potentially secret value
---- @param fallback number Value to return if secret or not a number
+--- @param fallback number|nil Value to return if secret or not a number (nil coerces to 0 — use SafeNumberOrNil when nil must survive)
 --- @return number The number or fallback
 function Helpers.SafeToNumber(value, fallback)
     if issecretvalue and issecretvalue(value) then
@@ -372,6 +372,22 @@ function Helpers.SafeToNumber(value, fallback)
         return num
     end
     return fallback or 0
+end
+
+--- Safely convert to number, or nil when that isn't possible. Unlike
+--- SafeToNumber (whose `fallback or 0` makes an explicit nil fallback
+--- impossible), this is the helper for callers that need to DISTINGUISH
+--- "unreadable/absent" from a real 0 — e.g. to reject/defer instead of
+--- folding a secret to 0.
+--- @param value any The potentially secret value
+--- @return number|nil The number, or nil if secret or not coercible
+function Helpers.SafeNumberOrNil(value)
+    -- Probe first: ==/truth-tests on a secret throw, so any nil compare or
+    -- tonumber call must come after the IsSecretValue probe.
+    if issecretvalue and issecretvalue(value) then
+        return nil -- @secret-policy: reject-to-nil — nil IS the reject signal; callers' nil guards defer/skip
+    end
+    return tonumber(value)
 end
 
 --- Safely convert to string
@@ -1126,7 +1142,8 @@ Helpers.HUD_MIN_WIDTH_MAX = 500
 --- @param width any
 --- @return number
 function Helpers.ClampHUDMinWidth(width)
-    local rounded = math.floor(Helpers.SafeToNumber(width, Helpers.HUD_MIN_WIDTH_DEFAULT) + 0.5)
+    -- width is addon config, never secret — plain coercion.
+    local rounded = math.floor((tonumber(width) or Helpers.HUD_MIN_WIDTH_DEFAULT) + 0.5)
     if rounded < Helpers.HUD_MIN_WIDTH_MIN then
         return Helpers.HUD_MIN_WIDTH_MIN
     end

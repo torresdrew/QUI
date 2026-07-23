@@ -747,15 +747,9 @@ local RenewingMistChargeState = {
     chargeModRate = 1,
 }
 
-local function SafeNumberOrNil(value)
-    -- Probe first: ==/truth-tests on a secret throw, so the nil compare must
-    -- come after IsSecretValue.
-    if Helpers.IsSecretValue(value) or value == nil then
-        return nil
-    end
-    local number = tonumber(value)
-    return number
-end
+-- Promoted to Helpers.SafeNumberOrNil (core/utils.lua); local alias keeps the
+-- existing call sites and upvalue count unchanged.
+local SafeNumberOrNil = Helpers.SafeNumberOrNil
 
 -- Probe-first read of a player power pair (UnitPower/UnitPowerMax are
 -- SecretWhenUnitPowerRestricted; NO power type is documented NeverSecret, so

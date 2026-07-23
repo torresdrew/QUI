@@ -787,8 +787,13 @@ local function GetHealthBarColor(unit, settings)
 
     -- Check HostilityColor - applies to NPCs
     if settings and settings.useHostilityColor then
+        -- SafeToNumber returns 0 for nil/secret reactions, and 0 is truthy in
+        -- Lua, so a bare `if reaction` sent unknown-reaction units down the
+        -- hostile-red branch. Valid UnitReaction values are 1-8; require >0 so
+        -- unknowns fall through to the custom/class color paths below (mirrors
+        -- Helpers.GetUnitClassColor in core/utils.lua).
         local reaction = Helpers.SafeToNumber(UnitReaction(unit, "player"), nil)
-        if reaction then
+        if reaction and reaction > 0 then
             if reaction >= 5 then
                 local c = general and general.hostilityColorFriendly or { 0.2, 0.8, 0.2, 1 }
                 return c[1], c[2], c[3], c[4] or 1

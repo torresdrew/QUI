@@ -51,10 +51,11 @@ local BUILTIN_GUARDS = {
 -- Always emit a `review`-tier finding at the call site to push toward
 -- C-side sinks.
 local BUILTIN_UNWRAPS = {
-    ["Helpers.SafeValue"]    = true,
-    ["Helpers.SafeToNumber"] = true,
-    ["Helpers.SafeToString"] = true,
-    ["Helpers.SafeCompare"]  = true,
+    ["Helpers.SafeValue"]        = true,
+    ["Helpers.SafeToNumber"]     = true,
+    ["Helpers.SafeToString"]     = true,
+    ["Helpers.SafeCompare"]      = true,
+    ["Helpers.SafeNumberOrNil"]  = true,
 }
 
 -- Clean fields: when reading `tainted_local.<field>`, if <field> is in this

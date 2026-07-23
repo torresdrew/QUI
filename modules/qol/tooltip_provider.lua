@@ -231,7 +231,12 @@ function TooltipProvider:IsOwnerFadedOut(owner)
     if IsOPieFrame(owner) then return false end
     local ok, alpha = pcall(owner.GetEffectiveAlpha, owner)
     if not ok then return false end
-    return Helpers.SafeToNumber(alpha, 1) < FADED_ALPHA_THRESHOLD
+    -- Fade suppression only ever HIDES tooltips, so an unreadable (secret)
+    -- alpha must fail open — an explicit reject here, not a folded comparison.
+    if Helpers.IsSecretValue(alpha) then
+        return false -- @secret-policy: treat-unknown-alpha-as-visible
+    end
+    return (tonumber(alpha) or 1) < FADED_ALPHA_THRESHOLD
 end
 
 function TooltipProvider:IsTransientTooltipOwner(owner)

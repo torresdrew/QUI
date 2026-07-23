@@ -352,6 +352,7 @@ return {
         "SafeToNumber",
         "SafeToString",
         "SafeCompare",
+        "SafeNumberOrNil",
     },
     clean_fields = {
         -- Field names that are always non-secret per Blizzard's API contract.

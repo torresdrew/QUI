@@ -87,6 +87,10 @@ function UpdateOwnedFlyoutButtonCooldown(button)
     -- `chargeInfo and` truth-tests read the structure ref itself, which is a
     -- plain table-or-nil (SpellCooldownInfo/SpellChargeInfo secretize per
     -- FIELD, several NeverSecret, per SpellSharedDocumentation).
+    -- Policy: probe-charges-when-unknown (mirrors actionbars_cooldowns) — a
+    -- secret currentCharges folds to 0, so showCharge stays true and the
+    -- charge swipe defers to the GetSpellChargeDuration DurationObject sink
+    -- below, which self-corrects (no recharge in flight → no durObj → Clear).
     local cur = Helpers.SafeToNumber(chargeInfo and chargeInfo.currentCharges, 0) -- @secret-safe: SpellChargeInfo container is a plain table-or-nil; the secret-capable field goes to the unwrap
     local max = Helpers.SafeToNumber(chargeInfo and chargeInfo.maxCharges, 0) -- @secret-safe: SpellChargeInfo container is a plain table-or-nil; maxCharges is NeverSecret and goes to the unwrap
     local showCharge = max > 0 and cur < max

@@ -200,10 +200,8 @@ local function GetPreviewSlot(barKey, index)
         and ns.ActionBarsOwned.nativeButtons
         and ns.ActionBarsOwned.nativeButtons[barKey]
     local button = buttons and buttons[index]
+    -- .action on owned buttons is addon-set, never secret — read it raw.
     local liveAction = button and button.action
-    if Helpers.SafeValue then
-        liveAction = Helpers.SafeValue(liveAction, nil)
-    end
     local numericAction = liveAction and tonumber(liveAction)
     if numericAction and numericAction > 0 then
         return numericAction
@@ -221,11 +219,8 @@ local function GetPreviewSourceButton(barKey, index)
 end
 
 local function GetPreviewActionSlot(slot, sourceButton)
+    -- .action on owned buttons is addon-set, never secret — read it raw.
     local liveAction = sourceButton and sourceButton.action
-    if Helpers.SafeValue then
-        liveAction = Helpers.SafeValue(liveAction, nil)
-    end
-
     local numericAction = liveAction and tonumber(liveAction)
     if numericAction and numericAction > 0 then
         return numericAction
