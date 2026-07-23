@@ -2222,28 +2222,108 @@ local function CreateBossFrame(unit, frameKey, bossIndex)
 end
 
 ---------------------------------------------------------------------------
+-- PURE: Frequent-power coalescing decisions (generation token)
+-- C_Timer.After callbacks are uncancellable, so a pending drain cannot be
+-- cancelled when an immediate UNIT_POWER_UPDATE / UNIT_MAXPOWER refresh
+-- makes it redundant. Instead every immediate refresh bumps `gen`; the
+-- drain captured `queuedGen` at queue time and no-ops when they differ.
+-- (C_Timer.NewTimer+Cancel would also work, but allocates a timer object
+-- per queue cycle and adds a handle to juggle across three sites; the token
+-- is one integer in per-frame state — no new file-scope upvalues.)
+-- Pure: no WoW APIs except in the EventPowerMatters wrapper at the bottom.
+-- Tested by tests/unit/unitframes_power_coalesce_test.lua.
+---------------------------------------------------------------------------
+QUI_UF.PowerCoalesce = {}
+
+function QUI_UF.PowerCoalesce.NewState()
+    return { gen = 0, queuedGen = nil }
+end
+
+-- UNIT_POWER_FREQUENT arrived. Returns true when the caller should schedule
+-- a drain timer; false when one is already pending (the pending slot is
+-- re-validated to the current generation so it fires for this newer event).
+function QUI_UF.PowerCoalesce.OnFrequent(state)
+    local schedule = (state.queuedGen == nil)
+    state.queuedGen = state.gen
+    return schedule
+end
+
+-- An immediate refresh ran (UNIT_POWER_UPDATE / UNIT_MAXPOWER). Any drain
+-- queued before this instant is now redundant: bump the generation so it
+-- no-ops on fire. gen is a plain Lua number (double, exact to 2^53), so it
+-- never wraps in any realistic session.
+function QUI_UF.PowerCoalesce.OnImmediate(state)
+    state.gen = state.gen + 1
+end
+
+-- Drain timer fired. Clears the queued slot; returns true when the queued
+-- generation is still current (no immediate refresh superseded it).
+function QUI_UF.PowerCoalesce.OnFire(state)
+    local queued = state.queuedGen
+    state.queuedGen = nil
+    return queued ~= nil and queued == state.gen
+end
+
+-- Should a power event with this payload refresh the display? The frame
+-- renders only the unit's primary power (UpdatePower / UpdatePowerText call
+-- UnitPower / UnitPowerPercent with nil powerType), so events for other
+-- power types are no-ops. Pure: the caller passes the probed secret flag;
+-- nil on either side means "cannot prove irrelevant" -> refresh.
+function QUI_UF.PowerCoalesce.EventMatters(eventPowerType, displayedToken, anySecret)
+    if anySecret then return true end
+    if eventPowerType == nil or displayedToken == nil then return true end
+    return eventPowerType == displayedToken
+end
+
+-- WoW-side wrapper: resolve the unit's displayed power token and probe for
+-- secrets BEFORE EventMatters compares anything. UNIT_POWER_FREQUENT /
+-- UNIT_POWER_UPDATE payload is (unitTarget, powerType cstring) per
+-- tests/api-docs/blizzard/UnitDocumentation.lua:4347-4357 / :4369-4379;
+-- UnitPowerType (:2736-2756) MayReturnNothing, so a nil token also refreshes.
+-- @secret-policy: collapse-only — a secret token on either side makes the
+-- comparison unprovable, so treat the event as relevant and refresh.
+function QUI_UF.EventPowerMatters(unit, eventPowerType)
+    local _, token = UnitPowerType(unit)
+    local eventIsSecret = IsSecretValue(eventPowerType)
+    local tokenIsSecret = IsSecretValue(token)
+    return QUI_UF.PowerCoalesce.EventMatters(eventPowerType, token,
+        eventIsSecret or tokenIsSecret)
+end
+
+---------------------------------------------------------------------------
 -- Force update ToT frame when target-related events fire
 ---------------------------------------------------------------------------
-local function ForceUpdateToT()
+local function ForceUpdateToT(includeIdentity)
     local totFrame = QUI_UF.frames and QUI_UF.frames.targettarget
     if not totFrame or not UnitExists("targettarget") then return end
     UpdateHealth(totFrame)
     UpdateAbsorbs(totFrame)
     UpdatePower(totFrame)
     UpdatePowerText(totFrame)
-    UpdateName(totFrame)
-    UpdateLevelText(totFrame)
+    if includeIdentity then
+        UpdateName(totFrame)
+        UpdateLevelText(totFrame)
+    end
 end
 
 -- ToT polling for health updates (unit events don't fire reliably for targettarget)
+-- Vitals poll every tick. Identity (name/level) is event-driven —
+-- UNIT_NAME_UPDATE / UNIT_LEVEL are registered for the frame and
+-- UNIT_TARGET / PLAYER_TARGET_CHANGED run a full UpdateFrame — but the
+-- client does not route unit events reliably for the compound targettarget
+-- token, so the ticker refreshes identity as a slow fallback every
+-- TOT_IDENTITY_TICKS ticks instead of every tick.
 local totUpdateTicker = nil
 local TOT_UPDATE_INTERVAL = 0.5
 
 local function StartToTTicker()
     if totUpdateTicker then return end
+    local TOT_IDENTITY_TICKS = 4  -- 4 * 0.5s = identity fallback every 2s
+    local tick = 0
     totUpdateTicker = C_Timer.NewTicker(TOT_UPDATE_INTERVAL, function()
         if UnitExists("targettarget") then
-            ForceUpdateToT()
+            tick = (tick + 1) % TOT_IDENTITY_TICKS
+            ForceUpdateToT(tick == 0)
         end
     end)
 end
@@ -2923,10 +3003,12 @@ local function CreateUnitFrame(unit, unitKey)
     -- Coalesce UNIT_POWER_FREQUENT (regen ticks, many/sec) to ~5 Hz.
     -- UNIT_POWER_UPDATE / UNIT_MAXPOWER are discrete and stay immediate.
     -- C_Timer drain instead of an OnUpdate script so the frame's OnUpdate
-    -- slot stays free; callbacks are uncancellable, so re-check on fire.
-    local _freqPowerQueued = false
+    -- slot stays free; callbacks are uncancellable, so an immediate refresh
+    -- invalidates a pending drain via the generation token in _freqPower
+    -- (see QUI_UF.PowerCoalesce) instead of cancelling the timer.
+    local _freqPower = QUI_UF.PowerCoalesce.NewState()
     local function DrainFrequentPower()
-        _freqPowerQueued = false
+        if not QUI_UF.PowerCoalesce.OnFire(_freqPower) then return end
         local u = QUI_UF.GetFrameUnit(frame)
         if u and UnitExists(u) then
             UpdatePower(frame)
@@ -2934,7 +3016,7 @@ local function CreateUnitFrame(unit, unitKey)
         end
     end
 
-    frame:SetScript("OnEvent", function(self, event, arg1)
+    frame:SetScript("OnEvent", function(self, event, arg1, arg2)
         local frameUnit = QUI_UF.GetFrameUnit(self)
         if event == "PLAYER_ENTERING_WORLD" then
             -- Skip refresh if HUD visibility has this frame hidden — the
@@ -3029,13 +3111,22 @@ local function CreateUnitFrame(unit, unitKey)
             elseif event == "UNIT_ABSORB_AMOUNT_CHANGED" or event == "UNIT_HEAL_ABSORB_AMOUNT_CHANGED" then
                 UpdateAbsorbs(self)
             elseif event == "UNIT_POWER_FREQUENT" then
-                if not _freqPowerQueued then
-                    _freqPowerQueued = true
+                -- arg2 = powerType token ("MANA", "ENERGY", ...). Skip types
+                -- the frame doesn't display; probe/secret handling lives in
+                -- QUI_UF.EventPowerMatters (@secret-policy collapse-only).
+                if QUI_UF.EventPowerMatters(frameUnit, arg2)
+                   and QUI_UF.PowerCoalesce.OnFrequent(_freqPower) then
                     C_Timer.After(0.2, DrainFrequentPower)
                 end
             elseif event == "UNIT_POWER_UPDATE" or event == "UNIT_MAXPOWER" then
-                UpdatePower(self)
-                UpdatePowerText(self)
+                -- UNIT_MAXPOWER always refreshes (pool resize moves the bar);
+                -- UNIT_POWER_UPDATE only when the payload type is displayed.
+                if event == "UNIT_MAXPOWER" or QUI_UF.EventPowerMatters(frameUnit, arg2) then
+                    UpdatePower(self)
+                    UpdatePowerText(self)
+                    -- Any pending frequent drain is now redundant.
+                    QUI_UF.PowerCoalesce.OnImmediate(_freqPower)
+                end
             elseif event == "UNIT_NAME_UPDATE" then
                 UpdateName(self)
                 UpdateLevelText(self)

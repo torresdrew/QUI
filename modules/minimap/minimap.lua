@@ -3875,26 +3875,45 @@ local function StartUpdateTickers()
     local settings = GetSettings()
     if not settings then return end
 
-    -- Cancel existing tickers if any
-    if clockTicker then clockTicker:Cancel() end
-    if coordsTicker then coordsTicker:Cancel() end
+    -- Cancel existing tickers if any; nil out so a now-disabled feature does
+    -- not keep a stale handle around (HideAllDecorations does the same).
+    if clockTicker then clockTicker:Cancel(); clockTicker = nil end
+    if coordsTicker then coordsTicker:Cancel(); coordsTicker = nil end
 
-    -- Clock ticker: Updates every 1 second
-    clockTicker = C_Timer.NewTicker(1, function()
-        local s = GetSettings()
-        if s then
-            UpdateClockTime()
+    -- Clock: the display renders HH:MM only (UpdateClockTime), so a 1-second
+    -- ticker repainted identical text 59 times a minute. Instead chain a
+    -- one-shot timer aligned to the next minute boundary. The delay is
+    -- recomputed from date("%S") on every fire, so client clock skew never
+    -- accumulates; the +0.1s lands each fire just past the rollover.
+    -- Game-time mode has no seconds to align on — GetGameTime returns only
+    -- hour, minute (tests/api-docs/blizzard/SystemTimeDocumentation.lua) —
+    -- so local second-of-minute is the proxy there; time zone offsets are
+    -- whole minutes, and any residual client/server drift is corrected by
+    -- the next recomputed delay. scheduleClockTick is function-scoped on
+    -- purpose: the chunk is near Lua 5.1's 200-locals cap.
+    if settings.showClock then
+        UpdateClockTime()  -- immediate paint; the first timer fires up to 60s out
+        local function scheduleClockTick()
+            local delay = 60.1 - (tonumber(date("%S")) or 0)
+            clockTicker = C_Timer.NewTimer(delay, function()
+                UpdateClockTime()
+                scheduleClockTick()
+            end)
         end
-    end)
+        scheduleClockTick()
+    end
 
-    -- Coords ticker: Updates based on setting (default 1 second)
-    local coordInterval = settings.coordUpdateInterval or 1
-    coordsTicker = C_Timer.NewTicker(coordInterval, function()
-        local s = GetSettings()
-        if s then
-            UpdateCoordsPosition()
-        end
-    end)
+    -- Coords ticker: only while coords are shown; interval per setting
+    -- (default 1 second)
+    if settings.showCoords then
+        local coordInterval = settings.coordUpdateInterval or 1
+        coordsTicker = C_Timer.NewTicker(coordInterval, function()
+            local s = GetSettings()
+            if s then
+                UpdateCoordsPosition()
+            end
+        end)
+    end
 
     -- Datatext updates are handled by individual datatext tickers via the registry
 end
@@ -4102,7 +4121,12 @@ function Minimap_Module:Refresh()
     UpdateMinimapSize()
     ApplyZoomLevel(settings.zoomLevel)
     UpdateClock()
+    -- UpdateClock measures width with a "99:99" placeholder and leaves it on
+    -- screen; the minute-aligned timer's next repaint can be up to 60s out,
+    -- so repaint the real time now (Initialize already uses this pairing).
+    UpdateClockTime()
     UpdateCoords()
+    UpdateCoordsPosition()
     UpdateZoneText()
     UpdateDatatextPanel()
     UpdateButtonVisibility()

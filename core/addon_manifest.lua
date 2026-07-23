@@ -13,8 +13,16 @@
 --                  Present on entries (QUI_Chat, QUI_GroupFrames, QUI_Bags) that
 --                  default to off for stock-chat / opt-in users.  Consumed by the
 --                  Module Addons rows (AND-read for isEnabled, heal-on-enable) and
---                  honored by each module's own init.  NOT consumed by the loader —
---                  addon enable state alone gates LOD loading.
+--                  honored by each module's own init.  NOT consumed by the loader
+--                  (addon enable state alone gates LOD loading) — except when the
+--                  entry also opts in via loadPolicy, below.
+--     loadPolicy — optional, "profile": the EAGER login pass additionally
+--                  requires the entry's legacyFlag profile path to not be
+--                  explicitly false (absent = on). Consulted ONLY by
+--                  LoadEnabledLODModulesEager; the staggered pass and the
+--                  Module Addons toggle ignore it, so enabling the module
+--                  later still live-loads without a reload — the policy
+--                  gates login eagerness only.
 --     sources    — original modules/<dir> roots (repo-relative, forward slashes);
 --                  inside the sub-addon each keeps its dir name (modules/cdm →
 --                  QUI_CDM/cdm/...)
@@ -52,9 +60,12 @@ local MANIFEST = {
     { coreModule = "skinning",  flag = { "skinning",     "enabled" } },
     { folder = "QUI_DamageMeter",  class = "lod",                                                    sources = { "modules/damage_meter" } },
     -- Opt-in, default-off (legacyFlag bags.enabled): ships enabled but stays
-    -- dormant until the user turns it on via the Module Addons row. Loads via
-    -- the eager LOD pass like its siblings; bags.lua self-gates on the flag.
-    { folder = "QUI_Bags",         class = "lod", legacyFlag = { "bags", "enabled" },                sources = { "modules/bags" } },
+    -- dormant until the user turns it on via the Module Addons row; bags.lua
+    -- self-gates on the flag. loadPolicy = "profile": with the flag explicitly
+    -- false, the eager pass skips it so flag-off users don't pay the bags
+    -- compile cost inside the loading-screen safe window — the post-login
+    -- staggered catch-up and live toggles ignore the policy and still load it.
+    { folder = "QUI_Bags",         class = "lod", legacyFlag = { "bags", "enabled" }, loadPolicy = "profile", sources = { "modules/bags" } },
 }
 
 local ADDON_NAME, ns = ...

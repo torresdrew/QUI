@@ -15,7 +15,10 @@
 -- addon-enabled.  Profile flags are NOT load gates here; three dormant-guard
 -- flags (chat.enabled, quiGroupFrames.enabled, bags.enabled) are handled by
 -- the Module Addons rows (AND-read / heal-on-enable) and by each module's
--- own init.
+-- own init.  One scoped exception: a manifest entry with loadPolicy =
+-- "profile" (today: QUI_Bags) consults its legacyFlag on the EAGER pass
+-- only — flag explicitly false skips the loading-screen compile; the
+-- staggered pass and the toggle backend ignore the policy entirely.
 --
 -- GetProfile() is kept as an overridable readiness hook so tests can inject
 -- a profile table and prevent the kick-off stagger from firing during
@@ -85,6 +88,36 @@ function AddonLoader.IsModuleLoaded(folder)
 end
 
 ---------------------------------------------------------------------------
+-- Eager-pass load policy
+---------------------------------------------------------------------------
+
+-- Nil-safe profile-flag read; same semantics as ReadLegacyFlag in
+-- core/settings/content/module_addons_content.lua (file-local there, hence
+-- this mirror): absent tables / nil value → treat as on; only an explicit
+-- false reads as off.
+local function ReadProfileFlag(profile, flagPath)
+    local node = profile
+    for i = 1, #flagPath do
+        if type(node) ~= "table" then return true end
+        node = node[flagPath[i]]
+    end
+    return node ~= false
+end
+
+-- Pure eligibility predicate for the EAGER pass only (exported for tests).
+-- Entries opting in with loadPolicy = "profile" are eager-eligible only when
+-- their legacyFlag profile path is not explicitly false; every other entry
+-- is eager-eligible regardless of profile content. The staggered pass
+-- (LoadEnabledLODModules) and SetModuleAddonEnabled never consult this —
+-- the policy gates login eagerness only, so live toggles and profile
+-- switches still load the module without a /reload.
+function AddonLoader.IsEagerLoadAllowedByPolicy(entry, profile)
+    if entry.loadPolicy ~= "profile" then return true end
+    if not entry.legacyFlag or not profile then return true end
+    return ReadProfileFlag(profile, entry.legacyFlag)
+end
+
+---------------------------------------------------------------------------
 -- Internal load + notify
 ---------------------------------------------------------------------------
 
@@ -101,19 +134,25 @@ end
 -- Manifest-ordered list of lod folders eligible to load now: lod class + not
 -- already loaded/loading + exists on disk + addon-enabled. Profile flags are
 -- NOT load gates; dormant-guard flags are handled by the Module Addons rows
--- and by each module's own init. Shared by the eager and staggered loaders.
+-- and by each module's own init. Single exception: entries opting in via
+-- loadPolicy = "profile" additionally consult their legacyFlag, and only
+-- when applyLoadPolicy is set (the eager pass) — the staggered pass ignores
+-- the policy so live toggles / profile switches load without a reload.
+-- Shared by the eager and staggered loaders.
 --   includeLate=false (eager, loading-screen): skip lateLoad entries — those
 --     need post-login state (e.g. settled EditMode) and break if loaded early.
 --   includeLate=true (staggered, post-login): load everything still eligible,
 --     i.e. the lateLoad modules plus anything the eager pass missed.
-local function CollectEligibleLODFolders(includeLate)
+local function CollectEligibleLODFolders(includeLate, applyLoadPolicy)
     local queue = {}
+    local profile = applyLoadPolicy and AddonLoader.GetProfile() or nil
     for _, entry in ipairs(ns.AddonManifest or {}) do
         -- entry.folder guard: coreModule entries (no folder; they ship inside
         -- the main addon) are not independently loadable here, so skip them.
         if entry.folder
             and entry.class == "lod"
             and (includeLate or not entry.lateLoad)
+            and (not applyLoadPolicy or AddonLoader.IsEagerLoadAllowedByPolicy(entry, profile))
             and not AddonLoader.IsModuleLoaded(entry.folder)
             and (not C_AddOns.DoesAddOnExist or C_AddOns.DoesAddOnExist(entry.folder))
             and AddonLoader.IsModuleAddonEnabled(entry.folder) then
@@ -147,7 +186,7 @@ end
 function AddonLoader:LoadEnabledLODModulesEager()
     if not AddonLoader.GetProfile() then return end  -- DB not ready; keeps headless tests inert
     local loadedAny = false
-    for _, folder in ipairs(CollectEligibleLODFolders(false)) do  -- exclude lateLoad
+    for _, folder in ipairs(CollectEligibleLODFolders(false, true)) do  -- exclude lateLoad; apply loadPolicy
         -- Re-check per folder: a live toggle racing OnEnable could have loaded it.
         if not AddonLoader.IsModuleLoaded(folder) then
             LoadNow(folder)

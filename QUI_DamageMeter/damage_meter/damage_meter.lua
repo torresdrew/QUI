@@ -215,6 +215,7 @@ end
 Data._combatStartTime = nil   -- GetTime() at last PLAYER_REGEN_DISABLED
 Data._combatEndTime   = nil   -- GetTime() at last PLAYER_REGEN_ENABLED
 Data._combatFrozen    = 0     -- elapsed seconds frozen at end-of-combat for post-combat display
+Data._currentDurPin   = 0     -- warm Current-session duration pin (see ResolveCurrentViewDuration)
 
 local function GetCombatElapsed()
     if Data._combatStartTime then
@@ -237,7 +238,50 @@ function Data:ResetCombatClock()
         self._combatEndTime   = nil
     end
     self._combatFrozen = 0
+    self._currentDurPin = 0
 end
+
+-- Current-session view duration. The server ROLLS the Current session at
+-- segment boundaries (a new pull after regen, a boss pull mid chain-pull):
+-- any locally anchored clock — and any post-combat GetSessionDurationSeconds
+-- read — races that roll. Two prior failures prove it: dividing by the
+-- regen-to-regen combat clock broke for sessions the clock didn't cover, and
+-- dividing by a post-combat API read picked up the freshly rolled (tiny)
+-- session. So the Current duration follows the session's OWN clock:
+--   * In combat: read GetSessionDurationSeconds(Current) live each refresh
+--     and keep a pin warm with the last good value. When the server rolls the
+--     session mid-combat, the next live read tracks it — timer and bars reset
+--     in lockstep, no local clock to drift.
+--   * Out of combat: serve the warm pin — it froze at the last in-combat
+--     refresh (≤ one combat-cadence tick before the end). The live API value
+--     is NOT trusted out of combat: the session may already have rolled
+--     underneath the retained view data. No combat-end API read exists at
+--     all (event handlers never touch C_DamageMeter), so there is no read to
+--     race the roll. The pin resets at every combat START, never at the end.
+--   * No pin (fresh login /reload with retained data): fall back to the API,
+--     then to the legacy combat clock.
+-- Returns (duration, newPin). Pure helper — state and isSecret are injected
+-- so it unit-tests under plain Lua. A duration is "usable" only if it's a
+-- positive, non-secret number (comparing a secret in Lua faults in combat).
+local function ResolveCurrentViewDuration(inCombat, apiDuration, pinnedDuration, combatElapsed, isSecret)
+    local function usable(d)
+        -- Probe first: type() must never see a secret (strict probe-order
+        -- gate; same shape as the other Safe* helpers in this file).
+        if isSecret and isSecret(d) then return false end
+        return type(d) == "number" and d > 0
+    end
+    if inCombat then
+        if usable(apiDuration) then return apiDuration, apiDuration end
+        if usable(pinnedDuration) then return pinnedDuration, pinnedDuration end
+        if usable(combatElapsed) then return combatElapsed, pinnedDuration end
+        return nil, pinnedDuration
+    end
+    if usable(pinnedDuration) then return pinnedDuration, pinnedDuration end
+    if usable(apiDuration) then return apiDuration, pinnedDuration end
+    if usable(combatElapsed) then return combatElapsed, pinnedDuration end
+    return nil, pinnedDuration
+end
+QUI_DamageMeter.ResolveCurrentViewDuration = ResolveCurrentViewDuration
 
 Data._eventFrame = CreateFrame("Frame")
 Data._eventFrame:RegisterEvent("DAMAGE_METER_COMBAT_SESSION_UPDATED")
@@ -267,6 +311,9 @@ Data._eventFrame:SetScript("OnEvent", function(_, event, arg1, _arg2)
         Data._inCombat = true
         Data._combatStartTime = GetTime()
         Data._combatEndTime   = nil
+        -- New combat = new session segment: drop the pinned duration so it
+        -- cannot carry a stale value across combats.
+        Data._currentDurPin   = 0
         -- Combat drives the live elapsed clock, which must tick smoothly even
         -- through damage lulls. Re-arm the ticker; it stays awake until combat
         -- ends and pending work drains (see the park check in OnUpdate).
@@ -275,6 +322,10 @@ Data._eventFrame:SetScript("OnEvent", function(_, event, arg1, _arg2)
         Data._inCombat = false
         Data._combatEndTime   = GetTime()
         Data._combatFrozen    = (Data._combatStartTime and (Data._combatEndTime - Data._combatStartTime)) or 0
+        -- The Current-session duration pin is NOT touched here: it froze at
+        -- the last in-combat refresh (see ResolveCurrentViewDuration), and a
+        -- combat-end API read would race the server's session roll — besides,
+        -- event handlers never call C_DamageMeter (scaffold contract).
         -- The API briefly returns secret-tagged source GUIDs after combat
         -- ends, which makes GetCombatSessionSourceFromType return an empty
         -- combatSpells. Re-mark dirty after a short delay so the next tick
@@ -423,69 +474,6 @@ HasCachedViewKey = function(selectorKey, damageMeterType)
     return bySelector and bySelector[damageMeterType] ~= nil
 end
 
--- DerivePerSecond: recompute a row's per-second rate as totalAmount / duration
--- rather than trust the API's amountPerSecond. Per DamageMeterDocumentation a
--- combat source/spell's amountPerSecond is SecretWhenInCombat and is derived
--- from the live session duration; after combat it declassifies to a garbage
--- value (the report: a DPS row read "4" and an HPS row "7.04e-15" instead of
--- ~405K). GetSessionDurationSeconds is AllowedWhenUntainted and — unlike
--- GetCombatSessionFromType — NOT SecretWhenInCombat, so it hands us a usable,
--- non-secret duration for the session in and out of combat.
---
--- We can only divide once totalAmount is non-secret (post-combat / idle /
--- historical). Mid-combat totalAmount stays secret, so we return nil and the
--- caller keeps the API amountPerSecond (rendered secret-safe downstream — the
--- C side can read it). The secret check runs BEFORE any comparison: comparing
--- or dividing a secret in Lua faults under combat restrictions. Pure helper —
--- isSecret is injected so it unit-tests under plain Lua.
-local function DerivePerSecond(totalAmount, duration, isSecret)
-    -- Probe BEFORE the nil-compare: mid-combat totalAmount is secret and
-    -- `secret == nil` throws.
-    if isSecret and (isSecret(totalAmount) or isSecret(duration)) then return nil end -- @secret-policy: keep-api-rate
-    if totalAmount == nil then return nil end
-    if type(duration) ~= "number" or duration <= 0 then return nil end
-    return totalAmount / duration
-end
-QUI_DamageMeter.DerivePerSecond = DerivePerSecond
-
--- ResolveRateDuration: pick the divisor DerivePerSecond uses for a session's
--- rows. GetSessionDurationSeconds is Nilable (DamageMeterDocumentation) and for
--- the live Current session frequently returns nil; when that happened the rows
--- kept the API's amountPerSecond, which declassifies to garbage post-combat (a
--- DPS row read 0.0576, an HPS row 0.0000933 instead of ~5K). So:
---   * Current (live): prefer our own combat timer (GetCombatElapsed — the same
---     value the [m:ss] header shows) so the rate stays consistent with the
---     visible clock; fall back to the API duration. The API Current duration is
---     unreliable (the reference distrusts it too), hence timer-first.
---   * Expired (historical): the session's own recorded durationSeconds is
---     authoritative; fall back to the API duration.
---   * Overall (cumulative across past combats): only the API knows that span,
---     so prefer it; fall back to the live timer if it's nil.
--- A duration is "usable" only if it's a positive, non-secret number — dividing
--- by a secret or comparing it faults under combat restrictions. Pure helper:
--- the durations and isSecret are injected so it unit-tests under plain Lua.
-local function ResolveRateDuration(sessionType, apiDuration, combatElapsed, historicalDuration, isSecret, currentType, expiredType)
-    local function usable(d)
-        -- Probe first: type() must never see a secret.
-        if isSecret and isSecret(d) then return false end
-        return type(d) == "number" and d > 0
-    end
-    if expiredType ~= nil and sessionType == expiredType then
-        if usable(historicalDuration) then return historicalDuration end
-        if usable(apiDuration) then return apiDuration end
-        return nil
-    end
-    if currentType ~= nil and sessionType == currentType then
-        if usable(combatElapsed) then return combatElapsed end
-        if usable(apiDuration) then return apiDuration end
-        return nil
-    end
-    if usable(apiDuration) then return apiDuration end
-    if usable(combatElapsed) then return combatElapsed end
-    return nil
-end
-QUI_DamageMeter.ResolveRateDuration = ResolveRateDuration
-
 local function FetchView(sessionType, damageMeterType, sessionID)
     if not C_DamageMeter then
         return NewView({}, 0, 0, 0)
@@ -521,41 +509,35 @@ local function FetchView(sessionType, damageMeterType, sessionID)
 
     local sources = NormalizeSources(TableOrEmpty(session.combatSources))
 
-    -- Duration: prefer our own elapsed timer for live sessions to sidestep
-    -- the secret-tagged session.durationSeconds. For historical sessions
-    -- (Expired session type = 2 per Enum.DamageMeterSessionType.Expired),
-    -- the API duration is safe.
+    -- Rows keep the API's amountPerSecond untouched. The server computes the
+    -- total/rate pair against the session's OWN clock, so the pair is always
+    -- self-consistent — while any locally derived rate races the server-side
+    -- session roll (see ResolveCurrentViewDuration). The stock meter renders
+    -- source.amountPerSecond as-is too (DamageMeterEntry.lua GetMainValue /
+    -- GetParentheticalValue); secret-tagged values flow to the render path,
+    -- where the C side reads them fine.
+    --
+    -- Duration (header timer / breakdown aggregates only):
+    --   * Explicit sessionID / Expired: the session's recorded durationSeconds.
+    --   * Current: the pinned session clock (ResolveCurrentViewDuration).
+    --   * Overall: the legacy combat clock (display-only, as before).
+    local S = Enum and Enum.DamageMeterSessionType
     local duration
     if sessionID ~= nil then
         duration = session.durationSeconds
-    elseif sessionType == (Enum and Enum.DamageMeterSessionType and Enum.DamageMeterSessionType.Expired or 2) then
+    elseif sessionType == ((S and S.Expired) or 2) then
         duration = session.durationSeconds  -- historical: API value is safe
-    else
-        duration = GetCombatElapsed()
-    end
-
-    -- Replace the API's per-source amountPerSecond (SecretWhenInCombat, derived
-    -- from the live duration and garbage once it declassifies) with a rate we
-    -- compute from the session's own non-secret duration. See DerivePerSecond:
-    -- it returns nil while totalAmount is still secret (mid-combat), leaving the
-    -- API value in place for the secret-safe render path. ResolveRateDuration
-    -- picks the divisor: the API session duration is Nilable and nil for the
-    -- live Current session, so we fall back to our own combat timer there.
-    local IsSecret = Helpers and Helpers.IsSecretValue
-    local S = Enum and Enum.DamageMeterSessionType
-    local rateDuration
-    if sessionID ~= nil then
-        rateDuration = session.durationSeconds
-    else
+    elseif sessionType == ((S and S.Current) or 1) then
+        local IsSecret = Helpers and Helpers.IsSecretValue
         local apiDuration = C_DamageMeter.GetSessionDurationSeconds
             and C_DamageMeter.GetSessionDurationSeconds(sessionType)
-        rateDuration = ResolveRateDuration(
-            sessionType, apiDuration, GetCombatElapsed(), session.durationSeconds,
-            IsSecret, (S and S.Current) or 1, (S and S.Expired) or 2)
-    end
-    for _, s in ipairs(sources) do
-        local rate = DerivePerSecond(s.totalAmount, rateDuration, IsSecret)
-        if rate ~= nil then s.amountPerSecond = rate end
+        local dur, newPin = ResolveCurrentViewDuration(
+            Data._inCombat and true or false, apiDuration,
+            Data._currentDurPin, GetCombatElapsed(), IsSecret)
+        Data._currentDurPin = newPin or 0
+        duration = dur or 0
+    else
+        duration = GetCombatElapsed()
     end
 
     return NewView(sources, duration, session.maxAmount, session.totalAmount)
@@ -1418,6 +1400,53 @@ local function FindLocalPlayerInSources(sources)
     return nil
 end
 
+-- Pure helper: the inclusive [first, last] pooled-row range to BIND for the
+-- current scroll offset. Rows partially inside the viewport count as visible
+-- (floor on the top edge, ceil on the bottom edge) — a half-clipped row must
+-- carry live data, never a stale bind. Degenerate geometry (viewport not
+-- laid out yet, zero pitch) fails OPEN to the full range: an oversized bind
+-- costs a few _SetRowSource calls, a stale row shows wrong numbers.
+-- totalCount is the render count (already capped at BAR_POOL_SIZE by the
+-- caller). Returns first > last when there is nothing to bind. Plain-number
+-- geometry only — no meter amounts (and therefore no secrets) flow through.
+local function ComputeVisibleBindRange(scrollY, viewH, rowPitch, totalCount)
+    if not totalCount or totalCount <= 0 then return 1, 0 end
+    if not rowPitch or rowPitch <= 0 then return 1, totalCount end
+    if not viewH or viewH <= 0 then return 1, totalCount end
+    if not scrollY or scrollY < 0 then scrollY = 0 end
+    local first = math.floor(scrollY / rowPitch) + 1
+    local last  = math.ceil((scrollY + viewH) / rowPitch)
+    if last > totalCount then last = totalCount end
+    if first > totalCount then first = totalCount end
+    if first < 1 then first = 1 end
+    return first, last
+end
+QUI_DamageMeter.ComputeVisibleBindRange = ComputeVisibleBindRange
+
+-- ==== Appearance revision ====
+-- Header text, fonts, and colors are settings-driven, but the old Refresh
+-- re-applied all three style walks on EVERY data tick before the generation
+-- guard — the meter paid the settings walk at combat cadence for values that
+-- change only when a user touches a widget. Every settings entry point
+-- funnels through WindowManager:RefreshAll (settings page ApplyNative, the
+-- skinning/theme registry, the Border Coloring registry, the header gear
+-- menu, challenge-mode swaps, resets) or ClearRuntimeSessionIDs (which
+-- rewrites per-window session identity and so the header label). Those bump
+-- this revision; Window:Refresh re-applies style only when the window's
+-- last-applied revision trails it. Data ticks leave it untouched.
+QUI_DamageMeter._appearanceRev = 1
+
+function QUI_DamageMeter.BumpAppearanceRevision()
+    QUI_DamageMeter._appearanceRev = QUI_DamageMeter._appearanceRev + 1
+end
+
+-- Pure helper: should this window re-apply header/fonts/colors? nil applied
+-- revision = a freshly spawned window that has never styled itself.
+local function ShouldReapplyAppearance(appliedRev, currentRev)
+    return appliedRev == nil or appliedRev ~= currentRev
+end
+QUI_DamageMeter.ShouldReapplyAppearance = ShouldReapplyAppearance
+
 -- Attach the icon, bar, name/value text, click handler, and hover tooltip
 -- to a row that has already been created and anchored. Shared between the
 -- pooled rows in _BuildRow (chain-anchored in the scroll viewport) and the
@@ -2088,7 +2117,7 @@ end
 -- every Refresh and every OnMouseWheel tick. Re-anchors scrollFrame's bottom
 -- to make room for the sticky row when shown.
 function Window:_UpdateStickyVisibility()
-    local sources = self._stickySources
+    local sources = self._renderSources
     local sticky  = self.stickyRow
     local sep     = self.stickySeparator
     local sf      = self.scrollFrame
@@ -2132,7 +2161,7 @@ function Window:_UpdateStickyVisibility()
     end
 
     -- Player is outside the visible range — populate + show sticky.
-    self:_SetRowSource(sticky, sources[localIdx], self._stickyMaxValue)
+    self:_SetRowSource(sticky, sources[localIdx], self._renderFillMax)
     sticky:Show()
     sep:Show()
     if not self._stickyShown then
@@ -2151,6 +2180,54 @@ function Window:_UpdateStickyVisibility()
     end
 end
 
+-- Bind sources onto the pooled rows actually inside the scroll viewport.
+-- Off-screen pooled rows are HIDDEN, not re-styled — the old Refresh re-ran
+-- _SetRowSource across all 40 pool rows every data tick, and that per-source
+-- style walk was the bulk of the render cost. Row keying stays positional
+-- (rows[i] renders sources[i]); hidden frames still anchor, so the chain
+-- through hidden rows keeps every row at its slot. The sticky self-row keeps
+-- the local player visible when scrolled out of range (own frame, handled by
+-- _UpdateStickyVisibility).
+--
+-- Idempotent and cheap on re-entry: when neither the data generation nor the
+-- visible range moved since the last bind, this is a no-op. On a pure scroll
+-- or resize (same generation) only newly revealed rows re-bind. Scroll
+-- (OnMouseWheel), viewport resize (OnSizeChanged, grip release via Refresh's
+-- generation-matched early path), and Refresh all land here.
+--
+-- Geometry only: every comparison below touches plain numbers (scroll
+-- offset, heights, indices). Amount fields ride through untouched inside
+-- sources[i] to _SetRowSource, whose secret guards are unchanged.
+function Window:_BindVisibleRows()
+    local sources = self._renderSources
+    if not sources then return end
+    local sf = self.scrollFrame
+    local barH   = ResolveAppearance(self.windowID, "barHeight")  or 18
+    local barGap = ResolveAppearance(self.windowID, "barSpacing") or 2
+    local scrollY = (sf and sf:GetVerticalScroll()) or 0
+    local viewH   = (sf and sf:GetHeight()) or 0
+    local renderCount = math.min(#sources, BAR_POOL_SIZE)
+    local first, last = ComputeVisibleBindRange(scrollY, viewH, barH + barGap, renderCount)
+
+    local gen = self._lastGeneration
+    if gen == self._boundGeneration
+        and first == self._boundFirst and last == self._boundLast then
+        return
+    end
+    local sameData = gen == self._boundGeneration
+    local oldFirst = self._boundFirst or 0
+    local oldLast  = self._boundLast  or -1
+    for i = 1, #self.rows do
+        local row = self.rows[i]
+        local visible = i >= first and i <= last
+        if visible and not (sameData and i >= oldFirst and i <= oldLast) then
+            self:_SetRowSource(row, sources[i], self._renderFillMax)
+        end
+        row:SetShown(visible)
+    end
+    self._boundGeneration, self._boundFirst, self._boundLast = gen, first, last
+end
+
 function Window:Refresh()
     if not self.frame then return end
 
@@ -2167,9 +2244,18 @@ function Window:Refresh()
     end
 
     local _t0 = Perf.enabled and PerfNow() or 0
-    self:_ApplyHeader()
-    self:_ApplyFonts()
-    self:_ApplyColors()
+    -- Appearance: only when a settings entry point bumped the revision (see
+    -- the Appearance revision block above BumpAppearanceRevision). Per-tick
+    -- data refreshes skip all three style walks; per-SOURCE styling that
+    -- tracks row occupancy (class colors, bar texture) still runs inside
+    -- _SetRowSource on every bind.
+    local rev = QUI_DamageMeter._appearanceRev
+    if ShouldReapplyAppearance(self._appliedAppearanceRev, rev) then
+        self:_ApplyHeader()
+        self:_ApplyFonts()
+        self:_ApplyColors()
+        self._appliedAppearanceRev = rev
+    end
 
     -- Healing views optionally include absorbs (settings.combineAbsorbsIntoHealing).
     local view
@@ -2180,7 +2266,14 @@ function Window:Refresh()
     else
         view = Data:GetView(self.sessionType, self.damageMeterType, self.sessionID)
     end
-    if view.generation == self._lastGeneration then return end
+    if view.generation == self._lastGeneration then
+        -- Data unchanged — but the viewport may have moved since the last
+        -- bind: the resize grips and the Layout Mode size sliders call
+        -- Refresh directly after SetSize. _BindVisibleRows no-ops when the
+        -- range didn't change either.
+        self:_BindVisibleRows()
+        return
+    end
     self._lastGeneration = view.generation
 
     -- Session timer text. Secret durations must go straight through
@@ -2198,13 +2291,16 @@ function Window:Refresh()
     local sources, fillMax = PrepareSourcesForRender(view)
     local renderCount = math.min(#sources, BAR_POOL_SIZE)
 
-    for i = 1, renderCount do
-        self:_SetRowSource(self.rows[i], sources[i], fillMax)
-        self.rows[i]:Show()
-    end
-    for i = renderCount + 1, #self.rows do
-        self.rows[i]:Hide()
-    end
+    -- Stash the render inputs for the out-of-band re-bind paths (mouse
+    -- wheel, viewport resize, sticky evaluation) so they can re-bind
+    -- without re-running the full Refresh. Clearing _boundGeneration forces
+    -- the _BindVisibleRows call below to re-bind every visible row against
+    -- the new sources even when the visible range itself didn't move — and
+    -- it also covers RefreshAll's forced-repaint contract (same view
+    -- generation, new settings).
+    self._renderSources = sources
+    self._renderFillMax = fillMax
+    self._boundGeneration = nil
 
     -- Size the scroll content to match what's rendered so the scrollbar and
     -- mouse wheel know how far to scroll. Row pitch = barHeight + barSpacing.
@@ -2221,13 +2317,14 @@ function Window:Refresh()
     -- Sticky self-row: shown when the local player is outside the currently
     -- visible scroll range. _UpdateStickyVisibility computes the predicate
     -- against the current viewport + scroll offset and toggles sticky/sep,
-    -- re-anchoring scrollFrame's bottom to shrink/grow the viewport.
-    -- pinnedSelf, sources, and fillMax are read directly by the method via
-    -- self._stickySources / self._stickyMaxValue so the OnMouseWheel handler
-    -- (Task 5) can re-evaluate without re-running the full Refresh.
-    self._stickySources = sources
-    self._stickyMaxValue = fillMax
+    -- re-anchoring scrollFrame's bottom to shrink/grow the viewport. It
+    -- reads self._renderSources / self._renderFillMax (stashed above).
     self:_UpdateStickyVisibility()
+
+    -- Bind LAST: _UpdateScrollThumb may clamp the scroll offset and
+    -- _UpdateStickyVisibility may re-anchor the viewport bottom — both
+    -- change which rows are visible, and the bind must see final geometry.
+    self:_BindVisibleRows()
 
     -- Phase 4: refresh an open breakdown popup on every parent-window tick.
     self:RefreshBreakdown()
@@ -2673,6 +2770,9 @@ function Window.New(windowID)
     scrollFrame:SetScript("OnSizeChanged", function(_, w)
         if w and w > 0 then scrollContent:SetWidth(w) end
         if self._UpdateScrollThumb then self:_UpdateScrollThumb() end
+        -- Viewport height changed: newly revealed rows must bind now, not on
+        -- the next data tick. No-ops when the visible range didn't move.
+        if self._BindVisibleRows then self:_BindVisibleRows() end
     end)
 
     -- Mouse wheel: two rows per tick, clamped to [0, contentH - viewportH].
@@ -2691,6 +2791,7 @@ function Window.New(windowID)
         sf:SetVerticalScroll(newVal)
         if self._UpdateStickyVisibility then self:_UpdateStickyVisibility() end
         if self._UpdateScrollThumb     then self:_UpdateScrollThumb()     end
+        if self._BindVisibleRows       then self:_BindVisibleRows()       end
     end)
 
     -- Thumb scrollbar: thin accent-colored bar at the right edge, auto-hides
@@ -3248,6 +3349,11 @@ function WindowManager:DespawnAll()
 end
 
 function WindowManager:ClearRuntimeSessionIDs()
+    -- Session identity changes rewrite the header label ("Type | Session"),
+    -- which the revision-gated _ApplyHeader paints. This path is reached
+    -- from Data._onChange after a meter reset WITHOUT going through
+    -- RefreshAll, so it must bump the revision itself.
+    QUI_DamageMeter.BumpAppearanceRevision()
     local s = GetSettings()
     self:Enumerate(function(_windowID, w)
         if w then
@@ -3364,9 +3470,10 @@ function WindowManager:RefreshAll()
     -- Force every live window to re-render NOW. Used by:
     --   - settings widget callbacks (texture, font, color changes)
     --   - ConfigButton menu actions (type / session switch)
-    -- We bypass the _lastGeneration short-circuit by clearing it; the next
-    -- Refresh() call walks all the source binding logic and re-applies
-    -- appearance from current settings.
+    -- Bumping the appearance revision makes the next Refresh re-apply
+    -- header/fonts/colors; clearing _lastGeneration bypasses the data guard
+    -- so row binding also re-runs against current settings.
+    QUI_DamageMeter.BumpAppearanceRevision()
     for _, w in pairs(self.windows) do
         if w then
             w._lastGeneration = -1
@@ -3593,7 +3700,10 @@ if ns.Registry then
         end,
         priority = 50,
         group = "skinning",
-        importCategories = { "skinning", "theme" },
+        -- "damageMeter": selective profile import of the Damage Meter
+        -- category (core/profile_io.lua) must re-apply appearance now that
+        -- Refresh no longer re-styles on every tick.
+        importCategories = { "skinning", "theme", "damageMeter" },
     })
 end
 

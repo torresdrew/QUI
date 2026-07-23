@@ -52,8 +52,10 @@ check("mhConfig.anyBuffIDs[spellId] lookup kept (ScanPlayerBuffs)",
     src:find("mhConfig.anyBuffIDs[spellId]", 1, true) ~= nil)
 check("ohConfig.anyBuffIDs[spellId] lookup kept (ScanPlayerBuffs)",
     src:find("ohConfig.anyBuffIDs[spellId]", 1, true) ~= nil)
-check("config.anyBuffIDs[buffSpellId] lookup kept (CheckEnhancementActive)",
-    src:find("config.anyBuffIDs[buffSpellId]", 1, true) ~= nil)
+check("CheckEnhancementActive removed (weapon-aura detection now sources ScanPlayerBuffs)",
+    src:find("CheckEnhancementActive", 1, true) == nil)
+check("ComputeEnhancementState present (compute-only replacement)",
+    src:find("local function ComputeEnhancementState(", 1, true) ~= nil)
 
 -- Sanitize-trace: the upstream Helpers.SafeValue / Helpers.SafeToNumber
 -- calls that make every deletion safe are still present and still run
@@ -63,8 +65,8 @@ check("spellId sanitized via Helpers.SafeValue before ScanPlayerBuffs' lookups",
     src:find("local spellId = Helpers.SafeValue(auraData.spellId)", 1, true) ~= nil)
 check("icon sanitized via Helpers.SafeValue before the food fallback compare",
     src:find("local icon = Helpers.SafeValue(auraData.icon)", 1, true) ~= nil)
-check("buffSpellId sanitized via Helpers.SafeValue before CheckEnhancementActive's lookup",
-    src:find("local buffSpellId = Helpers.SafeValue(auraData.spellId)", 1, true) ~= nil)
+check("weapon-aura match still rides ScanPlayerBuffs' sanitized spellId (mh/oh pins above)",
+    src:find("local spellId = Helpers.SafeValue(auraData.spellId)", 1, true) ~= nil)
 check("expires coerced via Helpers.SafeToNumber before the timeText arithmetic",
     src:find("local expires = Helpers.SafeToNumber(auraData.expirationTime)", 1, true) ~= nil)
 

@@ -96,6 +96,14 @@ local MACRO_SLOT_FOR_BUTTON = {
     oilMH       = "selectedWeapon",
 }
 
+-- Layout order of the category buttons (matches the positioning pass).
+local BUTTON_TYPES = { "food", "flask", "oilMH", "rune", "healthstone", "oilOH" }
+
+-- Test-only instrumentation: repaintLog is nil in production (single cheap
+-- nil-check per paint); layoutRuns is a plain counter.
+local repaintLog = nil
+local layoutRuns = 0
+
 -- Returns { itemID, label } for the macro family configured for this button,
 -- or nil. Safe when the macro module isn't present (e.g. unit tests / early load).
 local function GetMacroSelection(buttonType)
@@ -715,6 +723,80 @@ local function ResolveSelectedOwnedItem(buttonType, ownedItems)
     return ownedItems[1]
 end
 
+---------------------------------------------------------------------------
+-- STATE DIFF + INVENTORY SNAPSHOT CACHE
+-- One on-demand snapshot of per-button owned items + resolved selection.
+-- UNIT_AURA repaints reuse it; it is invalidated only on bag / equipment /
+-- roster / preference changes (seams wired near eventFrame below).
+---------------------------------------------------------------------------
+
+-- Pure equality over the comparable per-button state fields. Both sides
+-- hold only plain values (probed via SafeValue/SafeToNumber before they
+-- are stored), so == is safe here.
+local function ButtonStatesEqual(a, b)
+    if a == nil or b == nil then
+        return a == b
+    end
+    return a.shown == b.shown
+        and a.active == b.active
+        and a.icon == b.icon
+        and a.timeText == b.timeText
+        and a.clickable == b.clickable
+        and a.itemID == b.itemID
+        and a.count == b.count
+end
+
+-- Pure diff of two per-button state maps. Returns the array of buttonTypes
+-- whose state changed (repaint set) and whether the shown set changed
+-- (layout/resize needed). prev may be nil (forced full repaint).
+local function DiffButtonStates(prev, next, buttonTypes)
+    local changed = {}
+    local visibilityChanged = false
+    for _, buttonType in ipairs(buttonTypes) do
+        local before = prev and prev[buttonType] or nil
+        local after = next[buttonType]
+        if not ButtonStatesEqual(before, after) then
+            changed[#changed + 1] = buttonType
+        end
+        local wasShown = (before and before.shown) or false
+        local isShown = (after and after.shown) or false
+        if wasShown ~= isShown then
+            visibilityChanged = true
+        end
+    end
+    return changed, visibilityChanged
+end
+
+local snapshotCache = { entries = nil, hasWarlock = nil, lastStates = nil, layoutDirty = nil }
+
+local function InvalidateInventorySnapshot()
+    snapshotCache.entries = nil
+    snapshotCache.hasWarlock = nil
+    snapshotCache.lastStates = nil -- next update repaints everything
+end
+
+local function GetSnapshotEntry(buttonType)
+    local entries = snapshotCache.entries
+    if not entries then
+        entries = {}
+        snapshotCache.entries = entries
+    end
+    local entry = entries[buttonType]
+    if entry == nil then
+        local owned = GetOwnedItemsForButton(buttonType)
+        entry = { owned = owned, selected = ResolveSelectedOwnedItem(buttonType, owned) }
+        entries[buttonType] = entry
+    end
+    return entry
+end
+
+local function GetCachedWarlockPresence()
+    if snapshotCache.hasWarlock == nil then
+        snapshotCache.hasWarlock = HasWarlockInGroup()
+    end
+    return snapshotCache.hasWarlock
+end
+
 local function ConfigureButtonClickAction(button, buttonType, data, showGlow)
     if not button or not button.click or not data then return end
     button.selectedItemID = data.itemID
@@ -745,31 +827,23 @@ local function ConfigureButtonClickAction(button, buttonType, data, showGlow)
     end
 end
 
-local function ApplyPreferredItemIcons(buttons, settings)
-    if not settings then return end
-
-    local function apply(buttonType)
-        local button = buttons[buttonType]
-        if not button then return end
-        local preferredID = GetPreferredItemID(buttonType) or GetMacroPreferredItemID(buttonType)
-        if not preferredID then return end
-        -- Check if this is a spell preference (for class-based enhancements)
-        local slot = (buttonType == "oilMH" and "MH") or (buttonType == "oilOH" and "OH") or nil
-        local config = slot and GetEnhancementConfig(slot)
-        if config and config.source == "spell" then
-            local icon = C_Spell and C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(preferredID)
-            if icon then button.icon:SetTexture(icon) end
-        else
-            local icon = select(5, C_Item.GetItemInfoInstant(preferredID))
-            if icon then button.icon:SetTexture(icon) end
-        end
+-- Per-button preferred-icon override (was the aggregate
+-- ApplyPreferredItemIcons); PaintButton applies it in the same position of
+-- the paint sequence, so the last-write-wins icon result is unchanged.
+local function ApplyPreferredIcon(button, buttonType)
+    if not button then return end
+    local preferredID = GetPreferredItemID(buttonType) or GetMacroPreferredItemID(buttonType)
+    if not preferredID then return end
+    -- Check if this is a spell preference (for class-based enhancements)
+    local slot = (buttonType == "oilMH" and "MH") or (buttonType == "oilOH" and "OH") or nil
+    local config = slot and GetEnhancementConfig(slot)
+    if config and config.source == "spell" then
+        local icon = C_Spell and C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(preferredID)
+        if icon then button.icon:SetTexture(icon) end
+    else
+        local icon = select(5, C_Item.GetItemInfoInstant(preferredID))
+        if icon then button.icon:SetTexture(icon) end
     end
-
-    if settings.consumableFood ~= false then apply("food") end
-    if settings.consumableFlask ~= false then apply("flask") end
-    if settings.consumableRune ~= false then apply("rune") end
-    if settings.consumableOilMH ~= false then apply("oilMH") end
-    if settings.consumableOilOH ~= false then apply("oilOH") end
 end
 
 -- 12.1: GetAuraDataByIndex throws while aura data is secret. Player consumable
@@ -858,6 +932,9 @@ local function HideConsumablesFrameNow()
             button.click:Hide()
         end
     end
+    -- Rendered state diverged from the diff bookkeeping (clicks hidden);
+    -- the next update after a re-show must repaint everything.
+    snapshotCache.lastStates = nil
 end
 
 local function EnsureConsumableCombatDeferFrame()
@@ -990,6 +1067,7 @@ local function CreateConsumableButton(parent, index, buttonType, iconID, isClick
             if mouseButton == "LeftButton" and self.selectedItemID
                 and ShouldPersistPreferenceOnUse(button.buttonType) then
                 SetPreferredItemID(button.buttonType, self.selectedItemID)
+                InvalidateInventorySnapshot()
             end
         end)
     end
@@ -1044,6 +1122,7 @@ local function CreatePickerRow(parent)
         if mouseButton ~= "LeftButton" and mouseButton ~= "RightButton" then return end
         if self.itemID then
             SetPreferredItemID(self.buttonType, self.itemID)
+            InvalidateInventorySnapshot()
         end
         HideConsumablePicker()
         if UpdateConsumables and ConsumablesFrame:IsShown() then
@@ -1282,6 +1361,7 @@ local function InitializeButtons()
         buttons[def[1]] = button
     end
 
+    snapshotCache.lastStates = nil -- buttons recreated; nothing is painted yet
     ConsumablesFrame.buttonSize = buttonSize
 end
 
@@ -1289,85 +1369,87 @@ end
 -- CLASS-AWARE ENHANCEMENT DETECTION
 ---------------------------------------------------------------------------
 
--- Checks whether a weapon enhancement is active for the given slot.
--- Returns isActive; also updates the button icon/status/time directly.
-local function CheckEnhancementActive(slot, button, hasEnchant, enchantExpiration, enchantID)
+-- Probed aura display fields. Both literals below are load-bearing pins
+-- (consumablecheck_pcall_removal_test): SafeValue/SafeToNumber run before
+-- any use, so the returned values are plain and ==-comparable.
+local function AuraStateFields(auraData, now)
+    if not auraData then return nil, "" end
+    local icon = Helpers.SafeValue(auraData.icon)
+    local expires = Helpers.SafeToNumber(auraData.expirationTime)
+    local timeText = ""
+    if expires > 0 then
+        timeText = FormatTimeRemaining(expires - now)
+    end
+    return icon, timeText
+end
+
+-- Compute-only replacement for the old per-slot paint-while-checking
+-- enhancement function: same three branches (playerAura / class
+-- weaponEnchant / default item oil), but it
+-- returns state instead of painting. The aura branch reads the weapon aura
+-- ScanPlayerBuffs already collected (fields probed there), so the per-slot
+-- aura re-walk is gone. SaveLastWeaponEnchant keeps its old default-branch
+-- side effect (runs only for slots with no class config).
+local function ComputeEnhancementState(slot, hasEnchant, enchantExpiration, enchantID, buffs, now)
     local config = GetEnhancementConfig(slot)
 
     if config and config.checkType == "playerAura" then
-        -- Aura-based detection (rogues)
-        local found = false
-        ForEachPlayerHelpfulAura(function(auraData)
-            local buffSpellId = Helpers.SafeValue(auraData.spellId)
-            if config.anyBuffIDs[buffSpellId] then
-                button.status:SetTexture("Interface\\RaidFrame\\ReadyCheck-Ready")
-                button.icon:SetDesaturated(false)
-                local auraIcon = Helpers.SafeValue(auraData.icon)
-                if auraIcon then
-                    button.icon:SetTexture(auraIcon)
-                end
-                local expires = Helpers.SafeToNumber(auraData.expirationTime)
-                if expires > 0 then
-                    button.timeText:SetText(FormatTimeRemaining(expires - GetTime()))
-                end
-                found = true
-                return true
-            end
-        end)
-        return found
+        local auraData = (slot == "MH") and buffs.weaponMHData or buffs.weaponOHData
+        if auraData then
+            local icon, timeText = AuraStateFields(auraData, now)
+            return true, icon, timeText
+        end
+        return false, nil, ""
     end
 
     if config and config.checkType == "weaponEnchant" then
-        -- Enchant-based detection with class-specific enchant IDs (shamans, paladins)
         if hasEnchant then
-            button.status:SetTexture("Interface\\RaidFrame\\ReadyCheck-Ready")
-            button.icon:SetDesaturated(false)
+            local icon
             if enchantID and config.anyEnchantIDs and config.anyEnchantIDs[enchantID] then
                 -- Known class enchant - use the spell icon for the active enchant
                 if config.spells then
                     for _, spell in ipairs(config.spells) do
-                        local icon = C_Spell and C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(spell.spellID)
-                        if icon then
-                            button.icon:SetTexture(icon)
+                        local spellIcon = C_Spell and C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(spell.spellID)
+                        if spellIcon then
+                            icon = spellIcon
                             break
                         end
                     end
                 end
             elseif enchantID and WEAPON_ENCHANTS[enchantID] then
                 -- Fallback: known item enchant (should not happen for class enhancements)
-                local enchantData = WEAPON_ENCHANTS[enchantID]
-                button.icon:SetTexture(enchantData.icon)
+                icon = WEAPON_ENCHANTS[enchantID].icon
             end
+            local timeText = ""
             if enchantExpiration and enchantExpiration > 0 then
-                button.timeText:SetText(FormatTimeRemaining(enchantExpiration / 1000))
+                timeText = FormatTimeRemaining(enchantExpiration / 1000)
             end
-            return true
+            return true, icon, timeText
         end
-        return false
+        return false, nil, ""
     end
 
     -- Default: item-based oil/stone detection via GetWeaponEnchantInfo
     local invSlot = slot == "MH" and INVSLOT_MAINHAND or INVSLOT_OFFHAND
     if hasEnchant then
-        button.status:SetTexture("Interface\\RaidFrame\\ReadyCheck-Ready")
-        button.icon:SetDesaturated(false)
+        local icon
         if enchantID and WEAPON_ENCHANTS[enchantID] then
             local enchantData = WEAPON_ENCHANTS[enchantID]
-            button.icon:SetTexture(enchantData.icon)
+            icon = enchantData.icon
             SaveLastWeaponEnchant(invSlot, enchantID, enchantData.icon, enchantData.item)
         end
+        local timeText = ""
         if enchantExpiration and enchantExpiration > 0 then
-            button.timeText:SetText(FormatTimeRemaining(enchantExpiration / 1000))
+            timeText = FormatTimeRemaining(enchantExpiration / 1000)
         end
-        return true
-    else
-        -- Restore last known icon when enchant has expired
-        local lastEnchant = GetLastWeaponEnchant(invSlot)
-        if lastEnchant and lastEnchant.icon then
-            button.icon:SetTexture(lastEnchant.icon)
-        end
-        return false
+        return true, icon, timeText
     end
+    -- Restore last known icon when enchant has expired
+    local lastEnchant = GetLastWeaponEnchant(invSlot)
+    if lastEnchant and lastEnchant.icon then
+        return false, lastEnchant.icon, ""
+    end
+    return false, nil, ""
 end
 
 -- Checks whether an OH enhancement button should be visible for the current class
@@ -1387,6 +1469,175 @@ local function ShouldShowOHButton(settings)
     end
     -- Default: show if dual wielding
     return IsDualWielding()
+end
+
+-- Desired-state computation: one comparable table per category button.
+-- Every field is a PLAIN value (probed upstream) so ButtonStatesEqual can
+-- ==-compare freely:
+--   shown      button is in the visible layout set
+--   active     buff/enchant present
+--   icon       icon to force while dressed (nil keeps default/preferred)
+--   timeText   pre-rendered remaining-time label ("" when none)
+--   clickable  a secure use-action can be (re)configured this pass
+--   itemID     resolved use-item from the snapshot (nil when not clickable)
+--   count      rendered count (selected item stack / healthstone total)
+local function ComputeDesiredStates(settings, canUseItems)
+    local now = GetTime()
+    local buffs = ScanPlayerBuffs()
+    local hasMainHandEnchant, mainHandExpiration, _, mainHandEnchantID,
+        hasOffHandEnchant, offHandExpiration, _, offHandEnchantID = GetWeaponEnchantInfo()
+
+    local function newState(shown)
+        return { shown = shown, active = false, icon = nil, timeText = "",
+                 clickable = false, itemID = nil, count = nil }
+    end
+
+    local states = {}
+
+    states.food = newState(settings.consumableFood ~= false)
+    if states.food.shown and buffs.hasFood then
+        states.food.active = true
+        local _, timeText = AuraStateFields(buffs.foodData, now)
+        states.food.timeText = timeText
+    end
+
+    states.flask = newState(settings.consumableFlask ~= false)
+    if states.flask.shown and buffs.hasFlask then
+        states.flask.active = true
+        states.flask.icon, states.flask.timeText = AuraStateFields(buffs.flaskData, now)
+    end
+
+    states.rune = newState(settings.consumableRune ~= false)
+    if states.rune.shown and buffs.hasRune then
+        states.rune.active = true
+        local _, timeText = AuraStateFields(buffs.runeData, now)
+        states.rune.timeText = timeText
+    end
+
+    states.oilMH = newState(settings.consumableOilMH ~= false)
+    if states.oilMH.shown then
+        states.oilMH.active, states.oilMH.icon, states.oilMH.timeText =
+            ComputeEnhancementState("MH", hasMainHandEnchant, mainHandExpiration, mainHandEnchantID, buffs, now)
+    end
+
+    states.oilOH = newState(ShouldShowOHButton(settings))
+    if states.oilOH.shown then
+        states.oilOH.active, states.oilOH.icon, states.oilOH.timeText =
+            ComputeEnhancementState("OH", hasOffHandEnchant, offHandExpiration, offHandEnchantID, buffs, now)
+    end
+
+    states.healthstone = newState(settings.consumableHealthstone ~= false and GetCachedWarlockPresence())
+    if states.healthstone.shown then
+        local hsCount = C_Item.GetItemCount(5512, false, true) or 0
+        local hsLockCount = C_Item.GetItemCount(224464, false, true) or 0
+        local totalHS = hsCount + hsLockCount
+        states.healthstone.count = totalHS
+        if totalHS > 0 then
+            states.healthstone.active = true
+        end
+    end
+
+    -- Snapshot-backed action fields. Only touched out of combat, so the
+    -- on-demand snapshot build (bag walk) can never run in lockdown.
+    if canUseItems then
+        for _, buttonType in ipairs(BUTTON_TYPES) do
+            local state = states[buttonType]
+            if state.shown and buttonType ~= "healthstone" then
+                local entry = GetSnapshotEntry(buttonType)
+                local selected = entry and entry.selected
+                if selected then
+                    state.clickable = true
+                    state.itemID = selected.itemID
+                    state.count = selected.count
+                end
+            end
+        end
+    end
+
+    return states
+end
+
+-- Repaints ONE button from its computed state. Mirrors the old
+-- reset -> aura dress -> preferred icon -> action-config sequence exactly,
+-- so the final pixels match the pre-split pipeline; callers invoke it only
+-- for buttons whose state actually changed.
+local function PaintButton(button, buttonType, state)
+    if repaintLog then repaintLog[#repaintLog + 1] = buttonType end
+
+    -- Reset (old lines: per-button reset loop)
+    button.status:SetTexture("Interface\\RaidFrame\\ReadyCheck-NotReady")
+    if button.defaultIcon then
+        button.icon:SetTexture(button.defaultIcon)
+    end
+    button.icon:SetDesaturated(true)
+    button.timeText:SetText("")
+    button.countText:SetText("")
+    button.selectedItemID = nil
+    if not InCombatLockdown() then
+        if button.click then
+            button.click.selectedItemID = nil
+            button.click:Hide()
+        end
+    end
+    StopButtonGlow(button)
+
+    -- Dress
+    if state.active then
+        button.status:SetTexture("Interface\\RaidFrame\\ReadyCheck-Ready")
+        button.icon:SetDesaturated(false)
+    end
+    if state.icon then
+        button.icon:SetTexture(state.icon)
+    end
+    if state.timeText ~= "" then
+        button.timeText:SetText(state.timeText)
+    end
+    if buttonType == "healthstone" and state.shown then
+        button.countText:SetText(tostring(state.count or 0))
+    end
+
+    -- If a preferred item is configured, use that icon for the category.
+    ApplyPreferredIcon(button, buttonType)
+
+    -- Action (combat-gated via state.clickable, which is computed from
+    -- canUseItems = not InCombatLockdown())
+    if state.clickable then
+        local entry = GetSnapshotEntry(buttonType)
+        if entry and entry.selected then
+            ConfigureButtonClickAction(button, buttonType, entry.selected, not state.active)
+        end
+    end
+end
+
+-- Position + resize pass. Runs only when the shown set changed (or a full
+-- repaint was forced) and NEVER in combat — identical gating to the old
+-- inline layout block.
+local function ApplyButtonLayout(states)
+    layoutRuns = layoutRuns + 1
+    local buttons = ConsumablesFrame.buttons
+    local xOffset = 0
+    local buttonSize = ConsumablesFrame.buttonSize or DEFAULT_BUTTON_SIZE
+    local buttonY = CLOSE_BUTTON_HEIGHT  -- buttons sit above close button
+    local visibleCount = 0
+    for _, buttonType in ipairs(BUTTON_TYPES) do
+        local button = buttons[buttonType]
+        if type(button) == "table" and button.Hide then
+            local state = states[buttonType]
+            if state and state.shown then
+                button:ClearAllPoints()
+                button:SetPoint("BOTTOMLEFT", ConsumablesFrame, "BOTTOMLEFT", xOffset, buttonY)
+                button:Show()
+                xOffset = xOffset + buttonSize + BUTTON_SPACING
+                visibleCount = visibleCount + 1
+            else
+                button:Hide()
+            end
+        end
+    end
+    local frameWidth = visibleCount > 0
+        and (visibleCount * buttonSize + (visibleCount - 1) * BUTTON_SPACING)
+        or buttonSize
+    ConsumablesFrame:SetSize(frameWidth, buttonSize + CLOSE_BUTTON_HEIGHT)
 end
 
 ---------------------------------------------------------------------------
@@ -1413,203 +1664,37 @@ UpdateConsumables = function()
             pickerFrame:SetScale(frameScale)
         end
     end
-    local now = GetTime()
-    local visibleCount = 0
-    local hasFoodBuff = false
-    local hasFlaskBuff = false
-    local hasRuneBuff = false
-
-    -- Reset all buttons
-    for _, button in pairs(buttons) do
-        if type(button) == "table" and button.icon then
-            button.status:SetTexture("Interface\\RaidFrame\\ReadyCheck-NotReady")
-            if button.defaultIcon then
-                button.icon:SetTexture(button.defaultIcon)
-            end
-            button.icon:SetDesaturated(true)
-            button.timeText:SetText("")
-            button.countText:SetText("")
-            button.selectedItemID = nil
-            if not InCombatLockdown() then
-                button:Hide()
-                if button.click then
-                    button.click.selectedItemID = nil
-                    button.click:Hide()
-                end
-            end
-            StopButtonGlow(button)
-        end
-    end
-
-    -- Scan player buffs
-    ForEachPlayerHelpfulAura(function(auraData)
-        local spellId = Helpers.SafeValue(auraData.spellId)
-        local expires = Helpers.SafeToNumber(auraData.expirationTime)
-        local icon = Helpers.SafeValue(auraData.icon)
-
-        if settings.consumableFood ~= false then
-            if FOOD_BUFFS[spellId] or icon == 136000 then
-                hasFoodBuff = true
-                buttons.food.status:SetTexture("Interface\\RaidFrame\\ReadyCheck-Ready")
-                buttons.food.icon:SetDesaturated(false)
-                if expires and expires > 0 then
-                    buttons.food.timeText:SetText(FormatTimeRemaining(expires - now))
-                end
-            end
-        end
-
-        if settings.consumableFlask ~= false then
-            if FLASK_BUFFS[spellId] then
-                hasFlaskBuff = true
-                buttons.flask.status:SetTexture("Interface\\RaidFrame\\ReadyCheck-Ready")
-                buttons.flask.icon:SetDesaturated(false)
-                buttons.flask.icon:SetTexture(icon)
-                if expires and expires > 0 then
-                    buttons.flask.timeText:SetText(FormatTimeRemaining(expires - now))
-                end
-            end
-        end
-
-        if settings.consumableRune ~= false then
-            if RUNE_BUFFS[spellId] then
-                hasRuneBuff = true
-                buttons.rune.status:SetTexture("Interface\\RaidFrame\\ReadyCheck-Ready")
-                buttons.rune.icon:SetDesaturated(false)
-                if expires and expires > 0 then
-                    buttons.rune.timeText:SetText(FormatTimeRemaining(expires - now))
-                end
-            end
-        end
-    end)
-
-    -- Weapon enhancement check (class-aware)
-    local hasMainHandEnchant, mainHandExpiration, _, mainHandEnchantID, hasOffHandEnchant, offHandExpiration, _, offHandEnchantID = GetWeaponEnchantInfo()
-    local hasMHEnhancement = false
-    local hasOHEnhancement = false
-
-    if settings.consumableOilMH ~= false then
-        hasMHEnhancement = CheckEnhancementActive("MH", buttons.oilMH, hasMainHandEnchant, mainHandExpiration, mainHandEnchantID)
-    end
-
-    if ShouldShowOHButton(settings) then
-        hasOHEnhancement = CheckEnhancementActive("OH", buttons.oilOH, hasOffHandEnchant, offHandExpiration, offHandEnchantID)
-    end
-
-    -- Healthstone count
-    if settings.consumableHealthstone ~= false and HasWarlockInGroup() then
-        local hsCount = C_Item.GetItemCount(5512, false, true) or 0
-        local hsLockCount = C_Item.GetItemCount(224464, false, true) or 0
-        local totalHS = hsCount + hsLockCount
-        if totalHS > 0 then
-            buttons.healthstone.status:SetTexture("Interface\\RaidFrame\\ReadyCheck-Ready")
-            buttons.healthstone.icon:SetDesaturated(false)
-            buttons.healthstone.countText:SetText(tostring(totalHS))
-        else
-            buttons.healthstone.countText:SetText("0")
-        end
-    end
-
-    -- If a preferred item is configured, use that icon for the category.
-    ApplyPreferredItemIcons(buttons, settings)
 
     local canUseItems = not InCombatLockdown()
-    if canUseItems then
-        if settings.consumableFood ~= false then
-            local ownedFoodItems = GetOwnedItemsForButton("food")
-            local selectedFood = ResolveSelectedOwnedItem("food", ownedFoodItems)
-            if selectedFood then
-                ConfigureButtonClickAction(buttons.food, "food", selectedFood, not hasFoodBuff)
-            end
-        end
 
-        if settings.consumableFlask ~= false then
-            local ownedFlasks = GetOwnedItemsForButton("flask")
-            local selectedFlask = ResolveSelectedOwnedItem("flask", ownedFlasks)
-            if selectedFlask then
-                ConfigureButtonClickAction(buttons.flask, "flask", selectedFlask, not hasFlaskBuff)
-            end
-        end
+    -- Compute desired button states
+    local states = ComputeDesiredStates(settings, canUseItems)
 
-        if settings.consumableRune ~= false then
-            local ownedRunes = GetOwnedItemsForButton("rune")
-            local selectedRune = ResolveSelectedOwnedItem("rune", ownedRunes)
-            if selectedRune then
-                ConfigureButtonClickAction(buttons.rune, "rune", selectedRune, not hasRuneBuff)
-            end
-        end
+    local forceFull = snapshotCache.lastStates == nil
+    local changed, visibilityChanged = DiffButtonStates(snapshotCache.lastStates, states, BUTTON_TYPES)
+    snapshotCache.lastStates = states
 
-        if settings.consumableOilMH ~= false then
-            local ownedMH = GetOwnedItemsForButton("oilMH")
-            local selectedMH = ResolveSelectedOwnedItem("oilMH", ownedMH)
-            if selectedMH then
-                ConfigureButtonClickAction(buttons.oilMH, "oilMH", selectedMH, not hasMHEnhancement)
-            end
+    for _, buttonType in ipairs(changed) do
+        local button = buttons[buttonType]
+        if type(button) == "table" and button.icon then
+            PaintButton(button, buttonType, states[buttonType])
         end
+    end
 
-        if ShouldShowOHButton(settings) then
-            local ownedOH = GetOwnedItemsForButton("oilOH")
-            local selectedOH = ResolveSelectedOwnedItem("oilOH", ownedOH)
-            if selectedOH then
-                ConfigureButtonClickAction(buttons.oilOH, "oilOH", selectedOH, not hasOHEnhancement)
-            end
-        end
-    else
+    if not canUseItems then
         HideConsumablePicker()
     end
 
-    -- Position visible buttons (above the close button)
-    if not InCombatLockdown() then
-        local xOffset = 0
-        local buttonSize = ConsumablesFrame.buttonSize or DEFAULT_BUTTON_SIZE
-        local buttonY = CLOSE_BUTTON_HEIGHT  -- buttons sit above close button
-
-        if settings.consumableFood ~= false then
-            buttons.food:ClearAllPoints()
-            buttons.food:SetPoint("BOTTOMLEFT", ConsumablesFrame, "BOTTOMLEFT", xOffset, buttonY)
-            buttons.food:Show()
-            xOffset = xOffset + buttonSize + BUTTON_SPACING
-            visibleCount = visibleCount + 1
+    -- Layout only when the visible set changed (or a full repaint was
+    -- forced). A combat-deferred layout is remembered in layoutDirty and
+    -- applied by the first out-of-combat update (PLAYER_REGEN_ENABLED path).
+    if forceFull or visibilityChanged or snapshotCache.layoutDirty then
+        if InCombatLockdown() then
+            snapshotCache.layoutDirty = true
+        else
+            snapshotCache.layoutDirty = nil
+            ApplyButtonLayout(states)
         end
-        if settings.consumableFlask ~= false then
-            buttons.flask:ClearAllPoints()
-            buttons.flask:SetPoint("BOTTOMLEFT", ConsumablesFrame, "BOTTOMLEFT", xOffset, buttonY)
-            buttons.flask:Show()
-            xOffset = xOffset + buttonSize + BUTTON_SPACING
-            visibleCount = visibleCount + 1
-        end
-        if settings.consumableOilMH ~= false then
-            buttons.oilMH:ClearAllPoints()
-            buttons.oilMH:SetPoint("BOTTOMLEFT", ConsumablesFrame, "BOTTOMLEFT", xOffset, buttonY)
-            buttons.oilMH:Show()
-            xOffset = xOffset + buttonSize + BUTTON_SPACING
-            visibleCount = visibleCount + 1
-        end
-        if settings.consumableRune ~= false then
-            buttons.rune:ClearAllPoints()
-            buttons.rune:SetPoint("BOTTOMLEFT", ConsumablesFrame, "BOTTOMLEFT", xOffset, buttonY)
-            buttons.rune:Show()
-            xOffset = xOffset + buttonSize + BUTTON_SPACING
-            visibleCount = visibleCount + 1
-        end
-        if settings.consumableHealthstone ~= false and HasWarlockInGroup() then
-            buttons.healthstone:ClearAllPoints()
-            buttons.healthstone:SetPoint("BOTTOMLEFT", ConsumablesFrame, "BOTTOMLEFT", xOffset, buttonY)
-            buttons.healthstone:Show()
-            xOffset = xOffset + buttonSize + BUTTON_SPACING
-            visibleCount = visibleCount + 1
-        end
-        if ShouldShowOHButton(settings) then
-            buttons.oilOH:ClearAllPoints()
-            buttons.oilOH:SetPoint("BOTTOMLEFT", ConsumablesFrame, "BOTTOMLEFT", xOffset, buttonY)
-            buttons.oilOH:Show()
-            xOffset = xOffset + buttonSize + BUTTON_SPACING
-            visibleCount = visibleCount + 1
-        end
-
-        local frameWidth = visibleCount > 0
-            and (visibleCount * buttonSize + (visibleCount - 1) * BUTTON_SPACING)
-            or buttonSize
-        ConsumablesFrame:SetSize(frameWidth, buttonSize + CLOSE_BUTTON_HEIGHT)
     end
 end
 
@@ -1884,6 +1969,22 @@ end
 -- EVENT HANDLING
 ---------------------------------------------------------------------------
 
+-- Inventory snapshot invalidation entry point. The storage collector is
+-- always on (core/storage/collector.lua: "collection is a core service"),
+-- so its coalesced "BagsChanged" / "EquippedChanged" publishes are the
+-- batch boundaries for bag and equipment churn. The raw-event fallback
+-- below exists for the headless unit harness, which loads this file with a
+-- bare ns (no ns.Storage). None of these handlers read an event payload
+-- (BAG_UPDATE_DELAYED and GROUP_ROSTER_UPDATE carry none; the bus charKey
+-- and PLAYER_EQUIPMENT_CHANGED slot args are simply unused), so no secret
+-- probes are needed here.
+local function OnInventoryPossiblyChanged()
+    InvalidateInventorySnapshot()
+    if ConsumablesFrame:IsShown() then
+        UpdateConsumables()
+    end
+end
+
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("READY_CHECK")
 eventFrame:RegisterEvent("READY_CHECK_FINISHED")
@@ -1918,8 +2019,20 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         end)
     elseif event == "PLAYER_ALIVE" then
         C_Timer.After(0.5, OnResurrect)
+    elseif event == "BAG_UPDATE_DELAYED" or event == "PLAYER_EQUIPMENT_CHANGED"
+        or event == "GROUP_ROSTER_UPDATE" then
+        OnInventoryPossiblyChanged()
     end
 end)
+
+if ns.Storage and ns.Storage.Bus then
+    ns.Storage.Bus.Subscribe("BagsChanged", OnInventoryPossiblyChanged)
+    ns.Storage.Bus.Subscribe("EquippedChanged", OnInventoryPossiblyChanged)
+else
+    eventFrame:RegisterEvent("BAG_UPDATE_DELAYED")
+    eventFrame:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
+end
+eventFrame:RegisterEvent("GROUP_ROSTER_UPDATE")
 
 -- LOD catch-up: first PEW already fired before this module loads.
 -- ns.WhenLoggedIn is nil only in the headless test harness, where the old
@@ -1964,6 +2077,10 @@ combatFrame:SetScript("OnEvent", function(self, event)
                 button.click:Hide()
             end
         end
+        -- Clicks just got hidden outside the paint pipeline; drop the diff
+        -- bookkeeping so both the first in-combat update and the
+        -- PLAYER_REGEN_ENABLED update repaint (and re-arm actions) fully.
+        snapshotCache.lastStates = nil
     elseif event == "PLAYER_REGEN_ENABLED" then
         if hideConsumablesAfterCombat then
             return
@@ -1990,6 +2107,7 @@ end)
 ---------------------------------------------------------------------------
 
 _G.QUI_RefreshConsumables = function()
+    InvalidateInventorySnapshot()
     if ConsumablesFrame:IsShown() then
         local point, relativeTo, relativePoint, x, y = ConsumablesFrame:GetPoint()
         InitializeButtons()
@@ -2040,6 +2158,7 @@ if ns.Registry then
 end
 
 if ns.__test then
+    repaintLog = {}
     ns.ConsumableCheckTest = {
         RuneIconFallback = RUNE_ICON_FALLBACK,
         GetButtons = function() return ConsumablesFrame.buttons end,
@@ -2049,5 +2168,16 @@ if ns.__test then
         GetMacroPreferredItemID = GetMacroPreferredItemID,
         GetEnhancementLabel = GetEnhancementLabel,
         ShouldPersistPreferenceOnUse = ShouldPersistPreferenceOnUse,
+        ButtonStatesEqual = ButtonStatesEqual,
+        DiffButtonStates = DiffButtonStates,
+        GetSnapshotEntry = GetSnapshotEntry,
+        InvalidateInventorySnapshot = InvalidateInventorySnapshot,
+        ComputeDesiredStates = ComputeDesiredStates,
+        RunUpdate = function() UpdateConsumables() end,
+        GetRepaintLog = function() return repaintLog end,
+        ResetRepaintLog = function()
+            for i = #repaintLog, 1, -1 do repaintLog[i] = nil end
+        end,
+        GetLayoutRunCount = function() return layoutRuns end,
     }
 end

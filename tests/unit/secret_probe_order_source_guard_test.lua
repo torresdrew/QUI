@@ -204,8 +204,11 @@ do
     local path = "QUI_DamageMeter/damage_meter/damage_meter.lua"
     local code = stripLuaNonCode(readFile(path))
 
-    assertOrderInFunction(code, path, "local function DerivePerSecond(",
-        "isSecret(totalAmount)", "totalAmount == nil")
+    -- ResolveCurrentViewDuration's usable(): the probe must run before
+    -- type() ever sees the value (the beta-ported shape truth-tested via
+    -- type() first; reordered on alpha to the probe-first idiom).
+    assertOrderInFunction(code, path, "local function ResolveCurrentViewDuration(",
+        "isSecret(d)", "type(d)")
     assertOrderInFunction(code, path, "local function FormatNumber(amount, format)",
         "IsSecretValue(amount)", "amount == nil")
     assertOrderInFunction(code, path, "local function ShortenName(name)",
