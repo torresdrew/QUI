@@ -9,6 +9,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v5.0.0-alpha22 - 2026-07-23
+
+> ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will
+> not load on the 12.0.x live client. Stay on the v4.x beta line for live realms.
+
+### Added
+- Aura tooltips can now be positioned per element (anchor point and offset)
+  and hidden in combat through profile settings. Options-panel controls for
+  these arrive in a later alpha.
+
+### Changed
+- Aura containers now lay out through the 12.1 native flow layout, giving
+  real multi-column growth where the old layout degraded to a single column.
+- Aura tooltips now carry QUI's backdrop and border styling instead of the
+  default Blizzard chrome.
+- Dispel-type aura borders use the new 12.1 dispel texture API, keeping
+  Blizzard's per-type artwork intact under QUI sizing.
+- Aura "index" sorting uses the client's new instance-ID ordering when
+  available, keeping positions stable as auras refresh.
+
+### Fixed
+- Adopted the re-shipped 12.1 PTR build 68914 API surface.
+- More spots no longer error when the client withholds combat data
+  ("secret" values): the party leader icon, guild names in tooltips, and
+  raid buff class lookups.
+- A full-repo hardening sweep closed out the remaining strict taint-scan
+  findings across 32 files.
+
 ## v5.0.0-alpha21 - 2026-07-23
 
 > ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will
