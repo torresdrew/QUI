@@ -30,7 +30,9 @@ end
 local FILES = {
     { path = "modules/skinning/character_pane/character.lua",       safeCall = 25, bareCall = 29 },
     { path = "modules/skinning/character_pane/inspect.lua",         safeCall = 7,  bareCall = 10 },
-    { path = "modules/skinning/system/tooltips.lua",                safeCall = 26, bareCall = 19 },
+    -- 28 = 26 pre-PTR7 + 2 aura-tooltip bridge pushes (ApplyAuraTooltipStyle:
+    -- SetTooltipBackdrop + ResetTooltipStyle, both engine-mediated).
+    { path = "modules/skinning/system/tooltips.lua",                safeCall = 28, bareCall = 19 },
     { path = "modules/skinning/frames/character.lua",               safeCall = 7,  bareCall = 0 },
     { path = "modules/skinning/frames/achievement.lua",             safeCall = 2,  bareCall = 0 },
     { path = "modules/skinning/frames/craftingorders.lua",          safeCall = 2,  bareCall = 0 },

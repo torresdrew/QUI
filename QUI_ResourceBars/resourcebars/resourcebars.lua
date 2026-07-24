@@ -408,6 +408,8 @@ do
             local _, class = UnitClass("player")
             local spec = GetSpecialization()
             -- Fury = spec 2
+            -- @secret-policy: collapse-only — secret class takes the unregister/Reset branch
+            if issecretvalue and issecretvalue(class) then class = nil end
             if class == "WARRIOR" and spec == 2 then
                 self:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
                 self:RegisterEvent("PLAYER_DEAD")
@@ -550,6 +552,8 @@ do
             local _, class = UnitClass("player")
             local spec = GetSpecialization()
             -- Survival = spec 3
+            -- @secret-policy: collapse-only — secret class takes the unregister/Reset branch
+            if issecretvalue and issecretvalue(class) then class = nil end
             if class == "HUNTER" and spec == 3 then
                 self:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
                 self:RegisterEvent("PLAYER_DEAD")
@@ -691,6 +695,8 @@ do
             local _, class = UnitClass("player")
             local spec = GetSpecialization()
             -- Enhancement = spec 2
+            -- @secret-policy: collapse-only — secret class takes the unregister/Reset branch
+            if issecretvalue and issecretvalue(class) then class = nil end
             if class == "SHAMAN" and spec == 2 then
                 self:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
                 self:RegisterEvent("PLAYER_DEAD")
@@ -1856,7 +1862,11 @@ local primaryResources = {
 }
 
 local function GetPrimaryResource()
-    local playerClass = select(2, UnitClass("player"))
+    local _, playerClass = UnitClass("player")
+    -- @secret-policy: collapse-only — secret class renders the Mana default (matches
+    -- the no-spec fallback below)
+    if issecretvalue and issecretvalue(playerClass) then playerClass = nil end
+    if not playerClass then return Enum.PowerType.Mana end
     local spec = GetSpecialization()
     if not spec then return Enum.PowerType.Mana end
     local specID = GetSpecializationInfo(spec)
@@ -1919,7 +1929,11 @@ local secondaryResources = {
 }
 
 local function GetSecondaryResource()
-    local playerClass = select(2, UnitClass("player"))
+    local _, playerClass = UnitClass("player")
+    -- @secret-policy: collapse-only — secret class shows no secondary bar (matches
+    -- the no-spec fallback below)
+    if issecretvalue and issecretvalue(playerClass) then playerClass = nil end
+    if not playerClass then return nil end
     local spec = GetSpecialization()
     if not spec then return nil end
     local specID = GetSpecializationInfo(spec)
@@ -1988,6 +2002,8 @@ local function GetResourceColor(resource)
         elseif resource == Enum.PowerType.Runes then
             -- Check DK spec for spec-specific rune colors
             local _, class = UnitClass("player")
+            -- @secret-policy: collapse-only — secret class falls back to the base rune color
+            if issecretvalue and issecretvalue(class) then class = nil end
             if class == "DEATHKNIGHT" then
                 local spec = GetSpecialization()
                 if spec == 1 then customColor = pc.bloodRunes
@@ -2266,6 +2282,8 @@ local function GetSecondaryResourceValue(resource)
 
     if resource == Enum.PowerType.SoulShards then
         local _, class = UnitClass("player")
+        -- @secret-policy: collapse-only — secret class takes the generic shard path below
+        if issecretvalue and issecretvalue(class) then class = nil end
         if class == "WARLOCK" then
             local spec = GetSpecialization()
 
@@ -2602,7 +2620,9 @@ function QUICore:UpdatePowerBarValue(forceShown)
     elseif cfg.useClassColor then
         -- Class color
         local _, class = UnitClass("player")
-        local classColor = RAID_CLASS_COLORS[class]
+        -- @secret-policy: collapse-only — secret class falls back to the power color
+        if issecretvalue and issecretvalue(class) then class = nil end
+        local classColor = class and RAID_CLASS_COLORS[class]
         if classColor then
             bar.StatusBar:SetStatusBarColor(classColor.r, classColor.g, classColor.b)
         else
@@ -2882,7 +2902,9 @@ function QUICore:UpdatePowerBar()
         -- Apply text color
         if cfg.textUseClassColor then
             local _, class = UnitClass("player")
-            local classColor = RAID_CLASS_COLORS[class]
+            -- @secret-policy: collapse-only — secret class keeps the current text color
+            if issecretvalue and issecretvalue(class) then class = nil end
+            local classColor = class and RAID_CLASS_COLORS[class]
             if classColor then
                 bar.TextValue:SetTextColor(classColor.r, classColor.g, classColor.b, 1)
             end
@@ -3578,7 +3600,9 @@ function QUICore:UpdateFragmentedPowerDisplay(bar, resource, isVertical)
         color = GetResourceColor(resource)
     elseif cfg.useClassColor then
         local _, class = UnitClass("player")
-        local classColor = RAID_CLASS_COLORS[class]
+        -- @secret-policy: collapse-only — secret class falls back to the power color
+        if issecretvalue and issecretvalue(class) then class = nil end
+        local classColor = class and RAID_CLASS_COLORS[class]
         if classColor then
             color = { r = classColor.r, g = classColor.g, b = classColor.b }
         else
@@ -4370,7 +4394,9 @@ function QUICore:UpdateSecondaryPowerBarValue(forceShown)
             bar.StatusBar:SetStatusBarColor(color.r, color.g, color.b, color.a or 1)
         elseif cfg.useClassColor then
             local _, class = UnitClass("player")
-            local classColor = RAID_CLASS_COLORS[class]
+            -- @secret-policy: collapse-only — secret class falls back to the power color
+            if issecretvalue and issecretvalue(class) then class = nil end
+            local classColor = class and RAID_CLASS_COLORS[class]
             if classColor then
                 bar.StatusBar:SetStatusBarColor(classColor.r, classColor.g, classColor.b)
             else
@@ -4400,7 +4426,9 @@ function QUICore:UpdateSecondaryPowerBarValue(forceShown)
             bar.StatusBar:SetStatusBarColor(color.r, color.g, color.b, color.a or 1)
         elseif cfg.useClassColor then
             local _, class = UnitClass("player")
-            local classColor = RAID_CLASS_COLORS[class]
+            -- @secret-policy: collapse-only — secret class falls back to the power color
+            if issecretvalue and issecretvalue(class) then class = nil end
+            local classColor = class and RAID_CLASS_COLORS[class]
             if classColor then
                 bar.StatusBar:SetStatusBarColor(classColor.r, classColor.g, classColor.b)
             else
@@ -4982,7 +5010,9 @@ function QUICore:UpdateSecondaryPowerBar()
         -- Apply text color
         if textCfg.textUseClassColor then
             local _, class = UnitClass("player")
-            local classColor = RAID_CLASS_COLORS[class]
+            -- @secret-policy: collapse-only — secret class keeps the current text color
+            if issecretvalue and issecretvalue(class) then class = nil end
+            local classColor = class and RAID_CLASS_COLORS[class]
             if classColor then
                 bar.TextValue:SetTextColor(classColor.r, classColor.g, classColor.b, 1)
             end
@@ -4996,7 +5026,9 @@ function QUICore:UpdateSecondaryPowerBar()
             bar.SoulShardDecimal:SetShadowOffset(0, 0)
             if textCfg.textUseClassColor then
                 local _, class = UnitClass("player")
-                local classColor = RAID_CLASS_COLORS[class]
+                -- @secret-policy: collapse-only — secret class keeps the current text color
+                if issecretvalue and issecretvalue(class) then class = nil end
+                local classColor = class and RAID_CLASS_COLORS[class]
                 if classColor then
                     bar.SoulShardDecimal:SetTextColor(classColor.r, classColor.g, classColor.b, 1)
                 end

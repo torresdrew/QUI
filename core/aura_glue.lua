@@ -29,13 +29,15 @@ local function ResolveAuraSkin()
 end
 
 -- Settings sort keys → AuraContainerSortMethod (plain global, verified
--- Blizzard_AuraContainerShared.lua:46; no Index member exists — INDEX maps to
--- Default). Read lazily so the file loads headless before enum stubs exist.
+-- Blizzard_AuraContainerShared.lua:41; the 68914 re-patch added
+-- AuraInstanceIDOnly = 8 — INDEX finally maps to real insertion-order
+-- semantics, with Default as the pre-re-patch fallback). Read lazily so
+-- the file loads headless before enum stubs exist.
 local function SortMethodFor(rule)
     local M = _G.AuraContainerSortMethod
     if not M then return 0 end
     local map = {
-        INDEX = M.Default, DEFAULT = M.Default,
+        INDEX = M.AuraInstanceIDOnly or M.Default, DEFAULT = M.Default,
         EXPIRY = M.Expiration, EXPIRY_ONLY = M.ExpirationOnly,
         NAME = M.Name, NAME_ONLY = M.NameOnly,
         BIG_DEFENSIVE = M.BigDefensive,
@@ -86,6 +88,14 @@ function G.ElementProfile(element, overrides)
         -- (task 10) -- this is the passthrough pin so a future writer isn't
         -- silently dropped before it ever reaches the runtime.
         dispelColors = element.dispelColors,
+        -- PTR7 per-button tooltip controls (aura_skin styleButton applies
+        -- them feature-detected). Same passthrough-pin rationale as
+        -- dispelColors: no UI exposure yet, but a future writer must not be
+        -- silently dropped before reaching the runtime.
+        tooltipAnchor       = element.tooltipAnchor,
+        tooltipAnchorX      = element.tooltipAnchorX,
+        tooltipAnchorY      = element.tooltipAnchorY,
+        tooltipHideInCombat = element.tooltipHideInCombat,
     }
     if overrides then
         for k, v in pairs(overrides) do p[k] = v end

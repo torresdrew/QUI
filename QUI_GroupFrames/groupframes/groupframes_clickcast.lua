@@ -35,6 +35,7 @@ local InCombatLockdown = InCombatLockdown
 local C_Timer = C_Timer
 local table_insert = table.insert
 local table_remove = table.remove
+local issecretvalue = _G.issecretvalue -- nil on headless/pre-12.0 clients
 
 ---------------------------------------------------------------------------
 -- MODULE TABLE
@@ -188,7 +189,10 @@ local RES_SPELLS = {
 
 local function GetResurrectionSpellName()
     local _, classToken = UnitClass("player")
-    local spellID = RES_SPELLS[classToken]
+    -- Probe FIRST — a secret class token throws as a RES_SPELLS table index.
+    -- @secret-policy: collapse-only — no res spell resolved
+    if issecretvalue and issecretvalue(classToken) then classToken = nil end
+    local spellID = classToken and RES_SPELLS[classToken]
     if spellID then
         local name = C_Spell.GetSpellName(spellID)
         return name

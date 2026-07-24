@@ -134,10 +134,10 @@ local function buildButtonArt(button, container)
     if dispel.DisablePixelSnap then dispel:DisablePixelSnap() end
     button._quiDispel = dispel
     local borderOpts = {
-        style = 1,                 -- AuraButtonBorderStyle.Color (secure-env enum; mirror value)
-        showWhenHarmful = true,
-        showWhenHelpful = false,
-    }
+        style = 3,                 -- CustomAuraButtonDispelTypeTextureStyle.PreserveAsset
+        showWhenHarmful = true,    -- (secure-env enum; mirror value). 68914 re-patch replaced
+        showWhenHelpful = false,   -- BorderStyle.Color (=1); PreserveAsset keeps QUI's white
+    }                              -- texture, engine vertex-colors it per dispel type.
     -- 68824: optional per-element dispel palette. SetAuraBorder securecopies
     -- options, so passing an addon table (and nested color tables) is safe.
     local prof = container and container._quiProfile
@@ -204,6 +204,19 @@ local function styleButton(button, profile)
     local size = profile.iconSize or 22
     if size <= 0 then size = 22 end
     button:SetSize(size, size)
+
+    -- PTR7 per-button tooltip controls (68824+ AuraButton API; feature-
+    -- detected so headless mocks without them keep working). nil anchor =
+    -- engine default (ANCHOR_BOTTOMLEFT). pcall on the anchor: the setter
+    -- hard-asserts on invalid names — a stale/imported profile string must
+    -- not error every style pass.
+    if button.SetTooltipAnchorPoint and profile.tooltipAnchor then
+        pcall(button.SetTooltipAnchorPoint, button, profile.tooltipAnchor,
+            profile.tooltipAnchorX or 0, profile.tooltipAnchorY or 0)
+    end
+    if button.SetHideTooltipInCombat then
+        button:SetHideTooltipInCombat(profile.tooltipHideInCombat == true)
+    end
 
     -- Static QUI border: per-element override when set, else theme color.
     -- borderColor is optional on the element (absent = theme) — the seeded
@@ -310,19 +323,21 @@ local function styleButton(button, profile)
     end
 end
 
--- Map the QUI grow vocabulary onto the PTR4 container-wide flow layout
--- (verified: SetAuraLayoutAnchorPoint / SetAuraLayoutGrowthDirection with
--- AnchorUtil.FlowDirection {Left=-1, Right=1, Up=1, Down=-1} /
--- SetAuraLayoutRowWidth in PIXELS, nil = no wrap).
--- Column-primary growth (grow UP/DOWN) wraps after every icon (rowWidth =
--- iconSize); a multi-column vertical grid (maxPerRow with vertical grow) is
--- not expressible in a row-major flow layout and degrades to one column.
+-- Map the QUI grow vocabulary onto the 68914-re-patch flow layout
+-- (Blizzard_AuraContainerFlowLayout.lua: SetFlowLayoutAnchorPoint /
+-- SetFlowLayoutGrowthDirection(h, v) with AnchorUtil.FlowDirection
+-- {Left=-1, Right=1, Up=1, Down=-1} / SetFlowLayoutAxis
+-- {Horizontal=0, Vertical=1} / SetFlowLayoutMaximumLineSize in PIXELS,
+-- nil = no wrap). Column-primary growth (grow UP/DOWN) is now NATIVE:
+-- axis=Vertical flows icons down/up a column and maxPerRow caps icons
+-- per column, so a multi-column vertical grid finally works (the old
+-- row-major SetAuraLayoutRowWidth API degraded it to a single column).
 -- Flow derivation: primary axis from grow (RIGHT/LEFT = rows; UP/DOWN =
--- column, one icon per row), wrap axis from profile.wrap ("UP" wraps upward,
--- default "DOWN" — buffborders sets wrap from its growUp toggle). The flow
+-- columns), wrap axis from profile.wrap ("UP" wraps upward, default
+-- "DOWN" — buffborders sets wrap from its growUp toggle). The flow
 -- origin corner combines both.
 local function FlowFor(L)
-    -- CENTER has no native flow direction (SetAuraLayoutAnchorPoint only
+    -- CENTER has no native flow direction (SetFlowLayoutAnchorPoint only
     -- accepts corners) — it behaves as a RIGHT-growing row internally; the
     -- container auto-sizes, and LayoutAnchor pins that auto-sized rect's
     -- CENTER to the host so the row reads as centered overall.
@@ -353,27 +368,29 @@ end
 local function ApplyContainerLayout(container, L)
     local anchor, left, up, column = FlowFor(L)
     local FD = AnchorUtil.FlowDirection
-    container:SetAuraLayoutAnchorPoint(anchor)
-    container:SetAuraLayoutGrowthDirection(
+    local AX = AnchorUtil.FlowLayoutAxis
+    container:SetFlowLayoutAnchorPoint(anchor)
+    container:SetFlowLayoutGrowthDirection(
         left and FD.Left or FD.Right,
         up and FD.Up or FD.Down)
-    container:SetAuraLayoutPadding(0, 0, 0, 0)
-    local rowWidth
-    if column then
-        rowWidth = L.iconSize                 -- wrap after every icon → column
-    elseif L.maxPerRow and L.maxPerRow > 0 then
-        rowWidth = L.maxPerRow * L.iconSize + (L.maxPerRow - 1) * L.spacing + 0.5
+    container:SetFlowLayoutPadding(0, 0, 0, 0)
+    container:SetFlowLayoutAxis(column and AX.Vertical or AX.Horizontal)
+    -- Line cap along the PRIMARY axis: rows cap at maxPerRow icons wide,
+    -- columns cap at maxPerRow icons tall (both dims are iconSize squares).
+    local lineSize
+    if L.maxPerRow and L.maxPerRow > 0 then
+        lineSize = L.maxPerRow * L.iconSize + (L.maxPerRow - 1) * L.spacing + 0.5
     end
-    container:SetAuraLayoutRowWidth(rowWidth) -- nil → no wrap (math.huge)
+    container:SetFlowLayoutMaximumLineSize(lineSize) -- nil → no wrap (math.huge)
 end
 
 -- Per-group flow contribution: spacing + explicit element size.
 local function GroupLayout(L, g)
     local t = {
-        elementSpacingX = L.spacing,
-        elementSpacingY = L.spacing,
-        elementWidth    = L.iconSize,
-        elementHeight   = L.iconSize,
+        elementSpacing = L.spacing,   -- 68914 re-patch renamed the spacing
+        lineSpacing    = L.spacing,   -- keys (was elementSpacingX/Y)
+        elementWidth   = L.iconSize,
+        elementHeight  = L.iconSize,
     }
     -- 68824: explicit ordering. Registration order was the implicit order;
     -- layoutIndex pins it so a fallback-path re-registration (new composite
@@ -642,11 +659,11 @@ function AuraSkin.ConfigureEnchantments(container, profile)
     container._quiProfile = profile
     local L = ResolveLayout(profile)
     container:SetItemEnchantmentLayout({
-        placement       = placement.BeforeAuraGroups,
-        elementSpacingX = L.spacing,
-        elementSpacingY = L.spacing,
-        elementWidth    = L.iconSize,
-        elementHeight   = L.iconSize,
+        placement      = placement.BeforeAuraGroups,
+        elementSpacing = L.spacing,   -- 68914 re-patch key rename
+        lineSpacing    = L.spacing,   -- (was elementSpacingX/Y)
+        elementWidth   = L.iconSize,
+        elementHeight  = L.iconSize,
     })
     -- 68824: temp weapon enchants support native click-to-cancel — the same
     -- RegisterForClicks tokens as aura buttons. Re-assert on every pass so a

@@ -69,6 +69,9 @@ end
 
 local function HiddenUnlessDisciplinePriest()
     local _, class = UnitClass("player")
+    -- @secret-policy: collapse-only — UnitClass can return SECRET on 12.1 PTR7
+    -- (SecretWhenUnitIdentityRestricted); collapse ⇒ hidden (the safe default below).
+    if issecretvalue and issecretvalue(class) then class = nil end
     if class ~= "PRIEST" then return true end
     local spec = GetSpecialization and GetSpecialization()
     if spec then

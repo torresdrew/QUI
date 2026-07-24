@@ -2799,7 +2799,13 @@ local function UpdateStatsPanel(panel, unit)
                             spec = C_SpecializationInfo.GetSpecialization()
                             if spec then
                                 role = GetSpecializationRole(spec)
-                                primaryStat = select(6, C_SpecializationInfo.GetSpecializationInfo(spec, false, false, nil, UnitSex("player")))
+                                -- PTR7: UnitSex is SecretWhenUnitIdentityRestricted, and
+                                -- GetSpecializationInfo is SecretArguments=AllowedWhenUntainted,
+                                -- so a secret sex must not be forwarded (sex is Nilable).
+                                -- @secret-policy: collapse-only — nil sex = default spec name
+                                local playerSex = UnitSex("player")
+                                if issecretvalue and issecretvalue(playerSex) then playerSex = nil end
+                                primaryStat = select(6, C_SpecializationInfo.GetSpecializationInfo(spec, false, false, nil, playerSex))
                             end
 
                             if stat.statIndex == 1 then -- Strength
@@ -2936,8 +2942,7 @@ local function UpdateStatsPanel(panel, unit)
             local _, class = UnitClass(unit)
             -- PTR7: classFile is secret for secret-identity inspect targets.
             -- @secret-policy: collapse-only — concat throws on secret; safe fallback in all branches
-            local classIsSecret = issecretvalue and issecretvalue(class)
-            if classIsSecret then class = nil end
+            if issecretvalue and issecretvalue(class) then class = nil end
             tooltipBody = class and _G["STAT_HASTE_"..class.."_TOOLTIP"] or STAT_HASTE_TOOLTIP
         elseif stat.statKey == "MASTERY" then
             tooltipBody = STAT_MASTERY_TOOLTIP
@@ -2961,8 +2966,7 @@ local function UpdateStatsPanel(panel, unit)
                 local _, class = UnitClass(unit)
                 -- PTR7: classFile is secret for secret-identity inspect targets.
                 -- @secret-policy: collapse-only — concat throws on secret; safe fallback in all branches
-                local classIsSecret = issecretvalue and issecretvalue(class)
-                if classIsSecret then class = nil end
+                if issecretvalue and issecretvalue(class) then class = nil end
                 local hasteRating = SafeGetStat(GetCombatRating, CR_HASTE_SPELL)
                 local hasteBonus = SafeGetStat(GetCombatRatingBonus, CR_HASTE_SPELL)
                 row.tooltip = HIGHLIGHT_FONT_COLOR_CODE..format(PAPERDOLLFRAME_TOOLTIP_FORMAT, STAT_HASTE)..FONT_COLOR_CODE_CLOSE
@@ -3136,8 +3140,7 @@ local function UpdateStatsPanel(panel, unit)
         local _, cls = UnitClass(unit)
         -- PTR7: classFile is secret for secret-identity inspect targets.
         -- @secret-policy: collapse-only — skin falls back to neutral styling
-        local clsIsSecret = issecretvalue and issecretvalue(cls)
-        if clsIsSecret then cls = nil end
+        if issecretvalue and issecretvalue(cls) then cls = nil end
         local casterClasses = { MAGE = true, PRIEST = true, WARLOCK = true }
         local hybridClasses = { DRUID = true, PALADIN = true, SHAMAN = true, EVOKER = true, MONK = true }
         classFilter.ATTACK_POWER = not casterClasses[cls]
@@ -3217,8 +3220,7 @@ local function UpdateStatsPanel(panel, unit)
     local _, classTag = UnitClass(unit)
     -- PTR7: classFile is secret for secret-identity inspect targets.
     -- @secret-policy: collapse-only — skin falls back to neutral styling
-    local classTagIsSecret = issecretvalue and issecretvalue(classTag)
-    if classTagIsSecret then classTag = nil end
+    if issecretvalue and issecretvalue(classTag) then classTag = nil end
     local isBrewmaster = false
 
     if classTag == "MONK" and unit == "player" and GetSpecialization and GetSpecializationInfo then
@@ -3488,10 +3490,16 @@ local function UpdateILvlDisplay()
         local _, specNameLocal = C_SpecializationInfo.GetSpecializationInfo(specIndex)
         specName = specNameLocal or ""
     end
-    local _, classNameLocal = UnitClass("player")
+    local _, classNameLocal, classIdLocal = UnitClass("player")
+    -- PTR7: UnitClass is SecretWhenUnitIdentityRestricted — token/classID can be
+    -- secret; GetClassInfo's classID is not Nilable and the abbreviation below is
+    -- Lua string work, so collapse both before any truth-test or call.
+    -- @secret-policy: collapse-only — falls back to neutral (uncolored) text
+    if issecretvalue and issecretvalue(classNameLocal) then classNameLocal = nil end
+    if issecretvalue and issecretvalue(classIdLocal) then classIdLocal = nil end
     if classNameLocal then
         -- Get localized class name
-        local classInfo = C_CreatureInfo.GetClassInfo(select(3, UnitClass("player")))
+        local classInfo = classIdLocal and C_CreatureInfo.GetClassInfo(classIdLocal)
         className = classInfo and classInfo.className or classNameLocal
     end
 

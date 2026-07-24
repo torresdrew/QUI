@@ -22,8 +22,9 @@ assert(src:find("AuraSkin.Configure", 1, true), "must define AuraSkin.Configure"
 assert(src:find("AuraSkin.Restyle", 1, true), "must define AuraSkin.Restyle")
 assert(src:find("AuraSkin.LayoutAnchor", 1, true), "must define AuraSkin.LayoutAnchor")
 assert(src:find("AddAuraGroup", 1, true), "must register groups via AddAuraGroup")
-assert(src:find("SetAuraLayoutGrowthDirection", 1, true), "must set container-wide flow direction")
-assert(src:find("SetAuraLayoutRowWidth", 1, true), "must derive row wrap from maxPerRow (pixels)")
+assert(src:find("SetFlowLayoutGrowthDirection", 1, true), "must set container-wide flow direction")
+assert(src:find("SetFlowLayoutMaximumLineSize", 1, true), "must derive the line cap from maxPerRow (pixels)")
+assert(src:find("SetFlowLayoutAxis", 1, true), "must pick the flow axis (columns = Vertical) per grow")
 assert(src:find("initializeFrame", 1, true), "must style buttons via the initializeFrame callback")
 
 -- Groups are unremovable + filter-immutable: reconcile, never clear.

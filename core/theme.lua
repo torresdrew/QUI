@@ -97,7 +97,10 @@ function GUI:ResolveThemePreset(presetName)
     -- Dynamic presets
     if presetName == "Class Colored" then
         local _, class = UnitClass("player")
-        local color = RAID_CLASS_COLORS and RAID_CLASS_COLORS[class]
+        -- @secret-policy: collapse-only — UnitClass can return SECRET on 12.1 PTR7
+        -- (SecretWhenUnitIdentityRestricted); collapse so the static fallback applies.
+        if issecretvalue and issecretvalue(class) then class = nil end
+        local color = class and RAID_CLASS_COLORS and RAID_CLASS_COLORS[class]
         if color then return color.r, color.g, color.b end
         return 0.376, 0.647, 0.980
     end

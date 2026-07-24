@@ -1303,8 +1303,13 @@ local function ResolveTooltipTargetInfo(unit)
     end
 
     local okClass, _, classToken = pcall(UnitClass, targetUnit)
+    if not okClass then classToken = nil end
+    -- Probe BEFORE the truth-test, unconditionally — `classToken and` throws
+    -- on a secret. IsSecretValue(nil) is safe, so the probe can lead.
+    -- @secret-policy=collapse-only — white target text fallback
+    if Helpers.IsSecretValue(classToken) then classToken = nil end
     local valueR, valueG, valueB = 1, 1, 1
-    if okClass and classToken and not Helpers.IsSecretValue(classToken) then
+    if classToken then
         valueR, valueG, valueB = GetPlayerClassColor(classToken)
     end
 
@@ -2108,7 +2113,11 @@ local function SetupTooltipHook()
 
         if hideGuild then
             local okGuild, guildName = pcall(GetGuildInfo, unit)
-            if okGuild and guildName and guildName ~= "" and not Helpers.IsSecretValue(guildName) then
+            -- PTR7: probe BEFORE any truth-test — `guildName and ...` on a
+            -- secret throws; the pcall above does not cover this expression.
+            -- @secret-policy=collapse-only
+            if okGuild and Helpers.IsSecretValue(guildName) then guildName = nil end
+            if okGuild and guildName and guildName ~= "" then
                 local bracketed = "<" .. guildName .. ">"
                 HideTooltipLineMatching(tooltip, function(lt)
                     return lt == guildName or lt == bracketed
@@ -2172,7 +2181,10 @@ local function SetupTooltipHook()
         if not wantRank and not wantColor then return end
 
         local okGuild, guildName, guildRankName = pcall(GetGuildInfo, unit)
-        if not okGuild or not guildName or guildName == "" or Helpers.IsSecretValue(guildName) then return end
+        -- @secret-policy=collapse-only — probe before truth-test (see hideGuild site)
+        if okGuild and Helpers.IsSecretValue(guildName) then guildName = nil end
+        if okGuild and Helpers.IsSecretValue(guildRankName) then guildRankName = nil end
+        if not okGuild or not guildName or guildName == "" then return end
 
         local bracketed = "<" .. guildName .. ">"
         for i = 2, 5 do
@@ -2206,7 +2218,13 @@ local function SetupTooltipHook()
         if not settings.classColorName then return end
 
         local okClass, _, class = pcall(UnitClass, unit)
-        if not okClass or not class then return end
+        if not okClass then class = nil end
+        -- Probe FIRST, unconditionally — `not class` and the
+        -- RAID_CLASS_COLORS index below both throw on a secret class token.
+        -- IsSecretValue(nil) is safe, so the probe can lead.
+        -- @secret-policy=collapse-only — name line keeps its native color
+        if Helpers.IsSecretValue(class) then class = nil end
+        if not class then return end
 
         local classColor
         if InCombatLockdown() then

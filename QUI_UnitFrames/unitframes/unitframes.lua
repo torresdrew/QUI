@@ -776,8 +776,8 @@ local function GetHealthBarColor(unit, settings)
         -- safe inspection, but the class-color table-index below throws on a
         -- secret — probe first.
         -- @secret-policy: collapse-only — fall through to hostility/default color
-        local classIsSecret = issecretvalue and issecretvalue(class)
-        if not classIsSecret and type(class) == "string" then
+        if issecretvalue and issecretvalue(class) then class = nil end
+        if type(class) == "string" then
             local color = RAID_CLASS_COLORS[class]
             if color then
                 return color.r, color.g, color.b, 1
@@ -1484,6 +1484,8 @@ local function UpdateStance(frame)
     -- Set text color
     if stanceSettings.useClassColor then
         local _, class = UnitClass("player")
+        -- @secret-policy: collapse-only — secret class keeps the current stance text color
+        if issecretvalue and issecretvalue(class) then class = nil end
         if class then
             local color = RAID_CLASS_COLORS[class]
             if color then
@@ -1555,11 +1557,23 @@ local function UpdateLeaderIcon(frame)
 
     -- Check if unit is leader or assistant
     -- Note: Assistants only exist in raids, not parties
-    if UnitIsGroupLeader(QUI_UF.GetFrameUnit(frame)) then
+    -- PTR7: both APIs return secrets for secret-identity units (hostile
+    -- players in combat on target/focus frames); collapse secret → false,
+    -- the icon simply stays hidden for units we cannot inspect.
+    -- @secret-policy=collapse-only
+    local unit = QUI_UF.GetFrameUnit(frame)
+    local isLeader = UnitIsGroupLeader(unit)
+    if issecretvalue(isLeader) then isLeader = false end
+    local isAssist = false
+    if IsInRaid() then
+        isAssist = UnitIsGroupAssistant(unit)
+        if issecretvalue(isAssist) then isAssist = false end
+    end
+    if isLeader then
         frame.leaderIcon:SetAtlas("groupfinder-icon-leader")
         frame.leaderIcon:SetAlpha(1)
         frame.leaderIcon:Show()
-    elseif IsInRaid() and UnitIsGroupAssistant(QUI_UF.GetFrameUnit(frame)) then
+    elseif isAssist then
         frame.leaderIcon:SetAtlas("groupfinder-icon-leader")
         frame.leaderIcon:SetAlpha(0.6)
         frame.leaderIcon:Show()
@@ -3257,6 +3271,8 @@ function QUI_UF:ShowPreview(unitKey)
                     -- Default mode: use class color or custom default health color
                     if general and general.defaultUseClassColor then
                         local _, class = UnitClass("player")
+                        -- @secret-policy: collapse-only — secret class falls back to defaultHealthColor
+                        if issecretvalue and issecretvalue(class) then class = nil end
                         if class and RAID_CLASS_COLORS[class] then
                             local color = RAID_CLASS_COLORS[class]
                             frame.healthBar:SetStatusBarColor(color.r, color.g, color.b, 1)
@@ -3446,6 +3462,8 @@ function QUI_UF:ShowPreview(unitKey)
         -- Default mode: use class color or custom default health color
         if general and general.defaultUseClassColor then
             local _, class = UnitClass("player")
+            -- @secret-policy: collapse-only — secret class falls back to defaultHealthColor
+            if issecretvalue and issecretvalue(class) then class = nil end
             if class and RAID_CLASS_COLORS[class] then
                 local color = RAID_CLASS_COLORS[class]
                 frame.healthBar:SetStatusBarColor(color.r, color.g, color.b, 1)

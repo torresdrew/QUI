@@ -963,8 +963,11 @@ function CDMBars.ConfigureBar(bar, settings, overrideWidth)
                 overrideColor[1] or 0.2, overrideColor[2] or 0.8, overrideColor[3] or 0.6, barOpacity
         elseif useClassColor then
             local _, class = UnitClass("player")
-            local safeClass = tostring(class)
-            local color = safeClass and RAID_CLASS_COLORS[safeClass]
+            -- @secret-policy: collapse-only — UnitClass can return SECRET on 12.1 PTR7
+            -- (SecretWhenUnitIdentityRestricted); collapse so the custom barColor
+            -- fallback below applies.
+            if issecretvalue and issecretvalue(class) then class = nil end
+            local color = class and RAID_CLASS_COLORS[class]
             if color then
                 resolvedR, resolvedG, resolvedB, resolvedA = color.r, color.g, color.b, barOpacity
             else

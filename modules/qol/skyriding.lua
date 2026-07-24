@@ -20,7 +20,6 @@ local function CJKFont(fs, p, s, f)
         fs:SetFont(p, s, f)
     end
 end
-local IsSecretValue = Helpers.IsSecretValue
 
 -- Constants
 local VIGOR_SPELL_ID = 372608
@@ -95,7 +94,7 @@ local function IsSafeNumber(value)
     -- Probe FIRST: `value == nil` on a secret value is itself the throw
     -- (GetUnitSpeed is SecretWhenUnitStatsRestricted and feeds this helper
     -- from an every-frame path). issecretvalue(nil) is simply false.
-    if IsSecretValue and IsSecretValue(value) then return false end -- @secret-policy: reject-secret-value
+    if Helpers.IsSecretValue and Helpers.IsSecretValue(value) then return false end -- @secret-policy: reject-secret-value
     if value == nil then return false end
     return type(value) == "number"
 end
@@ -190,10 +189,10 @@ local function GetVigorInfo()
     -- NeverSecret (SpellSharedDocumentation SpellChargeInfo) so it can never
     -- trip; every other field used below is secret-capable and the `or`
     -- fallbacks would truth-test it and throw.
-    if IsSecretValue(data.currentCharges)
-        or IsSecretValue(data.cooldownStartTime)
-        or IsSecretValue(data.cooldownDuration)
-        or IsSecretValue(data.chargeModRate) then
+    if Helpers.IsSecretValue(data.currentCharges)
+        or Helpers.IsSecretValue(data.cooldownStartTime)
+        or Helpers.IsSecretValue(data.cooldownDuration)
+        or Helpers.IsSecretValue(data.chargeModRate) then
         return 0, 6, 0, 0, 1 -- @secret-policy: reject-secret-value
     end
 
@@ -211,10 +210,10 @@ local function GetSecondWindInfo()
     -- Restriction probe: maxCharges is NeverSecret (SpellSharedDocumentation
     -- SpellChargeInfo) so it can never trip; every other field used below is
     -- secret-capable and the `or` fallbacks would truth-test it and throw.
-    if IsSecretValue(data.currentCharges)
-        or IsSecretValue(data.cooldownStartTime)
-        or IsSecretValue(data.cooldownDuration)
-        or IsSecretValue(data.chargeModRate) then
+    if Helpers.IsSecretValue(data.currentCharges)
+        or Helpers.IsSecretValue(data.cooldownStartTime)
+        or Helpers.IsSecretValue(data.cooldownDuration)
+        or Helpers.IsSecretValue(data.chargeModRate) then
         return 0, 0, 0, 0, 1 -- @secret-policy: reject-secret-value
     end
 
@@ -238,7 +237,7 @@ local function GetGlidingInfo()
     if canGlideNow and not gliding and C_Spell and C_Spell.GetSpellCharges then
         local charges = C_Spell.GetSpellCharges(VIGOR_SPELL_ID)
         -- Probe currentCharges: maxCharges is NeverSecret and never trips.
-        if not charges or IsSecretValue(charges.currentCharges) then -- @secret-safe: GetSpellCharges table ref is non-secret (currentCharges field probed here)
+        if not charges or Helpers.IsSecretValue(charges.currentCharges) then -- @secret-safe: GetSpellCharges table ref is non-secret (currentCharges field probed here)
             return false, false, 0
         end
     end
@@ -262,7 +261,7 @@ local function RefreshThrillOfTheSkiesBuffState()
     hasThrillOfTheSkiesBuff = false
     if C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID then
         local aura = C_UnitAuras.GetPlayerAuraBySpellID(THRILL_OF_THE_SKIES_BUFF_ID)
-        if not IsSecretValue(aura) and aura then
+        if not Helpers.IsSecretValue(aura) and aura then
             hasThrillOfTheSkiesBuff = true
             return true
         end
@@ -283,7 +282,10 @@ local function GetVigorBarColor(settings)
 
     if settings.useClassColorVigor then
         local _, class = UnitClass("player")
-        local classColor = RAID_CLASS_COLORS[class]
+        -- Probe FIRST — a secret class throws on the RAID_CLASS_COLORS index.
+        -- @secret-policy: collapse-only — settings.barColor fallback below
+        if Helpers.IsSecretValue(class) then class = nil end
+        local classColor = class and RAID_CLASS_COLORS[class]
         if classColor then
             return {classColor.r, classColor.g, classColor.b, 1}
         end
@@ -652,7 +654,10 @@ local function UpdateSecondWind()
     local color
     if settings.useClassColorSecondWind then
         local _, class = UnitClass("player")
-        local classColor = RAID_CLASS_COLORS[class]
+        -- Probe FIRST — a secret class throws on the RAID_CLASS_COLORS index.
+        -- @secret-policy: collapse-only — secondWindColor fallback below
+        if Helpers.IsSecretValue(class) then class = nil end
+        local classColor = class and RAID_CLASS_COLORS[class]
         if classColor then
             color = {classColor.r, classColor.g, classColor.b, 1}
         else
@@ -919,7 +924,10 @@ local function UpdateSecondWindRecharge(settings)
     local color
     if settings.useClassColorSecondWind then
         local _, class = UnitClass("player")
-        local classColor = RAID_CLASS_COLORS[class]
+        -- Probe FIRST — a secret class throws on the RAID_CLASS_COLORS index.
+        -- @secret-policy: collapse-only — gold fallback below
+        if Helpers.IsSecretValue(class) then class = nil end
+        local classColor = class and RAID_CLASS_COLORS[class]
         if classColor then
             color = {classColor.r, classColor.g, classColor.b, 0.6}
         else

@@ -126,6 +126,11 @@ end
 local BuildOwnedItemsFromList  -- forward declaration (defined in utility section below)
 
 local _, playerClass = UnitClass("player")
+-- PTR7: probe FIRST — a secret class token would throw on every comparison
+-- and CLASS_ENHANCEMENT_CONFIG table index below. Existence-guarded like the
+-- other probes here: unit-test harnesses stub Helpers without IsSecretValue.
+-- @secret-policy: collapse-only — unknown class = no enhancement config
+if Helpers.IsSecretValue and Helpers.IsSecretValue(playerClass) then playerClass = nil end
 
 -- Each class entry has MH and/or OH sub-configs:
 --   source: "spell" (cast via /cast) or "item" (use via /use, default for non-class configs)
@@ -374,6 +379,9 @@ end
 
 local function HasWarlockInGroup()
     local _, playerClass = UnitClass("player")
+    -- Probe FIRST — comparing a secret class token throws.
+    -- @secret-policy: collapse-only — secret class treated as non-warlock
+    if Helpers.IsSecretValue and Helpers.IsSecretValue(playerClass) then playerClass = nil end
     if playerClass == "WARLOCK" then return true end
     local numMembers = GetNumGroupMembers()
     if numMembers == 0 then return false end
@@ -382,6 +390,9 @@ local function HasWarlockInGroup()
         local unit = prefix .. i
         if UnitExists(unit) then
             local _, class = UnitClass(unit)
+            -- Probe FIRST — comparing a secret class token throws.
+            -- @secret-policy: collapse-only — secret class treated as non-warlock
+            if Helpers.IsSecretValue and Helpers.IsSecretValue(class) then class = nil end
             if class == "WARLOCK" then return true end
         end
     end

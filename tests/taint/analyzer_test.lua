@@ -9159,3 +9159,254 @@ return 0
 
     print("round-23 final-review F5e paren-callee tests passed")
 end  -- closes the round-23 do…end block
+
+-- ===== Probe exemption: registered guards are never SecretArguments consumers =====
+-- The generated doc index stamps issecretvalue itself with
+-- SecretArguments=AllowedWhenUntainted (generator default template stamp).
+-- Runtime accepts probes from tainted code — the probe-first canon idiom
+-- must never be classified as a consumer leak, or the idiom itself goes red.
+do
+    local rP = Registry.new()
+    rP:addSource("UnitClass")
+    rP:addDocArgRestrictedFunction("issecretvalue", "AllowedWhenUntainted")
+    rP:addDocArgRestrictedFunction("Helpers.IsSecretValue", "AllowedWhenUntainted")
+
+    local srcP = [[
+local name = UnitClass("target")
+if issecretvalue(name) then name = nil end
+return name
+]]
+    local fP = Analyzer.analyze(srcP, "modules/foo.lua", rP, cfg)
+    for _, fi in ipairs(fP) do
+        assert(not (tostring(fi.sink):find("consumer:issecretvalue", 1, true)),
+            "registered probe must be exempt from consumer classification, got: "
+            .. tostring(fi.message))
+    end
+
+    local srcP2 = [[
+local name = UnitClass("target")
+if Helpers.IsSecretValue(name) then name = nil end
+return name
+]]
+    local fP2 = Analyzer.analyze(srcP2, "modules/foo.lua", rP, cfg)
+    for _, fi in ipairs(fP2) do
+        assert(not (tostring(fi.sink):find("consumer:Helpers.IsSecretValue", 1, true)),
+            "dotted registered probe must be exempt too, got: " .. tostring(fi.message))
+    end
+
+    print("probe-exemption consumer tests passed")
+end
+
+-- Existence-guard probe shape (pre-12.1 client compat): the RHS call in
+-- `local s = issecretvalue and issecretvalue(v)` is still THE probe — the
+-- consumer classifier must not flag it either.
+do
+    local rP3 = Registry.new()
+    rP3:addSource("UnitClass")
+    rP3:addDocArgRestrictedFunction("issecretvalue", "AllowedWhenUntainted")
+    local srcP3 = [[
+local _, class = UnitClass("target")
+local classIsSecret = issecretvalue and issecretvalue(class)
+if classIsSecret then class = nil end
+return class
+]]
+    local fP3 = Analyzer.analyze(srcP3, "modules/foo.lua", rP3, cfg)
+    for _, fi in ipairs(fP3) do
+        assert(not (tostring(fi.sink):find("consumer:issecretvalue", 1, true)),
+            "existence-guard probe shape must be exempt, got: " .. tostring(fi.message))
+    end
+    print("probe-exemption existence-guard test passed")
+end
+
+-- Shadowed-guard counterexamples (stop-gate): the exemption is protection-
+-- granting, so poison discipline applies to BOTH arms. A file that rebinds a
+-- guard name gets NO exemption — function form or method form.
+do
+    local rP4 = Registry.new()
+    rP4:addSource("UnitClass")
+
+    -- method form, guard name rebound in-file → must STILL flag
+    local srcP4 = [[
+local IsSecretValue = function() return false end
+local name = UnitClass("target")
+local obj = GetHelper()
+obj:IsSecretValue(name)
+return name
+]]
+    local fP4 = Analyzer.analyze(srcP4, "modules/foo.lua", rP4, cfg)
+    local sawConsumer = false
+    for _, fi in ipairs(fP4) do
+        if tostring(fi.sink):find("consumer:", 1, true)
+            and tostring(fi.sink):find("IsSecretValue", 1, true) then
+            sawConsumer = true
+        end
+    end
+    assert(sawConsumer,
+        "rebound guard name used as method must NOT get the probe exemption")
+
+    -- method form on an UNKNOWN receiver → NOT exempt (receiver-aware rule:
+    -- any object may carry a same-named non-probe method; only registered
+    -- qualified guards like Helpers.IsSecretValue are the probe surface)
+    local srcP5 = [[
+local name = UnitClass("target")
+local obj = GetHelper()
+obj:IsSecretValue(name)
+return name
+]]
+    local fP5 = Analyzer.analyze(srcP5, "modules/foo.lua", rP4, cfg)
+    local sawUnknownRecv = false
+    for _, fi in ipairs(fP5) do
+        if tostring(fi.sink):find("consumer:", 1, true)
+            and tostring(fi.sink):find("IsSecretValue", 1, true) then
+            sawUnknownRecv = true
+        end
+    end
+    assert(sawUnknownRecv,
+        "unknown-receiver method sharing a guard name must NOT be exempt")
+
+    -- method form on the REGISTERED receiver → exempt
+    local srcP5b = [[
+local name = UnitClass("target")
+if Helpers:IsSecretValue(name) then name = nil end
+return name
+]]
+    local fP5b = Analyzer.analyze(srcP5b, "modules/foo.lua", rP4, cfg)
+    for _, fi in ipairs(fP5b) do
+        assert(not (tostring(fi.sink):find("consumer:", 1, true)
+            and tostring(fi.sink):find("IsSecretValue", 1, true)),
+            "registered-receiver method-form probe must stay exempt, got: "
+            .. tostring(fi.message))
+    end
+
+    -- function form, rebound → the rebound local is no longer even a source
+    -- of protection; the poisoned name must not suppress consumer findings
+    -- on a DIFFERENT documented-restricted callee reached with the value.
+    local rP6 = Registry.new()
+    rP6:addSource("UnitClass")
+    rP6:addDocArgRestrictedFunction("issecretvalue", "AllowedWhenUntainted")
+    local srcP6 = [[
+local issecretvalue = function() return false end
+local name = UnitClass("target")
+issecretvalue(name)
+return name
+]]
+    local fP6 = Analyzer.analyze(srcP6, "modules/foo.lua", rP6, cfg)
+    local sawShadowed = false
+    for _, fi in ipairs(fP6) do
+        if tostring(fi.sink):find("consumer:issecretvalue", 1, true) then
+            sawShadowed = true
+        end
+    end
+    -- The rebound name is a plain local function (non-interprocedural
+    -- boundary): consumer classification of locals is traversal-only, so no
+    -- consumer finding is REQUIRED here — but the exemption must not have
+    -- been the reason. Accept either outcome except silent exemption of a
+    -- REAL documented global: assert the poisoned path never used the guard
+    -- registry (behavioral: fP6 must equal analysis with guards absent).
+    local rP6b = Registry.new()
+    rP6b:addSource("UnitClass")
+    rP6b:addDocArgRestrictedFunction("issecretvalue", "AllowedWhenUntainted")
+    -- remove guard status to compare
+    rP6b.guards = {}
+    local fP6b = Analyzer.analyze(srcP6, "modules/foo.lua", rP6b, cfg)
+    assert(#fP6 == #fP6b,
+        "poisoned function-form guard must analyze identically to no-guard registry ("
+        .. #fP6 .. " vs " .. #fP6b .. ")")
+    local _ = sawShadowed
+
+    print("shadowed-guard counterexample tests passed")
+end
+
+-- Self-cache forms keep guard credit (stop-gate follow-up): bare and
+-- _G-qualified caches are the same guard, not impostors.
+do
+    local rP7 = Registry.new()
+    rP7:addSource("UnitClass")
+    -- Live consumer classifier: without this restriction the exemption is
+    -- never exercised and a broken credit path passes silently.
+    rP7:addDocArgRestrictedFunction("issecretvalue", "AllowedWhenUntainted")
+    for _, cache in ipairs({
+        "local issecretvalue = issecretvalue",
+        "local issecretvalue = _G.issecretvalue",
+    }) do
+        local srcP7 = cache .. [[
+
+local name = UnitClass("target")
+if issecretvalue(name) then name = nil end
+return name
+]]
+        local fP7 = Analyzer.analyze(srcP7, "modules/foo.lua", rP7, cfg)
+        for _, fi in ipairs(fP7) do
+            assert(not tostring(fi.sink):find("consumer:issecretvalue", 1, true),
+                "self-cached probe must keep exemption (" .. cache .. "), got: "
+                .. tostring(fi.message))
+            assert(not tostring(fi.message):find("truth%-tested"),
+                "self-cached probe must keep guard credit (" .. cache .. "), got: "
+                .. tostring(fi.message))
+        end
+    end
+    print("self-cache guard credit tests passed")
+end
+
+-- Guard-alias credit (regression): `local IsSecretValue = Helpers.IsSecretValue`
+-- rebinds a bare builtin guard name — the direct-hit shadow rule must fall
+-- through to the alias map, which credits the registered target, not fail.
+do
+    local rP8 = Registry.new()
+    rP8:addSource("UnitClass")
+    rP8:addDocArgRestrictedFunction("issecretvalue", "AllowedWhenUntainted")
+    local srcP8 = [[
+local IsSecretValue = Helpers.IsSecretValue
+local name = UnitClass("target")
+if IsSecretValue(name) then name = nil end
+return name
+]]
+    local fP8 = Analyzer.analyze(srcP8, "modules/foo.lua", rP8, cfg)
+    for _, fi in ipairs(fP8) do
+        assert(not tostring(fi.sink):find("consumer:", 1, true),
+            "guard-alias must keep consumer exemption, got: " .. tostring(fi.message))
+        assert(not tostring(fi.message):find("truth%-tested"),
+            "guard-alias must keep probe credit, got: " .. tostring(fi.message))
+    end
+    -- Impostor refusal is covered by the shadowed-guard counterexamples
+    -- above (method form) and the no-guard-registry comparison: a local
+    -- impostor's CALL is the documented non-interprocedural boundary, so
+    -- zero findings here is correct — the load-bearing property is only
+    -- that no GUARD CREDIT was granted, which the counterexamples pin.
+    print("guard-alias credit tests passed")
+end
+
+-- Custom (.taintrc extra_guards) wrapper guards are function-literal-bound by
+-- construction — exempt from the builtin-only shadow rule.
+do
+    local rP9 = Registry.new()
+    rP9:addSource("UnitClass")
+    rP9:addGuard("MyWrapGuard")
+    local srcP9 = [[
+local MyWrapGuard = function(v) return issecretvalue and issecretvalue(v) end
+local name = UnitClass("target")
+if MyWrapGuard(name) then name = nil end
+return name
+]]
+    local fP9 = Analyzer.analyze(srcP9, "modules/foo.lua", rP9, cfg)
+    for _, fi in ipairs(fP9) do
+        assert(not tostring(fi.message):find("truth%-tested"),
+            "registered custom wrapper guard must keep credit, got: " .. tostring(fi.message))
+    end
+
+    -- ns-chain namespace alias: `local nsHelpers = ns.Helpers` then a bare
+    -- cache of the dotted builtin guard through it must resolve and credit.
+    local srcP9b = [[
+local nsHelpers = ns.Helpers
+local IsSecretValue = nsHelpers.IsSecretValue
+local name = UnitClass("target")
+if IsSecretValue(name) then name = nil end
+return name
+]]
+    local fP9b = Analyzer.analyze(srcP9b, "modules/foo.lua", rP9, cfg)
+    for _, fi in ipairs(fP9b) do
+        assert(not tostring(fi.message):find("truth%-tested"),
+            "ns-chained Helpers cache must keep credit, got: " .. tostring(fi.message))
+    end
+    print("custom-guard and ns-chain credit tests passed")
+end

@@ -14,8 +14,6 @@ if not openRaidLib then
     return
 end
 
-local issecretvalue = _G.issecretvalue
-
 -- CJK-safe font setter: preserves the roman font and only adds CJK fallback
 -- members where available, degrading to plain SetFont otherwise.
 local function CJKFont(fs, p, s, f)
@@ -424,7 +422,10 @@ local function UpdateButton(button, keystoneInfo, unitName, unit, isLeader)
     if InCombatLockdown() then return end
 
     local _, class = UnitClass(unit)
-    local classColor = RAID_CLASS_COLORS[class] and RAID_CLASS_COLORS[class].colorStr or "FFFFFFFF"
+    -- Probe FIRST — a secret class throws on the RAID_CLASS_COLORS table index.
+    -- @secret-policy: collapse-only — white player-name fallback
+    if Helpers.IsSecretValue(class) then class = nil end
+    local classColor = class and RAID_CLASS_COLORS[class] and RAID_CLASS_COLORS[class].colorStr or "FFFFFFFF"
     local displayName = unitName:match("([^%-]+)") or unitName
 
     if keystoneInfo and keystoneInfo.level and keystoneInfo.level > 0 then

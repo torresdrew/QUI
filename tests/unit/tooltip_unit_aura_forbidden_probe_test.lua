@@ -25,17 +25,46 @@ local auraTooltipXML = readFile(
 local auraContainerInbound = readFile(
     "tests/framexml/Interface/AddOns/Blizzard_AuraContainer/Blizzard_AuraContainerInbound.lua")
 
--- Blizzard contract: this tooltip is not in the add-on-visible environment.
+-- Blizzard contract: the tooltip object is not in the add-on-visible
+-- environment, but 12.1 publishes narrow styling setters through the inbound
+-- bridge.
 assertContains(auraContainerTOC, "## UseSecureEnvironment: 1",
     "AuraContainer must be modeled as a secure-environment Blizzard add-on")
 assertContains(auraTooltipXML, '<ScopedModifier forbidden="true" hideFromGlobalEnv="true">',
     "AuraButtonTooltip must be modeled as forbidden and hidden from _G")
 assertContains(auraContainerInbound, "GetDefaultAuraDurationFormatter",
     "test fixture should expose AuraContainer's one public inbound helper")
-assertNotContains(auraContainerInbound, "Tooltip",
-    "AuraContainer must not be modeled as publishing a tooltip styling handle")
+assertContains(auraContainerInbound, "SetTooltipNineSlice",
+    "AuraContainer must expose its secure tooltip nine-slice styling bridge")
+assertContains(auraContainerInbound, "SetTooltipTextureSlice",
+    "AuraContainer must expose its secure tooltip texture-slice styling bridge")
+assertContains(auraContainerInbound, "SetTooltipBackdrop",
+    "AuraContainer must expose its secure tooltip backdrop styling bridge")
+
+-- Tripwire: only the audited styling surface may mention the tooltip. Census
+-- every identifier in the file; any tooltip-mentioning identifier outside the
+-- exact sanctioned set — including extensions of sanctioned names such as
+-- SetTooltipBackdropBorderColor — must force this limitation to be re-audited.
+local sanctionedTooltipIdentifiers = {
+    ["SetTooltipNineSlice"] = true,
+    ["InboundSetTooltipNineSlice"] = true,
+    ["SetTooltipTextureSlice"] = true,
+    ["InboundSetTooltipTextureSlice"] = true,
+    ["SetTooltipBackdrop"] = true,
+    ["InboundSetTooltipBackdrop"] = true,
+    ["ResetTooltipStyle"] = true,
+    ["TooltipDefaultLayout"] = true,
+    ["TOOLTIP_DEFAULT_BACKGROUND_COLOR"] = true,
+}
+for identifier in auraContainerInbound:gmatch("[%w_]+") do
+    if identifier:lower():find("tooltip", 1, true)
+        and not sanctionedTooltipIdentifiers[identifier] then
+        error("a new AuraContainer inbound tooltip identifier must force this"
+            .. " limitation to be re-audited: " .. identifier)
+    end
+end
 assertNotContains(auraContainerTOC, "Outbound",
-    "a new AuraContainer secure-to-global outbound bridge must force this limitation to be re-audited")
+    "AuraContainer must not expose its forbidden tooltip object through an outbound bridge")
 
 -- Normal, add-on-visible UnitAura tooltips still use the standard post-call path.
 assertContains(tooltipSkin,
@@ -45,18 +74,23 @@ assertContains(tooltipSkin,
     "TooltipDataProcessor.AddTooltipPostCall(auraTooltipType, RunHandlePostCall)",
     "normal UnitAura tooltips must retain the standard QUI post-call")
 
--- Do not recreate impossible globals in tests. PrivateAurasTooltipMixin,
--- TooltipDataProcessor, and EventRegistry are separate inside the secure env.
+-- The styling bridge does not make secure-environment globals visible.
+-- PrivateAurasTooltipMixin, TooltipDataProcessor, and EventRegistry remain
+-- separate inside the secure environment.
 assertNotContains(tooltipSkin, "hooksecurefunc(PrivateAurasTooltipMixin",
     "QUI must not hook a secure-environment-only mixin")
 assertNotContains(tooltipSkin, "SetupAuraTooltipEventHook",
     "QUI must not install an aura-specific global EventRegistry hook that cannot see the secure tooltip")
 assertNotContains(tooltipSkin, "ApplyTooltipChrome(tooltip, true)",
     "QUI must not bypass secret geometry guards for forbidden AuraButtonTooltip")
-assertContains(tooltipSkin, 'supported = false',
-    "the runtime probe status must report that native AuraButtonTooltip skinning is unsupported")
-assertContains(tooltipSkin, 'reason = "secure-environment"',
-    "the runtime probe status must explain the secure-environment boundary")
+assertContains(tooltipSkin, 'local bridge = _G.AuraContainerInbound',
+    "the runtime probe status must feature-detect the inbound styling bridge")
+assertContains(tooltipSkin, '"inbound-bridge" or "secure-environment"',
+    "probe status must report bridge support with a secure-environment fallback")
+assertContains(tooltipSkin, "ApplyAuraTooltipStyle",
+    "the QUI side must push its skin through the inbound bridge (68914 re-patch)")
+assertNotContains(tooltipSkin, "AuraButtonTooltip:",
+    "QUI must never call methods on the forbidden tooltip object directly")
 assertContains(tooltipQOL, "auratip status skin=%s supported=%s reason=%s",
     "tooltip debug must report the limitation instead of a dead hook status")
 assertContains(tooltipQOL, 'AppendCounter(parts, "skin.protectedTooltipSkipped", "protSkip")',

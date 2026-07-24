@@ -1153,7 +1153,12 @@ local _missingRaidBuffMatchesScratch = {}
 local function FrameRoleGate(frame)
     local unit = GetFrameUnit(frame)
     if not unit then return nil, false end
-    local role = UnitGroupRolesAssigned and UnitGroupRolesAssigned(unit) or nil
+    -- No `or nil` collapse on the call result — under identity restriction
+    -- UnitGroupRolesAssigned can return a secret, and `secret or nil`
+    -- truth-tests it. Probe FIRST, then compare freely.
+    -- @secret-policy: collapse-only — unreadable role = no role gate
+    local role = UnitGroupRolesAssigned and UnitGroupRolesAssigned(unit)
+    if IsSecretValue(role) then role = nil end
     if role == "NONE" then role = nil end
     -- Probe before the ==: UnitIsUnit can return a secret under identity
     -- restriction, and the old `X and call() or false` truth-tested it.

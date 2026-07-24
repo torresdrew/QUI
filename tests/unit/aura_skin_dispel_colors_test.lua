@@ -40,7 +40,7 @@ print("OK aura_skin_dispel_colors_test (source-text floor)")
 _G.InCombatLockdown = function() return false end
 _G.AuraContainerSortMethod = { Default = 1 }
 _G.AuraContainerSortDirection = { Normal = 1 }
-_G.AnchorUtil = { FlowDirection = { Left = -1, Right = 1, Up = 1, Down = -1 } }
+_G.AnchorUtil = { FlowDirection = { Left = -1, Right = 1, Up = 1, Down = -1 }, FlowLayoutAxis = { Horizontal = 0, Vertical = 1 } }
 
 local function Stub()
     local t = {}
@@ -98,10 +98,11 @@ local function MakeContainer()
     function c:SetAuraGroupSortMethod() end
     function c:SetAuraGroupCandidateFilters() end
     function c:SetAuraGroupLayout() end
-    function c:SetAuraLayoutAnchorPoint() end
-    function c:SetAuraLayoutGrowthDirection() end
-    function c:SetAuraLayoutPadding() end
-    function c:SetAuraLayoutRowWidth() end
+    function c:SetFlowLayoutAnchorPoint() end
+    function c:SetFlowLayoutGrowthDirection() end
+    function c:SetFlowLayoutPadding() end
+    function c:SetFlowLayoutAxis() end
+    function c:SetFlowLayoutMaximumLineSize() end
     return c
 end
 
@@ -132,7 +133,7 @@ if btn1 then
         btn1._auraBorderOpts ~= nil and btn1._auraBorderOpts.customDispelColorMap == dispelMap,
         btn1._auraBorderOpts and tostring(btn1._auraBorderOpts.customDispelColorMap))
     check("customDispelColorMap does not clobber the style/showWhen fields",
-        btn1._auraBorderOpts.style == 1 and btn1._auraBorderOpts.showWhenHarmful == true
+        btn1._auraBorderOpts.style == 3 and btn1._auraBorderOpts.showWhenHarmful == true
             and btn1._auraBorderOpts.showWhenHelpful == false)
 end
 

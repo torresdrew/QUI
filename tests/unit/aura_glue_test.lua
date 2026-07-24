@@ -1,7 +1,8 @@
 -- tests/unit/aura_glue_test.lua
 -- Run: lua5.1 tests/unit/aura_glue_test.lua
 _G.AuraContainerSortMethod = { Default = 0, BigDefensive = 1, UnitFrameDebuff = 2,
-    ImportantOnly = 3, Expiration = 4, ExpirationOnly = 5, Name = 6, NameOnly = 7 }
+    ImportantOnly = 3, Expiration = 4, ExpirationOnly = 5, Name = 6, NameOnly = 7,
+    AuraInstanceIDOnly = 8 }
 _G.AuraContainerSortDirection = { Normal = 0, Reverse = 1 }
 local ns = dofile("tools/_addon_env.lua").LoadCore()
 local G = ns.AuraGlue
@@ -85,7 +86,7 @@ end
 
 -- SORT_TRANSLATIONS coverage -------------------------------------------------
 do
-    for rule, want in pairs({ INDEX = 0, DEFAULT = 0, EXPIRY = 4, EXPIRY_ONLY = 5,
+    for rule, want in pairs({ INDEX = 8, DEFAULT = 0, EXPIRY = 4, EXPIRY_ONLY = 5,
                               NAME = 6, NAME_ONLY = 7, BIG_DEFENSIVE = 1 }) do
         local e = E.NewFilterStripElement("HELPFUL")
         e.sortRule = rule

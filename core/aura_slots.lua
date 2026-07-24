@@ -114,11 +114,18 @@ end
 local function LiveAssistProbe(unit)
     if unit == "player" or unit == "pet" then return true end
     local ok, trusted = pcall(function()
-        return UnitIsConnected(unit)
+        if not (UnitIsConnected(unit)
             and not UnitIsDeadOrGhost(unit)
             and UnitCanAssist("player", unit)
-            and UnitIsVisible(unit)
-            and not UnitPhaseReason(unit)
+            and UnitIsVisible(unit)) then
+            return false
+        end
+        -- UnitPhaseReason is SecretWhenUnitIdentityRestricted (12.1 PTR7):
+        -- probe explicitly so the secret case parks without riding the
+        -- throw path (any residual throw still fails CLOSED via pcall).
+        local phase = UnitPhaseReason(unit)
+        if issecretvalue and issecretvalue(phase) then return false end -- @secret-policy: reject-secret-value — fail-closed park
+        return not phase
     end)
     return ok and trusted == true -- @secret-policy: reject-secret-value — fail-closed park
 end

@@ -1314,7 +1314,39 @@ C_AuraContainerUtil = {}
 ---@param options? any
 ---@param ... any
 ---@return any result
-function C_AuraContainerUtil.ProcessCustomAuraButtonBorderOptions(options, ...) end
+function C_AuraContainerUtil.ProcessAuraTooltipBackdropOptions(options, ...) end
+---@param options? any
+---@param ... any
+---@return any result
+function C_AuraContainerUtil.ProcessAuraTooltipNineSliceOptions(options, ...) end
+---@param options? any
+---@param ... any
+---@return any result
+function C_AuraContainerUtil.ProcessAuraTooltipTextureSliceOptions(options, ...) end
+---@param options? any
+---@param ... any
+---@return any result
+function C_AuraContainerUtil.ProcessCustomAuraButtonApplicationBarOptions(options, ...) end
+---@param options? any
+---@param ... any
+---@return any result
+function C_AuraContainerUtil.ProcessCustomAuraButtonApplicationCountOptions(options, ...) end
+---@param options? any
+---@param ... any
+---@return any result
+function C_AuraContainerUtil.ProcessCustomAuraButtonDispelTypeTextOptions(options, ...) end
+---@param options? any
+---@param ... any
+---@return any result
+function C_AuraContainerUtil.ProcessCustomAuraButtonDispelTypeTextureOptions(options, ...) end
+---@param options? any
+---@param ... any
+---@return any result
+function C_AuraContainerUtil.ProcessCustomAuraButtonDurationBarOptions(options, ...) end
+---@param options? any
+---@param ... any
+---@return any result
+function C_AuraContainerUtil.ProcessCustomAuraButtonDurationTextOptions(options, ...) end
 
 C_AutoComplete = {}
 ---@param name? string
@@ -7203,6 +7235,11 @@ function C_HousingBasicMode.StartPlacingNewDecor(catalogEntryVariantID, ...) end
 function C_HousingBasicMode.StartPlacingPreviewDecor(decorRecordID, bundleCatalogShopProductID, ...) end
 
 C_HousingBlueprint = {}
+--- Returns true if the player's current location is a valid place to attempt to export a specific kind of blueprint
+---@param type? any
+---@param ... any
+---@return boolean locationValid
+function C_HousingBlueprint.CanExportTypeFromCurrentLocation(type, ...) end
 --- Returns true if the player's current location is a valid place to attempt to import a specific kind of blueprint
 ---@param type? any
 ---@param ... any
@@ -13134,6 +13171,10 @@ function C_SpecializationInfo.GetClassIDFromSpecID(specID, ...) end
 ---@param ... any
 ---@return number selectedTalentID
 function C_SpecializationInfo.GetInspectSelectedPvpTalent(inspectedUnit, talentIndex, ...) end
+---@param unit? any
+---@param ... any
+---@return number specializationID
+function C_SpecializationInfo.GetInspectSpecialization(unit, ...) end
 ---@param classID? number
 ---@param ... any
 ---@return number specCount
@@ -19487,12 +19528,12 @@ function UnitQuestTrivialLevelRange(unit, ...) end
 ---@param ... any
 ---@return number levelRange
 function UnitQuestTrivialLevelRangeScaling(unit, ...) end
----@param name? string
+---@param unit? any
 ---@param ... any
 ---@return string localizedRaceName
 ---@return string englishRaceName
 ---@return number raceID
-function UnitRace(name, ...) end
+function UnitRace(unit, ...) end
 ---@param unit? any
 ---@param ... any
 ---@return number attackPower

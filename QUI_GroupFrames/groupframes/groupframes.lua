@@ -1033,6 +1033,10 @@ local function GetHealthBarColor(unit, isRaid)
 
     if general and general.useClassColor ~= false then
         local _, class = UnitClass(unit)
+        -- Probe FIRST — a secret class throws on the truth-test and the
+        -- RAID_CLASS_COLORS table index.
+        -- @secret-policy: collapse-only — fallback green below
+        if IsSecretValue(class) then class = nil end
         if class then
             local cc = RAID_CLASS_COLORS[class]
             if cc then
@@ -1408,6 +1412,10 @@ local function UpdateName(frame)
     -- Color
     if nameSettings and nameSettings.nameTextUseClassColor then
         local _, class = UnitClass(unit)
+        -- Probe FIRST — a secret class throws on the truth-test and the
+        -- RAID_CLASS_COLORS table index.
+        -- @secret-policy: collapse-only — settings text color below
+        if IsSecretValue(class) then class = nil end
         if class then
             local cc = RAID_CLASS_COLORS[class]
             if cc then
@@ -1470,6 +1478,10 @@ local function UpdateAbsorbs(frame, _unit, _maxHP)
     local ar, ag, ab
     if vdb.absorbs.useClassColor then
         local _, class = UnitClass(unit)
+        -- Probe FIRST — a secret class throws on the truth-test and the
+        -- RAID_CLASS_COLORS table index.
+        -- @secret-policy: collapse-only — white fallback below
+        if IsSecretValue(class) then class = nil end
         local cc = class and RAID_CLASS_COLORS[class]
         if cc then
             ar, ag, ab = cc.r, cc.g, cc.b
@@ -1602,6 +1614,10 @@ local function UpdateHealPrediction(frame, _unit, _maxHP)
     local pr, pg, pb
     if vdb.healPrediction.useClassColor then
         local _, class = UnitClass(unit)
+        -- Probe FIRST — a secret class throws on the truth-test and the
+        -- RAID_CLASS_COLORS table index.
+        -- @secret-policy: collapse-only — green fallback below
+        if IsSecretValue(class) then class = nil end
         local cc = class and RAID_CLASS_COLORS[class]
         if cc then
             pr, pg, pb = cc.r, cc.g, cc.b
@@ -1928,6 +1944,11 @@ local function UpdateLeaderIcon(frame)
 
     local isLeader = UnitIsGroupLeader(unit)
     local isAssistant = UnitIsGroupAssistant(unit)
+    -- Probe FIRST — under identity restriction both can return secrets, and a
+    -- bare truth-test throws.
+    -- @secret-policy: collapse-only — hidden icon fallback
+    if IsSecretValue(isLeader) then isLeader = nil end
+    if IsSecretValue(isAssistant) then isAssistant = nil end
     if isLeader then
         frame.leaderIcon:SetAtlas("groupfinder-icon-leader")
         frame.leaderIcon:Show()
@@ -1955,7 +1976,12 @@ local function UpdatePhaseIcon(frame)
         return
     end
 
-    local phased = UnitPhaseReason(unit) ~= nil and UnitExists(unit)
+    -- Probe FIRST — UnitPhaseReason can return a secret under identity
+    -- restriction, and the ~= nil compare throws on it.
+    -- @secret-policy: collapse-only — hidden icon fallback
+    local phaseReason = UnitPhaseReason(unit)
+    if IsSecretValue(phaseReason) then phaseReason = nil end
+    local phased = phaseReason ~= nil and UnitExists(unit)
     if phased then
         frame.phaseIcon:Show()
     else
@@ -4434,8 +4460,13 @@ GetRaidDisplaySections = function()
 
             local unitMatchesRoster = _state.UnitNameMatchesRoster(unit, name)
             local classFile = rosterClassFile
+            -- Probe FIRST — a secret class file throws on the truth-tests
+            -- below and cannot key the section maps.
+            -- @secret-policy: collapse-only — UNKNOWN section fallback
+            if IsSecretValue(classFile) then classFile = nil end
             if not classFile and unitMatchesRoster then
                 local _, unitClassFile = UnitClass(unit)
+                if IsSecretValue(unitClassFile) then unitClassFile = nil end
                 classFile = unitClassFile
             end
             classFile = classFile or "UNKNOWN"

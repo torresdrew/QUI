@@ -147,8 +147,6 @@ local function PositionAlertFrame()
     end
 end
 
-local IsSecretValue = Helpers.IsSecretValue
-
 local function IsSpellKnownForPlayer(spellID)
     if type(IsSpellKnownOrOverridesKnown) == "function" then
         local ok, known = ns.SafeCall("chain-next", IsSpellKnownOrOverridesKnown, spellID)
@@ -178,12 +176,12 @@ end
 local function OnPlayerInterruptCast(spellID)
     -- Probe FIRST: `spellID == nil` on a secret spellID is still a compare
     -- OF the secret and throws in-game (cross-type == included) — the old
-    -- order ran the == before the probe. IsSecretValue(nil) is safe, so the
+    -- order ran the == before the probe. Helpers.IsSecretValue(nil) is safe, so the
     -- probe can lead. ACTION POLICY: a secret spellID cannot key the
     -- interrupt lookup — skip tracking this cast, same outcome as an
     -- unknown spell. (Strict taint scan was green on the old order:
     -- analyzer gap, recorded for the Task 8 header notes.)
-    if IsSecretValue(spellID) then return end
+    if Helpers.IsSecretValue(spellID) then return end
     if spellID == nil then return end
     local cd = INTERRUPT_SPELL_LOOKUP[spellID]
     if cd then
@@ -195,6 +193,10 @@ end
 -- based on internal tracking (GetTime() since last cast vs base CD).
 local function IsInterruptReady()
     local _, classToken = UnitClass("player")
+    -- Probe FIRST — a secret class token throws on the `or` truth-test and
+    -- the interrupt-table index.
+    -- @secret-policy: collapse-only — unknown class = no interrupt tracking
+    if Helpers.IsSecretValue(classToken) then classToken = nil end
     local interruptSpells = INTERRUPT_SPELLS_BY_CLASS[classToken or ""]
     if not interruptSpells then
         return false
@@ -231,7 +233,7 @@ local function IsFocusCasting()
     -- restriction hides). When the poll is unreadable, fall back to EVENT
     -- evidence: state.castEvidence is maintained by the UNIT_SPELLCAST_*
     -- handlers, which fire regardless of restriction.
-    if IsSecretValue(castName) or IsSecretValue(channelName) then
+    if Helpers.IsSecretValue(castName) or Helpers.IsSecretValue(channelName) then
         return state.castEvidence ~= nil
     end
     if not castName and not channelName then
@@ -265,7 +267,7 @@ local function CaptureNotInterruptibleFlag()
     -- poll may decide. A secret poll is indeterminate — capture nothing;
     -- the alpha path fails closed on nil and the next event re-captures.
     local name, _, _, _, _, _, notInterruptible = UnitChannelInfo("focus")
-    if IsSecretValue(name) then
+    if Helpers.IsSecretValue(name) then
         state.rawNotInterruptible = nil -- @secret-policy: skip-capture-when-unknown
         return
     end
@@ -275,7 +277,7 @@ local function CaptureNotInterruptibleFlag()
     end
 
     name, _, _, _, _, _, _, notInterruptible = UnitCastingInfo("focus")
-    if IsSecretValue(name) then
+    if Helpers.IsSecretValue(name) then
         state.rawNotInterruptible = nil -- @secret-policy: skip-capture-when-unknown
         return
     end
@@ -308,7 +310,7 @@ local function MaybePlayInterruptSound()
 
     local raw = state.rawNotInterruptible
     -- Probe FIRST: `raw == nil` on a secret value is itself the throw.
-    if IsSecretValue(raw) then return end
+    if Helpers.IsSecretValue(raw) then return end
     if raw == nil then return end
     if raw ~= false then return end
 
@@ -380,7 +382,7 @@ end
 local function SafePlaceholder(value, fallback)
     -- Probe BEFORE the nil compare — `secret == nil` throws in-game (same
     -- ordering rule this file documents for spellID above).
-    if IsSecretValue(value) then return fallback end
+    if Helpers.IsSecretValue(value) then return fallback end
     if value == nil then return fallback end
     local str = SafeToString(value, fallback)
     return str ~= "" and str or fallback
@@ -409,7 +411,7 @@ local function ApplyAlertText(template)
     local unitName
     if hasUnit then
         unitName = UnitName("focus")
-        if IsSecretValue(unitName) then
+        if Helpers.IsSecretValue(unitName) then
             -- secret: renders via SetFormattedText
         elseif unitName == nil then
             unitName = ns.L["Focus"]
@@ -425,13 +427,13 @@ local function ApplyAlertText(template)
             rawSpellName = UnitChannelInfo("focus")
         else
             rawSpellName = UnitCastingInfo("focus")
-            if IsSecretValue(rawSpellName) then
+            if Helpers.IsSecretValue(rawSpellName) then
                 -- secret, no channel evidence: keep the cast-slot secret
             elseif rawSpellName == nil then
                 rawSpellName = UnitChannelInfo("focus")
             end
         end
-        if IsSecretValue(rawSpellName) then
+        if Helpers.IsSecretValue(rawSpellName) then
             -- secret: renders via SetFormattedText
         elseif rawSpellName == nil then
             rawSpellName = ""
@@ -440,7 +442,7 @@ local function ApplyAlertText(template)
 
     -- If no value is secret, safe to do plain string replacement.
     -- Escape % in replacement values so gsub doesn't interpret them as captures.
-    if not IsSecretValue(unitName) and not IsSecretValue(rawSpellName) then
+    if not Helpers.IsSecretValue(unitName) and not Helpers.IsSecretValue(rawSpellName) then
         if hasUnit then
             text = text:gsub("{unit}", SafePlaceholder(unitName, ns.L["Focus"]):gsub("%%", "%%%%"))
         end
@@ -566,7 +568,7 @@ local function ApplyInterruptAlpha()
     local raw = state.rawNotInterruptible
     -- Probe FIRST (`raw == nil` on a secret throws), then forward the raw
     -- secret straight to the C-side sink — no truth test, no conversion.
-    if IsSecretValue(raw) then
+    if Helpers.IsSecretValue(raw) then
         if state.frame.SetAlphaFromBoolean then
             state.frame:SetAlphaFromBoolean(raw, 0, 1)
         else

@@ -53,7 +53,7 @@ print("OK aura_skin_filter_mutation_test (source-text floor)")
 _G.InCombatLockdown = function() return false end
 _G.AuraContainerSortMethod = { Default = 1 }
 _G.AuraContainerSortDirection = { Normal = 1 }
-_G.AnchorUtil = { FlowDirection = { Left = -1, Right = 1, Up = 1, Down = -1 } }
+_G.AnchorUtil = { FlowDirection = { Left = -1, Right = 1, Up = 1, Down = -1 }, FlowLayoutAxis = { Horizontal = 0, Vertical = 1 } }
 
 local function Stub()
     local t = {}
@@ -108,10 +108,11 @@ local function MakeCapableContainer()
     function c:SetAuraGroupSortMethod() end
     function c:SetAuraGroupCandidateFilters() end
     function c:SetAuraGroupLayout() end
-    function c:SetAuraLayoutAnchorPoint() end
-    function c:SetAuraLayoutGrowthDirection() end
-    function c:SetAuraLayoutPadding() end
-    function c:SetAuraLayoutRowWidth() end
+    function c:SetFlowLayoutAnchorPoint() end
+    function c:SetFlowLayoutGrowthDirection() end
+    function c:SetFlowLayoutPadding() end
+    function c:SetFlowLayoutAxis() end
+    function c:SetFlowLayoutMaximumLineSize() end
     return c
 end
 
@@ -131,10 +132,11 @@ local function MakeIncapableContainer()
     function c:SetAuraGroupSortMethod() end
     function c:SetAuraGroupCandidateFilters() end
     function c:SetAuraGroupLayout() end
-    function c:SetAuraLayoutAnchorPoint() end
-    function c:SetAuraLayoutGrowthDirection() end
-    function c:SetAuraLayoutPadding() end
-    function c:SetAuraLayoutRowWidth() end
+    function c:SetFlowLayoutAnchorPoint() end
+    function c:SetFlowLayoutGrowthDirection() end
+    function c:SetFlowLayoutPadding() end
+    function c:SetFlowLayoutAxis() end
+    function c:SetFlowLayoutMaximumLineSize() end
     return c
 end
 

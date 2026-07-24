@@ -41,8 +41,6 @@ local ADDON_NAME, ns = ...
 local R = ns.QUI_GroupFrameAuraRender or {}
 ns.QUI_GroupFrameAuraRender = R
 
-local IsSecretValue = ns.Helpers and ns.Helpers.IsSecretValue
-    or function() return false end
 
 local function CJKFont(fs, p, s, f)
     if ns.Helpers and ns.Helpers.ApplyFontWithFallback then
@@ -59,7 +57,7 @@ end
 ---------------------------------------------------------------------------
 local function IconLayout() return ns.QUI_GroupFrameIconLayout end
 
-local function IsSecretValue(v)
+local function RenderIsSecretValue(v)
     local H = ns.Helpers
     if H and H.IsSecretValue then return H.IsSecretValue(v) end
     return issecretvalue and issecretvalue(v) or false
@@ -278,7 +276,7 @@ local function StartHealthTintAnimation(overlay, mode, targetValue, targetAlpha)
         or HEALTH_TINT_ANIMATION_DURATIONS[HEALTH_TINT_ANIMATION_DEFAULT]
     local nativeInterpolation = Enum and Enum.StatusBarInterpolation
         and Enum.StatusBarInterpolation.ExponentialEaseOut
-    local canTweenValue = not IsSecretValue(targetValue) and type(targetValue) == "number"
+    local canTweenValue = not RenderIsSecretValue(targetValue) and type(targetValue) == "number"
 
     overlay._quiTintMode = mode
     overlay._quiTintElapsed = 0
@@ -620,7 +618,7 @@ local function BindBarDurationObject(bar)
     -- Probe FIRST: `<secret> ~= nil` throws, so the IsSecretValue check must
     -- short-circuit ahead of the nil compare.
     local readableDuration = auraData.duration
-    if not IsSecretValue(readableDuration)
+    if not RenderIsSecretValue(readableDuration)
         and readableDuration ~= nil
         and SafeToNumber(readableDuration, 0) <= 0
     then
@@ -675,8 +673,8 @@ UpdateBarProgress = function(bar)
     local remaining = nil
     local pct = 1
     if duration > 0 and expirationTime > 0
-        and not IsSecretValue(auraData.duration)
-        and not IsSecretValue(auraData.expirationTime)
+        and not RenderIsSecretValue(auraData.duration)
+        and not RenderIsSecretValue(auraData.expirationTime)
     then
         remaining = math_max(expirationTime - GetTime(), 0)
         pct = math_min(math_max(remaining / duration, 0), 1)
@@ -785,8 +783,10 @@ local function ApplyDebuffTypeBorder(icon, unit, element, auraData, borderCurve)
     local ok, color = pcall(C_UnitAuras.GetAuraDispelTypeColor, unit, instID, borderCurve)
     if not ok then return false end
     -- Probe before the truth-test: a secret color OBJECT throws on `not
-    -- color` and on any method call — no border rather than a crash.
-    if IsSecretValue(color) then return false end -- @secret-policy: reject-secret-value
+    -- color` and on any method call — collapse to nil (no border) rather
+    -- than a crash.
+    -- @secret-policy: reject-secret-value
+    if RenderIsSecretValue(color) then color = nil end
     if not color then return false end
     ShowTypeBorder(icon, color)
     return true
@@ -1218,8 +1218,8 @@ function R.RenderBar(self, frame, element, matches)
     if bar._usesDurationObjectFill then
         UnregisterBarTimer(bar)
     elseif duration > 0 and expirationTime > 0
-        and not IsSecretValue(auraData.duration)
-        and not IsSecretValue(auraData.expirationTime)
+        and not RenderIsSecretValue(auraData.duration)
+        and not RenderIsSecretValue(auraData.expirationTime)
     then
         RegisterBarTimer(bar)
     else
@@ -1521,14 +1521,14 @@ function R.SyncHealthBarTint(self, frame, healthPct, canShow)
     -- again); only a readable nil degrades to 0. Short-circuit keeps `== nil`
     -- off the secret path.
     local targetValue = healthPct
-    if not IsSecretValue(targetValue) and targetValue == nil then
+    if not RenderIsSecretValue(targetValue) and targetValue == nil then
         targetValue = 0
     end
     if not overlay._quiTintWasShown then
         overlay._quiTintWasShown = true
         StartHealthTintAnimation(overlay, frame._quiAuraRenderHealthTintAnimation, targetValue, 1)
     elseif overlay._quiTintAnimating then
-        if overlay._quiTintTweenValue and not IsSecretValue(targetValue) and type(targetValue) == "number" then
+        if overlay._quiTintTweenValue and not RenderIsSecretValue(targetValue) and type(targetValue) == "number" then
             overlay._quiTintTargetValue = targetValue
         else
             overlay._quiTintTweenValue = nil

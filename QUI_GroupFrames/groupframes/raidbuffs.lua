@@ -418,8 +418,14 @@ end
 
 -- Safe wrapper for UnitClass (handles potential secret values in Midnight)
 local function SafeUnitClass(unit)
-    local ok, localized, class = pcall(UnitClass, unit)
-    if ok and class and type(class) == "string" then
+    local ok, _, class = pcall(UnitClass, unit)
+    if not ok then return nil end
+    -- Probe FIRST — a secret class survives the pcall and would throw on the
+    -- truth-test below; callers key tables on the return.
+    if IsSecretValue(class) then
+        return nil -- @secret-policy: reject-secret-ids
+    end
+    if class and type(class) == "string" then
         return class
     end
     return nil
@@ -890,6 +896,10 @@ local function ApplyIconBorderSettings()
     local br, bg, bb, ba = 0.376, 0.647, 0.980, 1
     if borderSettings.useClassColor then
         local _, class = UnitClass("player")
+        -- Probe FIRST — a secret class throws on the truth-test and the
+        -- RAID_CLASS_COLORS table index.
+        -- @secret-policy: collapse-only — fixed default border color
+        if IsSecretValue(class) then class = nil end
         if class and RAID_CLASS_COLORS[class] then
             local classColor = RAID_CLASS_COLORS[class]
             br, bg, bb = classColor.r, classColor.g, classColor.b

@@ -104,6 +104,13 @@ function M.new()
     for k, v in pairs(BUILTIN_SAFE_SINK_METHODS)    do self.safeSinkMethods[k]   = v end
     for k, v in pairs(BUILTIN_SAFE_SINK_FUNCTIONS)  do self.safeSinkFunctions[k] = v end
     for k, v in pairs(BUILTIN_GUARDS)               do self.guards[k]            = v end
+    -- Builtin (engine/canon) guard NAMES get the direct-hit shadow rule: a
+    -- file rebinding one is either an impostor or an alias resolved
+    -- elsewhere. Custom guards added later (.taintrc extra_guards) are
+    -- audited wrapper FUNCTIONS whose defining file necessarily binds the
+    -- name to a function literal — exempt from the shadow rule.
+    self.builtinGuardNames = {}
+    for k in pairs(BUILTIN_GUARDS)                  do self.builtinGuardNames[k] = true end
     for k, v in pairs(BUILTIN_UNWRAPS)              do self.unwraps[k]           = v end
     for k, v in pairs(BUILTIN_CLEAN_FIELDS)         do self.cleanFields[k]       = v end
     for k, v in pairs(BUILTIN_SECRET_RETURNING)     do self.secretReturning[k]   = v end
@@ -144,6 +151,8 @@ function Registry:addGuard(name)
     if ns then self.preconditionNamespaces[ns] = true end
 end
 function Registry:isGuard(name)             return self.guards[name]            == true end
+function Registry:isBuiltinGuard(name)      return self.builtinGuardNames ~= nil
+                                                and self.builtinGuardNames[name] == true end
 
 -- Element-secret container track (round-23): functions whose CONTAINER return
 -- is safe to truth-test but whose ELEMENTS secretize (conditionalSecretContents

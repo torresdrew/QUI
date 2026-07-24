@@ -287,20 +287,21 @@ local function GetClassData(unit)
 
     local localizedClassName, classToken, classID = UnitClass(unit)
     -- PTR7: classID is secret when the inspected unit has secret identity.
+    -- Direct collapse statements (no intermediate probe local — the analyzer
+    -- only credits the probe when the collapse branches on the probe call
+    -- itself) so the truth-tests and the C_CreatureInfo.GetClassInfo call
+    -- below only ever see collapsed values.
     -- @secret-policy: collapse-only — inspect panel shows nothing for secret units
-    local classIDSecret = issecretvalue and issecretvalue(classID)
-    if classIDSecret then classID = nil end
+    if issecretvalue and issecretvalue(classID) then classID = nil end
     -- localizedClassName is ConditionalSecret alongside classID (same PTR7
     -- identity gate) and reaches the `or` below on its own if the
     -- C_CreatureInfo overwrite is skipped.
     -- @secret-policy: collapse-only — inspect panel shows nothing for secret units
-    local localizedClassNameSecret = issecretvalue and issecretvalue(localizedClassName)
-    if localizedClassNameSecret then localizedClassName = nil end
+    if issecretvalue and issecretvalue(localizedClassName) then localizedClassName = nil end
     -- classToken is the `or` fallback AND the second return value handed
     -- straight to callers — must be collapsed too, not just the primary.
     -- @secret-policy: collapse-only — inspect panel shows nothing for secret units
-    local classTokenSecret = issecretvalue and issecretvalue(classToken)
-    if classTokenSecret then classToken = nil end
+    if issecretvalue and issecretvalue(classToken) then classToken = nil end
     if classID and C_CreatureInfo and C_CreatureInfo.GetClassInfo then
         local classInfo = C_CreatureInfo.GetClassInfo(classID)
         if classInfo and classInfo.className then

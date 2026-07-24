@@ -210,7 +210,10 @@ local function _BarReskinWork(live, settings)
         local r, g, b
         if settings.useClassColor and UnitClass and RAID_CLASS_COLORS then
             local _, class = UnitClass("player")
-            local cc = class and RAID_CLASS_COLORS[tostring(class)]
+            -- @secret-policy: collapse-only — UnitClass can return SECRET on 12.1 PTR7
+            -- (SecretWhenUnitIdentityRestricted); collapse so the barColor fallback applies.
+            if _issecretvalue(class) then class = nil end
+            local cc = class and RAID_CLASS_COLORS[class]
             if cc then r, g, b = cc.r, cc.g, cc.b end
         end
         if not r then

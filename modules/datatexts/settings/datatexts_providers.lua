@@ -676,6 +676,9 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
     local function GetDatatextPreviewValueColor(dtSettings)
         if dtSettings and dtSettings.useClassColor then
             local _, class = UnitClass("player")
+            -- @secret-policy: collapse-only — UnitClass can return SECRET on 12.1 PTR7
+            -- (SecretWhenUnitIdentityRestricted); collapse so the valueColor fallback applies.
+            if issecretvalue and issecretvalue(class) then class = nil end
             local classColor = class and RAID_CLASS_COLORS and RAID_CLASS_COLORS[class]
             if classColor then
                 return classColor.r or 1, classColor.g or 1, classColor.b or 1

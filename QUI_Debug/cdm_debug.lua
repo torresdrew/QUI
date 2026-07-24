@@ -2710,6 +2710,9 @@ local function RunCDMDebugClean()
     end
 
     local _, playerClass = UnitClass("player")
+    -- @secret-policy: collapse-only — UnitClass can return SECRET on 12.1 PTR7
+    -- (SecretWhenUnitIdentityRestricted); collapse so the bail below applies.
+    if issecretvalue and issecretvalue(playerClass) then playerClass = nil end
     if not playerClass then
         print(P, "Could not determine player class.")
         return

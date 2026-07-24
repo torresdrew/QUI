@@ -1204,8 +1204,29 @@ local fnErrorShadowed
 -- a name the file ever binds to anything else is poisoned and grants nothing.
 local function isGuardName(name, registry, aliases)
     if not name then return false end
-    if registry:isGuard(name) then return true end
     aliases = aliases or fnAliases
+    if registry:isGuard(name) then
+        -- Round-8 discipline extends to the DIRECT hit (stop-gate): a guard
+        -- NAME the file rebinds to anything other than itself is shadowed
+        -- and takes no DIRECT credit. Self-canonical bindings are the
+        -- legitimate upvalue-cache idioms — bare (`local issecretvalue =
+        -- issecretvalue`) or _G-qualified (normalized in harvest);
+        -- binds[name] == false records a non-canonical binding. A rebound
+        -- name FALLS THROUGH rather than failing outright: the binding may
+        -- itself be a registered guard alias (`local IsSecretValue =
+        -- Helpers.IsSecretValue`), which the map path below credits — an
+        -- early false here revoked exactly that idiom repo-wide.
+        -- Scope: BUILTIN guard names only. Custom guards (.taintrc
+        -- extra_guards) are audited wrapper FUNCTIONS — their defining file
+        -- binds the name to a function literal by construction.
+        if not registry:isBuiltinGuard(name) then return true end
+        local binds = aliases and aliases.binds
+        if not (binds and binds[name] ~= nil
+            and binds[name] ~= name
+            and binds[name] ~= ("_G." .. name)) then
+            return true
+        end
+    end
     if not aliases then return false end
     local poisoned = aliases.poisoned or {}
     if aliases.map[name] then
@@ -1215,6 +1236,40 @@ local function isGuardName(name, registry, aliases)
     if prefix and aliases.ns[prefix] then
         return (not poisoned[prefix])
             and registry:isGuard(aliases.ns[prefix] .. rest)
+    end
+    return false
+end
+
+-- Method-form guard lookup for the consumer exemption (obj:IsSecretValue(x)).
+-- Same poison discipline as isGuardName: the exemption is PROTECTION-GRANTING,
+-- so a bare method name the file ever binds to anything else is poisoned and
+-- grants nothing — otherwise `local IsSecretValue = <impostor>` would smuggle
+-- a shadowed member call past the consumer classifier.
+local function isGuardMethodName(name, registry, aliases)
+    -- RECEIVER-AWARE only (stop-gate round 2): `Helpers:IsSecretValue(x)`
+    -- maps to the registered dotted guard "Helpers.IsSecretValue". A bare
+    -- method-name match would exempt ANY object's same-named method —
+    -- protection-granting paths get no such benefit of the doubt. Unnamed /
+    -- complex receivers resolve to no qualified name and are never exempt.
+    if not name or not name:find(":", 1, true) then return false end
+    local prefix = name:match("^([%w_]+)[.:]")
+    if not prefix then return false end
+    aliases = aliases or fnAliases
+    local poisoned = aliases and aliases.poisoned or {}
+    if poisoned[prefix] then return false end
+    -- Receiver must be the canonical namespace itself (possibly cached
+    -- self-canonically) or a registered ns-alias of it.
+    local dotted = name:gsub(":", ".", 1)
+    if registry:isGuard(dotted) then
+        local binds = aliases and aliases.binds
+        if binds and binds[prefix] ~= nil
+            and binds[prefix] ~= prefix
+            and binds[prefix] ~= ("_G." .. prefix) then return false end
+        return true
+    end
+    if aliases and aliases.ns[prefix] then
+        local resolved = (aliases.ns[prefix] .. name:match("^[%w_]+([.:].+)$")):gsub(":", ".", 1)
+        return registry:isGuard(resolved)
     end
     return false
 end
@@ -4938,7 +4993,18 @@ walkExpr = function(expr, taintSet, fieldTaintSet, findings, registry, filePath)
                     argHadSource = false
                 end
                 if name and (argHadSource
-                    or isValueTainted(a, taintSet, fieldTaintSet, registry)) then
+                    or isValueTainted(a, taintSet, fieldTaintSet, registry))
+                    -- Registered probes/guards (issecretvalue et al) are the
+                    -- sanctioned inspection surface: the doc index stamps
+                    -- them SecretArguments=AllowedWhenUntainted (generator
+                    -- default), but the runtime accepts tainted probes —
+                    -- classifying them as consumers would outlaw the
+                    -- probe-first canon idiom itself (including the
+                    -- existence-guard shape `issecretvalue and
+                    -- issecretvalue(x)`, which bypasses guard recognition).
+                    and not isGuardName(name, registry)
+                    and not (kind == "method"
+                        and isGuardMethodName(name, registry)) then
                     local restriction
                     local rejects = false
                     if kind == "method" then
@@ -8731,6 +8797,30 @@ end
 -- binding — poisoned names never grant protection (isGateName) and never
 -- serve as chain hops (aliases.poisoned is the `blocked` set fed back in by
 -- the fixpoint loop).
+-- Canonical recognized form of a resolved name: the name itself, or the
+-- `_G.`/`ns.`-stripped variant when the stripped form is the recognized one
+-- (`_G` = real global table, `ns` = QUI suite namespace proxy). Returns nil
+-- when no variant is recognized.
+local function canonicalRecognized(n, registry)
+    if not n then return nil end
+    local candidates = { n }
+    for _, pre in ipairs({ "_G.", "ns." }) do
+        if n:sub(1, #pre) == pre then
+            candidates[#candidates + 1] = n:sub(#pre + 1)
+        end
+    end
+    for _, c in ipairs(candidates) do
+        if registry:preconditionFlags(c)
+            or registry:isRestrictionGate(c)
+            or registry:isGuard(c)
+            or registry:isElementSecretFunction(c)
+            or registry.preconditionNamespaces[c] then
+            return c
+        end
+    end
+    return nil
+end
+
 local function collectPreconditionAliases(node, registry, aliases, visited)
     if type(node) ~= "table" or visited[node] then return end
     visited[node] = true
@@ -8762,18 +8852,13 @@ local function collectPreconditionAliases(node, registry, aliases, visited)
             return resolveAliasedName(name, aliases)
         end
         if t == "BinopExpr" and (init.Op == "and" or init.Op == "or") then
-            local n = resolveInit(init.Rhs)
-            if n and (registry:preconditionFlags(n) or registry:isRestrictionGate(n)
-                or registry:isGuard(n) or registry:isElementSecretFunction(n)
-                or registry.preconditionNamespaces[n]) then
-                return n
-            end
-            n = resolveInit(init.Lhs)
-            if n and (registry:preconditionFlags(n) or registry:isRestrictionGate(n)
-                or registry:isGuard(n) or registry:isElementSecretFunction(n)
-                or registry.preconditionNamespaces[n]) then
-                return n
-            end
+            -- canonicalRecognized also accepts `_G.`/`ns.`-prefixed forms —
+            -- `(ns.Helpers and ns.Helpers.IsSecretValue) or <fallback fn>`
+            -- must resolve to the recognized dotted guard, not dissolve.
+            local n = canonicalRecognized(resolveInit(init.Rhs), registry)
+            if n then return n end
+            n = canonicalRecognized(resolveInit(init.Lhs), registry)
+            if n then return n end
         end
         return nil
     end
@@ -8784,6 +8869,12 @@ local function collectPreconditionAliases(node, registry, aliases, visited)
             local localName = nameOf(var)
             if localName then
                 local resolved = resolveInit(inits[i])
+                -- Normalize `_G.`/`ns.` prefixes (see canonicalRecognized) so
+                -- cache idioms like `local issecretvalue = _G.issecretvalue`
+                -- and `local nsHelpers = ns.Helpers` register canonically
+                -- instead of recording unrecognized bindings (false) that
+                -- revoke guard credit or drop the namespace alias.
+                resolved = canonicalRecognized(resolved, registry) or resolved
                 local canonical
                 -- Registration stays PERMISSIVE even for poisoned names — the
                 -- finding-emitting resolution may over-approximate; poisoning

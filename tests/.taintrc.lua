@@ -315,6 +315,13 @@ return {
         "ResolverIsSecretValue", -- cdm_resolvers
         "ScannerIsSecretValue",  -- spellscanner local issecretvalue wrapper
         "IsSecretSpellcastPayload", -- resourcebars UNIT_SPELLCAST_SUCCEEDED payload probe (spellID, castGUID)
+        "IsPreviewSecretValue",  -- action_bars_preview_driver Helpers.IsSecretValue wrapper
+                                 -- (renamed from a bare IsSecretValue local: builtin guard
+                                 -- names bound to function literals read as impostors under
+                                 -- the direct-hit shadow rule)
+        "RenderIsSecretValue",   -- groupframes_aura_render wrapper (same rename rationale;
+                                 -- also had a dead duplicate or-chain binding that poisoned
+                                 -- the bare name outright)
     },
     -- Round-23 element-taint class (conditionalSecretContents): wrapper
     -- functions whose RESULT 1 is a readable container with secret-capable

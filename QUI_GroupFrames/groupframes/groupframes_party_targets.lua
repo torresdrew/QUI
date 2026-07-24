@@ -184,9 +184,11 @@ local function RenderCompanion(frame)
     local r, g, b = FALLBACK_COLOR[1], FALLBACK_COLOR[2], FALLBACK_COLOR[3]
     local _, class = UnitClass(unit)
     -- Probe FIRST — `class and issecretvalue(class)` truth-tests the secret.
+    -- Collapse in place (not via a stored probe flag) so the truth-test below
+    -- is provably on a non-secret value.
     -- @secret-policy: collapse-only — fixed fallback color
-    local classIsSecret = issecretvalue and issecretvalue(class)
-    if not classIsSecret and class then
+    if issecretvalue and issecretvalue(class) then class = nil end
+    if class then
         local cc = RAID_CLASS_COLORS[class]
         if cc then r, g, b = cc.r, cc.g, cc.b end
     end

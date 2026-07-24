@@ -33,6 +33,10 @@ local inCombat = false
 local function GetTrailColor(cfg)
     if cfg.useClassColor ~= false then
         local _, class = UnitClass("player")
+        -- Probe FIRST — a secret class throws on the truth-test and the
+        -- RAID_CLASS_COLORS table index.
+        -- @secret-policy: collapse-only — custom color / white fallback below
+        if Helpers.IsSecretValue(class) then class = nil end
         local color = class and RAID_CLASS_COLORS and RAID_CLASS_COLORS[class]
         if color then return color.r, color.g, color.b end
     end

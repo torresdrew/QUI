@@ -69,7 +69,7 @@ function __WowWidget:ApplySnapshot(texture, snapshotID, ...) end
 ---@param oneShot? boolean
 ---@param ... any
 function __WowWidget:ApplySpellVisualKit(spellVisualKitID, oneShot, ...) end
---- Copies another duration object and assigns it to this one.
+--- Copies another duration text binding and assigns it to this one.
 ---@param other? any
 ---@param ... any
 function __WowWidget:Assign(other, ...) end
@@ -2117,10 +2117,10 @@ function __WowWidget:SetTextColor(colorR, colorG, colorB, a, ...) end
 ---@param ... any
 function __WowWidget:SetTextColorCurve(curve, property, ...) end
 --- Configures the text format used by this duration text binding. The format string may contain '{}' placeholders, each of which is substituted by the corresponding component in the supplied array.
----@param format? string
+---@param formatString? any
 ---@param components? table
 ---@param ... any
-function __WowWidget:SetTextFormat(format, components, ...) end
+function __WowWidget:SetTextFormat(formatString, components, ...) end
 ---@param thickness? number
 ---@param ... any
 function __WowWidget:SetThickness(thickness, ...) end

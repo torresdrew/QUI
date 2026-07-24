@@ -3188,6 +3188,10 @@ local function GetSpecKeyForSpecID(specID)
         local _
         _, class = UnitClass("player")
     end
+    -- @secret-policy: collapse-only — UnitClass can return SECRET on 12.1 PTR7
+    -- (SecretWhenUnitIdentityRestricted); collapse so the "UNKNOWN" fallback applies.
+    if issecretvalue and issecretvalue(class) then class = nil end
+    if issecretvalue and issecretvalue(specID) then specID = nil end
     if not class or not specID then return class or "UNKNOWN" end
     return class .. "-" .. tostring(specID)
 end
@@ -3200,6 +3204,7 @@ local function GetCurrentSpecKey()
             local _
             _, class = UnitClass("player")
         end
+        if issecretvalue and issecretvalue(class) then class = nil end -- @secret-policy: collapse-only
         return class or "UNKNOWN"
     end
     return GetSpecKeyForSpecID(specID)
@@ -3954,6 +3959,11 @@ local itemInfo = C_SpellBook.GetSpellBookItemInfo(slotIndex, Enum.SpellBookSpell
     do
         local _, raceFile = UnitRace("player")
         local _, classFile = UnitClass("player")
+        -- @secret-policy: collapse-only — UnitRace/UnitClass can return SECRET on
+        -- 12.1 PTR7 (SecretWhenUnitIdentityRestricted); collapse so the racial
+        -- append is skipped / class-filtered racials drop out (fail-safe).
+        if issecretvalue and issecretvalue(raceFile) then raceFile = nil end
+        if issecretvalue and issecretvalue(classFile) then classFile = nil end
         local racials = raceFile and RACE_RACIALS[raceFile]
         if racials then
             for _, racialEntry in ipairs(racials) do
