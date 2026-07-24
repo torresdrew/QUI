@@ -118,7 +118,7 @@ local SelectedBarListeners = setmetatable({}, { __mode = "k" })
 local function NotifySelectedBarChanged(origin)
     for owner, callback in pairs(SelectedBarListeners) do
         if owner and callback then
-            local ok = pcall(callback, SelectedBarState.key, origin)
+            local ok = ns.SafeCall("bulkhead", callback, SelectedBarState.key, origin)
             if not ok then
                 SelectedBarListeners[owner] = nil
             end
@@ -275,6 +275,22 @@ local function BuildMasterSettingsTab(tabContent)
     })
 
     local headerAt, sectionAt, closeSection, getY = MakeSectionLayout(tabContent)
+
+    -- Pointer row: the Buff/Debuff sub-page used to live on this tile
+    -- (subPages id "buffDebuff", tiles/action_bars.lua); aura config now
+    -- lives on the Auras hub tile (tiles/auras.lua, tabIndex 21, subTabIndex
+    -- 4 = Buff/Debuff Frames). BuildBuffDebuffTab itself is untouched -- the
+    -- hub's Buff/Debuff Frames sub-page (core/settings/content/
+    -- auras_actionbar_page.lua) still calls it directly.
+    headerAt(ns.L["Auras"])
+    local sAuras = sectionAt()
+    local openAurasBtn = GUI:CreateButton(sAuras.frame, ns.L["Open Auras"], 140, 26, function()
+        if GUI.NavigateTo then
+            GUI:NavigateTo(21, 3)
+        end
+    end)
+    sAuras.AddRow(Opts.BuildSettingRow(sAuras.frame, ns.L["Aura settings have moved to the Auras section."], openAurasBtn))
+    closeSection(sAuras)
 
     -- Button lock proxy (CVar-backed dropdown)
     local lockOptions = {

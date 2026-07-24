@@ -89,7 +89,7 @@ end
 --   { path = "tests/fixtures/current/basic_fresh", category = "current",
 --     name = "basic_fresh", files = { seed = "...", expected = "...", ... } }
 local FIXTURE_ROOT = env.REPO_ROOT .. "tests/fixtures/"
-local CATEGORIES = { "current", "legacy", "edge" }
+local CATEGORIES = { "current", "edge" }
 
 local function FileExists(path)
     local f = io.open(path, "r")

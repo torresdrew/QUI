@@ -194,61 +194,14 @@ env.__declared.ScheduleUsabilityUpdate = true
 -- Backward compat alias for any code referencing mirrorButtons
 ActionBarsOwned.mirrorButtons = ActionBarsOwned.nativeButtons
 
--- Taint-safe UpdateAction replacement.  The mixin's UpdateAction calls
--- ActionButton_CalculateAction and uses comparison operators, which can
--- error in tainted context during combat.  This version just syncs the
--- Lua-side self.action from the attribute (set by restricted code) and
--- triggers a safe visual refresh.  Called explicitly via CallMethod from
--- the _childupdate-offset restricted snippet after page changes, and
--- also installed as an instance shadow so any residual mixin path that
--- reaches UpdateAction hits this safe version.
-function ActionBarsOwned.SafeSyncAction(self)
-    local oldAction = self.action
-    local action = self:GetAttribute("action")
-    local actionChanged
-    if action then
-        actionChanged = oldAction and oldAction ~= action
-        self.action = action
-        if actionChanged and ResetButtonChargeCapabilityCache then
-            ResetButtonChargeCapabilityCache(self)
-        end
-        -- Keep slotMap in sync when bar 1 pages (action ID changes)
-        local slotMap = ActionBarsOwned.slotMap
-        if slotMap then
-            if actionChanged then
-                slotMap[oldAction] = nil
-            end
-            if action > 0 then
-                local entry = slotMap[action]
-                if entry then
-                    entry.button = self
-                else
-                    slotMap[action] = { button = self, barKey = "bar1" }
-                end
-            end
-        end
-    end
-    -- Re-register with C-side after page change so it pushes updates
-    -- for the new action (critical for assisted combat rotation).
-    if SetActionUIButton and action and self.cooldown then
-        SetActionUIButton(self, action, self.cooldown)
-    end
-    ActionBarsOwned.SafeUpdate(self)
-    -- Refresh assisted combat highlights after page change — the button
-    -- now shows a different spell so the old highlight may be stale.
-    if actionChanged and UpdateAllAssistedHighlights then
-        UpdateAllAssistedHighlights()
-    end
-end
-
 -- Taint-safe Update replacement for addon-created action buttons.
 -- The Blizzard mixin's Update uses comparison operators (==, ~=, >) on
 -- secret number values returned by restricted APIs, which errors when
 -- the button is tainted.  This version uses ONLY truthiness tests
 -- (if X then) on API returns — Lua evaluates truthiness without
 -- comparison operators, so secret booleans/numbers pass through safely.
--- Installed as an instance shadow so any residual mixin path that
--- reaches self:Update() hits this safe version.
+-- Called only by QUI's independent presentation/event paths; it is not
+-- installed over Blizzard's ActionBarActionButtonMixin:Update.
 -- Pre-filtered "buttons with an action" set. Mirrors LibActionButton's
 -- ActiveButtons pattern: maintained by SafeUpdate, consumed by the centralized
 -- state/usable/cooldown loops so they skip empty slots without an O(N)
@@ -387,17 +340,17 @@ function ActionBarsOwned.SafeUpdate(self)
             self.Name:SetText("")
         end
 
-        -- Delegated to shadowed methods
+        -- Count via Blizzard's mixin; cooldown via QUI's owned pipeline —
+        -- 12.1 removed ActionBarActionButtonMixin:UpdateCooldown (only the
+        -- free function ActionButton_UpdateCooldown remains).
         self:UpdateCount()
-        self:UpdateCooldown()
+        ActionBarsOwned.UpdateCooldown(self)
 
         -- Proc glow (spell activation overlay)
         ActionBarsOwned.UpdateOverlayGlow(self)
 
         -- Flyout arrow
-        if self.UpdateFlyout then
-            pcall(self.UpdateFlyout, self)
-        end
+        ns.SafeCallMethodIfPresent("best-effort-style", self, "UpdateFlyout")
 
         -- Assisted combat rotation arrow (one-button rotation).
         -- Set everActive flag here — SafeUpdate already confirmed
@@ -429,13 +382,13 @@ function ActionBarsOwned.SafeUpdate(self)
         if shouldFlash then
             if not self.flashing then
                 if ActionButton_StartFlash then
-                    pcall(ActionButton_StartFlash, self)
+                    ns.SafeCall("best-effort-style", ActionButton_StartFlash, self)
                 end
             end
         else
             if self.flashing then
                 if ActionButton_StopFlash then
-                    pcall(ActionButton_StopFlash, self)
+                    ns.SafeCall("best-effort-style", ActionButton_StopFlash, self)
                 end
             end
         end
@@ -468,13 +421,11 @@ function ActionBarsOwned.SafeUpdate(self)
         end
         if self.flashing then
             if ActionButton_StopFlash then
-                pcall(ActionButton_StopFlash, self)
+                ns.SafeCall("best-effort-style", ActionButton_StopFlash, self)
             end
         end
         -- Clean up overlays/elements that belong to the departed action
-        if self.UpdateFlyout then
-            pcall(self.UpdateFlyout, self)
-        end
+        ns.SafeCallMethodIfPresent("best-effort-style", self, "UpdateFlyout")
         UpdateAssistedCombatRotationFrame(self)
         ActionBarsOwned.UpdateOverlayGlow(self)
     end

@@ -1,18 +1,25 @@
 --[[
   gen_new_profile_seed.lua
 
-  One-shot generator: decode a full QUI profile export string (QUI1:) and emit
-  core/new_profile_defaults.lua, the seed applied to every newly-created profile
-  via AceDB OnNewProfile (core/init.lua). Existing profiles are never touched.
+  One-shot generator: decode a full QUI profile export string (QUI1:), strip
+  it, and emit importstrings/starter_profile.lua — the compressed Starter
+  Profile string that is BOTH the fresh-install seed (decoded lazily by
+  core/new_profile_defaults.lua via the AceDB OnNewProfile hook) and the
+  Profiles-tab preset. Existing profiles are never touched.
 
-  Meta/latch/runtime keys are stripped (any top-level "_"-prefixed key + the
-  fpsBackup runtime CVar buffer) so the seed carries ONLY genuine settings; the
-  migration/compat layers still stamp _schemaVersion/_defaultsVersion on the
-  seeded profile afterwards exactly as they do for a fresh profile.
+  Meta/latch/runtime keys are stripped (any "_"-prefixed key at ANY depth +
+  the fpsBackup runtime CVar buffer) so the seed carries ONLY genuine
+  settings; the migration/compat layers still stamp
+  _schemaVersion/_defaultsVersion on the seeded profile afterwards exactly as
+  they do for a fresh profile. Orphan CDM container satellites (anchors/
+  cooldown-effect overrides/glow keys left behind by a deleted container —
+  same rule as core/migrations.lua's v51 squash step (f)) are purged too.
 
   Usage:
-    lua tools/gen_new_profile_seed.lua <path-to-string-file> [out.lua]
+    lua tools/gen_new_profile_seed.lua <path-to-string-file>
     lua tools/gen_new_profile_seed.lua -                       # string on stdin
+    lua tools/gen_new_profile_seed.lua --from-seed              # reprocess the
+                                                                  -- shipped string in place
 ]]
 
 local function ScriptDir()
@@ -41,6 +48,91 @@ local function ShouldStripTopKey(k)
 end
 
 ----------------------------------------------------------------------------
+-- Orphan-satellite purge: DeleteContainer historically leaked per-container
+-- keys (frameAnchoring/cooldownEffects/customGlow) that never got cleaned up
+-- when the container itself was removed. Mirrors
+-- Migrations.PurgeOrphanContainerSatellites (core/migrations.lua v51 squash step (f)) — kept
+-- as its own copy here because this tool cannot load addon files (only
+-- tools/_addon_env.lua's headless lib stubs). Keep the customGlow suffix
+-- list in lockstep with the migrations.lua copy. (cdm_containers.lua's
+-- PurgeContainerSatellites needs no list — it prefix-matches on a known
+-- containerKey.)
+----------------------------------------------------------------------------
+-- Ordered longest-suffix-first: several suffixes share a tail (every
+-- Pandemic*Enabled variant ends in "Enabled"), so a shorter generic suffix
+-- must never be tried before the longer specific one it is a tail of, or it
+-- mis-derives the container prefix (e.g. stripping bare "Enabled" from
+-- "<liveKey>PandemicBuffEnabled" yields "<liveKey>PandemicBuff", which is
+-- not a live container key, wrongly orphaning a LIVE key). The match loop
+-- below stops at the first suffix that matches the key's tail at all
+-- (break unconditionally on match, not only on delete) so this ordering is
+-- load-bearing, not cosmetic. Keep in lockstep with core/migrations.lua.
+local CDM_GLOW_SUFFIXES = {
+    "PandemicDebuffEnabled", "PandemicBuffEnabled", "PandemicEnabled",
+    "Thickness", "Frequency", "GlowType", "XOffset", "YOffset", "Enabled",
+    "Color", "Scale", "Lines",
+}
+
+local function PurgeOrphanSatellites(p)
+    local ncdm = p.ncdm
+    local live = {}
+    if ncdm and type(ncdm.containers) == "table" then
+        for key in pairs(ncdm.containers) do live[key] = true end
+    end
+
+    local anchors = p.frameAnchoring
+    if type(anchors) == "table" then
+        local toRemove = {}
+        for k in pairs(anchors) do
+            if type(k) == "string" then
+                local key = k:match("^cdmCustom_(.+)$")
+                if key and not live[key] then toRemove[#toRemove + 1] = k end
+            end
+        end
+        for _, k in ipairs(toRemove) do anchors[k] = nil end
+    end
+
+    local effects = p.cooldownEffects
+    if type(effects) == "table" then
+        local toRemove = {}
+        for k in pairs(effects) do
+            if type(k) == "string" then
+                local key = k:match("^hide_(.+)$")
+                if key and not live[key] then toRemove[#toRemove + 1] = k end
+            end
+        end
+        for _, k in ipairs(toRemove) do effects[k] = nil end
+    end
+
+    local glow = p.customGlow
+    if type(glow) == "table" then
+        local toRemove = {}
+        for k in pairs(glow) do
+            if type(k) == "string" then
+                for _, suffix in ipairs(CDM_GLOW_SUFFIXES) do
+                    local key = k:match("^(.+)" .. suffix .. "$")
+                    if key then
+                        -- First matching suffix wins and stops the search
+                        -- (see the ordering note on CDM_GLOW_SUFFIXES above).
+                        -- Only container-shaped prefixes; never touch the
+                        -- essential/utility builtin glow keys.
+                        if key ~= "essential" and key ~= "utility"
+                            and (key:find("^custom_") or key:find("^customBar_"))
+                            and not live[key] then
+                            toRemove[#toRemove + 1] = k
+                        end
+                        break
+                    end
+                end
+            end
+        end
+        for _, k in ipairs(toRemove) do glow[k] = nil end
+    end
+
+    return true
+end
+
+----------------------------------------------------------------------------
 -- Decode
 ----------------------------------------------------------------------------
 local function ReadInput(path)
@@ -64,86 +156,50 @@ local function Decode(raw)
 end
 
 ----------------------------------------------------------------------------
--- Deterministic Lua-source serializer (sorted keys, round-trip numbers)
+-- Recursive strip: ShouldStripTopKey applies at EVERY depth, not just the
+-- root, so nested meta/latch keys (ncdm._specProfiles, chat.tabs[n].
+-- _groupsVersion, etc.) never ship. Returns only the top-level doomed-key
+-- list for the summary printout; deeper strips happen silently in the
+-- recursive calls.
 ----------------------------------------------------------------------------
-local IDENT = "^[%a_][%w_]*$"
-local RESERVED = {
-    ["and"]=true,["break"]=true,["do"]=true,["else"]=true,["elseif"]=true,["end"]=true,
-    ["false"]=true,["for"]=true,["function"]=true,["if"]=true,["in"]=true,["local"]=true,
-    ["nil"]=true,["not"]=true,["or"]=true,["repeat"]=true,["return"]=true,["then"]=true,
-    ["true"]=true,["until"]=true,["while"]=true,
-}
-
-local function ReprNumber(v)
-    if v ~= v then return "0/0" end
-    if v == math.huge then return "math.huge" end
-    if v == -math.huge then return "-math.huge" end
-    if v == math.floor(v) and math.abs(v) < 1e15 then
-        return string.format("%d", v)
-    end
-    return string.format("%.17g", v)
-end
-
-local function ReprScalar(v)
-    local t = type(v)
-    if t == "string" then return string.format("%q", v) end
-    if t == "number" then return ReprNumber(v) end
-    if t == "boolean" then return tostring(v) end
-    error("unsupported scalar type: " .. t)
-end
-
-local function SortedKeys(t)
-    local keys = {}
-    for k in pairs(t) do keys[#keys + 1] = k end
-    table.sort(keys, function(a, b)
-        local ta, tb = type(a), type(b)
-        if ta ~= tb then return ta < tb end
-        return tostring(a) < tostring(b)
-    end)
-    return keys
-end
-
-local Serialize
-function Serialize(t, indent, out)
-    local pad = string.rep("    ", indent)
-    out[#out + 1] = "{\n"
-    for _, k in ipairs(SortedKeys(t)) do
-        local v = t[k]
-        local keyStr
-        if type(k) == "string" and k:match(IDENT) and not RESERVED[k] then
-            keyStr = k
-        elseif type(k) == "string" then
-            keyStr = "[" .. string.format("%q", k) .. "]"
-        elseif type(k) == "number" then
-            keyStr = "[" .. ReprNumber(k) .. "]"
-        else
-            error("unsupported key type: " .. type(k))
+local function StripMetaKeysDeep(t)
+    local doomed = {}
+    for k, v in pairs(t) do
+        if ShouldStripTopKey(k) then
+            doomed[#doomed + 1] = k
+        elseif type(v) == "table" then
+            StripMetaKeysDeep(v)
         end
-        out[#out + 1] = pad .. "    " .. keyStr .. " = "
-        if type(v) == "table" then
-            Serialize(v, indent + 1, out)
-        else
-            out[#out + 1] = ReprScalar(v)
-        end
-        out[#out + 1] = ",\n"
     end
-    out[#out + 1] = pad .. "}"
+    table.sort(doomed, function(a, b) return tostring(a) < tostring(b) end)
+    for _, k in ipairs(doomed) do t[k] = nil end
+    return doomed
 end
 
 ----------------------------------------------------------------------------
 -- Main
 ----------------------------------------------------------------------------
-local inPath  = arg[1] or error("usage: gen_new_profile_seed.lua <string-file> [out.lua]")
-local outPath = arg[2] or (ScriptDir() .. "../core/new_profile_defaults.lua")
+local inPath  = arg[1] or error("usage: gen_new_profile_seed.lua <string-file>|--from-seed [out.lua]")
+local outPath = arg[2] or (ScriptDir() .. "../importstrings/starter_profile.lua")
 
-local profile = Decode(ReadInput(inPath))
-
-local stripped = {}
-for k in pairs(profile) do
-    if ShouldStripTopKey(k) then stripped[#stripped + 1] = k end
+local profile
+if inPath == "--from-seed" then
+    -- Reprocess the shipped string in place: register the loader, decode the
+    -- current starter_profile.lua data, re-strip + re-encode.
+    _G.QUI = _G.QUI or {}
+    _G.QUI._importLoaders = {}
+    assert(loadfile(ScriptDir() .. "../importstrings/starter_profile.lua"))("QUI", {})
+    local loader = assert(_G.QUI._importLoaders.StarterProfile, "StarterProfile loader missing")
+    local entry = loader()
+    local data = type(entry) == "table" and entry.data or entry
+    profile = Decode(assert(data, "starter_profile.lua carries no data string"))
+else
+    profile = Decode(ReadInput(inPath))
 end
-table.sort(stripped)
-for _, k in ipairs(stripped) do profile[k] = nil end
+profile._quiBundledGlobals = nil
+
+local strippedTop = StripMetaKeysDeep(profile)
+PurgeOrphanSatellites(profile)
 
 -- Force the shipped new-user theme to QUI's Classic Mint, regardless of the
 -- source profile's theme. general.themePreset is the live read (main.lua and
@@ -161,74 +217,53 @@ local function ApplyThemeOverride(p)
 end
 ApplyThemeOverride(profile)
 
-local body = {}
-Serialize(profile, 0, body)
-local seedSrc = table.concat(body)
+----------------------------------------------------------------------------
+-- Encode: payload = seed keys at top level + the empty bundled-globals block
+-- (core/new_profile_defaults.lua drops it on decode; profile_io's import
+-- validation expects the key on preset installs).
+----------------------------------------------------------------------------
+local payload = {}
+for k, v in pairs(profile) do payload[k] = v end
+payload._quiBundledGlobals = { ncdm_specTrackerSpells = {}, specTrackerSpells = {} }
 
-local header = [[
--- AUTO-GENERATED by tools/gen_new_profile_seed.lua -- DO NOT EDIT BY HAND.
--- The shipped new-profile defaults. Applied to EVERY newly-created profile
--- (and every fresh install's Default profile) via the AceDB OnNewProfile hook
--- in core/init.lua. Existing profiles are never touched; copies keep their
--- source. defaults.lua stays the legacy fallback so the shadow-defaults pin
--- (core/compatibility.lua) sees no diff for existing users.
---
--- Stripped on generation: every "_"-prefixed meta/latch key + fpsBackup, so a
--- seeded profile still reads as unmigrated (stored schema 0) and the migration
--- layer stamps _schemaVersion/_defaultsVersion on it normally afterwards.
---
--- Regenerate after curating: lua tools/gen_new_profile_seed.lua <string-file>
-local ADDON_NAME, ns = ...
+local serialized = AceSerializer:Serialize(payload)
+local compressed = LibDeflate:CompressDeflate(serialized)
+local encoded    = "QUI1:" .. LibDeflate:EncodeForPrint(compressed)
 
-ns.NewProfileSeed = ]]
+-- Pick a long-bracket level that cannot collide with the blob contents.
+local bracket = "[["
+local close   = "]]"
+if encoded:find("]]", 1, true) then bracket, close = "[==[", "]==]" end
 
-local footer = [[
+local body = table.concat({
+    "-- QUI Starter Profile export string.",
+    "-- AUTO-GENERATED by tools/gen_new_profile_seed.lua -- DO NOT EDIT BY HAND.",
+    "-- SINGLE SOURCE for the fresh-install seed (decoded lazily by",
+    "-- core/new_profile_defaults.lua via the OnNewProfile hook) AND the",
+    "-- Profiles-tab \"Starter Profile\" preset — they cannot drift.",
+    "-- Stripped on generation: every \"_\"-prefixed meta/latch key at ANY depth +",
+    "-- fpsBackup + orphan CDM container satellites.",
+    "-- Regenerate after curating: lua tools/gen_new_profile_seed.lua <string-file>",
+    "-- Reprocess in place (re-strip only): lua tools/gen_new_profile_seed.lua --from-seed",
+    "-- Decode guard: tests/unit/starter_preset_matches_seed_test.lua",
+    "",
+    "QUI._importLoaders.StarterProfile = function()",
+    "    return {",
+    "    name = \"Starter Profile\",",
+    "    description = \"QUI starter profile (the shipped new-profile defaults)\",",
+    "    data = " .. bracket .. encoded .. close .. ",",
+    "    }",
+    "end",
+    "",
+}, "\n")
 
--- Deep-overwrite the seed onto a freshly-created profile table. AceDB has
--- already filled it with legacy defaults via copyDefaults; we overwrite the
--- curated keys on top. Called from the OnNewProfile hook BEFORE the new
--- profile is first read, so the first reader sees seeded values (no reload).
-local function DeepApply(dst, src)
-    for k, v in pairs(src) do
-        if type(v) == "table" then
-            local d = dst[k]
-            if type(d) ~= "table" then d = {}; dst[k] = d end
-            DeepApply(d, v)
-        else
-            dst[k] = v
-        end
-    end
-end
-
-function ns.ApplyNewProfileSeed(profile)
-    if type(profile) ~= "table" then return end
-    DeepApply(profile, ns.NewProfileSeed)
-end
-]]
-
-local f = assert(io.open(outPath, "w"))
-f:write(header)
-f:write(seedSrc)
-f:write("\n")
-f:write(footer)
+local f = assert(io.open(outPath, "wb"))
+f:write(body)
 f:close()
 
 local kept = 0
 for _ in pairs(profile) do kept = kept + 1 end
-io.write(string.format("Wrote %s\n  kept %d top-level setting keys, stripped %d meta/runtime keys: %s\n",
-    outPath, kept, #stripped, table.concat(stripped, ", ")))
-
--- Keep the Profiles-tab "Starter Profile" preset in lock-step with the seed:
--- when we wrote the canonical seed (no custom out path), regenerate
--- importstrings/starter_profile.lua from it so the two never drift. Runs as a
--- separate process so the freshly-written seed file is re-read cleanly.
--- Guard: tests/unit/starter_preset_matches_seed_test.lua.
-if not arg[2] then
-    local interp = arg[-1] or "lua"
-    local presetGen = ScriptDir() .. "gen_starter_preset_from_seed.lua"
-    io.write("Regenerating Starter Profile preset from seed...\n")
-    local ok = os.execute(string.format('%q %q', interp, presetGen))
-    if ok ~= true and ok ~= 0 then
-        error("preset regen failed -- run manually: lua tools/gen_starter_preset_from_seed.lua")
-    end
-end
+io.write(string.format(
+    "Wrote %s\n  kept %d top-level setting keys, stripped %d top-level meta/runtime keys"
+        .. " (deep strip also ran below top level): %s\n",
+    outPath, kept, #strippedTop, table.concat(strippedTop, ", ")))

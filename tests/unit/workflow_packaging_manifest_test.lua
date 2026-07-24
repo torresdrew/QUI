@@ -26,6 +26,13 @@ local function assertContains(body, needle, message)
     assert(body:find(needle, 1, true), message .. "\nmissing: " .. needle)
 end
 
+local function assertTocGroup(folder)
+    local toc = assert(readFile(folder .. "/" .. folder .. ".toc"),
+        "missing companion TOC: " .. folder)
+    assertContains(toc, "## Group: QUI",
+        folder .. ": companion TOC should stay grouped with QUI")
+end
+
 local function discoverSuiteFolders()
     local folders = {}
     local pipe = assert(io.popen("find . -maxdepth 1 -type d -name 'QUI_*' -print | sort"))
@@ -48,8 +55,12 @@ for folder in pairs(folders) do
 end
 
 for _, entry in ipairs(manifest) do
-    assert(releaseFolders[entry.folder],
-        "manifest folder is not discoverable as a shipped suite addon: " .. entry.folder)
+    -- Host-backed entries ship inside another folder's addon and have no
+    -- `folder` of their own, so there is no separate shipped folder to verify.
+    if entry.folder then
+        assert(releaseFolders[entry.folder],
+            "manifest folder is not discoverable as a shipped suite addon: " .. entry.folder)
+    end
 end
 
 for _, companion in ipairs({ "QUI_Options", "QUI_OptionsSearch" }) do
@@ -61,6 +72,8 @@ assert(folders.QUI_Debug, "QUI_Debug should exist in the repo for local diagnost
 assert(not releaseFolders.QUI_Debug, "QUI_Debug must not be treated as a release folder")
 assert(folders.QUI_Logger, "QUI_Logger should exist in the repo for local event capture")
 assert(not releaseFolders.QUI_Logger, "QUI_Logger must not be treated as a release folder")
+assertTocGroup("QUI_Debug")
+assertTocGroup("QUI_Logger")
 
 for folder in pairs(releaseFolders) do
     local toc = folder .. "/" .. folder .. ".toc"

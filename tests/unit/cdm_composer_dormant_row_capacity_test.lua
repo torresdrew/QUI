@@ -70,6 +70,10 @@ assert(source:find("local entrySource = entryRef.source", 1, true),
     "composer should preserve add-list provenance for CDM-backed spell picks")
 assert(source:find("AddSpell(activeContainer, addID, kindFromTab, targetRow, entrySource)", 1, true),
     "right-click add should persist source provenance on spell entries")
+assert(source:find("AddTrinketSlot(activeContainer, entryRef._slotID, targetRow, itemKind, entrySource)", 1, true),
+    "right-click add should persist source provenance on Blizzard-backed slot entries")
+assert(source:find("AddConsumable(activeContainer, addID, targetRow, itemKind, entrySource)", 1, true),
+    "right-click add should persist source provenance on Blizzard-backed consumable entries")
 assert(source:find('local BLIZZARD_CDM_ENTRY_SOURCE = "blizzardCDM"', 1, true)
     and source:find("entry.source ~= BLIZZARD_CDM_ENTRY_SOURCE", 1, true),
     "only Blizzard-CDM-sourced entries should be eligible for the Not added to /cdm warning")

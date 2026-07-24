@@ -14,6 +14,7 @@
 ---------------------------------------------------------------------------
 local ADDON_NAME, ns = ...
 local Bags = ns.Bags or {}; ns.Bags = Bags
+local Storage = ns.Storage
 local UIKit = ns.UIKit
 local Helpers = ns.Helpers
 local GetSettings = Helpers.CreateDBGetter("bags")
@@ -51,8 +52,8 @@ local searchTimer = nil
 --- "Name-Realm" key, the warband gets a friendly constant, guild keys drop
 --- the registry prefix and gain chat-style brackets.
 function SearchWindow.OwnerLabel(ownerKey)
-    if ownerKey == Bags.Summaries.WARBAND_OWNER then return ns.L["Warband"] end
-    local prefix = Bags.Summaries.GUILD_PREFIX
+    if ownerKey == Storage.Summaries.WARBAND_OWNER then return ns.L["Warband"] end
+    local prefix = Storage.Summaries.GUILD_PREFIX
     if ownerKey:sub(1, #prefix) == prefix then
         return "<" .. ownerKey:sub(#prefix + 1) .. ">"
     end
@@ -139,7 +140,7 @@ local function CreateRow(parent)
             return
         end
         local target = self._item
-            and Bags.Everywhere.ResolveTarget(self._item, Bags.Store.GetCurrentCharacterKey())
+            and Bags.Everywhere.ResolveTarget(self._item, Storage.Store.GetCurrentCharacterKey())
         if not target then return end
         if target.window == "bags" then
             Bags.BagWindow.FocusItem(self._itemID, target.ownerKey)

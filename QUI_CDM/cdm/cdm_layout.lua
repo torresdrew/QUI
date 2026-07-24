@@ -191,7 +191,7 @@ function CDMLayout.SortIconsByAssignedRow(icons, rows)
 
     local overflow = {}
     for _, icon in ipairs(icons) do
-        local ar = icon._spellEntry and icon._spellEntry._assignedRow
+        local ar = (icon._spellEntry and icon._spellEntry._assignedRow) or icon._assignedRow
         local rn = findRowWithRoom(ar)
         if rn then
             buckets[rn][#buckets[rn] + 1] = icon
@@ -479,5 +479,198 @@ function CDMLayout.BuildIconLayout(settings, icons, opts)
         icons = icons,
         placements = placements,
         metrics = metrics,
+    }
+end
+
+-- Single-line growth layout for flat-schema surfaces (buff): their settings use a
+-- top-level iconSize / growthDirection instead of row1/row2/row3, so BuildIconLayout's
+-- BuildRows yields 0 rows and bails. This emits the SAME {placements, metrics} contract
+-- the re-anchor runtime feeds to PositionEntries + applySize, so buff shells get
+-- positioned and the container sized. Mirrors CDMBuffLayout.LayoutBuffIcons math
+-- (CENTERED_HORIZONTAL default; UP/DOWN = vertical). Pixel-snapping is applied
+-- downstream by the runtime's pixelRound.
+function CDMLayout.BuildBuffGridLayout(settings, icons, _opts)
+    if not icons or #icons == 0 then return nil end
+    settings = settings or {}
+
+    local iconSize = settings.iconSize or 42
+    local padding = settings.padding or 0
+    local aspectRatio = settings.aspectRatioCrop or 1.0
+    local growthDirection = settings.growthDirection or "CENTERED_HORIZONTAL"
+    local isVertical = (growthDirection == "UP" or growthDirection == "DOWN")
+
+    local iconWidth, iconHeight = iconSize, iconSize
+    if aspectRatio > 1.0 then
+        iconHeight = iconSize / aspectRatio
+    elseif aspectRatio < 1.0 then
+        iconWidth = iconSize * aspectRatio
+    end
+
+    -- One shared row config for every buff icon (flat schema -> one style). Mirrors
+    -- the rowConfig CDMBuffLayout.ApplyIconStyle builds, so positionShell sizes the
+    -- shell + border and decorate sizes the native count/countdown identically.
+    local rowConfig = {
+        rowNum = 1,
+        count = #icons,
+        size = iconSize,
+        borderSize = settings.borderSize or 2,
+        borderColorSource = settings.borderColorSource,
+        borderColor = settings.borderColor or settings.borderColorTable or {0, 0, 0, 1},
+        aspectRatioCrop = aspectRatio,
+        zoom = settings.zoom or 0,
+        padding = padding,
+        yOffset = 0,
+        xOffset = 0,
+        durationSize = settings.durationSize or 14,
+        durationOffsetX = settings.durationOffsetX or 0,
+        durationOffsetY = settings.durationOffsetY or 8,
+        durationTextColor = settings.durationTextColor or {1, 1, 1, 1},
+        durationAnchor = settings.durationAnchor or "TOP",
+        durationFont = settings.durationFont,
+        hideDurationText = settings.hideDurationText,
+        stackSize = settings.stackSize or 14,
+        stackOffsetX = settings.stackOffsetX or 0,
+        stackOffsetY = settings.stackOffsetY or -8,
+        stackTextColor = settings.stackTextColor or {1, 1, 1, 1},
+        stackAnchor = settings.stackAnchor or "BOTTOM",
+        stackFont = settings.stackFont,
+        hideStackText = settings.hideStackText,
+        opacity = settings.opacity or 1.0,
+    }
+
+    local n = #icons
+    local placements = {}
+    local totalWidth, totalHeight
+
+    if isVertical then
+        totalWidth = iconWidth
+        totalHeight = (n * iconHeight) + ((n - 1) * padding)
+        local startY
+        if growthDirection == "UP" then
+            startY = -(totalHeight / 2) + iconHeight / 2
+        else -- DOWN
+            startY = (totalHeight / 2) - iconHeight / 2
+        end
+        for i = 1, n do
+            local y = (growthDirection == "UP")
+                and (startY + (i - 1) * (iconHeight + padding))
+                or (startY - (i - 1) * (iconHeight + padding))
+            placements[i] = { icon = icons[i], rowConfig = rowConfig, x = 0, y = y }
+        end
+    else
+        totalWidth = (n * iconWidth) + ((n - 1) * padding)
+        totalHeight = iconHeight
+        local startX = -totalWidth / 2 + iconWidth / 2
+        for i = 1, n do
+            local x = startX + (i - 1) * (iconWidth + padding)
+            placements[i] = { icon = icons[i], rowConfig = rowConfig, x = x, y = 0 }
+        end
+    end
+
+    return {
+        rows = { rowConfig },
+        icons = icons,
+        placements = placements,
+        metrics = {
+            iconWidth = totalWidth,        -- container content width (applySize -> SetSize w)
+            rawContentWidth = totalWidth,
+            totalHeight = totalHeight,
+            proxyYOffset = 0,
+            row1IconHeight = iconHeight,
+            row1BorderSize = rowConfig.borderSize,
+            bottomRowBorderSize = rowConfig.borderSize,
+            bottomRowYOffset = 0,
+            row1Width = totalWidth,
+            bottomRowWidth = totalWidth,
+            rawRow1Width = totalWidth,
+            rawBottomRowWidth = totalWidth,
+            potentialRow1Width = totalWidth,
+            potentialBottomRowWidth = totalWidth,
+        },
+    }
+end
+
+-- Bar-stack layout for the trackedBar surface: wide StatusBars (barWidth x barHeight)
+-- stacked vertically (horizontal orientation, default) or tall bars stacked horizontally
+-- (vertical orientation). The icon-grid layout above would size each shell to iconSize
+-- (a small square) -- bars need the bar dimensions. Mirrors CDMBars:LayoutBars. Bar dims
+-- are encoded via rowConfig.size + aspectRatioCrop so PositionEntries' (w=size,
+-- h=size/aspect) yields barW x barH; pixel-snapping is applied downstream.
+function CDMLayout.BuildBuffBarLayout(settings, icons, _opts)
+    if not icons or #icons == 0 then return nil end
+    settings = settings or {}
+
+    local barWidth = settings.barWidth or 215
+    local barHeight = settings.barHeight or 25
+    local spacing = settings.spacing or 2
+    local isVertical = (settings.orientation == "vertical")
+    local growUp = (settings.growUp ~= false)
+
+    local barW, barH = barWidth, barHeight
+    if isVertical then barW, barH = barHeight, barWidth end
+
+    local n = #icons
+    local rowConfig = {
+        rowNum = 1,
+        count = n,
+        size = barW,
+        -- Icon crop stays square (1); the bar shell's wide dims come from placement.w/h
+        -- (PositionEntries), so the bar's small icon texcoord isn't stretched to bar aspect.
+        aspectRatioCrop = 1,
+        borderSize = settings.borderSize or 0,
+        borderColorSource = settings.borderColorSource,
+        borderColor = settings.borderColor or settings.borderColorTable or {0, 0, 0, 1},
+        zoom = 0,
+        padding = spacing,
+        yOffset = 0,
+        xOffset = 0,
+        durationSize = settings.durationSize or 12,
+        durationTextColor = settings.durationTextColor or {1, 1, 1, 1},
+        stackSize = settings.stackSize or 12,
+        stackTextColor = settings.stackTextColor or {1, 1, 1, 1},
+        opacity = settings.opacity or 1.0,
+    }
+
+    local placements = {}
+    local totalW, totalH
+    if isVertical then
+        totalW = (n * barW) + ((n - 1) * spacing)
+        totalH = barH
+        local startX = -totalW / 2 + barW / 2
+        for i = 1, n do
+            placements[i] = { icon = icons[i], rowConfig = rowConfig, w = barW, h = barH,
+                x = startX + (i - 1) * (barW + spacing), y = 0 }
+        end
+    else
+        totalW = barW
+        totalH = (n * barH) + ((n - 1) * spacing)
+        local startY = growUp and (-(totalH / 2) + barH / 2) or ((totalH / 2) - barH / 2)
+        for i = 1, n do
+            local y = growUp and (startY + (i - 1) * (barH + spacing))
+                or (startY - (i - 1) * (barH + spacing))
+            placements[i] = { icon = icons[i], rowConfig = rowConfig, w = barW, h = barH, x = 0, y = y }
+        end
+    end
+
+    return {
+        rows = { rowConfig },
+        icons = icons,
+        placements = placements,
+        metrics = {
+            iconWidth = totalW,
+            rawContentWidth = totalW,
+            totalHeight = totalH,
+            proxyYOffset = 0,
+            row1IconHeight = barH,
+            row1BorderSize = rowConfig.borderSize,
+            bottomRowBorderSize = rowConfig.borderSize,
+            bottomRowYOffset = 0,
+            row1Width = totalW,
+            bottomRowWidth = totalW,
+            rawRow1Width = totalW,
+            rawBottomRowWidth = totalW,
+            potentialRow1Width = totalW,
+            potentialBottomRowWidth = totalW,
+        },
     }
 end

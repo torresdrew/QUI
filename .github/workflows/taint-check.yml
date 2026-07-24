@@ -15,6 +15,21 @@ jobs:
           luaVersion: "5.1"
       - name: Run analyzer self-test
         run: lua tools/test_taint.lua --self-test
+      - name: Analyzer unit tests
+        run: |
+          set -u
+          fail=0
+          for t in tests/taint/*_test.lua tests/taint/parser/parser_test.lua; do
+            echo "::group::$t"
+            if lua "$t"; then
+              echo "::endgroup::"
+            else
+              echo "::endgroup::"
+              echo "::error file=$t::Test failed"
+              fail=1
+            fi
+          done
+          exit $fail
 
   api-index-sync:
     name: api-index in sync with corpus

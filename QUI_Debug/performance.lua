@@ -321,7 +321,7 @@ local function StartEventSniffer()
     local allow = ns.QUI_EventAllowlist
     if allow and #allow > 0 then
         for i = 1, #allow do
-            pcall(eventSniffer.RegisterEvent, eventSniffer, allow[i])
+            ns.SafeCallMethod("best-effort-style", eventSniffer, "RegisterEvent", allow[i])
         end
     else
         eventSniffer:RegisterAllEvents()
@@ -437,7 +437,7 @@ end
 
 local function Sample()
     -- Memory
-    pcall(UpdateAddOnMemoryUsage)
+    ns.SafeCall("best-effort-style", UpdateAddOnMemoryUsage)
     local mem = SumAddonMemoryUsage()
     if mem then
         currentMem = mem
@@ -457,7 +457,7 @@ local function Sample()
             currentCPUPct = (val / frameTimeMs) * 100
         end
     elseif cpuAPITier == "scriptProfile" then
-        pcall(UpdateAddOnCPUUsage)
+        ns.SafeCall("best-effort-style", UpdateAddOnCPUUsage)
         local val = SumScriptCPUUsage()
         if val then
             local now = GetTime()

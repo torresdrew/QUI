@@ -122,11 +122,11 @@ end
 -- post-profile-change settle timers (1.0s and, on scale change, 1.8s).
 local function RepositionFramesAfterScale()
     local ApplyAnchors = _G.QUI_ApplyAllFrameAnchors
-    if ApplyAnchors then pcall(ApplyAnchors, true) end
+    if ApplyAnchors then ns.SafeCall("bulkhead", ApplyAnchors, true) end
     local RefreshUnitFrames = _G.QUI_RefreshUnitFrames
-    if RefreshUnitFrames then pcall(RefreshUnitFrames) end
+    if RefreshUnitFrames then ns.SafeCall("bulkhead", RefreshUnitFrames) end
     local RefreshGroupFrames = _G.QUI_RefreshGroupFrames
-    if RefreshGroupFrames then pcall(RefreshGroupFrames) end
+    if RefreshGroupFrames then ns.SafeCall("bulkhead", RefreshGroupFrames) end
 end
 
 local LSM = ns.LSM
@@ -190,6 +190,13 @@ function QUICore:OnInitialize()
         ns.Migrations.Run(self.db)
     end
 
+    -- One-shot latch: the all-profile Tier 0/1 pass above is the same work
+    -- QUI:BackwardsCompat() opens with, and nothing writes raw SV between
+    -- this OnInitialize and QUI:OnEnable (both inside ADDON_LOADED). The
+    -- OnEnable invocation consumes the latch and skips the second full
+    -- walk; profile switches and imports that call in later re-run tiers.
+    ns._startupTierPassDone = true
+
     -- Late migrations run at PLAYER_LOGIN once Blizzard runtime state
     -- (EditModeManagerFrame, live frame positions) is available. The
     -- handler unregisters itself after a successful pass.
@@ -245,10 +252,9 @@ function QUICore:OnInitialize()
 
 	self._didInitialize = true
 	for _, callback in ipairs(self._postInitializeCallbacks or {}) do
-		local ok, err = pcall(callback, self)
-		if not ok and geterrorhandler then
-			geterrorhandler()(err)
-		end
+		-- ns.SafeCall's bulkhead policy already reports+dedups via the
+		-- classified error handler; no manual geterrorhandler forward needed.
+		ns.SafeCall("bulkhead", callback, self)
 	end
 
 end
@@ -381,7 +387,7 @@ function QUICore:OnProfileChanged(event, db, profileKey)
             QUICore._scaleRegenFrame = CreateFrame("Frame")
             QUICore._scaleRegenFrame:SetScript("OnEvent", function(self)
                 if QUICore._pendingUIScale and not InCombatLockdown() then
-                    local ok = pcall(UIParent.SetScale, UIParent, QUICore._pendingUIScale)
+                    local ok = ns.SafeCallMethod("defer-ooc", UIParent, "SetScale", QUICore._pendingUIScale)
                     if ok then
                         FinalizeProfileScale(QUICore._pendingUIScale)
                         QUICore._pendingUIScale = nil
@@ -397,7 +403,7 @@ function QUICore:OnProfileChanged(event, db, profileKey)
         if InCombatLockdown() then
             DeferUIScale(scale)
         else
-            local ok = pcall(UIParent.SetScale, UIParent, scale)
+            local ok = ns.SafeCallMethod("defer-ooc", UIParent, "SetScale", scale)
             if not ok then
                 DeferUIScale(scale)
             else
@@ -453,10 +459,10 @@ function QUICore:OnProfileChanged(event, db, profileKey)
     -- Invalidate options panel — cached widgets hold stale profile table references
     if QUI.GUI and QUI.GUI.MainFrame then
         if type(QUI.GUI.TeardownFrameTree) == "function" then
-            pcall(QUI.GUI.TeardownFrameTree, QUI.GUI, QUI.GUI.MainFrame, { includeRoot = true })
+            ns.SafeCallMethod("bulkhead", QUI.GUI, "TeardownFrameTree", QUI.GUI.MainFrame, { includeRoot = true })
         else
-            pcall(QUI.GUI.MainFrame.Hide, QUI.GUI.MainFrame)
-            pcall(QUI.GUI.MainFrame.SetParent, QUI.GUI.MainFrame, nil)
+            ns.SafeCallMethod("bulkhead", QUI.GUI.MainFrame, "Hide")
+            ns.SafeCallMethod("bulkhead", QUI.GUI.MainFrame, "SetParent", nil)
         end
         QUI.GUI.MainFrame = nil
         QUI.GUI.SettingsRegistry = {}
@@ -464,10 +470,11 @@ function QUICore:OnProfileChanged(event, db, profileKey)
     end
 
     if self.RefreshAll then
-        local ok, err = pcall(self.RefreshAll, self)
-        if not ok then
-            print("|cFFFF6666QUI:|r RefreshAll error: " .. tostring(err))
-        end
+        -- ns.SafeCall's bulkhead policy probes err for secrecy BEFORE any
+        -- tostring/format and already reports+dedups via the classified
+        -- error handler; the manual print(tostring(err)) this replaced
+        -- skipped that probe (RefreshAll touches secret aura/unit data).
+        ns.SafeCallMethod("bulkhead", self, "RefreshAll")
     end
 
     -- Refresh Minimap module on profile change
@@ -607,10 +614,9 @@ function QUICore:RegisterPostInitialize(callback)
         return
     end
     if self._didInitialize then
-        local ok, err = pcall(callback, self)
-        if not ok and geterrorhandler then
-            geterrorhandler()(err)
-        end
+        -- ns.SafeCall's bulkhead policy already reports+dedups via the
+        -- classified error handler; no manual geterrorhandler forward needed.
+        ns.SafeCall("bulkhead", callback, self)
         return
     end
     table.insert(self._postInitializeCallbacks, callback)
@@ -685,10 +691,11 @@ function QUICore:OnEnable()
         end
     end
 
-    -- Create secure player buff/debuff headers while the addon-load safe
+    -- Create the player buff/debuff aura containers while the addon-load safe
     -- window is still open. A delayed timer misses this window on combat
-    -- reloads, and SecureAuraHeaderTemplate cannot be safely bootstrapped
-    -- from addon code once combat lockdown is active.
+    -- reloads, and the forbidden CustomAuraContainer (the shared secure aura
+    -- model now used for the player, same as the unit/group frames) cannot be
+    -- created/configured from addon code once combat lockdown is active.
     if QUI.BuffBorders and QUI.BuffBorders.Init then
         QUI.BuffBorders.Init()
     end
@@ -891,16 +898,10 @@ function QUICore:HookEditMode()
 
         local function SuppressEditModeSelection(frame)
             if not frame then return end
-            if frame.ClearHighlight then
-                pcall(frame.ClearHighlight, frame)
-            end
+            ns.SafeCallMethodIfPresent("best-effort-style", frame, "ClearHighlight")
             local selection = frame.Selection
-            if selection and selection.Hide then
-                pcall(selection.Hide, selection)
-            end
-            if EditModeMagnetismManager and EditModeMagnetismManager.UnregisterFrame then
-                pcall(EditModeMagnetismManager.UnregisterFrame, EditModeMagnetismManager, frame)
-            end
+            ns.SafeCallMethodIfPresent("best-effort-style", selection, "Hide")
+            ns.SafeCallMethodIfPresent("best-effort-style", EditModeMagnetismManager, "UnregisterFrame", frame)
         end
 
         local function InstallEditModeSuppression()
@@ -1073,10 +1074,9 @@ function QUICore:SetupEncounterWarningsSecretValuePatch()
     local patched = TryPatch()
 
     for _, callback in ipairs(self._postEnableCallbacks or {}) do
-        local ok, err = pcall(callback, self)
-        if not ok and geterrorhandler then
-            geterrorhandler()(err)
-        end
+        -- ns.SafeCall's bulkhead policy already reports+dedups via the
+        -- classified error handler; no manual geterrorhandler forward needed.
+        ns.SafeCall("bulkhead", callback, self)
     end
 
     if patched then

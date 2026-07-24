@@ -76,6 +76,20 @@ local function RefreshCDMInstant()
 end
 
 
+-- Layout Mode toggles must REBUILD the CDM containers, not just refresh visibility:
+-- the re-anchor active-mode filter (show-only-active) is bypassed while editing so the
+-- mover spans the FULL container; a plain visibility refresh leaves the filtered
+-- 1-icon layout in place. RefreshAll re-runs LayoutContainer -> RefreshBuiltin with the
+-- current edit-mode state (open -> show all; close -> re-apply the filter). Guarded:
+-- ns.NCDM is set during CDM init, before layout mode can open.
+local function RebuildCDM()
+    if ns.NCDM and ns.NCDM.RefreshAll then ns.NCDM.RefreshAll(true) end
+    -- Bars (trackedBar) re-anchor through CDMBuffLayout, not RefreshAll -- re-drive them
+    -- too so the active-mode filter re-applies on layout-mode EXIT (clears the preview
+    -- bars) and the full set shows on ENTER.
+    if _G.QUI_RefreshCDMBuffLayout then _G.QUI_RefreshCDMBuffLayout() end
+end
+
 local function GetViewerFrame(elementKey)
     local viewerKey = CDM_VIEWER_MAP[elementKey]
     return viewerKey and _G.QUI_GetCDMViewerFrame and _G.QUI_GetCDMViewerFrame(viewerKey)
@@ -127,6 +141,8 @@ local function RegisterMasterElement(um)
         -- the next CDM event, so they linger after closing. isActive is already
         -- cleared by the time onClose fires; the instant variant also snaps
         -- past the fade so there's no 1-frame lag.
+        -- NOTE: this element is noHandle, so onOpen never fires on the main open
+        -- path -- the re-anchor rebuild lives in the enter/exit callbacks below.
         onClose = RefreshCDMInstant,
     })
 end
@@ -189,6 +205,8 @@ local function RegisterCustomElements()
     end
 end
 
+local _layoutCallbacksRegistered = false
+
 function CDMLayoutMode.RegisterLayoutModeElements()
     local um = ns.QUI_LayoutMode
     if not um then return false end
@@ -198,6 +216,18 @@ function CDMLayoutMode.RegisterLayoutModeElements()
         RegisterBuiltInElement(um, info)
     end
     RegisterCustomElements()
+
+    -- Rebuild the re-anchored CDM containers on layout-mode enter/exit. Enter callbacks
+    -- fire BEFORE the movers are sized (QUI_LayoutMode:Open runs them ahead of handle
+    -- creation, with isActive already true), so the rebuild -- with the active-mode
+    -- filter bypassed while editing -- gives each mover the FULL container extent instead
+    -- of the filtered active-only size. Exit re-applies the filter on the next frame,
+    -- after isActive clears. Registered once (ScheduleRegistration may retry).
+    if not _layoutCallbacksRegistered and um.RegisterEnterCallback and um.RegisterExitCallback then
+        _layoutCallbacksRegistered = true
+        um:RegisterEnterCallback(function() RebuildCDM() end)
+        um:RegisterExitCallback(function() C_Timer.After(0, RebuildCDM) end)
+    end
     return true
 end
 

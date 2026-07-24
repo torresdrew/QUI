@@ -42,7 +42,7 @@ local function SuiteNames()
 end
 
 local function SuiteMemoryKB()
-    pcall(UpdateAddOnMemoryUsage)
+    ns.SafeCall("best-effort-style", UpdateAddOnMemoryUsage)
     local total = 0
     for _, name in ipairs(SuiteNames()) do
         local ok, mem = pcall(GetAddOnMemoryUsage, name)
@@ -98,7 +98,7 @@ end
 local function ApplyAndRefresh()
     -- Re-render the aura pipeline so a toggle takes visible effect immediately.
     local GFA = ns.QUI_GroupFrameAuras
-    if GFA and GFA.RefreshAll then pcall(function() GFA:RefreshAll() end) end
+    if GFA and GFA.RefreshAll then ns.SafeCall("bulkhead", function() GFA:RefreshAll() end) end
 end
 
 local function StatusLine()

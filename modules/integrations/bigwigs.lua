@@ -71,12 +71,12 @@ end
 local function BigWigsAnchorResolver(proxy, source)
     -- Prefer SetAllPoints for exact mirror; fall back to center-based positioning
     -- when the source frame restricts SetAllPoints (e.g. protected frames).
-    local ok = pcall(function()
+    local ok = ns.SafeCall("defer-ooc", function()
         proxy:ClearAllPoints()
         proxy:SetAllPoints(source)
     end)
     if not ok then
-        pcall(function()
+        ns.SafeCall("defer-ooc", function()
             local cx, cy = source:GetCenter()
             cx = Helpers.SafeValue(cx, nil)
             cy = Helpers.SafeValue(cy, nil)
