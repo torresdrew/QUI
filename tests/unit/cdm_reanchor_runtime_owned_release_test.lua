@@ -123,4 +123,30 @@ do
         "diag: settings early return recorded")
 end
 
+-- Transactional ledger: an icon whose release FAILS (releaseOwned -> false, e.g.
+-- Factory:ReleaseIcon refused a protected icon in combat) stays tracked, so the
+-- next pass retries it instead of stranding an untracked visible/clickable ghost.
+do
+    local refuse = true
+    local kept = {}
+    local rt = R.New({
+        bridge = {},
+        wiring = wiring,
+        getContainer = function() return { c = 9 } end,
+        getSettings = function() return {} end,
+        getCurated = function() return {} end,
+        getAdditional = function() return { eAdd } end,
+        mintOwned = function() local ic = { ghost = true }; kept[#kept + 1] = ic; return ic end,
+        releaseOwned = function() return not refuse end,  -- refuse=true -> false (refused release)
+    })
+    rt:RefreshContainer("essential")        -- pass 1 mints ledger icon A
+    local iconA = kept[1]
+    rt:RefreshContainer("essential")        -- pass 2: release A refused -> A kept, mints B
+    local ledger = rt._mintedOwnedByKey["essential"]
+    assert(ledger ~= nil, "refused release keeps a ledger (no ghost strand)")
+    local keptA = false
+    for i = 1, #ledger do if ledger[i] == iconA then keptA = true end end
+    assert(keptA, "the REFUSED icon A is retained in the ledger for retry")
+end
+
 print("OK: cdm_reanchor_runtime_owned_release_test")

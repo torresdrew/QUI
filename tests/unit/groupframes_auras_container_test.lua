@@ -108,8 +108,10 @@ check("QUI_GFA.UpdateStripContainers exposed",
     src:find("QUI_GFA.UpdateStripContainers = UpdateStripContainers", 1, true) ~= nil)
 check("QUI_GFA.DisableStripContainers exposed (unit clear)",
     src:find("QUI_GFA.DisableStripContainers = DisableStripContainers", 1, true) ~= nil)
-check("QUI_GFA.EnsureContainersForFrame exposed (mid-combat joiner prealloc)",
-    src:find("function QUI_GFA.EnsureContainersForFrame(frame)", 1, true) ~= nil)
+check("prealloc surface retired (creation is combat-legal since PTR7 68914)",
+    src:find("EnsureContainersForFrame", 1, true) == nil
+    and src:find("PrebuildHeadroomGroups", 1, true) == nil
+    and src:find("PREALLOC_HEADROOM", 1, true) == nil)
 check("groupframes.lua wires UpdateStripContainers on unit assign",
     callSrc:find("UpdateStripContainers(", 1, true) ~= nil)
 check("groupframes.lua wires DisableStripContainers on unit clear",

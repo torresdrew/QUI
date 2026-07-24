@@ -41,15 +41,12 @@ test("legacy one-arg EnsureSeeded threads the GF default bucket", function()
     local auras = { enabled = true }
     Model.EnsureSeeded(auras)
     assert(auras.elementsSeeded == true)
-    assert(type(auras.elements) == "table" and #auras.elements["*"] == 4,
+    assert(type(auras.elements) == "table" and #auras.elements["*"] == 3,
         "one-arg EnsureSeeded must seed the GF default bucket, not an empty one")
     assert(auras.elements["*"][1].id == "debuffs" and auras.elements["*"][2].id == "buffs"
-        and auras.elements["*"][3].id == "defensives" and auras.elements["*"][4].id == "healerHoTs")
+        and auras.elements["*"][3].id == "defensives")
     -- One-arg = unknown surface: defensives seeds DISABLED (conservative).
-    -- healerHoTs (v57) is surface-INDEPENDENT — always present/enabled,
-    -- unlike defensives' frameType gate.
     assert(auras.elements["*"][3].enabled == false)
-    assert(auras.elements["*"][4].mode == "tracked" and auras.elements["*"][4].onlyMine == true)
     -- Normalized shape (core schema) straight from the shim's bucket.
     assert(type(auras.elements["*"][1].duration) == "table"
         and auras.elements["*"][1].duration.anchor == "BOTTOM")

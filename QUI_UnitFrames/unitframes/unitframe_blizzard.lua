@@ -164,16 +164,10 @@ local function SuppressPlayerCastingBarFrame()
         frame:SetAlpha(0)
         frame:SetScale(0.0001)
         frame:SetPoint("BOTTOMLEFT", UIParent, "TOPLEFT", -10000, 10000)
+        frame:SetUnit(nil)
         frame:UnregisterAllEvents()
         frame:Hide()
     end)
-
-    -- Do NOT call frame:SetUnit(nil) here: on 12.1 CastingBarMixin:SetUnit
-    -- reaches StopFinishAnims, which iterates CastingBarTypeInfo — a table
-    -- that taint-blocks iteration from addon execution ("attempted to iterate
-    -- a table that cannot be accessed while tainted"). UnregisterAllEvents +
-    -- Hide above already detach the bar, and the hide watcher re-suppresses
-    -- if Blizzard reattaches it.
 
     if frame.Icon then
         ns.SafeCall("best-effort-style", function()

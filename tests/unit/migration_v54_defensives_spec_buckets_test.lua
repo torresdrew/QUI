@@ -57,27 +57,21 @@ do -- spec bucket backfilled, context bucket untouched, stamp moves
     -- v54 ITSELF never touches "i2810" (that's what this check proves — see
     -- ExtendDefensivesToSpecBuckets's numeric-only bucketKey filter); the
     -- original id=9 element and its position survive. This profile's
-    -- RunOnProfile call cascades all the way to the CURRENT schema, though,
-    -- so LATER, independent steps in the same chain legitimately append to
-    -- this same bucket: v57's SeedHealerHoTElements fans a _quiHoTSeed
-    -- element into string i/e context buckets (see core/migrations.lua's
-    -- v57 doc), and v58's ExtendDefensivesToInstanceEncounterBuckets closes
-    -- the exact "i/e buckets never got 'defensives'" gap this v54 test
-    -- section title calls out — fanning a "defensives" clone into the same
-    -- bucket too (see the v58 doc). Both are expected and unrelated to v54
-    -- itself; the assertions below still pin v54's own no-touch behavior
-    -- (original element unmoved, "defensives" NOT injected by v54) while
-    -- accounting for the v57/v58 additions.
+    -- RunOnProfile call cascades to the CURRENT schema, so ONE later,
+    -- independent step in the same chain legitimately appends to this same
+    -- bucket: v58's ExtendDefensivesToInstanceEncounterBuckets closes the
+    -- exact "i/e buckets never got 'defensives'" gap this v54 test section
+    -- title calls out. (The former v57 healerHoTs fan-out that also used to
+    -- land here was deleted with the v59 seed removal.)
     check("context bucket: v54 leaves the original element untouched (in place)",
         elements["i2810"][1] and elements["i2810"][1].id == 9)
     check("context bucket: v58 (not v54) is what lands the 'defensives' element here",
         countDefensives(elements["i2810"]) == 1, tostring(countDefensives(elements["i2810"])))
-    check("context bucket: original + v57 healerHoTs fan-out + v58 defensives fan-out, nothing else",
-        #elements["i2810"] == 3 and elements["i2810"][2]._quiHoTSeed == true
-        and elements["i2810"][3].id == "defensives",
+    check("context bucket: original + v58 defensives fan-out, nothing else",
+        #elements["i2810"] == 2 and elements["i2810"][2].id == "defensives",
         tostring(#elements["i2810"]))
     check("'*' still has exactly one", countDefensives(elements["*"]) == 1)
-    check("stamped 58", p._schemaVersion == 58, tostring(p._schemaVersion))
+    check("stamped 59", p._schemaVersion == 59, tostring(p._schemaVersion))
 end
 
 do -- disabled "*" defensives mirrors as disabled

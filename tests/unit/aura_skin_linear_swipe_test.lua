@@ -105,8 +105,8 @@ local function MakeButton()
     end
     function b:SetSize() end
     function b:SetIcon() end
-    function b:SetAuraBorder() end
-    function b:SetAuraSymbol() end
+    function b:AddDispelTypeTexture() end
+    function b:SetDispelTypeText() end
     function b:SetDurationCooldown() end
     function b:SetDurationText() end
     function b:SetApplicationCount() end

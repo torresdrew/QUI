@@ -64,6 +64,11 @@ local function Stub()
     function t:SetDrawSwipe() end
     function t:SetReverse() end
     function t:SetText() end
+    function t:SetStatusBarTexture() end
+    function t:SetOrientation() end
+    function t:SetStatusBarColor() end
+    function t:Show() end
+    function t:Hide() end
     function t:CreateTexture() return Stub() end
     function t:CreateFontString() return Stub() end
     return t
@@ -83,8 +88,8 @@ local function MakeButton()
     end
     function b:SetSize() end
     function b:SetIcon() end
-    function b:SetAuraBorder() end
-    function b:SetAuraSymbol() end
+    function b:AddDispelTypeTexture() end
+    function b:SetDispelTypeText() end
     function b:SetDurationCooldown() end
     function b:SetDurationText() end
     function b:SetApplicationCount() end

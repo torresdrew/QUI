@@ -88,6 +88,9 @@ function G.ElementProfile(element, overrides)
         -- (task 10) -- this is the passthrough pin so a future writer isn't
         -- silently dropped before it ever reaches the runtime.
         dispelColors = element.dispelColors,
+        -- PTR7: optional per-dispel texture assets (customDispelAssetMap,
+        -- CustomAsset style). Same passthrough-pin rationale as dispelColors.
+        dispelAssets = element.dispelAssets,
         -- PTR7 per-button tooltip controls (aura_skin styleButton applies
         -- them feature-detected). Same passthrough-pin rationale as
         -- dispelColors: no UI exposure yet, but a future writer must not be

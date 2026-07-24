@@ -8509,7 +8509,44 @@ end
 -- (extra_restriction_gates wrappers) are unaffected.
 local function isGateName(name, registry, aliases)
     if not name then return false end
-    if registry:isRestrictionGate(name) then return true end
+    if registry:isRestrictionGate(name) then
+        -- Direct-hit shadow rule, mirroring isGuardName plus the
+        -- receiver-aware discipline of isGuardMethodName: gate credit is
+        -- PROTECTION-GRANTING, so a direct registry hit must be an exact
+        -- unshadowed identity.
+        --   * A gate NAME the file rebinds to anything other than itself is
+        --     shadowed and takes no DIRECT credit. Self-canonical bindings
+        --     keep it — bare or _G-qualified (normalized in harvest);
+        --     binds[name] == false records a non-canonical binding.
+        --   * A DOTTED gate additionally requires an unpoisoned, unrebound
+        --     namespace prefix (`local C_Secrets = <impostor>` must not
+        --     smuggle protection through the registered dotted spelling —
+        --     binds only keys simple names, so the full-name check alone
+        --     never sees that shadow).
+        -- A shadowed name FALLS THROUGH to the alias map rather than
+        -- failing outright: the binding may itself be a registered gate
+        -- alias (`local isSecret = C_Secrets.ShouldAurasBeSecret`), which
+        -- the map path below credits — an early false revoked exactly that
+        -- idiom repo-wide on the guard side. Scope: BUILTIN gate names only
+        -- — .taintrc extra_restriction_gates wrappers are
+        -- function-literal-bound in their defining file by construction.
+        if not registry:isBuiltinGate(name) then return true end
+        local binds = aliases and aliases.binds
+        local poisonedDirect = (aliases and aliases.poisoned) or {}
+        local shadowed = binds and binds[name] ~= nil
+            and binds[name] ~= name
+            and binds[name] ~= ("_G." .. name)
+        if not shadowed then
+            local prefix = name:match("^([%w_]+)%.")
+            if prefix then
+                shadowed = poisonedDirect[prefix] == true
+                    or (binds and binds[prefix] ~= nil
+                        and binds[prefix] ~= prefix
+                        and binds[prefix] ~= ("_G." .. prefix))
+            end
+        end
+        if not shadowed then return true end
+    end
     if not aliases then return false end
     local poisoned = aliases.poisoned or {}
     if aliases.map[name] then

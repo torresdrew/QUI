@@ -8,9 +8,9 @@
 -- (produced by the since-removed Encounters cascade, which at v58 time was
 -- tried ahead of specID) — those REPLACED "*" at render time exactly like a
 -- numeric spec bucket, so a pre-existing one silently lost
--- the "defensives" strip. This migration closes that gap, mirroring v57's
--- SeedHealerHoTElements fan-out shape (IsHoTOverrideBucketKey) but scoped to
--- the i/e subset only:
+-- the "defensives" strip. This migration closes that gap, mirroring
+-- the retired seed's fan-out shape (IsHoTOverrideBucketKey, kept for step
+-- (j)) but scoped to the i/e subset only:
 --   - a pre-existing "i"/"e" bucket lacking a defensives-equivalent element
 --     gets a CloneValue copy of "*"'s defensives element appended, mirroring
 --     its enabled state
@@ -62,12 +62,10 @@ local function findHoTSeed(bucket)
     end
 end
 
--- Mirrors the shape LANDED v57's SeedHealerHoTElements actually stamps
--- (core/migrations.lua Migrations.SeedHealerHoTElements): fixed id
--- "healerHoTs", mode "tracked", onlyMine=true, _quiHoTSeed=true. Used to
--- hand-build a bucket that already looks like an EARLIER real v57 pass left
--- it (a profile stamped 57 from a prior session), rather than re-deriving it
--- from the live E.NewTrackedElement/E.HealerHoTSpellIDs path every time.
+-- Mirrors the shape the RETIRED dev-build v57 seed left behind
+-- (fixed id "healerHoTs", mode "tracked", onlyMine=true, _quiHoTSeed=true).
+-- The live seed paths were deleted with the v59 removal; this hand-built
+-- shape stands in for profiles a real v57-era session actually stamped.
 local function hotSeedElement(enabled)
     return {
         id = "healerHoTs", mode = "tracked", displayType = "icon",
@@ -108,7 +106,7 @@ do
         },
     }
     M.RunOnProfile(profile)
-    check("stamped to current (58)", profile._schemaVersion == 58, tostring(profile._schemaVersion))
+    check("stamped to current (59)", profile._schemaVersion == 59, tostring(profile._schemaVersion))
 
     local elements = profile.quiGroupFrames.party.auras.elements
 
@@ -414,17 +412,11 @@ do
 end
 
 ----------------------------------------------------------------------------
--- 11) Migrations.RepairSoleHoTOverrideBuckets + net suppress-intent across
---     the full v57+v58 chain in ONE RunOnProfile pass, starting from stored
---     = 56 (before v57 has ever touched this profile): v57's fan-out
---     injects a real healerHoTs clone into the empty numeric/i/e override
---     buckets below, then the v58-gate repair immediately strips it back
---     out (before v58's own defensives fan-out ever sees the bucket) --
---     netting to the ORIGINAL empty state, i.e. the suppress-intent a user
---     configured is preserved end to end. A non-empty sibling bucket in the
---     same profile is the contrast: it DOES keep the v57 fan-out (repair's
---     `#bucket == 1` guard does not match a 2-element bucket), proving the
---     empty result isn't just "the fan-out never ran on this profile".
+-- 11) Chain from 56 with the seed step DELETED: nothing injects healerHoTs
+--     anymore. Empty override buckets stay empty ((j) finds nothing, (k)
+--     skips them), a curated numeric sibling is untouched by every step in
+--     the chain ((g) is stamp-guarded false at 56, (k) is i/e-only), and
+--     "*" never gains a flagged element at any point.
 ----------------------------------------------------------------------------
 do
     local profile = {
@@ -440,198 +432,146 @@ do
         },
     }
     M.RunOnProfile(profile)
-    check("chain from 56: stamped to current (58)", profile._schemaVersion == 58,
+    check("chain from 56: stamped to current (59)", profile._schemaVersion == 59,
         tostring(profile._schemaVersion))
 
     local elements = profile.quiGroupFrames.party.auras.elements
 
-    check("chain from 56: empty numeric bucket [301] ends EMPTY (net suppress-intent)",
+    check("chain from 56: empty numeric bucket [301] stays EMPTY",
         arrayCount(elements[301]) == 0, tostring(arrayCount(elements[301])))
-    check("chain from 56: empty instance bucket 'i3030' ends EMPTY (net suppress-intent)",
+    check("chain from 56: empty instance bucket 'i3030' stays EMPTY",
         arrayCount(elements["i3030"]) == 0, tostring(arrayCount(elements["i3030"])))
-    check("chain from 56: empty encounter bucket 'e4040' ends EMPTY (net suppress-intent)",
+    check("chain from 56: empty encounter bucket 'e4040' stays EMPTY",
         arrayCount(elements["e4040"]) == 0, tostring(arrayCount(elements["e4040"])))
-    check("chain from 56: none of the three carry a lingering healerHoTs element",
-        findHoTSeed(elements[301]) == nil and findHoTSeed(elements["i3030"]) == nil
-        and findHoTSeed(elements["e4040"]) == nil)
-    check("chain from 56: none of the three carry a lingering defensives element either",
+    check("chain from 56: no bucket anywhere carries a healerHoTs element",
+        findHoTSeed(elements["*"]) == nil and findHoTSeed(elements[301]) == nil
+        and findHoTSeed(elements["i3030"]) == nil and findHoTSeed(elements["e4040"]) == nil
+        and findHoTSeed(elements[302]) == nil)
+    check("chain from 56: none of the empty three gained defensives either",
         countDefensives(elements[301]) == 0 and countDefensives(elements["i3030"]) == 0
         and countDefensives(elements["e4040"]) == 0)
-
-    -- Contrast: non-empty sibling [302] keeps its curated content AND gets
-    -- the normal v57 fan-out (repair does not touch a 2-element bucket).
-    check("chain from 56: non-empty sibling [302] keeps curated content",
-        elements[302][1] and elements[302][1].id == "curatedSpec2")
-    check("chain from 56: non-empty sibling [302] DOES get the v57 healerHoTs fan-out",
-        findHoTSeed(elements[302]) ~= nil)
-    check("chain from 56: non-empty sibling [302] ends with exactly 2 elements (curated + healerHoTs)",
-        arrayCount(elements[302]) == 2, tostring(arrayCount(elements[302])))
-
-    -- ADVERSARIAL: prove the "ends EMPTY" result is the repair genuinely
-    -- undoing v57's injection (not v57 simply never firing on this profile
-    -- at all) -- "*" itself is the fan-out's SOURCE, never a repair target,
-    -- so it must carry a real healerHoTs element after the same run.
-    check("adversarial: '*' itself carries a real healerHoTs element post-run (v57 genuinely ran)",
-        findHoTSeed(elements["*"]) ~= nil)
-    check("adversarial: '*' also still carries its defensives element (v51/v54 lineage untouched)",
+    check("chain from 56: curated sibling [302] is byte-untouched (1 element)",
+        arrayCount(elements[302]) == 1 and elements[302][1].id == "curatedSpec2",
+        tostring(arrayCount(elements[302])))
+    check("chain from 56: '*' still carries its defensives element",
         countDefensives(elements["*"]) == 1)
-
-    -- ADVERSARIAL: manually re-seed [301] with a sole healerHoTs clone
-    -- AFTER the fact and confirm the discrimination helpers actually see it
-    -- (proving the EMPTY assertions above discriminate on content, not on
-    -- some accident like the table reference changing), then restore
-    -- byte-identical to the empty state RunOnProfile actually left.
-    local scratchHoT = hotSeedElement(true)
-    elements[301][1] = scratchHoT
-    check("adversarial: manually re-seeding [301] is visible to findHoTSeed/arrayCount",
-        findHoTSeed(elements[301]) == scratchHoT and arrayCount(elements[301]) == 1)
-    elements[301][1] = nil
-    check("adversarial: removing the scratch seed restores [301] byte-identical to empty",
-        arrayCount(elements[301]) == 0 and findHoTSeed(elements[301]) == nil)
 end
 
 ----------------------------------------------------------------------------
--- 12) Profiles already stamped 57 from an EARLIER real session (the sole
---     _quiHoTSeed element is already sitting in the bucket exactly as
---     LANDED v57 would have left it) get repaired when crossing 58 --
---     numeric AND both string-context (i/e) shapes, on both party and raid.
---     "*" itself is excluded (IsHoTOverrideBucketKey returns false for it),
---     so it is left completely alone even though it also only carries the
---     seed element.
+-- 12) Profiles already stamped 57 from a REAL v57-era session (sole
+--     _quiHoTSeed elements sitting in buckets exactly as the retired seed
+--     left them) crossing to current: the kept (j) repair empties sole-seed
+--     OVERRIDE buckets before (k) can refill them, and v59 then sweeps the
+--     "*" copies (j) never targets. NOTHING flagged survives anywhere --
+--     numeric AND both string-context shapes, party and raid.
 ----------------------------------------------------------------------------
 do
-    local starSoleHoT = hotSeedElement(true)
-    local numericSole = hotSeedElement(true)
     local instSole = hotSeedElement(false)
-    local encSole = hotSeedElement(true)
-    local raidNumericSole = hotSeedElement(true)
     local profile = {
         _schemaVersion = 57,
         quiGroupFrames = {
             party = { auras = { elementsSeeded = true, elements = {
-                ["*"]     = { starSoleHoT },
-                [401]     = { numericSole },
+                ["*"]     = { hotSeedElement(true) },
+                [401]     = { hotSeedElement(true) },
                 ["i4141"] = { instSole },
-                ["e4242"] = { encSole },
+                ["e4242"] = { hotSeedElement(true) },
             } } },
             raid = { auras = { elementsSeeded = true, elements = {
                 ["*"]  = { hotSeedElement(true) },
-                [402]  = { raidNumericSole },
+                [402]  = { hotSeedElement(true) },
             } } },
         },
     }
     M.RunOnProfile(profile)
-    check("already-57: stamped to current (58)", profile._schemaVersion == 58,
+    check("already-57: stamped to current (59)", profile._schemaVersion == 59,
         tostring(profile._schemaVersion))
 
     local pe = profile.quiGroupFrames.party.auras.elements
     local re = profile.quiGroupFrames.raid.auras.elements
 
-    check("already-57: sole-HoT numeric bucket [401] repaired to EMPTY",
+    check("already-57: sole-HoT numeric bucket [401] ends EMPTY",
         arrayCount(pe[401]) == 0, tostring(arrayCount(pe[401])))
-    check("already-57: sole-HoT instance bucket 'i4141' repaired to EMPTY",
+    check("already-57: sole-HoT instance bucket 'i4141' ends EMPTY",
         arrayCount(pe["i4141"]) == 0, tostring(arrayCount(pe["i4141"])))
-    check("already-57: sole-HoT encounter bucket 'e4242' repaired to EMPTY",
+    check("already-57: sole-HoT encounter bucket 'e4242' ends EMPTY",
         arrayCount(pe["e4242"]) == 0, tostring(arrayCount(pe["e4242"])))
-    check("already-57: sole-HoT numeric bucket on RAID [402] repaired to EMPTY too",
+    check("already-57: sole-HoT numeric bucket on RAID [402] ends EMPTY too",
         arrayCount(re[402]) == 0, tostring(arrayCount(re[402])))
+    check("already-57: (j)-emptied i/e buckets were NOT refilled by (k)",
+        countDefensives(pe["i4141"]) == 0 and countDefensives(pe["e4242"]) == 0)
 
-    -- "*" is never a repair target (IsHoTOverrideBucketKey excludes it) --
-    -- both party and raid "*" buckets keep their sole seed element intact.
-    check("already-57: party '*' (never a repair target) keeps its sole seed element",
-        arrayCount(pe["*"]) == 1 and pe["*"][1] == starSoleHoT)
-    check("already-57: raid '*' (never a repair target) keeps its sole seed element",
-        arrayCount(re["*"]) == 1)
+    -- v59 (not (j)) is what sweeps "*": both surfaces end flag-free AND empty.
+    check("already-57: party '*' swept EMPTY by v59 ((j) never targets '*')",
+        arrayCount(pe["*"]) == 0, tostring(arrayCount(pe["*"])))
+    check("already-57: raid '*' swept EMPTY by v59",
+        arrayCount(re["*"]) == 0, tostring(arrayCount(re["*"])))
 
-    -- ADVERSARIAL: confirm the removed element instances are actually gone
-    -- (not just shadowed) by identity, and restore each bucket's
-    -- byte-identical empty state after probing.
-    check("adversarial: the removed instance-bucket element is not aliased anywhere else",
-        instSole ~= pe["*"][1] and instSole ~= starSoleHoT)
+    -- ADVERSARIAL: the sweep discriminates on content, not table identity --
+    -- manually restoring the SAME removed element object is visible, then
+    -- restore byte-identical empty state.
     pe["i4141"][1] = instSole
-    check("adversarial: manually restoring the same element object makes the bucket non-empty again",
-        arrayCount(pe["i4141"]) == 1 and pe["i4141"][1] == instSole)
+    check("adversarial: manually restoring the removed element object is visible",
+        arrayCount(pe["i4141"]) == 1 and findHoTSeed(pe["i4141"]) == instSole)
     pe["i4141"][1] = nil
     check("adversarial: removing it again restores byte-identical empty state",
-        arrayCount(pe["i4141"]) == 0)
+        arrayCount(pe["i4141"]) == 0 and findHoTSeed(pe["i4141"]) == nil)
 end
 
 ----------------------------------------------------------------------------
--- 13) healerHoTs ALONGSIDE curated content (numeric AND i/e) is NEVER
---     removed by the repair -- the `#bucket == 1` guard only ever matches a
---     bucket whose SOLE content is the seed element. The i/e case also
---     proves the repair-then-fan-out ORDER within the same v58 gate:
---     because the repair does not empty this bucket, v58's own defensives
---     fan-out still runs on it normally afterward and adds "defensives"
---     alongside the untouched curated + healerHoTs content (unchanged
---     fan-out behavior for a non-empty, defensives-lacking bucket).
+-- 13) Flagged element ALONGSIDE curated content: (j)'s #bucket==1 guard
+--     leaves the 2-element buckets alone (pinning the kept repair's
+--     narrowness), (k) still fans "defensives" into the non-empty i/e
+--     bucket, and then v59 — UNLIKE (j) — sweeps the flagged element out
+--     of BOTH buckets unconditionally. Net: curated content + (for i/e)
+--     the defensives clone survive; no flag survives.
 ----------------------------------------------------------------------------
 do
     local curatedNumeric = { id = "curatedAlongside1", mode = "filterStrip", auraType = "HELPFUL" }
-    local numericHoT = hotSeedElement(true)
     local curatedIE = { id = "curatedAlongside2", mode = "tracked", spells = { 999 } }
-    local ieHoT = hotSeedElement(false)
     local profile = {
         _schemaVersion = 57,
         quiGroupFrames = {
             party = { auras = { elementsSeeded = true, elements = {
                 ["*"]     = { starDefensives(true) },
-                [501]     = { curatedNumeric, numericHoT },
-                ["i5151"] = { curatedIE, ieHoT },
+                [501]     = { curatedNumeric, hotSeedElement(true) },
+                ["i5151"] = { curatedIE, hotSeedElement(false) },
             } } },
         },
     }
     M.RunOnProfile(profile)
     local elements = profile.quiGroupFrames.party.auras.elements
 
-    check("alongside-curated: numeric bucket [501] keeps BOTH elements (not stripped)",
-        arrayCount(elements[501]) == 2, tostring(arrayCount(elements[501])))
-    check("alongside-curated: numeric bucket [501] curated element survives untouched",
-        elements[501][1] == curatedNumeric)
-    check("alongside-curated: numeric bucket [501] healerHoTs element survives untouched",
-        findHoTSeed(elements[501]) == numericHoT)
-
-    check("alongside-curated: i/e bucket 'i5151' curated element survives untouched",
+    check("alongside-curated: numeric [501] keeps curated, loses the flagged element",
+        arrayCount(elements[501]) == 1 and elements[501][1] == curatedNumeric,
+        tostring(arrayCount(elements[501])))
+    check("alongside-curated: 'i5151' curated element survives untouched",
         elements["i5151"][1] == curatedIE)
-    check("alongside-curated: i/e bucket 'i5151' healerHoTs element survives untouched",
-        findHoTSeed(elements["i5151"]) == ieHoT)
-    check("alongside-curated: i/e bucket 'i5151' ALSO gets the v58 defensives fan-out "
-        .. "(non-empty + lacking defensives = unchanged fan-out behavior)",
+    check("alongside-curated: 'i5151' got the (k) defensives fan-out "
+        .. "(it was non-empty when (k) ran)",
         countDefensives(elements["i5151"]) == 1, tostring(countDefensives(elements["i5151"])))
-    check("alongside-curated: i/e bucket 'i5151' ends with exactly 3 elements "
-        .. "(curated + healerHoTs + defensives)",
-        arrayCount(elements["i5151"]) == 3, tostring(arrayCount(elements["i5151"])))
-
-    -- ADVERSARIAL: prove the "kept" result is because the guard's
-    -- #bucket==1 check genuinely failed (2+ elements), not because the
-    -- repair skipped this bucket for some unrelated reason -- shrink the
-    -- numeric bucket down to JUST the seed element (mirroring section 12's
-    -- shape) and re-run on a freshly re-lowered stamp; THIS TIME it must be
-    -- stripped, proving the repair logic is live and content-sensitive.
-    table.remove(elements[501], 1)
-    check("adversarial setup: numeric bucket [501] now sole-seed", arrayCount(elements[501]) == 1
-        and findHoTSeed(elements[501]) == numericHoT)
-    profile._schemaVersion = 57
-    M.RunOnProfile(profile)
-    check("adversarial: now-sole-seed bucket [501] IS stripped to empty on this pass",
-        arrayCount(elements[501]) == 0, tostring(arrayCount(elements[501])))
+    check("alongside-curated: 'i5151' ends with exactly 2 elements "
+        .. "(curated + defensives; flagged element swept by v59)",
+        arrayCount(elements["i5151"]) == 2, tostring(arrayCount(elements["i5151"])))
+    check("alongside-curated: no flag survives anywhere",
+        findHoTSeed(elements[501]) == nil and findHoTSeed(elements["i5151"]) == nil
+        and findHoTSeed(elements["*"]) == nil)
 end
 
 ----------------------------------------------------------------------------
 -- 14) Idempotent: running the full pipeline twice never re-strips content
 --     that survived the first pass, and never re-injects/double-removes on
---     an already-repaired empty bucket.
+--     an already-repaired empty bucket. Once v59 has swept a flagged
+--     element it stays gone -- a forced second/third pass is a pure no-op.
 ----------------------------------------------------------------------------
 do
     local curated = { id = "curatedIdempotent", mode = "filterStrip", auraType = "HELPFUL" }
-    local hotEl = hotSeedElement(true)
     local profile = {
         _schemaVersion = 57,
         quiGroupFrames = {
             party = { auras = { elementsSeeded = true, elements = {
                 ["*"]     = { starDefensives(true) },
-                [601]     = { hotSeedElement(true) },       -- sole seed -> repaired to empty
-                ["e6161"] = { curated, hotEl },              -- alongside curated -> kept, then defensives added
+                [601]     = { hotSeedElement(true) },          -- sole seed -> repaired to empty
+                ["e6161"] = { curated, hotSeedElement(true) }, -- alongside curated -> kept, defensives added, flag swept
             } } },
         },
     }
@@ -641,26 +581,29 @@ do
     local firstKeptCount = arrayCount(elements["e6161"])
     check("idempotent setup: [601] repaired to empty on first pass", firstEmptyCount == 0,
         tostring(firstEmptyCount))
-    check("idempotent setup: 'e6161' ends at 3 elements on first pass (curated+HoT+defensives)",
-        firstKeptCount == 3, tostring(firstKeptCount))
+    check("idempotent setup: 'e6161' ends at 2 elements on first pass "
+        .. "(curated+defensives; flagged element swept by v59)",
+        firstKeptCount == 2, tostring(firstKeptCount))
+    check("idempotent setup: 'e6161' carries no flagged element after first pass",
+        findHoTSeed(elements["e6161"]) == nil)
 
-    profile._schemaVersion = 57  -- force a second pass through the v58 gate
+    profile._schemaVersion = 57  -- force a second pass through the v58+v59 gates
     M.RunOnProfile(profile)
     check("idempotent: [601] stays empty on second pass (no re-injection, no error on empty bucket)",
         arrayCount(elements[601]) == 0, tostring(arrayCount(elements[601])))
     check("idempotent: 'e6161' element count unchanged on second pass",
         arrayCount(elements["e6161"]) == firstKeptCount, tostring(arrayCount(elements["e6161"])))
-    check("idempotent: 'e6161' curated/HoT/defensives all still exactly one each",
-        elements["e6161"][1] == curated and findHoTSeed(elements["e6161"]) == hotEl
-        and countDefensives(elements["e6161"]) == 1)
+    check("idempotent: 'e6161' curated/defensives still exactly one each, no flag reappears",
+        elements["e6161"][1] == curated and countDefensives(elements["e6161"]) == 1
+        and findHoTSeed(elements["e6161"]) == nil)
 
     -- ADVERSARIAL: a third pass, forced again, must still be a no-op --
     -- guards against an off-by-one that only shows up on pass 3+.
     profile._schemaVersion = 57
     M.RunOnProfile(profile)
     check("adversarial: third pass still leaves [601] empty", arrayCount(elements[601]) == 0)
-    check("adversarial: third pass still leaves 'e6161' at exactly 3 elements",
-        arrayCount(elements["e6161"]) == 3, tostring(arrayCount(elements["e6161"])))
+    check("adversarial: third pass still leaves 'e6161' at exactly 2 elements",
+        arrayCount(elements["e6161"]) == 2, tostring(arrayCount(elements["e6161"])))
 end
 
 ----------------------------------------------------------------------------

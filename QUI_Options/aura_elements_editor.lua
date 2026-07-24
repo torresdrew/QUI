@@ -144,6 +144,22 @@ local DISPEL_TYPES = {
     { key = "Bleed", label = ns.L["Bleed"] },
 }
 
+-- GameTooltip anchor TOKENS — SetTooltipAnchorPoint hard-asserts on anything
+-- else (Blizzard_AuraButton.lua:53); frame-point strings are NOT valid here.
+-- ANCHOR_NONE (the engine-default reset) is expressed by unchecking the
+-- Custom Tooltip Anchor row, not offered as a dropdown value.
+local TOOLTIP_ANCHOR_OPTIONS = {
+    { value = "ANCHOR_TOPRIGHT", text = ns.L["Top Right"] },
+    { value = "ANCHOR_TOP", text = ns.L["Top"] },
+    { value = "ANCHOR_TOPLEFT", text = ns.L["Top Left"] },
+    { value = "ANCHOR_RIGHT", text = ns.L["Right"] },
+    { value = "ANCHOR_LEFT", text = ns.L["Left"] },
+    { value = "ANCHOR_BOTTOMRIGHT", text = ns.L["Bottom Right"] },
+    { value = "ANCHOR_BOTTOM", text = ns.L["Bottom"] },
+    { value = "ANCHOR_BOTTOMLEFT", text = ns.L["Bottom Left"] },
+    { value = "ANCHOR_CURSOR", text = ns.L["At Cursor"] },
+}
+
 local HEALTH_TINT_ANIMATION_OPTIONS = {
     { value = "fill", text = ns.L["Soft Fill"] },
     { value = "fade", text = ns.L["Soft Fade"] },
@@ -485,6 +501,100 @@ local function AddSwipeWidgets(ctx, element)
     row(ns.L["Swipe Style"], GUI:CreateFormDropdown(ctx.detailArea, nil, SWIPE_STYLE_OPTIONS, "swipeStyle", element, onChange, {
         description = ns.L["Radial or linear (horizontal/vertical) cooldown animation over aura icons."],
     }))
+end
+
+-- Per-button tooltip + dispel-ring overrides (PTR7). Every field is OPTIONAL
+-- on the element -- absent = engine default -- so the stamp/nil checkbox
+-- pattern from Custom Border Color applies throughout: widget construction
+-- never writes the DB, only a real user click stamps or clears the keys.
+-- dispelAssets (customDispelAssetMap) stays profile/import-only: a
+-- struct-valued texture-asset map has no honest row widget.
+local function AddDispelTooltipWidgets(ctx, element)
+    local GUI = ctx.GUI
+    local row = ctx.AddFormRow
+    local onChange = ctx.onChange
+    local rebuild = ctx.rebuild
+
+    row(ns.L["Hide Tooltips in Combat"], GUI:CreateFormCheckbox(ctx.detailArea, nil, "tooltipHideInCombat", element, onChange, {
+        description = ns.L["Suppress aura tooltips from this element while you are in combat."],
+    }))
+
+    row(ns.L["Custom Tooltip Anchor"], GUI:CreateFormCheckbox(ctx.detailArea, nil, "_customTooltipAnchor", {
+        _customTooltipAnchor = element.tooltipAnchor ~= nil,
+        _quiTransientOptionsProxy = true,
+    }, function(checked)
+        if checked and element.tooltipAnchor == nil then
+            element.tooltipAnchor = "ANCHOR_TOPRIGHT"
+            element.tooltipAnchorX = 0
+            element.tooltipAnchorY = 0
+        elseif not checked then
+            element.tooltipAnchor = nil
+            element.tooltipAnchorX = nil
+            element.tooltipAnchorY = nil
+        end
+        ctx.NotifyChanged()
+        rebuild()
+    end, {
+        description = ns.L["Anchor aura tooltips to each icon instead of the default tooltip position."],
+    }))
+    if element.tooltipAnchor ~= nil then
+        -- Legacy/imported values that predate the token list (or hand-edited
+        -- frame points) would hard-assert engine-side; normalize before the
+        -- dropdown binds so the control always shows a real state.
+        local valid = false
+        for _, opt in ipairs(TOOLTIP_ANCHOR_OPTIONS) do
+            if opt.value == element.tooltipAnchor then valid = true break end
+        end
+        if not valid then element.tooltipAnchor = "ANCHOR_TOPRIGHT" end
+        if type(element.tooltipAnchorX) ~= "number" then element.tooltipAnchorX = 0 end
+        if type(element.tooltipAnchorY) ~= "number" then element.tooltipAnchorY = 0 end
+        row(ns.L["Tooltip Anchor"], GUI:CreateFormDropdown(ctx.detailArea, nil, TOOLTIP_ANCHOR_OPTIONS, "tooltipAnchor", element, onChange, {
+            description = ns.L["Where the tooltip appears relative to the icon."],
+        }))
+        row(ns.L["Tooltip X Offset"], GUI:CreateFormSlider(ctx.detailArea, nil, -50, 50, 1, "tooltipAnchorX", element, onChange, { deferOnDrag = true }, {
+            description = ns.L["Horizontal pixel offset from the tooltip anchor."],
+        }))
+        row(ns.L["Tooltip Y Offset"], GUI:CreateFormSlider(ctx.detailArea, nil, -50, 50, 1, "tooltipAnchorY", element, onChange, { deferOnDrag = true }, {
+            description = ns.L["Vertical pixel offset from the tooltip anchor."],
+        }))
+    end
+
+    -- Dispel ring colors: optional map keyed by dispel type. The engine's
+    -- colorRGB shape ({r=,g=,b=}) differs from the picker's array shape, so
+    -- each picker binds a transient proxy and its onChange writes the
+    -- canonical shape into element.dispelColors.
+    row(ns.L["Custom Dispel Ring Colors"], GUI:CreateFormCheckbox(ctx.detailArea, nil, "_customDispelColors", {
+        _customDispelColors = type(element.dispelColors) == "table",
+        _quiTransientOptionsProxy = true,
+    }, function(checked)
+        if checked and type(element.dispelColors) ~= "table" then
+            element.dispelColors = {}
+        elseif not checked then
+            element.dispelColors = nil
+        end
+        ctx.NotifyChanged()
+        rebuild()
+    end, {
+        description = ns.L["Override the engine's per-dispel-type ring colors for icons in this element. Types you never touch keep the engine color."],
+    }))
+    if type(element.dispelColors) == "table" then
+        for _, entry in ipairs(DISPEL_TYPES) do
+            local key = entry.key
+            local stored = element.dispelColors[key]
+            local proxy = {
+                _quiTransientOptionsProxy = true,
+                color = stored and { stored.r or 1, stored.g or 1, stored.b or 1, 1 }
+                    or { 1, 1, 1, 1 },
+            }
+            row(string.format(ns.L["%s Ring Color"], entry.label),
+                GUI:CreateFormColorPicker(ctx.detailArea, nil, "color", proxy, function(r, g, b)
+                    element.dispelColors[key] = { r = r, g = g, b = b }
+                    onChange()
+                end, nil, {
+                    description = string.format(ns.L["Dispel ring color used for %s auras in this element."], entry.label),
+                }))
+        end
+    end
 end
 
 -- Shared text-region widget block for the duration{} / stack{} sub-tables. key
@@ -977,6 +1087,8 @@ local function AddFilterStripConfig(ctx, element)
             }))
         end
 
+        AddDispelTooltipWidgets(ctx, element)
+
         local filterMode = element.filterMode or "off"
         if filterMode == "classify" then
             if type(element.classifications) ~= "table" then
@@ -1115,6 +1227,10 @@ local function AddTrackedConfig(ctx, element)
         AddSwipeWidgets(ctx, element)
         AddTextRegionWidgets(ctx, element, "duration", ns.L["Duration Text"])
         AddTextRegionWidgets(ctx, element, "stack", ns.L["Stack Text"])
+        -- Tracked-element icons ride the slot path (WireButton), which now
+        -- passes the element profile to buildButtonArt/styleButton — the same
+        -- tooltip + dispel-ring overrides apply.
+        AddDispelTooltipWidgets(ctx, element)
     end
 
     AddRoleGateRow(ctx, element)

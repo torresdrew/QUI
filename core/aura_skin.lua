@@ -108,43 +108,35 @@ end
 -- options.formatter DIRECTLY (no securecopy), so a QUI formatter is a tainted value
 -- assigned into the forbidden fontstring → blocked; with {} it stays nil and the
 -- engine's own secret-safe `applications > 1` path (run secure-side) drives the
--- count.  SetAuraBorder DOES securecopy its options, so its field writes are safe;
--- ApplyAuraBorder reads the secret dispel fields secure-side.  Both run inside the
--- secure apply where secret compares are allowed — the earlier "blank" was the
--- unsized container, not these setters.
-local function buildButtonArt(button, container)
+-- count.  AddDispelTypeTexture DOES securecopy its options, so its field writes are
+-- safe; ApplyDispelTypeTextures reads the secret dispel fields secure-side.  Both run
+-- inside the secure apply where secret compares are allowed — the earlier "blank" was
+-- the unsized container, not these setters.
+local function buildButtonArt(button)
     if button._quiWired then return end
     button._quiWired = true
 
-    -- Static QUI border: a plain QUI-owned texture (NOT the secure SetAuraBorder),
+    -- Static QUI border: a plain QUI-owned texture (NOT the secure dispel texture),
     -- coloured by styleButton.  Aura-data-INDEPENDENT.  BACKGROUND (below the icon);
     -- shown as the neutral ring on buffs / non-dispel debuffs.
     local border = button:CreateTexture(nil, "BACKGROUND")
     border:SetAllPoints(button)
     button._quiBorder = border
 
-    -- Dispel overlay border (BORDER layer, above the static border, below the icon).
-    -- SetAuraBorder securecopies its options, so this is addon-safe; the engine
-    -- vertex-colours it by dispel type and shows it only on dispellable HARMFUL auras
-    -- (showWhenHelpful=false), covering the static ring with the dispel colour.  A
-    -- white base texture is required so the vertex colour is visible.
+    -- Dispel overlay border (BORDER layer, above the static border, below the
+    -- icon).  Only the TEXTURE is created here; the engine registration
+    -- (AddDispelTypeTexture) + its options (dispelColors/dispelAssets) live in
+    -- styleButton so profile changes re-apply to live buttons.  The engine
+    -- vertex-colours it by dispel type and shows it only on dispellable
+    -- HARMFUL auras, covering the static ring with the dispel colour.  A white
+    -- base texture is required so the vertex colour is visible.
+    -- (SetAuraBorder survives at 68914 only as a compat shim —
+    -- ClearDispelTypeTextures + AddDispelTypeTexture, removed after 12.1.)
     local dispel = button:CreateTexture(nil, "BORDER")
     dispel:SetAllPoints(button)
     dispel:SetColorTexture(1, 1, 1, 1)
     if dispel.DisablePixelSnap then dispel:DisablePixelSnap() end
     button._quiDispel = dispel
-    local borderOpts = {
-        style = 3,                 -- CustomAuraButtonDispelTypeTextureStyle.PreserveAsset
-        showWhenHarmful = true,    -- (secure-env enum; mirror value). 68914 re-patch replaced
-        showWhenHelpful = false,   -- BorderStyle.Color (=1); PreserveAsset keeps QUI's white
-    }                              -- texture, engine vertex-colors it per dispel type.
-    -- 68824: optional per-element dispel palette. SetAuraBorder securecopies
-    -- options, so passing an addon table (and nested color tables) is safe.
-    local prof = container and container._quiProfile
-    if prof and type(prof.dispelColors) == "table" then
-        borderOpts.customDispelColorMap = prof.dispelColors
-    end
-    button:SetAuraBorder(dispel, borderOpts)
 
     -- Icon (ARTWORK, inset 1px so the border shows as a ring).  Cropped 8% per
     -- edge to cut the bevel baked into icon art (engine's ApplyIcon only calls
@@ -156,13 +148,14 @@ local function buildButtonArt(button, container)
     button.Icon = icon
     button:SetIcon(icon)
 
-    -- Dispel text symbol. AuraUtil.SetAuraSymbol only shows text when Blizzard's
-    -- colorblind mode asks for it, so wiring this is visually inert for the
-    -- normal case but uses the new 12.1 secure-side symbol path when needed.
+    -- Dispel text symbol. The engine only shows it when Blizzard's colorblind
+    -- mode asks for it, so wiring this is visually inert for the normal case but
+    -- uses the 12.1 secure-side symbol path when needed.  (SetAuraSymbol is a
+    -- deprecated alias of SetDispelTypeText at 68914, removed after 12.1.)
     local symbol = button:CreateFontString(nil, "OVERLAY", "TextStatusBarText")
     symbol:SetPoint("TOPLEFT", button, "TOPLEFT", 2, -2)
     button._quiSymbol = symbol
-    button:SetAuraSymbol(symbol, {
+    button:SetDispelTypeText(symbol, {
         showWhenHarmful = true,
         showWhenHelpful = false,
     })
@@ -173,6 +166,25 @@ local function buildButtonArt(button, container)
     cd:SetHideCountdownNumbers(true)
     button._quiCooldown = cd
     button:SetDurationCooldown(cd)
+
+    -- Linear duration fill (StatusBar child), created at BIRTH like every
+    -- other art piece: initializeFrame runs pre-restriction, so a mid-combat
+    -- or mid-secrecy birth still gets the child. styleButton's linear branch
+    -- (and aura_slots StyleSlot, which routes through WireButton) only WIRES
+    -- it — child creation on a restricted button post-birth is not possible,
+    -- and a missing fill on a combat-born button would otherwise be
+    -- unrecoverable until some later OOC pass (stop-gate 2026-07-24).
+    -- Hidden until a linear swipeStyle wants it; SetDurationBar wiring stays
+    -- style-time. Footprint: SetAllPoints(button), default child frame level
+    -- — a child frame draws above ALL parent-owned regions, so the fill sits
+    -- above the icon exactly like the native radial Cooldown swipe; the
+    -- StatusBar only paints its FILLED portion, so the icon shows through
+    -- the depleted part.
+    local fill = CreateFrame("StatusBar", nil, button)
+    fill:SetStatusBarTexture("Interface\\Buttons\\WHITE8x8")
+    fill:SetAllPoints(button)
+    fill:Hide()
+    button._quiDurationBar = fill
 
     -- Duration text.  Font template so it always has a font; no Lua formatter
     -- (Blizzard's C-side DefaultAuraDurationFormatter is secret-safe).
@@ -206,16 +218,63 @@ local function styleButton(button, profile)
     button:SetSize(size, size)
 
     -- PTR7 per-button tooltip controls (68824+ AuraButton API; feature-
-    -- detected so headless mocks without them keep working). nil anchor =
-    -- engine default (ANCHOR_BOTTOMLEFT). pcall on the anchor: the setter
-    -- hard-asserts on invalid names — a stale/imported profile string must
-    -- not error every style pass.
-    if button.SetTooltipAnchorPoint and profile.tooltipAnchor then
-        pcall(button.SetTooltipAnchorPoint, button, profile.tooltipAnchor,
-            profile.tooltipAnchorX or 0, profile.tooltipAnchorY or 0)
+    -- detected so headless mocks without them keep working). Values are
+    -- GameTooltip anchor TOKENS ("ANCHOR_TOPRIGHT", ...) — the setter
+    -- hard-asserts on anything else (Blizzard_AuraButton.lua:53), hence the
+    -- pcall: a stale/imported profile string must not error every style
+    -- pass. There is no nil-reset API and the template pre-seeds a REAL
+    -- default (ANCHOR_BOTTOMLEFT,0,0 KeyValues, Blizzard_AuraButton.xml:11-13),
+    -- so the pre-override triple is cached ONCE via GetTooltipAnchorPoint and
+    -- restored when the override clears. _quiTipAnchored is set only on a
+    -- SUCCESSFUL set — a rejected token must not mark the button customized
+    -- (first-set failure) nor un-mark a previously applied custom anchor
+    -- (later-pass failure), so it is left untouched on pcall failure.
+    if button.SetTooltipAnchorPoint then
+        if profile.tooltipAnchor then
+            if not button._quiTipPrev and button.GetTooltipAnchorPoint then
+                button._quiTipPrev = { button:GetTooltipAnchorPoint() }
+            end
+            local ok = pcall(button.SetTooltipAnchorPoint, button, profile.tooltipAnchor,
+                profile.tooltipAnchorX or 0, profile.tooltipAnchorY or 0)
+            if ok then button._quiTipAnchored = true end
+        elseif button._quiTipAnchored then
+            local prev = button._quiTipPrev
+            pcall(button.SetTooltipAnchorPoint, button,
+                (prev and prev[1]) or "ANCHOR_BOTTOMLEFT",
+                (prev and prev[2]) or 0, (prev and prev[3]) or 0)
+            button._quiTipAnchored = nil
+        end
     end
     if button.SetHideTooltipInCombat then
         button:SetHideTooltipInCombat(profile.tooltipHideInCombat == true)
+    end
+
+    -- Dispel ring options (dispelColors palette / dispelAssets custom
+    -- textures) apply HERE, not at button birth, so an options change
+    -- restyles live buttons: Clear + Add mirrors the engine's own
+    -- SetAuraBorder shim shape, and the Add's UpdateAuraDisplay re-renders.
+    -- Unchecking an override naturally resets — the fresh options table
+    -- simply omits the map. AddDispelTypeTexture securecopies its options,
+    -- so passing addon tables (and nested color/asset tables) is safe.
+    local dispel = button._quiDispel
+    if dispel and button.ClearDispelTypeTextures and button.AddDispelTypeTexture then
+        local borderOpts = {
+            style = 3,              -- CustomAuraButtonDispelTypeTextureStyle.PreserveAsset
+            showWhenHarmful = true, -- (secure-env enum; mirror value). PreserveAsset keeps
+            showWhenHelpful = false, -- QUI's white texture, engine vertex-colors it.
+        }
+        if type(profile.dispelColors) == "table" then
+            borderOpts.customDispelColorMap = profile.dispelColors
+        end
+        -- customDispelAssetMap only applies under the CustomAsset style (4);
+        -- dispelColors still composes — the engine applies the custom vertex
+        -- colour after styling the asset.
+        if type(profile.dispelAssets) == "table" then
+            borderOpts.style = 4    -- CustomAuraButtonDispelTypeTextureStyle.CustomAsset
+            borderOpts.customDispelAssetMap = profile.dispelAssets
+        end
+        button:ClearDispelTypeTextures()
+        button:AddDispelTypeTexture(dispel, borderOpts)
     end
 
     -- Static QUI border: per-element override when set, else theme color.
@@ -273,28 +332,15 @@ local function styleButton(button, profile)
         if cd and cd.SetDrawSwipe then cd:SetDrawSwipe(false) end
         local fill = button._quiDurationBar
         if not fill and InCombatLockdown() then
-            -- StatusBar child creation on a forbidden button is OOC-only
-            -- (same principle as StyleSlot); Configure/Restyle's OOC replay
-            -- re-runs styleButton on every tracked button, so the next
-            -- regen-triggered pass lands the fill without a /reload.
+            -- Belt only: buildButtonArt creates the fill at birth on every
+            -- wired button, so this fires solely for a foreign/legacy button
+            -- — never create a child on a restricted button post-birth; the
+            -- next OOC pass re-covers it.
             return
         end
         if not fill then
             fill = CreateFrame("StatusBar", nil, button)
             fill:SetStatusBarTexture("Interface\\Buttons\\WHITE8x8")
-            -- Same footprint/level relationship as StyleSlot's linear fill
-            -- (aura_slots.lua:110-113, SetAllPoints(frame), default child
-            -- frame level = button level + 1 — no prior art exists for an
-            -- icon-preserving strip fill, so this mirrors the only existing
-            -- _quiDurationBar precedent). A child frame always draws above
-            -- ALL of its parent's own regions regardless of draw layer
-            -- (icon/border/dispel are button-owned ARTWORK/BACKGROUND/BORDER
-            -- regions, not separate frames), so the fill sits above the icon
-            -- the SAME way the native radial Cooldown swipe already does —
-            -- StatusBar only paints its FILLED portion, so the icon still
-            -- shows through the depleted portion exactly like a radial
-            -- swipe uncovers the icon as it drains. Unlike aura_slots.lua's
-            -- "bar" display type, the icon is never SetAlpha(0)'d here.
             fill:SetAllPoints(button)
             button._quiDurationBar = fill
         end
@@ -417,7 +463,7 @@ end
 -- — combat-legal, no secure header.
 local function MakeInitializer(container, _groupDesc)
     return function(button)
-        buildButtonArt(button, container)
+        buildButtonArt(button)
         styleButton(button, container._quiProfile or {})
         if button.SetCancelAuraButtons then
             button:SetCancelAuraButtons(container._quiCancelButtons)
@@ -572,7 +618,13 @@ function AuraSkin.Configure(container, profile, groups)
             container:SetAuraGroupCandidateFilters(key, g.candidateFilters)
             container:SetAuraGroupLayout(key, GroupLayout(L, g))
             registered[key] = filter
-        elseif not InCombatLockdown() then
+        else
+            -- AddAuraGroup (frameProvider:CreateFrameBatch() included) is
+            -- combat-legal since PTR7 68914 — earlier 12.1 builds crashed the
+            -- client on in-combat creation; proven in-game 2026-07-24.
+            -- initializeFrame runs BEFORE the 68675 access restrictions apply
+            -- (see aura_slots.lua birth-path note), so this is safe under
+            -- aura secrecy too.
             container:AddAuraGroup(key, filter, {
                 maxFrameCount    = maxCount,
                 sortMethod       = sortMethod,
@@ -583,10 +635,6 @@ function AuraSkin.Configure(container, profile, groups)
             })
             registered[key] = filter
         end
-        -- (in combat with an unregistered key: skip — AddAuraGroup runs
-        -- frameProvider:CreateFrameBatch() synchronously, i.e. forbidden
-        -- frame creation in combat. Consumers queue an OOC replay, so the
-        -- group materializes at regen.)
     end
     -- Retire groups no longer wanted: unremovable, so show zero frames.
     for key in pairs(registered) do

@@ -229,9 +229,10 @@ local function StyleSlot(frame, element, index)
         if cd and cd.SetDrawSwipe then cd:SetDrawSwipe(false) end
         local fill = frame._quiDurationBar
         if not fill and InCombatLockdown() then
-            -- displayType flipped to a linear fill MID-COMBAT: creating the
-            -- StatusBar child + SetDurationBar wiring is deferred to the regen
-            -- replay (OOC-only creation, same principle as AddAuraSlot).
+            -- Belt only: WireButton (buildButtonArt) creates the fill at
+            -- birth on every slot frame, so this fires solely for a
+            -- foreign/legacy frame — defer to the regen replay rather than
+            -- create a child on a restricted button post-birth.
             return false
         end
         if not fill then
@@ -404,7 +405,7 @@ function S.Sync(container, element, allowCreate)
                         container:SetAuraSlotCandidateFilters(slot.key, SlotCandidateFilters(element, spellID))
                         slot.parked = false
                     end
-                elseif allowCreate and not InCombatLockdown() then
+                elseif allowCreate then
                     local key = "t" .. tostring(want)
                     -- Style + anchor at BIRTH via initializeFrame: the frame
                     -- provider runs it BEFORE applying the 68675 access
@@ -424,8 +425,9 @@ function S.Sync(container, element, allowCreate)
                     slot = { key = key, frame = frame, parked = parkThis }
                     pool[want] = slot
                 else
-                    -- AddAuraSlot creates a forbidden frame synchronously —
-                    -- never in combat. Caller replays at regen.
+                    -- allowCreate=false caller: skip and report. (AddAuraSlot
+                    -- itself is combat-legal since PTR7 68914, proven in-game
+                    -- 2026-07-24 — the caller decides creation policy.)
                     complete = false
                 end
                 if slot and slot.frame then
@@ -444,6 +446,11 @@ function S.Sync(container, element, allowCreate)
                         if StyleSlot(slot.frame, element, want) == false then
                             complete = false
                         end
+                        -- CHILD-frame SetPoint in combat is the one surface
+                        -- NOT covered by the 2026-07-24 combat-legality proof
+                        -- (container-level ops + birth-path initializeFrame
+                        -- only) — keep the re-anchor gated and let the
+                        -- restriction-aware replay cover it.
                         if not InCombatLockdown() then
                             AnchorSlot(slot.frame, container, element, want, total)
                         else

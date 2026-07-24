@@ -229,6 +229,9 @@ local function EnsurePreviewPanel()
         return nil
     end
 
+    -- Same table across theme rebuilds: collapse + scale survive the window
+    -- teardown; the builder resets `detached` itself (fresh window = docked).
+    State.previewSession = State.previewSession or {}
     local panel = FullSurface.CreateDockedPreviewPanel({
         gui = GUI,
         title = ns.L["Preview"],
@@ -236,6 +239,7 @@ local function EnsurePreviewPanel()
         window = win,
         controlStripHeight = STRIP_HEIGHT,
         minWidth = 240,
+        sessionState = State.previewSession,
     })
     if not panel then return nil end
 

@@ -1056,7 +1056,16 @@ function CDMReanchorRealEnv.BuildEnv(ctx)
         -- release removes. Un-keyed calls keep the legacy shape untouched.
         acquireIcon = function(c, e, containerKey)
             if not (Factory and Factory.AcquireIcon) then return nil end
-            local icon = Factory:AcquireIcon(c, e)
+            -- Only a clickableIcons container's owned icons ever get a secure
+            -- clickButton; pass that through so AcquireIcon can reuse a protected
+            -- icon from the dedicated pool (mutation-safe) instead of minting a
+            -- fresh one every refresh (bounded, stable identity).
+            local clickable = false
+            if containerKey and ctx.getSettings then
+                local s = ctx.getSettings(containerKey)
+                clickable = (s and s.clickableIcons) and true or false
+            end
+            local icon = Factory:AcquireIcon(c, e, clickable)
             if icon and containerKey and Factory.EnsurePool then
                 local pool = Factory:EnsurePool(containerKey)
                 pool[#pool + 1] = icon
@@ -1067,6 +1076,11 @@ function CDMReanchorRealEnv.BuildEnv(ctx)
         -- pool return) for the runtime's per-pass owned-icon release.
         releaseIcon = function(icon, containerKey)
             if not (Factory and Factory.ReleaseIcon) then return end
+            -- Recycle FIRST: if the Factory refuses (protected in combat) it
+            -- returns false; keep pool membership so the icon stays tracked and
+            -- the caller (ReleaseOwnedIcons) can retry it on the regen drain.
+            local ok = Factory:ReleaseIcon(icon)
+            if ok == false then return false end
             if containerKey and Factory.GetIconPool then
                 local pool = Factory:GetIconPool(containerKey)
                 for i = #pool, 1, -1 do
@@ -1076,7 +1090,7 @@ function CDMReanchorRealEnv.BuildEnv(ctx)
                     end
                 end
             end
-            Factory:ReleaseIcon(icon)
+            return ok
         end,
         onIconPlaced = function(icon, rowConfig)
             if Icons and Icons.OnContainerIconPlaced then Icons.OnContainerIconPlaced(icon, rowConfig) end

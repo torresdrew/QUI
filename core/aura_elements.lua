@@ -159,60 +159,6 @@ local function defaultStack()
              color = { 1, 1, 1, 1 } }
 end
 
--- Healer HoTs (v57) — canonical spell-id source. An upcoming PTR build makes
--- ~42 healer HoT/absorb ids secret in combat; engine-rendered tracked slots
--- (core/aura_slots.lua) render secret auras C-side, but the legacy Lua-side
--- spellID match (buffsBySpellID) cannot see them and silently drops the
--- icon. This is the SINGLE physical copy of the non-secret union: every
--- consumer that needs to CONSTRUCT the shipped "healerHoTs" tracked element
--- calls HealerHoTSpellIDs() below instead of declaring its own literal —
--- QUI_GroupFrames/groupframes/groupframes_aura_model.lua
--- Model.HealerHoTElement (the runtime latch-time default, called from
--- Model.DefaultStripBucket) and core/migrations.lua
--- Migrations.SeedHealerHoTElements (the legacy-latch v57 migration) both
--- read this exact list, so those two can never drift apart from each other.
--- Ground truth for WHAT belongs in this list remains the Options-side
--- QUI_GroupFrames/groupframes/settings/group_frames_aura_defaults.lua
--- SPEC_AURA_PRESETS table, which carries the per-spell `secret` annotation
--- this core file structurally cannot see (core loads before every
--- sub-addon, including QUI_GroupFrames — see the v57 doc comment in
--- core/migrations.lua). That file's AuraDefaults.SeedHealerHoTElements
--- independently re-derives the non-secret union from SPEC_AURA_PRESETS
--- purely so tests/unit/migration_v57_hot_element_seed_test.lua can pin this
--- list against it (set AND order) — an edit to the presets that isn't
--- mirrored here fails that test instead of silently drifting.
-local HEALER_HOT_SPELL_IDS = {
-    -- Restoration Druid
-    774, 8936, 33763, 155777, 48438, 474754, 439530,
-    -- Restoration Shaman
-    61295, 383648, 974, 207400, 382024, 444490,
-    -- Holy Paladin
-    156910, 156322, 53563, 1244893, 200025,
-    -- Discipline Priest
-    17, 194384, 1253593, 41635,
-    -- Holy Priest (41635 Prayer of Mending already counted above)
-    139, 77489,
-    -- Mistweaver Monk
-    119611, 124682, 115175, 450769,
-    -- Preservation Evoker
-    364343, 366155, 367364, 355941, 376788, 363502, 373267,
-    -- Augmentation Evoker
-    410089, 413984, 360827, 410263, 410686, 395152, 369459,
-}
-
--- Fresh copy every call. The returned array becomes an element's stored
--- `.spells` field once handed to NewTrackedElement, and the tracked-element
--- editor (QUI_Options/aura_elements_editor.lua) mutates that array IN PLACE
--- (add/remove spell rows) — handing the SAME table object to every caller
--- would let editing one profile's healerHoTs element corrupt this shared
--- canonical list for every other latch in the session (and every profile
--- switch afterward). Callers must never receive the raw table above.
-function E.HealerHoTSpellIDs()
-    local out = {}
-    for i, id in ipairs(HEALER_HOT_SPELL_IDS) do out[i] = id end
-    return out
-end
-
 function E.NewFilterStripElement(auraType)
     return {
         id = nextId(), enabled = true, mode = "filterStrip",

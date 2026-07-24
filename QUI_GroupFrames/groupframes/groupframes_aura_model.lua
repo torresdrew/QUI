@@ -65,41 +65,7 @@ function Model.DefaultStripBucket(frameType)
             whitelist = {}, blacklist = {},
             sortRule = "INDEX", sortReverse = false, rightClickCancel = false,
         },
-        Model.HealerHoTElement(),
     }
-end
-
--- Healer HoTs (v57): shipped as ONE always-present tracked element, same
--- delivery precedent as the "defensives" strip above (built inside
--- DefaultStripBucket, so it reaches every EnsureSeeded latch path — party/
--- raid runtime render, editmode, preview, the Options Auras section, the
--- setup wizard — the FIRST time a surface's buckets latch; elementsSeeded
--- then makes deletion permanent). Covers the healer HoT/absorb ids PTR
--- flips secret in combat: engine-rendered tracked slots (core/aura_slots.lua)
--- render secret auras C-side, but the legacy Lua-side spellID match cannot
--- see them and silently drops the icon. Built via the shared constructor
--- (not a raw literal like the filterStrips above) so every NewTrackedElement
--- default — duration/stack/bar/border shape — tracks that constructor
--- automatically; `spells` comes from the SINGLE canonical source
--- core/aura_elements.lua E.HealerHoTSpellIDs() (core/migrations.lua
--- Migrations.SeedHealerHoTElements reads the exact same source for the
--- legacy-latch migration path covering profiles whose buckets latched
--- BEFORE this version — the two can never drift apart). Fixed id (not the
--- session-scoped "e<N>" counter NewTrackedElement assigns by default) —
--- same fixed-id precedent as "defensives"/"encounterBoss": the seed-once
--- dedup scan (both here and in the migration) keys on a STABLE id. Left
--- deliberately UNCAPPED (no maxIcons): AuraSlots binds tracked slots 1:1 per
--- spellID in array order and stops at any cap, so a cap here would strand
--- every id past it with no watching slot — onlyMine=true is the real bound
--- (only the player's own current spec's ids ever have a live aura to
--- match, so every other spec's slots simply sit unbound, not truncated).
-function Model.HealerHoTElement()
-    local element = E.NewTrackedElement(E.HealerHoTSpellIDs(), "icon")
-    element.id = "healerHoTs"
-    element.onlyMine = true
-    element.name = ns.L["Healer HoTs"]
-    element._quiHoTSeed = true
-    return element
 end
 
 -- Seed shim: second arg is either a defaultBucketFn (runtime callers pass

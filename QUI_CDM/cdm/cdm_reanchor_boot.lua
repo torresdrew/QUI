@@ -368,6 +368,11 @@ function CDMReanchorBoot.BuildRuntime(env)
         -- Blizzard-CDM buff entries are native-only in the reanchor runtime.
         entryAuraIsPresent = env.entryAuraIsPresent,
         inCombat = env.inCombat,
+        -- Frame-independent protected-mutation gate (realenv canMutateProtectedShells):
+        -- true OOC / init-safe window, false in combat. The runtime defers a whole
+        -- refresh pass when this is false AND the container's owned icons carry a
+        -- secure clickButton (else Factory recycle Hides a protected parent).
+        canMutate = env.canMutate,
         isEditMode = env.isEditMode,
         pixelRound = env.pixelRound,
         mintOwned = MakeMintOwned(env),
@@ -399,6 +404,11 @@ function CDMReanchorBoot.BuildRuntime(env)
         runtime = runtime,
         RefreshBuiltin = function(_, containerKey)
             return runtime:RefreshContainer(containerKey)
+        end,
+        -- PLAYER_REGEN_ENABLED drain: re-run every container whose combat refresh
+        -- was deferred by the protected-owned gate.
+        DrainPendingCombatRefresh = function(_)
+            return runtime:DrainPendingCombatRefresh()
         end,
         -- Per-frame feature registry accessors (keybinds / rotation glow over the
         -- re-anchored Blizzard frames, which aren't QUI-container children).

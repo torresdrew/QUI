@@ -22,7 +22,7 @@ do
     M.RunOnProfile(profile)
     check("below-floor (46) wiped: user data gone", profile.someModule == nil, tostring(profile.someModule))
     check("below-floor (46) flagged _needsStarterReseed", profile._needsStarterReseed == true, tostring(profile._needsStarterReseed))
-    check("below-floor (46) stamped to CURRENT (58)", profile._schemaVersion == 58, tostring(profile._schemaVersion))
+    check("below-floor (46) stamped to CURRENT (59)", profile._schemaVersion == 59, tostring(profile._schemaVersion))
 end
 
 -- 2) At-floor profile (47) is NOT floored; the squash runs RestoreBuffDebuffSplit +
@@ -40,7 +40,7 @@ do
     check("at-floor (47) flat buffIconSize pruned by the elements seed", profile.buffBorders.buffIconSize == nil, tostring(profile.buffBorders.buffIconSize))
     check("at-floor (47) NOT flagged for reseed", profile._needsStarterReseed == nil, tostring(profile._needsStarterReseed))
     check("at-floor (47) debuffFrame restored", profile.frameAnchoring.debuffFrame ~= nil, "debuffFrame nil")
-    check("at-floor (47) stamped to current (58)", profile._schemaVersion == 58, tostring(profile._schemaVersion))
+    check("at-floor (47) stamped to current (59)", profile._schemaVersion == 59, tostring(profile._schemaVersion))
 end
 
 -- 2b) PrunePrivateAuras via a shipped-alpha stamp (48, from alpha14): seeded
@@ -75,7 +75,7 @@ do
         and profile.quiUnitFrames.player.portrait.enabled == true, "portrait clobbered")
     check("prune preserves sibling group settings", profile.quiGroupFrames.party.frames
         and profile.quiGroupFrames.party.frames.width == 90, "frames clobbered")
-    check("alpha stamp 48 re-enters squash, stamps to CURRENT (58)", profile._schemaVersion == 58, tostring(profile._schemaVersion))
+    check("alpha stamp 48 re-enters squash, stamps to CURRENT (59)", profile._schemaVersion == 59, tostring(profile._schemaVersion))
 end
 
 -- 3) Mid-chain alpha stamp (51) re-enters the v58 squash: flat buffborders
@@ -88,7 +88,7 @@ do
     M.RunOnProfile(profile)
     check("alpha stamp 51: leftover flat debuffIconSize consumed by the unification", profile.buffBorders.debuffIconSize == nil, tostring(profile.buffBorders.debuffIconSize))
     check("alpha stamp 51: leftover flat buffIconSize consumed by the unification", profile.buffBorders.buffIconSize == nil, tostring(profile.buffBorders.buffIconSize))
-    check("pre-v54 (51) stamped to current (58)", profile._schemaVersion == 58, tostring(profile._schemaVersion))
+    check("pre-v54 (51) stamped to current (59)", profile._schemaVersion == 59, tostring(profile._schemaVersion))
 end
 
 print("migration_floor_collapse_test " .. (failures == 0 and "OK" or "FAILED"))

@@ -238,8 +238,9 @@ check("castbar.lua: SKIP — UnitHasAuraBySpellID @secret-policy probe untouched
 
 ---------------------------------------------------------------------------
 -- File: QUI_UnitFrames/unitframes/unitframe_blizzard.lua
--- 8 sites, best-effort-style (was 9; the SetUnit(nil) suppression site was
--- removed — 12.1 taint-blocks CastingBarTypeInfo iteration inside SetUnit)
+-- 8 sites, best-effort-style (the SetUnit(nil) detach — dropped when 12.1
+-- taint-blocked CastingBarTypeInfo iteration, restored after the PTR7 68914
+-- fix — lives INSIDE the suppression SafeCall, not as its own site)
 ---------------------------------------------------------------------------
 local ufb = readAll("QUI_UnitFrames/unitframes/unitframe_blizzard.lua")
 
@@ -262,19 +263,22 @@ check("unitframe_blizzard.lua: IsShown probe (castbar watcher) converted, ok/isS
 ---------------------------------------------------------------------------
 local ufa = readAll("QUI_UnitFrames/unitframes/unitframe_auras.lua")
 
-check("unitframe_auras.lua: ApplyElementPass combat-mutation pass converted",
-    ufa:find('ns.SafeCall("best-effort-style", ApplyElementPass, frame, false)', 1, true) ~= nil)
+-- PTR7 68914 combat-legal creation: the in-combat branch now runs the FULL
+-- pass (allowCreate=true) behind the same SafeCall policy; the regen requeue
+-- fires only when the belt catches a failure.
+check("unitframe_auras.lua: ApplyElementPass combat full pass converted (allowCreate)",
+    ufa:find('ns.SafeCall("best-effort-style", ApplyElementPass, frame, true)', 1, true) ~= nil)
 check("unitframe_auras.lua: NO bare pcall(ApplyElementPass remains",
     ufa:find("pcall(ApplyElementPass", 1, true) == nil)
-check("unitframe_auras.lua: regen requeue flow byte-preserved (QueueRegenWork call intact, unchanged)",
-    ufa:find('ns.SafeCall("best-effort-style", ApplyElementPass, frame, false)\n        AuraGlue = AuraGlue or ns.AuraGlue\n        if AuraGlue then\n            AuraGlue.QueueRegenWork(frame, function(f) ApplyElementPass(f, true) end)\n        end\n        return', 1, true) ~= nil)
+check("unitframe_auras.lua: failed combat pass still queues the regen replay",
+    ufa:find('local ok = ns.SafeCall("best-effort-style", ApplyElementPass, frame, true)\n        if not ok then\n            AuraGlue = AuraGlue or ns.AuraGlue\n            if AuraGlue then\n                AuraGlue.QueueRegenWork(frame, function(f) ApplyElementPass(f, true) end)\n            end\n        end\n        return', 1, true) ~= nil)
 
 -- Task 45a2: the structurally-identical GroupFrames sibling
 -- (groupframes_auras.lua UpdateStripContainers + DisableStripContainers'
 -- RetireContainer wrap) is now converted, matching unitframe_auras.lua:309.
 local gfa = readAll("QUI_GroupFrames/groupframes/groupframes_auras.lua")
-check("groupframes_auras.lua (45a2): UpdateStripContainers ApplyElementPass converted",
-    gfa:find('ns.SafeCall("best-effort-style", ApplyElementPass, frame, false)', 1, true) ~= nil)
+check("groupframes_auras.lua (45a2): UpdateStripContainers combat full pass converted (allowCreate)",
+    gfa:find('ns.SafeCall("best-effort-style", ApplyElementPass, frame, true)', 1, true) ~= nil)
 check("groupframes_auras.lua (45a2): DisableStripContainers RetireContainer converted (ok/complete flow kept)",
     gfa:find('local ok, complete = ns.SafeCall("best-effort-style", RetireContainer, container, false)', 1, true) ~= nil)
 check("groupframes_auras.lua (45a2): NO bare pcall(ApplyElementPass remains",

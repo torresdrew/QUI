@@ -1472,6 +1472,17 @@ local function ShouldDeferContainerLayoutInCombat(trackerKey, settings)
         return true
     end
 
+    -- clickableIcons may have been toggled OFF while pooled icons still carry a
+    -- stale (hidden) SecureActionButton child: that child is retained for the
+    -- icon's lifetime and stays protected, so a combat rebuild would Hide/recycle
+    -- a protected frame -> ADDON_ACTION_BLOCKED. Defer while any pooled icon is
+    -- still protected; recovery is the same PLAYER_REGEN_ENABLED pending-refresh
+    -- path as the arms above.
+    if ns.CDMIconFactory and ns.CDMIconFactory.PoolHasProtectedIcon
+        and ns.CDMIconFactory:PoolHasProtectedIcon(trackerKey) then
+        return true
+    end
+
     return false
 end
 
@@ -4376,6 +4387,15 @@ function ownedEngine:Initialize()
             -- glue is independent of loadout state.
             if ns._cdmReanchorHooks and ns._cdmReanchorHooks.ReassertViewerGlue then
                 ns._cdmReanchorHooks:ReassertViewerGlue()
+            end
+
+            -- Drain reanchor passes deferred in combat by the protected-owned gate
+            -- (owned icons carrying a secure clickButton could not be Factory-
+            -- recycled without ADDON_ACTION_BLOCKED). Independent of spec/loadout
+            -- state, so it runs before the spec-tracking early-returns -- same
+            -- placement rationale as ReassertViewerGlue above.
+            if ns._cdmBoot and ns._cdmBoot.DrainPendingCombatRefresh then
+                ns._cdmBoot:DrainPendingCombatRefresh()
             end
 
             local readyNow = specTrackingReady

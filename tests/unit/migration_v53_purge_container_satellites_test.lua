@@ -119,7 +119,7 @@ do
     check("utilityFrequency survives", profile.customGlow.utilityFrequency == 0.25)
     check("utilityEnabled survives", profile.customGlow.utilityEnabled == true)
 
-    check("stamped to current (58)", profile._schemaVersion == 58, tostring(profile._schemaVersion))
+    check("stamped to current (59)", profile._schemaVersion == 59, tostring(profile._schemaVersion))
 end
 
 ----------------------------------------------------------------------------
@@ -158,7 +158,7 @@ do
     M.RunOnProfile(profile)
     check("idempotent: live anchor still present", profile.frameAnchoring["cdmCustom_" .. liveKey] ~= nil)
     check("idempotent: live glow still present", profile.customGlow[liveKey .. "Scale"] == 0.5)
-    check("idempotent: stays at current (51)", profile._schemaVersion == 58, tostring(profile._schemaVersion))
+    check("idempotent: stays at current (51)", profile._schemaVersion == 59, tostring(profile._schemaVersion))
 end
 
 ----------------------------------------------------------------------------
@@ -176,7 +176,7 @@ do
     }
     M.RunOnProfile(profile)
     check("alpha stamp 51: squash re-runs the purge, orphan healed", profile.frameAnchoring["cdmCustom_custom_9_9"] == nil)
-    check("alpha stamp 51: stamped to current (58)", profile._schemaVersion == 58, tostring(profile._schemaVersion))
+    check("alpha stamp 51: stamped to current (59)", profile._schemaVersion == 59, tostring(profile._schemaVersion))
 
     profile.frameAnchoring["cdmCustom_custom_9_9"] = { parent = "UIParent" }
     M.RunOnProfile(profile)

@@ -42,8 +42,8 @@ local function newCastbar()
         self.eventsRegistered = false
     end
 
-    -- 12.1: CastingBarMixin:SetUnit iterates CastingBarTypeInfo, which
-    -- taint-blocks from addon execution — suppression must never call it.
+    -- PTR7 68914 fixed the CastingBarTypeInfo iteration taint inside
+    -- CastingBarMixin:SetUnit — suppression detaches the unit again.
     castbar.setUnitCalls = 0
     function castbar:SetUnit(unit)
         self.setUnitCalls = self.setUnitCalls + 1
@@ -158,7 +158,8 @@ local function assertSuppressed(castbar, messagePrefix)
     assert(castbar.alpha == 0, messagePrefix .. " should set the default castbar alpha to zero")
     assert(castbar.scale == 0.0001, messagePrefix .. " should shrink the default castbar")
     assert(castbar.shown == false, messagePrefix .. " should hide the default castbar")
-    assert(castbar.setUnitCalls == 0, messagePrefix .. " must never call SetUnit (12.1 taint-blocked path)")
+    assert(castbar.setUnitCalls >= 1, messagePrefix .. " should detach via SetUnit (PTR7-safe path)")
+    assert(castbar.unit == nil, messagePrefix .. " should leave the castbar unit detached")
     assert(castbar.eventsRegistered == false, messagePrefix .. " should unregister the default castbar events")
     assert(castbar.Icon.alpha == 0, messagePrefix .. " should set the default castbar icon alpha to zero")
     assert(castbar.Icon.shown == false, messagePrefix .. " should hide the default castbar icon")

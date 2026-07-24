@@ -15,145 +15,6 @@ function AuraDefaults.DefaultStripBucket(frameType)
     return ns.QUI_GroupFramesAuraModel.DefaultStripBucket(frameType)
 end
 
-local SPEC_AURA_PRESETS = {
-    {
-        name = "Restoration Druid",
-        specID = 105,
-        classFile = "DRUID",
-        source = ns.L["Spec Defaults"],
-        spells = {
-            { id = 774, name = "Rejuvenation", icon = 136081 },
-            { id = 8936, name = "Regrowth", icon = 136085 },
-            { id = 33763, name = "Lifebloom", icon = 134206 },
-            { id = 155777, name = "Germination", icon = 1033478 },
-            { id = 48438, name = "Wild Growth", icon = 236153 },
-            { id = 474754, name = "Symbiotic Relationship", icon = 1408837 },
-            { id = 439530, name = "Symbiotic Blooms", icon = 463540 },
-            { id = 102342, name = "Ironbark", icon = 572025, secret = true },
-        },
-    },
-    {
-        name = "Restoration Shaman",
-        specID = 264,
-        classFile = "SHAMAN",
-        source = ns.L["Spec Defaults"],
-        spells = {
-            { id = 61295, name = "Riptide", icon = 252995 },
-            { id = 383648, name = "Earth Shield", icon = 136089 },
-            { id = 974, name = "Earth Shield", icon = 136089 },
-            { id = 207400, name = "Ancestral Vigor", icon = 237574 },
-            { id = 382024, name = "Earthliving Weapon", icon = 237578 },
-            { id = 444490, name = "Hydrobubble", icon = 1320371 },
-        },
-    },
-    {
-        name = "Holy Paladin",
-        specID = 65,
-        classFile = "PALADIN",
-        source = ns.L["Spec Defaults"],
-        spells = {
-            { id = 156910, name = "Beacon of Faith", icon = 1030095 },
-            { id = 156322, name = "Eternal Flame", icon = 135433 },
-            { id = 53563, name = "Beacon of Light", icon = 236247 },
-            { id = 1244893, name = "Beacon of the Savior", icon = 7514188 },
-            { id = 200025, name = "Beacon of Virtue", icon = 1030094 },
-            { id = 1022, name = "Blessing of Protection", icon = 135964, secret = true },
-            { id = 432502, name = "Holy Armaments", icon = 5927636, secret = true },
-            { id = 6940, name = "Blessing of Sacrifice", icon = 135966, secret = true },
-            { id = 1044, name = "Blessing of Freedom", icon = 135968, secret = true },
-            { id = 431381, name = "Dawnlight", icon = 5927633, secret = true },
-        },
-    },
-    {
-        name = "Discipline Priest",
-        specID = 256,
-        classFile = "PRIEST",
-        source = ns.L["Spec Defaults"],
-        spells = {
-            { id = 17, name = "Power Word: Shield", icon = 135940 },
-            { id = 194384, name = "Atonement", icon = 458720 },
-            { id = 1253593, name = "Void Shield", icon = 7514191 },
-            { id = 41635, name = "Prayer of Mending", icon = 135944 },
-            { id = 33206, name = "Pain Suppression", icon = 135936, secret = true },
-            { id = 10060, name = "Power Infusion", icon = 135939, secret = true },
-        },
-    },
-    {
-        name = "Holy Priest",
-        specID = 257,
-        classFile = "PRIEST",
-        source = ns.L["Spec Defaults"],
-        spells = {
-            { id = 139, name = "Renew", icon = 135953 },
-            { id = 77489, name = "Echo of Light", icon = 237537 },
-            { id = 41635, name = "Prayer of Mending", icon = 135944 },
-            { id = 47788, name = "Guardian Spirit", icon = 237542, secret = true },
-            { id = 10060, name = "Power Infusion", icon = 135939, secret = true },
-        },
-    },
-    {
-        name = "Mistweaver Monk",
-        specID = 270,
-        classFile = "MONK",
-        source = ns.L["Spec Defaults"],
-        spells = {
-            { id = 119611, name = "Renewing Mist", icon = 627487 },
-            { id = 124682, name = "Enveloping Mist", icon = 775461 },
-            { id = 115175, name = "Soothing Mist", icon = 606550 },
-            { id = 450769, name = "Aspect of Harmony", icon = 5927638 },
-            { id = 116849, name = "Life Cocoon", icon = 627485, secret = true },
-            { id = 443113, name = "Strength of the Black Ox", icon = 615340, secret = true },
-        },
-    },
-    {
-        name = "Preservation Evoker",
-        specID = 1468,
-        classFile = "EVOKER",
-        source = ns.L["Spec Defaults"],
-        spells = {
-            { id = 364343, name = "Echo", icon = 4622456 },
-            { id = 366155, name = "Reversion", icon = 4630467 },
-            { id = 367364, name = "Echo Reversion", icon = 4630469 },
-            { id = 355941, name = "Dream Breath", icon = 4622454 },
-            { id = 376788, name = "Echo Dream Breath", icon = 7439198 },
-            { id = 363502, name = "Dream Flight", icon = 4622455 },
-            { id = 373267, name = "Lifebind", icon = 4630453 },
-            { id = 357170, name = "Time Dilation", icon = 4622478, secret = true },
-            { id = 363534, name = "Rewind", icon = 4622474, secret = true },
-            { id = 409895, name = "Verdant Embrace", icon = 4622471, secret = true },
-        },
-    },
-    {
-        name = "Augmentation Evoker",
-        specID = 1473,
-        classFile = "EVOKER",
-        source = ns.L["Spec Defaults"],
-        spells = {
-            { id = 410089, name = "Prescience", icon = 5199639 },
-            { id = 413984, name = "Shifting Sands", icon = 5199633 },
-            { id = 360827, name = "Blistering Scales", icon = 5199621 },
-            { id = 410263, name = "Inferno's Blessing", icon = 5199632 },
-            { id = 410686, name = "Symbiotic Bloom", icon = 4554354 },
-            { id = 395152, name = "Ebon Might", icon = 5061347 },
-            { id = 369459, name = "Source of Magic", icon = 4630412 },
-            { id = 361022, name = "Sense Power", icon = 132160, secret = true },
-        },
-    },
-}
-
-local SPEC_TO_PRESET = {}
-for _, preset in ipairs(SPEC_AURA_PRESETS) do
-    SPEC_TO_PRESET[preset.specID] = preset
-end
-
-local function GetPlayerSpecID()
-    local specIndex = GetSpecialization and GetSpecialization()
-    if specIndex and GetSpecializationInfo then
-        return GetSpecializationInfo(specIndex)
-    end
-    return nil
-end
-
 local function SpellKey(spellID)
     local numeric = tonumber(spellID)
     if numeric then
@@ -233,83 +94,20 @@ local function DeduplicatePresets(presets)
     return deduped
 end
 
--- Read-only accessor for the shipped spec presets — lets consumers outside
--- this file (e.g. the HoT seed below, future editor surfaces) reach the
--- table without duplicating it. Returns the live table (not a copy), same
--- as every other accessor in this file (GetDefaultPresets et al. read it
--- directly); callers must not mutate it.
-function AuraDefaults.SpecPresets()
-    return SPEC_AURA_PRESETS
-end
-
--- NOT called by any production path (v57 rework) — the shipped delivery is
--- now the model default (QUI_GroupFrames/groupframes/groupframes_aura_model.lua
--- Model.HealerHoTElement, reached via core/aura_elements.lua E.EnsureSeeded
--- on any surface's first bucket latch) plus core/migrations.lua
--- Migrations.SeedHealerHoTElements for profiles that latched before v57;
--- both read the single canonical spell-id source core/aura_elements.lua
--- E.HealerHoTSpellIDs(). This function stays ONLY as the tested
--- drift-anchor primitive: it independently re-derives the non-secret union
--- from SPEC_AURA_PRESETS below (the Options-side human-maintained ground
--- truth core cannot see), and
--- tests/unit/migration_v57_hot_element_seed_test.lua pins
--- E.HealerHoTSpellIDs() against this derivation (set AND order) so an edit
--- to the presets can never silently drift from what actually ships.
--- Engine slots (AuraSlots) render secret auras C-side, so HoT icons survive
--- the aura-secrecy expansion; the legacy Lua-side spellID match cannot see
--- secret auras and silently drops them. Seed-once (bucket-mutating, flag on
--- the element) — kept for the standalone/idempotence assertions the tests
--- still run against it.
-function AuraDefaults.SeedHealerHoTElements(bucket)
-    if type(bucket) ~= "table" then return false end
-    for i = 1, #bucket do
-        if bucket[i] and bucket[i]._quiHoTSeed then return false end
-    end
-    local E = ns.AuraElements
-    if not (E and E.NewTrackedElement) then return false end
-    local spells, seen = {}, {}
-    for _, preset in ipairs(SPEC_AURA_PRESETS) do
-        for _, s in ipairs(preset.spells) do
-            if not s.secret and not seen[s.id] then
-                seen[s.id] = true
-                spells[#spells + 1] = s.id
-            end
-        end
-    end
-    local element = E.NewTrackedElement(spells, "icon")
-    -- Fixed id (not the session-scoped "e<N>" counter NewTrackedElement
-    -- assigns by default) — drift-pin parity with core/migrations.lua's
-    -- Migrations.SeedHealerHoTElements, same fixed-id precedent as
-    -- "defensives" / "encounterBoss".
-    element.id = "healerHoTs"
-    element.onlyMine = true
-    -- Deliberately UNCAPPED: leave maxIcons absent (0/absent = uncapped per
-    -- core/aura_slots.lua Sync's `cap and cap > 0 and cap < total` check).
-    -- AuraSlots binds slots 1:1 per spellID in `spells`' array order and
-    -- stops at the cap — a maxIcons=4 here would strand every id past the
-    -- first 4 (Restoration Druid's) with no watching slot, silently dropping
-    -- 7 of 8 healer specs' HoTs entirely. onlyMine=true is the real bound:
-    -- only the player's own current spec's ids ever have a live aura to
-    -- match, so every other spec's slots simply sit unbound, not truncated.
-    element.name = ns.L["Healer HoTs"]
-    element._quiHoTSeed = true
-    bucket[#bucket + 1] = element
-    return true
-end
-
+-- Suggestion presets for the tracked-auras editor and the setup wizard.
+-- CDM catalog only since the healerHoTs-seed removal (2026-07-23, spec
+-- docs/superpowers/specs/2026-07-23-healerhots-seed-removal-design.md):
+-- the hand-curated SPEC_AURA_PRESETS table is gone — Blizzard's own
+-- isKnown-filtered CDM catalog is the sole suggestion source, and users
+-- build tracked elements themselves.
 function AuraDefaults.GetDefaultPresets(options)
     options = options or {}
-    local specID = options.specID or GetPlayerSpecID()
     local cdmEntries = options.cdmAuraEntries
     if cdmEntries == nil then
         cdmEntries = GetCDMAuraEntries()
     end
 
     local presets = {}
-    if specID and SPEC_TO_PRESET[specID] then
-        presets[#presets + 1] = SPEC_TO_PRESET[specID]
-    end
-
     local cdmPreset = BuildCDMPreset(cdmEntries)
     if cdmPreset then
         presets[#presets + 1] = cdmPreset

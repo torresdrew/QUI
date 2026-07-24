@@ -9410,3 +9410,88 @@ return name
     end
     print("custom-guard and ns-chain credit tests passed")
 end
+
+-- isGateName direct-hit shadow counterexamples (PTR7 follow-up): gate credit
+-- is protection-granting, so a direct dotted registry hit must be an exact
+-- unshadowed identity — mirror of the shadowed-guard block above. binds only
+-- keys simple names, so the load-bearing arm for the dotted builtin gate is
+-- the namespace-prefix consult.
+do
+    local rG1 = Registry.new()
+    rG1:addPreconditionAPI("C_UnitAuras.GetUnitAuras", { "RequiresUnitAuraAccess" })
+
+    -- impostor namespace: a local C_Secrets rebind must NOT grant gate
+    -- protection through the registered dotted spelling
+    local srcG1 = [[
+local C_Secrets = { ShouldAurasBeSecret = function() return false end }
+local function scan(unit)
+    if C_Secrets.ShouldAurasBeSecret() then return nil end
+    return C_UnitAuras.GetUnitAuras(unit, "HELPFUL")
+end
+return scan
+]]
+    assert_eq(#preFindings(Analyzer.analyze(srcG1, "modules/foo.lua", rG1, cfg)), 1,
+        "impostor local C_Secrets namespace must not grant direct gate credit")
+
+    -- parameter shadow: same discipline as guard parameters
+    local srcG2 = [[
+local function scan(unit, C_Secrets)
+    if C_Secrets.ShouldAurasBeSecret() then return nil end
+    return C_UnitAuras.GetUnitAuras(unit, "HELPFUL")
+end
+return scan
+]]
+    assert_eq(#preFindings(Analyzer.analyze(srcG2, "modules/foo.lua", rG1, cfg)), 1,
+        "parameter-shadowed C_Secrets must not grant direct gate credit")
+
+    -- self-canonical namespace caches keep credit: bare, _G-qualified, and
+    -- the pre-12.1 compat polyfill shape (all resolve canonically in harvest)
+    for _, cacheLine in ipairs({
+        "local C_Secrets = C_Secrets",
+        "local C_Secrets = _G.C_Secrets",
+        "C_Secrets = C_Secrets or {}",
+    }) do
+        local srcG3 = cacheLine .. [[
+
+local function scan(unit)
+    if C_Secrets.ShouldAurasBeSecret() then return nil end
+    return C_UnitAuras.GetUnitAuras(unit, "HELPFUL")
+end
+return scan
+]]
+        assert_eq(#preFindings(Analyzer.analyze(srcG3, "modules/foo.lua", rG1, cfg)), 0,
+            "self-canonical C_Secrets cache must keep gate credit: " .. cacheLine)
+    end
+
+    -- registered alias credit survives the direct-hit rule (fall-through
+    -- parity: an early false on shadowed names revoked exactly this idiom
+    -- repo-wide on the guard side)
+    local srcG4 = [[
+local isSecret = C_Secrets.ShouldAurasBeSecret
+local function scan(unit)
+    if isSecret() then return nil end
+    return C_UnitAuras.GetUnitAuras(unit, "HELPFUL")
+end
+return scan
+]]
+    assert_eq(#preFindings(Analyzer.analyze(srcG4, "modules/foo.lua", rG1, cfg)), 0,
+        "registered gate alias keeps credit under the direct-hit shadow rule")
+
+    -- custom (.taintrc extra_restriction_gates) wrapper gates are
+    -- function-literal-bound by construction — exempt from the shadow rule
+    local rG2 = Registry.new()
+    rG2:addPreconditionAPI("C_UnitAuras.GetUnitAuras", { "RequiresUnitAuraAccess" })
+    rG2:addRestrictionGate("MyGateWrap")
+    local srcG5 = [[
+local MyGateWrap = function() return C_Secrets.ShouldAurasBeSecret() end
+local function scan(unit)
+    if MyGateWrap() then return nil end
+    return C_UnitAuras.GetUnitAuras(unit, "HELPFUL")
+end
+return scan
+]]
+    assert_eq(#preFindings(Analyzer.analyze(srcG5, "modules/foo.lua", rG2, cfg)), 0,
+        "custom wrapper gate stays exempt from the builtin-only shadow rule")
+
+    print("gate direct-hit shadow counterexample tests passed")
+end

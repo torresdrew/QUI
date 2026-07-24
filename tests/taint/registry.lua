@@ -115,6 +115,12 @@ function M.new()
     for k, v in pairs(BUILTIN_CLEAN_FIELDS)         do self.cleanFields[k]       = v end
     for k, v in pairs(BUILTIN_SECRET_RETURNING)     do self.secretReturning[k]   = v end
     for k, v in pairs(BUILTIN_RESTRICTION_GATES)    do self.restrictionGates[k]  = v end
+    -- Builtin gate NAMES get the same direct-hit shadow rule as builtin
+    -- guards: a file rebinding one is either an impostor or an alias
+    -- resolved elsewhere. Custom gates (.taintrc extra_restriction_gates)
+    -- are audited wrapper FUNCTIONS bound by construction — exempt.
+    self.builtinGateNames = {}
+    for k in pairs(BUILTIN_RESTRICTION_GATES)       do self.builtinGateNames[k]  = true end
     for k in pairs(self.restrictionGates) do
         local ns = k:match("^([%w_]+)%.")
         if ns then self.preconditionNamespaces[ns] = true end
@@ -229,6 +235,8 @@ function Registry:addRestrictionGate(name)
     noteNamespace(self, name)
 end
 function Registry:isRestrictionGate(name)   return self.restrictionGates[name]  == true end
+function Registry:isBuiltinGate(name)       return self.builtinGateNames ~= nil
+                                                and self.builtinGateNames[name] == true end
 
 -- Secret event payloads (config event_payload_params): event name → array of
 -- handler parameter POSITIONS that carry secret payload values. A function

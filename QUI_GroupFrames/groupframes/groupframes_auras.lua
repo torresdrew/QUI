@@ -1443,11 +1443,12 @@ end
 -- are engine objects that can't be destroyed, so a changing element list
 -- re-purposes them (group retire inside AuraSkin.Configure, slot park via
 -- AuraSlots.Park). CREATION (CreateFrame + AddAuraGroup/AddAuraSlot button
--- pooling) is combat-restricted (crashes the 12.1 client) and stays queued on
--- the restriction-aware AuraGlue.QueueRegenWork (regen event + restriction
--- poll). MUTATION of a pre-created container (anchor / filters /
--- SetUnit / enable) is combat-legal, so the update path applies that subset live
--- in combat and STILL queues the full pass so a wrong assumption self-heals.
+-- pooling) and container anchoring are combat-legal since PTR7 68914 (earlier
+-- 12.1 builds crashed the client; proven in-game 2026-07-24), so the full pass
+-- runs live in combat. The restriction-aware AuraGlue.QueueRegenWork (regen
+-- event + restriction poll) still replays work skipped under the 12.1 aura
+-- SECRECY restriction (post-birth child styling/anchoring, aura_slots.lua) —
+-- secrecy is a separate mechanism from combat lockdown.
 --
 -- MRB synthetic icons + the health-bar tint feeder remain on the v46 element
 -- engine (RenderFrameElements above) — only container-rendered elements live here.
@@ -1508,14 +1509,14 @@ local function ResolveContainerElements(frame)
     return _activeElems
 end
 
--- Anchor a container OOC relative to its unit frame at the element's anchor
+-- Anchor a container relative to its unit frame at the element's anchor
 -- corner. AuraSkin.LayoutAnchor(profile) returns the flow-origin corner
 -- (grow + profile.wrap); pinning THAT corner to the frame's matching anchor
 -- point makes the auto-sized container hang off the frame edge, with multi-row
 -- growth extending AWAY from the frame. The per-element offset is folded in
--- here (the engine, not QUI, positions buttons/slots). The container is
--- forbidden → SetPoint is NEVER called in combat (callers gate on
--- InCombatLockdown / QueueContainerCombatWork).
+-- here (the engine, not QUI, positions buttons/slots). Container SetPoint is
+-- combat-legal (proven pre- and post-group registration, 2026-07-24) — only
+-- CHILD-frame anchoring stays combat-gated (aura_slots.lua).
 local function AnchorElementContainer(container, frame, element)
     local profile = AuraGlue.ElementProfile(element)
     container:ClearAllPoints()
@@ -1526,12 +1527,11 @@ end
 -- One container per active element, pooled by ORDINAL on the frame. Containers
 -- are engine objects that can't be destroyed; a changing element list
 -- re-purposes them (group retire inside AuraSkin.Configure via RunConfigPass,
--- slot park via AuraSlots.Park). allowCreate=false (combat) NEVER creates
--- containers or slots and never SetPoints; it only mutates pre-created
--- containers (pcall-guarded group reconcile with a Restyle fallback, inside
--- AuraGlue.RunConfigPass). Any forbidden work skipped in combat (or under the
--- 12.1 aura restriction) sets `incomplete`, which queues a full replay via the
--- restriction-aware AuraGlue.QueueRegenWork.
+-- slot park via AuraSlots.Park). Creation, registration and container
+-- anchoring run unconditionally (combat-legal since PTR7 68914); work skipped
+-- under the 12.1 aura SECRECY restriction (or by an allowCreate=false caller)
+-- sets `incomplete`, which queues a full replay via the restriction-aware
+-- AuraGlue.QueueRegenWork.
 local function ApplyElementPass(frame, allowCreate)
     if not frame then return end
     local unit = GetFrameUnit(frame)
@@ -1548,7 +1548,7 @@ local function ApplyElementPass(frame, allowCreate)
         local element = elems[i]
         local container = pool[i]
         if not container then
-            if allowCreate and not InCombatLockdown() and CreateFrame then
+            if allowCreate and CreateFrame then
                 container = CreateFrame("AuraContainer", nil, frame, "CustomAuraContainerTemplate")
                 container:SetSize(1, 1)  -- give the engine a renderable rect from the first dirty mark; it auto-sizes on layout
                 pool[i] = container
@@ -1560,9 +1560,7 @@ local function ApplyElementPass(frame, allowCreate)
             -- SetUnit BEFORE group configuration so the container's eager group
             -- registration (inside AuraSkin.Configure) has a valid unit.
             container:SetUnit(unit)
-            if not InCombatLockdown() then
-                AnchorElementContainer(container, frame, element)
-            end
+            AnchorElementContainer(container, frame, element)
             if element.mode == "tracked" then
                 -- Retire any strip groups a re-purposed container carries, then
                 -- reconcile the tracked slots (AddAuraSlot) onto it.
@@ -1594,27 +1592,26 @@ end
 
 -- Full pass entry (the forward-declared name + the QUI_GFA export; also what
 -- the QueueRegenWork closure replays once combat AND the aura restriction
--- clear — always OOC there).
+-- clear). Always allowCreate: the full pass is combat-legal since PTR7 68914.
 function ApplyStripContainers(frame)
-    ApplyElementPass(frame, not InCombatLockdown())
+    ApplyElementPass(frame, true)
 end
 QUI_GFA.ApplyStripContainers = ApplyStripContainers
 
--- Public entry: (re)apply the per-element container config for one frame. In
--- combat, mutation of pre-created containers is legal (SetUnit / filters /
--- enable), so run the mutation-only pass immediately AND queue the full pass
--- (creation + reconcile) for regen so any skipped forbidden work self-heals.
+-- Public entry: (re)apply the per-element container config for one frame. The
+-- full pass (creation + reconcile + container anchoring) is combat-legal since
+-- PTR7 68914; in combat it keeps a SafeCall belt — a surprise restriction must
+-- not error out of the event handler — and a failed pass queues the
+-- restriction-aware replay (the pass itself queues its own partial gaps).
 -- The containers self-drive UNIT_AURA, so this is config-only — not a per-event
 -- render loop.
 local function UpdateStripContainers(frame)
     if not frame or not GetFrameUnit(frame) then return end
     if InCombatLockdown() then
-        -- Mutation of pre-created containers is 12.1-PTR-legal (SetUnit /
-        -- filters / enable); SafeCall-guard the whole mutable pass (a surprise
-        -- combat restriction must not error out of the event handler) and
-        -- STILL queue the full pass (creation + reconcile) for regen.
-        ns.SafeCall("best-effort-style", ApplyElementPass, frame, false)
-        QueueContainerCombatWork(frame)
+        local ok = ns.SafeCall("best-effort-style", ApplyElementPass, frame, true)
+        if not ok then
+            QueueContainerCombatWork(frame)
+        end
         return
     end
     ApplyElementPass(frame, true)
@@ -1682,133 +1679,13 @@ local function DisableStripContainers(frame)
             end
         end
     end
-    if incomplete or inCombat then
+    -- Retirement is container-level mutation (combat-legal); only a SafeCall
+    -- failure or partial retire needs the restriction-aware replay.
+    if incomplete then
         QueueContainerCombatWork(frame)
     end
 end
 QUI_GFA.DisableStripContainers = DisableStripContainers
-
--- Pre-create (OOC) one container per active element for a header child, even a
--- unitless padding child (ResolveContainerElements keys on frame._isRaid,
--- stamped at child birth by the decorate bridge — no unit needed). Called by
--- the header preallocator so a member joining MID-COMBAT lands on a child whose
--- forbidden containers already exist + are anchored: creation is combat-forbidden
--- (crashes the 12.1 client), but SetUnit/filter/enable on a pre-created
--- container is combat-legal mutation. Cheap re-entry: skips when the pool
--- already holds enough containers (config-time RunConfigPass handles growth).
-function QUI_GFA.EnsureContainersForFrame(frame)
-    if not frame or InCombatLockdown() then return end
-    if not ResolveAuraDeps() or not CreateFrame then return end
-    local elems = ResolveContainerElements(frame)
-    local want = #elems
-    -- Union pre-stage: size the pool to the LARGEST reachable bucket ("*" +
-    -- spec buckets; MaxBucketElementCount skips dormant legacy context
-    -- buckets), not just the currently-active one, so a spec swap landing near
-    -- a combat edge finds its containers ALREADY created (creation is
-    -- combat-forbidden; the switch is then pure mutation).
-    -- Over-provisioned slots stay disabled until a bucket actually uses them.
-    local auras = GetFrameAuraSettings(frame)
-    if auras and AuraModel.MaxBucketElementCount then
-        local union = AuraModel.MaxBucketElementCount(auras)
-        if union > want then want = union end
-    end
-    if want == 0 then return end
-    local pool = frame._quiAuraContainers
-    if not pool then
-        pool = {}
-        frame._quiAuraContainers = pool
-    end
-    if #pool >= want then return end
-    for i = #pool + 1, want do
-        local container = CreateFrame("AuraContainer", nil, frame, "CustomAuraContainerTemplate")
-        container:SetSize(1, 1)  -- give the engine a renderable rect from the first dirty mark; it auto-sizes on layout
-        pool[i] = container
-        -- Only the currently-active elements have a definite anchor; union
-        -- spares (i > #elems) are anchored by the config pass when a bucket
-        -- activates them (OOC), so skip anchoring them here.
-        if elems[i] then
-            AnchorElementContainer(container, frame, elems[i])
-        end
-    end
-end
-
--- Spare header children (beyond the live roster) to fully build OOC: shells
--- get containers on every allocated child cheaply (EnsureContainersForFrame
--- above), but the GROUP config (AddAuraGroup/AddAuraSlot, which allocates the
--- engine's real secure button batches) is comparatively expensive, so only
--- roster + this many spares get it eagerly. QUI_GF:PreallocateAuraContainers
--- reads this to size the headroom window; exported (not a file local) so it
--- is mutation-verifiable and a single source of truth across both files.
-QUI_GFA.PREALLOC_HEADROOM = 5
-
--- Fully build (containers + AddAuraGroup/AddAuraSlot) the aura pipeline on a
--- header child that has NO roster occupant yet (a headroom/padding slot) —
--- OOC only, called from QUI_GF:PreallocateAuraContainers for the roster +
--- PREALLOC_HEADROOM window. Without this, EnsureContainersForFrame's bare
--- shells never get AddAuraGroup'd until the child's normal per-unit config
--- pass runs (UpdateStripContainers, only ever called with a real side-state unit
--- — see ApplyElementPass's guard below), so a raid member joining MID-COMBAT
--- into a shell-only slot binds a container with zero registered groups: the
--- combat mutation path (ApplyElementPass allowCreate=false -> AuraGlue.
--- RunConfigPass -> AuraSkin.Configure) never calls AddAuraGroup in combat
--- (Configure's own "elseif not InCombatLockdown() then container:
--- AddAuraGroup(...)" guard, core/aura_skin.lua) — it just skips, leaving the
--- member with no auras until PLAYER_REGEN_ENABLED replays. Pre-registering
--- the groups here (OOC, before the join) means the real join's SetUnit lands
--- on an ALREADY-REGISTERED key (Configure's "if registered[key] or
--- container:HasAuraGroup(key)" branch — mutators only, no AddAuraGroup call
--- needed), which IS combat-legal and already unconditional in ApplyElementPass
--- (`container:SetUnit(unit)` runs outside any allowCreate/combat gate;
--- see groupframes_auras_combat_mutable_test.lua's "SetUnit is combat-legal
--- mutation and runs unconditionally" pin).
---
--- Blizzard_AuraContainer.lua's AuraContainerSharedMixin:SetUnit asserts
--- `type(unitToken) == "string"` (no nil tolerance), so a genuinely unitless
--- container can't be probed with a nil side-state unit — bind it to a stand-in
--- token instead. FilterStringUsable's C-side probe (AuraGlue.
--- ElementGroups -> C_UnitAuras.GetUnitAuras(unit, filterString)) only checks
--- whether the call EXECUTES without erroring — it validates the filter
--- STRING's syntax, not the probed unit's actual aura state — so any
--- always-valid unit token yields the identical usable-filter set a real
--- roster member would get; "player" always exists, in or out of a group.
--- The container is left disabled + hidden: SetEnabled(true)/Show() only ever
--- happens on the REAL join (inside ApplyElementPass via UpdateStripContainers),
--- which unconditionally re-runs SetUnit(unit) first, overwriting this
--- probe binding before anything is ever shown.
---
--- Guard: only ever touches a container that truly has no roster occupant —
--- calling this on an already-assigned frame would wrongly re-hide/re-disable
--- a live strip, so it bails immediately if the side-state unit is already set.
-local PREALLOC_PROBE_UNIT = "player"
-function QUI_GFA.PrebuildHeadroomGroups(frame)
-    if not frame or GetFrameUnit(frame) or InCombatLockdown() then return end
-    if not ResolveAuraDeps() then return end
-    QUI_GFA.EnsureContainersForFrame(frame)
-    local elems = ResolveContainerElements(frame)
-    local pool = frame._quiAuraContainers
-    if not pool then return end
-    for i = 1, #elems do
-        local element = elems[i]
-        local container = pool[i]
-        if container then
-            -- SetUnit BEFORE group configuration — same ordering requirement
-            -- as ApplyElementPass (eager group registration needs a valid unit).
-            container:SetUnit(PREALLOC_PROBE_UNIT)
-            if element.mode == "tracked" then
-                AuraGlue.RunConfigPass(container, AuraGlue.ElementProfile(element), {}, true)
-                AuraSlots.Sync(container, element, true)
-            else
-                local profile = AuraGlue.ElementProfile(element)
-                local groups = AuraGlue.ElementGroups(PREALLOC_PROBE_UNIT, element, profile, false)
-                AuraGlue.RunConfigPass(container, profile, groups, true)
-                AuraSlots.Park(container)
-            end
-            -- Stay dormant: this slot has no real occupant yet.
-            container:SetEnabled(false)
-            container:Hide()
-        end
-    end
-end
 
 -- True when the unit's context has at least one enabled aura element.
 local function HasActiveAuraElements(vdb)

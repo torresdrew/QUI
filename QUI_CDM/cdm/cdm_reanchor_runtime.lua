@@ -87,13 +87,56 @@ end
 function CDMReanchorRuntime:ReleaseOwnedIcons(containerKey)
     local minted = self._mintedOwnedByKey[containerKey]
     if not minted then return end
-    self._mintedOwnedByKey[containerKey] = nil
     local release = self._deps.releaseOwned
-    if not release then return end
+    if not release then
+        self._mintedOwnedByKey[containerKey] = nil
+        return
+    end
+    -- Keep icons whose release was REFUSED (returned false: protected in combat).
+    -- Clearing them without a successful Factory recycle strands a visible/
+    -- clickable ghost; they are retried on the next pass / regen drain.
+    local kept
     for i = 1, #minted do
         -- containerKey rides along so realenv can drop the icon from the
         -- Factory pool it was registered in at mint time.
-        release(minted[i], containerKey)
+        local ok = release(minted[i], containerKey)
+        if ok == false then
+            kept = kept or {}
+            kept[#kept + 1] = minted[i]
+        end
+    end
+    self._mintedOwnedByKey[containerKey] = kept
+end
+
+-- Combat protected-owned defer. In combat a QUI-owned icon that carries a secure
+-- clickButton child is visibility-protected: Factory recycle (Hide/ClearAllPoints/
+-- SetParent) raises ADDON_ACTION_BLOCKED. Defer the WHOLE pass for such a container
+-- and recover on PLAYER_REGEN_ENABLED (DrainPendingCombatRefresh). Mirrors
+-- ShouldDeferContainerLayoutInCombat, which only the legacy LayoutContainer path
+-- consults. Inert without a canMutate dep (isolated tests, non-live callers).
+function CDMReanchorRuntime:_ShouldDeferOwnedReleaseInCombat(containerKey)
+    local canMutate = self._deps.canMutate
+    -- OOC / init-safe window: canMutate() true -> never defer. No dep -> never defer.
+    if not canMutate or canMutate() then return false end
+    -- Combat: only the prior pass's owned icons are at risk (they are what
+    -- ReleaseOwnedIcons would Hide). Native reanchored frames are not released here.
+    local minted = self._mintedOwnedByKey[containerKey]
+    if not minted then return false end
+    for i = 1, #minted do
+        local icon = minted[i]
+        if icon and icon.clickButton ~= nil then return true end
+    end
+    return false
+end
+
+-- Re-run every container whose combat refresh was deferred. Called from the
+-- PLAYER_REGEN_ENABLED handler via the boot table (DrainPendingCombatRefresh).
+function CDMReanchorRuntime:DrainPendingCombatRefresh()
+    local pending = self._pendingCombatRefresh
+    if not pending then return end
+    self._pendingCombatRefresh = nil
+    for key in pairs(pending) do
+        self:RefreshContainer(key)
     end
 end
 
@@ -388,6 +431,16 @@ function CDMReanchorRuntime:PositionEntries(container, plan, containerKey)
 end
 
 function CDMReanchorRuntime:RefreshContainer(containerKey)
+    -- Combat protected-owned defer (before ANY registry/ledger mutation): if this
+    -- container's owned icons carry a secure clickButton and we cannot mutate
+    -- protected frames right now, leave all state intact and queue a regen drain.
+    if self:_ShouldDeferOwnedReleaseInCombat(containerKey) then
+        self._pendingCombatRefresh = self._pendingCombatRefresh or {}
+        self._pendingCombatRefresh[containerKey] = true
+        self:_NextDiag(containerKey, { earlyReturn = "combat-protected-owned" })
+        return #(self._mintedOwnedByKey[containerKey] or {})
+    end
+
     local deps, wiring, bridge = self._deps, self._wiring, self._bridge
     local viewers = wiring.GetViewersForKey and wiring:GetViewersForKey(containerKey) or nil
     if not viewers or #viewers == 0 then

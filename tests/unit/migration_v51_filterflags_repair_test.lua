@@ -58,7 +58,7 @@ do
         table.concat(E.CompileFilters(debuff), " , "))
     check("corrupt buff 'exclusive' token stripped", buff.filterFlags.exclusive == nil, "still present")
     check("corrupt buff reverts to off", buff.filterMode == "off", tostring(buff.filterMode))
-    check("stamped to current (58)", profile._schemaVersion == 58, tostring(profile._schemaVersion))
+    check("stamped to current (59)", profile._schemaVersion == 59, tostring(profile._schemaVersion))
 end
 
 ----------------------------------------------------------------------------
@@ -119,7 +119,7 @@ do
     local spec = fa.elements[250][1]
     check("per-spec bucket repaired", spec.filterFlags.exclusive == nil and spec.filterMode == "off",
         tostring(spec.filterMode))
-    check("stamped to current (58)", profile._schemaVersion == 58, tostring(profile._schemaVersion))
+    check("stamped to current (59)", profile._schemaVersion == 59, tostring(profile._schemaVersion))
 end
 
 ----------------------------------------------------------------------------
@@ -145,7 +145,7 @@ do
     M.RunOnProfile(profile)
     local e = profile.quiUnitFrames.player.auras.elements["*"][1]
     check("alpha stamp 51: squash re-runs the repair, weird token stripped", e.filterFlags.modifiers == nil, "survived")
-    check("alpha stamp 51: stamped to current (58)", profile._schemaVersion == 58, tostring(profile._schemaVersion))
+    check("alpha stamp 51: stamped to current (59)", profile._schemaVersion == 59, tostring(profile._schemaVersion))
 
     e.filterFlags.modifiers = true
     M.RunOnProfile(profile)
@@ -190,7 +190,7 @@ do
         conflict.filterFlags.CANCELABLE == true, tostring(conflict.filterFlags.CANCELABLE))
     check("heal: NOT_CANCELABLE removed even when CANCELABLE already set",
         conflict.filterFlags.NOT_CANCELABLE == nil)
-    check("stamped to current (58)", profile._schemaVersion == 58, tostring(profile._schemaVersion))
+    check("stamped to current (59)", profile._schemaVersion == 59, tostring(profile._schemaVersion))
 end
 
 print("migration_v51_filterflags_repair_test " .. (failures == 0 and "OK" or "FAILED"))

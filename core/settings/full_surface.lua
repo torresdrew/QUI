@@ -504,6 +504,16 @@ function FullSurface.CreateDockedPreviewPanel(opts)
     local window = opts.window or (gui and gui.MainFrame) or _G.QUI_Options
     if not gui or not window then return nil end
 
+    -- Session-only UI state. The caller owns this table and passes the SAME
+    -- table across theme rebuilds so collapse/scale survive; `detached` is
+    -- deliberately reset every build (a fresh window starts docked).
+    local session = opts.sessionState or {}
+    if session.scale == nil then session.scale = 1 end
+    if session.collapsed == nil then session.collapsed = false end
+    session.detached = false
+
+    local SCALE_MIN, SCALE_MAX = 0.4, 1.25
+
     local UIKit = ns.UIKit
     local C = gui.Colors or {}
     local bg = C.bg or { 0.06, 0.06, 0.06 }
@@ -581,6 +591,61 @@ function FullSurface.CreateDockedPreviewPanel(opts)
     local title = gui:CreateLabel(panel, opts.title or ns.L["Preview"], 13, titleColor, "TOPLEFT", PAD, -PAD)
     title:SetJustifyH("LEFT")
 
+    -- Forward-declared so the header button closures below can close over it
+    -- as an upvalue; a `local P` declared only at the bottom of the function
+    -- (where the returned table is built) would leave those closures reading
+    -- the *global* P instead (Lua only captures locals already in scope when
+    -- the closure is created -- this is lexical scoping, not late dispatch).
+    local P
+
+    -- Header band: mouse-enabled drag target spanning the title row. A
+    -- transparent frame does not occlude the title fontstring (child frames
+    -- render above parent regions), but it does capture drag.
+    panel:SetMovable(true)
+    local header = CreateFrame("Frame", nil, panel)
+    header:SetPoint("TOPLEFT", 0, 0)
+    header:SetPoint("TOPRIGHT", 0, 0)
+    header:SetHeight(HEADER_H + PAD)
+    header:EnableMouse(true)
+    header:RegisterForDrag("LeftButton")
+
+    local UpdateHeaderButtons, ApplySize, grip -- forward decls
+
+    header:SetScript("OnDragStart", function()
+        session.detached = true
+        panel:StartMoving()
+        UpdateHeaderButtons()
+    end)
+    header:SetScript("OnDragStop", function()
+        panel:StopMovingOrSizing()
+    end)
+
+    -- Tiny text-glyph header button (no texture/atlas dependency; the
+    -- settings font + C.text color come from CreateLabel).
+    local function MakeHeaderButton(text, width, onClick)
+        local b = CreateFrame("Button", nil, header)
+        b:SetSize(width, 16)
+        b._label = gui:CreateLabel(b, text, 13, titleColor, "CENTER", 0, 0)
+        b:SetScript("OnClick", onClick)
+        return b
+    end
+
+    local collapseBtn = MakeHeaderButton("–", 16, function()
+        P.SetCollapsed(not session.collapsed)
+    end)
+    collapseBtn:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -PAD, -PAD)
+
+    local dockBtn = MakeHeaderButton(ns.L["Dock"], 34, function()
+        P.Redock()
+    end)
+    dockBtn:SetPoint("TOPRIGHT", collapseBtn, "TOPLEFT", -4, 0)
+
+    UpdateHeaderButtons = function()
+        dockBtn:SetShown(session.detached and true or false)
+        collapseBtn._label:SetText(session.collapsed and "+" or "–")
+        grip:SetShown(not session.collapsed)
+    end
+
     -- Optional control strip (filter chips, raid-size slider) hosted by the
     -- caller. Reserved as a fixed band so the auto-resize math (which measures
     -- only the content host) never overlaps it.
@@ -596,11 +661,24 @@ function FullSurface.CreateDockedPreviewPanel(opts)
     content:SetPoint("TOPLEFT", PAD, -(PAD + HEADER_H + STRIP_H))
     content:SetPoint("BOTTOMRIGHT", -PAD, PAD)
 
+    -- Inner scaled host: the preview driver parents its mock roster AND its
+    -- animation ticker here (exposed as P.contentHost, the driver-facing
+    -- contract). SetScale here scales the whole roster; `content` stays an
+    -- unscaled clipping-free wrapper whose Show/Hide drives collapse (hidden
+    -- frames get no OnUpdate, pausing the driver ticker for free).
+    local scaleHost = CreateFrame("Frame", nil, content)
+    scaleHost:SetPoint("TOPLEFT", content, "TOPLEFT", 0, 0)
+    scaleHost:SetSize(1, 1)
+    scaleHost:SetScale(session.scale or 1)
+
     -- Extra breathing room (screen px) kept between the panel and the screen
     -- edge when we nudge the window left to make the right dock fit.
     local EDGE_MARGIN = 8
 
     local function Reflow()
+        -- While the user has dragged the panel away, every auto-anchor
+        -- trigger (panel OnShow, window resize/move) must leave it alone.
+        if session.detached then return end
         -- All edge math is done in SCREEN pixels: the window carries its own
         -- scale (configPanelScale) so its GetLeft/GetRight are in window units,
         -- while UIParent's are in UIParent units -- multiply each by its
@@ -664,18 +742,165 @@ function FullSurface.CreateDockedPreviewPanel(opts)
         hooksecurefunc(window, "StopMovingOrSizing", function() if panel:IsShown() then Reflow() end end)
     end
 
-    local P = { frame = panel, contentHost = content, controlStrip = controlStrip }
+    -- Session-only detach: closing the options window forgets the dragged
+    -- position. No reflow here (window is hiding); the panel's own OnShow
+    -- hook re-docks on next open.
+    window:HookScript("OnHide", function()
+        if grip then grip:SetScript("OnUpdate", nil) end
+        if session.detached then
+            session.detached = false
+            panel:ClearAllPoints()
+            if type(panel.StopMovingOrSizing) == "function" then
+                panel:StopMovingOrSizing()
+            end
+        end
+        UpdateHeaderButtons()
+    end)
+
+    P = { frame = panel, contentHost = scaleHost, controlStrip = controlStrip }
+
+    -- Bottom-right grip: drag horizontally to scale the mock roster
+    -- (uniform, width-driven). Same SizeGrabber art + cursor tracking as the
+    -- options window's resize handle; this one drives SCALE, not free size.
+    grip = CreateFrame("Button", nil, panel)
+    grip:SetSize(16, 16)
+    grip:SetPoint("BOTTOMRIGHT", -2, 2)
+    grip:SetFrameLevel((panel:GetFrameLevel() or 500) + 10)
+
+    local gripTex = grip:CreateTexture(nil, "OVERLAY")
+    gripTex:SetAllPoints()
+    gripTex:SetTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
+
+    local gripHi = grip:CreateTexture(nil, "HIGHLIGHT")
+    gripHi:SetAllPoints()
+    gripHi:SetTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
+
+    -- Cancel an in-flight grip drag: OnMouseUp may never fire if the panel is
+    -- hidden or torn down while the button is held, which would leave a stale
+    -- OnUpdate to resume when the frame is shown again. Also stop any active
+    -- header move so StartMoving state never outlives a hide.
+    local function CancelGripDrag()
+        grip:SetScript("OnUpdate", nil)
+        if type(panel.StopMovingOrSizing) == "function" then
+            panel:StopMovingOrSizing()
+        end
+    end
+
+    grip:SetScript("OnMouseDown", function(self, button)
+        if button ~= "LeftButton" or session.collapsed then return end
+        -- Pin the panel's top-left for the duration of the drag so the box
+        -- grows down/right from a fixed top-left, regardless of which edge
+        -- Reflow last docked to (left-dock pins the RIGHT edge, so a naive
+        -- SetSize would move the opposite edge). Same technique as the options
+        -- window's own resize handle; Reflow on release re-docks.
+        local ox = (panel:GetLeft() or 0) - (window:GetLeft() or 0)
+        local oy = (panel:GetTop() or 0) - (window:GetTop() or 0)
+        panel:ClearAllPoints()
+        panel:SetPoint("TOPLEFT", window, "TOPLEFT", ox, oy)
+        -- Scale is driven by the VERTICAL drag. The panel width floors at
+        -- MIN_W (the header needs a minimum), and the shipped party layout is
+        -- narrow enough (contentW < MIN_W) that its panel width never changes
+        -- across the whole scale range -- a width-driven grip would sit
+        -- frozen there. Panel HEIGHT tracks contentH*scale for both party and
+        -- raid, so the grabbed bottom edge follows the cursor: a downward drag
+        -- of dy pixels should grow the content height by dy, i.e. add
+        -- dy/contentH to the scale.
+        local es = panel:GetEffectiveScale() or 1
+        if es <= 0 then es = 1 end
+        local _, cy = GetCursorPosition()
+        self._startY = cy / es
+        self._startScale = session.scale or 1
+        self._elapsed = 0
+        self:SetScript("OnUpdate", function(self, elapsed)
+            self._elapsed = (self._elapsed or 0) + elapsed
+            if self._elapsed < 0.016 then return end
+            self._elapsed = 0
+            local contentH = session.contentH or 0
+            if contentH <= 0 then return end
+            local es2 = panel:GetEffectiveScale() or 1
+            if es2 <= 0 then es2 = 1 end
+            local _, y = GetCursorPosition()
+            -- Apply the cursor delta to the START scale, NOT to the live panel
+            -- height: ApplySize caps height at the window, so panel:GetHeight()
+            -- can be less than contentH*scale + chrome. Deriving from the
+            -- capped height would make merely holding the grip (zero delta)
+            -- snap the scale down. Drag DOWN => cursor Y decreases => grow.
+            local dyDown = self._startY - y / es2
+            P.SetContentScale(self._startScale + dyDown / contentH)
+        end)
+    end)
+    grip:SetScript("OnMouseUp", function(self)
+        self:SetScript("OnUpdate", nil)
+        Reflow()   -- one re-dock pass after the drag settles
+    end)
+    -- Precedent: alts view drag teardown clears tracking in OnHide.
+    panel:HookScript("OnHide", CancelGripDrag)
 
     function P.SetTitle(text) title:SetText(text or ns.L["Preview"]) end
     function P.Show() panel:Show(); Reflow() end
     function P.Hide() panel:Hide() end
-    function P.Resize(contentW, contentH)
-        local w = math.max(contentW or 0, MIN_W) + PAD * 2
-        local h = (contentH or 0) + HEADER_H + STRIP_H + PAD * 2
+    function P.IsDetached() return session.detached and true or false end
+    function P.Redock()
+        session.detached = false
+        panel:ClearAllPoints()
+        Reflow()
+        UpdateHeaderButtons()
+    end
+    P.header = header
+    P.dockButton = dockBtn
+    P._session = session
+
+    ApplySize = function()
+        local s = session.scale or 1
+        local w = math.max((session.contentW or 0) * s, MIN_W) + PAD * 2
+        local h = (session.contentH or 0) * s + HEADER_H + STRIP_H + PAD * 2
         local cap = (window:GetHeight() or 850)
         if h > cap then h = cap end
         panel:SetSize(w, h)
+    end
+
+    function P.SetContentScale(s)
+        s = tonumber(s) or 1
+        if s < SCALE_MIN then s = SCALE_MIN end
+        if s > SCALE_MAX then s = SCALE_MAX end
+        session.scale = s
+        scaleHost:SetScale(s)
+        if not session.collapsed then
+            ApplySize()   -- deliberately NO Reflow: grip drag calls this
+        end               -- per-tick; Reflow happens on grip release
+    end
+    function P.GetContentScale() return session.scale or 1 end
+
+    function P.Resize(contentW, contentH)
+        session.contentW, session.contentH = contentW or 0, contentH or 0
+        if session.collapsed then return end   -- deferred; applied on expand
+        ApplySize()
         Reflow()
+    end
+
+    function P.SetCollapsed(v)
+        session.collapsed = v and true or false
+        if session.collapsed then
+            content:Hide()
+            if controlStrip then controlStrip:Hide() end
+            panel:SetHeight(HEADER_H + PAD * 2)
+        else
+            content:Show()
+            if controlStrip then controlStrip:Show() end
+            ApplySize()
+        end
+        UpdateHeaderButtons()
+        Reflow()
+    end
+    function P.IsCollapsed() return session.collapsed and true or false end
+    P.collapseButton = collapseBtn
+    P._contentWrapper = content
+    P.grip = grip
+
+    if session.collapsed then
+        P.SetCollapsed(true)   -- also hides grip via UpdateHeaderButtons
+    else
+        UpdateHeaderButtons()
     end
 
     return P

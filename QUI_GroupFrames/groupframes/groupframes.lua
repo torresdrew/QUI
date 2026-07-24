@@ -3012,75 +3012,6 @@ function QUI_GF.HeaderChildCreated(_, childName)
     end
 end
 
--- Pre-allocate every header's MAXIMUM children OOC, then pre-create the aura
--- containers on each. SecureGroupHeaders create children lazily — including
--- MID-COMBAT, where the forbidden CustomAuraContainer cannot be created
--- (crashes the 12.1 client) — so without this a member joining mid-combat
--- shows no auras until regen. FrameXML configureChildren sizes the pool as
--- numDisplayed = unitCount - (startingIndex - 1), capped by unitsPerColumn *
--- maxColumns: a negative startingIndex on a VISIBLE header forces full
--- allocation synchronously (attribute change → SecureGroupHeader_Update).
--- The dance runs tainted; the next secure roster update re-stamps the unit
--- attributes, so restore startingIndex immediately and let Blizzard's event
--- driver reconcile. Method on QUI_GF: this chunk rides the 200-local limit.
-function QUI_GF:PreallocateAuraContainers()
-    if InCombatLockdown() then return end
-    local GFA = ns.QUI_GroupFrameAuras
-    if not GFA or not GFA.EnsureContainersForFrame then return end
-    -- Hybrid headroom: EVERY allocated child gets a cheap container SHELL
-    -- (below), but the expensive GROUP config (AddAuraGroup/AddAuraSlot —
-    -- real secure button batches) is only pre-built for the live roster PLUS
-    -- this many spares — see GFA.PrebuildHeadroomGroups for why the shell-only
-    -- gap otherwise leaves a mid-combat joiner with zero aura groups.
-    local headroom = GFA.PREALLOC_HEADROOM or 5
-    local function preallocHeader(header)
-        if not header or not header:IsShown() then return end
-        local upc = header:GetAttribute("unitsPerColumn") or 5
-        local cols = header:GetAttribute("maxColumns") or 1
-        local wanted = math.min(upc * cols, 40)
-        if wanted < 1 then return end
-        if not header:GetAttribute("child" .. wanted) then
-            local saved = header:GetAttribute("startingIndex")
-            header:SetAttribute("startingIndex", -(wanted - 1))
-            header:SetAttribute("startingIndex", saved or 1)
-        end
-        local assignedCount = 0
-        for i = 1, wanted do
-            local child = header:GetAttribute("child" .. i)
-            if not child then break end
-            GFA.EnsureContainersForFrame(child)
-            if QUI_GF.GetFrameUnit(child) then assignedCount = assignedCount + 1 end
-        end
-        -- Roster + headroom window: fully build (containers + groups) every
-        -- currently-unoccupied child inside the window so it's ready to bind
-        -- a mid-combat joiner. Already-assigned children are skipped here —
-        -- QUI_GF:RefreshAllFrames (which runs before this, in GRU_DeferredWork)
-        -- already fully configured + enabled + shown them via the normal
-        -- per-unit UpdateStripContainers path; touching them again here would
-        -- risk re-hiding a live strip (PrebuildHeadroomGroups itself refuses
-        -- to run on a frame assigned in QUI's side state as a second guard).
-        if GFA.PrebuildHeadroomGroups then
-            local buildCount = math.min(assignedCount + headroom, wanted)
-            for i = 1, buildCount do
-                local child = header:GetAttribute("child" .. i)
-                if not child then break end
-                if not QUI_GF.GetFrameUnit(child) then
-                    GFA.PrebuildHeadroomGroups(child)
-                end
-            end
-        end
-    end
-    preallocHeader(self.headers.party)
-    preallocHeader(self.headers.raid)
-    preallocHeader(self.headers.self)
-    if self.raidGroupHeaders then
-        for _, header in ipairs(self.raidGroupHeaders) do
-            preallocHeader(header)
-        end
-    end
-    preallocHeader(self.spotlightHeader)
-end
-
 ---------------------------------------------------------------------------
 -- UNIT FRAME MAP: Rebuild unit → list-of-frames lookup
 ---------------------------------------------------------------------------
@@ -5384,11 +5315,9 @@ local function GRU_DeferredWork()
     if GFA and GFA.PruneAuraCache then GFA.PruneAuraCache() end
     UpdateFrameScaling(true)
     QUI_GF:RefreshAllFrames("roster")
-    -- Pre-create header children + containers for the full possible roster
-    -- while OOC (creation is combat-forbidden; mid-combat joins reuse these).
-    if not InCombatLockdown() then
-        QUI_GF:PreallocateAuraContainers()
-    end
+    -- (Container prealloc retired: creation + AddAuraGroup/AddAuraSlot are
+    -- combat-legal since PTR7 68914 — a mid-combat joiner's child builds its
+    -- containers live via the normal UpdateStripContainers path.)
     -- Ensure ticker is running (may not have started yet on first roster event)
     StartRangeCheck()
     -- Re-anchor party target companions to the rebuilt unit→frame map (the
@@ -5786,9 +5715,6 @@ local function OnEvent(self, event, arg1, ...)
             _pending.groupReflow = false
             PositionRaidGroupHeaders()
         end
-        -- Roster may have grown during combat past the allocated children;
-        -- top up children + containers now that creation is legal again.
-        QUI_GF:PreallocateAuraContainers()
         if _pending.registerClicks then
             _pending.registerClicks = false
             -- Catch up on click registration for frames whose OnLoad path
@@ -6301,19 +6227,10 @@ function QUI_GF:RefreshSettings()
         self:RefreshAllFrames()
     end
 
-    -- Rebuild the headroom prealloc window AFTER the assigned-frame walk:
-    -- RefreshAllFrames above only iterates unitFrameMap (assigned frames), so
-    -- a settings/filter edit would otherwise leave the headroom SPARES'
-    -- Configure registries keyed to the STALE canonical filter — a mid-combat
-    -- join onto a stale spare before the next roster/regen trigger would miss
-    -- Configure's registered-key check, hit the combat AddAuraGroup skip, and
-    -- reproduce the exact zero-groups gap headroom exists to close.
-    -- PreallocateAuraContainers is internally OOC-gated (bails on
-    -- InCombatLockdown), so this call is safe unconditionally; a settings
-    -- change made IN combat already reaches the spares via the existing regen
-    -- replay (the PLAYER_REGEN_ENABLED block runs the deferred RefreshSettings
-    -- and then PreallocateAuraContainers).
-    self:PreallocateAuraContainers()
+    -- (Headroom prealloc retired with PTR7 68914 combat-legal creation: a
+    -- mid-combat joiner's child configures its containers live, always against
+    -- the CURRENT settings — the stale-spare-filter gap this rebuild closed
+    -- no longer exists.)
 
     -- Re-resolve per-group "Group N" labels for visual-only changes (color/anchor/
     -- offset/toggle) that don't otherwise re-run the header layout pass. Self-guards

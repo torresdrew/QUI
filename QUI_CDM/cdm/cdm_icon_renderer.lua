@@ -3743,6 +3743,8 @@ function CDMIcons:BuildIcons(viewerType, container)
     local spellData = ns.CDMSpellData and ns.CDMSpellData:GetSpellList(viewerType) or {}
     local signature = BuildIconListSignature(viewerType, container, spellData)
     local pool = Factory:GetIconPool(viewerType)
+    local clickViewerDB = GetTrackerSettings and GetTrackerSettings(viewerType)
+    local clickable = (clickViewerDB and clickViewerDB.clickableIcons) and true or false
     local reusePool = pool
         and container._lastBuildSignature == signature
         and container._lastBuildPool == pool
@@ -3754,7 +3756,7 @@ function CDMIcons:BuildIcons(viewerType, container)
 
         -- Create icons from harvested spell data
         for _, entry in ipairs(spellData) do
-            local icon = Factory:AcquireIcon(container, entry)
+            local icon = Factory:AcquireIcon(container, entry, clickable)
             pool[#pool + 1] = icon
         end
 
@@ -3780,7 +3782,7 @@ function CDMIcons:BuildIcons(viewerType, container)
                             and IsCustomBarEntryUsableOnCurrentClass(entry, viewerType) then
                             local spellEntry = BuildSpellEntryFromCustom(entry, idx, viewerType)
                             if spellEntry then
-                                local icon = Factory:AcquireIcon(container, spellEntry)
+                                local icon = Factory:AcquireIcon(container, spellEntry, clickable)
                                 pool[#pool + 1] = icon
                             end
                         end
@@ -3821,11 +3823,11 @@ function CDMIcons:BuildIcons(viewerType, container)
                             pool[i + prefixCount] = pool[i]
                         end
                         for i, entry in ipairs(unpositioned) do
-                            pool[i] = Factory:AcquireIcon(container, entry)
+                            pool[i] = Factory:AcquireIcon(container, entry, clickable)
                         end
                     else
                         for _, entry in ipairs(unpositioned) do
-                            local icon = Factory:AcquireIcon(container, entry)
+                            local icon = Factory:AcquireIcon(container, entry, clickable)
                             pool[#pool + 1] = icon
                         end
                     end
@@ -3837,7 +3839,7 @@ function CDMIcons:BuildIcons(viewerType, container)
                     return a.origIndex < b.origIndex
                 end)
                 for _, item in ipairs(positioned) do
-                    local icon = Factory:AcquireIcon(container, item.entry)
+                    local icon = Factory:AcquireIcon(container, item.entry, clickable)
                     local insertAt = math.min(item.position, #pool + 1)
                     table.insert(pool, insertAt, icon)
                 end
