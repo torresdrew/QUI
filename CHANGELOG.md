@@ -9,6 +9,46 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v5.0.0-alpha23 - 2026-07-24
+
+> ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will
+> not load on the 12.0.x live client. Stay on the v4.x beta line for live realms.
+
+> 🔄 **Profile schema migrated to v59.** Removes the tracked auras that earlier
+> alphas seeded into the Healer HoTs element. Your profile is backed up
+> automatically before it runs.
+
+### Removed
+- The 42-spell **Healer HoTs** default seed. Alpha22 shipped that element
+  pre-filled with every healer specialization's healing-over-time spells; the
+  element itself stays, but its tracked auras are now yours to choose. Spells
+  you added by hand are kept — only the seeded ones are swept, on every group
+  frame and raid bucket, including profiles you import.
+- Specialization-based aura suggestions in the aura editor and wizard.
+  Suggestions now come from the Blizzard cooldown-manager catalog only.
+
+### Added
+- Aura tooltip and dispel controls in the options panel, promised in alpha22:
+  hide aura tooltips in combat, anchor them to each icon (or at the cursor),
+  and override the per-dispel-type ring colors for a single element. Dispel
+  types you leave alone keep the engine color.
+- The docked options preview panel can be detached, dragged, collapsed, and
+  scaled by its grip for the rest of the session.
+
+### Changed
+- Dispel-type borders and symbols moved onto the 12.1 dispel-texture API that
+  replaced the names removed after 12.1, and custom dispel artwork now reaches
+  tracked-aura element buttons alongside custom dispel colors.
+
+### Fixed
+- Cooldown-manager icons no longer trigger an action-blocked error when the
+  cooldown manager re-anchors during combat. Clickable icons are held in their
+  own pool and only reused while they are still safe to touch, so nothing is
+  dropped or leaked while you are in a fight.
+- Restored the cast bar detach that a 12.1 PTR guard had been suppressing.
+- A taint-scan gate check no longer accepts a look-alike namespace-prefixed
+  name in place of the real one.
+
 ## v5.0.0-alpha22 - 2026-07-23
 
 > ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will
