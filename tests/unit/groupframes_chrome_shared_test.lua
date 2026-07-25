@@ -118,7 +118,11 @@ local VDB = {
     },
     healer  = {
         targetHighlight = { fillOpacity = 0.17 },
-        dispelOverlay = { borderSize = 3, fillOpacity = 0.2 },
+        dispelOverlay = {
+            borderSize = 3, fillOpacity = 0.2,
+            showIcon = true, iconSize = 22, iconOpacity = 0.75,
+            iconAnchor = "BOTTOMLEFT", iconOffsetX = 3, iconOffsetY = 4,
+        },
     },
     portrait = { showPortrait = true, portraitSize = 30, portraitSide = "LEFT" },
     absorbs = {}, healAbsorbs = {}, healPrediction = {},
@@ -162,6 +166,7 @@ check("highlight/text/glow ladder has unique increasing frame levels",
     and frame.targetHighlight:GetFrameLevel() == frame:GetFrameLevel() + Chrome.LEVELS.TARGET
     and frame.dispelOverlay:GetFrameLevel() == frame:GetFrameLevel() + Chrome.LEVELS.DISPEL
     and frame._textFrame:GetFrameLevel() == frame:GetFrameLevel() + Chrome.LEVELS.TEXT
+    and frame.dispelTypeIcons.Magic:GetFrameLevel() == frame:GetFrameLevel() + Chrome.LEVELS.DISPEL_ICON
     and frame.cleanseGlow:GetFrameLevel() == frame:GetFrameLevel() + Chrome.LEVELS.CLEANSE)
 check("threat/target backdrops carry a real fill and configured opacity",
     frame.threatBorder.backdrop.bgFile ~= nil
@@ -172,15 +177,39 @@ check("dispel overlay carries its 4 borders + fill",
     frame.dispelOverlay.borderTop and frame.dispelOverlay.borderBottom
     and frame.dispelOverlay.borderLeft and frame.dispelOverlay.borderRight
     and frame.dispelOverlay.fill ~= nil)
+check("dispel type icon builds all five native atlases with shared geometry",
+    frame.dispelTypeIcons.Magic:GetStatusBarTexture().atlas == "RaidFrame-Icon-DebuffMagic"
+    and frame.dispelTypeIcons.Curse:GetStatusBarTexture().atlas == "RaidFrame-Icon-DebuffCurse"
+    and frame.dispelTypeIcons.Disease:GetStatusBarTexture().atlas == "RaidFrame-Icon-DebuffDisease"
+    and frame.dispelTypeIcons.Poison:GetStatusBarTexture().atlas == "RaidFrame-Icon-DebuffPoison"
+    and frame.dispelTypeIcons.Bleed:GetStatusBarTexture().atlas == "RaidFrame-Icon-DebuffBleed"
+    and frame.dispelTypeIcons.Magic.w == 22
+    and frame.dispelTypeIcons.Magic.alpha == 0.75
+    and frame.dispelTypeIcons.Magic.points[1].p == "BOTTOMLEFT"
+    and frame.dispelTypeIcons.Magic.points[1].x == 3
+    and frame.dispelTypeIcons.Magic.points[1].y == 4)
+Chrome.ShowDispelTypeIcon(frame, "Bleed")
+check("shared dispel icon selector shows only the requested type",
+    frame.dispelTypeIcons.Bleed:IsShown()
+    and not frame.dispelTypeIcons.Magic:IsShown()
+    and not frame.dispelTypeIcons.Curse:IsShown()
+    and not frame.dispelTypeIcons.Disease:IsShown()
+    and not frame.dispelTypeIcons.Poison:IsShown())
 check("portrait built when enabled", frame.portrait ~= nil and frame.portraitTexture ~= nil)
 
 -- Idempotent: a second pass reuses every child (settings changes re-decorate).
-local before = { hb = frame.healthBar, tf = frame._textFrame, ab = frame.absorbBar }
+local before = {
+    hb = frame.healthBar, tf = frame._textFrame, ab = frame.absorbBar,
+    magic = frame.dispelTypeIcons.Magic, bleed = frame.dispelTypeIcons.Bleed,
+}
 local created = frameCount
 Chrome.Apply(frame, VDB)
 check("re-apply reuses the existing children (no frame leak)",
     frame.healthBar == before.hb and frame._textFrame == before.tf
-    and frame.absorbBar == before.ab and frameCount == created)
+    and frame.absorbBar == before.ab
+    and frame.dispelTypeIcons.Magic == before.magic
+    and frame.dispelTypeIcons.Bleed == before.bleed
+    and frameCount == created)
 
 -- Vertical fill flips orientation + is reported back.
 local vFrame = NewFrame("Button", nil, nil)
@@ -323,11 +352,15 @@ check("runtime and preview both use shared full-frame tint helper",
     and live:find("Chrome.SetBackdropOverlayColor(frame.targetHighlight", 1, true) ~= nil
     and prev:find("C.SetBackdropOverlayColor(tb", 1, true) ~= nil
     and prev:find("C.SetBackdropOverlayColor(th", 1, true) ~= nil)
-
 local auraRender = readAll("QUI_GroupFrames/groupframes/groupframes_aura_render.lua")
 local auraContainers = readAll("QUI_GroupFrames/groupframes/groupframes_auras.lua")
 local targeted = readAll("QUI_GroupFrames/groupframes/groupframes_targeted_spells.lua")
 local editMode = readAll("QUI_GroupFrames/groupframes/groupframes_editmode.lua")
+check("runtime and both previews use the shared dispel-type icon helpers",
+    live:find("Chrome.ShowDispelTypeIcon(frame, visualType)", 1, true) ~= nil
+    and prev:find("C.ShowDispelTypeIcon(f, dispelType)", 1, true) ~= nil
+    and editMode:find("Chrome.ApplyDispelIconLayout(frame, dsp)", 1, true) ~= nil
+    and editMode:find("Chrome.ShowDispelTypeIcon(frame, sampleType)", 1, true) ~= nil)
 check("aura, targeted-spell and Edit Mode layers consume the shared ladder",
     auraRender:find("CHROME_LEVELS.AURA_HOST", 1, true) ~= nil
     and auraRender:find("CHROME_LEVELS.AURA_BAR", 1, true) ~= nil

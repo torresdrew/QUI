@@ -42,7 +42,7 @@ local IsSecretValue = Helpers.IsSecretValue
 local TargetedSpells = ns.QUI_GroupFrameTargetedSpells or {}
 ns.QUI_GroupFrameTargetedSpells = TargetedSpells
 local CHROME_LEVELS = (ns.QUI_GroupFrameChrome and ns.QUI_GroupFrameChrome.LEVELS)
-    or { TARGETED = 13 }
+    or { TARGETED = 14 }
 
 local TIMING = {
     firstRead = 0.10,

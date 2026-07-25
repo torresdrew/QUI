@@ -112,6 +112,9 @@ end
 
 local IsCooldownViewerReady
 local initialReanchorDoneByKey = {}
+local REANCHOR_KEYS = { "essential", "utility", "buff" }
+local refreshAllReanchorBatchActive = false
+local refreshAllReanchorBatchCounts
 
 local function ResetInitialReanchorDone()
     for key in pairs(initialReanchorDoneByKey) do
@@ -129,11 +132,30 @@ local function IsInitialReanchorDone(key)
     return initialReanchorDoneByKey[key] == true
 end
 
-local function RefreshReanchoredBuiltin(boot, key)
+local function RefreshReanchoredBuiltin(boot, key, allowCachedBatch)
     if not (boot and boot.RefreshBuiltin) then return nil end
-    local result = boot:RefreshBuiltin(key)
+    local result
+    if boot.RefreshBuiltins then
+        local counts
+        if allowCachedBatch and refreshAllReanchorBatchActive
+            and refreshAllReanchorBatchCounts then
+            counts = refreshAllReanchorBatchCounts
+        else
+            counts = boot:RefreshBuiltins(REANCHOR_KEYS) or {}
+            if refreshAllReanchorBatchActive then
+                refreshAllReanchorBatchCounts = counts
+            end
+        end
+        result = counts[key] or 0
+    else
+        result = boot:RefreshBuiltin(key)
+    end
     if not IsCooldownViewerReady or IsCooldownViewerReady() then
-        MarkInitialReanchorDone(key)
+        if boot.RefreshBuiltins then
+            for i = 1, #REANCHOR_KEYS do MarkInitialReanchorDone(REANCHOR_KEYS[i]) end
+        else
+            MarkInitialReanchorDone(key)
+        end
     end
     return result
 end
@@ -2621,7 +2643,7 @@ local function LayoutContainer(trackerKey)
         -- Re-anchor engine: relocate Blizzard BuffIcon frames into the QUI buff
         -- container instead of building owned mirror icons.
         if ns._cdmBoot then
-            RefreshReanchoredBuiltin(ns._cdmBoot, "buff")
+            RefreshReanchoredBuiltin(ns._cdmBoot, "buff", true)
             applying[trackerKey] = false
             return
         end
@@ -2694,7 +2716,7 @@ local function LayoutContainer(trackerKey)
     -- for re-anchored Blizzard frames (frame runtime state isn't QUI-owned).
     -- The post-layout tail below is mirrored here so dependent systems still update.
     if ns._cdmBoot and (trackerKey == "essential" or trackerKey == "utility") then
-        RefreshReanchoredBuiltin(ns._cdmBoot, trackerKey)
+        RefreshReanchoredBuiltin(ns._cdmBoot, trackerKey, true)
         applying[trackerKey] = false
 
         -- Post-layout tail (kept in sync with the legacy tail at end of function).
@@ -3036,6 +3058,20 @@ RefreshAll = function(forceSync)
 
     SyncSettingsFeatureLookups()
 
+    -- One global ownership/placement transaction per RefreshAll. The three
+    -- built-in LayoutContainer calls below still run their surface-specific
+    -- visibility/layering/post-layout tails, but reuse this result instead of
+    -- releasing/re-minting every mirror three times in the stagger window.
+    refreshAllReanchorBatchActive = true
+    refreshAllReanchorBatchCounts = nil
+    if ns._cdmBoot and ns._cdmBoot.RefreshBuiltins then
+        -- The buff container was historically lazy-created inside its own
+        -- LayoutContainer branch. Global arbitration must see that placement
+        -- before Essential/Utility ownership is chosen.
+        InitBuffContainer()
+        RefreshReanchoredBuiltin(ns._cdmBoot, "essential", false)
+    end
+
     -- Buff fingerprint is NOT reset here. Owned spell lists are kept in sync
     -- by composer changes — the fingerprint comparison in LayoutContainer("buff")
     -- will detect any actual change and rebuild. Unconditional reset causes a
@@ -3068,6 +3104,8 @@ RefreshAll = function(forceSync)
             LayoutContainer(key)
         end
         RunPostLayoutRefresh()
+        refreshAllReanchorBatchActive = false
+        refreshAllReanchorBatchCounts = nil
     else
         refreshTimers[1] = C_Timer.NewTimer(0.01, function()
             refreshTimers[1] = nil
@@ -3099,6 +3137,8 @@ RefreshAll = function(forceSync)
         local finalTimerDelay = 0.10 + #customKeys * 0.01
         refreshTimers[100] = C_Timer.NewTimer(finalTimerDelay, function()
             refreshTimers[100] = nil
+            refreshAllReanchorBatchActive = false
+            refreshAllReanchorBatchCounts = nil
             if InCombatLockdown() and not inInitSafeWindow then
                 specTrackingPendingRefresh = true
                 return
@@ -3520,7 +3560,6 @@ local VIEWER_KEY_MAP = {
 
 -- pcall-guarded construction of the (still-inert) re-anchor runtime. Kept out of
 -- Initialize so that function stays under luac's 60-upvalue-per-function cap.
-local REANCHOR_KEYS = { "essential", "utility", "buff" }
 local EDIT_LOCK_KEYS = { "essential", "utility", "buff", "trackedBar" }
 local reanchorHooksReadyFrame
 local reanchorHooksReadyQueued = false
@@ -3763,6 +3802,9 @@ function ownedEngine:BootstrapReanchorRuntime()
             local scheduleActiveState = ns.CDMReanchorHooks.CreateActiveStateScheduler(CreateFrame)
             local hk = ns.CDMReanchorHooks.New({
                 refresh = function(key) return RefreshReanchoredBuiltin(boot, key) end,
+                refreshMany = function()
+                    return RefreshReanchoredBuiltin(boot, "essential")
+                end,
                 keys = REANCHOR_KEYS,
                 schedule = function(fn) C_Timer.After(0.05, fn) end,
                 scheduleActiveState = scheduleActiveState,

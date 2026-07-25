@@ -42,7 +42,7 @@ local R = ns.QUI_GroupFrameAuraRender or {}
 ns.QUI_GroupFrameAuraRender = R
 
 local CHROME_LEVELS = (ns.QUI_GroupFrameChrome and ns.QUI_GroupFrameChrome.LEVELS)
-    or { AURA_HOST = 11, AURA_BAR = 12 }
+    or { AURA_HOST = 12, AURA_BAR = 13 }
 
 local function CJKFont(fs, p, s, f)
     if ns.Helpers and ns.Helpers.ApplyFontWithFallback then

@@ -5477,9 +5477,9 @@ end
 -- RefreshPowerBars() call site in resource_bars_builders.lua.
 ---------------------------------------------------------------------------
 
-_G.QUI_BuildResourceBarPreview = function(pv)
+_G.QUI_BuildResourceBarPreview = function(pv, options)
     if ns.QUI_ResourceBarsPreview and ns.QUI_ResourceBarsPreview.Build then
-        ns.QUI_ResourceBarsPreview.Build(pv)
+        ns.QUI_ResourceBarsPreview.Build(pv, options)
     end
 end
 

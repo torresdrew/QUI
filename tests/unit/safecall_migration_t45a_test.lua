@@ -60,7 +60,7 @@ check("groupframes.lua: NO bare pcall(SetPortraitTexture remains",
 check("groupframes.lua: SKIP — IsPlayerUnit statement-split probe untouched",
     gf:find('local ok, isPlayer = pcall(UnitIsUnit, unit, "player")', 1, true) ~= nil)
 check("groupframes.lua: SKIP — dispel-color probe (2183 region) untouched",
-    gf:find("local cOk, color = pcall(C_UnitAuras.GetAuraDispelTypeColor, unit, firstDispellableInstID, curve)", 1, true) ~= nil)
+    gf:find("local cOk, color = pcall(C_UnitAuras.GetAuraDispelTypeColor, unit, visualInstID, curve)", 1, true) ~= nil)
 
 -- Task 45a2: header.SetFrameLevel (ApplyHUDLayering), Class A sink-forward,
 -- discarded result, 2 sites (main headers loop + raid group headers loop).

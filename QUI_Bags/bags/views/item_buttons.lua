@@ -116,6 +116,30 @@ local function LiveGetItemContextMatchResult(button)
     return ContainerFrameItemButtonMixin.GetItemContextMatchResult(button)
 end
 
+--- Stop QUI's new-item visual immediately. This deliberately mirrors the
+--- relevant part of Blizzard's ContainerFrameItemButtonMixin:OnUpdate so
+--- callers do not depend on the template's hover script having run first.
+local function StopNewItemGlow(button)
+    if button.NewItemTexture then button.NewItemTexture:Hide() end
+    if button.BattlepayItemTexture then button.BattlepayItemTexture:Hide() end
+    if button.flashAnim and button.flashAnim:IsPlaying() then
+        button.flashAnim:Stop()
+    end
+    if button.newitemglowAnim and button.newitemglowAnim:IsPlaying() then
+        button.newitemglowAnim:Stop()
+    end
+end
+
+--- Hover acknowledgement shared by the live item button and any transparent
+--- input catcher layered over it (selection / routed-deposit modes).
+function ItemButtons.DismissNewItemGlow(button)
+    if not button then return end
+    local guid = button._newItemGuid
+    if guid and Bags.NewItems then Bags.NewItems.MarkSlotSeen(guid) end
+    button._newItemGuid = nil
+    StopNewItemGlow(button)
+end
+
 --- Create one live button under a holder. NOT pooled across bags (a button's
 --- holder fixes its bagID); pooled per holder by the window.
 function ItemButtons.CreateLive(holder, bagID)
@@ -145,18 +169,13 @@ function ItemButtons.CreateLive(holder, bagID)
     button.emptyBackgroundAtlas = nil
     ItemButtons.AddSlotBackground(button)
     UIKit.CreateBorderLines(button)
-    -- New-item glow seen-marking. HookScript is sanctioned here: the
+    -- New-item glow acknowledgement. HookScript is sanctioned here: the
     -- template wires OnEnter as a plain function script ("NOTE: Tutorials
-    -- hook this" — vendored ContainerFrame.xml:76), and Blizzard's own
-    -- handler (Mixin:OnEnter → OnUpdate, ContainerFrame.lua:1538-1548)
-    -- already hides NewItemTexture + stops the anims before this post-hook
-    -- runs — so the hook only persists the seen state in the char store;
-    -- the next Dress then keeps the glow off.
+    -- hook this" — vendored ContainerFrame.xml:76). QUI explicitly hides its
+    -- glow here as well as persisting the seen state, so hover remains
+    -- correct even if the stock handler changes or another region owns it.
     button:HookScript("OnEnter", function(self)
-        if self._newItemGuid then
-            if Bags.NewItems then Bags.NewItems.MarkSlotSeen(self._newItemGuid) end
-            self._newItemGuid = nil
-        end
+        ItemButtons.DismissNewItemGlow(self)
     end)
     return button
 end
@@ -536,13 +555,7 @@ function ItemButtons.Dress(button, entry, searchResult, newGuid)
                 button.newitemglowAnim:Play()
             end
         else
-            button.NewItemTexture:Hide()
-            if button.flashAnim and button.flashAnim:IsPlaying() then
-                button.flashAnim:Stop()
-            end
-            if button.newitemglowAnim and button.newitemglowAnim:IsPlaying() then
-                button.newitemglowAnim:Stop()
-            end
+            StopNewItemGlow(button)
         end
     end
     if button.UpgradeIcon then button.UpgradeIcon:Hide() end

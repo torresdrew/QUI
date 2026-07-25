@@ -18,7 +18,7 @@ local GetDB = Helpers.CreateDBGetter("quiGroupFrames")
 local CHROME_LEVELS = (ns.QUI_GroupFrameChrome and ns.QUI_GroupFrameChrome.LEVELS)
     or {
         THREAT = 6, TARGET = 7, DISPEL = 8, TEXT = 9,
-        AURA_HOST = 11,
+        DISPEL_ICON = 10, CLEANSE = 11, AURA_HOST = 12,
     }
 
 -- Upvalue hot-path globals
@@ -622,17 +622,27 @@ local function CreateTestFrame(parent, index, totalCount, classToken, name, role
             end
         end
 
-        -- Dispel Overlay — edge + tinted fill
+        -- Dispel border + native type icon. Use Bleed for the all-typed
+        -- awareness scope; the default actionable scope previews Magic.
         if prev.dispelOverlay then
             local dsp = healerSettings.dispelOverlay
-            if dsp and dsp.enabled ~= false then
-                local dispel = CreateFrame("Frame", nil, frame, "BackdropTemplate")
-                dispel:SetPoint("TOPLEFT", -px, px)
-                dispel:SetPoint("BOTTOMRIGHT", px, -px)
-                dispel:SetFrameLevel(baseLevel + CHROME_LEVELS.DISPEL)
-                local dc = dsp.color or { 0.26, 0.54, 1, 0.8 }
-                local opacity = dsp.opacity or 0.8
-                ns.SkinBase.ApplyPixelBackdrop(dispel, dsp.borderSize or 3, true, false, { dc[1], dc[2], dc[3], opacity }, { dc[1], dc[2], dc[3], dsp.fillOpacity or 0.18 })
+            if dsp then
+                local sampleType = dsp.scope == "ALL_TYPED" and "Bleed" or "Magic"
+                if dsp.enabled ~= false then
+                    local dispel = CreateFrame("Frame", nil, frame, "BackdropTemplate")
+                    dispel:SetPoint("TOPLEFT", -px, px)
+                    dispel:SetPoint("BOTTOMRIGHT", px, -px)
+                    dispel:SetFrameLevel(baseLevel + CHROME_LEVELS.DISPEL)
+                    local palette = dsp.colors or {}
+                    local dc = palette[sampleType] or { 0.26, 0.54, 1, 0.8 }
+                    local opacity = dsp.opacity or 0.8
+                    ns.SkinBase.ApplyPixelBackdrop(dispel, dsp.borderSize or 3, true, false, { dc[1], dc[2], dc[3], opacity }, { dc[1], dc[2], dc[3], dsp.fillOpacity or 0.18 })
+                end
+                local Chrome = ns.QUI_GroupFrameChrome
+                if dsp.showIcon == true and Chrome and Chrome.ApplyDispelIconLayout then
+                    Chrome.ApplyDispelIconLayout(frame, dsp)
+                    Chrome.ShowDispelTypeIcon(frame, sampleType)
+                end
             end
         end
     end

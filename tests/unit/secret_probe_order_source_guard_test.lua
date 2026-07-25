@@ -453,14 +453,12 @@ end
 do
     local path = "QUI_GroupFrames/groupframes/groupframes.lua"
     local code = stripLuaNonCode(readFile(path))
-    -- Dispel overlay type: statement-split probe. The old compound
-    -- `dispelAura.dispelName and not IsSecretValue(...)` truth-tested the
-    -- possibly-secret field first (RebuildDebuffMaps stores entries whose
-    -- dispelName is secret and probes this same field itself).
+    -- Dispel type resolver: statement-split probe. The old compound
+    -- truth-tested the possibly-secret dispelName before probing it.
     assert(not code:find("dispelAura and dispelAura.dispelName and not IsSecretValue", 1, true),
         path .. ": dispelName probe must not trail its truth test")
-    assertOrderInFunction(code, path, "local dispelName = dispelAura and dispelAura.dispelName",
-        "IsSecretValue(dispelName)", "if dispelName then", 900)
+    assertOrderInFunction(code, path, "function _dispel.ReadableType(auraData)",
+        "IsSecretValue(dispelName)", "if dispelName ==", 900)
 end
 
 do

@@ -999,6 +999,7 @@ function BagWindow.Refresh()
                 -- the catcher owns hover while armed, so it reproduces the
                 -- item tooltip and adds the mode instructions
                 catcher:SetScript("OnEnter", function(self)
+                    Bags.ItemButtons.DismissNewItemGlow(btn)
                     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
                     GameTooltip:SetBagItem(btn:GetBagID(), btn:GetID())
                     GameTooltip:AddLine(" ")
@@ -1042,6 +1043,7 @@ function BagWindow.Refresh()
                     end
                 end)
                 dep:SetScript("OnEnter", function(self)
+                    Bags.ItemButtons.DismissNewItemGlow(btn)
                     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
                     GameTooltip:SetBagItem(btn:GetBagID(), btn:GetID())
                     GameTooltip:AddLine(" ")

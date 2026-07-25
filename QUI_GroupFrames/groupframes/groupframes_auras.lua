@@ -12,7 +12,7 @@ local SafeToNumber = Helpers.SafeToNumber
 local GetDB = Helpers.CreateDBGetter("quiGroupFrames")
 local AuraModel = ns.QUI_GroupFramesAuraModel
 local CHROME_LEVELS = (ns.QUI_GroupFrameChrome and ns.QUI_GroupFrameChrome.LEVELS)
-    or { AURA_HOST = 11 }
+    or { AURA_HOST = 12 }
 local function GetFrameUnit(frame)
     local GF = ns.QUI_GroupFrames
     return GF and GF.GetFrameUnit and GF.GetFrameUnit(frame) or nil
@@ -138,6 +138,8 @@ QUI_GFA.BuildElementRenderList = BuildElementRenderList
 --     playerDispellable      = { [instID] = true },     -- player can dispel
 --     playerDispellableOrder = { instID, ... },
 --     allDispellable         = { [instID] = true },     -- anyone can dispel (any dispelName)
+--     typedDebuffs           = { [instID] = true },     -- any known dispel type, incl. Bleed/Enrage
+--     typedDebuffOrder       = { instID, ... },
 --     -- Bookkeeping
 --     hasFullScan            = boolean,
 -- }
@@ -296,6 +298,8 @@ local function CreateAuraCacheEntry()
         playerDispellable = {},
         playerDispellableOrder = {},
         allDispellable = {},
+        typedDebuffs = {},
+        typedDebuffOrder = {},
         -- Bookkeeping
         hasFullScan = false,
     }
@@ -325,6 +329,8 @@ local function ResetAuraCache(cache)
     wipe(cache.playerDispellable)
     wipe(cache.playerDispellableOrder)
     wipe(cache.allDispellable)
+    wipe(cache.typedDebuffs)
+    wipe(cache.typedDebuffOrder)
     cache.hasFullScan = false
 end
 
@@ -370,6 +376,7 @@ local function RebuildBuffMaps(_unit, cache)
     end
 end
 
+-- >>> QUI_TEST_EXTRACT RebuildDebuffMaps
 local function RebuildDebuffMaps(unit, cache)
     wipe(cache.debuffsByID)
     wipe(cache.debuffsIndexByID)
@@ -378,6 +385,8 @@ local function RebuildDebuffMaps(unit, cache)
     wipe(cache.playerDispellable)
     wipe(cache.playerDispellableOrder)
     wipe(cache.allDispellable)
+    wipe(cache.typedDebuffs)
+    wipe(cache.typedDebuffOrder)
 
     local debuffs = cache.debuffs
     local debuffsByID = cache.debuffsByID
@@ -387,6 +396,8 @@ local function RebuildDebuffMaps(unit, cache)
     local playerDispellable = cache.playerDispellable
     local playerDispellableOrder = cache.playerDispellableOrder
     local allDispellable = cache.allDispellable
+    local typedDebuffs = cache.typedDebuffs
+    local typedDebuffOrder = cache.typedDebuffOrder
 
     -- Per-spell always-secret auras survive the AurasAreSecret() gate
     -- (SecretPredicatesDocumentation: "Individual spells may be flagged as
@@ -422,7 +433,21 @@ local function RebuildDebuffMaps(unit, cache)
                 allDispellable[instID] = true
             end
 
+            local dispelEnum = auraData.dispelType
+            if IsSecretValue(dispelEnum) then
+                -- @secret-policy: reject-secret-value — never compare an
+                -- opaque enum; the player-dispellable classifier below may
+                -- still establish typed membership without revealing it.
+                dispelEnum = nil
+            end
             local classified = ClassifyDispellable(unit, instID)
+            local hasTypedEnum = dispelEnum == 1 or dispelEnum == 2
+                or dispelEnum == 3 or dispelEnum == 4
+                or dispelEnum == 9 or dispelEnum == 11
+            if hasDispelType or hasTypedEnum or classified == true then
+                typedDebuffs[instID] = true
+                typedDebuffOrder[#typedDebuffOrder + 1] = instID
+            end
             if classified == true or (classified == nil and hasDispelType) then
                 playerDispellable[instID] = true
                 playerDispellableOrder[#playerDispellableOrder + 1] = instID
@@ -440,6 +465,7 @@ local function RebuildDebuffMaps(unit, cache)
         end
     end
 end
+-- <<< QUI_TEST_EXTRACT RebuildDebuffMaps
 
 local function ResolveAuraBucket(unit, auraData)
     if not auraData then return nil end
@@ -573,7 +599,21 @@ local function AddDebuffDerivedData(unit, cache, auraData)
         cache.allDispellable[instID] = true
     end
 
+    local dispelEnum = auraData.dispelType
+    if IsSecretValue(dispelEnum) then
+        -- @secret-policy: reject-secret-value
+        dispelEnum = nil
+    end
     local classified = ClassifyDispellable(unit, instID)
+    local hasTypedEnum = dispelEnum == 1 or dispelEnum == 2
+        or dispelEnum == 3 or dispelEnum == 4
+        or dispelEnum == 9 or dispelEnum == 11
+    if hasDispelType or hasTypedEnum or classified == true then
+        if not cache.typedDebuffs[instID] then
+            cache.typedDebuffOrder[#cache.typedDebuffOrder + 1] = instID
+        end
+        cache.typedDebuffs[instID] = true
+    end
     if classified == true or (classified == nil and hasDispelType) then
         -- Dedup-guard the order append against the set so playerDispellableOrder
         -- stays a faithful mirror of playerDispellable; an unconditional append
@@ -611,7 +651,9 @@ local function RemoveDebuffDerivedData(cache, auraData, instID)
 
     cache.playerDispellable[instID] = nil
     cache.allDispellable[instID] = nil
+    cache.typedDebuffs[instID] = nil
     RemoveIDFromOrder(cache.playerDispellableOrder, instID)
+    RemoveIDFromOrder(cache.typedDebuffOrder, instID)
 end
 
 local function AppendAuraToBucket(unit, cache, bucketName, auraData)
@@ -1042,7 +1084,8 @@ local function ApplyAuraDelta(unit, updateInfo)
     -- No full RebuildBuffMaps/RebuildDebuffMaps on the updated path: ReplaceAuraInBucket
     -- now maintains the spellID/name/instance maps incrementally. Dispel
     -- classification is spell-fixed, so a stack/duration update can't change it
-    -- -- the add/remove paths already keep playerDispellable/allDispellable current.
+    -- -- the add/remove paths already keep playerDispellable/allDispellable and
+    -- typedDebuffs current.
 
     -- Publish the dirty summary for the render fan-out (valid only on this true
     -- return; a false return falls back to a full scan + full render).
@@ -1742,10 +1785,12 @@ local function HasActiveAuraElements(vdb)
     return false
 end
 
-local function HasDispelOverlay(vdb)
+local function HasDispelConsumer(vdb)
     local healer = vdb and vdb.healer
     local dispel = healer and healer.dispelOverlay
-    return dispel and dispel.enabled ~= false
+    local glow = healer and healer.cleanseGlow
+    return (dispel and (dispel.enabled ~= false or dispel.showIcon == true))
+        or (glow and glow.enabled == true)
 end
 
 -- A context has active aura consumers when it has any enabled aura element
@@ -1756,7 +1801,7 @@ local function HasActiveAuraConsumers(isRaid)
     if not vdb then return false end
 
     if HasActiveAuraElements(vdb) then return true end
-    if HasDispelOverlay(vdb) then return true end
+    if HasDispelConsumer(vdb) then return true end
 
     return false
 end

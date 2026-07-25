@@ -4241,6 +4241,12 @@ return {
               dispelOverlay = {
                 borderSize = 3,
                 colors = {
+                  Bleed = {
+                    [1] = 0.80000000000000004,
+                    [2] = 0,
+                    [3] = 0,
+                    [4] = 1
+                  },
                   Curse = {
                     [1] = 0.59999999999999998,
                     [2] = 0,
@@ -4268,7 +4274,14 @@ return {
                 },
                 enabled = true,
                 fillOpacity = 0.17999999999999999,
-                opacity = 0.80000000000000004
+                iconAnchor = "TOPRIGHT",
+                iconOffsetX = 0,
+                iconOffsetY = 0,
+                iconOpacity = 1,
+                iconSize = 20,
+                opacity = 0.80000000000000004,
+                scope = "PLAYER_DISPELLABLE",
+                showIcon = false
               },
               targetHighlight = {
                 color = {
@@ -4617,6 +4630,12 @@ return {
               dispelOverlay = {
                 borderSize = 3,
                 colors = {
+                  Bleed = {
+                    [1] = 0.80000000000000004,
+                    [2] = 0,
+                    [3] = 0,
+                    [4] = 1
+                  },
                   Curse = {
                     [1] = 0.59999999999999998,
                     [2] = 0,
@@ -4644,7 +4663,14 @@ return {
                 },
                 enabled = true,
                 fillOpacity = 0.17999999999999999,
-                opacity = 0.80000000000000004
+                iconAnchor = "TOPRIGHT",
+                iconOffsetX = 0,
+                iconOffsetY = 0,
+                iconOpacity = 1,
+                iconSize = 20,
+                opacity = 0.80000000000000004,
+                scope = "PLAYER_DISPELLABLE",
+                showIcon = false
               },
               targetHighlight = {
                 color = {

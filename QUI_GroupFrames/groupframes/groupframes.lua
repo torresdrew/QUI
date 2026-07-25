@@ -283,6 +283,7 @@ local _dispel = {
         [9] = "Bleed", [11] = "Bleed",
     },
     colorCurve = nil,
+    iconCurves = {},
     cachedColors = nil,
     borderKeys = {"borderTop", "borderBottom", "borderLeft", "borderRight"},
 }
@@ -1821,119 +1822,164 @@ local function ShowConfiguredDispelOverlay(overlay, colors, dispelType, opacity)
     return true
 end
 
+-- >>> QUI_TEST_EXTRACT DispelTypeIconRuntime
+function _dispel.ReadableType(auraData)
+    if IsSecretValue(auraData) then
+        -- An opaque AuraData cannot safely participate in Lua-side selection.
+        return nil -- @secret-policy: reject-secret-value
+    end
+    local dispelName = auraData and auraData.dispelName
+    if IsSecretValue(dispelName) then
+        -- @secret-policy: reject-secret-value — selection is deferred to the
+        -- per-atlas color curves instead of branching on an opaque type.
+        dispelName = nil
+    end
+    if dispelName == "Enrage" then return "Bleed" end
+    if dispelName == "Magic" or dispelName == "Curse"
+        or dispelName == "Disease" or dispelName == "Poison"
+        or dispelName == "Bleed" then
+        return dispelName
+    end
+
+    local dispelEnum = auraData and auraData.dispelType
+    if IsSecretValue(dispelEnum) then
+        -- @secret-policy: reject-secret-value
+        dispelEnum = nil
+    end
+    return _dispel.enumNames[dispelEnum]
+end
+
+-- Stable order + authoritative set membership. When aura access is allowed,
+-- also re-probe the unit so a stale derived-set entry cannot strand a visual.
+function _dispel.SelectCachedAura(cache, unit, orderKey, setKey)
+    local order = cache and cache[orderKey]
+    local set = cache and cache[setKey]
+    if not order or not set then return nil, nil end
+
+    local GetAuraByInstanceID = C_UnitAuras and C_UnitAuras.GetAuraDataByAuraInstanceID
+    if GetAuraByInstanceID and C_Secrets and C_Secrets.ShouldAurasBeSecret
+        and C_Secrets.ShouldAurasBeSecret() then
+        GetAuraByInstanceID = nil
+    end
+    for i = 1, #order do
+        local instID = order[i]
+        if instID and set[instID] then
+            local stillLive = true
+            if GetAuraByInstanceID and not IsSecretValue(instID) then
+                local live = GetAuraByInstanceID(unit, instID) -- @secret-safe: the AurasAreSecret gate above disables this access while restricted
+                if not IsSecretValue(live) and live == nil then
+                    stillLive = false
+                end
+            end
+            if stillLive then
+                local auraData = cache.debuffsByID and cache.debuffsByID[instID]
+                return instID, _dispel.ReadableType(auraData)
+            end
+        end
+    end
+    return nil, nil
+end
+
+function _dispel.GetIconCurve(typeName)
+    local cached = _dispel.iconCurves[typeName]
+    if cached then return cached end
+    if not C_CurveUtil or not C_CurveUtil.CreateColorCurve then return nil end
+
+    local curve = C_CurveUtil.CreateColorCurve()
+    curve:SetType(Enum.LuaCurveType.Step)
+    curve:AddPoint(0, CreateColor(1, 1, 1, 0))
+    for _, enumVal in ipairs(_dispel.allEnums) do
+        local alpha = _dispel.enumNames[enumVal] == typeName and 1 or 0
+        curve:AddPoint(enumVal, CreateColor(1, 1, 1, alpha))
+    end
+    _dispel.iconCurves[typeName] = curve
+    return curve
+end
+
+-- A restricted aura can yield secret RGBA components. Do not inspect them:
+-- forward GetRGBA() directly into the texture's supported C-side color sink.
+function _dispel.ShowIconWithCurves(frame, unit, auraInstanceID)
+    local icons = frame and frame.dispelTypeIcons
+    local GetTypeColor = C_UnitAuras and C_UnitAuras.GetAuraDispelTypeColor
+    if not icons or not GetTypeColor or not auraInstanceID then return false end
+
+    Chrome.HideDispelTypeIcons(frame)
+    local showed = false
+    for _, typeName in ipairs(Chrome.DISPEL_ICON_TYPES) do
+        local icon = icons[typeName]
+        local curve = _dispel.GetIconCurve(typeName)
+        if icon and curve then
+            local ok = pcall(function()
+                local color = GetTypeColor(unit, auraInstanceID, curve)
+                icon:GetStatusBarTexture():SetVertexColor(color:GetRGBA())
+            end)
+            if ok then
+                icon:Show()
+                showed = true
+            else
+                icon:Hide()
+            end
+        end
+    end
+    return showed
+end
+
+function _dispel.HideVisuals(frame)
+    if frame.dispelOverlay then frame.dispelOverlay:Hide() end
+    Chrome.HideDispelTypeIcons(frame)
+    if frame.cleanseGlow then frame.cleanseGlow:Hide() end
+end
+-- <<< QUI_TEST_EXTRACT DispelTypeIconRuntime
+
 local function UpdateDispelOverlay(frame)
     if not frame or not frame.dispelOverlay then return end
     local unit = QUI_GF.GetFrameUnit(frame)
-    if not unit then return end
-    local isRaid = frame._isRaid
-    local healerSettings = GetHealerSettings(isRaid)
+    if not unit then
+        _dispel.HideVisuals(frame)
+        return
+    end
+
+    local healerSettings = GetHealerSettings(frame._isRaid)
     local dispelCfg = healerSettings and healerSettings.dispelOverlay
     local glowCfg = healerSettings and healerSettings.cleanseGlow
-    -- Border defaults to ON when the key is absent (legacy behavior); glow is
-    -- strictly opt-in. Both consume the SAME playerDispellable probe below, so a
-    -- user can run glow-only, border-only, or both off (fast early-out).
+    -- The border keeps its legacy default-on behavior. The type icon and
+    -- cleanse glow are independent opt-ins, so any combination is valid.
     local borderOn = dispelCfg ~= nil and dispelCfg.enabled ~= false
+    local iconOn = dispelCfg ~= nil and dispelCfg.showIcon == true
     local glowOn = glowCfg ~= nil and glowCfg.enabled == true
-    local glowFrame = frame.cleanseGlow
-    if not borderOn and not glowOn then
-        frame.dispelOverlay:Hide()
-        if glowFrame then glowFrame:Hide() end
+    if not borderOn and not iconOn and not glowOn then
+        _dispel.HideVisuals(frame)
         return
     end
 
     local _, isDeadOrGhost = GetUnitLifeState(unit)
     if not UnitExists(unit) or isDeadOrGhost then
-        frame.dispelOverlay:Hide()
-        if glowFrame then glowFrame:Hide() end
+        _dispel.HideVisuals(frame)
         return
     end
 
-    local overlay = frame.dispelOverlay
-
-    -- Fast path: the aura scan already classified every harmful aura against
-    -- HARMFUL|RAID (68675: player-dispellable) and stashed the matching
-    -- instance IDs in cache.playerDispellable. Probe the set directly — this
-    -- replaces a per-aura pcall+filter-check loop with a single next() call,
-    -- which is the biggest raid-perf win on this path.
     local GFA = ns.QUI_GroupFrameAuras
     local cache = GFA and GFA.unitAuraCache and GFA.unitAuraCache[unit]
-    local hasDispellable = false
-    local firstDispellableInstID = nil
-    local firstDispellableType = nil
+    local playerInstID = _dispel.SelectCachedAura(
+        cache, unit, "playerDispellableOrder", "playerDispellable"
+    )
 
-    if cache and cache.playerDispellableOrder then
-        -- The playerDispellable SET is the authoritative membership (cleared
-        -- unconditionally on removal); playerDispellableOrder is only a stable
-        -- type-picker. A phantom order entry (one whose set membership was
-        -- already cleared) must NOT relight the overlay, so walk the order and
-        -- accept the first entry still present in the set. This order+set
-        -- validation mirrors the reference implementation's next(set) semantics.
-        -- Authoritative re-probe: accept an order entry only when it is still in
-        -- the SET *and* still live on the unit. GetAuraDataByAuraInstanceID is the
-        -- cache-independent authority — if the shared cache ever desyncs (a removal
-        -- that failed to clear the derived set), a gone aura returns nil here and
-        -- the overlay clears instead of sticking; only a genuine nil means the
-        -- aura is gone.
-        local order = cache.playerDispellableOrder
-        local set = cache.playerDispellable
-        local GetAuraByInstanceID = C_UnitAuras and C_UnitAuras.GetAuraDataByAuraInstanceID
-        -- 12.1: the re-probe carries RequiresUnitAuraAccess — it THROWS while
-        -- auras are restricted (execution is tainted; a plain-number instID
-        -- does not exempt the call, see cdm_sources' wrapper rationale). Skip
-        -- the probe under restriction and keep the overlay lit until the next
-        -- unrestricted pass — the cache-driven membership above still governs.
-        if GetAuraByInstanceID and C_Secrets and C_Secrets.ShouldAurasBeSecret
-            and C_Secrets.ShouldAurasBeSecret() then
-            GetAuraByInstanceID = nil
-        end
-        for i = 1, #order do
-            local instID = order[i]
-            if instID and (not set or set[instID]) then
-                local stillLive = true
-                if GetAuraByInstanceID and not IsSecretValue(instID) then
-                    local live = GetAuraByInstanceID(unit, instID) -- @secret-safe: the AurasAreSecret check above nils GetAuraByInstanceID under restriction, so this call only runs unrestricted
-                    if not IsSecretValue(live) and live == nil then
-                        stillLive = false
-                    end
-                end
-                if stillLive then
-                    hasDispellable = true
-                    firstDispellableInstID = instID
-                    local dispelAura = cache.debuffsByID and cache.debuffsByID[instID]
-                    -- Statement-split probe: dispelName can be secret on an
-                    -- otherwise readable cached entry (RebuildDebuffMaps
-                    -- stores such entries and probes this same field for its
-                    -- own dispel classification). The previous compound
-                    -- `and dispelAura.dispelName and not IsSecretValue(...)`
-                    -- truth-tested the secret BEFORE the probe could run.
-                    local dispelName = dispelAura and dispelAura.dispelName
-                    if IsSecretValue(dispelName) then
-                        -- @secret-policy: reject-secret-value — a secret
-                        -- dispel type is indeterminate; leave the type nil
-                        -- (flat-color fallback path).
-                        dispelName = nil
-                    end
-                    if dispelName then
-                        firstDispellableType = dispelName
-                    end
-                    break
-                end
-            end
-        end
+    local visualInstID, visualType
+    if dispelCfg and dispelCfg.scope == "ALL_TYPED" then
+        visualInstID, visualType = _dispel.SelectCachedAura(
+            cache, unit, "typedDebuffOrder", "typedDebuffs"
+        )
+    else
+        visualInstID, visualType = _dispel.SelectCachedAura(
+            cache, unit, "playerDispellableOrder", "playerDispellable"
+        )
     end
 
-    if not hasDispellable then
-        overlay:Hide()
-        if glowFrame then glowFrame:Hide() end
-        return
-    end
-
-    -- Cleanse-ready glow: same non-secret playerDispellable membership, an
-    -- independent flat-color layer. Resolve it HERE (before the border color
-    -- paths, which early-return on success). Flat configured color only — no
-    -- secret dispel-type curve is forwarded, so this stays secret-safe.
+    -- Cleanse-ready remains strictly player-actionable even when the border
+    -- and icon are configured as all-typed awareness visuals.
+    local glowFrame = frame.cleanseGlow
     if glowFrame then
-        if glowOn then
+        if glowOn and playerInstID then
             local gc = glowCfg and glowCfg.color
             glowFrame.tex:SetVertexColor((gc and gc[1]) or 0.1, (gc and gc[2]) or 1.0, (gc and gc[3]) or 0.1, (gc and gc[4]) or 1.0)
             glowFrame:Show()
@@ -1942,24 +1988,36 @@ local function UpdateDispelOverlay(frame)
         end
     end
 
-    -- Glow can run standalone; if the border is disabled, stop here (glow shown).
-    if not borderOn then
-        overlay:Hide()
+    if not visualInstID then
+        frame.dispelOverlay:Hide()
+        Chrome.HideDispelTypeIcons(frame)
         return
     end
 
-    -- Preferred color path: let the client resolve the color from the aura instance.
-    if firstDispellableInstID and C_UnitAuras.GetAuraDispelTypeColor then
-        local opacity = healerSettings.dispelOverlay.opacity or 0.8
+    if iconOn then
+        local shown = visualType and Chrome.ShowDispelTypeIcon(frame, visualType)
+        if not shown then
+            _dispel.ShowIconWithCurves(frame, unit, visualInstID)
+        end
+    else
+        Chrome.HideDispelTypeIcons(frame)
+    end
+
+    if not borderOn then
+        frame.dispelOverlay:Hide()
+        return
+    end
+
+    local overlay = frame.dispelOverlay
+    -- Preferred border path: let the client resolve the color from the aura
+    -- instance and forward any secret components into supported sinks.
+    if C_UnitAuras.GetAuraDispelTypeColor then
+        local opacity = dispelCfg.opacity or 0.8
         local curve = GetDispelColorCurve(opacity)
         if curve then
-            local cOk, color = pcall(C_UnitAuras.GetAuraDispelTypeColor, unit, firstDispellableInstID, curve)
+            local cOk, color = pcall(C_UnitAuras.GetAuraDispelTypeColor, unit, visualInstID, curve)
             if cOk then
-                -- A secret color OBJECT can't be method-called (GetRGBA
-                -- throws); fold to nil so the fallback below renders instead.
-                if IsSecretValue(color) then
-                    color = nil
-                end
+                if IsSecretValue(color) then color = nil end
                 if color then
                     SetDispelBorderColorMixin(overlay, color)
                     overlay:Show()
@@ -1969,16 +2027,12 @@ local function UpdateDispelOverlay(frame)
         end
     end
 
-    -- Fallback color path: look up the resolved dispel type in the color table.
     local colors = GetDispelColors()
-    local fallbackOpacity = healerSettings.dispelOverlay.opacity or 0.8
-    if ShowConfiguredDispelOverlay(overlay, colors, firstDispellableType, fallbackOpacity) then
+    local fallbackOpacity = dispelCfg.opacity or 0.8
+    if ShowConfiguredDispelOverlay(overlay, colors, visualType, fallbackOpacity) then
         return
     end
 
-    -- Last-resort fallback: detection succeeded but no type-specific color
-    -- could be resolved. Default to Magic blue so the healer still sees the
-    -- overlay instead of silently dropping it.
     local fallback = (colors and colors.Magic) or _state.defaultColors.dispelFallback
     SetDispelBorderColor(overlay, fallback[1], fallback[2], fallback[3], fallbackOpacity)
     overlay:Show()

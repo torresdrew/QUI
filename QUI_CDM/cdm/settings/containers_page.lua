@@ -2995,7 +2995,13 @@ local function BuildPreviewBlock(pv)
                 State.deleteBtn:Hide()
             end
             if _G.QUI_BuildCDMPreview then
-                _G.QUI_BuildCDMPreview(previewHost, State.activeContainer)
+                _G.QUI_BuildCDMPreview(previewHost, State.activeContainer, {
+                    outer = pv,
+                    -- The host starts below the 50px context column with a
+                    -- 4px gap and ends 8px above the pane bottom. The inner
+                    -- preview adds its own title and compact padding.
+                    outerChromeHeight = LEFT_COL_HEIGHT + 4 + 8,
+                })
             end
         end,
     })

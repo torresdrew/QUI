@@ -120,9 +120,12 @@ test("chip enabled: threat default-on unless explicit false", function()
     assert(D._ChipEnabledInConfig({ indicators = { showThreatBorder = false } }, "threat") == false)
 end)
 
-test("chip enabled: dispel requires cfg.enabled ~= false", function()
+test("chip enabled: dispel accepts border, icon, or glow independently", function()
     assert(D._ChipEnabledInConfig({ healer = { dispelOverlay = { enabled = true } } }, "dispel") == true)
     assert(D._ChipEnabledInConfig({ healer = { dispelOverlay = { enabled = false } } }, "dispel") == false)
+    assert(D._ChipEnabledInConfig({
+        healer = { dispelOverlay = { enabled = false, showIcon = true } },
+    }, "dispel") == true, "icon-only config still has a useful Dispel chip")
     assert(D._ChipEnabledInConfig({ healer = {} }, "dispel") == false)
     assert(D._ChipEnabledInConfig({
         healer = {
@@ -430,10 +433,10 @@ test("surface labels every single-tile sample with an independent control", func
     assert(not driverSource:find("F.highlights", 1, true))
 end)
 
-test("aura placeholder host rides the shared live container level (frame+11)", function()
+test("aura placeholder host rides the shared live container level (frame+12)", function()
     -- Filter strips and tracked icon/square/bar are drawn LIVE by a secure
     -- CustomAuraContainer the engine fills; the preview stands in for them with
-    -- placeholders, which must sit where those containers sit (frame+11 host,
+    -- placeholders, which must sit where those containers sit (frame+12 host,
     -- frame+12 child/bar) -- above the chrome text frame.
     assert(D._AuraHostLevel(0) == 11)
     assert(D._AuraHostLevel(100) == 111)

@@ -33,7 +33,7 @@ ns.QUI_GroupFramesPreview = Driver
 ---------------------------------------------------------------------------
 local PREVIEW_BUFF_ICONS   = { 136034, 135940, 136081, 135932, 136063 }
 local FAKE_DURATIONS = { 8, 15, 30, 45, 60 }
-local DISPEL_CYCLE   = { "Magic", "Curse", "Disease", "Poison" }
+local DISPEL_CYCLE   = { "Magic", "Curse", "Disease", "Poison", "Bleed" }
 
 local _fakeInstance = 0
 local function NextInstanceID()
@@ -137,7 +137,7 @@ function Driver._ChipEnabledInConfig(vdb, chipKey)
     elseif chipKey == "dispel" then
         local d = healer.dispelOverlay
         local glow = healer.cleanseGlow
-        return ((d ~= nil) and (d.enabled ~= false))
+        return ((d ~= nil) and (d.enabled ~= false or d.showIcon == true))
             or ((glow ~= nil) and (glow.enabled == true))
     elseif chipKey == "auras" then
         local a = vdb.auras
@@ -751,20 +751,34 @@ local function ApplyTargetHighlight(f, healer, isTarget)
     th:Show()
 end
 
--- dispel overlay (healer.dispelOverlay) on Chrome's dispelOverlay, tinted
--- through the shared Chrome.SetDispelBorderColor the runtime uses.
+-- Dispel border + native type icon on the exact Chrome objects runtime uses.
+-- Each visual is independently gated by its own setting.
 local function ApplyDispelOverlay(f, healer, dispelType)
     local ov = f.dispelOverlay
     if not ov then return end
     local cfg = healer and healer.dispelOverlay
-    if not cfg or cfg.enabled == false or not dispelType then ov:Hide(); return end
     local C = GetChrome()
-    if not C then ov:Hide(); return end
-    local seed = DispelPalette()
-    local colors = cfg.colors or seed
-    local c = colors[dispelType] or seed[dispelType] or DefaultColor("dispelFallback")
-    C.SetDispelBorderColor(ov, c[1], c[2], c[3], tonumber(cfg.opacity) or 1)
-    ov:Show()
+    if not cfg or not C or not dispelType then
+        ov:Hide()
+        if C then C.HideDispelTypeIcons(f) end
+        return
+    end
+
+    if cfg.enabled ~= false then
+        local seed = DispelPalette()
+        local colors = cfg.colors or seed
+        local c = colors[dispelType] or seed[dispelType] or DefaultColor("dispelFallback")
+        C.SetDispelBorderColor(ov, c[1], c[2], c[3], tonumber(cfg.opacity) or 1)
+        ov:Show()
+    else
+        ov:Hide()
+    end
+
+    if cfg.showIcon == true then
+        C.ShowDispelTypeIcon(f, dispelType)
+    else
+        C.HideDispelTypeIcons(f)
+    end
 end
 
 -- cleanse-ready glow shares the dispellable sample with the border but has its
@@ -1013,8 +1027,12 @@ local function ApplyFrameSettings(f, member, vdb, gfdb, contextMode)
     ApplyTargetHighlight(f, vdb.healer,
         member._sampleTarget == true and F.targetHighlight ~= false)
     local sampleDispel = (F.dispel ~= false) and member._sampleDispel or nil
+    local dispelCfg = vdb.healer and vdb.healer.dispelOverlay
+    if sampleDispel and dispelCfg and dispelCfg.scope == "ALL_TYPED" then
+        sampleDispel = "Bleed"
+    end
     ApplyDispelOverlay(f, vdb.healer, sampleDispel)
-    ApplyCleanseGlow(f, vdb.healer, sampleDispel ~= nil)
+    ApplyCleanseGlow(f, vdb.healer, sampleDispel ~= nil and sampleDispel ~= "Bleed")
 
     -- 4. Preview-only extras (no live counterpart on the frame itself).
     ApplyTargetedSpells(f, vdb.targetedSpells, member._sampleTargetedSpells,

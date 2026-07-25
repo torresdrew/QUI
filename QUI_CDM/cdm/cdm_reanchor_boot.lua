@@ -346,6 +346,7 @@ function CDMReanchorBoot.BuildRuntime(env)
     runtime = env.CDMReanchorRuntime.New({
         bridge = bridge,
         wiring = wiring,
+        placementPlanner = env.CDMPlacementPlanner or ns.CDMPlacementPlanner,
         auraPhase = auraPhase,
         pandemic = pandemic,
         -- Proc-glow bridge OnClaim reconcile. The instance is built lazily in
@@ -381,6 +382,10 @@ function CDMReanchorBoot.BuildRuntime(env)
         -- can't pile up Show()n at stale slots.
         releaseOwned = env.releaseIcon,
         positionOwned = MakePositionOwned(env),
+        acquireAuraMirror = env.acquireAuraMirror,
+        positionAuraMirror = env.positionAuraMirror,
+        beginAuraMirrorPass = env.beginAuraMirrorPass,
+        endAuraMirrorPass = env.endAuraMirrorPass,
         applySize = MakeApplySize(env),
         decorate = env.decorate,
         mintShell = env.mintShell,
@@ -405,6 +410,11 @@ function CDMReanchorBoot.BuildRuntime(env)
         RefreshBuiltin = function(_, containerKey)
             return runtime:RefreshContainer(containerKey)
         end,
+        -- Atomic global placement pass used by live built-in layout and hook
+        -- churn. RefreshBuiltin remains as a narrow compatibility/test seam.
+        RefreshBuiltins = function(_, containerKeys)
+            return runtime:RefreshContainers(containerKeys)
+        end,
         -- PLAYER_REGEN_ENABLED drain: re-run every container whose combat refresh
         -- was deferred by the protected-owned gate.
         DrainPendingCombatRefresh = function(_)
@@ -417,6 +427,9 @@ function CDMReanchorBoot.BuildRuntime(env)
         end,
         GetEntryForFrame = function(_, frame)
             return runtime:GetEntryForFrame(frame)
+        end,
+        GetPlacementsForFrame = function(_, frame)
+            return runtime:GetPlacementsForFrame(frame)
         end,
     }
 end

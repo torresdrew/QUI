@@ -152,6 +152,8 @@ ns._OwnedSwipe = { GetSettings = function() return swipeStub end }
 local facade = B.BuildRuntime(env)
 assert(type(facade) == "table" and facade.bridge and facade.wiring and facade.runtime, "facade has bridge/wiring/runtime")
 assert(type(facade.RefreshBuiltin) == "function", "facade:RefreshBuiltin exists")
+assert(type(facade.RefreshBuiltins) == "function", "facade:RefreshBuiltins exposes atomic placement refresh")
+assert(type(facade.GetPlacementsForFrame) == "function", "facade exposes placement consumers")
 
 local count = facade:RefreshBuiltin("essential")
 assert(count == 1, "one curated entry assembled (matched)")

@@ -52,10 +52,11 @@ local LEVELS = Chrome.LEVELS or {
     TARGET       = 7,
     DISPEL       = 8,
     TEXT         = 9,
-    CLEANSE      = 10,
-    AURA_HOST    = 11,
-    AURA_BAR     = 12,
-    TARGETED     = 13,
+    DISPEL_ICON  = 10,
+    CLEANSE      = 11,
+    AURA_HOST    = 12,
+    AURA_BAR     = 13,
+    TARGETED     = 14,
 }
 Chrome.LEVELS = LEVELS
 
@@ -439,6 +440,88 @@ local function AnchorBottomPadded(frame, vdb, bottomPad)
     end
 end
 Chrome.AnchorBottomPadded = AnchorBottomPadded
+
+---------------------------------------------------------------------------
+-- DISPEL-TYPE ICONS
+-- Five overlapping StatusBars let the runtime forward a secret dispel-type
+-- color directly into texture sinks: one step curve makes exactly one atlas
+-- opaque while the other four remain transparent. When the type is readable,
+-- ShowDispelTypeIcon simply selects the matching frame without using curves.
+---------------------------------------------------------------------------
+local DISPEL_ICON_TYPES = Chrome.DISPEL_ICON_TYPES or {
+    "Magic", "Curse", "Disease", "Poison", "Bleed",
+}
+local DISPEL_ICON_ATLASES = Chrome.DISPEL_ICON_ATLASES or {
+    Magic   = "RaidFrame-Icon-DebuffMagic",
+    Curse   = "RaidFrame-Icon-DebuffCurse",
+    Disease = "RaidFrame-Icon-DebuffDisease",
+    Poison  = "RaidFrame-Icon-DebuffPoison",
+    Bleed   = "RaidFrame-Icon-DebuffBleed",
+}
+Chrome.DISPEL_ICON_TYPES = DISPEL_ICON_TYPES
+Chrome.DISPEL_ICON_ATLASES = DISPEL_ICON_ATLASES
+
+function Chrome.HideDispelTypeIcons(frame)
+    local icons = frame and frame.dispelTypeIcons
+    if not icons then return end
+    for _, typeName in ipairs(DISPEL_ICON_TYPES) do
+        local icon = icons[typeName]
+        if icon then icon:Hide() end
+    end
+end
+
+function Chrome.ShowDispelTypeIcon(frame, typeName)
+    local icons = frame and frame.dispelTypeIcons
+    if not icons then return false end
+    local selected = icons[typeName]
+    for _, name in ipairs(DISPEL_ICON_TYPES) do
+        local icon = icons[name]
+        if icon then icon:Hide() end
+    end
+    if not selected then return false end
+    local texture = selected:GetStatusBarTexture()
+    if texture then texture:SetVertexColor(1, 1, 1, 1) end
+    selected:Show()
+    return true
+end
+
+function Chrome.ApplyDispelIconLayout(frame, settings)
+    if not frame then return end
+    if not settings or settings.showIcon ~= true then
+        Chrome.HideDispelTypeIcons(frame)
+        return
+    end
+
+    local icons = frame.dispelTypeIcons or {}
+    frame.dispelTypeIcons = icons
+    local size = tonumber(settings.iconSize) or 20
+    local alpha = tonumber(settings.iconOpacity) or 1
+    local anchor = settings.iconAnchor or "TOPRIGHT"
+    local offsetX = tonumber(settings.iconOffsetX) or 0
+    local offsetY = tonumber(settings.iconOffsetY) or 0
+
+    for _, typeName in ipairs(DISPEL_ICON_TYPES) do
+        local icon = icons[typeName]
+        if not icon then
+            icon = CreateFrame("StatusBar", nil, frame)
+            icon:SetMinMaxValues(0, 1)
+            icon:SetValue(1)
+            icons[typeName] = icon
+        end
+        icon:SetStatusBarTexture("Interface\\Buttons\\WHITE8x8")
+        local texture = icon:GetStatusBarTexture()
+        if texture then
+            texture:SetAtlas(DISPEL_ICON_ATLASES[typeName])
+            texture:SetVertexColor(1, 1, 1, 1)
+        end
+        icon:ClearAllPoints()
+        icon:SetPoint(anchor, frame, anchor, offsetX, offsetY)
+        icon:SetSize(size, size)
+        icon:SetAlpha(alpha)
+        icon:SetFrameLevel(frame:GetFrameLevel() + LEVELS.DISPEL_ICON)
+        icon:Hide()
+    end
+end
 
 ---------------------------------------------------------------------------
 -- THE BUILDER
@@ -841,6 +924,10 @@ function Chrome.Apply(frame, vdb, state)
 
         dispelOverlay:Hide()
         frame.dispelOverlay = dispelOverlay
+
+        -- Optional native dispel-type atlas. Creation and geometry live here
+        -- so live frames, Edit Mode, and the settings preview stay identical.
+        Chrome.ApplyDispelIconLayout(frame, dispelSettings)
 
         -- Cleanse-ready glow: an additive halo (distinct from the dispel border tint)
         -- shown when the player can dispel a debuff here. Driven by UpdateDispelOverlay
