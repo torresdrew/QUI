@@ -42,7 +42,9 @@ local function NormalizeContextMode(contextMode)
     end
     return contextMode
 end
--- Module state shared between the preview dropdown and the tabbed page body.
+-- Module state for the context currently driving the shared settings builders
+-- and detached preview. Cached surfaces retain their own dropdown choice and
+-- restore it here when that surface becomes visible.
 ---------------------------------------------------------------------------
 local State = {
     contextMode = "party",
@@ -309,12 +311,9 @@ local function SetContextMode(key)
     ContextSelection:Set(key)
 end
 
--- Read-only accessor for the shared context mode. Callers outside this
--- surface (e.g. the Auras hub's Group Frames sub-page) must READ this
--- module-level singleton rather than keeping their own defaulted copy --
--- State.contextMode is also the value the real Group Frames settings tile
--- displays and mutates, so any independent default overwrites it on cold
--- entry.
+-- Read the context currently driving the shared builders/preview. Other
+-- surfaces use it only to seed their first dropdown build; each cached surface
+-- subsequently restores its own retained dropdown choice when shown.
 local function GetContextMode()
     return State.contextMode
 end
@@ -510,9 +509,46 @@ end
 -- Also docks the detached preview panel and ties its visibility to this
 -- page's show/hide (covers tile-switch and window-close).
 ---------------------------------------------------------------------------
+local function ActivatePreviewBody(body)
+    if not body then return end
+
+    -- Auras > Group Frames and the main Group Frames tile cache separate
+    -- dropdown widgets. Restore the newly-visible surface's retained choice
+    -- before rebuilding the one shared preview panel.
+    local getContextMode = body._gfPreviewContextGetter
+    if type(getContextMode) == "function" then
+        local contextMode = NormalizeContextMode(getContextMode())
+        if contextMode and contextMode ~= State.contextMode then
+            SetContextMode(contextMode)
+        end
+    end
+
+    if State.previewPanel then State.previewPanel.Show() end
+    RefreshPreviewPanel()
+end
+
+local function BindPreviewBody(body, getContextMode)
+    if not body then return end
+    body._gfPreviewContextGetter = getContextMode
+    EnsurePreviewPanel()
+    if not body._gfPreviewHooked then
+        body._gfPreviewHooked = true
+        body:HookScript("OnShow", function()
+            ActivatePreviewBody(body)
+        end)
+        body:HookScript("OnHide", function()
+            if State.previewPanel then State.previewPanel.Hide() end
+        end)
+    end
+    if State.previewPanel and body:IsShown() then
+        ActivatePreviewBody(body)
+    end
+end
+
 local function BuildTileBody(body, _, _, feature)
     local tabModel = EnsureTabModel(feature)
     local DROPDOWN_ROW_H = 30
+    local contextDropdown
 
     local result = FullSurface.BuildScrollTabBody(body, {
         cacheTabBodies = true,
@@ -525,7 +561,7 @@ local function BuildTileBody(body, _, _, feature)
             local model = ResolveModel(feature)
             local getContextOptions = model and model.GetContextOptions
             State.contextMode = NormalizeContextMode(State.contextMode)
-            FullSurface.BuildContextDropdownRow(body, {
+            contextDropdown = FullSurface.BuildContextDropdownRow(body, {
                 gui = GUI,
                 label = ns.L["Unit Group"],
                 stateKey = "_contextMode",
@@ -588,22 +624,12 @@ local function BuildTileBody(body, _, _, feature)
         preventReentry = true,
     })
 
-    -- Dock + show the detached preview panel; tie its visibility to this page.
-    EnsurePreviewPanel()
-    if not body._gfPreviewHooked then
-        body._gfPreviewHooked = true
-        body:HookScript("OnShow", function()
-            if State.previewPanel then State.previewPanel.Show() end
-            RefreshPreviewPanel()
-        end)
-        body:HookScript("OnHide", function()
-            if State.previewPanel then State.previewPanel.Hide() end
-        end)
-    end
-    if State.previewPanel and body:IsShown() then
-        State.previewPanel.Show()
-        RefreshPreviewPanel()
-    end
+    -- Dock + show the detached preview panel. The main tile's retained
+    -- dropdown is authoritative whenever this cached body becomes visible.
+    BindPreviewBody(body, function()
+        local db = contextDropdown and contextDropdown.dropdownDB
+        return (db and db._contextMode) or State.contextMode
+    end)
 
     return result
 end
@@ -613,23 +639,8 @@ end
 -- block BuildTileBody wires for its own body (see above, "Dock + show the
 -- detached preview panel"), so any page hosting RenderAurasTab can drive the
 -- same detached panel without going through BuildTileBody's tab strip.
-local function ShowPreviewOn(body)
-    if not body then return end
-    EnsurePreviewPanel()
-    if not body._gfPreviewHooked then
-        body._gfPreviewHooked = true
-        body:HookScript("OnShow", function()
-            if State.previewPanel then State.previewPanel.Show() end
-            RefreshPreviewPanel()
-        end)
-        body:HookScript("OnHide", function()
-            if State.previewPanel then State.previewPanel.Hide() end
-        end)
-    end
-    if State.previewPanel and body:IsShown() then
-        State.previewPanel.Show()
-        RefreshPreviewPanel()
-    end
+local function ShowPreviewOn(body, getContextMode)
+    BindPreviewBody(body, getContextMode)
 end
 
 local function HidePreview()

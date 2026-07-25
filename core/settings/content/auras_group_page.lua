@@ -27,24 +27,22 @@ local function BuildAurasGroupContent(host, ctx, section)
     local GFModel = ns.QUI_GroupFramesSettingsModel
     local GFSurface = ns.QUI_GroupFramesSettingsSurface
 
-    -- State.contextMode in group_frames_surface.lua is a MODULE-LEVEL
-    -- singleton also displayed/mutated by the real Group Frames settings
-    -- tile -- it is the single source of truth for this selector. Read it
-    -- rather than keeping an independently-defaulted page-local copy, or
-    -- cold entry here (defaulting to "party") would stomp whatever bucket
-    -- the GF tile was last left on (e.g. raid -> party) and fire its heavy
-    -- context-switch side effects for no user action at all.
+    -- Seed this cached page's first dropdown from the context currently driving
+    -- the shared builders/preview. After build, dropdownDB retains this page's
+    -- own selection; ShowPreviewOn restores it whenever the Auras page becomes
+    -- visible, independently of the main Group Frames tile's retained choice.
     local contextMode = (GFSurface and type(GFSurface.GetContextMode) == "function" and GFSurface.GetContextMode()) or "party"
 
     -- Party | Raid selector at the top; re-render this section on change.
     local y = 0
+    local built
     if FullSurface and type(FullSurface.BuildContextDropdownRow) == "function" then
         local options = (GFModel and type(GFModel.GetContextOptions) == "function" and GFModel.GetContextOptions())
             or {
                 { value = "party", text = ns.L["Party"] },
                 { value = "raid", text = ns.L["Raid"] },
             }
-        local built = FullSurface.BuildContextDropdownRow(host, {
+        built = FullSurface.BuildContextDropdownRow(host, {
             gui = GUI,
             label = ns.L["Unit Group"],
             stateKey = "_contextMode",
@@ -84,7 +82,10 @@ local function BuildAurasGroupContent(host, ctx, section)
     -- detached preview panel stuck open. ctx.host IS that direct child.
     local previewHost = (ctx and ctx.host) or host
     if GFSurface and type(GFSurface.ShowPreviewOn) == "function" then
-        GFSurface.ShowPreviewOn(previewHost)
+        GFSurface.ShowPreviewOn(previewHost, function()
+            local db = built and built.dropdownDB
+            return (db and db._contextMode) or contextMode
+        end)
     end
 
     local total = y + (tonumber(h) or (editorHost.GetHeight and editorHost:GetHeight()) or 1)

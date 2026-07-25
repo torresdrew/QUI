@@ -194,6 +194,17 @@ function Driver._BuildMissingRaidBuffMatches(element, now)
                 if count >= maxIcons then break end
             end
         end
+        -- Auto-detect can legitimately resolve no built-in raid buff for the
+        -- player's class (for example, Death Knight). Runtime should remain
+        -- empty in that case, but the synthetic settings preview still needs to
+        -- expose the newly-added container so its placement can be configured.
+        -- Manual mode remains exact: an empty buffChecks table previews nothing.
+        if count == 0 and (not element or element.classDetection ~= false) then
+            local buff = buffs[1]
+            local spellID = buff.iconSpellID or (buff.ids and buff.ids[1])
+            local icon = ResolveSpellIcon(spellID) or PREVIEW_BUFF_ICONS[1]
+            out[1] = MakeFakeAura(icon, 1, false, now, spellID)
+        end
     else
         out[1] = MakeFakeAura(PREVIEW_BUFF_ICONS[1], 1, false, now)
     end
