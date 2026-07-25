@@ -87,25 +87,46 @@ local function ParkRecord(pool, record)
     record.parked = true
 end
 
--- Retired records stay in pool.records under their old key until they are
--- claimed, so the free list uses lazy deletion: a stale entry is skipped when
--- its record was reclaimed by key in the meantime.
+-- A retired record keeps its old key in pool.records until something claims it,
+-- so it can leave the free list either by recycling (tail take) or by being
+-- reclaimed under its own key. Both remove their exact entry, because a
+-- skip-the-stale-entry list would grow by one on every retire/reclaim cycle.
+-- Invariant: record.free is true exactly while it occupies one free slot.
 local function ReleaseToFree(pool, record)
     if record.free then return end
+    local free = pool.free
+    free[#free + 1] = record
     record.free = true
-    pool.free[#pool.free + 1] = record
+    record.freeIndex = #free
+end
+
+local function DetachFree(pool, record)
+    local free = pool.free
+    local index, last = record.freeIndex, #free
+    if index and free[index] == record then
+        if index ~= last then
+            local moved = free[last]
+            free[index] = moved
+            moved.freeIndex = index
+        end
+        free[last] = nil
+    end
+    record.free = false
+    record.freeIndex = nil
+end
+
+local function ClaimFromFree(pool, record)
+    if not record.free then return end
+    DetachFree(pool, record)
 end
 
 local function TakeFree(pool)
     local free = pool.free
-    while #free > 0 do
-        local record = table.remove(free)
-        if record.free then
-            record.free = false
-            return record
-        end
-    end
-    return nil
+    local last = #free
+    if last == 0 then return nil end
+    local record = free[last]
+    DetachFree(pool, record)
+    return record
 end
 
 function CDMManagedAuraMirrors:Acquire(ownerContainer, placementKey, entry, profile)
@@ -116,7 +137,7 @@ function CDMManagedAuraMirrors:Acquire(ownerContainer, placementKey, entry, prof
 
     local record = pool.records[placementKey]
     if record then
-        record.free = false
+        ClaimFromFree(pool, record)
     else
         record = TakeFree(pool)
         if record then

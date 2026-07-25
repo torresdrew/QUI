@@ -134,7 +134,27 @@ local revived = manager:Acquire(owner, "concurrent:a", churnEntry, {})
 local other = manager:Acquire(owner, "concurrent:z", churnEntry, {})
 manager:EndPass(owner)
 assert(revived == first, "a retired record is reclaimed by its own placement key")
-assert(other ~= revived, "the stale free entry is skipped, not handed out twice")
+assert(other ~= revived, "a record is never handed to two placements at once")
+
+-- Reclaiming by key must remove that record's free entry, not leave it behind:
+-- a skipped-stale-entry list would grow by one on every retire/reclaim cycle.
+local recordCount = 0
+for _ in pairs(pool.records) do recordCount = recordCount + 1 end
+local settledHosts = #createdHosts
+for _ = 1, 40 do
+    manager:BeginPass(owner)
+    manager:EndPass(owner)
+    manager:BeginPass(owner)
+    assert(manager:Acquire(owner, "concurrent:a", churnEntry, {}) == first,
+        "a reclaimed key keeps resolving to its own record")
+    manager:EndPass(owner)
+    assert(#pool.free <= recordCount,
+        "the free list stays bounded by the record count, not the cycle count")
+end
+assert(#createdHosts == settledHosts, "retire/reclaim cycles mint no hosts")
+local settledKeys = 0
+for _ in pairs(pool.records) do settledKeys = settledKeys + 1 end
+assert(settledKeys == recordCount, "retire/reclaim cycles leak no placement keys")
 
 local blocked = M.New({ createFrame = createFrame, canCreate = function() return false end })
 assert(blocked:BeginPass({}) == false, "first-time container creation fails closed when forbidden")
