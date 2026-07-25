@@ -9,6 +9,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v5.0.0-alpha27 - 2026-07-25
+
+> ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will
+> not load on the 12.0.x live client. Stay on the v4.x beta line for live realms.
+
+### Fixed
+- The duplicate-placement aura mirrors added in alpha26 kept a small internal
+  bookkeeping list that grew every time a placement retired and came back —
+  toggling a container off and on, swapping specs, or an entry dropping out for
+  a refresh. Nothing visible went wrong and no frames were retained, but memory
+  crept up over a long session. Retired records are now released exactly, so
+  the list stays bounded.
+
 ## v5.0.0-alpha26 - 2026-07-25
 
 > ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will

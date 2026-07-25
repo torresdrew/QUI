@@ -3,7 +3,7 @@
 ## IconTexture: Interface\AddOns\QUI\assets\QUI
 ## Notes: Traditional Chinese translations + settings search index for QUI
 ## Author: Zol
-## Version: 5.0.0-alpha26
+## Version: 5.0.0-alpha27
 ## Category: User Interface
 ## Group: QUI
 ## LoadOnDemand: 1
