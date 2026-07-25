@@ -528,13 +528,14 @@ local function ApplyBarValues(f, member, general, power, showPower)
         f._healthPct = member.healthPct
         hb:SetMinMaxValues(0, 100)
         hb:SetValue(member.healthPct)
-        local r, g, b = 0.2, 0.8, 0.2
-        if general.useClassColor then
+        local r, g, b, a = 0.2, 0.8, 0.2, 1
+        if general.darkMode then
+            local c = general.darkModeHealthColor or DefaultColor("darkHealth")
+            r, g, b, a = c[1] or r, c[2] or g, c[3] or b, c[4] or a
+        elseif general.useClassColor ~= false then
             r, g, b = ClassColor(member.class)
-        elseif general.darkMode and general.darkModeHealthColor then
-            local c = general.darkModeHealthColor; r, g, b = c[1] or r, c[2] or g, c[3] or b
         end
-        hb:SetStatusBarColor(r, g, b, 1)
+        hb:SetStatusBarColor(r, g, b, a)
     end
 
     local pb = f.powerBar

@@ -204,6 +204,55 @@ test("disabling Target Highlight leaves name, level and health text visible", fu
     assert(frame.healthText.shown == true and frame.healthText.text == "75%")
 end)
 
+test("dark mode immediately overrides class color on a pooled preview tile", function()
+    local color
+    local frame = {
+        healthBar = {
+            SetMinMaxValues = function() end,
+            SetValue = function() end,
+            SetStatusBarColor = function(_, ...) color = { ... } end,
+        },
+        SetAlpha = function() end,
+    }
+    ns.QUI_GroupFrameChrome = {
+        Apply = function() end,
+        ResizeHealthForPower = function() end,
+        DEFAULT_COLORS = { darkHealth = { 0.15, 0.15, 0.15, 1 } },
+    }
+    local previousClassColors = RAID_CLASS_COLORS
+    RAID_CLASS_COLORS = {
+        PRIEST = { r = 0.9, g = 0.9, b = 0.9 },
+    }
+    D._state.filter = D._NormalizeFilter(nil)
+
+    local general = {
+        darkMode = false,
+        useClassColor = true,
+        darkModeHealthColor = { 0.11, 0.22, 0.33, 0.44 },
+    }
+    local vdb = {
+        general = general,
+        power = { showPowerBar = false },
+        name = {},
+        health = {},
+        indicators = {},
+    }
+    local member = {
+        name = "Preview", role = "HEALER", class = "PRIEST", healthPct = 75,
+    }
+
+    D._ApplyFrameSettings(frame, member, vdb, {}, "party")
+    assert(color[1] == 0.9 and color[2] == 0.9 and color[3] == 0.9,
+        "dark mode off should keep the configured class color")
+
+    general.darkMode = true
+    D._ApplyFrameSettings(frame, member, vdb, {}, "party")
+    assert(color[1] == 0.11 and color[2] == 0.22 and color[3] == 0.33 and color[4] == 0.44,
+        "dark mode on must replace class color during the same preview refresh")
+
+    RAID_CLASS_COLORS = previousClassColors
+end)
+
 test("aura focus filter selects the configured table only while enabled", function()
     local configured = { enabled = true }
     local vdb = { auras = configured }
