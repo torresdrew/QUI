@@ -142,7 +142,7 @@ local function EnsurePixelBackdropCompat(frame)
     end
 
     if frame.SetBackdrop then
-        pcall(frame.SetBackdrop, frame, nil)
+        frame:SetBackdrop(nil)
     end
 
     if uikit and uikit.CreateBorderLines and uikit.UpdateBorderLines then
@@ -162,7 +162,7 @@ local function EnsurePixelBackdropCompat(frame)
                 compat.bg:Hide()
             end
         elseif compat.originalSetBackdropColor then
-            pcall(compat.originalSetBackdropColor, self, compat.bgColor[1], compat.bgColor[2], compat.bgColor[3], compat.bgColor[4])
+            compat.originalSetBackdropColor(self, compat.bgColor[1], compat.bgColor[2], compat.bgColor[3], compat.bgColor[4])
         end
     end
 
@@ -174,7 +174,7 @@ local function EnsurePixelBackdropCompat(frame)
         if uikit and uikit.UpdateBorderLines then
             uikit.UpdateBorderLines(self, compat.borderPixels or 1, compat.borderColor[1], compat.borderColor[2], compat.borderColor[3], compat.borderColor[4], false)
         elseif compat.originalSetBackdropBorderColor then
-            pcall(compat.originalSetBackdropBorderColor, self, compat.borderColor[1], compat.borderColor[2], compat.borderColor[3], compat.borderColor[4])
+            compat.originalSetBackdropBorderColor(self, compat.borderColor[1], compat.borderColor[2], compat.borderColor[3], compat.borderColor[4])
         end
     end
 
@@ -317,56 +317,11 @@ end
 ---------------------------------------------------------------------------
 -- V3 layout helpers (standard dual-column card pattern, matches other tabs)
 ---------------------------------------------------------------------------
-local HEADER_GAP = 26
-local SECTION_GAP = 14
 
 local function MakeLayout(content)
-    local y = -10
-    local L = {}
-    function L.headerAt(text)
-        local h = Shared.CreateAccentDotLabel(content, text, y)
-        h:ClearAllPoints()
-        h:SetPoint("TOPLEFT", content, "TOPLEFT", PAD, y)
-        h:SetPoint("TOPRIGHT", content, "TOPRIGHT", -PAD, y)
-        y = y - HEADER_GAP
-    end
-    function L.sectionAt()
-        local c = Shared.CreateSettingsCardGroup(content, y)
-        c.frame:ClearAllPoints()
-        c.frame:SetPoint("TOPLEFT", content, "TOPLEFT", PAD, y)
-        c.frame:SetPoint("TOPRIGHT", content, "TOPRIGHT", -PAD, y)
-        return c
-    end
-    function L.closeSection(c)
-        c.Finalize()
-        y = y - c.frame:GetHeight() - SECTION_GAP
-    end
-    function L.intro(text)
-        local frame = CreateFrame("Frame", nil, content)
-        frame:ClearAllPoints()
-        frame:SetPoint("TOPLEFT", content, "TOPLEFT", PAD, y)
-        frame:SetPoint("TOPRIGHT", content, "TOPRIGHT", -PAD, y)
-        local lbl = GUI:CreateLabel(frame, text, 11, C.textMuted)
-        lbl:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, 0)
-        lbl:SetPoint("RIGHT", frame, "RIGHT", 0, 0)
-        lbl:SetJustifyH("LEFT")
-        lbl:SetWordWrap(true)
-        local approxHeight = math.max(18, math.ceil(#text / 90) * 15)
-        frame:SetHeight(approxHeight)
-        y = y - approxHeight - 8
-        return lbl, frame
-    end
-    function L.placeCustom(frame, height)
-        frame:SetParent(content)
-        frame:ClearAllPoints()
-        frame:SetPoint("TOPLEFT", content, "TOPLEFT", PAD, y)
-        frame:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
-        frame:SetHeight(height)
-        y = y - height - SECTION_GAP
-    end
-    function L.offset()
-        return y
-    end
+    -- Core builder; offset() is this page's historical name for the y cursor.
+    local L = ns.QUI_SettingsLayoutShared.MakeLayout(content)
+    L.offset = L.getY
     return L
 end
 
@@ -1332,7 +1287,7 @@ local function BuildClickCastBindings(L, content, cc, refreshClickCast, state)
         local frameH = self:GetHeight()
         local maxScroll = math.max(0, contentH - frameH)
         local newScroll = math.max(0, math.min(currentScroll - (delta * SCROLL_STEP), maxScroll))
-        pcall(self.SetVerticalScroll, self, newScroll)
+        self:SetVerticalScroll(newScroll)
         UpdateBrowseThumb()
     end)
     browseScroll:SetScript("OnScrollRangeChanged", function() UpdateBrowseThumb() end)
@@ -1463,7 +1418,7 @@ local function BuildClickCastBindings(L, content, cc, refreshClickCast, state)
 
         browseScrollChild:SetHeight(math.max(1, math.abs(by)))
         -- Reset scroll to top and update thumb
-        pcall(browseScroll.SetVerticalScroll, browseScroll, 0)
+        browseScroll:SetVerticalScroll(0)
         C_Timer.After(0, UpdateBrowseThumb)
     end
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Assemble subagent-produced translations into core/locale/<loc>.lua.
+"""Assemble subagent-produced translations into QUI_Locale_<loc>/<loc>.lua.
 
 Reads tools/i18n/_mt/out_<loc>_*.json (each a JSON object {english_key: translation}),
 merges them per locale, verifies every enUS key is covered, writes the locale file,
@@ -43,7 +43,7 @@ def write_locale(loc, table):
     for k in sorted(table):
         lines.append(f'    ["{lua_escape(k)}"] = "{lua_escape(table[k])}",')
     lines.append("}\n")
-    open(f"core/locale/{loc}.lua", "w", encoding="utf-8").write("\n".join(lines))
+    open(f"QUI_Locale_{loc}/{loc}.lua", "w", encoding="utf-8").write("\n".join(lines))
 
 
 def format_gate(table):

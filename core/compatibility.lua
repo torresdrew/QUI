@@ -172,7 +172,7 @@ local function StampOldDefaultsOnRawProfile(rawProfile, fallbackShadow)
     end
 
     -- Legacy default-stamp blocks (defaults v1/v2) were removed in 4.0: every
-    -- profile new enough to keep (schema >= 31, the 3.5.11 floor) is already at
+    -- profile new enough to keep (schema >= 47, the migration floor) is already at
     -- _defaultsVersion 3 and returns early above; older profiles are floored
     -- (wiped + reseeded) by Migrations. The v3 rescue below is retained as a
     -- harmless no-op safety net for any lingering _defaultsVersion==2 profile.
@@ -243,7 +243,7 @@ end
 -- BackwardsCompat: facade that orchestrates both tiers
 ---------------------------------------------------------------------------
 
--- Pre-3.5.11 floor reseed. Migrations backs up + wipes any profile older than
+-- Below-floor reseed (schema < 47). Migrations backs up + wipes any profile older than
 -- the schema floor and flags it `_needsStarterReseed`. Seed the shipped
 -- new-profile defaults onto each flagged raw profile and clear the flag.
 --
@@ -264,17 +264,25 @@ local function ReseedStarterFlaggedProfiles(db)
 end
 
 function QUI:BackwardsCompat()
+    -- Consume the OnInitialize latch (core/main.lua): when set, the
+    -- all-profile Tier 0/1 walk already ran this login and raw SV is
+    -- unchanged since. One-shot — profile switches and imports that call
+    -- back in later always re-run the tiers. Tier 2 and the housekeeping
+    -- below are NOT skipped: reseed consumes flags the Tier 1 pass left.
+    local skipTierPass = ns._startupTierPassDone
+    ns._startupTierPassDone = nil
+
     -- Tier 0: Raw SV defaults stamp (must run before AceDB fills defaults)
-    if self.db then
+    if not skipTierPass and self.db then
         RunShippedDefaultsMaintenance(self.db)
     end
 
     -- Tier 1: All profile-level migrations (consolidated in migrations.lua)
-    if ns.Migrations and ns.Migrations.Run then
+    if not skipTierPass and ns.Migrations and ns.Migrations.Run then
         ns.Migrations.Run(self.db)
     end
 
-    -- Tier 2: reseed any profile the migration floor wiped (pre-3.5.11) with
+    -- Tier 2: reseed any profile the migration floor wiped (schema < 47) with
     -- the shipped new-profile defaults, before modules build.
     ReseedStarterFlaggedProfiles(self.db)
 

@@ -70,7 +70,8 @@ function ActionBarsOwned.UpdatePetButton(btn)
         btn.AutoCastOverlay:ShowAutoCastEnabled(autoCastEnabled and true or false)
     end
     if btn.SpellHighlightTexture then
-        if spellID and C_Spell and C_Spell.IsSpellOverlayed and C_Spell.IsSpellOverlayed(spellID) then
+        if spellID and C_SpellActivationOverlay and C_SpellActivationOverlay.IsSpellOverlayed
+            and C_SpellActivationOverlay.IsSpellOverlayed(spellID) then
             btn.SpellHighlightTexture:Show()
         else
             btn.SpellHighlightTexture:Hide()
@@ -82,7 +83,7 @@ function ActionBarsOwned.UpdatePetButton(btn)
     if cooldown and GetPetActionCooldown then
         local start, duration, enable = GetPetActionCooldown(id)
         if CooldownFrame_Set then
-            pcall(CooldownFrame_Set, cooldown, start, duration, enable)
+            ns.SafeCall("sink-forward", CooldownFrame_Set, cooldown, start, duration, enable)
         end
     end
 end
@@ -126,7 +127,7 @@ function ActionBarsOwned.UpdateStanceButton(btn)
     if cooldown and GetShapeshiftFormCooldown then
         local start, duration, enable = GetShapeshiftFormCooldown(id)
         if CooldownFrame_Set then
-            pcall(CooldownFrame_Set, cooldown, start, duration, enable)
+            ns.SafeCall("sink-forward", CooldownFrame_Set, cooldown, start, duration, enable)
         end
     end
 end

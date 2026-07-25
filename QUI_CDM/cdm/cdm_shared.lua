@@ -189,7 +189,7 @@ function CDMShared.GetCustomBarVisibilityMode(containerDB)
 end
 
 function CDMShared.NormalizeMirrorCategory(category)
-    if issecretvalue and issecretvalue(category) then return nil end
+    if issecretvalue and issecretvalue(category) then return nil end -- @secret-policy: reject-secret-value
     if category == "essential"
         or category == "utility"
         or category == "buff"
@@ -287,14 +287,14 @@ end
 
 function CDMShared.IsSafeNumeric(value)
     if issecretvalue and issecretvalue(value) then
-        return false
+        return false -- @secret-policy: reject-secret-value
     end
     return type(value) == "number"
 end
 
 function CDMShared.SafeBoolean(value)
     if issecretvalue and issecretvalue(value) then
-        return nil
+        return nil -- @secret-policy: reject-secret-value
     end
     if type(value) == "boolean" then
         return value
@@ -307,4 +307,37 @@ function CDMShared.SettingEnabled(value, fallback)
         return fallback == true
     end
     return value == true
+end
+
+do
+-- Inlined from cdm_viewer_addon.lua
+-- Shared identity/loading helper for Blizzard's CooldownViewer addon.
+local _, ns = ...
+
+local CDMCooldownViewerAddon = {}
+ns.CDMCooldownViewerAddon = CDMCooldownViewerAddon
+
+CDMCooldownViewerAddon.PRIMARY = "Blizzard_CooldownViewer"
+
+function CDMCooldownViewerAddon.IsViewerAddon(addonName)
+    return addonName == CDMCooldownViewerAddon.PRIMARY
+end
+
+function CDMCooldownViewerAddon.Load(loader)
+    if not loader then
+        if C_AddOns and C_AddOns.LoadAddOn then
+            loader = function(name) return C_AddOns.LoadAddOn(name) end
+        elseif LoadAddOn then
+            loader = LoadAddOn
+        end
+    end
+    if not loader then return false end
+
+    local addonName = CDMCooldownViewerAddon.PRIMARY
+    local ok, loaded = pcall(loader, addonName)
+    if ok and loaded ~= false then
+        return true, addonName
+    end
+    return false
+end
 end

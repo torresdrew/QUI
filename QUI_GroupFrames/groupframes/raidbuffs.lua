@@ -347,7 +347,7 @@ end
 -- Safe value check - returns nil if secret value, otherwise returns the value
 local function SafeBooleanCheck(value)
     if IsSecretValue(value) then
-        return nil
+        return nil -- @secret-policy: reject-secret-value
     end
     return value
 end
@@ -418,8 +418,14 @@ end
 
 -- Safe wrapper for UnitClass (handles potential secret values in Midnight)
 local function SafeUnitClass(unit)
-    local ok, localized, class = pcall(UnitClass, unit)
-    if ok and class and type(class) == "string" then
+    local ok, _, class = pcall(UnitClass, unit)
+    if not ok then return nil end
+    -- Probe FIRST — a secret class survives the pcall and would throw on the
+    -- truth-test below; callers key tables on the return.
+    if IsSecretValue(class) then
+        return nil -- @secret-policy: reject-secret-ids
+    end
+    if class and type(class) == "string" then
         return class
     end
     return nil
@@ -464,6 +470,9 @@ end
 
 -- Shared raid buff detection (direct spell-ID lookup, pre-combat snapshot,
 -- name lookup, guarded iteration).
+-- Returns true (present), false (definitely absent), or nil (UNKNOWN — aura
+-- data secret or unreadable). Callers must treat nil as "do not flag":
+-- flagging missing on unknown false-positives every secret-aura combat frame.
 local function UnitHasBuff(unit, spellId, spellName, buffIDs)
     if not MissingRaidBuffs or not MissingRaidBuffs.UnitHasBuff then return false end
     return MissingRaidBuffs:UnitHasBuff(unit, buffIDs or spellId, spellName)
@@ -476,21 +485,27 @@ end
 
 -- Check if player has a buff, with toggle aura fallback (for raid buff entries)
 -- Toggle auras (e.g. Devotion Aura) don't place a HELPFUL buff on the caster when solo
+-- Tristate passthrough: true stays true; a confirmed false or an unknown nil
+-- both fall through to the toggle-aura fallback (an independent confirmation
+-- route), and if that doesn't confirm either, the original false/nil is
+-- returned unchanged — an unknown scan must never collapse to "missing".
 local function PlayerHasRaidBuff(buff)
-    if PlayerHasBuff(buff.spellId, buff.name, buff.buffIDs) then
+    local has = PlayerHasBuff(buff.spellId, buff.name, buff.buffIDs)
+    if has == true then
         return true
     end
     if buff.isToggleAura and buff.castSpellId and IsCurrentSpell then
         local ok, current = pcall(IsCurrentSpell, buff.castSpellId)
         if ok and current then return true end
     end
-    return false
+    return has
 end
 
 -- Check if any available group member is missing a specific buff
 local function AnyGroupMemberMissingBuff(spellId, spellName, rangeYards, buffIDs)
-    -- Check player first
-    if not PlayerHasBuff(spellId, spellName, buffIDs) then
+    -- Check player first — only a definite false counts as "missing";
+    -- unknown (nil, secret/unreadable aura data) is never flagged.
+    if PlayerHasBuff(spellId, spellName, buffIDs) == false then
         return true
     end
 
@@ -499,8 +514,12 @@ local function AnyGroupMemberMissingBuff(spellId, spellName, rangeYards, buffIDs
         for i = 1, GetNumGroupMembers() do
             local unit = "raid" .. i
             local isPlayer = UnitIsUnit(unit, "player")
-            if IsUnitAvailable(unit, rangeYards) and not IsSecretValue(isPlayer) and not isPlayer then
-                if not UnitHasBuff(unit, spellId, spellName, buffIDs) then
+            -- ACTION POLICY, not identity truth: a secret identity is
+            -- INDETERMINATE — the unit is SKIPPED (never flagged missing a
+            -- buff on unverifiable identity). Fold before any truth-test.
+            if IsSecretValue(isPlayer) then isPlayer = true end
+            if IsUnitAvailable(unit, rangeYards) and not isPlayer then
+                if UnitHasBuff(unit, spellId, spellName, buffIDs) == false then
                     return true
                 end
             end
@@ -509,7 +528,7 @@ local function AnyGroupMemberMissingBuff(spellId, spellName, rangeYards, buffIDs
         for i = 1, GetNumGroupMembers() - 1 do
             local unit = "party" .. i
             if IsUnitAvailable(unit, rangeYards) then
-                if not UnitHasBuff(unit, spellId, spellName, buffIDs) then
+                if UnitHasBuff(unit, spellId, spellName, buffIDs) == false then
                     return true
                 end
             end
@@ -535,7 +554,9 @@ local function CountBuffedMembers(spellId, spellName, buffIDs)
         for i = 1, GetNumGroupMembers() do
             local unit = "raid" .. i
             local isPlayer = UnitIsUnit(unit, "player")
-            if not IsSecretValue(isPlayer) and not isPlayer then
+            -- ACTION POLICY (see above): unreadable identity skips the unit.
+            if IsSecretValue(isPlayer) then isPlayer = true end
+            if not isPlayer then
                 local exists = SafeBooleanCheck(UnitExists(unit))
                 local connected = SafeBooleanCheck(UnitIsConnected(unit))
                 if exists and connected then
@@ -598,7 +619,14 @@ local function PlayerHasSelfBuff(entry)
         if C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID then
             for id in pairs(entry.anyBuffIDs) do
                 local ok, aura = pcall(C_UnitAuras.GetPlayerAuraBySpellID, id)
-                if ok and aura then return true end
+                if ok then
+                    if IsSecretValue(aura) then
+                        -- RequiresNonSecretAura contract: shouldn't happen;
+                        -- guarded anyway so the truth-test can't throw.
+                    elseif aura then
+                        return true
+                    end
+                end
             end
         end
         return false
@@ -664,7 +692,9 @@ local function IsProviderClassInRange(providerClass, rangeYards)
         for i = 1, GetNumGroupMembers() do
             local unit = "raid" .. i
             local isPlayer = UnitIsUnit(unit, "player")
-            if not IsSecretValue(isPlayer) and not isPlayer then
+            -- ACTION POLICY (see above): unreadable identity skips the unit.
+            if IsSecretValue(isPlayer) then isPlayer = true end
+            if not isPlayer then
                 local class = SafeUnitClass(unit)
                 if class == providerClass and IsUnitAvailable(unit, rangeYards) then
                     return true
@@ -721,7 +751,9 @@ local function GetRelevantBuffs()
                 -- Provider mode: only show buffs the player's class can provide that are missing
                 if buff.providerClass == playerClass then
                     buff._hasBuff = PlayerHasRaidBuff(buff)
-                    if not buff._hasBuff then
+                    -- Tristate: only a definite false flags the icon as
+                    -- missing; nil (unknown/secret aura data) shows nothing.
+                    if buff._hasBuff == false then
                         table_insert(result, buff)
                     end
                 end
@@ -729,7 +761,7 @@ local function GetRelevantBuffs()
                 -- Default: show missing buffs where provider class is in the group
                 if groupClasses[buff.providerClass] then
                     buff._hasBuff = PlayerHasRaidBuff(buff)
-                    if not buff._hasBuff then
+                    if buff._hasBuff == false then
                         table_insert(result, buff)
                     end
                 end
@@ -740,9 +772,11 @@ local function GetRelevantBuffs()
         -- Reuses MissingRaidBuffs engine methods to avoid logic duplication.
         if ns.QUI_AllyBuffs and MissingRaidBuffs then
             for _, buff in ipairs(ns.QUI_AllyBuffs) do
+                -- Tristate consumer: only a definite false reminds the
+                -- player; nil (unknown ally aura data) shows nothing.
                 if MissingRaidBuffs:PlayerIsProviderSpec(buff)
                     and MissingRaidBuffs._spellKnownProbe(buff)
-                    and not MissingRaidBuffs:AnyEligibleAllyHasMyBuff(buff.ids)
+                    and MissingRaidBuffs:AnyEligibleAllyHasMyBuff(buff.ids) == false
                 then
                     table_insert(result, {
                         name = buff.label or buff.name,
@@ -862,6 +896,10 @@ local function ApplyIconBorderSettings()
     local br, bg, bb, ba = 0.376, 0.647, 0.980, 1
     if borderSettings.useClassColor then
         local _, class = UnitClass("player")
+        -- Probe FIRST — a secret class throws on the truth-test and the
+        -- RAID_CLASS_COLORS table index.
+        -- @secret-policy: collapse-only — fixed default border color
+        if IsSecretValue(class) then class = nil end
         if class and RAID_CLASS_COLORS[class] then
             local classColor = RAID_CLASS_COLORS[class]
             br, bg, bb = classColor.r, classColor.g, classColor.b
@@ -1496,8 +1534,12 @@ local function AuraDeltaIsRelevant(unit, updateInfo)
         end
     end
 
-    -- Removed / updated carry only instanceIDs (NeverSecretContents per API).
-    -- Only the ones we flagged tracked matter.
+    -- Removed / updated carry only instanceIDs. Element-level readability is
+    -- guaranteed by the aura router (core/aura_events.lua PayloadIsSecret
+    -- promotes any secret element to the full-update sentinel before this
+    -- "roster" subscriber runs) — UnitAuraUpdateInfo itself carries NO
+    -- NeverSecretContents annotation, so never key raw payloads outside the
+    -- router path. Only the ones we flagged tracked matter.
     if set then
         local removed = updateInfo.removedAuraInstanceIDs
         if removed then
@@ -1636,26 +1678,33 @@ function QUI_RaidBuffs:Debug()
             local connected = SafeBooleanCheck(UnitIsConnected(unit))
             local dead = SafeBooleanCheck(UnitIsDeadOrGhost(unit))
             local available = IsUnitAvailable(unit)
-            local name = UnitName(unit) or "?"
+            -- Identity-restricted: probe before the `or` default (which
+            -- truth-tests, i.e. throws on a secret name).
+            local name = UnitName(unit)
+            if IsSecretValue(name) then name = "SECRET" end
+            if name == nil then name = "?" end
             local uClass = SafeUnitClass(unit)
 
             -- Detailed range check info (wrap everything for secret values)
+            -- Statement-form guards (analyzer-provable): the `guard(x) and
+            -- "SECRET" or tostring(x)` selects left the assigned local
+            -- looking tainted to the concat below.
             local uirRange, uirChecked = "?", "?"
             local ok1, r1, r2 = pcall(UnitInRange, unit)
             if ok1 then
-                uirRange = IsSecretValue(r1) and "SECRET" or tostring(r1)
-                uirChecked = IsSecretValue(r2) and "SECRET" or tostring(r2)
+                if IsSecretValue(r1) then uirRange = "SECRET" else uirRange = tostring(r1) end
+                if IsSecretValue(r2) then uirChecked = "SECRET" else uirChecked = tostring(r2) end
             end
             local cidResult = "?"
             local ok2, cid = pcall(CheckInteractDistance, unit, 1)
             if ok2 then
-                cidResult = IsSecretValue(cid) and "SECRET" or tostring(cid)
+                if IsSecretValue(cid) then cidResult = "SECRET" else cidResult = tostring(cid) end
             end
             local udsResult = "N/A"
             if UnitDistanceSquared then
                 local ok3, distSq = pcall(UnitDistanceSquared, unit)
                 if ok3 then
-                    udsResult = IsSecretValue(distSq) and "SECRET" or tostring(distSq)
+                    if IsSecretValue(distSq) then udsResult = "SECRET" else udsResult = tostring(distSq) end
                 end
             end
             local rangeInfo = " UnitInRange:" .. uirRange .. "/" .. uirChecked .. " CheckInteract:" .. cidResult .. " DistSq:" .. udsResult
@@ -1676,7 +1725,11 @@ function QUI_RaidBuffs:Debug()
         local canProvide = PlayerCanCastBuff(buff)
         local anyMissing = AnyGroupMemberMissingBuff(buff.spellId, buff.name, buffRange, buff.buffIDs)
         local status = ""
-        if hasProvider and not playerHas then
+        if playerHas == nil then
+            -- Unknown (secret/unreadable aura data) is never reported as
+            -- MISSING — this debug tool must not lie about the tristate.
+            status = hasProvider and "UNKNOWN" or "No provider"
+        elseif hasProvider and not playerHas then
             if providerInRange then
                 status = "MISSING"
             else
@@ -1696,8 +1749,20 @@ function QUI_RaidBuffs:Debug()
                 local unit = "party" .. i
                 if IsUnitAvailable(unit, buffRange) then
                     local has = UnitHasBuff(unit, buff.spellId, buff.name, buff.buffIDs)
-                    local name = UnitName(unit) or "?"
-                    table_insert(lines, "    -> " .. unit .. " (" .. name .. "): " .. (has and "HAS" or "MISSING"))
+                    local hasText
+                    if IsSecretValue(has) then
+                        hasText = "SECRET"
+                    elseif has == nil then
+                        hasText = "UNKNOWN"
+                    elseif has then
+                        hasText = "HAS"
+                    else
+                        hasText = "MISSING"
+                    end
+                    local name = UnitName(unit)
+                    if IsSecretValue(name) then name = "SECRET" end
+                    if name == nil then name = "?" end
+                    table_insert(lines, "    -> " .. unit .. " (" .. name .. "): " .. hasText)
                 end
             end
         end

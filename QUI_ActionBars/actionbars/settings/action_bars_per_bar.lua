@@ -295,9 +295,12 @@ end
 local feature = Schema.Feature({
     id = "actionBarsPerBar",
     category = "frames",
+    -- Per-Bar shifted from tile subPages array position 3 to 2 when the
+    -- Buff/Debuff sub-page was removed (moved to the Auras hub -- see
+    -- tiles/action_bars.lua and action_bars.lua's actionBarsBuffDebuff nav).
     nav = {
         tileId = "action_bars",
-        subPageIndex = 3,
+        subPageIndex = 2,
     },
     lookupKeys = LOOKUP_KEYS,
     onNavigate = function(lookupKey)

@@ -10,8 +10,9 @@ if not Renderer or type(Renderer.RenderFeature) ~= "function"
 end
 
 local Helpers = ns.Helpers
-local AurasEditor = ns.QUI_GroupFramesAurasSettings
+local AurasEditor = ns.QUI_AuraElementsEditor
 local AuraModel = ns.QUI_GroupFramesAuraModel
+local AuraDefaults = ns.QUI_GroupFramesAuraDefaults
 
 local GroupFramesSchema = ns.QUI_GroupFramesSettingsSchema or {}
 ns.QUI_GroupFramesSettingsSchema = GroupFramesSchema
@@ -63,16 +64,10 @@ local HEALTH_FILL_OPTIONS = {
     { value = "HORIZONTAL", text = ns.L["Horizontal (Left to Right)"] },
     { value = "VERTICAL", text = ns.L["Vertical (Bottom to Top)"] },
 }
-local NINE_POINT_OPTIONS = {
-    { value = "TOPLEFT", text = ns.L["Top Left"] },
-    { value = "TOP", text = ns.L["Top"] },
-    { value = "TOPRIGHT", text = ns.L["Top Right"] },
-    { value = "LEFT", text = ns.L["Left"] },
-    { value = "CENTER", text = ns.L["Center"] },
-    { value = "RIGHT", text = ns.L["Right"] },
-    { value = "BOTTOMLEFT", text = ns.L["Bottom Left"] },
-    { value = "BOTTOM", text = ns.L["Bottom"] },
-    { value = "BOTTOMRIGHT", text = ns.L["Bottom Right"] },
+local NINE_POINT_OPTIONS = ns.QUI_SettingsLayoutShared.BuildNinePointAnchorOptions()
+local DISPEL_SCOPE_OPTIONS = {
+    { value = "PLAYER_DISPELLABLE", text = ns.L["Dispellable by Me"] },
+    { value = "ALL_TYPED", text = ns.L["All Typed Debuffs"] },
 }
 local TEXT_JUSTIFY_OPTIONS = {
     { value = "LEFT", text = ns.L["Left"] },
@@ -109,7 +104,7 @@ local VISUAL_DB_KEYS = {
     general = true, layout = true, health = true, power = true, name = true,
     absorbs = true, healAbsorbs = true, healPrediction = true, indicators = true,
     healer = true, classPower = true, range = true, auras = true,
-    privateAuras = true, auraIndicators = true, castbar = true,
+    auraIndicators = true, castbar = true,
     targetedSpells = true,
     portrait = true, pets = true, dimensions = true, spotlight = true,
 }
@@ -295,99 +290,6 @@ local function GetFontListWithDefault(optionsAPI)
     end
     table.insert(fonts, 1, { value = "", text = ns.L["(Frame Font)"] })
     return fonts
-end
-
-local function AddAuraDurationTextRows(card, gui, optionsAPI, auras, prefix, labelPrefix, refresh, enabledCond)
-    local showKey = "show" .. labelPrefix .. "DurationText"
-    local fontKey = prefix .. "DurationFont"
-    local fontSizeKey = prefix .. "DurationFontSize"
-    local anchorKey = prefix .. "DurationAnchor"
-    local offsetXKey = prefix .. "DurationOffsetX"
-    local offsetYKey = prefix .. "DurationOffsetY"
-    local useTimeColorKey = prefix .. "DurationUseTimeColor"
-    local colorKey = prefix .. "DurationColor"
-    local controlledRows = {}
-    local colorRow
-
-    local function TextEnabled()
-        return enabledCond() and auras[showKey] ~= false
-    end
-
-    local function UsesStaticColor()
-        local useTimeColor = auras[useTimeColorKey]
-        if useTimeColor == nil then
-            useTimeColor = auras.showDurationColor ~= false
-        end
-        return TextEnabled() and not useTimeColor
-    end
-
-    local updateRows
-    local function onChange()
-        refresh()
-        if updateRows then
-            updateRows()
-        end
-    end
-
-    local showCheckbox = gui:CreateFormCheckbox(card.frame, nil, showKey, auras, onChange, {
-        description = string.format(ns.L["Show remaining-time text on %1$s icons."], string.lower(labelPrefix)),
-    })
-    local showRow = optionsAPI.BuildSettingRow(card.frame, string.format(ns.L["Show %1$s Duration Text"], labelPrefix), showCheckbox)
-
-    local fontDropdown = gui:CreateFormDropdown(card.frame, nil, GetFontListWithDefault(optionsAPI), fontKey, auras, onChange, nil, {
-        searchable = true,
-    })
-    local fontRow = optionsAPI.BuildSettingRow(card.frame, ns.L["Duration Font"], fontDropdown)
-    controlledRows[#controlledRows + 1] = fontRow
-    card.AddRow(showRow, fontRow)
-
-    local fontSizeSlider = gui:CreateFormSlider(card.frame, nil, 6, 24, 1, fontSizeKey, auras, onChange, { deferOnDrag = true }, {
-        description = ns.L["Font size used for the remaining-time text."],
-    })
-    local fontSizeRow = optionsAPI.BuildSettingRow(card.frame, ns.L["Duration Font Size"], fontSizeSlider)
-    controlledRows[#controlledRows + 1] = fontSizeRow
-    local anchorDropdown = gui:CreateFormDropdown(card.frame, nil, NINE_POINT_OPTIONS, anchorKey, auras, onChange, {
-        description = ns.L["Anchor point for the remaining-time text on each icon."],
-    })
-    local anchorRow = optionsAPI.BuildSettingRow(card.frame, ns.L["Duration Anchor"], anchorDropdown)
-    controlledRows[#controlledRows + 1] = anchorRow
-    card.AddRow(fontSizeRow, anchorRow)
-
-    local offsetXSlider = gui:CreateFormSlider(card.frame, nil, -40, 40, 1, offsetXKey, auras, onChange, { deferOnDrag = true }, {
-        description = ns.L["Horizontal pixel offset for duration text."],
-    })
-    local offsetXRow = optionsAPI.BuildSettingRow(card.frame, ns.L["Duration X Offset"], offsetXSlider)
-    controlledRows[#controlledRows + 1] = offsetXRow
-    local offsetYSlider = gui:CreateFormSlider(card.frame, nil, -40, 40, 1, offsetYKey, auras, onChange, { deferOnDrag = true }, {
-        description = ns.L["Vertical pixel offset for duration text."],
-    })
-    local offsetYRow = optionsAPI.BuildSettingRow(card.frame, ns.L["Duration Y Offset"], offsetYSlider)
-    controlledRows[#controlledRows + 1] = offsetYRow
-    card.AddRow(offsetXRow, offsetYRow)
-
-    local useTimeColorCheckbox = gui:CreateFormCheckbox(card.frame, nil, useTimeColorKey, auras, onChange, {
-        description = ns.L["Use green/yellow/red time-based duration colors instead of the static text color."],
-    })
-    local useTimeColorRow = optionsAPI.BuildSettingRow(card.frame, ns.L["Use Time-Based Duration Color"], useTimeColorCheckbox)
-    controlledRows[#controlledRows + 1] = useTimeColorRow
-    local colorPicker = gui:CreateFormColorPicker(card.frame, nil, colorKey, auras, onChange, nil, {
-        description = ns.L["Static duration text color when time-based coloring is off."],
-    })
-    colorRow = optionsAPI.BuildSettingRow(card.frame, ns.L["Duration Text Color"], colorPicker)
-    card.AddRow(useTimeColorRow, colorRow)
-
-    updateRows = function()
-        local showAlpha = enabledCond() and 1.0 or 0.4
-        local textAlpha = TextEnabled() and 1.0 or 0.4
-        showRow:SetAlpha(showAlpha)
-        for _, row in ipairs(controlledRows) do
-            row:SetAlpha(textAlpha)
-        end
-        colorRow:SetAlpha(UsesStaticColor() and 1.0 or 0.4)
-    end
-
-    updateRows()
-    return updateRows
 end
 
 local function RequestTabRepaint(ctx)
@@ -579,6 +481,35 @@ local function RenderGeneralEnableSection(sectionHost, ctx)
     iconSkinDropdown:SetPoint("TOPRIGHT", externalSkinCheck, "BOTTOMRIGHT", 0, -12)
 
     return 142
+end
+
+-- Pointer row: the Auras tab used to live on this surface (TAB_DEFINITIONS
+-- key "auras", group_frames_model.lua); aura config now lives on the Auras
+-- hub tile (tiles/auras.lua, tabIndex 21, subTabIndex 1 = Group Frames).
+-- RenderAurasTab itself is untouched -- the hub's Group Frames sub-page
+-- (core/settings/content/auras_group_page.lua) still calls it directly.
+local function RenderAurasHubPointerSection(sectionHost, ctx)
+    local gui = GetGUI()
+    local optionsAPI = GetOptionsAPI()
+    local groupFrames = ResolveGroupFramesDB(ctx and ctx.options and ctx.options.contextMode)
+    if not gui or not optionsAPI or not groupFrames then
+        return nil
+    end
+
+    SetSearchContext(CreateSearchContext("general", groupFrames.contextMode))
+
+    local openButton = gui:CreateButton(sectionHost, ns.L["Open Auras"], 140, 26, function()
+        if gui.NavigateTo then
+            gui:NavigateTo(21, 1)
+        end
+    end)
+
+    local row = optionsAPI.BuildSettingRow(sectionHost, ns.L["Aura settings have moved to the Auras section."], openButton)
+    row:ClearAllPoints()
+    row:SetPoint("TOPLEFT", sectionHost, "TOPLEFT", 0, 0)
+    row:SetPoint("TOPRIGHT", sectionHost, "TOPRIGHT", 0, 0)
+
+    return 28
 end
 
 local function RenderGeneralCopySettingsSection(sectionHost, ctx)
@@ -2103,129 +2034,6 @@ local function RenderLevelSection(sectionHost, ctx)
     return builder.Height()
 end
 
-local function RenderPrivateAurasSection(sectionHost, ctx)
-    local gui = GetGUI()
-    local optionsAPI = GetOptionsAPI()
-    local groupFrames = ResolveGroupFramesDB(ctx and ctx.options and ctx.options.contextMode)
-    if not gui or not optionsAPI or not groupFrames then
-        return nil
-    end
-
-    local privateAuras = EnsureSubTable(groupFrames.contextDB, "privateAuras")
-    if not privateAuras then
-        return nil
-    end
-
-    -- Private Auras now lives under the Auras tab — tag search nav accordingly.
-    local builder = CreateSectionBuilder(sectionHost, ctx, CreateSearchContext("auras"))
-    if not builder then
-        return nil
-    end
-
-    local refresh = function()
-        RefreshGroupFrames(groupFrames.contextMode)
-    end
-
-    builder.Header(ns.L["Private Auras"])
-    builder.Description(string.format(ns.L["Private-aura anchors and countdown styling for %1$s group frames."], groupFrames.sourceLabel))
-
-    local card = builder.Card()
-    local controlledRows = {}
-    local function UpdatePrivateAuraRows()
-        local alpha = privateAuras.enabled and 1.0 or 0.4
-        for _, row in ipairs(controlledRows) do
-            row:SetAlpha(alpha)
-        end
-    end
-
-    local enableCheckbox = gui:CreateFormCheckbox(card.frame, nil, "enabled", privateAuras, function()
-        refresh()
-        UpdatePrivateAuraRows()
-    end, {
-        description = ns.L["Anchor Blizzard private aura indicators to this frame."],
-    })
-    local maxPerFrameSlider = gui:CreateFormSlider(card.frame, nil, 1, 5, 1, "maxPerFrame", privateAuras, refresh, { deferOnDrag = true }, {
-        description = ns.L["Hard cap on how many private aura slots this frame displays at once."],
-    })
-    local maxPerFrameRow = optionsAPI.BuildSettingRow(card.frame, ns.L["Max Per Frame"], maxPerFrameSlider)
-    controlledRows[#controlledRows + 1] = maxPerFrameRow
-    card.AddRow(
-        optionsAPI.BuildSettingRow(card.frame, ns.L["Enable Private Auras"], enableCheckbox),
-        maxPerFrameRow
-    )
-
-    local iconSizeSlider = gui:CreateFormSlider(card.frame, nil, 10, 40, 1, "iconSize", privateAuras, refresh, { deferOnDrag = true }, {
-        description = ns.L["Pixel size of each private aura icon."],
-    })
-    local iconSizeRow = optionsAPI.BuildSettingRow(card.frame, ns.L["Icon Size"], iconSizeSlider)
-    controlledRows[#controlledRows + 1] = iconSizeRow
-    local growDirectionDropdown = gui:CreateFormDropdown(card.frame, nil, AURA_GROW_OPTIONS, "growDirection", privateAuras, refresh, {
-        description = ns.L["Direction additional private aura icons are added in after the first."],
-    })
-    local growDirectionRow = optionsAPI.BuildSettingRow(card.frame, ns.L["Grow Direction"], growDirectionDropdown)
-    controlledRows[#controlledRows + 1] = growDirectionRow
-    card.AddRow(iconSizeRow, growDirectionRow)
-
-    local spacingSlider = gui:CreateFormSlider(card.frame, nil, 0, 8, 1, "spacing", privateAuras, refresh, { deferOnDrag = true }, {
-        description = ns.L["Pixel gap between adjacent private aura icons."],
-    })
-    local spacingRow = optionsAPI.BuildSettingRow(card.frame, ns.L["Spacing"], spacingSlider)
-    controlledRows[#controlledRows + 1] = spacingRow
-    local anchorDropdown = gui:CreateFormDropdown(card.frame, nil, NINE_POINT_OPTIONS, "anchor", privateAuras, refresh, {
-        description = ns.L["Where on the frame the first private aura icon is anchored. X/Y Offset below nudges it from this anchor point."],
-    })
-    local anchorRow = optionsAPI.BuildSettingRow(card.frame, ns.L["Anchor"], anchorDropdown)
-    controlledRows[#controlledRows + 1] = anchorRow
-    card.AddRow(spacingRow, anchorRow)
-
-    local xOffsetSlider = gui:CreateFormSlider(card.frame, nil, -100, 100, 1, "anchorOffsetX", privateAuras, refresh, { deferOnDrag = true }, {
-        description = ns.L["Horizontal pixel offset for the private aura block from its anchor."],
-    })
-    local xOffsetRow = optionsAPI.BuildSettingRow(card.frame, ns.L["X Offset"], xOffsetSlider)
-    controlledRows[#controlledRows + 1] = xOffsetRow
-    local yOffsetSlider = gui:CreateFormSlider(card.frame, nil, -100, 100, 1, "anchorOffsetY", privateAuras, refresh, { deferOnDrag = true }, {
-        description = ns.L["Vertical pixel offset for the private aura block from its anchor."],
-    })
-    local yOffsetRow = optionsAPI.BuildSettingRow(card.frame, ns.L["Y Offset"], yOffsetSlider)
-    controlledRows[#controlledRows + 1] = yOffsetRow
-    card.AddRow(xOffsetRow, yOffsetRow)
-
-    local borderScaleSlider = gui:CreateFormSlider(card.frame, nil, -100, 10, 0.5, "borderScale", privateAuras, refresh, { deferOnDrag = true }, {
-        description = ns.L["Scale applied to the Blizzard-drawn border around each private aura icon."],
-    })
-    local borderScaleRow = optionsAPI.BuildSettingRow(card.frame, ns.L["Border Scale"], borderScaleSlider)
-    controlledRows[#controlledRows + 1] = borderScaleRow
-    local showCountdownCheckbox = gui:CreateFormCheckbox(card.frame, nil, "showCountdown", privateAuras, refresh, {
-        description = ns.L["Show the cooldown swipe animation over private aura icons."],
-    })
-    local showCountdownRow = optionsAPI.BuildSettingRow(card.frame, ns.L["Show Countdown"], showCountdownCheckbox)
-    controlledRows[#controlledRows + 1] = showCountdownRow
-    card.AddRow(borderScaleRow, showCountdownRow)
-
-    local showCountdownNumbersCheckbox = gui:CreateFormCheckbox(card.frame, nil, "showCountdownNumbers", privateAuras, refresh, {
-        description = ns.L["Show the remaining-duration countdown text over private aura icons."],
-    })
-    local showCountdownNumbersRow = optionsAPI.BuildSettingRow(card.frame, ns.L["Show Countdown Numbers"], showCountdownNumbersCheckbox)
-    controlledRows[#controlledRows + 1] = showCountdownNumbersRow
-    local reverseSwipeCheckbox = gui:CreateFormCheckbox(card.frame, nil, "reverseSwipe", privateAuras, refresh, {
-        description = ns.L["Reverse the swipe direction so the shaded portion grows instead of shrinks as the aura ticks down."],
-    })
-    local reverseSwipeRow = optionsAPI.BuildSettingRow(card.frame, ns.L["Reverse Swipe"], reverseSwipeCheckbox)
-    controlledRows[#controlledRows + 1] = reverseSwipeRow
-    card.AddRow(showCountdownNumbersRow, reverseSwipeRow)
-
-    local textScaleSlider = gui:CreateFormSlider(card.frame, nil, 0.5, 1.5, 0.05, "textScale", privateAuras, refresh, { deferOnDrag = true }, {
-        description = ns.L["Scales the Blizzard-drawn countdown timer and stack-count text. There is no API to size that text directly, so the whole icon is scaled and the icon/border compensated -- lowering this shrinks the text while the icon and border stay at their configured size."],
-    })
-    local textScaleRow = optionsAPI.BuildSettingRow(card.frame, ns.L["Text Scale"], textScaleSlider)
-    controlledRows[#controlledRows + 1] = textScaleRow
-    card.AddRow(textScaleRow)
-
-    UpdatePrivateAuraRows()
-    builder.CloseCard(card)
-    return builder.Height()
-end
-
 local function EnsureDispelColors(dispel)
     if type(dispel.colors) ~= "table" then
         dispel.colors = {
@@ -2234,6 +2042,12 @@ local function EnsureDispelColors(dispel)
             Disease = { 0.6, 0.4, 0.0, 1 },
             Poison = { 0.0, 0.6, 0.0, 1 },
         }
+    end
+    -- Backfill any school missing from the canonical palette (e.g. Bleed,
+    -- added after this profile's dispel.colors was first seeded) without
+    -- disturbing colors the user already customized.
+    if ns.QUI_GroupFrameIconLayout and ns.QUI_GroupFrameIconLayout.SeedDispelColors then
+        ns.QUI_GroupFrameIconLayout.SeedDispelColors(dispel.colors)
     end
 end
 
@@ -2266,14 +2080,22 @@ local function RenderDispelOverlaySection(sectionHost, ctx)
     end
 
     builder.Header(ns.L["Dispel Overlay"])
-    builder.Description(string.format(ns.L["Dispel overlays, including Blizzard private-dispel markers when available, for %1$s group frames."], groupFrames.sourceLabel))
+    builder.Description(string.format(ns.L["Dispel border and type-icon alerts for %1$s group frames."], groupFrames.sourceLabel))
 
     local dispelCard = builder.Card()
-    local dispelRows = {}
+    local borderRows, iconRows = {}, {}
+    local scopeRow
     local function UpdateDispelRows()
-        local alpha = dispel.enabled and 1.0 or 0.4
-        for _, row in ipairs(dispelRows) do
-            row:SetAlpha(alpha)
+        local borderAlpha = dispel.enabled ~= false and 1.0 or 0.4
+        local iconAlpha = dispel.showIcon == true and 1.0 or 0.4
+        for _, row in ipairs(borderRows) do
+            row:SetAlpha(borderAlpha)
+        end
+        for _, row in ipairs(iconRows) do
+            row:SetAlpha(iconAlpha)
+        end
+        if scopeRow then
+            scopeRow:SetAlpha((dispel.enabled ~= false or dispel.showIcon == true) and 1.0 or 0.4)
         end
     end
 
@@ -2281,53 +2103,106 @@ local function RenderDispelOverlaySection(sectionHost, ctx)
         refresh()
         UpdateDispelRows()
     end, {
-        description = ns.L["Outline the frame border in the dispel type's color when a dispellable debuff or private-dispel marker is active on the unit."],
+        description = ns.L["Outline the frame border in the dispel type's color when a debuff you can dispel is active on the unit."],
     })
+    local iconEnableCheckbox = gui:CreateFormCheckbox(dispelCard.frame, nil, "showIcon", dispel, function()
+        refresh()
+        UpdateDispelRows()
+    end, {
+        description = ns.L["Show the Blizzard Magic, Curse, Disease, Poison, or Bleed type icon. Independent of the colored border."],
+    })
+    dispelCard.AddRow(
+        optionsAPI.BuildSettingRow(dispelCard.frame, ns.L["Enable Dispel Overlay"], dispelEnableCheckbox),
+        optionsAPI.BuildSettingRow(dispelCard.frame, ns.L["Show Dispel Type Icon"], iconEnableCheckbox)
+    )
+
+    local scopeDropdown = gui:CreateFormDropdown(dispelCard.frame, nil, DISPEL_SCOPE_OPTIONS, "scope", dispel, refresh, {
+        description = ns.L["Dispellable by Me shows actionable dispels. All Typed Debuffs also shows awareness-only types such as Bleed and Enrage. Cleanse-Ready Glow always remains actionable-only."],
+    })
+    scopeRow = optionsAPI.BuildSettingRow(dispelCard.frame, ns.L["Show For"], scopeDropdown)
+    local iconSizeSlider = gui:CreateFormSlider(dispelCard.frame, nil, 8, 64, 1, "iconSize", dispel, refresh, { deferOnDrag = true }, {
+        description = ns.L["Width and height of the dispel type icon in pixels."],
+    })
+    local iconSizeRow = optionsAPI.BuildSettingRow(dispelCard.frame, ns.L["Icon Size"], iconSizeSlider)
+    iconRows[#iconRows + 1] = iconSizeRow
+    dispelCard.AddRow(scopeRow, iconSizeRow)
+
     local borderSizeSlider = gui:CreateFormSlider(dispelCard.frame, nil, 1, 16, 1, "borderSize", dispel, refresh, { deferOnDrag = true }, {
         description = ns.L["Pixel thickness of the dispel border."],
     })
     local borderSizeRow = optionsAPI.BuildSettingRow(dispelCard.frame, ns.L["Border Size"], borderSizeSlider)
-    dispelRows[#dispelRows + 1] = borderSizeRow
+    borderRows[#borderRows + 1] = borderSizeRow
+    local iconOpacitySlider = gui:CreateFormSlider(dispelCard.frame, nil, 0.1, 1, 0.05, "iconOpacity", dispel, refresh, { deferOnDrag = true }, {
+        description = ns.L["Opacity of the dispel type icon."],
+    })
+    local iconOpacityRow = optionsAPI.BuildSettingRow(dispelCard.frame, ns.L["Icon Opacity"], iconOpacitySlider)
+    iconRows[#iconRows + 1] = iconOpacityRow
     dispelCard.AddRow(
-        optionsAPI.BuildSettingRow(dispelCard.frame, ns.L["Enable Dispel Overlay"], dispelEnableCheckbox),
-        borderSizeRow
+        borderSizeRow,
+        iconOpacityRow
     )
 
     local borderOpacitySlider = gui:CreateFormSlider(dispelCard.frame, nil, 0.1, 1, 0.05, "opacity", dispel, refresh, { deferOnDrag = true }, {
         description = ns.L["Opacity of the dispel-type colored border."],
     })
     local borderOpacityRow = optionsAPI.BuildSettingRow(dispelCard.frame, ns.L["Border Opacity"], borderOpacitySlider)
-    dispelRows[#dispelRows + 1] = borderOpacityRow
+    borderRows[#borderRows + 1] = borderOpacityRow
     local fillOpacitySlider = gui:CreateFormSlider(dispelCard.frame, nil, 0, 0.5, 0.05, "fillOpacity", dispel, refresh, { deferOnDrag = true }, {
         description = ns.L["Opacity of a color tint applied across the health bar when a dispellable debuff is active."],
     })
     local fillOpacityRow = optionsAPI.BuildSettingRow(dispelCard.frame, ns.L["Fill Opacity"], fillOpacitySlider)
-    dispelRows[#dispelRows + 1] = fillOpacityRow
+    borderRows[#borderRows + 1] = fillOpacityRow
     dispelCard.AddRow(borderOpacityRow, fillOpacityRow)
+
+    local iconAnchorDropdown = gui:CreateFormDropdown(dispelCard.frame, nil, NINE_POINT_OPTIONS, "iconAnchor", dispel, refresh, {
+        description = ns.L["Where the dispel type icon anchors on the unit frame."],
+    })
+    local iconAnchorRow = optionsAPI.BuildSettingRow(dispelCard.frame, ns.L["Icon Anchor"], iconAnchorDropdown)
+    iconRows[#iconRows + 1] = iconAnchorRow
+    local iconXSlider = gui:CreateFormSlider(dispelCard.frame, nil, -100, 100, 1, "iconOffsetX", dispel, refresh, { deferOnDrag = true }, {
+        description = ns.L["Horizontal pixel offset of the dispel type icon."],
+    })
+    local iconXRow = optionsAPI.BuildSettingRow(dispelCard.frame, ns.L["Icon X Offset"], iconXSlider)
+    iconRows[#iconRows + 1] = iconXRow
+    dispelCard.AddRow(iconAnchorRow, iconXRow)
+
+    local iconYSlider = gui:CreateFormSlider(dispelCard.frame, nil, -100, 100, 1, "iconOffsetY", dispel, refresh, { deferOnDrag = true }, {
+        description = ns.L["Vertical pixel offset of the dispel type icon."],
+    })
+    local iconYRow = optionsAPI.BuildSettingRow(dispelCard.frame, ns.L["Icon Y Offset"], iconYSlider)
+    iconRows[#iconRows + 1] = iconYRow
+    dispelCard.AddRow(iconYRow)
 
     local magicColorPicker = gui:CreateFormColorPicker(dispelCard.frame, nil, "Magic", dispel.colors, refresh, nil, {
         description = ns.L["Color used when the active dispellable debuff is of Magic type."],
     })
     local magicColorRow = optionsAPI.BuildSettingRow(dispelCard.frame, ns.L["Magic Color"], magicColorPicker)
-    dispelRows[#dispelRows + 1] = magicColorRow
+    borderRows[#borderRows + 1] = magicColorRow
     local curseColorPicker = gui:CreateFormColorPicker(dispelCard.frame, nil, "Curse", dispel.colors, refresh, nil, {
         description = ns.L["Color used when the active dispellable debuff is of Curse type."],
     })
     local curseColorRow = optionsAPI.BuildSettingRow(dispelCard.frame, ns.L["Curse Color"], curseColorPicker)
-    dispelRows[#dispelRows + 1] = curseColorRow
+    borderRows[#borderRows + 1] = curseColorRow
     dispelCard.AddRow(magicColorRow, curseColorRow)
 
     local diseaseColorPicker = gui:CreateFormColorPicker(dispelCard.frame, nil, "Disease", dispel.colors, refresh, nil, {
         description = ns.L["Color used when the active dispellable debuff is of Disease type."],
     })
     local diseaseColorRow = optionsAPI.BuildSettingRow(dispelCard.frame, ns.L["Disease Color"], diseaseColorPicker)
-    dispelRows[#dispelRows + 1] = diseaseColorRow
+    borderRows[#borderRows + 1] = diseaseColorRow
     local poisonColorPicker = gui:CreateFormColorPicker(dispelCard.frame, nil, "Poison", dispel.colors, refresh, nil, {
         description = ns.L["Color used when the active dispellable debuff is of Poison type."],
     })
     local poisonColorRow = optionsAPI.BuildSettingRow(dispelCard.frame, ns.L["Poison Color"], poisonColorPicker)
-    dispelRows[#dispelRows + 1] = poisonColorRow
+    borderRows[#borderRows + 1] = poisonColorRow
     dispelCard.AddRow(diseaseColorRow, poisonColorRow)
+
+    local bleedColorPicker = gui:CreateFormColorPicker(dispelCard.frame, nil, "Bleed", dispel.colors, refresh, nil, {
+        description = ns.L["Bleed effects can't be dispelled — this color is for awareness only."],
+    })
+    local bleedColorRow = optionsAPI.BuildSettingRow(dispelCard.frame, ns.L["Bleed"], bleedColorPicker)
+    borderRows[#borderRows + 1] = bleedColorRow
+    dispelCard.AddRow(bleedColorRow)
 
     UpdateDispelRows()
     builder.CloseCard(dispelCard)
@@ -2413,119 +2288,6 @@ local function RenderHealerSection(sectionHost, ctx)
     UpdateTargetRows()
     builder.CloseCard(targetCard)
 
-    return builder.Height()
-end
-
-local function RenderDefensiveSection(sectionHost, ctx)
-    local gui = GetGUI()
-    local optionsAPI = GetOptionsAPI()
-    local groupFrames = ResolveGroupFramesDB(ctx and ctx.options and ctx.options.contextMode)
-    if not gui or not optionsAPI or not groupFrames then
-        return nil
-    end
-
-    local healer = EnsureSubTable(groupFrames.contextDB, "healer")
-    if not healer then
-        return nil
-    end
-    local defensive = EnsureSubTable(healer, "defensiveIndicator")
-    if not defensive then
-        return nil
-    end
-
-    -- Defensives now lives under the Auras tab — tag search nav accordingly.
-    local builder = CreateSectionBuilder(sectionHost, ctx, CreateSearchContext("auras"))
-    if not builder then
-        return nil
-    end
-
-    local refresh = function()
-        RefreshGroupFrames(groupFrames.contextMode)
-    end
-
-    builder.Header(ns.L["Defensives"])
-    builder.Description(string.format(ns.L["Defensive-cooldown icon strip placement for %1$s group frames."], groupFrames.sourceLabel))
-
-    local card = builder.Card()
-    local controlledRows = {}
-    local function UpdateDefensiveRows()
-        local alpha = defensive.enabled and 1.0 or 0.4
-        for _, row in ipairs(controlledRows) do
-            row:SetAlpha(alpha)
-        end
-    end
-
-    local enableCheckbox = gui:CreateFormCheckbox(card.frame, nil, "enabled", defensive, function()
-        refresh()
-        UpdateDefensiveRows()
-    end, {
-        description = ns.L["Show a dedicated icon strip for active defensive cooldowns on this frame."],
-    })
-    local maxIconsSlider = gui:CreateFormSlider(card.frame, nil, 1, 5, 1, "maxIcons", defensive, refresh, { deferOnDrag = true }, {
-        description = ns.L["Hard cap on how many defensive icons this frame displays at once."],
-    })
-    local maxIconsRow = optionsAPI.BuildSettingRow(card.frame, ns.L["Max Icons"], maxIconsSlider)
-    controlledRows[#controlledRows + 1] = maxIconsRow
-    card.AddRow(
-        optionsAPI.BuildSettingRow(card.frame, ns.L["Enable Defensive Indicator"], enableCheckbox),
-        maxIconsRow
-    )
-
-    local iconSizeSlider = gui:CreateFormSlider(card.frame, nil, 8, 32, 1, "iconSize", defensive, refresh, { deferOnDrag = true }, {
-        description = ns.L["Pixel size of each defensive icon."],
-    })
-    local iconSizeRow = optionsAPI.BuildSettingRow(card.frame, ns.L["Icon Size"], iconSizeSlider)
-    controlledRows[#controlledRows + 1] = iconSizeRow
-    local reverseSwipeCheckbox = gui:CreateFormCheckbox(card.frame, nil, "reverseSwipe", defensive, refresh, {
-        description = ns.L["Reverse the swipe direction so the shaded portion grows instead of shrinks as the defensive ticks down."],
-    })
-    local reverseSwipeRow = optionsAPI.BuildSettingRow(card.frame, ns.L["Reverse Swipe"], reverseSwipeCheckbox)
-    controlledRows[#controlledRows + 1] = reverseSwipeRow
-    card.AddRow(iconSizeRow, reverseSwipeRow)
-
-    local growDirectionDropdown = gui:CreateFormDropdown(card.frame, nil, AURA_GROW_OPTIONS, "growDirection", defensive, refresh, {
-        description = ns.L["Direction additional defensive icons are added in after the first."],
-    })
-    local growDirectionRow = optionsAPI.BuildSettingRow(card.frame, ns.L["Grow Direction"], growDirectionDropdown)
-    controlledRows[#controlledRows + 1] = growDirectionRow
-    local spacingSlider = gui:CreateFormSlider(card.frame, nil, 0, 8, 1, "spacing", defensive, refresh, { deferOnDrag = true }, {
-        description = ns.L["Pixel gap between adjacent defensive icons."],
-    })
-    local spacingRow = optionsAPI.BuildSettingRow(card.frame, ns.L["Spacing"], spacingSlider)
-    controlledRows[#controlledRows + 1] = spacingRow
-    card.AddRow(growDirectionRow, spacingRow)
-
-    local positionDropdown = gui:CreateFormDropdown(card.frame, nil, NINE_POINT_OPTIONS, "position", defensive, refresh, {
-        description = ns.L["Where on the frame the defensive icon strip is anchored. X/Y Offset below nudges it from this anchor point."],
-    })
-    local positionRow = optionsAPI.BuildSettingRow(card.frame, ns.L["Position"], positionDropdown)
-    controlledRows[#controlledRows + 1] = positionRow
-    local xOffsetSlider = gui:CreateFormSlider(card.frame, nil, -100, 100, 1, "offsetX", defensive, refresh, { deferOnDrag = true }, {
-        description = ns.L["Horizontal pixel offset for the defensive icons from their anchor."],
-    })
-    local xOffsetRow = optionsAPI.BuildSettingRow(card.frame, ns.L["X Offset"], xOffsetSlider)
-    controlledRows[#controlledRows + 1] = xOffsetRow
-    card.AddRow(positionRow, xOffsetRow)
-
-    local yOffsetSlider = gui:CreateFormSlider(card.frame, nil, -100, 100, 1, "offsetY", defensive, refresh, { deferOnDrag = true }, {
-        description = ns.L["Vertical pixel offset for the defensive icons from their anchor."],
-    })
-    local yOffsetRow = optionsAPI.BuildSettingRow(card.frame, ns.L["Y Offset"], yOffsetSlider)
-    controlledRows[#controlledRows + 1] = yOffsetRow
-    card.AddRow(yOffsetRow)
-
-    -- Countdown text size: pixel size applied to the native cooldown countdown
-    -- number in UpdateDefensiveIndicator (the count stays the secret-safe native
-    -- C-side countdown; only its font is restyled).
-    local durationSizeSlider = gui:CreateFormSlider(card.frame, nil, 2, 24, 1, "durationTextSize", defensive, refresh, {}, {
-        description = ns.L["Pixel size of the defensive countdown number."],
-    })
-    local durationSizeRow = optionsAPI.BuildSettingRow(card.frame, ns.L["Duration Text Size"], durationSizeSlider)
-    controlledRows[#controlledRows + 1] = durationSizeRow
-    card.AddRow(durationSizeRow)
-
-    UpdateDefensiveRows()
-    builder.CloseCard(card)
     return builder.Height()
 end
 
@@ -2955,7 +2717,7 @@ local function RenderAurasSection(sectionHost, ctx)
     -- table so a hand-edited/partial profile cannot nil-index the editor.
     local AuraModel = ns.QUI_GroupFramesAuraModel
     if AuraModel and AuraModel.EnsureSeeded then
-        AuraModel.EnsureSeeded(auras)
+        AuraModel.EnsureSeeded(auras, groupFrames.contextMode)
     end
     if type(auras.elements) ~= "table" then
         auras.elements = {}
@@ -2964,19 +2726,6 @@ local function RenderAurasSection(sectionHost, ctx)
     local builder = CreateSectionBuilder(sectionHost, ctx, CreateSearchContext("auras"))
     if not builder then
         return nil
-    end
-
-    -- CreateSectionBuilder -> PrepareSectionHost set an explicit width on
-    -- sectionHost, so reading it here is reliable and frame-independent. The
-    -- embedded editor's listArea inherits this width through anchors, but its
-    -- GetWidth() does not settle until the next frame -- so the suggestion-grid
-    -- column math read a fallback (480) on the synchronous tab render yet the
-    -- real width on the in-place add/remove rebuild, producing inconsistent
-    -- heights and the gap/overrun on the sections below. Thread the known width
-    -- down so every rebuild measures against the same value.
-    local contentWidth = sectionHost.GetWidth and sectionHost:GetWidth() or nil
-    if type(contentWidth) ~= "number" or contentWidth <= 0 then
-        contentWidth = nil
     end
 
     -- Resolve the editing-spec bucket up front so the refresh closures below can
@@ -3099,6 +2848,8 @@ local function RenderAurasSection(sectionHost, ctx)
     end
 
     local forcedIndex = GetSelectedElementIndex(ctx, groupFrames.contextMode, selectedBucket)
+    local editorMounted = false
+    local editorHeight
 
     RenderEmbeddedEditorSection(sectionHost, builder, function(editorHost)
         return AurasEditor.RenderAuras(editorHost, auras, selectedBucket, function()
@@ -3107,33 +2858,46 @@ local function RenderAurasSection(sectionHost, ctx)
             -- per-tile restyle). The section reflow is driven by onLayoutChanged.
             refreshAuras()
         end, {
-            contentWidth = contentWidth,
             forceSelectedIndex = forcedIndex,
+            capabilities = {
+                elementTypes        = { filterStrip = true, tracked = true, missingRaidBuff = true },
+                -- border included: the wizard commits border elements onto
+                -- group-frame surfaces and the GF engine renders them
+                -- (R.RenderBorder) — omitting it here stranded wizard-created
+                -- border elements with no editor access to their display type.
+                trackedDisplayTypes = { icon = true, square = true, bar = true, healthTint = true, border = true },
+                cancelEligible      = false,
+                maxStripElements    = 4,   -- per-frame container cap: 40-man parse cost
+                allowSpecOverride   = true,
+                defaultBucketFn     = AuraDefaults and function()
+                    return AuraDefaults.DefaultStripBucket(groupFrames.contextMode)
+                end or nil,
+                -- Group frames only ever show the player's own party/raid —
+                -- always assistable (Wave 4 Task 2c polarity hint).
+                unitPolarity        = "friendly",
+            },
             onSelectionChanged = function(index)
                 SetSelectedElementIndex(ctx, groupFrames.contextMode, selectedBucket, index)
             end,
             onLayoutChanged = function(height)
-                -- Re-anchor the sections below the editor only when its height
-                -- actually changes. The first observation just seeds the store
-                -- (the synchronous render already laid everything out), so we
-                -- avoid a redundant repaint on open; later changes (add/remove/
-                -- expand) trigger one re-render that converges, because the
-                -- width-stable height is a fixed point.
                 if type(height) ~= "number" then
                     return
                 end
-                local store = ctx.state and ctx.state._aurasEditorHeight
-                if type(store) ~= "table" then
-                    store = {}
-                    if ctx.state then
-                        ctx.state._aurasEditorHeight = store
-                    end
+                local previousHeight = editorHeight
+                editorHeight = height
+                -- The synchronous first render already returns the correct
+                -- section height. Later disclosure/list changes resize this
+                -- section in place, which re-anchors Targeted Spells without
+                -- destroying and painting the whole Auras tab a second time.
+                if not editorMounted or previousHeight == nil or previousHeight == height then
+                    return
                 end
-                local key = ElementIndexKey(groupFrames.contextMode, selectedBucket)
-                if store[key] == nil then
-                    store[key] = height
-                elseif store[key] ~= height then
-                    store[key] = height
+                local sectionHeight = ctx.runtime
+                    and ctx.runtime.sectionHeights
+                    and ctx.runtime.sectionHeights.auras
+                if type(ctx.ResizeSection) == "function" and type(sectionHeight) == "number" then
+                    ctx:ResizeSection("auras", sectionHeight + (height - previousHeight))
+                else
                     ScheduleTabRepaint(ctx)
                 end
             end,
@@ -3141,6 +2905,7 @@ local function RenderAurasSection(sectionHost, ctx)
     end, {
         minHeight = 1,
     })
+    editorMounted = true
 
     return builder.Height()
 end
@@ -3199,6 +2964,7 @@ end
 
 local GENERAL_TAB_FEATURE = CreateMultiSectionTabFeature("groupFramesGeneralTab", {
     { id = "enable", minHeight = 42, render = RenderGeneralEnableSection },
+    { id = "aurasHubPointer", minHeight = 28, render = RenderAurasHubPointerSection },
     { id = "rangepet", minHeight = 140, render = RenderRangePetSection },
     { id = "healer", minHeight = 140, render = RenderHealerSection },
     { id = "copySettings", minHeight = 88, render = RenderGeneralCopySettingsSection },
@@ -3208,6 +2974,7 @@ local GENERAL_TAB_FEATURE = CreateMultiSectionTabFeature("groupFramesGeneralTab"
 -- raid would mean up to 40 extra secure frames).
 local GENERAL_PARTY_TAB_FEATURE = CreateMultiSectionTabFeature("groupFramesGeneralPartyTab", {
     { id = "enable", minHeight = 42, render = RenderGeneralEnableSection },
+    { id = "aurasHubPointer", minHeight = 28, render = RenderAurasHubPointerSection },
     { id = "rangepet", minHeight = 140, render = RenderRangePetSection },
     { id = "partyTargets", minHeight = 200, render = RenderPartyTargetsSection },
     { id = "healer", minHeight = 140, render = RenderHealerSection },
@@ -3264,9 +3031,15 @@ local INDICATORS_TAB_FEATURE = CreateSingleSectionTabFeature(
 
 local AURAS_TAB_FEATURE = CreateMultiSectionTabFeature("groupFramesAurasTab", {
     { id = "auras", minHeight = 180, render = RenderAurasSection },
-    { id = "privateAuras", minHeight = 140, render = RenderPrivateAurasSection },
-    { id = "defensive", minHeight = 140, render = RenderDefensiveSection },
     { id = "targetedSpells", minHeight = 160, render = RenderTargetedSpellsSection },
+})
+
+-- Standalone one-section tab wrapping the same RenderDispelOverlaySection
+-- the Group Frames tile's Appearance tab folds in -- gives the Auras hub's
+-- Dispel Colors sub-page a self-contained mount seam without duplicating
+-- the card render.
+local DISPEL_TAB_FEATURE = CreateMultiSectionTabFeature("groupFramesDispelTab", {
+    { id = "dispelOverlay", minHeight = 140, render = RenderDispelOverlaySection },
 })
 
 local function RenderFeatureTab(feature, host, contextMode)
@@ -3321,4 +3094,8 @@ end
 
 function GroupFramesSchema.RenderAurasTab(host, contextMode)
     return RenderFeatureTab(AURAS_TAB_FEATURE, host, contextMode)
+end
+
+function GroupFramesSchema.RenderDispelTab(host, contextMode)
+    return RenderFeatureTab(DISPEL_TAB_FEATURE, host, contextMode)
 end

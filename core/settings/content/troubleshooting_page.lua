@@ -108,10 +108,8 @@ local function BuildTroubleshootingContent(content)
         -- Register this button with the search index so the global
         -- "Search settings" box can land users on this sub-page when
         -- they query a button label, the slash command, or any tooltip
-        -- term. The slash command is added as a keyword so queries like
-        -- "cdm cache" match `/qui cdm_cache status` even though the
-        -- visible label is "CDM Cache Status" with no "cache" hit on
-        -- its own.
+        -- term. Slash commands are added as keywords so command-name
+        -- searches can still resolve to the matching diagnostic button.
         if GUI.RegisterSearchSettingWidget then
             GUI:RegisterSearchSettingWidget({
                 label       = entry.label,

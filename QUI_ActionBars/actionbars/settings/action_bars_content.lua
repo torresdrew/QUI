@@ -4,14 +4,7 @@ local GUI = QUI.GUI
 local C = GUI.Colors
 local Shared = ns.QUI_Options
 local Opts = Shared  -- V3 body-pattern helpers
-
-local function CJKFont(fs, p, s, f)
-    if ns.Helpers and ns.Helpers.ApplyFontWithFallback then
-        ns.Helpers.ApplyFontWithFallback(fs, p, s, f)
-    else
-        fs:SetFont(p, s, f)
-    end
-end
+local SkinBase = ns.SkinBase
 
 -- Local references
 local PADDING = Shared.PADDING
@@ -118,7 +111,7 @@ local SelectedBarListeners = setmetatable({}, { __mode = "k" })
 local function NotifySelectedBarChanged(origin)
     for owner, callback in pairs(SelectedBarListeners) do
         if owner and callback then
-            local ok = pcall(callback, SelectedBarState.key, origin)
+            local ok = ns.SafeCall("bulkhead", callback, SelectedBarState.key, origin)
             if not ok then
                 SelectedBarListeners[owner] = nil
             end
@@ -167,7 +160,6 @@ local function SetActionBarsPreviewBar(barKey)
 end
 
 local function BuildActionBarsPreview(pv)
-    local accent = C.accent or { 0.204, 0.827, 0.6, 1 }
     local border = (GUI.Colors and GUI.Colors.border) or { 1, 1, 1, 0.06 }
 
     local selectedBar = GetSelectedBar()
@@ -186,16 +178,21 @@ local function BuildActionBarsPreview(pv)
     end
 
     local lbl = pv:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    local fpath = ns.UIKit and ns.UIKit.ResolveFontPath and ns.UIKit.ResolveFontPath(GUI:GetFontPath())
-    CJKFont(lbl, fpath or select(1, lbl:GetFont()), 8, "")
-    lbl:SetTextColor(accent[1], accent[2], accent[3], 0.7)
+    if SkinBase and SkinBase.SkinFontString then
+        SkinBase.SkinFontString(lbl, { fontOnly = true })
+    end
     lbl:SetPoint("TOPLEFT", pv, "TOPLEFT", 8, -6)
-    local spaced = ns.L["P R E V I E W"]
-    lbl:SetText(spaced)
+    lbl:SetText(ns.L["Live Preview"])
+    lbl:SetTextColor(0.6, 0.6, 0.6, 1)
 
     -- Driver owns the preview buttons, Cooldown children, ticker, and cycle.
     if ns.QUI_ActionBarsPreviewDriver and ns.QUI_ActionBarsPreviewDriver.Build then
-        ns.QUI_ActionBarsPreviewDriver.Build(pv)
+        ns.QUI_ActionBarsPreviewDriver.Build(pv, {
+            autoHeight = true,
+            chromeHeight = 42,
+            minHeight = 66,
+            verticalPadding = 2,
+        })
     end
 
     -- PreviewState.refresh now points at the driver. This is the
@@ -275,6 +272,22 @@ local function BuildMasterSettingsTab(tabContent)
     })
 
     local headerAt, sectionAt, closeSection, getY = MakeSectionLayout(tabContent)
+
+    -- Pointer row: the Buff/Debuff sub-page used to live on this tile
+    -- (subPages id "buffDebuff", tiles/action_bars.lua); aura config now
+    -- lives on the Auras hub tile (tiles/auras.lua, tabIndex 21, subTabIndex
+    -- 4 = Buff/Debuff Frames). BuildBuffDebuffTab itself is untouched -- the
+    -- hub's Buff/Debuff Frames sub-page (core/settings/content/
+    -- auras_actionbar_page.lua) still calls it directly.
+    headerAt(ns.L["Auras"])
+    local sAuras = sectionAt()
+    local openAurasBtn = GUI:CreateButton(sAuras.frame, ns.L["Open Auras"], 140, 26, function()
+        if GUI.NavigateTo then
+            GUI:NavigateTo(21, 3)
+        end
+    end)
+    sAuras.AddRow(Opts.BuildSettingRow(sAuras.frame, ns.L["Aura settings have moved to the Auras section."], openAurasBtn))
+    closeSection(sAuras)
 
     -- Button lock proxy (CVar-backed dropdown)
     local lockOptions = {

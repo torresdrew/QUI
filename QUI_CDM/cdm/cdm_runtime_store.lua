@@ -146,9 +146,10 @@ function CDMRuntimeStore.ClearAll()
 end
 
 function CDMRuntimeStore.GetStats()
+    -- Frame-owned store: per-frame states are not centrally tracked, so
+    -- there is no meaningful count to report — only the write version and
+    -- whether the single compat slot is occupied.
     return {
-        states = 0,
-        centralStates = 0,
         compatState = _compatState and 1 or 0,
         version = _version,
     }

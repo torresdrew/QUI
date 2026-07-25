@@ -30,16 +30,6 @@ local function IsSecretValue(value)
     return false
 end
 
-local chargeDurationObjectSerial = 0
-
-function CDMRuntimeQueries.NoteChargeDurationObjectsUpdated()
-    chargeDurationObjectSerial = chargeDurationObjectSerial + 1
-end
-
-function CDMRuntimeQueries.GetChargeDurationObjectSerial()
-    return chargeDurationObjectSerial
-end
-
 local function GetChargeMetadataDB()
     local db = QUI and QUI.db and QUI.db.global
     if not db then return nil end
@@ -51,9 +41,6 @@ CDMRuntimeQueries.GetChargeMetadataDB = GetChargeMetadataDB
 local NIL_SENTINEL = {}
 local runtimeQueryBatchDepth = 0
 local runtimeQueryEpoch = 0
-local runtimeQueryOwner
-local runtimeQueryOwnerStack = {}
-local runtimeQueryOwnerStackDepth = 0
 local stableOverrideCache = {}
 local runtimeQueryStats -- debug counters; nil until QUI_Debug activates instrumentation
 
@@ -129,31 +116,6 @@ function CDMRuntimeQueries.InvalidateStableOverrideForSpell(spellID)
     stableOverrideCache[spellID] = nil
 end
 
-function CDMRuntimeQueries.PushRuntimeQueryOwner(owner)
-    runtimeQueryOwnerStackDepth = runtimeQueryOwnerStackDepth + 1
-    runtimeQueryOwnerStack[runtimeQueryOwnerStackDepth] = runtimeQueryOwner
-    runtimeQueryOwner = owner
-    return runtimeQueryOwnerStackDepth
-end
-
-function CDMRuntimeQueries.PopRuntimeQueryOwner()
-    if runtimeQueryOwnerStackDepth <= 0 then
-        runtimeQueryOwner = nil
-        return
-    end
-    runtimeQueryOwner = runtimeQueryOwnerStack[runtimeQueryOwnerStackDepth]
-    runtimeQueryOwnerStack[runtimeQueryOwnerStackDepth] = nil
-    runtimeQueryOwnerStackDepth = runtimeQueryOwnerStackDepth - 1
-end
-
-function CDMRuntimeQueries.WithRuntimeQueryOwner(owner, callback, ...)
-    if not callback then return nil end
-    CDMRuntimeQueries.PushRuntimeQueryOwner(owner)
-    local a, b, c, d, e = callback(...)
-    CDMRuntimeQueries.PopRuntimeQueryOwner()
-    return a, b, c, d, e
-end
-
 function CDMRuntimeQueries.BeginRuntimeQueryBatch()
     if runtimeQueryBatchDepth == 0 then
         AdvanceRuntimeQueryEpoch()
@@ -165,25 +127,14 @@ end
 function CDMRuntimeQueries.EndRuntimeQueryBatch()
     if runtimeQueryBatchDepth <= 0 then
         runtimeQueryBatchDepth = 0
-        runtimeQueryOwner = nil
-        runtimeQueryOwnerStackDepth = 0
-        wipe(runtimeQueryOwnerStack)
         return
     end
 
     runtimeQueryBatchDepth = runtimeQueryBatchDepth - 1
-    if runtimeQueryBatchDepth == 0 then
-        runtimeQueryOwner = nil
-        runtimeQueryOwnerStackDepth = 0
-        wipe(runtimeQueryOwnerStack)
-    end
 end
 
 function CDMRuntimeQueries.ResetRuntimeQueryBatch()
     runtimeQueryBatchDepth = 0
-    runtimeQueryOwner = nil
-    runtimeQueryOwnerStackDepth = 0
-    wipe(runtimeQueryOwnerStack)
     AdvanceRuntimeQueryEpoch()
 end
 
@@ -212,7 +163,7 @@ local batchSharedCache = {
 
 local function ReadRuntimeCache(cacheName, _owner, key, hitStat)
     if runtimeQueryBatchDepth <= 0 then return nil, false end
-    if IsSecretValue(key) then return nil, false end
+    if IsSecretValue(key) then return nil, false end -- @secret-policy: reject-secret-ids
     local cache = batchSharedCache[cacheName]
     if not cache then return nil, false end
     local slot = cache[key]
@@ -338,7 +289,7 @@ function CDMRuntimeQueries.QueryOverrideSpell(spellID)
         overrideID = Sources.QueryOverrideSpell(spellID)
     end
     if IsSecretValue(overrideID) then
-        return nil
+        return nil -- @secret-policy: reject-secret-ids
     end
     stableOverrideCache[spellID] = overrideID == nil and NIL_SENTINEL or overrideID
     if runtimeQueryBatchDepth > 0 then

@@ -60,7 +60,7 @@ function GetButtonSpellId(button)
     if not action then return nil end
     if not HasAction(action) then return nil end
 
-    local ok, actionType, id, subType = pcall(GetActionInfo, action)
+    local ok, actionType, id, subType = ns.SafeCall("best-effort-style", GetActionInfo, action)
     if not ok then return nil end
 
     if actionType == "spell" then
@@ -71,7 +71,7 @@ function GetButtonSpellId(button)
         end
         -- Fallback: GetMacroSpell for macros without spell subType
         if GetMacroSpell then
-            local macroOk, spellId = pcall(GetMacroSpell, id)
+            local macroOk, spellId = ns.SafeCall("best-effort-style", GetMacroSpell, id)
             if macroOk and spellId then return spellId end
         end
     end
@@ -86,7 +86,7 @@ function ForEachSpellCandidate(spellId, callback)
     callback(spellId)
 
     if C_Spell and C_Spell.GetOverrideSpell then
-        local ok, overrideId = pcall(C_Spell.GetOverrideSpell, spellId)
+        local ok, overrideId = ns.SafeCall("best-effort-style", C_Spell.GetOverrideSpell, spellId)
         overrideId = ok and Helpers.SafeValue(overrideId, nil) or nil
         if ok and overrideId and overrideId ~= spellId then
             callback(overrideId)
@@ -98,10 +98,10 @@ end
 function ButtonFlyoutContainsSpell(button, spellId)
     local action = button.action
     if not action then return false end
-    local ok, actionType, id = pcall(GetActionInfo, action)
+    local ok, actionType, id = ns.SafeCall("best-effort-style", GetActionInfo, action)
     if not ok or actionType ~= "flyout" then return false end
     if FlyoutHasSpell then
-        local fok, has = pcall(FlyoutHasSpell, id, spellId)
+        local fok, has = ns.SafeCall("best-effort-style", FlyoutHasSpell, id, spellId)
         if fok and has then return true end
     end
     return false
@@ -169,7 +169,7 @@ function RebuildSpellIdMap()
                         -- Check if this is a flyout button (rare but possible)
                         local action = btn.action
                         if action and HasAction(action) then
-                            local ok, actionType = pcall(GetActionInfo, action)
+                            local ok, actionType = ns.SafeCall("best-effort-style", GetActionInfo, action)
                             if ok and actionType == "flyout" then
                                 flyoutButtons[#flyoutButtons + 1] = btn
                             end
@@ -225,7 +225,7 @@ function ActionBarsOwned.UpdateOverlayGlow(button)
             local overlayed = false
             ForEachSpellCandidate(spellId, function(candidateId)
                 if overlayed then return end
-                local ok, result = pcall(IsSpellOverlayed, candidateId)
+                local ok, result = ns.SafeCall("best-effort-style", IsSpellOverlayed, candidateId)
                 if ok and result then
                     overlayed = true
                 end
@@ -257,7 +257,7 @@ function UpdateSpellHighlight(button)
     elseif spellHighlight.type == "flyout" then
         local action = button.action
         if action then
-            local ok, actionType, actionId = pcall(GetActionInfo, action)
+            local ok, actionType, actionId = ns.SafeCall("best-effort-style", GetActionInfo, action)
             if ok and actionType == "flyout" and actionId == spellHighlight.id then
                 shown = true
             end
@@ -331,6 +331,23 @@ UpdateAssistedCombatRotationFrame = function(button)
         frame = CreateFrame("Frame", nil, button, "ActionBarButtonAssistedCombatRotationTemplate")
         button.AssistedCombatRotationFrame = frame
         _assistRotationButton = button
+        -- 12.1: the template's OnUpdate now calls actionButton:OnActionBarSlotChanged().
+        -- QUI's owned buttons are built from ActionButtonTemplate +
+        -- SecureActionButtonTemplate and do NOT inherit ActionBarActionButtonMixin,
+        -- so that method is nil and the OnUpdate errors every frame. Stub it.
+        if not button.OnActionBarSlotChanged then
+            button.OnActionBarSlotChanged = function(self)
+                -- Mirror ActionBarActionButtonMixin:OnActionBarSlotChanged:
+                -- assisted combat suppresses regular events and drives slot
+                -- refresh through this method, so it must refresh the button,
+                -- not just clear the highlight. No guard here on purpose:
+                -- the template's own OnUpdate already time-throttles this call
+                -- (updateTimeLeft / assistedCombatIconUpdateRate), and
+                -- Blizzard's real handler runs UpdateAction(true) unguarded.
+                if ClearNewActionHighlight then ClearNewActionHighlight(self.action, true) end
+                if self.Update then self:Update() end
+            end
+        end
         -- The template OnLoad sets frame level relative to MainActionBar's
         -- EndCaps, which QUI reparented to a hidden frame (low level).
         -- Override to sit above the button so it's visible over QUI's
@@ -363,7 +380,7 @@ function UpdateAllAssistedCombatRotation()
         and C_ActionBar and C_ActionBar.FindSpellActionButtons) then
         return
     end
-    local ok, spellID = pcall(C_AssistedCombat.GetNextCastSpell, false)
+    local ok, spellID = ns.SafeCall("best-effort-style", C_AssistedCombat.GetNextCastSpell, false)
     if not ok or not spellID then return end
     local slots = C_ActionBar.FindSpellActionButtons(spellID)
     if not slots then return end
@@ -417,7 +434,7 @@ UpdateAllAssistedHighlights = function()
         return
     end
 
-    local okNext, nextSpellID = pcall(C_AssistedCombat.GetNextCastSpell, false)
+    local okNext, nextSpellID = ns.SafeCall("best-effort-style", C_AssistedCombat.GetNextCastSpell, false)
     if not okNext then nextSpellID = nil end
 
     -- Build match set into a reusable scratch table to avoid per-call
@@ -507,7 +524,7 @@ function ForEachButtonForSpellGlow(spellId, callback)
         end
 
         if C_ActionBar and C_ActionBar.FindSpellActionButtons and slotMap then
-            local ok, slots = pcall(C_ActionBar.FindSpellActionButtons, candidateId)
+            local ok, slots = ns.SafeCall("best-effort-style", C_ActionBar.FindSpellActionButtons, candidateId)
             if ok and slots then
                 for _, slot in ipairs(slots) do
                     local entry = slotMap[slot]
@@ -587,7 +604,7 @@ function ActionBarsOwned.UpdateAllButtonCounts()
     _lastCountUpdateTime = now
 
     for btn in pairs(ActionBarsOwned._activeButtons) do
-        if btn.UpdateCount then pcall(btn.UpdateCount, btn) end
+        ns.SafeCallMethodIfPresent("best-effort-style", btn, "UpdateCount")
     end
 end
 
@@ -620,12 +637,12 @@ function ActionBarsOwned.UpdateAllButtonVisuals()
                         if HasAction(action) then
                             local state = GetFrameState(btn)
                             state.wasEmpty = false
-                            pcall(ActionBarsOwned.SafeUpdate, btn)
+                            ns.SafeCall("best-effort-style", ActionBarsOwned.SafeUpdate, btn)
                         else
                             local state = GetFrameState(btn)
                             if not state.wasEmpty then
                                 state.wasEmpty = true
-                                pcall(ActionBarsOwned.SafeUpdate, btn)
+                                ns.SafeCall("best-effort-style", ActionBarsOwned.SafeUpdate, btn)
                             end
                         end
                     else
@@ -638,14 +655,14 @@ function ActionBarsOwned.UpdateAllButtonVisuals()
         _visualFirstRunDone = true
     else
         -- Fast path: iterate only buttons with actions. Active→empty
-        -- transitions are handled by SafeSyncAction/ACTIONBAR_SLOT_CHANGED
+        -- transitions are handled by Blizzard updates/ACTIONBAR_SLOT_CHANGED
         -- paths calling SafeUpdate directly on the affected button.
         for btn in pairs(ActionBarsOwned._activeButtons) do
             local barKey = btn._quiBarKey
             if not IsButtonInsideVisibleLayout or IsButtonInsideVisibleLayout(btn, barKey) then
                 local state = GetFrameState(btn)
                 state.wasEmpty = false
-                pcall(ActionBarsOwned.SafeUpdate, btn)
+                ns.SafeCall("best-effort-style", ActionBarsOwned.SafeUpdate, btn)
             else
                 ActionBarsOwned._activeButtons[btn] = nil
                 ActionBarsOwned._activeStandardButtons[btn] = nil
@@ -667,4 +684,3 @@ function ActionBarsOwned.ForceFullVisualRescan()
     end
     if MarkSpellIdMapDirty then MarkSpellIdMapDirty() end
 end
-

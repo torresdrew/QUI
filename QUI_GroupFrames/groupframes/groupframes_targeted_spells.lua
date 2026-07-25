@@ -41,6 +41,8 @@ local IsSecretValue = Helpers.IsSecretValue
 
 local TargetedSpells = ns.QUI_GroupFrameTargetedSpells or {}
 ns.QUI_GroupFrameTargetedSpells = TargetedSpells
+local CHROME_LEVELS = (ns.QUI_GroupFrameChrome and ns.QUI_GroupFrameChrome.LEVELS)
+    or { TARGETED = 14 }
 
 local TIMING = {
     firstRead = 0.10,
@@ -104,7 +106,7 @@ end
 
 local function ReadableTruthy(value)
     if IsSecretValue(value) then
-        return false
+        return false -- @secret-policy: reject-secret-value
     end
     return value and true or false
 end
@@ -343,7 +345,7 @@ local function ApplyMarkerStyle(marker)
     local isRaid = marker._quiTargetedRaid and true or false
     local size = MarkerSize(isRaid)
     marker:SetSize(size, size)
-    marker:SetFrameLevel((marker:GetParent():GetFrameLevel() or 0) + 12)
+    marker:SetFrameLevel((marker:GetParent():GetFrameLevel() or 0) + CHROME_LEVELS.TARGETED)
 
     if marker._border then
         marker._border:SetFrameLevel(marker:GetFrameLevel() + 1)
@@ -488,9 +490,7 @@ local function StopCooldown(cooldown)
     if not cooldown then
         return
     end
-    if cooldown.Clear then
-        pcall(cooldown.Clear, cooldown)
-    end
+    ns.SafeCallMethodIfPresent("best-effort-style", cooldown, "Clear")
     cooldown:Hide()
 end
 
@@ -499,10 +499,14 @@ local function StartCooldown(cooldown, durationObject, startMS, endMS)
         return
     end
 
-    if durationObject and cooldown.SetCooldownFromDurationObject then
+    -- durationObject may be SECRET (UnitCasting/ChannelDuration are
+    -- SecretReturns): probe before any truth-test/index; a secret object is
+    -- still routed to the SetCooldownFromDurationObject sink.
+    local durSecret = IsSecretValue(durationObject)
+    if (durSecret or durationObject) and cooldown.SetCooldownFromDurationObject then
         local ok = pcall(cooldown.SetCooldownFromDurationObject, cooldown, durationObject)
         if ok then
-            if durationObject.IsZero and cooldown.SetAlphaFromBoolean then
+            if not durSecret and durationObject.IsZero and cooldown.SetAlphaFromBoolean then
                 cooldown:SetAlphaFromBoolean(durationObject:IsZero(), 0, 1)
             else
                 cooldown:SetAlpha(1)
@@ -553,15 +557,39 @@ local function NextSerial(caster)
     return serial
 end
 
+-- Returns: spellName, texture, isChannel, startMS, endMS, evidence
+--   evidence "plain"  — readable cast; every value is ordinary.
+--   evidence "secret" — the poll returned secrets: INDETERMINATE, never
+--       converted into cast state. name/texture ride along SINK-ONLY (raw,
+--       possibly secret), timing is dropped; the caller may render only via
+--       its own EVENT evidence (watch latch) + the DurationObject sink.
+--       Cast-vs-channel is unknowable here (isChannel defaults false).
+--   evidence nil — readable "no cast".
 local function ReadCast(caster)
     local ok, spellName, _, texture, startMS, endMS = pcall(UnitCastingInfo, caster)
-    if ok and spellName ~= nil then
-        return spellName, texture, false, startMS, endMS
+    if ok then
+        if IsSecretValue(spellName) then
+            return spellName, texture, false, nil, nil, "secret"
+        end
+        if spellName ~= nil then
+            if IsSecretValue(startMS) or IsSecretValue(endMS) then
+                return spellName, texture, false, nil, nil, "secret"
+            end
+            return spellName, texture, false, startMS, endMS, "plain"
+        end
     end
 
     ok, spellName, _, texture, startMS, endMS = pcall(UnitChannelInfo, caster)
-    if ok and spellName ~= nil then
-        return spellName, texture, true, startMS, endMS
+    if ok then
+        if IsSecretValue(spellName) then
+            return spellName, texture, true, nil, nil, "secret"
+        end
+        if spellName ~= nil then
+            if IsSecretValue(startMS) or IsSecretValue(endMS) then
+                return spellName, texture, true, nil, nil, "secret"
+            end
+            return spellName, texture, true, startMS, endMS, "plain"
+        end
     end
 
     return nil
@@ -683,8 +711,11 @@ local function ResolveCastTarget(caster, expectedSerial)
         return
     end
 
-    local spellName, texture, isChannel, startMS, endMS = ReadCast(caster)
-    if spellName == nil or not SpellTargetIsDisplayable(caster) then
+    local spellName, texture, isChannel, startMS, endMS, evidence = ReadCast(caster)
+    if evidence == nil then
+        return
+    end
+    if not SpellTargetIsDisplayable(caster) then
         return
     end
 
@@ -703,7 +734,25 @@ local function ResolveCastTarget(caster, expectedSerial)
         HideMarkerSet(current)
     end
 
-    ShowCastOnUnit(caster, unit, texture, ReadDuration(caster, isChannel), startMS, endMS)
+    local durationObject
+    if evidence == "secret" then
+        -- Restricted cast: render ONLY on event evidence (the watch latch
+        -- set by the cast-start event) and only through the DurationObject
+        -- sink. Cast-vs-channel is unknowable — try both getters; a SECRET
+        -- object still routes to the sink (probed, never truth-tested).
+        if not watchedCaster[caster] then
+            return
+        end
+        durationObject = ReadDuration(caster, false)
+        if IsSecretValue(durationObject) then
+            -- sink-capable as-is
+        elseif durationObject == nil then
+            durationObject = ReadDuration(caster, true)
+        end
+    else
+        durationObject = ReadDuration(caster, isChannel)
+    end
+    ShowCastOnUnit(caster, unit, texture, durationObject, startMS, endMS)
 end
 
 local function QueueResolve(caster, serial, delay)
@@ -740,7 +789,10 @@ local function RecheckCasterTarget(caster)
 end
 
 local function AdoptLiveCast(unit)
-    if ReadCast(unit) ~= nil then
+    -- Catch-up has NO event evidence: only a READABLE live cast adopts.
+    -- (A secret poll is indeterminate and must not start a watch.)
+    local _, _, _, _, _, evidence = ReadCast(unit)
+    if evidence == "plain" then
         BeginCastWatch(unit)
     end
 end

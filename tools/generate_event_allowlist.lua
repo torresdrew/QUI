@@ -36,8 +36,8 @@ local DENY = {
 }
 
 local function list_lua_files()
-    -- core/ plus every QUI_* addon dir, minus the generated OptionsSearch caches.
-    local cmd = [[find core QUI_* -name '*.lua' -not -path '*/QUI_OptionsSearch*' 2>/dev/null]]
+    -- core/ + modules/ plus every QUI_* addon dir, minus the generated OptionsSearch caches.
+    local cmd = [[find core modules QUI_* -name '*.lua' -not -path '*/QUI_OptionsSearch*' 2>/dev/null]]
     local handle = assert(io.popen(cmd, "r"))
     local files = {}
     for line in handle:lines() do

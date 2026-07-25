@@ -193,6 +193,22 @@ function ns.CDMComposer.RebuildCooldownLearnedPreferredIDs(outSet)
     return false
 end
 
+function ns.CDMComposer.RebuildAuraLearnedFamilyIDs(outSet)
+    local catalog = ns.CDMCatalog
+    if catalog and catalog.RebuildAuraLearnedFamilyIDs then
+        return catalog.RebuildAuraLearnedFamilyIDs(outSet)
+    end
+    return false
+end
+
+function ns.CDMComposer.RebuildClassApplicableSpellIDs(outSet)
+    local catalog = ns.CDMCatalog
+    if catalog and catalog.RebuildClassApplicableSpellIDs then
+        return catalog.RebuildClassApplicableSpellIDs(outSet)
+    end
+    return false
+end
+
 function ns.CDMComposer.GetAvailableSpellsForContainer(containerKey, containerType, ownedSet, correctionMap)
     local catalog = ns.CDMCatalog
     if catalog and catalog.GetAvailableSpellsForContainer then
@@ -452,6 +468,14 @@ local function GetEntryIcon(entry)
                 if texID then return texID end
             end
         end
+    elseif etype == "consumable" then
+        -- entry.id is a spell CATEGORY id (combat pot / health pot /
+        -- healthstone) — resolve through the catalog meta, never spell/item
+        -- queries.
+        local Catalog = ns.CDMCatalog
+        local meta = Catalog and Catalog.GetConsumableCategoryMeta
+            and Catalog.GetConsumableCategoryMeta(entry.id)
+        if meta and meta.icon then return meta.icon end
     end
     return "Interface\\Icons\\INV_Misc_QuestionMark"
 end
@@ -487,6 +511,13 @@ local function GetEntryName(entry)
         return string.format(ns.L["Trinket Slot %s"], tostring(entry.id or "?"))
     elseif etype == "macro" then
         return entry.macroName or ns.L["Macro"]
+    elseif etype == "consumable" then
+        local Catalog = ns.CDMCatalog
+        local meta = Catalog and Catalog.GetConsumableCategoryMeta
+            and Catalog.GetConsumableCategoryMeta(entry.id)
+        local L = ns.L
+        return (meta and ((L and L[meta.name]) or meta.name))
+            or ("Category " .. tostring(entry.id or "?"))
     end
     return ns.L["Unknown"]
 end
@@ -507,6 +538,18 @@ local function IsEntryDormantOnCurrentPlayer(entry, containerKey)
     return spellData:IsSpellKnown(entry.id) ~= true
 end
 
+local function IsEntryApplicableOnCurrentPlayer(entry, containerKey)
+    if type(entry) ~= "table" then return true end
+    if entry.type ~= "spell" then return true end
+    if type(entry.id) ~= "number" then return true end
+    local spellData = ns.CDMSpellData
+    if spellData and type(spellData.IsEntryApplicableForContainer) == "function" then
+        return spellData:IsEntryApplicableForContainer(
+            containerKey or activeContainer, entry) == true
+    end
+    return true
+end
+
 -- True if the entry is castable / usable by the player currently logged in.
 -- Items, slots, macros are always considered usable here. Spell dormancy is
 -- delegated to CDMSpellData so cooldown entries use spell knownness while
@@ -515,7 +558,8 @@ local function IsEntryUsableOnCurrentPlayer(entry, containerKey)
     if type(entry) ~= "table" then return true end
     if entry.type ~= "spell" then return true end
     if type(entry.id) ~= "number" then return true end
-    return not IsEntryDormantOnCurrentPlayer(entry, containerKey)
+    return IsEntryApplicableOnCurrentPlayer(entry, containerKey)
+        and not IsEntryDormantOnCurrentPlayer(entry, containerKey)
 end
 
 local function EntryCountsForCooldownRowCapacity(entry)
@@ -777,11 +821,108 @@ end
 -- LIVE PREVIEW
 ---------------------------------------------------------------------------
 local previewFrame = nil
-local previewScale = 1.5
+local PREVIEW_SCALE = 1.5
+local PREVIEW_INITIAL_HEIGHT = 180
+local PREVIEW_INNER_CHROME_HEIGHT = 32
+local PREVIEW_MIN_CONTENT_HEIGHT = 60
+local PREVIEW_CONTENT_VERTICAL_PADDING = 2
 
-local function BuildPreviewSection(parent)
+local function IncludePreviewBounds(object, bounds, onlyWhenShown)
+    if not object then return end
+    if onlyWhenShown and object.IsShown and not object:IsShown() then return end
+
+    local top = object.GetTop and object:GetTop()
+    local bottom = object.GetBottom and object:GetBottom()
+    if top and bottom then
+        bounds.top = bounds.top and math_max(bounds.top, top) or top
+        bounds.bottom = bounds.bottom and math.min(bounds.bottom, bottom) or bottom
+    end
+end
+
+local function MeasurePreviewContentHeight()
+    local driver = ns.CDMComposerPreview
+    local frames = driver and driver.GetContentFrames and driver.GetContentFrames()
+    if type(frames) ~= "table" then return 0 end
+
+    local bounds = {}
+    for _, frame in ipairs(frames) do
+        if frame then
+            -- Roots remain layout content even during a preview animation's
+            -- brief hidden phase. Their border regions are larger than the
+            -- roots, however, so include the visible icon/bar border geometry
+            -- or the fitted grid will clip the first and last rows.
+            IncludePreviewBounds(frame, bounds, false)
+            IncludePreviewBounds(frame.Border, bounds, true)
+            IncludePreviewBounds(frame.BorderContainer, bounds, true)
+        end
+    end
+
+    if not bounds.top or not bounds.bottom then return 0 end
+    return math_max(0, bounds.top - bounds.bottom)
+        + PREVIEW_CONTENT_VERTICAL_PADDING * 2
+end
+
+local function ResizePreviewToContent(container)
+    if not container or not container._previewAutoHeight then return end
+
+    local outer = container._previewOuter or container
+    if not outer or not outer.SetHeight then return end
+
+    local contentHeight = MeasurePreviewContentHeight()
+    local chromeHeight = container._previewChromeHeight or PREVIEW_INNER_CHROME_HEIGHT
+    local desiredHeight = math_floor(contentHeight + chromeHeight + 0.5)
+    desiredHeight = math_max(container._previewMinHeight or 0, desiredHeight)
+    if container._previewMaxHeight then
+        desiredHeight = math.min(container._previewMaxHeight, desiredHeight)
+    end
+
+    local currentHeight = outer.GetHeight and outer:GetHeight() or 0
+    if math_abs(currentHeight - desiredHeight) <= 0.5 then return end
+
+    outer._previewAutoHeightApplying = true
+    outer:SetHeight(desiredHeight)
+    outer._previewAutoHeightApplying = nil
+
+    -- Icon and bar layouts use the grid's center at refresh time. The grid
+    -- has a new height now, so re-center without reacquiring preview frames.
+    local driver = ns.CDMComposerPreview
+    if driver and driver.Relayout then
+        driver.Relayout()
+    end
+end
+
+local function RequestPreviewAutoHeight(container)
+    if not container or not container._previewAutoHeight
+        or container._previewAutoHeightPending then
+        return
+    end
+
+    container._previewAutoHeightPending = true
+    local function Apply()
+        container._previewAutoHeightPending = nil
+        ResizePreviewToContent(container)
+    end
+
+    -- Frame bounds settle after the refresh callback that sized and anchored
+    -- the icon/bar roots, matching the Unit Frames preview contract.
+    if C_Timer and C_Timer.After then
+        C_Timer.After(0, Apply)
+    else
+        Apply()
+    end
+end
+
+local function BuildPreviewSection(parent, autoHeightOptions)
+    autoHeightOptions = autoHeightOptions or {}
     local container = CreateBackdropFrame(parent)
-    container:SetHeight(180)
+    container:SetHeight(PREVIEW_INITIAL_HEIGHT)
+    container._previewAutoHeight = autoHeightOptions.autoHeight ~= false
+    container._previewOuter = autoHeightOptions.outer or container
+    container._previewChromeHeight = PREVIEW_INNER_CHROME_HEIGHT
+        + (autoHeightOptions.outerChromeHeight or 0)
+    container._previewMinHeight = autoHeightOptions.minHeight
+        or (container._previewChromeHeight + PREVIEW_MIN_CONTENT_HEIGHT)
+    container._previewMaxHeight = autoHeightOptions.maxHeight
     local _bpsBR, _bpsBG, _bpsBB = GetChromeBgSubpanel()
     local _bpsBdR, _bpsBdG, _bpsBdB = GetChromeBorder()
     SetSimpleBackdrop(container, _bpsBR, _bpsBG, _bpsBB, 1, _bpsBdR, _bpsBdG, _bpsBdB, 1)
@@ -795,61 +936,9 @@ local function BuildPreviewSection(parent)
     -- Icon grid area
     local gridArea = CreateFrame("Frame", nil, container)
     gridArea:SetPoint("TOPLEFT", 8, -24)
-    gridArea:SetPoint("BOTTOMRIGHT", container, "BOTTOMRIGHT", -8, 36)
+    gridArea:SetPoint("BOTTOMRIGHT", container, "BOTTOMRIGHT", -8, 8)
     gridArea:SetClipsChildren(true)
     container._gridArea = gridArea
-
-    -- Scale slider area
-    local scaleLabel = container:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    if SkinBase and SkinBase.SkinFontString then SkinBase.SkinFontString(scaleLabel, { fontOnly = true }) end
-    scaleLabel:SetPoint("BOTTOMLEFT", container, "BOTTOMLEFT", 8, 10)
-    scaleLabel:SetText(ns.L["Preview Scale:"])
-    scaleLabel:SetTextColor(0.5, 0.5, 0.5, 1)
-
-    local scaleValueText = container:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    if SkinBase and SkinBase.SkinFontString then SkinBase.SkinFontString(scaleValueText, { fontOnly = true }) end
-    scaleValueText:SetPoint("BOTTOMRIGHT", container, "BOTTOMRIGHT", -8, 10)
-    scaleValueText:SetTextColor(ACCENT_R, ACCENT_G, ACCENT_B, 1)
-
-    -- Slider track
-    local sliderTrack = CreateFrame("Button", nil, container)
-    sliderTrack:SetHeight(6)
-    sliderTrack:SetPoint("LEFT", scaleLabel, "RIGHT", 8, 0)
-    sliderTrack:SetPoint("RIGHT", scaleValueText, "LEFT", -8, 0)
-
-    local trackBg = sliderTrack:CreateTexture(nil, "BACKGROUND")
-    trackBg:SetAllPoints()
-    trackBg:SetColorTexture(0.15, 0.15, 0.15, 1)
-
-    local trackFill = sliderTrack:CreateTexture(nil, "ARTWORK")
-    trackFill:SetPoint("LEFT")
-    trackFill:SetHeight(6)
-    trackFill:SetColorTexture(ACCENT_R, ACCENT_G, ACCENT_B, 0.6)
-
-    local function UpdateScaleVisual()
-        local pct = (previewScale - 0.5) / 2.5
-        trackFill:SetWidth(math_max(1, sliderTrack:GetWidth() * pct))
-        scaleValueText:SetText(string.format("%.1fx", previewScale))
-    end
-
-    sliderTrack:SetScript("OnClick", function(self)
-        local x = select(1, GetCursorPosition()) / self:GetEffectiveScale()
-        local left = self:GetLeft()
-        local w = self:GetWidth()
-        local pct = (x - left) / w
-        pct = math_max(0, math.min(1, pct))
-        previewScale = 0.5 + pct * 2.5
-        previewScale = math_floor(previewScale * 10 + 0.5) / 10
-        UpdateScaleVisual()
-        if ns.CDMComposerPreview and ns.CDMComposerPreview.SetScale then
-            ns.CDMComposerPreview.SetScale(previewScale)
-        end
-        if composerFrame and composerFrame._refreshPreview then
-            composerFrame._refreshPreview()
-        end
-    end)
-
-    container._updateScaleVisual = UpdateScaleVisual
     previewFrame = container
 
     -- Hand the grid area off to the live preview driver so it owns the
@@ -859,7 +948,7 @@ local function BuildPreviewSection(parent)
         ns.CDMComposerPreview.Build(container._gridArea)
     end
     if ns.CDMComposerPreview and ns.CDMComposerPreview.SetScale then
-        ns.CDMComposerPreview.SetScale(previewScale)
+        ns.CDMComposerPreview.SetScale(PREVIEW_SCALE)
     end
 
     -- Composer-close path: when the preview frame hides (composer popup
@@ -1096,7 +1185,7 @@ local function LayoutPreviewIconsImpl(icons, containerKey, scale)
     -- Bar containers are handled by LayoutPreviewBarsImpl, not here.
     if containerType == "auraBar" or db.shape == "bar" then return end
 
-    scale = scale or previewScale or 1.5
+    scale = scale or PREVIEW_SCALE
     local ROW_GAP_PREVIEW = 5 * scale * 0.5
 
     local isCooldown = (containerType == "cooldown")
@@ -1188,7 +1277,7 @@ local function StylePreviewIconsImpl(icons, containerKey, scale)
     local containerType = ResolveContainerType(containerKey) or "cooldown"
     if containerType == "auraBar" or db.shape == "bar" then return end
 
-    scale = scale or previewScale or 1.5
+    scale = scale or PREVIEW_SCALE
     local isCooldown = (containerType == "cooldown")
     local rows = BuildPreviewRows(db, containerType, isCustomBar, entries, scale)
     entries = SortPreviewEntries(entries, rows, isCooldown, isCustomBar, db)
@@ -1241,7 +1330,7 @@ local function LayoutPreviewBarsImpl(bars, containerDB, scale, containerKey)
     local entries = GetPreviewEntries(containerKey or activeContainer, containerDB)
     if type(entries) ~= "table" then return end
 
-    scale = scale or previewScale or 1.5
+    scale = scale or PREVIEW_SCALE
 
     local barHeight = (containerDB.barHeight or 25) * scale * 0.5
     local barWidth  = (containerDB.barWidth or 215) * scale * 0.5
@@ -1310,9 +1399,7 @@ RefreshPreview = function()
         ns.CDMComposerPreview.Refresh(activeContainer)
     end
 
-    if previewFrame._updateScaleVisual then
-        previewFrame._updateScaleVisual()
-    end
+    RequestPreviewAutoHeight(previewFrame)
 end
 
 ---------------------------------------------------------------------------
@@ -2138,8 +2225,7 @@ StopDrag = function()
     if not spellData or not activeContainer then return end
 
     if fromSpecKey ~= targetSpecKey then
-        UIErrorsFrame:AddMessage(ns.L["Can only reorder within the same source spec"], 1.0, 0.3, 0.3, 1.0, 3)
-        UIErrorsFrame:SetFrameStrata("TOOLTIP")
+        if UIErrorsFrame then UIErrorsFrame:AddMessage(ns.L["Can only reorder within the same source spec"], 1.0, 0.3, 0.3, 1.0, 3); UIErrorsFrame:SetFrameStrata("TOOLTIP") end
         return
     end
 
@@ -2170,8 +2256,7 @@ StopDrag = function()
                 end
             end
             if count >= rd.iconCount then
-                UIErrorsFrame:AddMessage(string.format(ns.L["Row %1$d is full (%2$d/%3$d)"], targetRow, rd.iconCount, rd.iconCount), 1.0, 0.3, 0.3, 1.0, 3)
-                UIErrorsFrame:SetFrameStrata("TOOLTIP")
+                if UIErrorsFrame then UIErrorsFrame:AddMessage(string.format(ns.L["Row %1$d is full (%2$d/%3$d)"], targetRow, rd.iconCount, rd.iconCount), 1.0, 0.3, 0.3, 1.0, 3); UIErrorsFrame:SetFrameStrata("TOOLTIP") end
                 return
             end
         end
@@ -2307,10 +2392,7 @@ local function ShowEntryContextMenu(anchorCell, entry, entryIndex)
                     items[#items + 1] = {
                         label = lbl,
                         color = isFull and { 0.4, 0.4, 0.4 } or { ACCENT_R, ACCENT_G, ACCENT_B },
-                        action = isFull and function()
-                            UIErrorsFrame:AddMessage(string.format(ns.L["Row %1$d is full (%2$d/%3$d)"], rn, rowMax[rn], rowMax[rn]), 1.0, 0.3, 0.3, 1.0, 3)
-                            UIErrorsFrame:SetFrameStrata("TOOLTIP")
-                        end or function()
+                        action = isFull and function() if UIErrorsFrame then UIErrorsFrame:AddMessage(string.format(ns.L["Row %1$d is full (%2$d/%3$d)"], rn, rowMax[rn], rowMax[rn]), 1.0, 0.3, 0.3, 1.0, 3); UIErrorsFrame:SetFrameStrata("TOOLTIP") end end or function()
                             if InCombatLockdown() then return end
                             spellData:SetEntryRow(activeContainer, entryIndex, rn)
                             C_Timer.After(0.02, function()
@@ -2427,7 +2509,7 @@ local function ShowEntryContextMenu(anchorCell, entry, entryIndex)
     end
 
     menu:SetScript("OnUpdate", function(self)
-        if not MouseIsOver(self) and (IsMouseButtonDown("LeftButton") or IsMouseButtonDown("RightButton")) then
+        if not self:IsMouseOver() and (IsMouseButtonDown("LeftButton") or IsMouseButtonDown("RightButton")) then
             self:Hide()
         end
     end)
@@ -2665,7 +2747,7 @@ RefreshEntryList = function()
     local cooldownDormantEntries = {}
     if isCooldown and #activeRowNums > 0 then
         for i, entry in ipairs(entries) do
-            if entry then
+            if entry and IsEntryApplicableOnCurrentPlayer(entry) then
                 if EntryCountsForCooldownRowCapacity(entry) then
                     local r = entry.row
                     r = FindCooldownRowWithRoom(activeRowNums, rowCounts, rowMax, r)
@@ -2749,10 +2831,9 @@ RefreshEntryList = function()
         -- Dormancy is computed per render from known-state — entries are
         -- never relocated or removed because of it. The runtime path
         -- (cdm_icon_renderer.lua:BuildIcons) skips these same entries at
-        -- display time; surfacing them here under a dormant header lets
-        -- the user still see / right-click-remove every entry they
-        -- configured — cross-class leftovers in a shared profile as well
-        -- as same-class talents not in the current loadout. The
+        -- display time; surfacing them here under a dormant header keeps
+        -- valid same-class talents visible across loadout changes. Foreign-
+        -- class Blizzard rows are filtered before either bucket. The
         -- specSpecific path already labels entries by source spec
         -- (_renderSpecKey), so leave it alone.
         local splitDormant = not (isCustomBar and db.specSpecific)
@@ -2761,7 +2842,7 @@ RefreshEntryList = function()
             usableEntries = {}
             dormantEntries = {}
             for i, entry in ipairs(entries) do
-                if entry then
+                if entry and IsEntryApplicableOnCurrentPlayer(entry) then
                     if IsEntryUsableOnCurrentPlayer(entry) then
                         usableEntries[#usableEntries + 1] = { entry = entry, idx = i }
                     else
@@ -2804,11 +2885,15 @@ RefreshEntryList = function()
             if reverse then
                 for i = #entries, 1, -1 do
                     local entry = entries[i]
-                    if entry then RenderEntryCell(entry, i) end
+                    if entry and IsEntryApplicableOnCurrentPlayer(entry) then
+                        RenderEntryCell(entry, i)
+                    end
                 end
             else
                 for i, entry in ipairs(entries) do
-                    if entry then RenderEntryCell(entry, i) end
+                    if entry and IsEntryApplicableOnCurrentPlayer(entry) then
+                        RenderEntryCell(entry, i)
+                    end
                 end
             end
             FinishRow()
@@ -2933,9 +3018,14 @@ local function BuildAddSection(parent)
     -- Auto-refresh the add list when the player's auras change AND the
     -- user is looking at the Active Buffs/Debuffs tab. Cheap guard so the
     -- event has zero cost on other tabs.
+    -- Player-only registration — never read the payload unit; the
+    -- C-level filter already restricts delivery to "player". PTR 68569
+    -- marks UNIT_AURA event-wide SecretWhenAurasRestricted, so the
+    -- payload unit may arrive as an opaque secret value in combat;
+    -- updateInfo is never consumed here so no probe is needed for it.
     container:RegisterUnitEvent("UNIT_AURA", "player")
-    container:SetScript("OnEvent", function(self, event, unit)
-        if event == "UNIT_AURA" and unit == "player"
+    container:SetScript("OnEvent", function(self, event)
+        if event == "UNIT_AURA"
            and (activeAddTab == "active_buffs" or activeAddTab == "active_debuffs")
            and self:IsVisible() then
             RefreshAddList()
@@ -3442,8 +3532,7 @@ RefreshAddList = function()
                                 end
                             end
                             if not targetRow then
-                                UIErrorsFrame:AddMessage(ns.L["All rows are full — remove a spell or increase row size"], 1.0, 0.3, 0.3, 1.0, 3)
-                                UIErrorsFrame:SetFrameStrata("TOOLTIP")
+                                if UIErrorsFrame then UIErrorsFrame:AddMessage(ns.L["All rows are full — remove a spell or increase row size"], 1.0, 0.3, 0.3, 1.0, 3); UIErrorsFrame:SetFrameStrata("TOOLTIP") end
                                 return
                             end
                         end
@@ -3510,7 +3599,12 @@ RefreshAddList = function()
                             if containerDB.removedSpells then
                                 ns.CDMSpellData:ClearRemoved(containerDB, entryRef._slotID)
                             end
-                            addResult = spellData:AddTrinketSlot(activeContainer, entryRef._slotID, targetRow, itemKind)
+                            addResult = spellData:AddTrinketSlot(activeContainer, entryRef._slotID, targetRow, itemKind, entrySource)
+                        elseif addType == "consumable" then
+                            if containerDB.removedSpells then
+                                ns.CDMSpellData:ClearRemoved(containerDB, addID)
+                            end
+                            addResult = spellData:AddConsumable(activeContainer, addID, targetRow, itemKind, entrySource)
                         elseif addType == "item" then
                             addResult = spellData:AddItem(activeContainer, addID, targetRow, itemKind)
                         else
@@ -3962,7 +4056,7 @@ local function ShowContainerContextMenu(containerKey, anchorFrame)
 
     -- Auto-hide when clicking elsewhere
     menu:SetScript("OnUpdate", function(self)
-        if not MouseIsOver(self) and IsMouseButtonDown("LeftButton") then
+        if not self:IsMouseOver() and IsMouseButtonDown("LeftButton") then
             self:Hide()
         end
     end)
@@ -4285,9 +4379,15 @@ local function BuildComposerLayout(host)
             if sh >= MIN_H then h = sh end
         else
             w = math.max(MIN_W, sw)
-            h = math.max(MIN_H, sh)
+            h = math.max(MIN_H, sh, frame._composerNaturalHeight or 0)
         end
-        frame:SetSize(w, h)
+        local currentW = frame:GetWidth() or 0
+        local currentH = frame:GetHeight() or 0
+        if math_abs(currentW - w) > 0.5 or math_abs(currentH - h) > 0.5 then
+            frame:SetSize(w, h)
+            return true
+        end
+        return false
     end
     scroll:HookScript("OnSizeChanged", FitToHost)
     FitToHost()
@@ -4334,18 +4434,21 @@ local function BuildComposerLayout(host)
     -- Live Preview — suppressed when the host owns the nav (the tile
     -- hoists the preview above the sub-tabs). Entry section claims the
     -- space that would have held the preview.
-    local entryY = -188
+    local preview
     if not hostOwnsNav then
-        local preview = BuildPreviewSection(frame)
+        preview = BuildPreviewSection(frame)
         preview:SetPoint("TOPLEFT", frame, "TOPLEFT", contentLeft, 0)
         preview:SetPoint("RIGHT", frame, "RIGHT", -8, 0)
-    else
-        entryY = 0
+        frame._previewSection = preview
     end
 
     -- Entry List (below preview if present) — height set dynamically by Relayout below
     local entrySection = BuildEntryListSection(frame)
-    entrySection:SetPoint("TOPLEFT", frame, "TOPLEFT", contentLeft, entryY)
+    if preview then
+        entrySection:SetPoint("TOPLEFT", preview, "BOTTOMLEFT", 0, -8)
+    else
+        entrySection:SetPoint("TOPLEFT", frame, "TOPLEFT", contentLeft, 0)
+    end
     entrySection:SetPoint("RIGHT", frame, "RIGHT", -8, 0)
     frame._entrySection = entrySection
 
@@ -4365,21 +4468,28 @@ local function BuildComposerLayout(host)
     -- composer fits whatever the current panel size is. Re-runs whenever
     -- the host (and therefore the wrapper) changes size.
     --
-    -- Embedded mode skips the 188px preview reservation (the tile hoists
-    -- the preview above the tab strip), so the entry/add sections claim
-    -- that space instead of leaving it as dead air between rows.
-    local PREVIEW_H = embedded and 0 or 188
     local FOOTER_H  = 36
     local GAP       = 4
     local MIN_SECT  = 80
     local function Relayout()
+        local previewHeight = preview and ((preview:GetHeight() or PREVIEW_INITIAL_HEIGHT) + 8) or 0
+        if not embedded then
+            -- A tall auto-fitted preview increases the scroll child's natural
+            -- height instead of overlapping the minimum-sized editor sections
+            -- or the footer. FitToHost will shrink it again when content does.
+            frame._composerNaturalHeight = previewHeight + FOOTER_H + GAP * 2 + MIN_SECT * 2
+            if FitToHost() then return end
+        end
         local h = frame:GetHeight() or FRAME_HEIGHT
-        local content = h - PREVIEW_H - FOOTER_H - GAP * 2
+        local content = h - previewHeight - FOOTER_H - GAP * 2
         local each = math.max(MIN_SECT, math.floor(content / 2))
         entrySection:SetHeight(each)
         addSection:SetHeight(each)
     end
     frame:HookScript("OnSizeChanged", Relayout)
+    if preview then
+        preview:HookScript("OnSizeChanged", Relayout)
+    end
     Relayout()
 
     -- Override panel (created lazily, parented to entry content)
@@ -4502,10 +4612,10 @@ end
 -- existing composer-internal builder — reusing it keeps the visual
 -- language consistent. activeContainer is the file-local state used
 -- by RefreshPreview to know what to render.
-_G.QUI_BuildCDMPreview = function(host, initialContainerKey)
+_G.QUI_BuildCDMPreview = function(host, initialContainerKey, autoHeightOptions)
     if not host then return end
     RefreshAccentColor()
-    local frame = BuildPreviewSection(host)
+    local frame = BuildPreviewSection(host, autoHeightOptions)
     frame:SetAllPoints(host)
     if initialContainerKey then
         local db = GetContainerDB(initialContainerKey)

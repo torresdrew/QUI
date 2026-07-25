@@ -192,7 +192,7 @@ local tooltipShownByQUI = false
 local tooltipCallbacksRegistered = false
 
 local function getLinkType(link)
-    if IsSecret(link) then return nil end
+    if IsSecret(link) then return nil end -- @secret-policy: reject-secret-value
     if type(link) ~= "string" or link == "" then return nil end
     local linkType = link:match("^([^:]+):")
     return linkType and linkType:lower() or nil
@@ -261,9 +261,6 @@ HL.SetupHyperlinkTooltips = setupHyperlinkTooltips
 -- ---------------------------------------------------------------------------
 -- Player quick-action dropdown
 -- ---------------------------------------------------------------------------
--- Created lazily on first use. Single shared frame; reinitialized per show.
-
-local playerMenu
 
 -- Walk every well-known unit ID looking for one whose name matches `name`
 -- (and realm, when supplied). Inspect requires a unit token, not a name —
@@ -286,14 +283,20 @@ local function findUnitForName(name, realm)
         end
     end
 
+    local myRealm = GetRealmName and GetRealmName() or nil
+    if IsSecret(myRealm) then myRealm = nil end
     for _, unit in ipairs(units) do
         if UnitExists(unit) then
             local uname, urealm = UnitFullName(unit)
+            -- 12.1: UnitFullName is identity-restricted — probe before any
+            -- ==; a secret identity simply can't match a plain link name.
+            if IsSecret(uname) then uname = nil end
+            if IsSecret(urealm) then urealm = nil end
             if uname == name then
                 if not realm or realm == "" then
                     return unit
                 end
-                if urealm == realm or (urealm == nil and realm == GetRealmName()) then
+                if urealm == realm or (urealm == nil and realm == myRealm) then
                     return unit
                 end
             end
@@ -304,93 +307,65 @@ end
 
 function HL.ShowPlayerMenu(name, realm)
     if not name or name == "" then return end
+    -- MenuUtil.CreateContextMenu is the taint-safe 12.x replacement for the
+    -- deprecated UIDropDownMenu system (Blizzard_Menu/MenuUtil.lua:151). A nil
+    -- owner region anchors the menu at the cursor (falls back to the top-level
+    -- parent), matching the old ToggleDropDownMenu "cursor" anchor.
+    if not (_G.MenuUtil and _G.MenuUtil.CreateContextMenu) then return end
 
     local fullName = (realm and realm ~= "") and (name .. "-" .. realm) or name
 
-    playerMenu = playerMenu or CreateFrame(
-        "Frame", "QUIChatPlayerMenu", UIParent, "UIDropDownMenuTemplate")
+    _G.MenuUtil.CreateContextMenu(nil, function(owner, rootDescription)
+        rootDescription:CreateTitle(fullName)
 
-    local function init(self, level)
-        local info
-
-        info = UIDropDownMenu_CreateInfo()
-        info.text = fullName
-        info.isTitle = true
-        info.notCheckable = true
-        UIDropDownMenu_AddButton(info, level)
-
-        info = UIDropDownMenu_CreateInfo()
-        info.text = ns.L["Whisper"]
-        info.notCheckable = true
-        info.func = function()
+        rootDescription:CreateButton(ns.L["Whisper"], function()
             if ChatFrame_SendTell then ChatFrame_SendTell(fullName) end
-        end
-        UIDropDownMenu_AddButton(info, level)
+        end)
 
-        info = UIDropDownMenu_CreateInfo()
-        info.text = ns.L["Invite to Group"]
-        info.notCheckable = true
-        info.func = function()
+        rootDescription:CreateButton(ns.L["Invite to Group"], function()
             if C_PartyInfo and C_PartyInfo.InviteUnit then
                 C_PartyInfo.InviteUnit(fullName)
             end
-        end
-        UIDropDownMenu_AddButton(info, level)
+        end)
 
         -- Inspect: resolve the name to a unit token via party/raid/target/
-        -- mouseover/focus. Cross-realm-but-different-realm players cannot
-        -- be inspected at all (Blizzard limitation), so the entry is hidden
-        -- when the resolver returns nothing. NotifyInspect is async; the
-        -- InspectFrame opens immediately and populates as data arrives.
+        -- mouseover/focus. Cross-realm-but-different-realm players cannot be
+        -- inspected at all (Blizzard limitation), so the entry is disabled with an
+        -- explanatory tooltip when the resolver returns nothing. NotifyInspect is
+        -- async; the InspectFrame opens immediately and populates as data arrives.
         if not realm or realm == "" or realm == GetRealmName() then
             local resolvedUnit = findUnitForName(name, realm)
-            info = UIDropDownMenu_CreateInfo()
-            info.text = ns.L["Inspect"]
-            info.notCheckable = true
             if resolvedUnit then
-                info.disabled = false
-                info.func = function()
+                rootDescription:CreateButton(ns.L["Inspect"], function()
                     if NotifyInspect then NotifyInspect(resolvedUnit) end
                     if InspectFrame_Show then
                         InspectFrame_Show(resolvedUnit)
                     elseif _G.InspectFrame and _G.InspectFrame.Show then
                         _G.InspectFrame:Show()
                     end
-                end
+                end)
             else
-                info.disabled = true
-                info.tooltipTitle = ns.L["Inspect"]
-                info.tooltipText  = ns.L["Player not in group/target/mouseover/focus."]
-                info.tooltipOnButton = true
-                ---@type fun(...)
-                info.func = function() end
+                local inspectBtn = rootDescription:CreateButton(ns.L["Inspect"], function() end)
+                inspectBtn:SetEnabled(false)
+                inspectBtn:SetTooltip(function(tooltip)
+                    GameTooltip_SetTitle(tooltip, ns.L["Inspect"])
+                    tooltip:AddLine(ns.L["Player not in group/target/mouseover/focus."], nil, nil, nil, true)
+                end)
             end
-            UIDropDownMenu_AddButton(info, level)
         end
 
-        info = UIDropDownMenu_CreateInfo()
-        info.text = ns.L["Add Friend"]
-        info.notCheckable = true
-        info.func = function()
+        rootDescription:CreateButton(ns.L["Add Friend"], function()
             if C_FriendList and C_FriendList.AddFriend then
                 C_FriendList.AddFriend(fullName)
             end
-        end
-        UIDropDownMenu_AddButton(info, level)
+        end)
 
-        info = UIDropDownMenu_CreateInfo()
-        info.text = ns.L["Ignore"]
-        info.notCheckable = true
-        info.func = function()
+        rootDescription:CreateButton(ns.L["Ignore"], function()
             if C_FriendList and C_FriendList.AddIgnore then
                 C_FriendList.AddIgnore(fullName)
             end
-        end
-        UIDropDownMenu_AddButton(info, level)
-    end
-
-    UIDropDownMenu_Initialize(playerMenu, init, "MENU")
-    ToggleDropDownMenu(1, nil, playerMenu, "cursor", 0, 0)
+        end)
+    end)
 end
 
 -- (No registration plumbing: TryLinkifyCoordsForCapture self-gates per call;

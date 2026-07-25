@@ -114,7 +114,7 @@ if Helpers and Helpers.BorderRegistry then
         -- These containers never had a per-instance border color, so an
         -- un-migrated profile must fall through to "inherit" (the global skin
         -- border) — NOT the colorless "custom" the icon-row containers default
-        -- to. See MigrateBorderColoringTable's defaultSource handling.
+        -- to. The legacy.defaultSource = "inherit" below encodes that.
         legacy   = { defaultSource = "inherit" },
     })
 end

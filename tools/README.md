@@ -107,7 +107,7 @@ lua tools/test_profiles.lua --only edge/
 lua tools/test_profiles.lua --list
 
 # Regenerate snapshots after intentional changes
-lua tools/test_profiles.lua --update --only legacy/v22_pre_ncdm_containers
+lua tools/test_profiles.lua --update --only edge/idempotency_check
 ```
 
 See `tests/README.md` for the full fixture authoring guide. Exit codes:

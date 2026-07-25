@@ -38,7 +38,7 @@ local function Now()
 end
 
 local function FormatString(fmt, ...)
-    local ok, formatted = pcall(string.format, fmt, ...)
+    local ok, formatted = ns.SafeCall("report", string.format, fmt, ...)
     if not ok then return nil end
     return formatted
 end
@@ -166,11 +166,11 @@ SYSTEM_EVENTS.PLAYER_LEVEL_CHANGED = function(event, oldLevel, newLevel, real)
     local noLink = false
     if _G.C_GameRules and _G.C_GameRules.IsGameRuleActive and _G.Enum
         and _G.Enum.GameRule and _G.Enum.GameRule.ChatLinkLevelToastsDisabled then
-        local ok, active = pcall(_G.C_GameRules.IsGameRuleActive, _G.Enum.GameRule.ChatLinkLevelToastsDisabled)
+        local ok, active = ns.SafeCall("best-effort-style", _G.C_GameRules.IsGameRuleActive, _G.Enum.GameRule.ChatLinkLevelToastsDisabled)
         noLink = ok and active or false
     end
     if not noLink and _G.C_PlayerInfo and _G.C_PlayerInfo.IsPlayerNPERestricted then
-        local ok, restricted = pcall(_G.C_PlayerInfo.IsPlayerNPERestricted)
+        local ok, restricted = ns.SafeCall("best-effort-style", _G.C_PlayerInfo.IsPlayerNPERestricted)
         noLink = ok and restricted or false
     end
     local line
@@ -383,7 +383,7 @@ end
 
 local function RegionalUnavailableLine()
     if _G.GetRegionalChatUnavailableString then
-        local ok, s = pcall(_G.GetRegionalChatUnavailableString)
+        local ok, s = ns.SafeCall("chain-next", _G.GetRegionalChatUnavailableString)
         if ok and type(s) == "string" then return s end
     end
     return nil
@@ -393,7 +393,7 @@ SYSTEM_EVENTS.CHAT_REGIONAL_STATUS_CHANGED = function(event, isServiceAvailable)
     if IsSecret(isServiceAvailable) then return end
     if isServiceAvailable then
         if _G.GetRegionalChatAvailableString then
-            local ok, s = pcall(_G.GetRegionalChatAvailableString)
+            local ok, s = ns.SafeCall("best-effort-style", _G.GetRegionalChatAvailableString)
             if ok and type(s) == "string" then AppendSystemLine(event, s) end
         end
     else
@@ -469,7 +469,7 @@ local function MaybeAutoAddChannel(event, p)
     if type(p.zoneID) ~= "number" or p.zoneID <= 0 then return end
     local CI = _G.C_ChatInfo
     if not (CI and CI.IsChannelRegionalForChannelID) then return end
-    local ok, regional = pcall(CI.IsChannelRegionalForChannelID, p.zoneID)
+    local ok, regional = ns.SafeCall("best-effort-style", CI.IsChannelRegionalForChannelID, p.zoneID)
     if not ok or not regional then return end
     if Registry and Registry.Refresh then Registry.Refresh() end
     local name = p.chName or p.chBase
@@ -485,7 +485,7 @@ local WHISPER_POPOUT_KEYS = I.WHISPER_TYPE_KEYS
 
 local function GetWhisperMode()
     if type(_G.GetCVar) ~= "function" then return nil end
-    local ok, value = pcall(_G.GetCVar, "whisperMode")
+    local ok, value = ns.SafeCall("chain-next", _G.GetCVar, "whisperMode")
     if ok then return value end
     return nil
 end
@@ -522,12 +522,11 @@ local function OnCaptureEvent(_, event, ...)
     -- Letterbox/cinematic-hidden lines: Blizzard bails before filters when
     -- arg16 is set; mirror that. Probe before truth-testing (may be secret;
     -- if it is, we can't know — let the line through rather than risk an op).
-    local a16 = select(16, ...)
-    if not IsSecret(a16) and a16 then return end
-    -- arg17 (suppressRaidIcons) is not in the filter contract (filters see
-    -- args 1-14) — read it from the original payload.
-    local a17 = select(17, ...)
-
+    -- (Named a16Raw, not a16: the vararg unpack below also names a slot-16
+    -- local for the payload; that one may carry a FILTERED value, so the two
+    -- are kept distinct rather than shadowed.)
+    local a16Raw = select(16, ...)
+    if not IsSecret(a16Raw) and a16Raw then return end
     -- Cross-addon compat: honor ChatFrameUtil.AddMessageEventFilter consumers
     -- (spam blockers etc.). ChatFrame1 is the filter context — filters that
     -- act per-frame behave as they do for the default frame. While suppressed
@@ -536,20 +535,38 @@ local function OnCaptureEvent(_, event, ...)
     -- way the filter chain runs exactly once per message in steady state.
     -- (Blizzard's filter registry skips callbacks on secret payloads via
     -- canaccessvalue — we inherit that protection by calling the same API.)
-    local filtered, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14
+    --
+    -- Vararg width through the filter chain — DELIBERATE DEVIATION from
+    -- Blizzard. Blizzard's own dispatch still round-trips only arg1-arg14
+    -- through ProcessMessageEventFilters and reads discordInfo from the RAW
+    -- pre-filter arg18 (ChatFrameOverrides.lua:294-305);
+    -- ProcessMessageEventFilters itself is merely count-agnostic — it echoes
+    -- whatever varargs it is given (`return shouldDiscardMessage, ...` /
+    -- SafePack replacement, ChatFrameFilters.lua:138-168), it does not
+    -- guarantee 18 slots. QUI threads all 18 args through so a filter CAN see
+    -- and edit a15-a18 (isSubtitle, hideSenderInLetterbox, suppressRaidIcons,
+    -- discordInfo). Known consequence: a filter that replaces args with the
+    -- classic 14-value return list truncates a15-a18 — discordInfo is
+    -- stripped and the line degrades to a plain guild-style render
+    -- (isFromDiscord false), never an error. When no filter chain runs,
+    -- a15-a18 are unpacked from the original payload. discordInfo (arg18) is
+    -- non-nilable per 12.1's ChatInfoDocumentation.lua CHAT_MSG_GUILD_DISCORD
+    -- payload but IS nil for every other CHAT_MSG_* event — carried through
+    -- opaquely either way.
+    local filtered, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17, a18
     local isChatMessage = type(event) == "string" and event:sub(1, 9) == "CHAT_MSG_"
     if isChatMessage and _G.ChatFrameUtil and _G.ChatFrameUtil.ProcessMessageEventFilters and _G.ChatFrame1 then
-        filtered, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14 =
+        filtered, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17, a18 =
             _G.ChatFrameUtil.ProcessMessageEventFilters(_G.ChatFrame1, event, ...)
         if filtered then return end
     else
-        a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14 = ...
+        a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17, a18 = ...
     end
 
     local typeKey = Format.EventToTypeKey(event)
 
     local line, p, secretBody = Format.BuildEventLineFromArgs(event, a1, a2, a3, a4, a5, a6, a7,
-        a8, a9, a10, a11, a12, a13, a14, nil, nil, a17)
+        a8, a9, a10, a11, a12, a13, a14, a15, a16, a17, a18)
 
     MaybeAutoAddChannel(event, p)
 
@@ -565,7 +582,7 @@ local function OnCaptureEvent(_, event, ...)
     if (event == "CHAT_MSG_WHISPER" or event == "CHAT_MSG_BN_WHISPER") and p.sender then
         local CFU = _G.ChatFrameUtil
         if CFU and CFU.SetLastTellTarget then
-            pcall(CFU.SetLastTellTarget, p.sender, typeKey)
+            ns.SafeCall("sink-forward", CFU.SetLastTellTarget, p.sender, typeKey)
         end
     end
 
@@ -600,8 +617,9 @@ local function OnCaptureEvent(_, event, ...)
     if secretBody then
         -- BuildEventLineFromArgs owns the secret-body formatting rules, including
         -- dropping secret friend-status toast keys and preserving real secret
-        -- message bodies opaquely.
-        if not line then return end
+        -- message bodies opaquely. Probe before the nil bail: the line itself
+        -- is usually SECRET here and a bare `not line` truth-tests it.
+        if not IsSecret(line) and not line then return end
         local m = line
         -- Timestamp secret lines too: AddTimestamp's secret path wraps via
         -- C_StringUtil.WrapString (secret-safe) and passes through unchanged

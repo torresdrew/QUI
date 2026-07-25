@@ -70,6 +70,7 @@ local UIParent = UIParent
 local ipairs = ipairs
 local pcall = pcall
 local InCombatLockdown = InCombatLockdown
+local UnitClass = UnitClass
 local C_Timer = C_Timer
 local math_floor = math.floor
 local string_format = string.format
@@ -128,7 +129,12 @@ end
 -- TOTEM SLOT PRIORITIES
 ---------------------------------------------------------------------------
 local function GetSlotPriorities()
-    if SHAMAN_TOTEM_PRIORITIES then
+    local _, class = UnitClass("player")
+    -- @secret-policy: collapse-only — a restricted class token falls back to
+    -- STANDARD_TOTEM_PRIORITIES; only a proven readable SHAMAN token may use
+    -- the class-specific earth/fire ordering.
+    if Helpers.IsSecretValue(class) then class = nil end
+    if class == "SHAMAN" and SHAMAN_TOTEM_PRIORITIES then
         return SHAMAN_TOTEM_PRIORITIES
     elseif STANDARD_TOTEM_PRIORITIES then
         return STANDARD_TOTEM_PRIORITIES
@@ -201,6 +207,12 @@ TotemBar.enabled = false
 for i = 1, MAX_SLOTS do
     local btn = CreateFrame("Button", "QUI_TotemBarButton" .. i, container, "SecureActionButtonTemplate")
     btn:SetSize(36, 36)
+    -- Active buttons pack toward the growth edge while inactive secure
+    -- placeholders retain their original offsets for combat-safe activation.
+    -- A later active button can therefore overlap an earlier invisible one.
+    -- Stable increasing levels ensure the active packed button owns the hit
+    -- region instead of the earlier alpha-zero placeholder.
+    btn:SetFrameLevel(container:GetFrameLevel() + i)
     btn:SetAlpha(0)
     -- Mouse is enabled permanently OOC; left/middle clicks fall through to
     -- the world frame, while right-click is intercepted for destroytotem.
@@ -270,7 +282,7 @@ local function StyleButton(btn)
 
     -- Cooldown swipe
     local cd = btn.cooldown
-    pcall(function()
+    ns.SafeCall("best-effort-style", function()
         cd:SetSwipeTexture("Interface\\Buttons\\WHITE8x8")
         cd:SetUseCircularEdge(false)
         local lowTC = { x = 0, y = 0 }
@@ -280,10 +292,10 @@ local function StyleButton(btn)
 
     if db.showSwipe ~= false then
         local swipeColor = db.swipeColor or {0, 0, 0, 0.6}
-        pcall(cd.SetSwipeColor, cd, swipeColor[1], swipeColor[2], swipeColor[3], swipeColor[4])
-        pcall(cd.SetDrawSwipe, cd, true)
+        ns.SafeCallMethod("best-effort-style", cd, "SetSwipeColor", swipeColor[1], swipeColor[2], swipeColor[3], swipeColor[4])
+        ns.SafeCallMethod("best-effort-style", cd, "SetDrawSwipe", true)
     else
-        pcall(cd.SetDrawSwipe, cd, false)
+        ns.SafeCallMethod("best-effort-style", cd, "SetDrawSwipe", false)
     end
 
     -- Border
@@ -412,30 +424,35 @@ local function UpdateTotems()
             -- OOC: safe to compare (pcall guards edge cases during combat transitions
             -- where InCombatLockdown() returns false but values are already secret)
             local ok, val = pcall(function()
+                -- @secret-safe: comparisons run INSIDE pcall — a secret value's throw is caught, ok=false falls through to inactive
                 return haveTotem and icon and icon ~= 0 and duration and duration > 0
             end)
             isActive = ok and val
         else
-            -- Combat: try comparison inside pcall
+            -- Combat: probe FIRST — the old `if tok and timeLeft` truth-test
+            -- was itself the throw when timeLeft arrived secret.
             local tok, timeLeft = pcall(GetTotemTimeLeft, slot)
-            if tok and timeLeft then
-                local cok, positive = pcall(function() return timeLeft > 0 end)
-                if cok then
-                    isActive = positive  -- non-secret: true if > 0
-                else
-                    isActive = true  -- secret: active totem (expired data is non-secret)
+            if tok then
+                if Helpers.IsSecretValue(timeLeft) then
+                    -- ACTION POLICY, not activity truth: a secret time-left
+                    -- is INDETERMINATE. Keep the slot visible so a possibly
+                    -- live totem is never hidden; the C-side duration text
+                    -- renders the secret, and readable reads reconcile.
+                    isActive = true
+                elseif timeLeft then
+                    isActive = timeLeft > 0  -- proven non-secret: plain compare
                 end
             end
         end
 
 
         if isActive then
-            pcall(btn.icon.SetTexture, btn.icon, icon)
+            ns.SafeCallMethod("sink-forward", btn.icon, "SetTexture", icon)
             -- Prefer DurationObject API for swipe (secret-safe)
             local cd = btn.cooldown
             local durObj = nil
             if GetTotemDuration then
-                local dok, fetchedDurObj = pcall(GetTotemDuration, slot)
+                local dok, fetchedDurObj = ns.SafeCall("best-effort-style", GetTotemDuration, slot)
                 if dok and fetchedDurObj then
                     durObj = fetchedDurObj
                 end
@@ -480,7 +497,7 @@ local function UpdateTotems()
                         -- SetFormattedText which handles secrets C-side.
                         local shown = false
                         if GetTotemDuration then
-                            local dok, durObj = pcall(GetTotemDuration, b.slot)
+                            local dok, durObj = ns.SafeCall("best-effort-style", GetTotemDuration, b.slot)
                             if dok and durObj and durObj.GetRemainingDuration then
                                 local rok, rem = pcall(durObj.GetRemainingDuration, durObj)
                                 if rok and rem then
@@ -489,7 +506,7 @@ local function UpdateTotems()
                                     if not isSecret and rem > 0 then
                                         b.duration:SetText(FormatDuration(rem))
                                     elseif isSecret then
-                                        pcall(b.duration.SetFormattedText, b.duration, "%.0f", rem)
+                                        ns.SafeCallMethod("sink-forward", b.duration, "SetFormattedText", "%.0f", rem)
                                     else
                                         b.duration:SetText("")
                                     end
@@ -498,13 +515,15 @@ local function UpdateTotems()
                             end
                         end
                         if not shown then
+                            -- Probe before ANY truth-test of remaining — a
+                            -- secret throws on `if remaining`; direct-call
+                            -- guard form so the analyzer proves the branches.
                             local ok, remaining = pcall(GetTotemTimeLeft, b.slot)
-                            if ok and remaining then
-                                local isSecret = Helpers.IsSecretValue(remaining)
-                                if not isSecret and remaining > 0 then
+                            if ok then
+                                if Helpers.IsSecretValue(remaining) then
+                                    ns.SafeCallMethod("sink-forward", b.duration, "SetFormattedText", "%.0f", remaining)
+                                elseif remaining and remaining > 0 then
                                     b.duration:SetText(FormatDuration(remaining))
-                                elseif isSecret then
-                                    pcall(b.duration.SetFormattedText, b.duration, "%.0f", remaining)
                                 else
                                     b.duration:SetText("")
                                 end
@@ -552,7 +571,7 @@ local function StealEvents()
     -- Keep PLAYER_TOTEM_UPDATE so Blizzard's TotemFrame stays internally consistent
     for _, event in ipairs(STOLEN_EVENTS) do
         if event ~= "PLAYER_TOTEM_UPDATE" then
-            pcall(tf.UnregisterEvent, tf, event)
+            ns.SafeCallMethod("defer-ooc", tf, "UnregisterEvent", event)
         end
     end
     -- Alpha 0 hides TotemFrame visually while keeping it "shown" so its
@@ -567,7 +586,7 @@ local function StealEvents()
     tf:EnableMouse(false)
     if tf.totemButtons then
         for _, tbtn in ipairs(tf.totemButtons) do
-            pcall(tbtn.EnableMouse, tbtn, false)
+            ns.SafeCallMethod("defer-ooc", tbtn, "EnableMouse", false)
         end
     end
 end
@@ -576,19 +595,17 @@ local function RestoreEvents()
     local tf = TotemFrame
     if not tf then return end
     for _, event in ipairs(STOLEN_EVENTS) do
-        pcall(tf.RegisterEvent, tf, event)
+        ns.SafeCallMethod("defer-ooc", tf, "RegisterEvent", event)
     end
     tf:SetAlpha(1)
     if not InCombatLockdown() then
         tf:EnableMouse(true)
         if tf.totemButtons then
             for _, tbtn in ipairs(tf.totemButtons) do
-                pcall(tbtn.EnableMouse, tbtn, true)
+                ns.SafeCallMethod("defer-ooc", tbtn, "EnableMouse", true)
             end
         end
-        if tf.Update then
-            pcall(tf.Update, tf)
-        end
+        ns.SafeCallMethodIfPresent("defer-ooc", tf, "Update")
     else
         pendingReconcile = true
     end

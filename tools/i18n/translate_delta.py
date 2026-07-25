@@ -3,7 +3,7 @@
 
 Reads core/locale/enUS.lua (identity base) + tools/i18n/state.json, computes the
 set of new/changed keys per locale, translates ONLY those via translate_fn,
-writes core/locale/<loc>.lua, and updates state.json.
+writes QUI_Locale_<loc>/<loc>.lua, and updates state.json.
 
 Usage:
   python3 tools/i18n/translate_delta.py --locales deDE,frFR        # real run
@@ -34,7 +34,7 @@ def read_enus():
 def lua_escape(s): return s.replace("\\","\\\\").replace('"','\\"').replace("\n","\\n")
 
 def write_locale(loc, table):
-    os.makedirs("core/locale", exist_ok=True)
+    os.makedirs(f"QUI_Locale_{loc}", exist_ok=True)
     lines = [f'local want = (QUIDB and QUIDB.global and QUIDB.global.selectedLocale) or GetLocale()',
              f'if want ~= "{loc}" then return end',
              "local ADDON_NAME, ns = ...",
@@ -44,7 +44,7 @@ def write_locale(loc, table):
     for k in sorted(table):
         lines.append(f'    ["{lua_escape(k)}"] = "{lua_escape(table[k])}",')
     lines.append("}\n")
-    open(f"core/locale/{loc}.lua","w",encoding="utf-8").write("\n".join(lines))
+    open(f"QUI_Locale_{loc}/{loc}.lua","w",encoding="utf-8").write("\n".join(lines))
 
 LANG_NAMES = {
     "deDE": "German", "esES": "Spanish (Spain)", "esMX": "Spanish (Latin America)",
@@ -109,7 +109,7 @@ def mock_translate(loc, items):
     return [f"[{loc}] {s}" for s in items]   # deterministic, offline
 
 def load_existing(loc):
-    path = f"core/locale/{loc}.lua"
+    path = f"QUI_Locale_{loc}/{loc}.lua"
     if not os.path.exists(path): return {}
     out, txt = {}, open(path, encoding="utf-8").read()
     for m in re.finditer(r'\["((?:\\.|[^"])*)"\]\s*=\s*"((?:\\.|[^"])*)"', txt):

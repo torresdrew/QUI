@@ -440,8 +440,8 @@ local function SetHandlePosition(handle, ox, oy)
                 oy = oy / pScale
             end
         end
-        pcall(parent.ClearAllPoints, parent)
-        pcall(parent.SetPoint, parent, "CENTER", UIParent, "CENTER", ox, oy)
+        ns.SafeCallMethod("best-effort-style", parent, "ClearAllPoints")
+        ns.SafeCallMethod("best-effort-style", parent, "SetPoint", "CENTER", UIParent, "CENTER", ox, oy)
     else
         handle:ClearAllPoints()
         handle:SetPoint("CENTER", UIParent, "CENTER", ox, oy)
@@ -1135,17 +1135,20 @@ CreateToolbar = function(ui)
         end
         SyncTable(profile, 0)
 
-        -- Refresh all modules
-        if ns.RefreshAll then ns.RefreshAll()
-        elseif _G.QUI_RefreshAll then _G.QUI_RefreshAll()
-        end
-        -- Refresh unit frames
+        -- Refresh every module that renders profile fonts/textures. There is
+        -- no generic all-module refresh global; call each surface's public
+        -- refresh directly.
         local uf = ns.QUI_UnitFrames
         if uf and uf.RefreshAll then uf:RefreshAll() end
-        -- Refresh group frames
         if _G.QUI_RefreshGroupFrames then _G.QUI_RefreshGroupFrames() end
-        -- Refresh CDM
-        if _G.QUI_RefreshCDM then _G.QUI_RefreshCDM() end
+        if _G.QUI_RefreshNCDM then _G.QUI_RefreshNCDM() end
+        if _G.QUI_RefreshActionBars then _G.QUI_RefreshActionBars() end
+        if _G.QUI_RefreshChat then _G.QUI_RefreshChat() end
+        if _G.QUI_RefreshInfoBar then _G.QUI_RefreshInfoBar() end
+        if _G.QUI_RefreshDatapanels then _G.QUI_RefreshDatapanels() end
+        if _G.QUI_RefreshMinimap then _G.QUI_RefreshMinimap() end
+        if _G.QUI_RefreshCastbars then _G.QUI_RefreshCastbars() end
+        if _G.QUI_RefreshBags then _G.QUI_RefreshBags() end
 
         print("|cff34D399QUI:|r " .. ns.L["Synced all fonts to "] .. "\"" .. globalFont .. "\" " .. ns.L["and textures to "] .. "\"" .. globalTexture .. "\"")
     end, 0.15, 0.25, 0.4)
@@ -1801,7 +1804,7 @@ CreateFramesDrawer = function(ui)
         local ok2, max = pcall(self.GetVerticalScrollRange, self)
         if not ok2 then return end
         local newScroll = math.max(0, math.min((cur or 0) - (delta * 40), max or 0))
-        pcall(self.SetVerticalScroll, self, newScroll)
+        ns.SafeCallMethod("best-effort-style", self, "SetVerticalScroll", newScroll)
     end)
 
     drawer._scrollFrame = scrollFrame

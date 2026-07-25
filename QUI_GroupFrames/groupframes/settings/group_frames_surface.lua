@@ -42,7 +42,9 @@ local function NormalizeContextMode(contextMode)
     end
     return contextMode
 end
--- Module state shared between the preview dropdown and the tabbed page body.
+-- Module state for the context currently driving the shared settings builders
+-- and detached preview. Cached surfaces retain their own dropdown choice and
+-- restore it here when that surface becomes visible.
 ---------------------------------------------------------------------------
 local State = {
     contextMode = "party",
@@ -51,7 +53,10 @@ local State = {
     previewHost = nil,
     activeBody  = nil,
     repaintTabs = nil,
-    previewFilter = { threat = true, dispel = true, auras = true, indicators = true, highlights = true },
+    previewFilter = {
+        threat = true, dispel = true, auras = true, indicators = true,
+        targetedSpells = true, targetHighlight = true, pets = true, range = true,
+    },
 }
 
 local TabModel
@@ -127,12 +132,15 @@ local FILTER_DEFS = {
     { key = "dispel",     label = ns.L["Dispel"] },
     { key = "auras",      label = ns.L["Auras"] },
     { key = "indicators", label = ns.L["Indicators"] },
-    { key = "highlights", label = ns.L["Highlights"] },
+    { key = "targetedSpells", label = ns.L["Targeted Spells"] },
+    { key = "targetHighlight", label = ns.L["Target Highlight"] },
+    { key = "pets",       label = ns.L["Pet Frames"] },
+    { key = "range",      label = ns.L["Range Fade"] },
 }
 
--- Strip height: 3 card rows (32 each) + gap + one slider row (28) + pad.
+-- Strip height: 4 card rows (32 each) + gap + one slider row (28) + pad.
 local STRIP_CARD_ROW_H = 32
-local STRIP_HEIGHT = (3 * STRIP_CARD_ROW_H) + 8 + 28 + 6
+local STRIP_HEIGHT = (4 * STRIP_CARD_ROW_H) + 8 + 28 + 6
 
 function CurrentPreviewVDB()
     local Driver = ns.QUI_GroupFramesPreview
@@ -171,7 +179,8 @@ local function BuildControlStrip(panel)
     end
     card.AddRow(cells.threat, cells.dispel)
     card.AddRow(cells.auras, cells.indicators)
-    card.AddRow(cells.highlights)
+    card.AddRow(cells.targetedSpells, cells.targetHighlight)
+    card.AddRow(cells.pets, cells.range)
     card.Finalize()
 
     -- gfdb captured once per build: testMode is mutated in place (never replaced)
@@ -229,6 +238,9 @@ local function EnsurePreviewPanel()
         return nil
     end
 
+    -- Same table across theme rebuilds: collapse + scale survive the window
+    -- teardown; the builder resets `detached` itself (fresh window = docked).
+    State.previewSession = State.previewSession or {}
     local panel = FullSurface.CreateDockedPreviewPanel({
         gui = GUI,
         title = ns.L["Preview"],
@@ -236,6 +248,7 @@ local function EnsurePreviewPanel()
         window = win,
         controlStripHeight = STRIP_HEIGHT,
         minWidth = 240,
+        sessionState = State.previewSession,
     })
     if not panel then return nil end
 
@@ -296,6 +309,13 @@ local ContextSelection = FullSurface and FullSurface.CreateSelectionController
 
 local function SetContextMode(key)
     ContextSelection:Set(key)
+end
+
+-- Read the context currently driving the shared builders/preview. Other
+-- surfaces use it only to seed their first dropdown build; each cached surface
+-- subsequently restores its own retained dropdown choice when shown.
+local function GetContextMode()
+    return State.contextMode
 end
 
 local function SetActiveTab(tabKey)
@@ -396,10 +416,11 @@ end
 -- auto-registers each header as a section on any host that exposes
 -- RegisterSection, so we install one on the tab's content host before render.
 ---------------------------------------------------------------------------
+-- "auras" removed: the Auras tab-strip entry no longer exists on this
+-- surface (moved to the Auras hub tile), so activeTab can never be "auras".
 local SECTION_NAV_TABS = {
     appearance = true,
     indicators = true,
-    auras = true,
     layout = true,
 }
 
@@ -488,9 +509,46 @@ end
 -- Also docks the detached preview panel and ties its visibility to this
 -- page's show/hide (covers tile-switch and window-close).
 ---------------------------------------------------------------------------
+local function ActivatePreviewBody(body)
+    if not body then return end
+
+    -- Auras > Group Frames and the main Group Frames tile cache separate
+    -- dropdown widgets. Restore the newly-visible surface's retained choice
+    -- before rebuilding the one shared preview panel.
+    local getContextMode = body._gfPreviewContextGetter
+    if type(getContextMode) == "function" then
+        local contextMode = NormalizeContextMode(getContextMode())
+        if contextMode and contextMode ~= State.contextMode then
+            SetContextMode(contextMode)
+        end
+    end
+
+    if State.previewPanel then State.previewPanel.Show() end
+    RefreshPreviewPanel()
+end
+
+local function BindPreviewBody(body, getContextMode)
+    if not body then return end
+    body._gfPreviewContextGetter = getContextMode
+    EnsurePreviewPanel()
+    if not body._gfPreviewHooked then
+        body._gfPreviewHooked = true
+        body:HookScript("OnShow", function()
+            ActivatePreviewBody(body)
+        end)
+        body:HookScript("OnHide", function()
+            if State.previewPanel then State.previewPanel.Hide() end
+        end)
+    end
+    if State.previewPanel and body:IsShown() then
+        ActivatePreviewBody(body)
+    end
+end
+
 local function BuildTileBody(body, _, _, feature)
     local tabModel = EnsureTabModel(feature)
     local DROPDOWN_ROW_H = 30
+    local contextDropdown
 
     local result = FullSurface.BuildScrollTabBody(body, {
         cacheTabBodies = true,
@@ -503,7 +561,7 @@ local function BuildTileBody(body, _, _, feature)
             local model = ResolveModel(feature)
             local getContextOptions = model and model.GetContextOptions
             State.contextMode = NormalizeContextMode(State.contextMode)
-            FullSurface.BuildContextDropdownRow(body, {
+            contextDropdown = FullSurface.BuildContextDropdownRow(body, {
                 gui = GUI,
                 label = ns.L["Unit Group"],
                 stateKey = "_contextMode",
@@ -566,30 +624,36 @@ local function BuildTileBody(body, _, _, feature)
         preventReentry = true,
     })
 
-    -- Dock + show the detached preview panel; tie its visibility to this page.
-    EnsurePreviewPanel()
-    if not body._gfPreviewHooked then
-        body._gfPreviewHooked = true
-        body:HookScript("OnShow", function()
-            if State.previewPanel then State.previewPanel.Show() end
-            RefreshPreviewPanel()
-        end)
-        body:HookScript("OnHide", function()
-            if State.previewPanel then State.previewPanel.Hide() end
-        end)
-    end
-    if State.previewPanel and body:IsShown() then
-        State.previewPanel.Show()
-        RefreshPreviewPanel()
-    end
+    -- Dock + show the detached preview panel. The main tile's retained
+    -- dropdown is authoritative whenever this cached body becomes visible.
+    BindPreviewBody(body, function()
+        local db = contextDropdown and contextDropdown.dropdownDB
+        return (db and db._contextMode) or State.contextMode
+    end)
 
     return result
 end
 
+-- Reusable preview-panel accessors for non-surface bodies (e.g. the Auras
+-- hub's Group Frames sub-page). Factored out of the same OnShow/OnHide hook
+-- block BuildTileBody wires for its own body (see above, "Dock + show the
+-- detached preview panel"), so any page hosting RenderAurasTab can drive the
+-- same detached panel without going through BuildTileBody's tab strip.
+local function ShowPreviewOn(body, getContextMode)
+    BindPreviewBody(body, getContextMode)
+end
+
+local function HidePreview()
+    if State.previewPanel then State.previewPanel.Hide() end
+end
+
 ns.QUI_GroupFramesSettingsSurface = {
     SetContextMode = SetContextMode,
+    GetContextMode = GetContextMode,
     SetActiveTab = SetActiveTab,
     NavigateSearchEntry = NavigateSearchEntry,
     GetSearchRoot = GetSearchRoot,
     RenderPage = BuildTileBody,
+    ShowPreviewOn = ShowPreviewOn,
+    HidePreview = HidePreview,
 }

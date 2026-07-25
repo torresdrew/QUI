@@ -28,14 +28,14 @@ local LSM = ns.LSM
 -- New message sound (SharedMedia compatible)
 ---------------------------------------------------------------------------
 local SOUND_CHANNEL_EVENTS = {
-    guild = { "CHAT_MSG_GUILD" },
+    guild = { "CHAT_MSG_GUILD", "CHAT_MSG_GUILD_DISCORD" },
     officer = { "CHAT_MSG_OFFICER" },
-    guild_officer = { "CHAT_MSG_GUILD", "CHAT_MSG_OFFICER" },
+    guild_officer = { "CHAT_MSG_GUILD", "CHAT_MSG_GUILD_DISCORD", "CHAT_MSG_OFFICER" },
     party = { "CHAT_MSG_PARTY", "CHAT_MSG_PARTY_LEADER" },
     raid = { "CHAT_MSG_RAID", "CHAT_MSG_RAID_LEADER", "CHAT_MSG_RAID_WARNING" },
     whisper = { "CHAT_MSG_WHISPER", "CHAT_MSG_BN_WHISPER" },
     all = {
-        "CHAT_MSG_GUILD", "CHAT_MSG_OFFICER",
+        "CHAT_MSG_GUILD", "CHAT_MSG_GUILD_DISCORD", "CHAT_MSG_OFFICER",
         "CHAT_MSG_PARTY", "CHAT_MSG_PARTY_LEADER",
         "CHAT_MSG_RAID", "CHAT_MSG_RAID_LEADER", "CHAT_MSG_RAID_WARNING",
         "CHAT_MSG_INSTANCE_CHAT", "CHAT_MSG_INSTANCE_CHAT_LEADER",
@@ -75,7 +75,8 @@ end
 local function GetReadablePlayerGUID()
     if not UnitGUID then return nil end
     local guid = UnitGUID("player")
-    if IsSecret(guid) or type(guid) ~= "string" or guid == "" then return nil end
+    if IsSecret(guid) then return nil end -- @secret-policy: reject-secret-ids
+    if type(guid) ~= "string" or guid == "" then return nil end
     return guid
 end
 

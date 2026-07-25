@@ -50,6 +50,12 @@ _G.BreakUpLargeNumbers = function(n)
     return "BULN"
 end
 
+-- FormatNumber probes before its nil-compare (`secret == nil` throws
+-- in-game); the extracted chunk resolves the file-local IsSecretValue as a
+-- global here. Model a secret with a sentinel table.
+local SECRET = {}
+_G.IsSecretValue = function(v) return v == SECRET end
+
 local loader = assert(loadstring(extractFormatOpts()
     .. extract("FormatDuration")
     .. extract("FormatNumber")
@@ -96,5 +102,16 @@ assert(_calls[1].fn == "abbrev" and _calls[1].mode == 10, "unknown format must f
 reset()
 FormatNumber(0, "compact")
 assert(#_calls == 1 and _calls[1].n == 0, "zero must pass through to AbbreviateNumbers, not be short-circuited")
+
+-- FormatNumber — SECRET amounts bypass the nil-compare (probe-first) and ride
+-- untouched to the AllowedWhenTainted formatters (sink-passthrough policy).
+reset()
+assert(FormatNumber(SECRET, "compact") == "ABBR", "secret -> AbbreviateNumbers passthrough")
+assert(#_calls == 1 and _calls[1].fn == "abbrev" and _calls[1].n == SECRET,
+    "secret amount must reach AbbreviateNumbers raw")
+reset()
+assert(FormatNumber(SECRET, "complete") == "BULN", "secret -> BreakUpLargeNumbers passthrough")
+assert(#_calls == 1 and _calls[1].fn == "buln" and _calls[1].n == SECRET,
+    "secret amount must reach BreakUpLargeNumbers raw")
 
 print("OK: damage_meter_formatters_test")

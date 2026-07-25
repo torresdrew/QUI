@@ -4,9 +4,9 @@ local IconLayout = ns.QUI_GroupFrameIconLayout or {}
 ns.QUI_GroupFrameIconLayout = IconLayout
 
 -- Canonical dispel-type default color palette. Shared by groupframes.lua
--- (_dispel.defaultColors) and groupframes_auras.lua (AURA_DISPEL_COLORS) so a
--- palette change lands in exactly one place. NOTE: the settings UI keeps its
--- own 4-color seed (no Bleed) by design — do not point it here.
+-- (_dispel.defaultColors), groupframes_auras.lua (AURA_DISPEL_COLORS), and
+-- (via SeedDispelColors below) the settings-card dispel.colors seed, so a
+-- palette change lands in exactly one place.
 IconLayout.DISPEL_DEFAULT_COLORS = {
     Magic   = { 0.2, 0.6, 1.0, 1 },  -- Blue
     Curse   = { 0.6, 0.0, 1.0, 1 },  -- Purple
@@ -14,6 +14,21 @@ IconLayout.DISPEL_DEFAULT_COLORS = {
     Poison  = { 0.0, 0.6, 0.0, 1 },  -- Green
     Bleed   = { 0.8, 0.0, 0.0, 1 },  -- Red
 }
+
+-- Seeds any missing dispel-type color in tbl from the canonical palette
+-- above (existing entries are left untouched). Used by
+-- group_frames_schema.lua's EnsureDispelColors to backfill new schools
+-- (e.g. Bleed) into profiles saved before they existed, without disturbing
+-- a color the user already customized.
+function IconLayout.SeedDispelColors(tbl)
+    if type(tbl) ~= "table" then return tbl end
+    for k, v in pairs(IconLayout.DISPEL_DEFAULT_COLORS) do
+        if type(tbl[k]) ~= "table" then
+            tbl[k] = { v[1], v[2], v[3], v[4] or 1 }
+        end
+    end
+    return tbl
+end
 
 -- Single-row offset for slot `index` (1-based) growing `direction` from the
 -- anchor. CENTER centres the whole strip of `totalCount` icons on the anchor.
