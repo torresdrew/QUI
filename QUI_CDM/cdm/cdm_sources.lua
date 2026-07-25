@@ -12,6 +12,7 @@ local CDMSources = {}
 ns.CDMSources = CDMSources
 
 local C_Spell = C_Spell
+local C_SpellBook = C_SpellBook
 local C_Item = C_Item
 local C_UnitAuras = C_UnitAuras
 local C_Secrets = C_Secrets
@@ -73,6 +74,8 @@ local _C_GetSpellTexture = C_Spell and C_Spell.GetSpellTexture
 local _C_IsSpellUsable = C_Spell and C_Spell.IsSpellUsable
 local _C_IsSpellInRange = C_Spell and C_Spell.IsSpellInRange
 local _C_SpellHasRange = C_Spell and C_Spell.SpellHasRange
+local _C_FindSpellBookSlotForSpell = C_SpellBook and C_SpellBook.FindSpellBookSlotForSpell
+local _C_GetNumSpellBookSkillLines = C_SpellBook and C_SpellBook.GetNumSpellBookSkillLines
 
 function CDMSources.QuerySpellCharges(spellID)
     if not spellID or not _C_GetSpellCharges then return nil, false end
@@ -120,6 +123,27 @@ function CDMSources.QueryIsSpellKnownOrPlayerSpell(spellID)
     if _IsSpellKnown and _IsSpellKnown(spellID) then return true end
     if _IsPlayerSpell and _IsPlayerSpell(spellID) then return true end
     return false
+end
+
+-- Does this spell belong to any player spellbook lane for the current class?
+-- includeHidden/flyouts/future/off-spec are all true so this is class
+-- applicability, not current-loadout knownness. Returns nil while the API or
+-- spellbook is unavailable so catalog callers can fail open during cold load.
+function CDMSources.QuerySpellBookClassAffinity(spellID)
+    if WoW_IsSecretValue and WoW_IsSecretValue(spellID) then
+        return false -- @secret-policy: reject-secret-ids
+    end
+    if spellID == nil or not _C_FindSpellBookSlotForSpell then return nil end
+    if _C_GetNumSpellBookSkillLines and _C_GetNumSpellBookSkillLines() == 0 then
+        return nil
+    end
+    local includeHidden = true
+    local includeFlyouts = true
+    local includeFutureSpells = true
+    local includeOffSpec = true
+    local slotIndex = _C_FindSpellBookSlotForSpell(
+        spellID, includeHidden, includeFlyouts, includeFutureSpells, includeOffSpec)
+    return slotIndex ~= nil
 end
 
 function CDMSources.QuerySpellDisplayCount(spellID)

@@ -3473,6 +3473,10 @@ local function IsCustomBarEntryUsableOnCurrentClass(entry, viewerType)
     if entry.type ~= "spell" then return true end
     if type(entry.id) ~= "number" then return true end
     local spellData = ns.CDMSpellData
+    if spellData and type(spellData.IsEntryApplicableForContainer) == "function"
+        and spellData:IsEntryApplicableForContainer(viewerType, entry) ~= true then
+        return false
+    end
     if spellData and type(spellData.IsEntryDormantForContainer) == "function" then
         return spellData:IsEntryDormantForContainer(viewerType, entry) ~= true
     end

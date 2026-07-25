@@ -134,6 +134,20 @@ CDMSpellData.SyncCooldownViewerCVar = SyncCooldownViewerCVarToMasterToggle
 -- the allowUnlearned _spellInCDMCooldowns superset can't answer dormancy.
 CDMSpellData._cdmCooldownLearnedPreferred = {}
 
+-- Current-spec aura-family IDs, rebuilt with allowUnlearned=false. The
+-- separate readiness flag distinguishes a legitimately empty learned set
+-- from a cold/partial catalog read; without it, either state would look like
+-- an empty table and could false-positive every saved aura as dormant.
+CDMSpellData._cdmAuraLearnedFamily = {}
+CDMSpellData._cdmAuraLearnedCatalogReady = false
+
+-- Blizzard-owned spell rows that belong to this player's class, including
+-- hidden/future/off-spec spellbook lanes. Foreign-class rows are retained in
+-- saved intent but excluded from Composer and runtime. Readiness is explicit
+-- so a cold/partial spellbook read fails open.
+CDMSpellData._cdmClassApplicableSpellFamily = {}
+CDMSpellData._cdmClassApplicableCatalogReady = false
+
 -- Zone transition flag — set true on PLAYER_ENTERING_WORLD, cleared after
 -- 2s. Defers SPELLS_CHANGED reconciles while WoW APIs (IsSpellKnown,
 -- C_CooldownViewer, spellbook) are returning stale/incomplete data, so the
@@ -2775,17 +2789,43 @@ local function IsSpellInCDMCategoryInternal(spellID, family)
     return _spellToCooldownID[id] ~= nil
 end
 
+function CDMSpellData:IsEntryApplicableForContainer(_containerKey, entry)
+    local normalized = NormalizeOwnedEntry(entry)
+    if not normalized or normalized.type ~= "spell" or type(normalized.id) ~= "number" then
+        return true
+    end
+    if normalized.source ~= BLIZZARD_CDM_ENTRY_SOURCE then
+        return true
+    end
+    if CDMSpellData._cdmClassApplicableCatalogReady ~= true then
+        return true
+    end
+    local family = CDMSpellData._cdmClassApplicableSpellFamily
+    return type(family) == "table" and family[normalized.id] == true
+end
+
 local function IsEntryDormantForContainerInternal(containerKey, entry)
     local normalized = NormalizeOwnedEntry(entry)
     if not normalized or normalized.type ~= "spell" or type(normalized.id) ~= "number" then
+        return false
+    end
+    if not CDMSpellData:IsEntryApplicableForContainer(containerKey, normalized) then
         return false
     end
     if IsAuraEntry(normalized, containerKey) then
         if normalized.source ~= BLIZZARD_CDM_ENTRY_SOURCE then
             return false
         end
-        return CDMCatalogReady("aura")
-            and not IsSpellInCDMCategoryInternal(normalized.id, "aura")
+        if not CDMCatalogReady("aura") then return false end
+        if not IsSpellInCDMCategoryInternal(normalized.id, "aura") then
+            return true
+        end
+        -- The family map above is the intentional allowUnlearned superset
+        -- used by the picker. Once the current-spec learned catalog is ready,
+        -- require this Blizzard-owned entry to exist there too. This keeps
+        -- valid same-class loadout/talent rows Dormant until learned.
+        if not CDMSpellData:_AuraLearnedCatalogReady() then return false end
+        return not CDMSpellData:_IsAuraLearnedFamilyID(normalized.id)
     end
     -- Cooldown family. Unknown spell -> dormant (unchanged). Additionally, a
     -- blizzardCDM-sourced cooldown that is no longer a LEARNED/active cooldown
@@ -2826,6 +2866,17 @@ function CDMSpellData:_IsCooldownLearnedPreferred(spellID)
     local id = tonumber(spellID)
     if not id then return false end
     local set = self._cdmCooldownLearnedPreferred
+    return type(set) == "table" and set[id] == true
+end
+
+function CDMSpellData:_AuraLearnedCatalogReady()
+    return self._cdmAuraLearnedCatalogReady == true
+end
+
+function CDMSpellData:_IsAuraLearnedFamilyID(spellID)
+    local id = tonumber(spellID)
+    if not id then return false end
+    local set = self._cdmAuraLearnedFamily
     return type(set) == "table" and set[id] == true
 end
 
@@ -2891,7 +2942,7 @@ function CDMSpellData:BuildSpellListFromOwned(containerKey)
             if entry.type == "spell" and self:_IsSpellRemovedForCurrentBuild(db, entry.id) then
                 isRemoved = true
             end
-            -- Display-time dormancy. Owned lists are pure user intent and
+            -- Display-time applicability and dormancy. Owned lists are pure user intent and
             -- are never mutated by known-state probes (IsSpellKnown races
             -- at cold login / loadout swaps used to delete tracked talent
             -- spells). An entry whose spell this character can't currently
@@ -2901,10 +2952,14 @@ function CDMSpellData:BuildSpellListFromOwned(containerKey)
             -- there). Only entries proven to come from Blizzard CDM are
             -- judged by the per-character CDM aura catalog; manual aura
             -- spell IDs remain user-managed even if absent from /cdm.
+            -- Blizzard-owned foreign-class rows remain saved but are omitted
+            -- from both runtime and Composer.
             local isDormant = not isRemoved
                 and IsEntryDormantForContainerInternal(containerKey, entry)
+            local isApplicable = not isRemoved
+                and self:IsEntryApplicableForContainer(containerKey, entry)
 
-            if not isRemoved and not isDormant then
+            if not isRemoved and isApplicable and not isDormant then
                 local resolved = ResolveOwnedEntry(entry, containerKey, i)
                 if resolved then
                     resolved._assignedRow = entry.row  -- carry row assignment
@@ -3003,6 +3058,34 @@ RebuildSpellToCooldownID = function()
     if composer and composer.RebuildCooldownLearnedPreferredIDs then
         composer.RebuildCooldownLearnedPreferredIDs(learnedSet)
     end
+
+    -- Aura dormancy needs the same learned-vs-unlearned distinction, but
+    -- retains every identity in a learned aura family so legacy/base-ID
+    -- snapshots remain valid. RebuildAuraLearnedFamilyIDs returns false for a
+    -- cold or partial read; keep dormancy conservative until it reports ready.
+    local learnedAuraSet = CDMSpellData._cdmAuraLearnedFamily
+    if type(learnedAuraSet) ~= "table" then
+        learnedAuraSet = {}
+        CDMSpellData._cdmAuraLearnedFamily = learnedAuraSet
+    end
+    wipe(learnedAuraSet)
+    CDMSpellData._cdmAuraLearnedCatalogReady = false
+    if composer and composer.RebuildAuraLearnedFamilyIDs then
+        CDMSpellData._cdmAuraLearnedCatalogReady =
+            composer.RebuildAuraLearnedFamilyIDs(learnedAuraSet) == true
+    end
+
+    local applicableSet = CDMSpellData._cdmClassApplicableSpellFamily
+    if type(applicableSet) ~= "table" then
+        applicableSet = {}
+        CDMSpellData._cdmClassApplicableSpellFamily = applicableSet
+    end
+    wipe(applicableSet)
+    CDMSpellData._cdmClassApplicableCatalogReady = false
+    if composer and composer.RebuildClassApplicableSpellIDs then
+        CDMSpellData._cdmClassApplicableCatalogReady =
+            composer.RebuildClassApplicableSpellIDs(applicableSet) == true
+    end
 end
 
 ---------------------------------------------------------------------------
@@ -3017,17 +3100,26 @@ end
 -- maps, and FireChangeCallback refreshes display — which re-evaluates the
 -- render-time known filters against fresh spell data. Callers must invoke
 -- this inside their own combat-lockdown guard.
--- Order-independent signature of the persistent learned-cooldown set
--- (_cdmCooldownLearnedPreferred, rebuilt inside ReconcileAllContainers). Its
--- keys are SelectPersistentSpellID values, which prefer the still-known BASE
--- spell over a live override -- so a transient proc override (e.g. Hammer of
--- Light 427453 replacing Wake of Ashes 255937) does NOT move the set, while a
--- talent/spec change that adds, drops, or converts a learned cooldown does.
-local function LearnedCooldownSignature()
-    local set = CDMSpellData._cdmCooldownLearnedPreferred
-    if type(set) ~= "table" then return "" end
+-- Order-independent signature of the learned cooldown and aura-family sets
+-- rebuilt inside ReconcileAllContainers. Cooldown keys prefer the still-known
+-- BASE spell over a live proc override, so transient procs do not move the
+-- signature. Real talent/spec changes to either family do.
+local function LearnedCatalogSignature()
     local ids = {}
-    for id in pairs(set) do ids[#ids + 1] = id end
+    local cooldowns = CDMSpellData._cdmCooldownLearnedPreferred
+    if type(cooldowns) == "table" then
+        for id in pairs(cooldowns) do ids[#ids + 1] = "c:" .. tostring(id) end
+    end
+    local auras = CDMSpellData._cdmAuraLearnedFamily
+    if type(auras) == "table" then
+        for id in pairs(auras) do ids[#ids + 1] = "a:" .. tostring(id) end
+    end
+    local applicable = CDMSpellData._cdmClassApplicableSpellFamily
+    if type(applicable) == "table" then
+        for id in pairs(applicable) do ids[#ids + 1] = "p:" .. tostring(id) end
+    end
+    ids[#ids + 1] = CDMSpellData._cdmAuraLearnedCatalogReady and "ar:1" or "ar:0"
+    ids[#ids + 1] = CDMSpellData._cdmClassApplicableCatalogReady and "pr:1" or "pr:0"
     table.sort(ids)
     return table.concat(ids, ",")
 end
@@ -3043,9 +3135,9 @@ end
 -- known-state live every tick, so a skipped refresh never leaves stale display.
 local function RunReconcileSequence(guardUnchanged)
     local restored = CDMSpellData:CheckAllDormantSpells()
-    local before = guardUnchanged and LearnedCooldownSignature() or nil
+    local before = guardUnchanged and LearnedCatalogSignature() or nil
     CDMSpellData:ReconcileAllContainers()
-    if guardUnchanged and not restored and before == LearnedCooldownSignature() then
+    if guardUnchanged and not restored and before == LearnedCatalogSignature() then
         return
     end
     if FireChangeCallback then

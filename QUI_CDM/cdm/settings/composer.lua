@@ -193,6 +193,22 @@ function ns.CDMComposer.RebuildCooldownLearnedPreferredIDs(outSet)
     return false
 end
 
+function ns.CDMComposer.RebuildAuraLearnedFamilyIDs(outSet)
+    local catalog = ns.CDMCatalog
+    if catalog and catalog.RebuildAuraLearnedFamilyIDs then
+        return catalog.RebuildAuraLearnedFamilyIDs(outSet)
+    end
+    return false
+end
+
+function ns.CDMComposer.RebuildClassApplicableSpellIDs(outSet)
+    local catalog = ns.CDMCatalog
+    if catalog and catalog.RebuildClassApplicableSpellIDs then
+        return catalog.RebuildClassApplicableSpellIDs(outSet)
+    end
+    return false
+end
+
 function ns.CDMComposer.GetAvailableSpellsForContainer(containerKey, containerType, ownedSet, correctionMap)
     local catalog = ns.CDMCatalog
     if catalog and catalog.GetAvailableSpellsForContainer then
@@ -522,6 +538,18 @@ local function IsEntryDormantOnCurrentPlayer(entry, containerKey)
     return spellData:IsSpellKnown(entry.id) ~= true
 end
 
+local function IsEntryApplicableOnCurrentPlayer(entry, containerKey)
+    if type(entry) ~= "table" then return true end
+    if entry.type ~= "spell" then return true end
+    if type(entry.id) ~= "number" then return true end
+    local spellData = ns.CDMSpellData
+    if spellData and type(spellData.IsEntryApplicableForContainer) == "function" then
+        return spellData:IsEntryApplicableForContainer(
+            containerKey or activeContainer, entry) == true
+    end
+    return true
+end
+
 -- True if the entry is castable / usable by the player currently logged in.
 -- Items, slots, macros are always considered usable here. Spell dormancy is
 -- delegated to CDMSpellData so cooldown entries use spell knownness while
@@ -530,7 +558,8 @@ local function IsEntryUsableOnCurrentPlayer(entry, containerKey)
     if type(entry) ~= "table" then return true end
     if entry.type ~= "spell" then return true end
     if type(entry.id) ~= "number" then return true end
-    return not IsEntryDormantOnCurrentPlayer(entry, containerKey)
+    return IsEntryApplicableOnCurrentPlayer(entry, containerKey)
+        and not IsEntryDormantOnCurrentPlayer(entry, containerKey)
 end
 
 local function EntryCountsForCooldownRowCapacity(entry)
@@ -2675,7 +2704,7 @@ RefreshEntryList = function()
     local cooldownDormantEntries = {}
     if isCooldown and #activeRowNums > 0 then
         for i, entry in ipairs(entries) do
-            if entry then
+            if entry and IsEntryApplicableOnCurrentPlayer(entry) then
                 if EntryCountsForCooldownRowCapacity(entry) then
                     local r = entry.row
                     r = FindCooldownRowWithRoom(activeRowNums, rowCounts, rowMax, r)
@@ -2759,10 +2788,9 @@ RefreshEntryList = function()
         -- Dormancy is computed per render from known-state — entries are
         -- never relocated or removed because of it. The runtime path
         -- (cdm_icon_renderer.lua:BuildIcons) skips these same entries at
-        -- display time; surfacing them here under a dormant header lets
-        -- the user still see / right-click-remove every entry they
-        -- configured — cross-class leftovers in a shared profile as well
-        -- as same-class talents not in the current loadout. The
+        -- display time; surfacing them here under a dormant header keeps
+        -- valid same-class talents visible across loadout changes. Foreign-
+        -- class Blizzard rows are filtered before either bucket. The
         -- specSpecific path already labels entries by source spec
         -- (_renderSpecKey), so leave it alone.
         local splitDormant = not (isCustomBar and db.specSpecific)
@@ -2771,7 +2799,7 @@ RefreshEntryList = function()
             usableEntries = {}
             dormantEntries = {}
             for i, entry in ipairs(entries) do
-                if entry then
+                if entry and IsEntryApplicableOnCurrentPlayer(entry) then
                     if IsEntryUsableOnCurrentPlayer(entry) then
                         usableEntries[#usableEntries + 1] = { entry = entry, idx = i }
                     else
@@ -2814,11 +2842,15 @@ RefreshEntryList = function()
             if reverse then
                 for i = #entries, 1, -1 do
                     local entry = entries[i]
-                    if entry then RenderEntryCell(entry, i) end
+                    if entry and IsEntryApplicableOnCurrentPlayer(entry) then
+                        RenderEntryCell(entry, i)
+                    end
                 end
             else
                 for i, entry in ipairs(entries) do
-                    if entry then RenderEntryCell(entry, i) end
+                    if entry and IsEntryApplicableOnCurrentPlayer(entry) then
+                        RenderEntryCell(entry, i)
+                    end
                 end
             end
             FinishRow()
