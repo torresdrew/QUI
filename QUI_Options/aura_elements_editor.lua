@@ -368,10 +368,8 @@ end
 
 -- Derive the plain-language "What to Show" intent for an element, coerced to
 -- "custom" when the raw derive yields a key this element's polarity doesn't
--- offer (hand-edited SV, or a stale key surviving an auraType flip). Shared by
--- the section-state latch and the dropdown so both agree on when a strip is
--- "custom" -- otherwise a niche element could show "Custom…" in the dropdown
--- yet start with Appearance & Advanced collapsed, hiding the raw config.
+-- offer (hand-edited SV, or a stale key surviving an auraType flip). Used by
+-- the dropdown so it never receives a value outside its offered option list.
 local function EffectiveWhatToShow(element)
     local derived = E.DeriveWhatToShow(element)
     for _, key in ipairs(E.WhatToShowKeys(element.auraType)) do
@@ -385,19 +383,24 @@ local sectionExpand = {}
 local function sectionState(element)
     local s = sectionExpand[element.id]
     if not s then
-        s = { basics = true, filters = true, advanced = (EffectiveWhatToShow(element) == "custom") }
+        s = { basics = false, filters = false, advanced = false }
+        s.manualCustom = false
         sectionExpand[element.id] = s
     end
     return s
 end
 
--- Emit a full-width clickable section header with a chevron; toggles state + rebuild.
+-- Emit a full-width clickable section header with a chevron. Section bodies
+-- stay built for the current detail view, so disclosure clicks only hide/show
+-- and reflow existing rows instead of allocating another complete widget tree.
 local function MakeSectionHeader(ctx, element, sectionKey, labelText)
     local state = sectionState(element)
     local header = CreateFrame("Button", nil, ctx.detailArea)
     header:SetHeight(FORM_ROW)
-    local fs = header:CreateFontString(nil, "OVERLAY")
-    fs:SetFontObject(ns.QUI_Options and ns.QUI_Options.HeaderFont or "GameFontNormal")
+    local fs = header:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    local textColor = ctx.C.text or { 1, 1, 1, 1 }
+    CJKFont(fs, ctx.GUI.FONT_PATH or [[Interface\\AddOns\\QUI\\assets\\Quazii.ttf]], 11, "")
+    fs:SetTextColor(textColor[1], textColor[2], textColor[3], textColor[4] or 1)
     fs:SetPoint("LEFT", header, "LEFT", 20, 0)
     fs:SetText(labelText)
     local caret
@@ -408,14 +411,32 @@ local function MakeSectionHeader(ctx, element, sectionKey, labelText)
             expanded = state[sectionKey],
         })
     end
+    if ctx._detailSectionCarets then
+        ctx._detailSectionCarets[sectionKey] = caret
+    end
     header:SetScript("OnClick", function()
-        state[sectionKey] = not state[sectionKey]
-        if caret and ns.UIKit.SetChevronCaretExpanded then
-            ns.UIKit.SetChevronCaretExpanded(caret, state[sectionKey])
+        local expanded = not state[sectionKey]
+        if ctx.SetDetailSectionExpanded then
+            ctx.SetDetailSectionExpanded(sectionKey, expanded)
+        else
+            state[sectionKey] = expanded
+            if caret and ns.UIKit.SetChevronCaretExpanded then
+                ns.UIKit.SetChevronCaretExpanded(caret, expanded)
+            end
+            if not expanded and SpellList and SpellList.CloseBrowsePopup then
+                SpellList.CloseBrowsePopup(ctx.browsePrefix)
+            end
+            if ctx.RelayoutDetail then
+                ctx.RelayoutDetail()
+                if ctx.RelayoutList then
+                    ctx.RelayoutList()
+                end
+            else
+                ctx.rebuild()
+            end
         end
-        ctx.rebuild()
     end)
-    ctx.AddDetailWidget(header, FORM_ROW, true) -- span = full width
+    ctx.BeginDetailSection(header, FORM_ROW, sectionKey)
 end
 
 local function AddPlacementWidgets(ctx, element, includeStrip)
@@ -688,6 +709,15 @@ local function AddSpellMapEditor(ctx, map, headerText, onMutate, browseCfg)
     addManualText:SetText(ns.L["Add"])
     StyleSpellInputText(GUI, C, inputBox, inputLabel, addManualText)
 
+    local listFrame
+    local function RefreshInlineList()
+        if listFrame and type(listFrame.Refresh) == "function" then
+            listFrame:Refresh()
+        else
+            ctx.rebuild()
+        end
+    end
+
     local function CommitManual()
         local spellID = tonumber(inputBox:GetText())
         if spellID and spellID > 0 then
@@ -695,7 +725,7 @@ local function AddSpellMapEditor(ctx, map, headerText, onMutate, browseCfg)
             inputBox:SetText("")
             inputBox:ClearFocus()
             notify()
-            ctx.rebuild()
+            RefreshInlineList()
         end
     end
     addManualButton:SetScript("OnClick", CommitManual)
@@ -704,21 +734,25 @@ local function AddSpellMapEditor(ctx, map, headerText, onMutate, browseCfg)
     -- Browse popup trigger. Re-binding via RefreshBrowsePopup on every render
     -- keeps an already-open popup's closures fresh across list rebuilds.
     if browseCfg and browseCfg.key and SpellList.ToggleBrowsePopup then
+        local toggleSpell = browseCfg.onToggle or function(spellID)
+            if map[spellID] then
+                map[spellID] = nil
+            else
+                map[spellID] = true
+            end
+            notify()
+        end
         local browseOpts = {
             title = browseCfg.title or headerText,
             presets = browseCfg.presets or {},
             isSelected = browseCfg.isSelected or function(spellID)
                 return map[spellID] == true
             end,
-            onToggle = browseCfg.onToggle or function(spellID)
-                if map[spellID] then
-                    map[spellID] = nil
-                else
-                    map[spellID] = true
-                end
-                notify()
-                ctx.rebuild()
+            onToggle = function(spellID)
+                toggleSpell(spellID)
+                RefreshInlineList()
             end,
+            onClose = browseCfg.onClose,
         }
         local browseButton = GUI:CreateButton(manualRow, ns.L["Browse"], 70, 20)
         browseButton:ClearAllPoints()
@@ -733,10 +767,10 @@ local function AddSpellMapEditor(ctx, map, headerText, onMutate, browseCfg)
     add(manualRow, 26, true)
 
     -- Current spells only (no preset groups — those live in the Browse popup).
-    local listFrame = SpellList.CreateListFrame(ctx.detailArea, map, nil, function()
+    listFrame = SpellList.CreateListFrame(ctx.detailArea, map, nil, function()
         notify()
-    end, function()
-        ctx.rebuild()
+    end, function(_, newHeight)
+        ctx.UpdateDetailWidgetHeight(listFrame, newHeight)
     end)
     add(listFrame, math.max(1, listFrame:GetHeight() or 1), true)
 end
@@ -794,15 +828,15 @@ local function AddTrackedSpellListEditor(ctx, element)
                 for i = #arr, 1, -1 do
                     if arr[i] == spellID then
                         table.remove(arr, i)
+                        mapView[spellID] = nil
                         ctx.NotifyChanged()
-                        ctx.rebuild()
                         return
                     end
                 end
                 arr[#arr + 1] = spellID
                 table.sort(arr)
+                mapView[spellID] = true
                 ctx.NotifyChanged()
-                ctx.rebuild()
             end,
         })
 end
@@ -842,7 +876,7 @@ local function AddFilterStripConfig(ctx, element)
 
     -- ===== BASICS =====
     MakeSectionHeader(ctx, element, "basics", ns.L["Basics"])
-    if state.basics then
+    do
         if not caps.fixedAuraType then
             row(ns.L["Aura Type"], GUI:CreateFormDropdown(ctx.detailArea, nil, AURA_TYPE_OPTIONS, "auraType", element, function()
                 ctx.NotifyChanged()
@@ -857,16 +891,17 @@ local function AddFilterStripConfig(ctx, element)
 
     -- ===== FILTERS =====
     MakeSectionHeader(ctx, element, "filters", ns.L["Filters"])
-    if state.filters then
+    do
         -- "What to Show" leads Filters: pick a plain-language intent and QUI
         -- stamps the raw fields for you (E.ApplyWhatToShow); the raw controls
         -- themselves live under Appearance & Advanced for full control.
         -- "Custom…" is the escape hatch -- it leaves whatever raw config is
-        -- already there untouched (never zeroed by picking it).
+        -- already there untouched (never zeroed by picking it), latches the
+        -- dropdown in manual mode, and opens the raw controls below.
         -- EffectiveWhatToShow already coerces a non-offered/hand-edited derive
         -- to "custom", so the dropdown never renders a value outside its own
-        -- option list -- and it matches the section-state latch above exactly.
-        local derived = EffectiveWhatToShow(element)
+        -- option list.
+        local derived = state.manualCustom and "custom" or EffectiveWhatToShow(element)
 
         -- Bound to a transient proxy (never element) so widget CONSTRUCTION
         -- never writes the DB -- same pattern as the Custom Border Color
@@ -877,10 +912,13 @@ local function AddFilterStripConfig(ctx, element)
         row(ns.L["What to Show"], GUI:CreateFormDropdown(ctx.detailArea, nil,
             WhatToShowOptions(element.auraType), "whatToShow", whatToShowProxy, function()
                 local key = whatToShowProxy.whatToShow
-                if key ~= "custom" then
-                    E.ApplyWhatToShow(element, key)
+                if key == "custom" then
+                    state.manualCustom = true
+                    ctx.SetDetailSectionExpanded("advanced", true)
+                    return
                 end
-                -- "custom" leaves fields as-is so the Advanced controls stay authoritative
+                state.manualCustom = false
+                E.ApplyWhatToShow(element, key)
                 ctx.NotifyChanged()
                 rebuild()
             end, {
@@ -951,7 +989,7 @@ local function AddFilterStripConfig(ctx, element)
 
     -- ===== APPEARANCE & ADVANCED =====
     MakeSectionHeader(ctx, element, "advanced", ns.L["Appearance & Advanced"])
-    if state.advanced then
+    do
         AddSwipeWidgets(ctx, element)
         AddTextRegionWidgets(ctx, element, "duration", ns.L["Duration Text"])
         AddTextRegionWidgets(ctx, element, "stack", ns.L["Stack Text"])
@@ -1303,6 +1341,12 @@ end
 -- frame) flushes any half-filled row and takes the full width on its own.
 local function RenderDetail(ctx, element)
     ctx.ClearDetailWidgets()
+    ctx.RelayoutDetail = nil
+    ctx.BeginDetailSection = nil
+    ctx.SetDetailSectionExpanded = nil
+    ctx.UpdateDetailWidgetHeight = nil
+    ctx._detailSectionCarets = {}
+    ctx._detailSectionKey = nil
     if not element then
         ctx.detailArea:SetHeight(1)
         return 0
@@ -1312,10 +1356,7 @@ local function RenderDetail(ctx, element)
     ctx.detailY = -2
     ctx._pendingWidget = nil
     ctx._pendingHeight = 0
-    -- Parity counter for the alternating row tint. Span rows (headers, the
-    -- spell-list frame) are visually distinct and do not stripe or count, so
-    -- the zebra rhythm stays continuous across the form rows around them.
-    local rowParity = 0
+    local detailRows = {}
 
     -- Emit one detail row: a frame stacked at the running Y holding either a
     -- left/right form pair (with center divider) or a single full-width / lone
@@ -1330,17 +1371,20 @@ local function RenderDetail(ctx, element)
         rowFrame:SetPoint("TOPLEFT", detailArea, "TOPLEFT", 0, ctx.detailY)
         rowFrame:SetPoint("TOPRIGHT", detailArea, "TOPRIGHT", 0, ctx.detailY)
         rowFrame:SetHeight(rowH)
+        rowFrame._quiDetailHeight = rowH
+        rowFrame._quiDetailSection = ctx._detailSectionKey
+        rowFrame._quiDetailOwner = detailRows
+        detailRows[#detailRows + 1] = rowFrame
 
         if not span then
-            if (rowParity % 2) == 1 then
-                local bg = rowFrame:CreateTexture(nil, "BACKGROUND")
-                bg:SetAllPoints(rowFrame)
-                bg:SetColorTexture(1, 1, 1, 0.02)
-            end
-            rowParity = rowParity + 1
+            local bg = rowFrame:CreateTexture(nil, "BACKGROUND")
+            bg:SetAllPoints(rowFrame)
+            bg:SetColorTexture(1, 1, 1, 0)
+            rowFrame._quiDetailBackground = bg
         end
 
         left:SetParent(rowFrame)
+        left._quiDetailRow = rowFrame
         left:ClearAllPoints()
         if span then
             left:SetPoint("TOPLEFT", rowFrame, "TOPLEFT", PAD, 0)
@@ -1349,6 +1393,7 @@ local function RenderDetail(ctx, element)
             left:SetPoint("TOPLEFT", rowFrame, "TOPLEFT", PAD, 0)
             left:SetPoint("TOPRIGHT", rowFrame, "TOP", -(COL_GAP / 2), 0)
             right:SetParent(rowFrame)
+            right._quiDetailRow = rowFrame
             right:ClearAllPoints()
             right:SetPoint("TOPLEFT", rowFrame, "TOP", COL_GAP / 2, 0)
             right:SetPoint("TOPRIGHT", rowFrame, "TOPRIGHT", -PAD, 0)
@@ -1372,6 +1417,16 @@ local function RenderDetail(ctx, element)
             ctx._pendingWidget = nil
             ctx._pendingHeight = 0
         end
+    end
+
+    -- Section headers need to flush any half-filled row from the preceding
+    -- section, emit themselves outside every disclosure group, then tag all
+    -- following body rows with their own section key.
+    ctx.BeginDetailSection = function(header, height, sectionKey)
+        FlushPending()
+        ctx._detailSectionKey = nil
+        EmitRow(header, height, nil, nil, true)
+        ctx._detailSectionKey = sectionKey
     end
 
     ctx.AddDetailWidget = function(widget, height, span)
@@ -1402,6 +1457,69 @@ local function RenderDetail(ctx, element)
         ctx.AddDetailWidget(cell, FORM_ROW, span)
     end
 
+    -- Re-anchor the rows already created for this detail view. Hidden section
+    -- bodies consume no height, and visible form rows are re-striped so the
+    -- two-column zebra rhythm remains continuous across disclosure boundaries.
+    local function RelayoutDetail()
+        local disclosure = sectionState(element)
+        local y = -2
+        local rowParity = 0
+        for _, rowFrame in ipairs(detailRows) do
+            local sectionKey = rowFrame._quiDetailSection
+            local visible = not sectionKey or disclosure[sectionKey] == true
+            if visible then
+                rowFrame:ClearAllPoints()
+                rowFrame:SetPoint("TOPLEFT", detailArea, "TOPLEFT", 0, y)
+                rowFrame:SetPoint("TOPRIGHT", detailArea, "TOPRIGHT", 0, y)
+                rowFrame:Show()
+                if rowFrame._quiDetailBackground then
+                    rowFrame._quiDetailBackground:SetColorTexture(
+                        1, 1, 1, (rowParity % 2) == 1 and 0.02 or 0)
+                    rowParity = rowParity + 1
+                end
+                y = y - rowFrame._quiDetailHeight
+            else
+                rowFrame:Hide()
+            end
+        end
+        ctx.detailY = y
+        local used = math.abs(y) + 8
+        detailArea:SetHeight(used)
+        return used
+    end
+    ctx.RelayoutDetail = RelayoutDetail
+    ctx.SetDetailSectionExpanded = function(sectionKey, expanded)
+        local disclosure = sectionState(element)
+        disclosure[sectionKey] = expanded == true
+        local caret = ctx._detailSectionCarets[sectionKey]
+        if caret and ns.UIKit and ns.UIKit.SetChevronCaretExpanded then
+            ns.UIKit.SetChevronCaretExpanded(caret, disclosure[sectionKey])
+        end
+        if not disclosure[sectionKey] and SpellList and SpellList.CloseBrowsePopup then
+            SpellList.CloseBrowsePopup(ctx.browsePrefix)
+        end
+        RelayoutDetail()
+        if ctx.RelayoutList then
+            ctx.RelayoutList()
+        end
+    end
+    ctx.UpdateDetailWidgetHeight = function(widget, newHeight)
+        local rowFrame = widget and widget._quiDetailRow
+        if not rowFrame or rowFrame._quiDetailOwner ~= detailRows or type(newHeight) ~= "number" then
+            return
+        end
+        newHeight = math.max(1, newHeight)
+        if rowFrame._quiDetailHeight == newHeight then
+            return
+        end
+        rowFrame._quiDetailHeight = newHeight
+        rowFrame:SetHeight(newHeight)
+        RelayoutDetail()
+        if ctx.RelayoutList then
+            ctx.RelayoutList()
+        end
+    end
+
     if not ctx.caps.singleStrip then
         ctx.AddFormRow(ns.L["Element Enabled"], ctx.GUI:CreateFormCheckbox(ctx.detailArea, nil, "enabled", element, function()
             ctx.NotifyChanged()
@@ -1420,15 +1538,86 @@ local function RenderDetail(ctx, element)
     end
 
     FlushPending()
+    ctx._detailSectionKey = nil
 
-    local used = math.abs(ctx.detailY) + 8
-    ctx.detailArea:SetHeight(used)
-    return used
+    return RelayoutDetail()
 end
 
 ---------------------------------------------------------------------------
 -- LIST + ADD rendering
 ---------------------------------------------------------------------------
+-- Geometry-only pass used after a subsection disclosure click. The row/widget
+-- tree remains intact; only anchors and aggregate heights move.
+local function RelayoutList(ctx)
+    local contentHeight
+
+    if ctx.caps.singleStrip then
+        ctx.detailArea:ClearAllPoints()
+        ctx.detailArea:SetParent(ctx.listArea)
+        ctx.detailArea:SetPoint("TOPLEFT", ctx.listArea, "TOPLEFT", 0, 0)
+        ctx.detailArea:SetPoint("TOPRIGHT", ctx.listArea, "TOPRIGHT", 0, 0)
+        ctx.detailArea:Show()
+        contentHeight = math.max(1, ctx.detailArea:GetHeight() or 1)
+    else
+        local listY = 0
+        for index, row in ipairs(ctx.activeRows) do
+            row:ClearAllPoints()
+            row:SetPoint("TOPLEFT", ctx.listArea, "TOPLEFT", 0, listY)
+            row:SetPoint("TOPRIGHT", ctx.listArea, "TOPRIGHT", 0, listY)
+            listY = listY - ROW_STEP
+
+            if index == ctx.selectedIndex then
+                listY = listY - 2
+                ctx.detailArea:ClearAllPoints()
+                ctx.detailArea:SetParent(ctx.listArea)
+                ctx.detailArea:SetPoint("TOPLEFT", ctx.listArea, "TOPLEFT", PAD, listY)
+                ctx.detailArea:SetPoint("TOPRIGHT", ctx.listArea, "TOPRIGHT", 0, listY)
+                ctx.detailArea:Show()
+                listY = listY - math.max(1, ctx.detailArea:GetHeight() or 1) - 4
+            end
+        end
+
+        if #ctx.bucket == 0 then
+            ctx.emptyLabel:ClearAllPoints()
+            ctx.emptyLabel:SetPoint("TOPLEFT", ctx.listArea, "TOPLEFT", 0, listY)
+            ctx.emptyLabel:Show()
+            listY = listY - 22
+        else
+            ctx.emptyLabel:Hide()
+        end
+
+        if ctx.selectedIndex == nil then
+            ctx.detailArea:Hide()
+        end
+
+        if ctx.hasAddButtons then
+            ctx.UpdateAddStripState()
+            listY = listY - 8
+            ctx.addRow:ClearAllPoints()
+            ctx.addRow:SetPoint("TOPLEFT", ctx.listArea, "TOPLEFT", 0, listY)
+            ctx.addRow:SetPoint("TOPRIGHT", ctx.listArea, "TOPRIGHT", 0, listY)
+            ctx.addRow:Show()
+            listY = listY - 30
+        else
+            ctx.addRow:Hide()
+        end
+
+        contentHeight = math.max(1, math.abs(listY))
+    end
+
+    ctx.listArea:SetHeight(contentHeight)
+    local hostHeight = contentHeight + 8
+    ctx.host:SetHeight(hostHeight)
+
+    if not ctx.caps.singleStrip and ctx.onSelectionChanged then
+        ctx.onSelectionChanged(ctx.selectedIndex)
+    end
+    if ctx.onLayoutChanged then
+        ctx.onLayoutChanged(hostHeight)
+    end
+    return hostHeight
+end
+
 local function RebuildList(ctx)
     local bucket = ctx.bucket
     ctx.ReleaseRows()
@@ -1470,14 +1659,11 @@ local function RebuildList(ctx)
         ctx.detailArea:SetPoint("TOPLEFT", ctx.listArea, "TOPLEFT", 0, 0)
         ctx.detailArea:SetPoint("TOPRIGHT", ctx.listArea, "TOPRIGHT", 0, 0)
         ctx.detailArea:Show()
-        local used = RenderDetail(ctx, element)
-        local contentHeight = math.max(1, used)
-        ctx.listArea:SetHeight(contentHeight)
-        local hostHeight = contentHeight + 8
-        ctx.host:SetHeight(hostHeight)
-        if ctx.onLayoutChanged then
-            ctx.onLayoutChanged(hostHeight)
+        RenderDetail(ctx, element)
+        if SpellList and SpellList.EndBrowseScope then
+            SpellList.EndBrowseScope(ctx.browsePrefix)
         end
+        RelayoutList(ctx)
         return
     end
 
@@ -1603,20 +1789,9 @@ local function RebuildList(ctx)
         SpellList.EndBrowseScope(ctx.browsePrefix)
     end
 
-    local contentHeight = math.max(1, math.abs(listY))
-    ctx.listArea:SetHeight(contentHeight)
-    local hostHeight = contentHeight + 8
-    ctx.host:SetHeight(hostHeight)
-
-    -- Report selection + height so the host can persist the open row and
-    -- re-anchor the sections below this editor. Both are no-ops when the host
-    -- did not supply hooks (e.g. the headless search-cache harvest).
-    if ctx.onSelectionChanged then
-        ctx.onSelectionChanged(ctx.selectedIndex)
-    end
-    if ctx.onLayoutChanged then
-        ctx.onLayoutChanged(hostHeight)
-    end
+    -- Report selection + height and establish final geometry through the same
+    -- cheap pass subsection disclosure clicks use.
+    RelayoutList(ctx)
 end
 
 -- opts is optional. opts.forceSelectedIndex seeds the initially-expanded element
@@ -1774,6 +1949,9 @@ function AurasEditor.RenderAuras(host, auras, bucketKey, onChange, opts)
         end
     end
     ctx.rebuild = rebuild
+    ctx.RelayoutList = function()
+        return RelayoutList(ctx)
+    end
 
     ctx.ClearDetailWidgets = function()
         for _, widget in ipairs(detailWidgets) do

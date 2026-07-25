@@ -1691,6 +1691,7 @@ local function RegisterFeatureTile(frame, spec)
                     name = page.name,
                     featureId = page.featureId,
                     featureIds = page.featureIds,
+                    preview = subPage.preview,
                     noScroll = subPage.noScroll,
                     sectionNav = subPage.sectionNav,
                     buildFunc = function(body)

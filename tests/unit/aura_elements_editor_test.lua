@@ -133,6 +133,11 @@ check("schema passes defaultBucketFn = AuraDefaults.DefaultStripBucket",
     schema and schema:find("AuraDefaults.DefaultStripBucket", 1, true) ~= nil)
 check("2c: GF passes unitPolarity = friendly (party/raid are always assistable)",
     schema and schema:find('unitPolarity        = "friendly"', 1, true) ~= nil)
+local coreSchema = read("core/settings/schema.lua")
+check("settings schema exposes in-place section resize",
+    coreSchema and coreSchema:find("function Schema:ResizeSection", 1, true) ~= nil)
+check("GF aura editor resizes its schema section without repainting it",
+    schema and schema:find('ctx:ResizeSection("auras"', 1, true) ~= nil)
 -- Suggestion grid removed: tracked elements are created empty via an "Add
 -- Tracked Aura" button; spell picking lives ONLY in the per-element detail
 -- (preset toggle list + manual spell ID).
@@ -165,6 +170,31 @@ check("editor wraps list rebuilds in a browse scope",
     and editor:find("SpellList.EndBrowseScope", 1, true) ~= nil)
 check("editor's inline list renders current spells only (no preset groups)",
     editor:find("SpellList.CreateListFrame(ctx.detailArea, map, nil,", 1, true) ~= nil)
+
+-- Aura-editor interaction contract: subsection disclosure is quiet by default,
+-- toggles reflow the already-built detail rows instead of allocating a fresh
+-- widget tree, and Browse batches its one editor rebuild until the popup closes.
+check("filter-strip subsections default collapsed",
+    editor:find("s = { basics = false, filters = false, advanced = false }", 1, true) ~= nil)
+check("subsection headers use the normal QUI text palette",
+    editor:find("local textColor = ctx.C.text or { 1, 1, 1, 1 }", 1, true) ~= nil
+    and editor:find("fs:SetTextColor(textColor[1], textColor[2], textColor[3], textColor[4] or 1)", 1, true) ~= nil)
+check("subsection toggles locally reflow retained detail rows",
+    editor:find("ctx.BeginDetailSection(header, FORM_ROW, sectionKey)", 1, true) ~= nil
+    and editor:find("ctx.RelayoutDetail()", 1, true) ~= nil
+    and editor:find("ctx.RelayoutList()", 1, true) ~= nil)
+check("What to Show Custom latches manual mode and opens Advanced",
+    editor:find("state.manualCustom = true", 1, true) ~= nil
+    and editor:find("state.manualCustom = false", 1, true) ~= nil
+    and editor:find('ctx.SetDetailSectionExpanded("advanced", true)', 1, true) ~= nil
+    and editor:find("state.manualCustom and \"custom\" or EffectiveWhatToShow(element)", 1, true) ~= nil)
+check("Browse refreshes the inline spell list while it stays open",
+    spelllist:find("function frame:Refresh()", 1, true) ~= nil
+    and editor:find("listFrame:Refresh()", 1, true) ~= nil
+    and editor:find("ctx.UpdateDetailWidgetHeight(listFrame, newHeight)", 1, true) ~= nil)
+check("tracked Browse keeps its inline map view synchronized",
+    editor:find("mapView[spellID] = nil", 1, true) ~= nil
+    and editor:find("mapView[spellID] = true", 1, true) ~= nil)
 
 -- TOC surgery -------------------------------------------------------------
 local optsToc = read("QUI_Options/QUI_Options.toc")
@@ -211,6 +241,8 @@ check("2c: UF polarity resolver pins player/pet friendly, boss hostile, target/f
     and ufSchema:find('return "friendly"', 1, true) ~= nil
     and ufSchema:find('elseif unitKey == "boss" then', 1, true) ~= nil
     and ufSchema:find('return "hostile"', 1, true) ~= nil)
+check("UF aura editor resizes its schema section without repainting it",
+    ufSchema and ufSchema:find('ctx:ResizeSection("auraElements"', 1, true) ~= nil)
 
 check("BB content mounts RenderAuras for buffAuras",
     bbContent and bbContent:find('AurasEditor.RenderAuras(editorHost, auras, "*"', 1, true) ~= nil

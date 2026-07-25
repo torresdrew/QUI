@@ -2072,6 +2072,39 @@ local function GetResourceColor(resource)
         or GetPowerBarColor("MANA")
 end
 
+-- colorMode is the authoritative setting exposed by both resource-bar option
+-- panels. Keep the old booleans as a fallback for profiles/config tables that
+-- predate the dropdown, but never let them override an explicit enum value.
+local function GetResourceBarColorMode(cfg)
+    if not cfg then return "power" end
+    local mode = cfg.colorMode
+    if mode == "power" or mode == "class" or mode == "custom" then
+        return mode
+    end
+    if cfg.usePowerColor then return "power" end
+    if cfg.useClassColor then return "class" end
+    if cfg.useCustomColor then return "custom" end
+    return "power"
+end
+
+local function GetConfiguredResourceColor(cfg, resource)
+    local mode = GetResourceBarColorMode(cfg)
+    if mode == "custom" and cfg.customColor then
+        local c = cfg.customColor
+        return { r = c[1], g = c[2], b = c[3], a = c[4] or 1 }
+    end
+    if mode == "class" then
+        local _, class = UnitClass("player")
+        -- @secret-policy: collapse-only — secret class falls back to the power color
+        if issecretvalue and issecretvalue(class) then class = nil end
+        local classColor = class and RAID_CLASS_COLORS and RAID_CLASS_COLORS[class]
+        if classColor then
+            return { r = classColor.r, g = classColor.g, b = classColor.b, a = classColor.a or 1 }
+        end
+    end
+    return GetResourceColor(resource)
+end
+
 -- GET RESOURCE VALUES
 
 local cachedDHSoulBarParent = nil
@@ -2383,6 +2416,7 @@ ns.QUI_ResourceBars_Internal = {
     GetPrimaryResource      = GetPrimaryResource,
     GetSecondaryResource    = GetSecondaryResource,
     GetResourceColor        = GetResourceColor,
+    GetResourceBarColorMode = GetResourceBarColorMode,
     GetSecondaryTextConfig  = GetSecondaryTextConfig,
     GetCurrentSpecID        = GetCurrentSpecID,
     EnsureTextSpecOverrides = EnsureTextSpecOverrides,
@@ -2588,6 +2622,12 @@ function QUICore:UpdatePowerBarValue(forceShown)
     if GetCDMHiddenAlpha() ~= nil then return nil end
     if not ShouldShowBar(cfg) then return nil end
 
+    -- Color depends only on readable configuration/class/resource metadata.
+    -- Apply it before the value read so the secret-value sink path below does
+    -- not leave a newly-created status bar at its default white tint.
+    local color = GetConfiguredResourceColor(cfg, resource)
+    bar.StatusBar:SetStatusBarColor(color.r, color.g, color.b, color.a or 1)
+
     -- Get resource values. valueType is ALWAYS a plain string — branch on it
     -- BEFORE touching max/current, which are raw secrets when "secret" (a
     -- truth-test like `not max` on a secret throws).
@@ -2611,33 +2651,6 @@ function QUICore:UpdatePowerBarValue(forceShown)
     -- Set bar values
     bar.StatusBar:SetMinMaxValues(0, max)
     bar.StatusBar:SetValue(current)
-
-    -- Set bar color based on checkboxes: Power Type > Class > Custom
-    if cfg.usePowerColor then
-        -- Power type color (Mana=blue, Rage=red, Energy=yellow, etc.)
-        local color = GetResourceColor(resource)
-        bar.StatusBar:SetStatusBarColor(color.r, color.g, color.b, color.a or 1)
-    elseif cfg.useClassColor then
-        -- Class color
-        local _, class = UnitClass("player")
-        -- @secret-policy: collapse-only — secret class falls back to the power color
-        if issecretvalue and issecretvalue(class) then class = nil end
-        local classColor = class and RAID_CLASS_COLORS[class]
-        if classColor then
-            bar.StatusBar:SetStatusBarColor(classColor.r, classColor.g, classColor.b)
-        else
-            local color = GetResourceColor(resource)
-            bar.StatusBar:SetStatusBarColor(color.r, color.g, color.b, color.a or 1)
-        end
-    elseif cfg.useCustomColor and cfg.customColor then
-        -- Custom color override
-        local c = cfg.customColor
-        bar.StatusBar:SetStatusBarColor(c[1], c[2], c[3], c[4] or 1)
-    else
-        -- Power type color (default)
-        local color = GetResourceColor(resource)
-        bar.StatusBar:SetStatusBarColor(color.r, color.g, color.b, color.a or 1)
-    end
 
     -- Update text content (font/placement/color are config-path)
     if valueType == "percent" then
@@ -3592,30 +3605,8 @@ function QUICore:UpdateFragmentedPowerDisplay(bar, resource, isVertical)
         end
     end
 
-    -- Determine color based on checkboxes: Power Type > Class > Custom
-    local color
-
-    if cfg.usePowerColor then
-        -- Power type color
-        color = GetResourceColor(resource)
-    elseif cfg.useClassColor then
-        local _, class = UnitClass("player")
-        -- @secret-policy: collapse-only — secret class falls back to the power color
-        if issecretvalue and issecretvalue(class) then class = nil end
-        local classColor = class and RAID_CLASS_COLORS[class]
-        if classColor then
-            color = { r = classColor.r, g = classColor.g, b = classColor.b }
-        else
-            color = GetResourceColor(resource)
-        end
-    elseif cfg.useCustomColor and cfg.customColor then
-        -- Custom color override
-        local c = cfg.customColor
-        color = { r = c[1], g = c[2], b = c[3], a = c[4] or 1 }
-    else
-        -- Power type color (default)
-        color = GetResourceColor(resource)
-    end
+    -- Match the colorMode dropdown used by settings and preview.
+    local color = GetConfiguredResourceColor(cfg, resource)
 
 
     if resource == Enum.PowerType.Runes then
@@ -4284,6 +4275,11 @@ function QUICore:UpdateSecondaryPowerBarValue(forceShown)
     local isVertical = bar._cachedIsVertical or false
     local textCfg = GetSecondaryTextConfig(cfg)
 
+    -- Keep the static configured tint current even when the numeric power
+    -- values below are secret and must take the early sink-passthrough path.
+    local color = GetConfiguredResourceColor(cfg, resource)
+    bar.StatusBar:SetStatusBarColor(color.r, color.g, color.b, color.a or 1)
+
     -- Get resource values. valueType is ALWAYS a plain string — branch on it
     -- BEFORE truth-testing max/current (raw secrets when "secret").
     local max, current, displayValue, valueType = GetSecondaryResourceValue(resource)
@@ -4388,30 +4384,7 @@ function QUICore:UpdateSecondaryPowerBarValue(forceShown)
         bar.StatusBar:SetMinMaxValues(0, max)
         bar.StatusBar:SetValue(current)
 
-        -- Set bar color based on checkboxes: Power Type > Class > Custom
-        if cfg.usePowerColor then
-            local color = GetResourceColor(resource)
-            bar.StatusBar:SetStatusBarColor(color.r, color.g, color.b, color.a or 1)
-        elseif cfg.useClassColor then
-            local _, class = UnitClass("player")
-            -- @secret-policy: collapse-only — secret class falls back to the power color
-            if issecretvalue and issecretvalue(class) then class = nil end
-            local classColor = class and RAID_CLASS_COLORS[class]
-            if classColor then
-                bar.StatusBar:SetStatusBarColor(classColor.r, classColor.g, classColor.b)
-            else
-                local color = GetResourceColor(resource)
-                bar.StatusBar:SetStatusBarColor(color.r, color.g, color.b, color.a or 1)
-            end
-        elseif cfg.useCustomColor and cfg.customColor then
-            -- Custom color override
-            local c = cfg.customColor
-            bar.StatusBar:SetStatusBarColor(c[1], c[2], c[3], c[4] or 1)
-        else
-            -- Power type color (default)
-            local color = GetResourceColor(resource)
-            bar.StatusBar:SetStatusBarColor(color.r, color.g, color.b, color.a or 1)
-        end
+        bar.StatusBar:SetStatusBarColor(color.r, color.g, color.b, color.a or 1)
 
         bar.TextValue:SetText(tostring(current))
     else
@@ -4420,30 +4393,7 @@ function QUICore:UpdateSecondaryPowerBarValue(forceShown)
         bar.StatusBar:SetMinMaxValues(0, max)
         bar.StatusBar:SetValue(current)
 
-        -- Set bar color based on checkboxes: Power Type > Class > Custom
-        if cfg.usePowerColor then
-            local color = GetResourceColor(resource)
-            bar.StatusBar:SetStatusBarColor(color.r, color.g, color.b, color.a or 1)
-        elseif cfg.useClassColor then
-            local _, class = UnitClass("player")
-            -- @secret-policy: collapse-only — secret class falls back to the power color
-            if issecretvalue and issecretvalue(class) then class = nil end
-            local classColor = class and RAID_CLASS_COLORS[class]
-            if classColor then
-                bar.StatusBar:SetStatusBarColor(classColor.r, classColor.g, classColor.b)
-            else
-                local color = GetResourceColor(resource)
-                bar.StatusBar:SetStatusBarColor(color.r, color.g, color.b, color.a or 1)
-            end
-        elseif cfg.useCustomColor and cfg.customColor then
-            -- Custom color override
-            local c = cfg.customColor
-            bar.StatusBar:SetStatusBarColor(c[1], c[2], c[3], c[4] or 1)
-        else
-            -- Power type color (default)
-            local color = GetResourceColor(resource)
-            bar.StatusBar:SetStatusBarColor(color.r, color.g, color.b, color.a or 1)
-        end
+        bar.StatusBar:SetStatusBarColor(color.r, color.g, color.b, color.a or 1)
 
         -- Update text (safe: uses only displayValue). SetFormattedText is C-side
         -- and skips the Lua-side string allocation that SetText(string_format(...))

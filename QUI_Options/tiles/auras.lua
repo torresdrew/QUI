@@ -69,6 +69,20 @@ function ns.QUI_AurasTile.Register(frame)
                 id = "aurasUnit",
                 name = ns.L["Unit Frames"],
                 featureId = "aurasUnitPage",
+                preview = {
+                    height = 140,
+                    build = function(previewHost)
+                        local surface = ns.QUI_UnitFramesSettingsSurface
+                        local preview = surface and surface.preview
+                        if preview and type(preview.build) == "function" then
+                            preview.build(previewHost, {
+                                showDropdown = false,
+                                bodyOnly = true,
+                                autoHeight = true,
+                            })
+                        end
+                    end,
+                },
                 navRoutes = { { tabIndex = 21, subTabIndex = 3 } },
                 searchContext = {
                     tabIndex = 21,

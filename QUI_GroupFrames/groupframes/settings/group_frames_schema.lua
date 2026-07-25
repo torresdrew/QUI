@@ -2790,6 +2790,8 @@ local function RenderAurasSection(sectionHost, ctx)
     end
 
     local forcedIndex = GetSelectedElementIndex(ctx, groupFrames.contextMode, selectedBucket)
+    local editorMounted = false
+    local editorHeight
 
     RenderEmbeddedEditorSection(sectionHost, builder, function(editorHost)
         return AurasEditor.RenderAuras(editorHost, auras, selectedBucket, function()
@@ -2820,27 +2822,24 @@ local function RenderAurasSection(sectionHost, ctx)
                 SetSelectedElementIndex(ctx, groupFrames.contextMode, selectedBucket, index)
             end,
             onLayoutChanged = function(height)
-                -- Re-anchor the sections below the editor only when its height
-                -- actually changes. The first observation just seeds the store
-                -- (the synchronous render already laid everything out), so we
-                -- avoid a redundant repaint on open; later changes (add/remove/
-                -- expand) trigger one re-render that converges, because the
-                -- width-stable height is a fixed point.
                 if type(height) ~= "number" then
                     return
                 end
-                local store = ctx.state and ctx.state._aurasEditorHeight
-                if type(store) ~= "table" then
-                    store = {}
-                    if ctx.state then
-                        ctx.state._aurasEditorHeight = store
-                    end
+                local previousHeight = editorHeight
+                editorHeight = height
+                -- The synchronous first render already returns the correct
+                -- section height. Later disclosure/list changes resize this
+                -- section in place, which re-anchors Targeted Spells without
+                -- destroying and painting the whole Auras tab a second time.
+                if not editorMounted or previousHeight == nil or previousHeight == height then
+                    return
                 end
-                local key = ElementIndexKey(groupFrames.contextMode, selectedBucket)
-                if store[key] == nil then
-                    store[key] = height
-                elseif store[key] ~= height then
-                    store[key] = height
+                local sectionHeight = ctx.runtime
+                    and ctx.runtime.sectionHeights
+                    and ctx.runtime.sectionHeights.auras
+                if type(ctx.ResizeSection) == "function" and type(sectionHeight) == "number" then
+                    ctx:ResizeSection("auras", sectionHeight + (height - previousHeight))
+                else
                     ScheduleTabRepaint(ctx)
                 end
             end,
@@ -2848,6 +2847,7 @@ local function RenderAurasSection(sectionHost, ctx)
     end, {
         minHeight = 1,
     })
+    editorMounted = true
 
     return builder.Height()
 end

@@ -225,7 +225,9 @@ end
 
 local function GetPreviewBarColor(cfg, resource)
     local Internal = GetInternal()
-    local mode = cfg and cfg.colorMode or "power"
+    local mode = Internal and Internal.GetResourceBarColorMode
+        and Internal.GetResourceBarColorMode(cfg)
+        or (cfg and cfg.colorMode or "power")
     if mode == "custom" and cfg and cfg.customColor then
         local c = cfg.customColor
         return (c[1] or c.r or 0.2), (c[2] or c.g or 0.5), (c[3] or c.b or 1.0)

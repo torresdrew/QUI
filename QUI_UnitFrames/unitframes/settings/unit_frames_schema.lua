@@ -2654,6 +2654,8 @@ local function RenderAuraElementsSection(sectionHost, ctx)
     editorHost:SetPoint("TOPRIGHT", sectionHost, "TOPRIGHT", 0, topOffset)
     editorHost:SetHeight(1)
 
+    local editorMounted = false
+    local editorHeight
     local height = AurasEditor.RenderAuras(editorHost, auraDB, "*", refreshAuras, {
         forceSelectedIndex = GetAuraSelectedElementIndex(ctx, unitKey),
         capabilities = {
@@ -2673,23 +2675,22 @@ local function RenderAuraElementsSection(sectionHost, ctx)
             if type(newHeight) ~= "number" then
                 return
             end
-            local state = ctx.state
-            if type(state) ~= "table" then
+            local previousHeight = editorHeight
+            editorHeight = newHeight
+            if not editorMounted or previousHeight == nil or previousHeight == newHeight then
                 return
             end
-            local store = state._aurasEditorHeight
-            if type(store) ~= "table" then
-                store = {}
-                state._aurasEditorHeight = store
-            end
-            if store[unitKey] == nil then
-                store[unitKey] = newHeight
-            elseif store[unitKey] ~= newHeight then
-                store[unitKey] = newHeight
+            local sectionHeight = ctx.runtime
+                and ctx.runtime.sectionHeights
+                and ctx.runtime.sectionHeights.auraElements
+            if type(ctx.ResizeSection) == "function" and type(sectionHeight) == "number" then
+                ctx:ResizeSection("auraElements", sectionHeight + (newHeight - previousHeight))
+            else
                 ScheduleAuraSectionRepaint(ctx)
             end
         end,
     })
+    editorMounted = true
     height = (type(height) == "number" and height > 0) and height
         or (editorHost.GetHeight and editorHost:GetHeight())
         or 1
