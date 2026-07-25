@@ -89,6 +89,53 @@ for i = 1, #record.slots do
         "every retired exact slot receives the impossible park filter")
 end
 
+-- Placement keys embed the container ordinal, so every Composer reorder,
+-- add, or removal retires the old keys. Frames and managed aura slots are
+-- permanent in-game, so churn must recycle rather than mint.
+-- A record only retires at EndPass, so a churned key recycles one pass later:
+-- the pool settles on a recycled pair instead of one host frame per pass.
+local hostCount = #createdHosts
+local slotCount = #createdAuraContainers[1].added
+local pool = manager._pools[owner]
+local churnEntry = { type = "spell", id = 100, overrideSpellID = 101, linkedSpellIDs = { 102 } }
+for i = 2, 60 do
+    manager:BeginPass(owner)
+    local churned = manager:Acquire(owner, "essential:" .. i .. ":spell:100", churnEntry, {})
+    assert(churned and churned.free == false and churned.parked == false,
+        "each churned placement resolves to a live record")
+    manager:EndPass(owner)
+end
+assert(#createdHosts == hostCount + 1,
+    "sustained configuration churn settles on a recycled pair, not one host per pass")
+assert(#createdAuraContainers[1].added == slotCount * 2,
+    "recycled records reuse their permanent managed aura slots")
+
+local liveKeys = 0
+for _ in pairs(pool.records) do liveKeys = liveKeys + 1 end
+assert(liveKeys == 2, "retired placement keys are released instead of accumulating")
+assert(createdAuraContainers[1].filters[record.slots[1].key].includeSpellIDs[101] == true,
+    "recycled slots re-point at the current candidate IDs")
+
+-- Two live placements in one pass must never be handed the same record.
+manager:BeginPass(owner)
+local first = manager:Acquire(owner, "concurrent:a", churnEntry, {})
+local second = manager:Acquire(owner, "concurrent:b", churnEntry, {})
+manager:EndPass(owner)
+assert(first and second and first ~= second, "concurrent placements get distinct records")
+assert(#createdHosts <= hostCount + 2,
+    "concurrent demand mints at most one host beyond the recycled pair")
+
+-- Reclaiming a key whose record still sits in the free list must not leave a
+-- stale entry that later hands the same live record to a second placement.
+manager:BeginPass(owner)
+manager:EndPass(owner)
+manager:BeginPass(owner)
+local revived = manager:Acquire(owner, "concurrent:a", churnEntry, {})
+local other = manager:Acquire(owner, "concurrent:z", churnEntry, {})
+manager:EndPass(owner)
+assert(revived == first, "a retired record is reclaimed by its own placement key")
+assert(other ~= revived, "the stale free entry is skipped, not handed out twice")
+
 local blocked = M.New({ createFrame = createFrame, canCreate = function() return false end })
 assert(blocked:BeginPass({}) == false, "first-time container creation fails closed when forbidden")
 

@@ -59,6 +59,11 @@ function CDMManagedAuraMirrors:_GetPool(ownerContainer, allowCreate)
     pool = {
         auraContainer = auraContainer,
         records = {},
+        -- Placement keys embed the container ordinal, so configuration churn
+        -- retires keys constantly. Frames and managed aura slots can never be
+        -- destroyed, so retired records are recycled instead of re-minted.
+        free = {},
+        slotSeq = 0,
         generation = 0,
     }
     self._pools[ownerContainer] = pool
@@ -82,6 +87,27 @@ local function ParkRecord(pool, record)
     record.parked = true
 end
 
+-- Retired records stay in pool.records under their old key until they are
+-- claimed, so the free list uses lazy deletion: a stale entry is skipped when
+-- its record was reclaimed by key in the meantime.
+local function ReleaseToFree(pool, record)
+    if record.free then return end
+    record.free = true
+    pool.free[#pool.free + 1] = record
+end
+
+local function TakeFree(pool)
+    local free = pool.free
+    while #free > 0 do
+        local record = table.remove(free)
+        if record.free then
+            record.free = false
+            return record
+        end
+    end
+    return nil
+end
+
 function CDMManagedAuraMirrors:Acquire(ownerContainer, placementKey, entry, profile)
     local pool = self._pools[ownerContainer]
     if not pool then return nil end
@@ -89,13 +115,24 @@ function CDMManagedAuraMirrors:Acquire(ownerContainer, placementKey, entry, prof
     if #ids == 0 then return nil end
 
     local record = pool.records[placementKey]
-    if not record then
-        local createFrame = self._deps.createFrame
-        if not createFrame then return nil end
-        local host = createFrame("Frame", nil, ownerContainer)
-        if not host then return nil end
-        record = { placementKey = placementKey, host = host, slots = {} }
-        pool.records[placementKey] = record
+    if record then
+        record.free = false
+    else
+        record = TakeFree(pool)
+        if record then
+            -- Recycle a retired placement: the host frame and its managed aura
+            -- slots are permanent, so only the key and filters change.
+            pool.records[record.placementKey] = nil
+            record.placementKey = placementKey
+            pool.records[placementKey] = record
+        else
+            local createFrame = self._deps.createFrame
+            if not createFrame then return nil end
+            local host = createFrame("Frame", nil, ownerContainer)
+            if not host then return nil end
+            record = { placementKey = placementKey, host = host, slots = {}, free = false }
+            pool.records[placementKey] = record
+        end
     end
 
     local auraContainer = pool.auraContainer
@@ -107,7 +144,10 @@ function CDMManagedAuraMirrors:Acquire(ownerContainer, placementKey, entry, prof
             auraContainer:SetAuraSlotCandidateFilters(slot.key, CandidateFilter(spellID))
             slot.spellID = spellID
         else
-            local key = placementKey .. ":aura:" .. tostring(i)
+            -- Slot keys must outlive the placement key: a recycled record keeps
+            -- its permanent slots and only re-points their candidate filters.
+            pool.slotSeq = pool.slotSeq + 1
+            local key = "quiAuraMirror:" .. tostring(pool.slotSeq)
             local host = record.host
             local styleFrame = self._deps.styleFrame
             local frame = auraContainer:AddAuraSlot(key, "HELPFUL", {
@@ -179,6 +219,7 @@ function CDMManagedAuraMirrors:EndPass(ownerContainer)
             if record.host.Hide and (not canMutate or canMutate(record.host)) then
                 record.host:Hide()
             end
+            ReleaseToFree(pool, record)
         end
     end
     return true
