@@ -9,6 +9,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v5.0.0-alpha25 - 2026-07-25
+
+> ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will
+> not load on the 12.0.x live client. Stay on the v4.x beta line for live realms.
+
+### Fixed
+- Dark Mode looked inert in the group frame preview whenever Use Class Color
+  was also enabled: the preview painted the class color over the dark fill,
+  while the live frames do it the other way round. The preview now follows the
+  live rule — Dark Mode wins while it is on, with its configured color and
+  alpha honored — so the two surfaces finally agree.
+
 ## v5.0.0-alpha24 - 2026-07-25
 
 > ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will
