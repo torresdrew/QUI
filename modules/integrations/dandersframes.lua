@@ -57,7 +57,7 @@ local function IsFrameProtected(frame)
     if not frame then return false end
     if type(frame.IsProtected) ~= "function" then return false end
 
-    local ok, isProtected = pcall(frame.IsProtected, frame)
+    local ok, isProtected = ns.SafeCallMethod("best-effort-style", frame, "IsProtected")
     return ok and isProtected or false
 end
 
@@ -179,7 +179,7 @@ local function ApplyPositionToFrames(frames, applyFunc)
     local shouldRetryAfterCombat = false
 
     for _, container in ipairs(frames) do
-        local ok = pcall(applyFunc, container)
+        local ok = ns.SafeCall("best-effort-style", applyFunc, container)
         if not ok then
             shouldRetryAfterCombat = true
         end
@@ -576,7 +576,7 @@ RegisterLayoutModeElements = function()
             onOpen = info.showTest and function()
                 local danders = GetDandersAddon()
                 if danders and type(danders[info.showTest]) == "function" then
-                    pcall(danders[info.showTest], danders)
+                    ns.SafeCall("bulkhead", danders[info.showTest], danders)
                 end
                 -- Re-sync handle after test frames finish async layout
                 C_Timer.After(0.1, function()
@@ -589,7 +589,7 @@ RegisterLayoutModeElements = function()
             onClose = info.hideTest and function()
                 local danders = GetDandersAddon()
                 if danders and type(danders[info.hideTest]) == "function" then
-                    pcall(danders[info.hideTest], danders)
+                    ns.SafeCall("bulkhead", danders[info.hideTest], danders)
                 end
             end or nil,
 

@@ -29,6 +29,7 @@
 ---------------------------------------------------------------------------
 local ADDON_NAME, ns = ...
 local Bags = ns.Bags or {}; ns.Bags = Bags
+local Storage = ns.Storage
 local Helpers = ns.Helpers
 local GetSettings = Helpers.CreateDBGetter("bags")
 
@@ -68,7 +69,7 @@ local function ShowBreakdownTooltip(hit)
         GameTooltip:AddDoubleLine(ns.L["Warband (account-wide)"],
             FormatQty(info.quantity or 0), 0.8, 0.8, 0.8, 1, 1, 1)
     else
-        local Store = Bags.Store
+        local Store = Storage.Store
         if Store and Store.ListCharacters then
             local rows, total = {}, 0
             for _, key in ipairs(Store.ListCharacters()) do

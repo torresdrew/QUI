@@ -13,8 +13,12 @@
 # compiled by any gate. This script closes that hole: it compiles EVERY shipped
 # QUI Lua file under 5.1.
 #
-# Vendored trees are excluded: their locale files carry UTF-8 BOMs that WoW's
-# loader strips but stock luac rejects, and they are pre-validated upstream.
+# Vendored framexml/api-docs corpora are excluded (reference-only, never
+# loaded in-game). Shipped libs/ ARE compiled — in a second pass that strips
+# the UTF-8 BOMs stock luac rejects (WoW's loader strips them itself) — since
+# a vendored lib that fails 5.1 limits crashes in-game exactly like our code;
+# libs were previously exempt from every gate, which let a shipped
+# LibOpenRaid hazard ride through green suites (2026-07 external review).
 set -uo pipefail
 
 luac="${LUAC:-$(command -v luac5.1 || command -v luac)}"
@@ -34,8 +38,20 @@ while IFS= read -r f; do
   fi
 done < <(git ls-files '*.lua' | grep -viE '^libs/|^Libs/|^tests/framexml/|^tests/api-docs/')
 
+libcount=0
+while IFS= read -r f; do
+  libcount=$((libcount + 1))
+  # BOM-strip (first line only) then compile from stdin; luac reports the
+  # file as "stdin", so print the real path ourselves on failure.
+  if ! out=$(sed '1s/^\xEF\xBB\xBF//' "$f" | "$luac" -p - 2>&1); then
+    echo "COMPILE FAIL (lib): $f"
+    echo "  ${out#*: }"
+    fail=1
+  fi
+done < <(git ls-files 'libs/*.lua' 'Libs/*.lua')
+
 if [ "$fail" -eq 0 ]; then
-  echo "luac (5.1): $count QUI-authored Lua files compile cleanly"
+  echo "luac (5.1): $count QUI-authored + $libcount vendored lib Lua files compile cleanly"
 else
   echo "luac (5.1): compile failures above — these crash on in-game load" >&2
 fi

@@ -174,6 +174,11 @@ local function GetPreviewPowerMax(resource)
     if Helpers and Helpers.SafeToNumber then
         return Helpers.SafeToNumber(maxValue, 0)
     end
+    -- Bare fallback (core/utils.lua always loads first in-game; this arm is
+    -- headless-only): probe before tonumber — the read is secret-capable.
+    if issecretvalue and issecretvalue(maxValue) then
+        return 0 -- @secret-policy: zero-degrade
+    end
     return tonumber(maxValue) or 0
 end
 
@@ -220,13 +225,17 @@ end
 
 local function GetPreviewBarColor(cfg, resource)
     local Internal = GetInternal()
-    local mode = cfg and cfg.colorMode or "power"
+    local mode = Internal and Internal.GetResourceBarColorMode
+        and Internal.GetResourceBarColorMode(cfg)
+        or (cfg and cfg.colorMode or "power")
     if mode == "custom" and cfg and cfg.customColor then
         local c = cfg.customColor
         return (c[1] or c.r or 0.2), (c[2] or c.g or 0.5), (c[3] or c.b or 1.0)
     elseif mode == "class" then
         local _, class = UnitClass("player")
-        local cc = RAID_CLASS_COLORS and RAID_CLASS_COLORS[class]
+        -- @secret-policy: collapse-only — secret class falls back to the resource color
+        if issecretvalue and issecretvalue(class) then class = nil end
+        local cc = class and RAID_CLASS_COLORS and RAID_CLASS_COLORS[class]
         if cc then return cc.r, cc.g, cc.b end
     end
     local col = resource and Internal and Internal.GetResourceColor
@@ -569,6 +578,8 @@ function Module.Refresh()
         local textR, textG, textB, textA = 1, 1, 1, 0.9
         if textCfg and textCfg.textUseClassColor then
             local _, class = UnitClass("player")
+            -- @secret-policy: collapse-only — secret class keeps the default text color
+            if issecretvalue and issecretvalue(class) then class = nil end
             local classColor = class and RAID_CLASS_COLORS and RAID_CLASS_COLORS[class]
             if classColor then
                 textR, textG, textB, textA = classColor.r, classColor.g, classColor.b, 1

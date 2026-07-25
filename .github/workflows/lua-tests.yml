@@ -34,6 +34,10 @@ jobs:
           lua tools/test_i18n_locale.lua
           lua tools/test_i18n_extract.lua
           lua tools/test_i18n_format.lua
+      - name: Tooling unit tests
+        run: |
+          lua tests/api-docs/extract_test.lua
+          lua tools/lua_defs_gen_test.lua
       # NOTE: the locale base (core/locale/enUS.lua) is auto-regenerated and
       # committed back by .github/workflows/regen-i18n-base.yml on push to
       # qui-beta, so the old hard "git diff --exit-code" gate was removed to
@@ -50,4 +54,4 @@ jobs:
       - name: Install luacheck
         run: luarocks install luacheck
       - name: Lint (luacheck)
-        run: luacheck QUI_Debug/ core/ modules/ init.lua QUI_ActionBars/ QUI_Alts/ QUI_Bags/ QUI_CDM/ QUI_Chat/ QUI_DamageMeter/ QUI_Datatexts/ QUI_GroupFrames/ QUI_InfoBar/ QUI_Minimap/ QUI_Options/ QUI_OptionsSearch/ QUI_QoL/ QUI_ResourceBars/ QUI_Skinning/ QUI_UnitFrames/
+        run: luacheck QUI_Debug/ core/ modules/ init.lua QUI_ActionBars/ QUI_Bags/ QUI_CDM/ QUI_Chat/ QUI_DamageMeter/ QUI_GroupFrames/ QUI_Options/ QUI_OptionsSearch/ QUI_ResourceBars/ QUI_UnitFrames/

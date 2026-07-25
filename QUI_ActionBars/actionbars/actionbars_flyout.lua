@@ -33,10 +33,10 @@ function ApplyOwnedFlyoutButtonVisuals(button, spellID)
         local texture
         if spellID then
             if C_Spell and C_Spell.GetSpellTexture then
-                local ok, result = pcall(C_Spell.GetSpellTexture, spellID)
+                local ok, result = ns.SafeCall("best-effort-style", C_Spell.GetSpellTexture, spellID)
                 if ok then texture = result end
             elseif GetSpellTexture then
-                local ok, result = pcall(GetSpellTexture, spellID)
+                local ok, result = ns.SafeCall("best-effort-style", GetSpellTexture, spellID)
                 if ok then texture = result end
             end
         end
@@ -83,19 +83,29 @@ function UpdateOwnedFlyoutButtonCooldown(button)
 
     -- This runs via secure CallMethod from the flyout snippet, so any field
     -- on cdInfo / chargeInfo may be secret. Comparing secret numbers errors;
-    -- coerce through Helpers before gating display.
-    local cur = Helpers.SafeToNumber(chargeInfo and chargeInfo.currentCharges, 0)
-    local max = Helpers.SafeToNumber(chargeInfo and chargeInfo.maxCharges, 0)
+    -- coerce through Helpers before gating display. The `cdInfo and` /
+    -- `chargeInfo and` truth-tests read the structure ref itself, which is a
+    -- plain table-or-nil (SpellCooldownInfo/SpellChargeInfo secretize per
+    -- FIELD, several NeverSecret, per SpellSharedDocumentation).
+    -- Policy: probe-charges-when-unknown (mirrors actionbars_cooldowns) — a
+    -- secret currentCharges folds to 0, so showCharge stays true and the
+    -- charge swipe defers to the GetSpellChargeDuration DurationObject sink
+    -- below, which self-corrects (no recharge in flight → no durObj → Clear).
+    local cur = Helpers.SafeToNumber(chargeInfo and chargeInfo.currentCharges, 0) -- @secret-safe: SpellChargeInfo container is a plain table-or-nil; the secret-capable field goes to the unwrap
+    local max = Helpers.SafeToNumber(chargeInfo and chargeInfo.maxCharges, 0) -- @secret-safe: SpellChargeInfo container is a plain table-or-nil; maxCharges is NeverSecret and goes to the unwrap
     local showCharge = max > 0 and cur < max
 
-    local enabled = Helpers.SafeValue(cdInfo and cdInfo.isEnabled, false)
-    local dur     = Helpers.SafeToNumber(cdInfo and cdInfo.duration, 0)
-    local showNormal = enabled and dur > 0
+    -- Gate on isActive: NeverSecret, and it already folds in isEnabled plus
+    -- startTime/duration (per SpellSharedDocumentation).  Gating on the
+    -- secret-capable duration would fold an unreadable value to 0 during
+    -- restricted cooldowns and skip the secret-safe DurationObject path
+    -- exactly when it is the only legal display route.
+    local showNormal = Helpers.SafeValue(cdInfo and cdInfo.isActive, false) -- @secret-safe: SpellCooldownInfo container is a plain table-or-nil; isActive is NeverSecret and goes to the unwrap
 
     if showNormal then
         -- ignoreGCD=true so the flyout button's swipe tracks the spell's
         -- real cooldown instead of being masked by the 1.5s GCD sweep.
-        local ok, durObj = pcall(C_Spell.GetSpellCooldownDuration, spellID, true)
+        local ok, durObj = ns.SafeCall("best-effort-style", C_Spell.GetSpellCooldownDuration, spellID, true)
         if ok and durObj then
             cooldown:SetCooldownFromDurationObject(durObj)
         else
@@ -114,7 +124,7 @@ function UpdateOwnedFlyoutButtonCooldown(button)
             cd:SetFrameLevel(button:GetFrameLevel())
             button.chargeCooldown = cd
         end
-        local ok, durObj = pcall(C_Spell.GetSpellChargeDuration, spellID)
+        local ok, durObj = ns.SafeCall("best-effort-style", C_Spell.GetSpellChargeDuration, spellID)
         if ok and durObj then
             button.chargeCooldown:SetCooldownFromDurationObject(durObj)
         else
@@ -391,11 +401,40 @@ function PopulateOwnedFlyoutInfoEntry(info, flyoutID, numSlots, isKnown)
     end
 end
 
+-- 12.1: GetFlyoutInfo hard-errors ("No flyout found for ID=%i") for IDs the
+-- client has no record of, so the old blind 1..300 ID probe is no longer
+-- viable. Mirror Blizzard's IconDataProviderMixin:FillOutExtraIconsMapWithSpells:
+-- the player spellbook is the authority for which flyouts the character owns
+-- (GetSpellBookItemType's actionID return is the flyoutID for FLYOUT items).
+local ownedFlyoutIDScratch = {}
+local function CollectOwnedFlyoutIDs(out)
+    wipe(out)
+    if not (C_SpellBook and C_SpellBook.GetNumSpellBookSkillLines) then return out end
+    local playerBank = Enum.SpellBookSpellBank and Enum.SpellBookSpellBank.Player or 0
+    local flyoutType = Enum.SpellBookItemType and Enum.SpellBookItemType.Flyout or 4
+    for lineIndex = 1, C_SpellBook.GetNumSpellBookSkillLines() do
+        local lineInfo = C_SpellBook.GetSpellBookSkillLineInfo(lineIndex)
+        if lineInfo and lineInfo.numSpellBookItems then
+            for i = 1, lineInfo.numSpellBookItems do
+                local slotIndex = (lineInfo.itemIndexOffset or 0) + i
+                local itemType, actionID = C_SpellBook.GetSpellBookItemType(slotIndex, playerBank)
+                if (itemType == flyoutType or itemType == "FLYOUT")
+                    and type(actionID) == "number" and actionID > 0 then
+                    out[#out + 1] = actionID
+                end
+            end
+        end
+    end
+    return out
+end
+
 function DiscoverOwnedFlyoutInfo()
     wipe(ownedFlyoutInfo)
 
-    for flyoutID = 1, 300 do
-        local ok, _, _, numSlots, isKnown = pcall(GetFlyoutInfo, flyoutID)
+    CollectOwnedFlyoutIDs(ownedFlyoutIDScratch)
+    for i = 1, #ownedFlyoutIDScratch do
+        local flyoutID = ownedFlyoutIDScratch[i]
+        local ok, _, _, numSlots, isKnown = ns.SafeCall("best-effort-style", GetFlyoutInfo, flyoutID)
         if ok and type(numSlots) == "number" and numSlots > 0 then
             local info = { slots = {} }
             PopulateOwnedFlyoutInfoEntry(info, flyoutID, numSlots, isKnown)
@@ -414,8 +453,10 @@ function UpdateOwnedFlyoutInfo()
 
     local seen = ownedFlyoutSeen
     wipe(seen)
-    for flyoutID = 1, 300 do
-        local ok, _, _, numSlots, isKnown = pcall(GetFlyoutInfo, flyoutID)
+    CollectOwnedFlyoutIDs(ownedFlyoutIDScratch)
+    for i = 1, #ownedFlyoutIDScratch do
+        local flyoutID = ownedFlyoutIDScratch[i]
+        local ok, _, _, numSlots, isKnown = ns.SafeCall("best-effort-style", GetFlyoutInfo, flyoutID)
         if ok and type(numSlots) == "number" and numSlots > 0 then
             local info = ownedFlyoutInfo[flyoutID] or { slots = {} }
             PopulateOwnedFlyoutInfoEntry(info, flyoutID, numSlots, isKnown)

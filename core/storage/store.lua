@@ -21,6 +21,7 @@
 --   {} is the pre-first-scan placeholder.
 ---------------------------------------------------------------------------
 local ADDON_NAME, ns = ...
+local issecretvalue = issecretvalue -- bare self-cache: analyzer-credited guard name
 local Storage = ns.Storage or {}; ns.Storage = Storage
 
 local Store = {}
@@ -110,6 +111,11 @@ end
 -- format). Display realm for UI lives in details.realm, never in keys.
 local function NormalizedRealm()
     local _, realm = UnitFullName("player")
+    -- UnitFullName is secret-capable under identity restriction — probe
+    -- before the truth-test; unknown realm falls through the chain below.
+    if issecretvalue and issecretvalue(realm) then
+        realm = nil -- @secret-policy: reject-secret-value (next realm source decides)
+    end
     if realm and realm ~= "" then return realm end
     if type(GetNormalizedRealmName) == "function" then
         realm = GetNormalizedRealmName()
@@ -121,6 +127,11 @@ end
 
 function Store.GetCurrentCharacterKey()
     local name = UnitFullName("player")
+    -- Secret self-name cannot key the character store (secret table index
+    -- throws) — treat as not-ready, callers already tolerate nil.
+    if issecretvalue and issecretvalue(name) then
+        name = nil -- @secret-policy: reject-secret-value (store stays unkeyed this pass)
+    end
     if not name then return nil end
     local realm = NormalizedRealm()
     if not realm or realm == "" then return nil end
@@ -139,9 +150,14 @@ function Store.EnsureCurrentCharacter()
     local d = rec.details
     -- UnitClass/UnitRace: MayReturnNothing (guard; for "player" this fires at
     -- login when the unit is ready, so nil is unlikely but possible mid-session).
+    -- Both are SecretWhenUnitIdentityRestricted on 12.1 PTR7 — collapse before
+    -- the truth-test; a secret pass keeps the previously stored details.
+    -- @secret-policy: collapse-only
     local _, classFilename = UnitClass("player")
+    if issecretvalue and issecretvalue(classFilename) then classFilename = nil end
     if classFilename then d.class = classFilename end
     local _, englishRace = UnitRace("player")
+    if issecretvalue and issecretvalue(englishRace) then englishRace = nil end -- @secret-policy: collapse-only
     if englishRace then d.race = englishRace end
     local faction = UnitFactionGroup("player")
     if faction then d.faction = faction end

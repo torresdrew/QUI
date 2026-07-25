@@ -143,15 +143,18 @@ local function FormatPreviewKeybind(keybind)
     return upper
 end
 
-local function IsSecretValue(value)
+local function IsPreviewSecretValue(value)
     return Helpers and Helpers.IsSecretValue and Helpers.IsSecretValue(value) or false
 end
 
-local IsPreviewSecretValue = IsSecretValue
 
+-- ACTION POLICY, not a truth claim: returns "route this value to the text
+-- sink". A SECRET value is INDETERMINATE (it may wrap an empty string) —
+-- it routes to SetText so the C side renders whatever it truly is; only
+-- readable emptiness is treated as no-display.
 local function HasPreviewTextValue(value)
-    if IsSecretValue(value) then
-        return true
+    if IsPreviewSecretValue(value) then
+        return true -- @secret-policy: route-to-text-sink
     end
     if value == nil then return false end
     return value ~= ""
@@ -196,10 +199,8 @@ local function GetPreviewSlot(barKey, index)
         and ns.ActionBarsOwned.nativeButtons
         and ns.ActionBarsOwned.nativeButtons[barKey]
     local button = buttons and buttons[index]
+    -- .action on owned buttons is addon-set, never secret — read it raw.
     local liveAction = button and button.action
-    if Helpers.SafeValue then
-        liveAction = Helpers.SafeValue(liveAction, nil)
-    end
     local numericAction = liveAction and tonumber(liveAction)
     if numericAction and numericAction > 0 then
         return numericAction
@@ -217,11 +218,8 @@ local function GetPreviewSourceButton(barKey, index)
 end
 
 local function GetPreviewActionSlot(slot, sourceButton)
+    -- .action on owned buttons is addon-set, never secret — read it raw.
     local liveAction = sourceButton and sourceButton.action
-    if Helpers.SafeValue then
-        liveAction = Helpers.SafeValue(liveAction, nil)
-    end
-
     local numericAction = liveAction and tonumber(liveAction)
     if numericAction and numericAction > 0 then
         return numericAction
@@ -316,7 +314,7 @@ local function GetPreviewCountText(slot, sourceButton)
     local ok, count = pcall(C_ActionBar.GetActionDisplayCount, actionSlot)
     if not ok then return nil end
 
-    if IsSecretValue(count) then
+    if IsPreviewSecretValue(count) then
         return count
     else
         if count == nil or count == "" or count == 0 or count == "0" then
@@ -356,7 +354,7 @@ end
 
 local function SetPreviewTextStyle(fontString, button, text, fontPath, outline, fontSize, color, anchor, offsetX, offsetY)
     if not fontString then return end
-    local isSecretText = IsSecretValue(text)
+    local isSecretText = IsPreviewSecretValue(text)
     if isSecretText then
         -- Secret text can be passed directly to SetText below, but must not be
         -- inspected in Lua.

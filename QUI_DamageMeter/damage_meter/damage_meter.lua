@@ -89,17 +89,21 @@ local function GetSettings()
 end
 
 -- Strip the "-Realm" suffix from a unit name when the shortenNames setting is
--- on (e.g. "Anya-Stormrage" -> "Anya"). Ambiguate is a C function that's safe
--- to call on a secret-tagged name (the API marks source.name ConditionalSecret)
--- — it passes through anything it can't read, and the value still goes straight
--- to a FontString. We never compare or concatenate the result against a secret
--- here, so the only Lua-side touch is the C call. Returns nil for nil input so
--- callers keep their own "?" / "Unknown" fallback.
+-- on (e.g. "Anya-Stormrage" -> "Anya"). source.name is ConditionalSecret —
+-- probe BEFORE the nil-compare (`secret == nil` throws). A secret name is
+-- returned UNCHANGED so it rides untouched to the FontString sink; callers
+-- must not truth-test/concatenate the result without their own probe.
+-- Returns nil for nil input so callers keep their own "?" fallback.
 local function ShortenName(name)
+    if Helpers and Helpers.IsSecretValue and Helpers.IsSecretValue(name) then
+        return name -- @secret-policy: sink-passthrough
+    end
     if name == nil then return nil end
     local s = GetSettings()
     if s and s.shortenNames and Ambiguate then
-        return Ambiguate(name, "short") or name
+        local short = Ambiguate(name, "short")
+        if short ~= nil then return short end
+        return name
     end
     return name
 end
@@ -133,8 +137,9 @@ QUI_DamageMeter.SortByDescSafe = SortByDescSafe
 -- total stays a plain number (per-source bars carry secrets through for
 -- display). Shared by GetCombinedHealingView / GetCombinedHealingBreakdown.
 local function SafeNumOrZero(v, isSecret)
+    -- Probe BEFORE the nil-compare: `secret == nil` throws.
+    if isSecret and isSecret(v) then return 0 end -- @secret-policy: zero-degrade
     if v == nil then return 0 end
-    if isSecret and isSecret(v) then return 0 end
     return v
 end
 
@@ -145,7 +150,10 @@ local function RankAndMaxAmount(list, isSecret)
     for i, s in ipairs(list) do
         s.rank = i
         local v = s.totalAmount
-        if v and not (isSecret and isSecret(v)) and v > maxAmount then maxAmount = v end
+        -- Probe BEFORE the truth-test: `v and isSecret(v)` throws when v IS
+        -- secret (the leading truth-test evaluates first).
+        local vSecret = isSecret and isSecret(v)
+        if not vSecret and v ~= nil and v > maxAmount then maxAmount = v end
     end
     return maxAmount
 end
@@ -207,6 +215,7 @@ end
 Data._combatStartTime = nil   -- GetTime() at last PLAYER_REGEN_DISABLED
 Data._combatEndTime   = nil   -- GetTime() at last PLAYER_REGEN_ENABLED
 Data._combatFrozen    = 0     -- elapsed seconds frozen at end-of-combat for post-combat display
+Data._currentDurPin   = 0     -- warm Current-session duration pin (see ResolveCurrentViewDuration)
 
 local function GetCombatElapsed()
     if Data._combatStartTime then
@@ -229,7 +238,50 @@ function Data:ResetCombatClock()
         self._combatEndTime   = nil
     end
     self._combatFrozen = 0
+    self._currentDurPin = 0
 end
+
+-- Current-session view duration. The server ROLLS the Current session at
+-- segment boundaries (a new pull after regen, a boss pull mid chain-pull):
+-- any locally anchored clock — and any post-combat GetSessionDurationSeconds
+-- read — races that roll. Two prior failures prove it: dividing by the
+-- regen-to-regen combat clock broke for sessions the clock didn't cover, and
+-- dividing by a post-combat API read picked up the freshly rolled (tiny)
+-- session. So the Current duration follows the session's OWN clock:
+--   * In combat: read GetSessionDurationSeconds(Current) live each refresh
+--     and keep a pin warm with the last good value. When the server rolls the
+--     session mid-combat, the next live read tracks it — timer and bars reset
+--     in lockstep, no local clock to drift.
+--   * Out of combat: serve the warm pin — it froze at the last in-combat
+--     refresh (≤ one combat-cadence tick before the end). The live API value
+--     is NOT trusted out of combat: the session may already have rolled
+--     underneath the retained view data. No combat-end API read exists at
+--     all (event handlers never touch C_DamageMeter), so there is no read to
+--     race the roll. The pin resets at every combat START, never at the end.
+--   * No pin (fresh login /reload with retained data): fall back to the API,
+--     then to the legacy combat clock.
+-- Returns (duration, newPin). Pure helper — state and isSecret are injected
+-- so it unit-tests under plain Lua. A duration is "usable" only if it's a
+-- positive, non-secret number (comparing a secret in Lua faults in combat).
+local function ResolveCurrentViewDuration(inCombat, apiDuration, pinnedDuration, combatElapsed, isSecret)
+    local function usable(d)
+        -- Probe first: type() must never see a secret (strict probe-order
+        -- gate; same shape as the other Safe* helpers in this file).
+        if isSecret and isSecret(d) then return false end
+        return type(d) == "number" and d > 0
+    end
+    if inCombat then
+        if usable(apiDuration) then return apiDuration, apiDuration end
+        if usable(pinnedDuration) then return pinnedDuration, pinnedDuration end
+        if usable(combatElapsed) then return combatElapsed, pinnedDuration end
+        return nil, pinnedDuration
+    end
+    if usable(pinnedDuration) then return pinnedDuration, pinnedDuration end
+    if usable(apiDuration) then return apiDuration, pinnedDuration end
+    if usable(combatElapsed) then return combatElapsed, pinnedDuration end
+    return nil, pinnedDuration
+end
+QUI_DamageMeter.ResolveCurrentViewDuration = ResolveCurrentViewDuration
 
 Data._eventFrame = CreateFrame("Frame")
 Data._eventFrame:RegisterEvent("DAMAGE_METER_COMBAT_SESSION_UPDATED")
@@ -259,6 +311,9 @@ Data._eventFrame:SetScript("OnEvent", function(_, event, arg1, _arg2)
         Data._inCombat = true
         Data._combatStartTime = GetTime()
         Data._combatEndTime   = nil
+        -- New combat = new session segment: drop the pinned duration so it
+        -- cannot carry a stale value across combats.
+        Data._currentDurPin   = 0
         -- Combat drives the live elapsed clock, which must tick smoothly even
         -- through damage lulls. Re-arm the ticker; it stays awake until combat
         -- ends and pending work drains (see the park check in OnUpdate).
@@ -267,6 +322,10 @@ Data._eventFrame:SetScript("OnEvent", function(_, event, arg1, _arg2)
         Data._inCombat = false
         Data._combatEndTime   = GetTime()
         Data._combatFrozen    = (Data._combatStartTime and (Data._combatEndTime - Data._combatStartTime)) or 0
+        -- The Current-session duration pin is NOT touched here: it froze at
+        -- the last in-combat refresh (see ResolveCurrentViewDuration), and a
+        -- combat-end API read would race the server's session roll — besides,
+        -- event handlers never call C_DamageMeter (scaffold contract).
         -- The API briefly returns secret-tagged source GUIDs after combat
         -- ends, which makes GetCombatSessionSourceFromType return an empty
         -- combatSpells. Re-mark dirty after a short delay so the next tick
@@ -362,13 +421,35 @@ local function SessionKey(sessionType, sessionID)
 end
 QUI_DamageMeter.SessionKey = SessionKey
 
+-- Container fields ride in as plain tables per DamageMeterDocumentation
+-- (non-nilable), but probe anyway: a secret container would throw on the
+-- very first #/ipairs. Secret → treated as empty.
+local function TableOrEmpty(v)
+    if Helpers and Helpers.IsSecretValue and Helpers.IsSecretValue(v) then
+        return {} -- @secret-policy: empty-table-degrade
+    end
+    if type(v) ~= "table" then return {} end
+    return v
+end
+
+-- Amount/duration fields can be SECRET mid-combat and flow to C-side render
+-- sinks untouched; `v or d` truth-tests v — a throw when v is secret — so
+-- only a plain nil takes the default.
+local function AmountOrDefault(v, dflt)
+    if Helpers and Helpers.IsSecretValue and Helpers.IsSecretValue(v) then
+        return v
+    end
+    if v == nil then return dflt end
+    return v
+end
+
 local function NewView(sources, duration, maxAmount, totalAmount)
     Data._generation = Data._generation + 1
     return {
-        duration    = duration or 0,
-        maxAmount   = maxAmount or 0,
-        totalAmount = totalAmount or 0,
-        sources     = sources or {},
+        duration    = AmountOrDefault(duration, 0),
+        maxAmount   = AmountOrDefault(maxAmount, 0),
+        totalAmount = AmountOrDefault(totalAmount, 0),
+        sources     = TableOrEmpty(sources),
         generation  = Data._generation,
     }
 end
@@ -393,65 +474,6 @@ HasCachedViewKey = function(selectorKey, damageMeterType)
     return bySelector and bySelector[damageMeterType] ~= nil
 end
 
--- DerivePerSecond: recompute a row's per-second rate as totalAmount / duration
--- rather than trust the API's amountPerSecond. Per DamageMeterDocumentation a
--- combat source/spell's amountPerSecond is SecretWhenInCombat and is derived
--- from the live session duration; after combat it declassifies to a garbage
--- value (the report: a DPS row read "4" and an HPS row "7.04e-15" instead of
--- ~405K). GetSessionDurationSeconds is AllowedWhenUntainted and — unlike
--- GetCombatSessionFromType — NOT SecretWhenInCombat, so it hands us a usable,
--- non-secret duration for the session in and out of combat.
---
--- We can only divide once totalAmount is non-secret (post-combat / idle /
--- historical). Mid-combat totalAmount stays secret, so we return nil and the
--- caller keeps the API amountPerSecond (rendered secret-safe downstream — the
--- C side can read it). The secret check runs BEFORE any comparison: comparing
--- or dividing a secret in Lua faults under combat restrictions. Pure helper —
--- isSecret is injected so it unit-tests under plain Lua.
-local function DerivePerSecond(totalAmount, duration, isSecret)
-    if totalAmount == nil then return nil end
-    if isSecret and (isSecret(totalAmount) or isSecret(duration)) then return nil end
-    if type(duration) ~= "number" or duration <= 0 then return nil end
-    return totalAmount / duration
-end
-QUI_DamageMeter.DerivePerSecond = DerivePerSecond
-
--- ResolveRateDuration: pick the divisor DerivePerSecond uses for a session's
--- rows. GetSessionDurationSeconds is Nilable (DamageMeterDocumentation) and for
--- the live Current session frequently returns nil; when that happened the rows
--- kept the API's amountPerSecond, which declassifies to garbage post-combat (a
--- DPS row read 0.0576, an HPS row 0.0000933 instead of ~5K). So:
---   * Current (live): prefer our own combat timer (GetCombatElapsed — the same
---     value the [m:ss] header shows) so the rate stays consistent with the
---     visible clock; fall back to the API duration. The API Current duration is
---     unreliable (the reference distrusts it too), hence timer-first.
---   * Expired (historical): the session's own recorded durationSeconds is
---     authoritative; fall back to the API duration.
---   * Overall (cumulative across past combats): only the API knows that span,
---     so prefer it; fall back to the live timer if it's nil.
--- A duration is "usable" only if it's a positive, non-secret number — dividing
--- by a secret or comparing it faults under combat restrictions. Pure helper:
--- the durations and isSecret are injected so it unit-tests under plain Lua.
-local function ResolveRateDuration(sessionType, apiDuration, combatElapsed, historicalDuration, isSecret, currentType, expiredType)
-    local function usable(d)
-        return type(d) == "number" and not (isSecret and isSecret(d)) and d > 0
-    end
-    if expiredType ~= nil and sessionType == expiredType then
-        if usable(historicalDuration) then return historicalDuration end
-        if usable(apiDuration) then return apiDuration end
-        return nil
-    end
-    if currentType ~= nil and sessionType == currentType then
-        if usable(combatElapsed) then return combatElapsed end
-        if usable(apiDuration) then return apiDuration end
-        return nil
-    end
-    if usable(apiDuration) then return apiDuration end
-    if usable(combatElapsed) then return combatElapsed end
-    return nil
-end
-QUI_DamageMeter.ResolveRateDuration = ResolveRateDuration
-
 local function FetchView(sessionType, damageMeterType, sessionID)
     if not C_DamageMeter then
         return NewView({}, 0, 0, 0)
@@ -472,47 +494,50 @@ local function FetchView(sessionType, damageMeterType, sessionID)
         end
         ok, session = pcall(C_DamageMeter.GetCombatSessionFromType, sessionType, damageMeterType)
     end
-    if not ok or type(session) ~= "table" then
+    if not ok then
+        return NewView({}, 0, 0, 0)
+    end
+    -- Probe before type(): a whole-secret session must never reach type()
+    -- (SecretWhenInCombat; field-level NeverSecret markers imply the struct is
+    -- normally traversable, but never hand type() a secret).
+    if Helpers and Helpers.IsSecretValue and Helpers.IsSecretValue(session) then
+        return NewView({}, 0, 0, 0) -- @secret-policy: empty-view-degrade
+    end
+    if type(session) ~= "table" then
         return NewView({}, 0, 0, 0)
     end
 
-    local sources = NormalizeSources(session.combatSources or {})
+    local sources = NormalizeSources(TableOrEmpty(session.combatSources))
 
-    -- Duration: prefer our own elapsed timer for live sessions to sidestep
-    -- the secret-tagged session.durationSeconds. For historical sessions
-    -- (Expired session type = 2 per Enum.DamageMeterSessionType.Expired),
-    -- the API duration is safe.
+    -- Rows keep the API's amountPerSecond untouched. The server computes the
+    -- total/rate pair against the session's OWN clock, so the pair is always
+    -- self-consistent — while any locally derived rate races the server-side
+    -- session roll (see ResolveCurrentViewDuration). The stock meter renders
+    -- source.amountPerSecond as-is too (DamageMeterEntry.lua GetMainValue /
+    -- GetParentheticalValue); secret-tagged values flow to the render path,
+    -- where the C side reads them fine.
+    --
+    -- Duration (header timer / breakdown aggregates only):
+    --   * Explicit sessionID / Expired: the session's recorded durationSeconds.
+    --   * Current: the pinned session clock (ResolveCurrentViewDuration).
+    --   * Overall: the legacy combat clock (display-only, as before).
+    local S = Enum and Enum.DamageMeterSessionType
     local duration
     if sessionID ~= nil then
         duration = session.durationSeconds
-    elseif sessionType == (Enum and Enum.DamageMeterSessionType and Enum.DamageMeterSessionType.Expired or 2) then
+    elseif sessionType == ((S and S.Expired) or 2) then
         duration = session.durationSeconds  -- historical: API value is safe
-    else
-        duration = GetCombatElapsed()
-    end
-
-    -- Replace the API's per-source amountPerSecond (SecretWhenInCombat, derived
-    -- from the live duration and garbage once it declassifies) with a rate we
-    -- compute from the session's own non-secret duration. See DerivePerSecond:
-    -- it returns nil while totalAmount is still secret (mid-combat), leaving the
-    -- API value in place for the secret-safe render path. ResolveRateDuration
-    -- picks the divisor: the API session duration is Nilable and nil for the
-    -- live Current session, so we fall back to our own combat timer there.
-    local IsSecret = Helpers and Helpers.IsSecretValue
-    local S = Enum and Enum.DamageMeterSessionType
-    local rateDuration
-    if sessionID ~= nil then
-        rateDuration = session.durationSeconds
-    else
+    elseif sessionType == ((S and S.Current) or 1) then
+        local IsSecret = Helpers and Helpers.IsSecretValue
         local apiDuration = C_DamageMeter.GetSessionDurationSeconds
             and C_DamageMeter.GetSessionDurationSeconds(sessionType)
-        rateDuration = ResolveRateDuration(
-            sessionType, apiDuration, GetCombatElapsed(), session.durationSeconds,
-            IsSecret, (S and S.Current) or 1, (S and S.Expired) or 2)
-    end
-    for _, s in ipairs(sources) do
-        local rate = DerivePerSecond(s.totalAmount, rateDuration, IsSecret)
-        if rate ~= nil then s.amountPerSecond = rate end
+        local dur, newPin = ResolveCurrentViewDuration(
+            Data._inCombat and true or false, apiDuration,
+            Data._currentDurPin, GetCombatElapsed(), IsSecret)
+        Data._currentDurPin = newPin or 0
+        duration = dur or 0
+    else
+        duration = GetCombatElapsed()
     end
 
     return NewView(sources, duration, session.maxAmount, session.totalAmount)
@@ -579,7 +604,9 @@ local function IsSecretValue(value)
 end
 
 local function IsIndexableSpellID(spellID)
-    return spellID ~= nil and not IsSecretValue(spellID)
+    -- Probe BEFORE the nil-compare: `secret ~= nil` throws.
+    if IsSecretValue(spellID) then return false end -- @secret-policy: reject-secret-ids
+    return spellID ~= nil
 end
 
 local function ResolveSpellInfo(spellID)
@@ -594,19 +621,38 @@ end
 
 local function NormalizeSpells(rawSpells)
     local out = {}
-    for i, spell in ipairs(rawSpells) do
-        local info = ResolveSpellInfo(spell.spellID)
-        out[i] = {
-            rank             = i,
-            spellID          = spell.spellID,
-            name             = (info and info.name) or spell.creatureName,
-            iconID           = info and info.iconID,
-            totalAmount      = spell.totalAmount,
-            amountPerSecond  = spell.amountPerSecond,
-            hitCount         = spell.hitCount,
-            critCount        = spell.critCount,
-            criticalAmount   = spell.criticalAmount,
-        }
+    local n = 0
+    for i = 1, #rawSpells do
+        local spell = rawSpells[i]
+        -- Probe each element: array-readable ≠ elements-readable — a
+        -- whole-secret combatSpells entry throws on the first field index.
+        if IsSecretValue(spell) then
+            -- @secret-policy: reject-secret-value — an opaque entry carries
+            -- no renderable identity; skip it.
+            spell = nil
+        end
+        if spell ~= nil then
+            n = n + 1
+            local info = ResolveSpellInfo(spell.spellID)
+            -- name may end up the SECRET creatureName (value-copy only —
+            -- renderers must probe before truth-test/concat and route
+            -- secrets to text sinks).
+            local name = info and info.name
+            if not IsSecretValue(name) and name == nil then
+                name = spell.creatureName
+            end
+            out[n] = {
+                rank             = n,
+                spellID          = spell.spellID,
+                name             = name,
+                iconID           = info and info.iconID,
+                totalAmount      = spell.totalAmount,
+                amountPerSecond  = spell.amountPerSecond,
+                hitCount         = spell.hitCount,
+                critCount        = spell.critCount,
+                criticalAmount   = spell.criticalAmount,
+            }
+        end
     end
     return out
 end
@@ -632,13 +678,20 @@ function Data:GetBreakdownView(sessionType, damageMeterType, sourceGUID, sourceC
         ok, src = pcall(C_DamageMeter.GetCombatSessionSourceFromType,
             sessionType, damageMeterType, sourceGUID, sourceCreatureID)
     end
-    if not ok or type(src) ~= "table" then
+    if not ok then
+        return { spells = {}, maxAmount = 0, totalAmount = 0 }
+    end
+    -- Probe before type(): the whole source struct is SecretWhenInCombat.
+    if Helpers and Helpers.IsSecretValue and Helpers.IsSecretValue(src) then
+        return { spells = {}, maxAmount = 0, totalAmount = 0 } -- @secret-policy: empty-table-degrade
+    end
+    if type(src) ~= "table" then
         return { spells = {}, maxAmount = 0, totalAmount = 0 }
     end
     return {
-        spells      = NormalizeSpells(src.combatSpells or {}),
-        maxAmount   = src.maxAmount or 0,
-        totalAmount = src.totalAmount or 0,
+        spells      = NormalizeSpells(TableOrEmpty(src.combatSpells)),
+        maxAmount   = AmountOrDefault(src.maxAmount, 0),
+        totalAmount = AmountOrDefault(src.totalAmount, 0),
     }
 end
 
@@ -662,11 +715,17 @@ end
 local function AggregateSpellsByUnit(combatSpells, isSecret)
     local byName, list = {}, {}
     for _, spell in ipairs(combatSpells or {}) do
-        local det  = spell.combatSpellDetails
+        -- Probe BEFORE indexing/nil-compares: a secret spell entry throws on
+        -- `.combatSpellDetails`, and `x ~= nil` before the probe throws too.
+        if isSecret and isSecret(spell) then spell = nil end -- @secret-policy: reject-secret-value
+        local det  = spell and spell.combatSpellDetails
+        if isSecret and isSecret(det) then det = nil end -- @secret-policy: reject-secret-value
         local name = det and det.unitName
-        local amt  = spell.totalAmount
-        local nameOk = name ~= nil and not (isSecret and isSecret(name))
-        local amtOk  = amt  ~= nil and not (isSecret and isSecret(amt))
+        local amt  = spell and spell.totalAmount
+        local nameSecret = isSecret and isSecret(name)
+        local amtSecret  = isSecret and isSecret(amt)
+        local nameOk = not nameSecret and name ~= nil
+        local amtOk  = not amtSecret and amt ~= nil
         if nameOk and amtOk then
             local e = byName[name]
             if not e then
@@ -720,8 +779,13 @@ local function FetchSourceSpells(sessionType, meterType, sourceGUID, sourceCreat
         ok, src = pcall(C_DamageMeter.GetCombatSessionSourceFromType,
             sessionType, meterType, sourceGUID, sourceCreatureID)
     end
-    if not ok or type(src) ~= "table" then return {} end
-    return src.combatSpells or {}
+    if not ok then return {} end
+    -- Probe before type(): the whole source struct is SecretWhenInCombat.
+    if Helpers and Helpers.IsSecretValue and Helpers.IsSecretValue(src) then
+        return {} -- @secret-policy: empty-table-degrade
+    end
+    if type(src) ~= "table" then return {} end
+    return TableOrEmpty(src.combatSpells)
 end
 
 local function EnemyDamageTakenType()
@@ -769,9 +833,12 @@ function Data:GetPlayerTargetsMap(sessionType, sessionID)
 end
 
 function Data:GetPlayerTargets(sessionType, playerName, sessionID)
-    if playerName == nil then return {} end
+    -- Probe BEFORE the nil compare: `playerName == nil` on a secret name is
+    -- itself the throw (== consumes the secret). issecretvalue(nil) is
+    -- false, so the reorder is behavior-preserving for plain nil.
     local IsSecret = Helpers and Helpers.IsSecretValue
-    if IsSecret and IsSecret(playerName) then return {} end
+    if IsSecret and IsSecret(playerName) then return {} end -- @secret-policy: empty-table-degrade
+    if playerName == nil then return {} end
     return self:GetPlayerTargetsMap(sessionType, sessionID)[playerName] or {}
 end
 
@@ -805,7 +872,10 @@ function Data:GetCombinedHealingView(sessionType, sessionID)
     -- (see PLAYER_REGEN_ENABLED handler) re-runs this merge after GUIDs
     -- become indexable, so the duplicate-row state is transient.
     local function isIndexableKey(v)
-        return v and not (IsSecret and IsSecret(v))
+        -- Probe BEFORE the truth-test: `v and IsSecret(v)` throws when v IS
+        -- secret (the leading truth-test evaluates first).
+        if IsSecret and IsSecret(v) then return false end -- @secret-policy: reject-secret-ids
+        return v ~= nil
     end
     for i, s in ipairs(hView.sources or {}) do
         local copy = {}
@@ -816,12 +886,15 @@ function Data:GetCombinedHealingView(sessionType, sessionID)
     for _, a in ipairs(aView.sources) do
         local existing = isIndexableKey(a.sourceGUID) and byGuid[a.sourceGUID]
         if existing then
-            if existing.totalAmount and a.totalAmount
-                and not (IsSecret and (IsSecret(existing.totalAmount) or IsSecret(a.totalAmount))) then
+            -- Probe BEFORE the truth-tests: leading `x and y and probe` throws
+            -- when either amount is secret. Secret amounts skip the merge this
+            -- tick (unchanged policy; post-combat re-dirty re-runs it).
+            local totSecret = IsSecret and (IsSecret(existing.totalAmount) or IsSecret(a.totalAmount))
+            if not totSecret and existing.totalAmount ~= nil and a.totalAmount ~= nil then
                 existing.totalAmount = existing.totalAmount + a.totalAmount
             end
-            if existing.amountPerSecond and a.amountPerSecond
-                and not (IsSecret and (IsSecret(existing.amountPerSecond) or IsSecret(a.amountPerSecond))) then
+            local psSecret = IsSecret and (IsSecret(existing.amountPerSecond) or IsSecret(a.amountPerSecond))
+            if not psSecret and existing.amountPerSecond ~= nil and a.amountPerSecond ~= nil then
                 existing.amountPerSecond = existing.amountPerSecond + a.amountPerSecond
             end
         else
@@ -865,8 +938,9 @@ function Data:GetCombinedHealingBreakdown(sessionType, sourceGUID, sourceCreatur
     for _, sp in ipairs(aView.spells) do
         local existing = IsIndexableSpellID(sp.spellID) and bySpell[sp.spellID] or nil
         if existing then
-            if existing.totalAmount and sp.totalAmount
-                and not (IsSecret and (IsSecret(existing.totalAmount) or IsSecret(sp.totalAmount))) then
+            -- Probe BEFORE the truth-tests (see GetCombinedHealingView merge).
+            local totSecret = IsSecret and (IsSecret(existing.totalAmount) or IsSecret(sp.totalAmount))
+            if not totSecret and existing.totalAmount ~= nil and sp.totalAmount ~= nil then
                 existing.totalAmount = existing.totalAmount + sp.totalAmount
             end
         else
@@ -899,7 +973,7 @@ end
 -- FormatDuration(seconds) → "M:SS" string, "" when nil/0.
 -- Handles ConditionalSecret values: routes through C_StringUtil when tainted.
 local function FormatDuration(seconds)
-    if not seconds then return "" end
+    -- Probe BEFORE the truth-test: `not seconds` on a secret duration throws.
     -- Secret-value path: arithmetic on secret numbers under taint faults.
     -- Route through C_StringUtil helpers which Blizzard tags
     -- SecretArguments=AllowedWhenTainted. Worst case we render raw seconds
@@ -909,9 +983,10 @@ local function FormatDuration(seconds)
             local s = C_StringUtil.TruncateWhenZero(seconds)
             return C_StringUtil.WrapString(s, "", "s")
         end
-        return ""
+        return "" -- @secret-policy: empty-text-degrade
     end
     -- Non-secret pure-Lua path:
+    if not seconds then return "" end
     if seconds == 0 then return "" end
     local s = math.floor(seconds)
     local m = math.floor(s / 60)
@@ -969,7 +1044,11 @@ local _formatOpts = {
 }
 
 local function FormatNumber(amount, format)
-    if amount == nil then return "" end
+    -- Probe BEFORE the nil-compare: `secret == nil` throws. A secret amount
+    -- falls through STRAIGHT to the AllowedWhenTainted C formatters (which
+    -- read it C-side and hand back a render-ready string for the SetText
+    -- sink). -- @secret-policy: sink-passthrough
+    if not IsSecretValue(amount) and amount == nil then return "" end
     if format == "complete" then
         return BreakUpLargeNumbers(amount)
     end
@@ -1004,6 +1083,18 @@ local function BuildValueText(primaryVal, secondaryVal, numberFormat, isSecret, 
         secondaryHas = (secondaryStr ~= "")
     end
     if primaryHas and secondaryHas then
+        if primarySecret or secondarySecret then
+            -- Lua `..` on a secret string throws. Compose via WrapString
+            -- (stringViews accept secrets): first ride the secret primary as
+            -- PREFIX around the never-empty plain infix " (", then ride that
+            -- accumulated string as PREFIX around the secondary infix.
+            local WrapString = C_StringUtil and C_StringUtil.WrapString
+            if WrapString then
+                local opened = WrapString(" (", primaryStr, nil)
+                return WrapString(secondaryStr, opened, ")")
+            end
+            return primaryStr -- @secret-policy: drop-secondary-decoration
+        end
         return primaryStr .. " (" .. secondaryStr .. ")"
     elseif primaryHas then
         return primaryStr
@@ -1148,12 +1239,19 @@ local function ComputeBarFill(meterType, source, fillMax, deathsType, isSecret)
         return 0, 1, 1
     end
     -- Check secret BEFORE any nil/<= comparison: comparing a secret value
-    -- against nil or a number faults under combat restrictions.
+    -- against nil or a number faults under combat restrictions. The `or`
+    -- fallbacks must ALSO be probe-gated — `secret or 1` truth-tests the
+    -- secret and throws, defeating the raw-to-widget intent.
     local maxSecret = isSecret and isSecret(fillMax)
     if not maxSecret and (fillMax == nil or fillMax <= 0) then
         return 0, 1, 0
     end
-    return 0, (fillMax or 1), (source.totalAmount or 0)
+    local fm = fillMax
+    if not maxSecret and fm == nil then fm = 1 end
+    local fv = source.totalAmount
+    local fvSecret = isSecret and isSecret(fv)
+    if not fvSecret and fv == nil then fv = 0 end
+    return 0, fm, fv
 end
 QUI_DamageMeter.ComputeBarFill = ComputeBarFill
 
@@ -1302,6 +1400,53 @@ local function FindLocalPlayerInSources(sources)
     return nil
 end
 
+-- Pure helper: the inclusive [first, last] pooled-row range to BIND for the
+-- current scroll offset. Rows partially inside the viewport count as visible
+-- (floor on the top edge, ceil on the bottom edge) — a half-clipped row must
+-- carry live data, never a stale bind. Degenerate geometry (viewport not
+-- laid out yet, zero pitch) fails OPEN to the full range: an oversized bind
+-- costs a few _SetRowSource calls, a stale row shows wrong numbers.
+-- totalCount is the render count (already capped at BAR_POOL_SIZE by the
+-- caller). Returns first > last when there is nothing to bind. Plain-number
+-- geometry only — no meter amounts (and therefore no secrets) flow through.
+local function ComputeVisibleBindRange(scrollY, viewH, rowPitch, totalCount)
+    if not totalCount or totalCount <= 0 then return 1, 0 end
+    if not rowPitch or rowPitch <= 0 then return 1, totalCount end
+    if not viewH or viewH <= 0 then return 1, totalCount end
+    if not scrollY or scrollY < 0 then scrollY = 0 end
+    local first = math.floor(scrollY / rowPitch) + 1
+    local last  = math.ceil((scrollY + viewH) / rowPitch)
+    if last > totalCount then last = totalCount end
+    if first > totalCount then first = totalCount end
+    if first < 1 then first = 1 end
+    return first, last
+end
+QUI_DamageMeter.ComputeVisibleBindRange = ComputeVisibleBindRange
+
+-- ==== Appearance revision ====
+-- Header text, fonts, and colors are settings-driven, but the old Refresh
+-- re-applied all three style walks on EVERY data tick before the generation
+-- guard — the meter paid the settings walk at combat cadence for values that
+-- change only when a user touches a widget. Every settings entry point
+-- funnels through WindowManager:RefreshAll (settings page ApplyNative, the
+-- skinning/theme registry, the Border Coloring registry, the header gear
+-- menu, challenge-mode swaps, resets) or ClearRuntimeSessionIDs (which
+-- rewrites per-window session identity and so the header label). Those bump
+-- this revision; Window:Refresh re-applies style only when the window's
+-- last-applied revision trails it. Data ticks leave it untouched.
+QUI_DamageMeter._appearanceRev = 1
+
+function QUI_DamageMeter.BumpAppearanceRevision()
+    QUI_DamageMeter._appearanceRev = QUI_DamageMeter._appearanceRev + 1
+end
+
+-- Pure helper: should this window re-apply header/fonts/colors? nil applied
+-- revision = a freshly spawned window that has never styled itself.
+local function ShouldReapplyAppearance(appliedRev, currentRev)
+    return appliedRev == nil or appliedRev ~= currentRev
+end
+QUI_DamageMeter.ShouldReapplyAppearance = ShouldReapplyAppearance
+
 -- Attach the icon, bar, name/value text, click handler, and hover tooltip
 -- to a row that has already been created and anchored. Shared between the
 -- pooled rows in _BuildRow (chain-anchored in the scroll viewport) and the
@@ -1378,33 +1523,46 @@ function Window:_AttachRowVisuals(row)
         GameTooltip:SetOwner(rowSelf, "ANCHOR_BOTTOM")
         GameTooltip:ClearLines()
 
-        -- Header colored by class
+        -- GameTooltip:AddLine/AddDoubleLine are NOT secret-accepting sinks
+        -- (undocumented SecretArguments = default-reject) — every value that
+        -- reaches them below must be probed and, when secret, replaced with a
+        -- plain placeholder. -- @secret-policy: placeholder-when-secret
+        local IsSecret = Helpers and Helpers.IsSecretValue
+
+        -- Header colored by class (classFilename is NeverSecret)
         local cr, cg, cb = 1, 1, 1
         if src.classFilename and RAID_CLASS_COLORS and RAID_CLASS_COLORS[src.classFilename] then
             local cc = Helpers.GetClassColorTable(src.classFilename)
             cr, cg, cb = cc.r, cc.g, cc.b
         end
-        GameTooltip:AddLine(ShortenName(src.name) or "?", cr, cg, cb)
+        local headerName = ShortenName(src.name)
+        if IsSecret and IsSecret(headerName) then
+            headerName = "???" -- @secret-policy: placeholder-when-secret
+        end
+        GameTooltip:AddLine(headerName or "?", cr, cg, cb)
 
         if src.classFilename then
             GameTooltip:AddLine(src.classFilename, 0.7, 0.7, 0.7)
         end
 
         local totalLabel, rateLabel = TooltipLabelsForType(rowSelf._damageMeterType or 0)
-        -- Capture secret state BEFORE any equality comparison: comparing a
-        -- secret-tagged string against "" taints execution. AbbreviateNumbers
-        -- propagates the secret tag, so secret amounts must be rendered as-is
-        -- without the "is it empty?" gate.
-        local IsSecret = Helpers and Helpers.IsSecretValue
-        local totalSecret = src.totalAmount and IsSecret and IsSecret(src.totalAmount)
-        local amt = FormatNumber(src.totalAmount, "complete")
-        if totalSecret or (amt ~= "") then
-            GameTooltip:AddDoubleLine(totalLabel .. ":", amt, 1, 1, 1, 1, 1, 1)
+        -- Probe BEFORE any truth-test or equality comparison: the old
+        -- `x and IsSecret(x)` order truth-tested the secret first and threw.
+        local totalSecret = IsSecret and IsSecret(src.totalAmount)
+        if totalSecret then
+            GameTooltip:AddDoubleLine(totalLabel .. ":", "???", 1, 1, 1, 1, 1, 1) -- @secret-policy: placeholder-when-secret
+        else
+            local amt = FormatNumber(src.totalAmount, "complete")
+            if amt ~= "" then
+                GameTooltip:AddDoubleLine(totalLabel .. ":", amt, 1, 1, 1, 1, 1, 1)
+            end
         end
 
         local ps = src.amountPerSecond
-        local psSecret = ps and IsSecret and IsSecret(ps)
-        if ps and (psSecret or ps ~= 0) then
+        local psSecret = IsSecret and IsSecret(ps)
+        if psSecret then
+            GameTooltip:AddDoubleLine((rateLabel or ns.L["Per Second"]) .. ":", "???", 1, 1, 1, 1, 1, 1) -- @secret-policy: placeholder-when-secret
+        elseif ps and ps ~= 0 then
             GameTooltip:AddDoubleLine((rateLabel or ns.L["Per Second"]) .. ":", FormatNumber(ps, "compact"), 1, 1, 1, 1, 1, 1)
         end
 
@@ -1531,7 +1689,16 @@ function Window:_SetRowSource(row, source, maxAmount)
         end
     end
 
-    row.Name:SetText((source.rank or 0) .. ". " .. (ShortenName(source.name) or "?"))
+    -- source.name is ConditionalSecret: ShortenName passes a secret through
+    -- untouched, and Lua `..` / `or "?"` on it throw. Route the secret name
+    -- through the SetFormattedText sink (AllowedWhenTainted, Text aspect)
+    -- with the plain rank composed by the FORMAT string, never by Lua concat.
+    local displayName = ShortenName(source.name)
+    if Helpers and Helpers.IsSecretValue and Helpers.IsSecretValue(displayName) then
+        row.Name:SetFormattedText("%d. %s", source.rank or 0, displayName) -- @secret-policy: sink-passthrough
+    else
+        row.Name:SetText((source.rank or 0) .. ". " .. (displayName or "?"))
+    end
 
     -- Name text color: class-color when enabled and the class is known,
     -- otherwise the configured Row Name color. Set here (per refresh) so the
@@ -1560,8 +1727,15 @@ function Window:_SetRowSource(row, source, maxAmount)
     -- possibly-secret secondary is never inspected — just not passed.
     local numberFormat = ResolveAppearance(windowID, "numberFormat") or "compact"
     local perSecondMode = IsPerSecondType(self.damageMeterType)
-    local primaryVal   = perSecondMode and source.amountPerSecond or source.totalAmount
-    local secondaryVal = perSecondMode and source.totalAmount     or source.amountPerSecond
+    -- if/else, NOT `cond and a or b`: the `or` truth-tests a possibly-secret
+    -- amount and throws mid-combat. Plain field reads are safe; truth-tests
+    -- are not.
+    local primaryVal, secondaryVal
+    if perSecondMode then
+        primaryVal, secondaryVal = source.amountPerSecond, source.totalAmount
+    else
+        primaryVal, secondaryVal = source.totalAmount, source.amountPerSecond
+    end
     if ResolveAppearance(windowID, "showSecondaryValue") == false then
         secondaryVal = nil
     end
@@ -1583,8 +1757,9 @@ function Window:_SetRowSource(row, source, maxAmount)
     -- Push the raw value straight to the widget and let the C side compute the
     -- fill (it reads secret combat values fine). The bar is never blended in
     -- Lua: interpolating the fill would mean arithmetic on the value, which
-    -- faults on secret combat values.
-    row.Bar:SetValue(fillValue or 0)
+    -- faults on secret combat values. No `or 0` fallback here — that would
+    -- truth-test a secret fillValue; ComputeBarFill already returns non-nil.
+    row.Bar:SetValue(fillValue)
 
     -- Bar color: priority is useClassColor → barColorAccent → custom barColor.
     local alpha = ResolveAppearance(windowID, "barFillAlpha") or 1
@@ -1783,8 +1958,11 @@ local function PrepareSourcesForRender(view)
     -- secret during combat). _SetRowSource hands it to the StatusBar widget,
     -- which divides on the C side. Bars are total-based even for per-second
     -- views — the rate has no secret-safe Lua maximum to divide against while
-    -- combat values are still secret.
-    local fillMax = sources[1] and sources[1].totalAmount or 0
+    -- combat values are still secret. No `... and X or 0` here: the trailing
+    -- `or 0` truth-tests the secret amount and throws — probe instead.
+    local first = sources[1]
+    local fillMax = first and first.totalAmount
+    if not IsSecretValue(fillMax) and fillMax == nil then fillMax = 0 end
     return sources, fillMax
 end
 
@@ -1841,7 +2019,7 @@ function Window:_OpenConfigMenu()
         local previousMenu = root:CreateButton(ns.L["Previous"])
         local sessions
         if C_DamageMeter and C_DamageMeter.GetAvailableCombatSessions then
-            local ok, availableSessions = pcall(C_DamageMeter.GetAvailableCombatSessions)
+            local ok, availableSessions = ns.SafeCall("best-effort-style", C_DamageMeter.GetAvailableCombatSessions)
             if ok and type(availableSessions) == "table" then
                 sessions = availableSessions
             end
@@ -1939,7 +2117,7 @@ end
 -- every Refresh and every OnMouseWheel tick. Re-anchors scrollFrame's bottom
 -- to make room for the sticky row when shown.
 function Window:_UpdateStickyVisibility()
-    local sources = self._stickySources
+    local sources = self._renderSources
     local sticky  = self.stickyRow
     local sep     = self.stickySeparator
     local sf      = self.scrollFrame
@@ -1983,7 +2161,7 @@ function Window:_UpdateStickyVisibility()
     end
 
     -- Player is outside the visible range — populate + show sticky.
-    self:_SetRowSource(sticky, sources[localIdx], self._stickyMaxValue)
+    self:_SetRowSource(sticky, sources[localIdx], self._renderFillMax)
     sticky:Show()
     sep:Show()
     if not self._stickyShown then
@@ -2002,6 +2180,54 @@ function Window:_UpdateStickyVisibility()
     end
 end
 
+-- Bind sources onto the pooled rows actually inside the scroll viewport.
+-- Off-screen pooled rows are HIDDEN, not re-styled — the old Refresh re-ran
+-- _SetRowSource across all 40 pool rows every data tick, and that per-source
+-- style walk was the bulk of the render cost. Row keying stays positional
+-- (rows[i] renders sources[i]); hidden frames still anchor, so the chain
+-- through hidden rows keeps every row at its slot. The sticky self-row keeps
+-- the local player visible when scrolled out of range (own frame, handled by
+-- _UpdateStickyVisibility).
+--
+-- Idempotent and cheap on re-entry: when neither the data generation nor the
+-- visible range moved since the last bind, this is a no-op. On a pure scroll
+-- or resize (same generation) only newly revealed rows re-bind. Scroll
+-- (OnMouseWheel), viewport resize (OnSizeChanged, grip release via Refresh's
+-- generation-matched early path), and Refresh all land here.
+--
+-- Geometry only: every comparison below touches plain numbers (scroll
+-- offset, heights, indices). Amount fields ride through untouched inside
+-- sources[i] to _SetRowSource, whose secret guards are unchanged.
+function Window:_BindVisibleRows()
+    local sources = self._renderSources
+    if not sources then return end
+    local sf = self.scrollFrame
+    local barH   = ResolveAppearance(self.windowID, "barHeight")  or 18
+    local barGap = ResolveAppearance(self.windowID, "barSpacing") or 2
+    local scrollY = (sf and sf:GetVerticalScroll()) or 0
+    local viewH   = (sf and sf:GetHeight()) or 0
+    local renderCount = math.min(#sources, BAR_POOL_SIZE)
+    local first, last = ComputeVisibleBindRange(scrollY, viewH, barH + barGap, renderCount)
+
+    local gen = self._lastGeneration
+    if gen == self._boundGeneration
+        and first == self._boundFirst and last == self._boundLast then
+        return
+    end
+    local sameData = gen == self._boundGeneration
+    local oldFirst = self._boundFirst or 0
+    local oldLast  = self._boundLast  or -1
+    for i = 1, #self.rows do
+        local row = self.rows[i]
+        local visible = i >= first and i <= last
+        if visible and not (sameData and i >= oldFirst and i <= oldLast) then
+            self:_SetRowSource(row, sources[i], self._renderFillMax)
+        end
+        row:SetShown(visible)
+    end
+    self._boundGeneration, self._boundFirst, self._boundLast = gen, first, last
+end
+
 function Window:Refresh()
     if not self.frame then return end
 
@@ -2018,9 +2244,18 @@ function Window:Refresh()
     end
 
     local _t0 = Perf.enabled and PerfNow() or 0
-    self:_ApplyHeader()
-    self:_ApplyFonts()
-    self:_ApplyColors()
+    -- Appearance: only when a settings entry point bumped the revision (see
+    -- the Appearance revision block above BumpAppearanceRevision). Per-tick
+    -- data refreshes skip all three style walks; per-SOURCE styling that
+    -- tracks row occupancy (class colors, bar texture) still runs inside
+    -- _SetRowSource on every bind.
+    local rev = QUI_DamageMeter._appearanceRev
+    if ShouldReapplyAppearance(self._appliedAppearanceRev, rev) then
+        self:_ApplyHeader()
+        self:_ApplyFonts()
+        self:_ApplyColors()
+        self._appliedAppearanceRev = rev
+    end
 
     -- Healing views optionally include absorbs (settings.combineAbsorbsIntoHealing).
     local view
@@ -2031,7 +2266,14 @@ function Window:Refresh()
     else
         view = Data:GetView(self.sessionType, self.damageMeterType, self.sessionID)
     end
-    if view.generation == self._lastGeneration then return end
+    if view.generation == self._lastGeneration then
+        -- Data unchanged — but the viewport may have moved since the last
+        -- bind: the resize grips and the Layout Mode size sliders call
+        -- Refresh directly after SetSize. _BindVisibleRows no-ops when the
+        -- range didn't change either.
+        self:_BindVisibleRows()
+        return
+    end
     self._lastGeneration = view.generation
 
     -- Session timer text. Secret durations must go straight through
@@ -2049,13 +2291,16 @@ function Window:Refresh()
     local sources, fillMax = PrepareSourcesForRender(view)
     local renderCount = math.min(#sources, BAR_POOL_SIZE)
 
-    for i = 1, renderCount do
-        self:_SetRowSource(self.rows[i], sources[i], fillMax)
-        self.rows[i]:Show()
-    end
-    for i = renderCount + 1, #self.rows do
-        self.rows[i]:Hide()
-    end
+    -- Stash the render inputs for the out-of-band re-bind paths (mouse
+    -- wheel, viewport resize, sticky evaluation) so they can re-bind
+    -- without re-running the full Refresh. Clearing _boundGeneration forces
+    -- the _BindVisibleRows call below to re-bind every visible row against
+    -- the new sources even when the visible range itself didn't move — and
+    -- it also covers RefreshAll's forced-repaint contract (same view
+    -- generation, new settings).
+    self._renderSources = sources
+    self._renderFillMax = fillMax
+    self._boundGeneration = nil
 
     -- Size the scroll content to match what's rendered so the scrollbar and
     -- mouse wheel know how far to scroll. Row pitch = barHeight + barSpacing.
@@ -2072,13 +2317,14 @@ function Window:Refresh()
     -- Sticky self-row: shown when the local player is outside the currently
     -- visible scroll range. _UpdateStickyVisibility computes the predicate
     -- against the current viewport + scroll offset and toggles sticky/sep,
-    -- re-anchoring scrollFrame's bottom to shrink/grow the viewport.
-    -- pinnedSelf, sources, and fillMax are read directly by the method via
-    -- self._stickySources / self._stickyMaxValue so the OnMouseWheel handler
-    -- (Task 5) can re-evaluate without re-running the full Refresh.
-    self._stickySources = sources
-    self._stickyMaxValue = fillMax
+    -- re-anchoring scrollFrame's bottom to shrink/grow the viewport. It
+    -- reads self._renderSources / self._renderFillMax (stashed above).
     self:_UpdateStickyVisibility()
+
+    -- Bind LAST: _UpdateScrollThumb may clamp the scroll offset and
+    -- _UpdateStickyVisibility may re-anchor the viewport bottom — both
+    -- change which rows are visible, and the bind must see final geometry.
+    self:_BindVisibleRows()
 
     -- Phase 4: refresh an open breakdown popup on every parent-window tick.
     self:RefreshBreakdown()
@@ -2207,9 +2453,7 @@ local function AttachWindowResizeOverlay(overlay, frame, window, windowID)
                 LM:RecordFreeElementPosition(overlay._barKey, frame)
             end
 
-            if window.Refresh then
-                pcall(window.Refresh, window)
-            end
+            ns.SafeCallMethodIfPresent("best-effort-style", window, "Refresh")
 
             -- Re-sync the Layout Mode Frame Size sliders to the dragged size
             -- (they read the live size only at build time otherwise).
@@ -2359,7 +2603,7 @@ do
                         if _G.QUI_ReassertAnchorAfterResize then
                             _G.QUI_ReassertAnchorAfterResize(providerKey)
                         end
-                        if window.Refresh then pcall(window.Refresh, window) end
+                        ns.SafeCallMethodIfPresent("best-effort-style", window, "Refresh")
                     end
 
                     local prevPosOnly = U._layoutModePositionOnly
@@ -2526,6 +2770,9 @@ function Window.New(windowID)
     scrollFrame:SetScript("OnSizeChanged", function(_, w)
         if w and w > 0 then scrollContent:SetWidth(w) end
         if self._UpdateScrollThumb then self:_UpdateScrollThumb() end
+        -- Viewport height changed: newly revealed rows must bind now, not on
+        -- the next data tick. No-ops when the visible range didn't move.
+        if self._BindVisibleRows then self:_BindVisibleRows() end
     end)
 
     -- Mouse wheel: two rows per tick, clamped to [0, contentH - viewportH].
@@ -2544,6 +2791,7 @@ function Window.New(windowID)
         sf:SetVerticalScroll(newVal)
         if self._UpdateStickyVisibility then self:_UpdateStickyVisibility() end
         if self._UpdateScrollThumb     then self:_UpdateScrollThumb()     end
+        if self._BindVisibleRows       then self:_BindVisibleRows()       end
     end)
 
     -- Thumb scrollbar: thin accent-colored bar at the right edge, auto-hides
@@ -2816,7 +3064,15 @@ function Breakdown:_SetSpellRow(row, spell, maxAmount)
         row.Icon:SetTexture("Interface\\Icons\\INV_Misc_QuestionMark")
     end
 
-    row.Name:SetText((spell.rank or 0) .. ". " .. (spell.name or "?"))
+    -- spell.name can be a SECRET creatureName (NormalizeSpells value-copies
+    -- it) — `or "?"` / Lua `..` on it throw; compose via the
+    -- SetFormattedText sink instead.
+    local spellName = spell.name
+    if Helpers and Helpers.IsSecretValue and Helpers.IsSecretValue(spellName) then
+        row.Name:SetFormattedText("%d. %s", spell.rank or 0, spellName) -- @secret-policy: sink-passthrough
+    else
+        row.Name:SetText((spell.rank or 0) .. ". " .. (spellName or "?"))
+    end
     local numberFormat = ResolveAppearance(self.parentWindowID, "numberFormat") or "compact"
     row.Value:SetText(FormatNumber(spell.totalAmount, numberFormat))
 
@@ -2829,7 +3085,8 @@ function Breakdown:_SetSpellRow(row, spell, maxAmount)
     local IsSecret = Helpers and Helpers.IsSecretValue
     local fillMin, fillMaxValue, fillValue = ComputeBarFill(nil, spell, maxAmount, nil, IsSecret)
     row.Bar:SetMinMaxValues(fillMin, fillMaxValue)
-    row.Bar:SetValue(fillValue or 0)
+    -- ComputeBarFill returns non-nil; `or 0` would truth-test a secret fill.
+    row.Bar:SetValue(fillValue)
 
     -- Bar color: inherit parent window's accent or custom color (class color
     -- doesn't apply to spells).
@@ -2865,17 +3122,26 @@ function Breakdown:_SetTargetRow(row, target, maxAmount)
         row.Icon:SetTexture(nil)
     end
 
-    row.Name:SetText(ShortenName(target.name) or "?")
+    -- target.name can be a secret enemyName (PivotPlayerTargets stores it
+    -- as a value) — `or "?"` truth-tests it; route secrets straight to the
+    -- SetText sink instead.
+    local IsSecret = Helpers and Helpers.IsSecretValue
+    local targetName = ShortenName(target.name)
+    if IsSecret and IsSecret(targetName) then
+        row.Name:SetText(targetName) -- @secret-policy: sink-passthrough
+    else
+        row.Name:SetText(targetName or "?")
+    end
     local numberFormat = ResolveAppearance(self.parentWindowID, "numberFormat") or "compact"
     row.Value:SetText(FormatNumber(target.totalAmount, numberFormat))
 
     -- Aggregated target totals are plain Lua numbers (secret amounts were
     -- skipped during aggregation), but route through the widget anyway for
-    -- consistency with the rest of the meter.
-    local IsSecret = Helpers and Helpers.IsSecretValue
+    -- consistency with the rest of the meter. ComputeBarFill returns non-nil;
+    -- `or 0` would truth-test a secret fill value.
     local fillMin, fillMaxValue, fillValue = ComputeBarFill(nil, target, maxAmount, nil, IsSecret)
     row.Bar:SetMinMaxValues(fillMin, fillMaxValue)
-    row.Bar:SetValue(fillValue or 0)
+    row.Bar:SetValue(fillValue)
 
     -- Bar color: class color for known players, else parent accent / custom.
     local alpha = ResolveAppearance(self.parentWindowID, "barFillAlpha") or 1
@@ -2925,9 +3191,15 @@ function Breakdown:Refresh()
             self.source.sourceGUID, self.source.sourceCreatureID, sessionID)
     end
 
-    -- Title: "Damage Done by <Name>"
+    -- Title: "Damage Done by <Name>". A secret name can't ride Lua concat —
+    -- compose via the SetFormattedText sink instead.
     local label = LabelForType(damageMeterType)
-    self.TitleLabel:SetText(label .. " by " .. (ShortenName(self.source.name) or "?"))
+    local titleName = ShortenName(self.source.name)
+    if Helpers and Helpers.IsSecretValue and Helpers.IsSecretValue(titleName) then
+        self.TitleLabel:SetFormattedText("%s by %s", label, titleName) -- @secret-policy: sink-passthrough
+    else
+        self.TitleLabel:SetText(label .. " by " .. (titleName or "?"))
+    end
 
     local visibleCount = math.min(#view.spells, BREAKDOWN_POOL_SIZE)
     for i = 1, visibleCount do
@@ -3046,11 +3318,14 @@ function WindowManager:Despawn(windowID)
     -- Phase 3: also unregister from Layout Mode + the frame resolver registry
     -- so the dead window doesn't continue to claim a slot in the layout list.
     local key = LayoutKey(windowID)
+    -- Loud by design: key is our own "damageMeter_window_<id>" string (never
+    -- secret-tainted), so a failure here is our bug, not an expected/secret
+    -- class. Let it crash at destroy time instead of leaking silently.
     if ns.QUI_LayoutMode and ns.QUI_LayoutMode.UnregisterElement then
-        pcall(ns.QUI_LayoutMode.UnregisterElement, ns.QUI_LayoutMode, key)
+        ns.QUI_LayoutMode.UnregisterElement(ns.QUI_LayoutMode, key)
     end
     if _G.QUI_UnregisterFrameResolver then
-        pcall(_G.QUI_UnregisterFrameResolver, key)
+        _G.QUI_UnregisterFrameResolver(key)
     end
     local Registry = ns.Settings and ns.Settings.Registry
     if Registry and type(Registry.UnregisterLookupKey) == "function" then
@@ -3074,6 +3349,11 @@ function WindowManager:DespawnAll()
 end
 
 function WindowManager:ClearRuntimeSessionIDs()
+    -- Session identity changes rewrite the header label ("Type | Session"),
+    -- which the revision-gated _ApplyHeader paints. This path is reached
+    -- from Data._onChange after a meter reset WITHOUT going through
+    -- RefreshAll, so it must bump the revision itself.
+    QUI_DamageMeter.BumpAppearanceRevision()
     local s = GetSettings()
     self:Enumerate(function(_windowID, w)
         if w then
@@ -3190,9 +3470,10 @@ function WindowManager:RefreshAll()
     -- Force every live window to re-render NOW. Used by:
     --   - settings widget callbacks (texture, font, color changes)
     --   - ConfigButton menu actions (type / session switch)
-    -- We bypass the _lastGeneration short-circuit by clearing it; the next
-    -- Refresh() call walks all the source binding logic and re-applies
-    -- appearance from current settings.
+    -- Bumping the appearance revision makes the next Refresh re-apply
+    -- header/fonts/colors; clearing _lastGeneration bypasses the data guard
+    -- so row binding also re-runs against current settings.
+    QUI_DamageMeter.BumpAppearanceRevision()
     for _, w in pairs(self.windows) do
         if w then
             w._lastGeneration = -1
@@ -3419,7 +3700,10 @@ if ns.Registry then
         end,
         priority = 50,
         group = "skinning",
-        importCategories = { "skinning", "theme" },
+        -- "damageMeter": selective profile import of the Damage Meter
+        -- category (core/profile_io.lua) must re-apply appearance now that
+        -- Refresh no longer re-styles on every tick.
+        importCategories = { "skinning", "theme", "damageMeter" },
     })
 end
 

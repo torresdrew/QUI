@@ -43,7 +43,7 @@ local function BuildLinkedSpellIDsFingerprint(linkedSpellIDs)
     local parts = {}
     for i, linkedID in ipairs(linkedSpellIDs) do
         if issecretvalue and issecretvalue(linkedID) then
-            parts[i] = "secret"
+            parts[i] = "secret" -- @secret-policy: encode-secret-as-placeholder
         else
             parts[i] = tostring(linkedID or 0)
         end
@@ -107,6 +107,48 @@ local function CancelRefreshTimers()
             handle:Cancel()
         end
         refreshTimers[i] = nil
+    end
+end
+
+local IsCooldownViewerReady
+local initialReanchorDoneByKey = {}
+
+local function ResetInitialReanchorDone()
+    for key in pairs(initialReanchorDoneByKey) do
+        initialReanchorDoneByKey[key] = nil
+    end
+end
+
+local function MarkInitialReanchorDone(key)
+    if key then
+        initialReanchorDoneByKey[key] = true
+    end
+end
+
+local function IsInitialReanchorDone(key)
+    return initialReanchorDoneByKey[key] == true
+end
+
+local function RefreshReanchoredBuiltin(boot, key)
+    if not (boot and boot.RefreshBuiltin) then return nil end
+    local result = boot:RefreshBuiltin(key)
+    if not IsCooldownViewerReady or IsCooldownViewerReady() then
+        MarkInitialReanchorDone(key)
+    end
+    return result
+end
+
+local function BlankReanchoredNativeItemFrame(frame)
+    if not frame then return end
+    if frame.SetAlpha then frame:SetAlpha(0) end
+
+    local cd = frame.Cooldown
+    if not cd then
+        local ok, cooldown = ns.SafeCallMethodIfPresent("best-effort-style", frame, "GetCooldownFrame")
+        if ok then cd = cooldown end
+    end
+    if cd and cd.SetDrawSwipe then
+        cd:SetDrawSwipe(false)
     end
 end
 
@@ -206,7 +248,7 @@ end
 
 local function FireLoadoutChangeCallbacks()
     for i = 1, #_loadoutChangeCallbacks do
-        pcall(_loadoutChangeCallbacks[i])
+        ns.SafeCall("bulkhead", _loadoutChangeCallbacks[i])
     end
 end
 
@@ -354,11 +396,20 @@ end
 local function GetCurrentCharacterKey()
     if not UnitName then return nil end
     local name, realm = UnitName("player")
+    -- 12.1: UnitName is identity-restricted (SecretWhenUnitIdentityRestricted).
+    -- type() checks PASS secrets, so they are not guards — probe explicitly
+    -- before any ==/concat. A secret identity can't key anything: bail.
+    if issecretvalue and issecretvalue(name) then return nil end -- @secret-policy: reject-secret-ids
+    if issecretvalue and issecretvalue(realm) then realm = nil end
     if type(name) ~= "string" or name == "" then
         return nil
     end
     if type(realm) ~= "string" or realm == "" then
-        realm = GetRealmName and GetRealmName() or nil
+        realm = nil
+        if GetRealmName then
+            realm = GetRealmName()
+            if issecretvalue and issecretvalue(realm) then realm = nil end
+        end
     end
     if type(realm) ~= "string" or realm == "" then
         return name
@@ -369,7 +420,7 @@ end
 local function GetCurrentProfileName()
     local db = QUICore and QUICore.db
     if db and db.GetCurrentProfile then
-        local ok, profileName = pcall(db.GetCurrentProfile, db)
+        local ok, profileName = ns.SafeCallMethod("best-effort-style", db, "GetCurrentProfile")
         if ok and type(profileName) == "string" and profileName ~= "" then
             return profileName
         end
@@ -1421,6 +1472,17 @@ local function ShouldDeferContainerLayoutInCombat(trackerKey, settings)
         return true
     end
 
+    -- clickableIcons may have been toggled OFF while pooled icons still carry a
+    -- stale (hidden) SecureActionButton child: that child is retained for the
+    -- icon's lifetime and stays protected, so a combat rebuild would Hide/recycle
+    -- a protected frame -> ADDON_ACTION_BLOCKED. Defer while any pooled icon is
+    -- still protected; recovery is the same PLAYER_REGEN_ENABLED pending-refresh
+    -- path as the arms above.
+    if ns.CDMIconFactory and ns.CDMIconFactory.PoolHasProtectedIcon
+        and ns.CDMIconFactory:PoolHasProtectedIcon(trackerKey) then
+        return true
+    end
+
     return false
 end
 
@@ -1689,6 +1751,38 @@ function CDMContainers_API:CreateContainer(name, containerType)
     return key
 end
 
+-- >>> QUI_TEST_EXTRACT PurgeContainerSatellites (sentinels used by
+-- tests/unit/cdm_delete_container_satellites_test.lua to load this pure
+-- function standalone -- cdm_containers.lua as a whole is too
+-- dependency-heavy to instantiate headlessly, see
+-- cdm_containers_combat_end_refresh_coalesce_test.lua).
+-- Purge per-container satellite settings keyed on the container name.
+-- Pure (profile-table in, mutations only) so the unit test can drive it
+-- without the frame runtime. Shared by DeleteContainer; the orphan
+-- migration (core/migrations.lua v53) can NOT reuse it (different addon
+-- load context) and carries its own suffix-list-based copy — this one
+-- needs no suffix list because the containerKey is known: any glow key
+-- with that prefix is this container's satellite.
+local function PurgeContainerSatellites(profile, containerKey)
+    if type(profile) ~= "table" or type(containerKey) ~= "string" then return end
+    local glow = profile.customGlow
+    if type(glow) == "table" then
+        for k in pairs(glow) do
+            if type(k) == "string" and k:sub(1, #containerKey) == containerKey then
+                glow[k] = nil
+            end
+        end
+    end
+    if type(profile.cooldownEffects) == "table" then
+        profile.cooldownEffects["hide_" .. containerKey] = nil
+    end
+    if type(profile.frameAnchoring) == "table" then
+        profile.frameAnchoring["cdmCustom_" .. containerKey] = nil
+    end
+end
+-- <<< QUI_TEST_EXTRACT PurgeContainerSatellites
+ns.CDMPurgeContainerSatellites = PurgeContainerSatellites -- test seam + migration reuse if loadable
+
 --- Delete a custom container. Returns true on success.
 function CDMContainers_API:DeleteContainer(containerKey)
     if InCombatLockdown() then return false end
@@ -1702,6 +1796,14 @@ function CDMContainers_API:DeleteContainer(containerKey)
     -- Remove from DB
     db.containers[containerKey] = nil
     db[containerKey] = nil
+
+    -- Satellite settings leak fix: effects/glow/anchor entries are keyed on
+    -- the container name by the settings page and layout mode; without this
+    -- they orphan forever (the shipped seed accumulated 15 dead anchors).
+    local profile = QUICore and QUICore.db and QUICore.db.profile
+    if profile then
+        PurgeContainerSatellites(profile, containerKey)
+    end
 
     -- Destroy the frame
     local frame = containers[containerKey]
@@ -2299,6 +2401,29 @@ local function SyncContainerIconsForVisibility(containerKey, hidden, hoverOnly)
             SyncClickButtonForVisibility(icon, containerKey, hidden)
         end
     end
+
+    local container = containers and containers[containerKey]
+    if not (container and container.GetChildren) then
+        return
+    end
+
+    local children = { container:GetChildren() }
+    for _, child in ipairs(children) do
+        if child and child._quiCdmShell then
+            if hidden then
+                if hoverOnly then
+                    SetFrameHoverOnly(child)
+                else
+                    SetFrameMouseDisabled(child)
+                end
+            else
+                SetIconMouseDefault(child)
+            end
+            if containerKey == "essential" or containerKey == "utility" then
+                SyncClickButtonForVisibility(child, containerKey, hidden)
+            end
+        end
+    end
 end
 
 local function SyncContainerBarsForVisibility(container)
@@ -2390,10 +2515,14 @@ end
 -- Ported from cdm_viewer.lua:1069-1554 for addon-owned containers.
 ---------------------------------------------------------------------------
 local function LayoutContainer(trackerKey)
-    if not IsCDMRuntimeEnabled() then return end
+    if not IsCDMRuntimeEnabled() then
+        return
+    end
 
     local container = containers[trackerKey]
-    if not container then return end
+    if not container then
+        return
+    end
 
     -- Aura containers may rebuild during combat. Cooldown containers can have
     -- SecureActionButton children for click-to-cast, so their visibility/layout
@@ -2404,7 +2533,9 @@ local function LayoutContainer(trackerKey)
     -- already rendered.  RefreshAll() on Edit Mode exit rebuilds everything.
     -- Exception: _forceLayoutKey allows the Composer to force layout for
     -- a specific container during edit mode (so it resizes when spells change).
-    if _editModeActive and trackerKey ~= _forceLayoutKey then return end
+    if _editModeActive and trackerKey ~= _forceLayoutKey then
+        return
+    end
 
     local settings = GetTrackerSettings(trackerKey)
     if ShouldDeferContainerLayoutInCombat(trackerKey, settings) then
@@ -2428,7 +2559,9 @@ local function LayoutContainer(trackerKey)
     end
 
     -- Re-entry guard
-    if applying[trackerKey] then return end
+    if applying[trackerKey] then
+        return
+    end
     applying[trackerKey] = true
 
     -- Respect "hide with anchor" — the anchoring system hid this container
@@ -2462,10 +2595,10 @@ local function LayoutContainer(trackerKey)
     local layoutDirection = settings.layoutDirection or "HORIZONTAL"
     vs.cdmLayoutDirection = layoutDirection
 
-    -- Buff tracker: create addon-owned icons via icon factory, adopt
-    -- Blizzard CooldownFrames for taint-safe aura display.
-    -- Blizzard's children stay in the hidden viewer (alpha=0).
-    -- CDMBuffLayout handles positioning and styling of addon-owned icons.
+    -- BuffIcon tracker: relocate Blizzard's live BuffIconCooldownViewer items
+    -- into the QUI buff container through the re-anchor runtime. Inactive
+    -- placeholders still use the owned icon factory path below when the boot
+    -- runtime is not available.
     if trackerKey == "buff" then
         InitBuffContainer()
         container = containers.buff
@@ -2483,6 +2616,14 @@ local function LayoutContainer(trackerKey)
         local ch = (container:GetHeight() or 0)
         if cw <= 1 or ch <= 1 then
             EnsureContainerBootstrapSize(container, "buff")
+        end
+
+        -- Re-anchor engine: relocate Blizzard BuffIcon frames into the QUI buff
+        -- container instead of building owned mirror icons.
+        if ns._cdmBoot then
+            RefreshReanchoredBuiltin(ns._cdmBoot, "buff")
+            applying[trackerKey] = false
+            return
         end
 
         -- Fingerprint: skip rebuild when the same buff spellIDs are active.
@@ -2540,6 +2681,48 @@ local function LayoutContainer(trackerKey)
         -- for this rebuild batch.
         if ns.CDMBuffLayout and ns.CDMBuffLayout.OnLayoutReady then
             ns.CDMBuffLayout:OnLayoutReady()
+        end
+        return
+    end
+
+    -- Re-anchor engine (essential/utility; buff is handled above): relocate
+    -- Blizzard CDM icons into the QUI container (RefreshBuiltin) instead of
+    -- building owned mirror icons. trackedBar stays on the owned StatusBar path
+    -- because BuffBarCooldownViewer is data-source-only.
+    -- Additional spells + the metrics stash ARE ported (env.resolveAdditional /
+    -- env.onMetrics). Still IN-GAME PENDING: active-mode/dynamicLayout drop-filtering
+    -- for re-anchored Blizzard frames (frame runtime state isn't QUI-owned).
+    -- The post-layout tail below is mirrored here so dependent systems still update.
+    if ns._cdmBoot and (trackerKey == "essential" or trackerKey == "utility") then
+        RefreshReanchoredBuiltin(ns._cdmBoot, trackerKey)
+        applying[trackerKey] = false
+
+        -- Post-layout tail (kept in sync with the legacy tail at end of function).
+        RefreshCustomBarRuntimeAfterLayout(trackerKey, settings)
+        if trackerKey == "essential" then
+            local db = GetDB()
+            if db and db.utility and db.utility.anchorBelowEssential then
+                C_Timer.After(0.05, function()
+                    if InCombatLockdown() then return end
+                    if ApplyUtilityAnchor then
+                        ApplyUtilityAnchor()
+                    end
+                end)
+            end
+        end
+        if vs and not vs.cdmUpdatePending then
+            vs.cdmUpdatePending = true
+            C_Timer.After(0.05, function()
+                vs.cdmUpdatePending = nil
+                if InCombatLockdown() then return end
+                UpdateLockedBarsForViewer(trackerKey)
+                if _G.QUI_UpdateCDMAnchoredUnitFrames then
+                    _G.QUI_UpdateCDMAnchoredUnitFrames()
+                end
+                if _G.QUI_UpdateViewerKeybinds then
+                    _G.QUI_UpdateViewerKeybinds(trackerKey)
+                end
+            end)
         end
         return
     end
@@ -2830,9 +3013,10 @@ RefreshAll = function(forceSync)
     -- races against a 0.5s spec-change refresh.
     CancelRefreshTimers()
 
-    if ns.CDMSpellData then
-        ns.CDMSpellData:UpdateCVar()
-    end
+    -- No CVar re-sync here: re-issuing SetCVar("cooldownViewerEnabled") from a
+    -- post-data rebuild performed Blizzard's hidden->shown viewer flip on
+    -- QUI's tainted stack (the cold-login taint). The VARIABLES_LOADED handler
+    -- in cdm_spelldata owns the single pre-data write.
 
     applying["essential"] = false
     applying["utility"] = false
@@ -2964,7 +3148,7 @@ ApplyUtilityAnchor = function()
 
     local anchorParent = UpdateUtilityAnchorProxy() or essContainer
 
-    local ok = pcall(function()
+    local ok = ns.SafeCall("best-effort-style", function()
         utilContainer:ClearAllPoints()
         utilContainer:SetPoint("TOP", anchorParent, "BOTTOM", 0, -totalOffset)
     end)
@@ -3334,6 +3518,358 @@ local VIEWER_KEY_MAP = {
     buffBar   = "trackedBar",
 }
 
+-- pcall-guarded construction of the (still-inert) re-anchor runtime. Kept out of
+-- Initialize so that function stays under luac's 60-upvalue-per-function cap.
+local REANCHOR_KEYS = { "essential", "utility", "buff" }
+local EDIT_LOCK_KEYS = { "essential", "utility", "buff", "trackedBar" }
+local reanchorHooksReadyFrame
+local reanchorHooksReadyQueued = false
+local reanchorHooksReadyMarkDirty = false
+
+IsCooldownViewerReady = function()
+    local catalog = ns.CDMCatalog
+    if catalog and catalog.IsCooldownViewerReady then
+        return catalog.IsCooldownViewerReady()
+    end
+
+    local api = _G.C_CooldownViewer
+    if not api then return false end
+    if not api.IsCooldownViewerAvailable then return true end
+    local ok, ready = pcall(api.IsCooldownViewerAvailable)
+    return ok and ready == true
+end
+
+local function QueueReanchorHooksWhenCooldownViewerReady(markDirty)
+    if markDirty then
+        reanchorHooksReadyMarkDirty = true
+    end
+    if reanchorHooksReadyQueued then return true end
+    if not CreateFrame then return false end
+
+    reanchorHooksReadyQueued = true
+    if not reanchorHooksReadyFrame then
+        reanchorHooksReadyFrame = CreateFrame("Frame")
+    end
+    reanchorHooksReadyFrame:RegisterEvent("COOLDOWN_VIEWER_DATA_LOADED")
+    reanchorHooksReadyFrame:SetScript("OnEvent", function(self, event)
+        if event ~= "COOLDOWN_VIEWER_DATA_LOADED" then return end
+        self:UnregisterEvent("COOLDOWN_VIEWER_DATA_LOADED")
+        self:SetScript("OnEvent", nil)
+        reanchorHooksReadyQueued = false
+        if not IsCooldownViewerReady() then return end
+        local canMarkDirty = (not InCombatLockdown) or not InCombatLockdown()
+        local queuedMarkDirty = reanchorHooksReadyMarkDirty or canMarkDirty
+        reanchorHooksReadyMarkDirty = false
+        ownedEngine:RefreshReanchorRuntimeHooks(queuedMarkDirty)
+    end)
+    return true
+end
+
+-- Task C / G8: own glow overlays for re-anchored Blizzard CDM frames. A re-anchored
+-- frame is NOT an owned IconFactory icon, so the event-driven owned glow path never
+-- reaches it. CDMReanchorProcGlow paints QUI's configured glow on a QUI-OWNED Frame
+-- child of the live frame (created lazily; SetAllPoints to the live frame; CreateFrame
+-- is unprotected so this is combat-legal). The overlay is keyed weakly by the live
+-- frame so a re-pooled frame's overlay is collectible. We NEVER write the secret
+-- frame's strata/level/alpha state -- only a child + glow on that child.
+local _reanchorGlowOverlays = setmetatable({}, { __mode = "k" })
+local REANCHOR_PROC_GLOW_KEY = "_QUICDMReanchorProcGlow"
+
+local function EnsureReanchorGlowOverlay(frame)
+    if not (frame and CreateFrame) then return nil end
+    local o = _reanchorGlowOverlays[frame]
+    if not o then
+        o = CreateFrame("Frame", nil, frame)
+        if o.SetAllPoints then o:SetAllPoints(frame) end
+        _reanchorGlowOverlays[frame] = o
+    end
+    return o
+end
+-- Shared with the pandemic bridge (CDMReanchorPandemic, wired in boot): one
+-- own overlay child per live frame hosts both the proc glow and the pandemic
+-- flash texture.
+ns._CDMEnsureReanchorGlowOverlay = EnsureReanchorGlowOverlay
+
+-- Build (once) + install the ActionButtonSpellAlertManager ShowAlert/HideAlert hook
+-- that suppresses Blizzard's native proc flipbook on re-anchored frames (G6) and
+-- paints QUI's configured glow on the own overlay (G8). Idempotent: the installer's
+-- own guard prevents double-hooking, and re-callable from the hooks retry path (the
+-- manager global may not exist yet at first construction).
+function ownedEngine:InstallReanchorProcGlowHooks(boot)
+    if not (ns.CDMReanchorProcGlow and boot and boot.GetEntryForFrame) then return false end
+    local manager = _G.ActionButtonSpellAlertManager
+    if not manager then return false end
+    local pg = ns._cdmReanchorProcGlow
+    if not pg then
+        pg = ns.CDMReanchorProcGlow.New({
+            getEntryForFrame = function(frame) return boot:GetEntryForFrame(frame) end,
+            ensureOverlay = EnsureReanchorGlowOverlay,
+            resolveGlow = function(entry)
+                local OG = ns._OwnedGlows
+                return OG and OG.ResolveGlowForEntry and OG.ResolveGlowForEntry(entry) or nil
+            end,
+            startGlow = function(overlay, viewerSettings)
+                local OG = ns._OwnedGlows
+                if OG and OG.ApplyGlowWithKey then
+                    OG.ApplyGlowWithKey(overlay, viewerSettings, REANCHOR_PROC_GLOW_KEY)
+                end
+            end,
+            stopGlow = function(overlay)
+                local OG = ns._OwnedGlows
+                if OG and OG.StopGlowWithKey then
+                    OG.StopGlowWithKey(overlay, REANCHOR_PROC_GLOW_KEY)
+                end
+            end,
+            hooksecurefunc = hooksecurefunc,
+        })
+        ns._cdmReanchorProcGlow = pg
+    end
+    return pg:Install(manager)
+end
+
+function ownedEngine:RefreshReanchorRuntimeHooks(markDirty)
+    local boot = ns._cdmBoot
+    local wiring = boot and boot.wiring
+    if not (wiring and wiring.GetViewerForKey) then return false end
+    if not IsCooldownViewerReady() then
+        QueueReanchorHooksWhenCooldownViewerReady(markDirty)
+        return false
+    end
+
+    local function getViewer(key)
+        return wiring:GetViewerForKey(key)
+    end
+
+    local touched = false
+    local hk = ns._cdmReanchorHooks
+    if hk then
+        hk:InstallViewerHooks(getViewer)
+        -- Glue the Essential/Utility viewer rects onto the QUI containers
+        -- (combat-start snap fix): the viewers sit at their native mid-screen
+        -- Edit-Mode position at alpha-1, so any item frame Blizzard lays out
+        -- before QUI claims it rendered mid-screen. Glued, Blizzard's own grid
+        -- layout lands on the QUI container instead. Buff is excluded --
+        -- cdm_buff_layout owns that viewer's anchoring. Viewer anchor writes
+        -- are combat-restricted; a glue missed in combat is recovered on
+        -- PLAYER_REGEN_ENABLED (ReassertViewerGlue).
+        if hk.InstallViewerGlue then
+            hk:InstallViewerGlue(getViewer,
+                function(key)
+                    return CDMContainers_API and CDMContainers_API:GetContainer(key) or nil
+                end,
+                { essential = true, utility = true },
+                function()
+                    return (not InCombatLockdown()) or ns._inInitSafeWindow == true
+                end)
+        end
+        if hk.InstallGlobalMixinHooks and hk:InstallGlobalMixinHooks() then
+            touched = true
+        end
+        if hk.InstallIndexSubscription then
+            hk:InstallIndexSubscription(ns.CDMIndex)
+        end
+        if markDirty then
+            hk:MarkAllDirty()
+        end
+        touched = true
+    end
+    local thk = ns._cdmTrackedBarLifecycleHooks
+    if thk then
+        thk:InstallViewerHooks(getViewer)
+        if thk.InstallGlobalMixinHooks and thk:InstallGlobalMixinHooks() then
+            touched = true
+        end
+        if markDirty then
+            thk:MarkAllDirty()
+        end
+        touched = true
+    end
+
+    local el = ns._cdmReanchorEditLock
+    if el then
+        el:Install(getViewer)
+        touched = true
+    end
+
+    -- Re-attempt the proc-glow/native-alert hook (ActionButtonSpellAlertManager may
+    -- have loaded after the first BootstrapReanchorRuntime); idempotent.
+    if self:InstallReanchorProcGlowHooks(boot) then
+        touched = true
+    end
+
+    return touched
+end
+
+function ownedEngine:BootstrapReanchorRuntime()
+    if not (ns.CDMReanchorBoot and ns.CDMReanchorRealEnv) then return end
+    ResetInitialReanchorDone()
+    local ok, boot = ns.SafeCall("best-effort-style", function()
+        local env = ns.CDMReanchorRealEnv.BuildEnv({
+            getSettings = GetTrackerSettings,
+            resolveAdditional = function(key)
+                if ns.CDMIcons and ns.CDMIcons.ResolveCustomSpellEntries then
+                    return ns.CDMIcons.ResolveCustomSpellEntries(key)
+                end
+                return {}
+            end,
+            -- Replicates the legacy LayoutContainer metrics stash (viewerState
+            -- vs.cdm* fields + ncdm._last*Width/Height persistence). applySize
+            -- already did the container:SetSize; this is the stash only.
+            onMetrics = function(container, metrics)
+                local vs = viewerState[container]
+                if not vs then return end
+                local maxRowWidth = metrics.iconWidth or 0
+                local proxyTotalHeight = metrics.totalHeight or 0
+                vs.cdmIconWidth = maxRowWidth
+                vs.cdmRawContentWidth = metrics.rawContentWidth or 0
+                vs.cdmTotalHeight = proxyTotalHeight
+                vs.cdmProxyYOffset = metrics.proxyYOffset or 0
+                vs.cdmRow1IconHeight = metrics.row1IconHeight or 0
+                vs.cdmRow1BorderSize = metrics.row1BorderSize or 0
+                vs.cdmBottomRowBorderSize = metrics.bottomRowBorderSize or 0
+                vs.cdmBottomRowYOffset = metrics.bottomRowYOffset or 0
+                vs.cdmRow1Width = metrics.row1Width or maxRowWidth
+                vs.cdmBottomRowWidth = metrics.bottomRowWidth or maxRowWidth
+                vs.cdmRawRow1Width = metrics.rawRow1Width or (metrics.rawContentWidth or 0)
+                vs.cdmRawBottomRowWidth = metrics.rawBottomRowWidth or (metrics.rawContentWidth or 0)
+                vs.cdmPotentialRow1Width = metrics.potentialRow1Width or maxRowWidth
+                vs.cdmPotentialBottomRowWidth = metrics.potentialBottomRowWidth or maxRowWidth
+                local ncdm = QUICore and QUICore.db and QUICore.db.profile and QUICore.db.profile.ncdm
+                if ncdm and maxRowWidth > 0 then
+                    local mkey = container._quiCdmKey
+                    if mkey == "essential" then
+                        ncdm._lastEssentialWidth = maxRowWidth
+                        ncdm._lastEssentialHeight = proxyTotalHeight
+                    elseif mkey == "utility" then
+                        ncdm._lastUtilityWidth = maxRowWidth
+                        ncdm._lastUtilityHeight = proxyTotalHeight
+                    end
+                end
+            end,
+        })
+        return ns.CDMReanchorBoot.BuildRuntime(env)
+    end)
+    if ok and boot then
+        ns._cdmBoot = boot
+        -- Re-pool keep-up: hook each managed viewer's RefreshLayout + drive a
+        -- throttled re-claim so re-anchored frames track Blizzard re-pooling.
+        if ns.CDMReanchorHooks then
+            -- Shared settle scheduler for BOTH hook instances below. Must hold a
+            -- LIST of pending flushes: hk (buff) and trackedHooks (trackedBar)
+            -- flip in the same UNIT_AURA dispatch, and a single-slot upvalue
+            -- dropped the earlier instance's callback -- latching its
+            -- _activeScheduled true for the session (buff surface permanently
+            -- deaf to OnActiveStateChanged).
+            local scheduleActiveState = ns.CDMReanchorHooks.CreateActiveStateScheduler(CreateFrame)
+            local hk = ns.CDMReanchorHooks.New({
+                refresh = function(key) return RefreshReanchoredBuiltin(boot, key) end,
+                keys = REANCHOR_KEYS,
+                schedule = function(fn) C_Timer.After(0.05, fn) end,
+                scheduleActiveState = scheduleActiveState,
+                immediateRefreshLayoutKeys = { buff = true },
+                immediateAcquireKeys = { buff = true },
+                blank = BlankReanchoredNativeItemFrame,
+                -- Essential/utility opted in (combat-start snap fix): a frame
+                -- Blizzard acquires mid-combat is parked alpha-0 at acquire
+                -- instead of rendering at the native viewer position until the
+                -- coalesced re-claim pass. isClaimed skips frames the bridge
+                -- still claims -- their anchor guard re-pins them, and
+                -- blanking them would flicker every pool churn.
+                blankKeys = { buff = true, essential = true, utility = true },
+                isClaimed = function(frame)
+                    local bridge = boot.bridge
+                    return (bridge and bridge.IsClaimed and bridge:IsClaimed(frame)) or false
+                end,
+                -- Early anchor-guard install: essential/utility unclaimed
+                -- natives are force-sunk every pass anyway (fail-invisible
+                -- policy); the guard just enforces the same policy the moment
+                -- Blizzard's layout touches a not-yet-claimed frame. Buff is
+                -- excluded -- its unclaimed natives are intentionally visible
+                -- (skipNativeSink).
+                installGuard = function(frame)
+                    local bridge = boot.bridge
+                    if bridge and bridge.InstallAnchorGuard then
+                        bridge:InstallAnchorGuard(frame)
+                    end
+                end,
+                installGuardKeys = { essential = true, utility = true },
+                isInitWindow = function() return ns._inInitSafeWindow == true end,
+                isInitialReanchorDone = IsInitialReanchorDone,
+            })
+            ns._cdmReanchorHooks = hk
+
+            local trackedHooks = ns.CDMReanchorHooks.New({
+                refresh = function(key)
+                    if ns.CDMBuffLayout and ns.CDMBuffLayout.LayoutBars then
+                        ns.CDMBuffLayout.LayoutBars()
+                        MarkInitialReanchorDone(key or "trackedBar")
+                    end
+                end,
+                keys = { "trackedBar" },
+                hooksecurefunc = hooksecurefunc,
+                schedule = function(fn) C_Timer.After(0.05, fn) end,
+                scheduleActiveState = scheduleActiveState,
+                immediateRefreshLayoutKeys = { trackedBar = true },
+                immediateAcquireKeys = { trackedBar = true },
+                blank = BlankReanchoredNativeItemFrame,
+                blankKeys = { trackedBar = true },
+                isInitWindow = function() return ns._inInitSafeWindow == true end,
+                isInitialReanchorDone = IsInitialReanchorDone,
+            })
+            ns._cdmTrackedBarLifecycleHooks = trackedHooks
+            self:RefreshReanchorRuntimeHooks(false)
+
+            if EventRegistry and EventRegistry.RegisterCallback
+               and not ns._cdmReanchorSettingsCallbacksInstalled then
+                ns._cdmReanchorSettingsCallbacksInstalled = true
+                ns._cdmReanchorSettingsCallbackOwner = {}
+                local function reanchorAfterSettings()
+                    if ns._cdmReanchorHooks then
+                        ns._cdmReanchorHooks:MarkAllDirty()
+                    end
+                    if ns._cdmTrackedBarLifecycleHooks then
+                        ns._cdmTrackedBarLifecycleHooks:MarkAllDirty()
+                    end
+                end
+                EventRegistry:RegisterCallback("CooldownViewerSettings.OnShow",
+                    reanchorAfterSettings, ns._cdmReanchorSettingsCallbackOwner)
+                EventRegistry:RegisterCallback("CooldownViewerSettings.OnHide",
+                    reanchorAfterSettings, ns._cdmReanchorSettingsCallbackOwner)
+            end
+        end
+        -- Task C (G6 + G8): suppress Blizzard's native proc flipbook on re-anchored
+        -- frames + paint QUI's configured glow on an own overlay. Re-attempted by
+        -- RefreshReanchorRuntimeHooks if the manager global isn't loaded yet.
+        self:InstallReanchorProcGlowHooks(boot)
+        -- Lock the re-anchored viewers out of Blizzard Edit Mode (non-movable + close
+        -- the settings dialog when it attaches to one of ours) so the native
+        -- Cooldown Manager doesn't re-surface as an editable system over the QUI
+        -- containers. Additive hooks only; the settings dialog global may not
+        -- exist yet at this point -- HookDialog is also re-attempted lazily below.
+        if ns.CDMReanchorEditLock then
+            local el = ns.CDMReanchorEditLock.New({
+                hooksecurefunc = hooksecurefunc,
+                keys = EDIT_LOCK_KEYS,
+                getDialog = function() return _G.EditModeSystemSettingsDialog end,
+            })
+            local wiring = boot.wiring
+            if wiring and wiring.GetViewerForKey then
+                el:Install(function(key) return wiring:GetViewerForKey(key) end)
+            end
+            ns._cdmReanchorEditLock = el
+        end
+    else
+        -- Legacy fallback is intentional, but it must never be silent: the
+        -- reanchor engine is the maintained 12.1 rendering path and a
+        -- swallowed bootstrap error here previously degraded CDM for the
+        -- whole session with no diagnostics.
+        ns._cdmBootError = (not ok and tostring(boot))
+            or "BuildRuntime returned nil"
+        print("|cffff4444QUI:|r " .. ns.L["CDM re-anchor bootstrap failed; using legacy rendering."]
+            .. " " .. ns._cdmBootError)
+    end
+end
+
 ---------------------------------------------------------------------------
 -- Initialize: called by the local provider bridge during ADDON_LOADED
 ---------------------------------------------------------------------------
@@ -3358,13 +3894,15 @@ function ownedEngine:Initialize()
         -- called directly off ns._OwnedGlows (see RunPostLayoutRefresh) to avoid
         -- a second _G.QUI_* global.
         _G.QUI_RefreshCustomGlows = ns._OwnedGlows.RefreshAllGlows
-        -- No-op effects refresh (owned engine has no effects.lua)
-        ---@type fun(...)
-        _G.QUI_RefreshCooldownEffects = function() end
     end
     if ns._OwnedSwipe then
         QUI.CooldownSwipe = ns._OwnedSwipe
         _G.QUI_RefreshCooldownSwipe = ns._OwnedSwipe.Apply
+        -- Hide Cooldown Effects rides the swipe applicator: the per-icon apply
+        -- consults profile.cooldownEffects (cdm_effects.lua
+        -- IsContainerEffectsHidden) and forces swipe+edge off for hidden
+        -- containers, so a full swipe re-apply is exactly the effects refresh.
+        _G.QUI_RefreshCooldownEffects = ns._OwnedSwipe.Apply
     end
 
     if ns.Registry then
@@ -3456,14 +3994,11 @@ function ownedEngine:Initialize()
         ns.InvalidateCDMFrameCache()
     end
 
-    -- Build the Blizzard CDM mirror catalog NOW, inside the safe window, so
-    -- BuildIcons → TryBindIconToBlizz can resolve cooldownIDs for every
-    -- Blizzard-mirrored icon. The mirror's own PLAYER_LOGIN / PLAYER_ENTERING_WORLD
-    -- Walk fires on a separate event frame and can run after this window has
-    -- closed; on a combat /reload it would otherwise bail until combat ends.
-    if ns.CDMBlizzMirror and ns.CDMBlizzMirror.ForceRescan then
-        ns.CDMBlizzMirror.ForceRescan()
-    end
+    -- Construct the re-anchor runtime (still inert: RefreshBuiltin is called by
+    -- nobody until the LayoutContainer splice in a later phase). Extracted to its
+    -- own method so Initialize stays under luac's 60-upvalue-per-function cap;
+    -- `self` is a param here, so this call adds no upvalue to Initialize.
+    self:BootstrapReanchorRuntime()
 
     -- Synchronous initial layout: leverages the ADDON_LOADED safe window on
     -- combat /reload (InCombatLockdown() still returns true). If Blizzard viewers
@@ -3534,6 +4069,16 @@ function ownedEngine:Initialize()
         end
     end)
 
+    -- Late cold-login settle pass. On first login Blizzard can hydrate or
+    -- repool CooldownViewer aura children after the early 1s/3s passes; /reload
+    -- works because those pools are already warm. This mirrors the reference
+    -- addon's defensive late reanchor without touching combat.
+    C_Timer.After(6.0, function()
+        if initialized and not InCombatLockdown() then
+            RefreshAll()
+        end
+    end)
+
     -- Register runtime events (spec change, zone change, cinematics, addon loads)
     local eventFrame = CreateFrame("Frame")
     runtimeEventFrame = eventFrame
@@ -3565,15 +4110,21 @@ function ownedEngine:Initialize()
             return
         end
 
-        if event == "ADDON_LOADED" and arg1 == "Blizzard_CooldownManager" then
+        local viewerAddon = ns.CDMCooldownViewerAddon
+        local cooldownViewerLoaded = (viewerAddon and viewerAddon.IsViewerAddon and viewerAddon.IsViewerAddon(arg1))
+            or arg1 == "Blizzard_CooldownViewer"
+
+        if event == "ADDON_LOADED" and cooldownViewerLoaded then
             -- Viewer just loaded -- grab it as buff container
             InitBuffContainer()
+            ownedEngine:RefreshReanchorRuntimeHooks(not InCombatLockdown())
             if initialized then
                 if ns.InvalidateCDMFrameCache then ns.InvalidateCDMFrameCache() end
                 RefreshAll()
             end
         elseif event == "PLAYER_ENTERING_WORLD" then
             local isLogin, isReload = arg1, arg2
+            ownedEngine:RefreshReanchorRuntimeHooks((not isReload) and not InCombatLockdown())
             if isReload then
                 -- Second layout pass during combat /reload safe window.
                 -- Catches Blizzard viewer children that populated after
@@ -3583,9 +4134,6 @@ function ownedEngine:Initialize()
                 local pewPreviousInitSafeWindow = ns._inInitSafeWindow
                 inInitSafeWindow = true
                 ns._inInitSafeWindow = true
-                if ns.CDMBlizzMirror and ns.CDMBlizzMirror.ForceRescan then
-                    ns.CDMBlizzMirror.ForceRescan()
-                end
                 RefreshAll(true)
                 if _G.QUI_ApplyAllFrameAnchors then
                     _G.QUI_ApplyAllFrameAnchors()
@@ -3834,6 +4382,22 @@ function ownedEngine:Initialize()
                 end
             end
         elseif event == "PLAYER_REGEN_ENABLED" then
+            -- Recover a viewer glue missed in combat (viewer anchor writes are
+            -- combat-restricted). Before the spec-tracking early-return: the
+            -- glue is independent of loadout state.
+            if ns._cdmReanchorHooks and ns._cdmReanchorHooks.ReassertViewerGlue then
+                ns._cdmReanchorHooks:ReassertViewerGlue()
+            end
+
+            -- Drain reanchor passes deferred in combat by the protected-owned gate
+            -- (owned icons carrying a secure clickButton could not be Factory-
+            -- recycled without ADDON_ACTION_BLOCKED). Independent of spec/loadout
+            -- state, so it runs before the spec-tracking early-returns -- same
+            -- placement rationale as ReassertViewerGlue above.
+            if ns._cdmBoot and ns._cdmBoot.DrainPendingCombatRefresh then
+                ns._cdmBoot:DrainPendingCombatRefresh()
+            end
+
             local readyNow = specTrackingReady
             if not specTrackingReady then
                 readyNow = InitSpecTracking()
@@ -3948,6 +4512,7 @@ function ownedEngine:DisableRuntime()
     specTrackingPendingRefresh = false
     specTrackingRetryToken = specTrackingRetryToken + 1
     inInitSafeWindow = false
+    ResetInitialReanchorDone()
     CancelRefreshTimers()
 
     -- Loadout state teardown (parallels the spec-tracking lines above).
@@ -3989,8 +4554,8 @@ function ownedEngine:GetViewerFrame(key)
     if containers[key] then
         return containers[key]
     end
-    -- No QUI container yet (engine pre-init or unknown key): the provider
-    -- handles Blizzard-frame pre-init resolution above this layer.
+    -- No QUI container yet (engine pre-init or unknown key): fail closed.
+    -- Blizzard frames are explicit data sources only, never provider fallbacks.
     return nil
 end
 
@@ -4116,8 +4681,7 @@ function CDMProvider:GetViewerFrame(key)
         if frame then return frame end
     end
 
-    local blizzName = BLIZZARD_FRAME_KEYS[key]
-    return blizzName and _G[blizzName] or nil
+    return nil
 end
 
 function CDMProvider:GetViewerFrames()
@@ -4129,13 +4693,7 @@ function CDMProvider:GetViewerFrames()
         return ownedEngine:GetViewerFrames()
     end
 
-    local frames = {}
-    for _, blizzName in pairs(BLIZZARD_FRAME_KEYS) do
-        if _G[blizzName] then
-            frames[#frames + 1] = _G[blizzName]
-        end
-    end
-    return frames
+    return self.emptyFrames
 end
 
 local GLOBAL_WIRE_MAP = {
@@ -4233,6 +4791,24 @@ _G.QUI_IsCDMMasterEnabled = function()
     return CDMProvider:IsRuntimeEnabled()
 end
 
+-- Per-frame feature resolvers for the re-anchor engine. Re-anchored Blizzard CDM
+-- frames stay parented to the Blizzard viewer, so feature code that enumerates a
+-- QUI container's children (keybinds, rotation glow) can't see them. These let
+-- that code also enumerate the re-anchored frames and resolve each frame's curated
+-- spell entry (for spellID) without ever reading a key off the Blizzard frame.
+-- viewerName here is the container/taxonomy key ("essential"/"utility"/...).
+_G.QUI_GetReanchoredCDMFrames = function(viewerName)
+    local boot = ns._cdmBoot
+    if not boot or not boot.GetReanchoredFrames then return nil end
+    return boot:GetReanchoredFrames(viewerName)
+end
+
+_G.QUI_ResolveCDMFrameEntry = function(frame)
+    local boot = ns._cdmBoot
+    if not boot or not boot.GetEntryForFrame then return nil end
+    return boot:GetEntryForFrame(frame)
+end
+
 ns.CDMProvider = CDMProvider
 
 local providerEventFrame = CreateFrame("Frame")
@@ -4254,12 +4830,118 @@ _G.QUI_DebugCDM = _G.QUI_DebugCDM or {}
 _G.QUI_DebugCDM.GetLayoutSettings = function() return ns.QUI_LayoutMode_Settings end
 _G.QUI_DebugCDM.GetLayoutMode = function() return ns.QUI_LayoutMode end
 _G.QUI_DebugCDM.GetContainersAPI = function() return CDMContainers_API end
+-- One-shot cold-boot diagnostic for the buff surface: prints every stage of the
+-- pipeline (catalog readiness, hook install, curated list + live-aura probe,
+-- claim registry, per-item native state) so a single /run call localizes which
+-- stage is dead. Read-only; every native read is pcall'd.
+_G.QUI_DebugCDM.BuffState = function()
+    local function say(...) print("|cFF30D1FF[BuffState]|r", ...) end
+    say("catalogReady:", IsCooldownViewerReady() and true or false,
+        " initialReanchorDone(buff):", IsInitialReanchorDone("buff") and true or false,
+        " boot:", ns._cdmBoot and true or false,
+        " hooks:", ns._cdmReanchorHooks and true or false)
+    local viewer = _G.BuffIconCooldownViewer
+    if ns._cdmReanchorHooks and viewer then
+        say("viewerHooked:", ns._cdmReanchorHooks._hooked[viewer] and true or false)
+    end
+    local curated = {}
+    if ns.CDMSpellData and ns.CDMSpellData.BuildSpellListFromOwned then
+        local ok, list = pcall(ns.CDMSpellData.BuildSpellListFromOwned, ns.CDMSpellData, "buff")
+        if ok and type(list) == "table" then curated = list end
+    end
+    say("curated:", #curated)
+    local query = ns.CDMSources and ns.CDMSources.QueryPlayerAuraBySpellID
+    for i = 1, #curated do
+        local e = curated[i]
+        local sid = e.overrideSpellID or e.spellID or e.id
+        local live = false
+        if query and type(sid) == "number" then
+            local ok, aura = pcall(query, sid)
+            live = (ok and aura ~= nil) and true or false
+        end
+        say(("  entry %d: id=%s spellID=%s auraLive=%s"):format(
+            i, tostring(e.id), tostring(sid), tostring(live)))
+    end
+    local reg = _G.QUI_GetReanchoredCDMFrames and _G.QUI_GetReanchoredCDMFrames("buff")
+    say("claimedRegistry:", reg and #reg or 0)
+    local settings = GetTrackerSettings("buff")
+    say("iconDisplayMode:", tostring(settings and settings.iconDisplayMode))
+    -- Last refresh pass's boundary counters (runtime:GetLastDiag): proves whether
+    -- a pass ran since the aura changed (seq/at) and where the owned-fallback
+    -- chain drops (staleNative -> fallbackLive -> minted -> positioned).
+    local runtime = ns._cdmBoot and ns._cdmBoot.runtime
+    local diag = runtime and runtime.GetLastDiag and runtime:GetLastDiag("buff")
+    if diag then
+        if diag.earlyReturn then
+            say(("lastPass: seq=%d at=%s EARLY-RETURN=%s"):format(
+                diag.seq or -1, tostring(diag.at), diag.earlyReturn))
+        else
+            say(("lastPass: seq=%d at=%s mode=%s filter=%s edit=%s probe=%s"):format(
+                diag.seq or -1, tostring(diag.at), tostring(diag.displayMode),
+                tostring(diag.filterInactive), tostring(diag.editing),
+                tostring(diag.auraProbe)))
+            say(("  curated=%d matched=%d frameless=%d additional=%d"):format(
+                diag.curated or -1, diag.matched or -1,
+                diag.frameless or -1, diag.additional or -1))
+            say(("  nativeClaimed=%d staleNative=%d fallbackLive=%d minted=%d mintFailed=%d"):format(
+                diag.nativeClaimed or -1, diag.staleNative or -1,
+                diag.fallbackLive or -1, diag.minted or -1, diag.mintFailed or -1))
+            say(("  entriesOut=%d planNil=%s positioned=%s"):format(
+                diag.entriesOut or -1, tostring(diag.planNil), tostring(diag.positioned)))
+        end
+        if _G.GetTime and diag.at then
+            say(("  passAge: %.1fs ago"):format(_G.GetTime() - diag.at))
+        end
+    else
+        say("lastPass: NO DIAG (no refresh pass has run)")
+    end
+    local ledger = runtime and runtime._mintedOwnedByKey and runtime._mintedOwnedByKey["buff"]
+    say("ownedLedger:", ledger and #ledger or 0)
+    for i = 1, (ledger and #ledger or 0) do
+        local icon = ledger[i]
+        local okV, shown = pcall(icon.IsShown, icon)
+        local okAl, alpha = pcall(icon.GetAlpha, icon)
+        local okW, w = pcall(icon.GetWidth, icon)
+        local okP, np = pcall(icon.GetNumPoints, icon)
+        say(("  owned %d: shown=%s alpha=%s w=%s points=%s"):format(
+            i,
+            okV and tostring(shown) or "ERR",
+            okAl and tostring(alpha) or "ERR",
+            okW and tostring(w) or "ERR",
+            okP and tostring(np) or "ERR"))
+    end
+    if viewer and viewer.GetItemFrames then
+        local okItems, items = pcall(viewer.GetItemFrames, viewer)
+        if okItems and type(items) == "table" then
+            say("nativeItems:", #items)
+            for i = 1, #items do
+                local f = items[i]
+                local okC, cid = pcall(f.GetCooldownID, f)
+                local okS, sid = pcall(f.GetSpellID, f)
+                local okA, act = pcall(f.IsActive, f)
+                local okV, shown = pcall(f.IsShown, f)
+                local okAl, alpha = pcall(f.GetAlpha, f)
+                say(("  item %d: cd=%s spell=%s info=%s active=%s shown=%s alpha=%s"):format(
+                    i,
+                    okC and tostring(cid) or "ERR",
+                    okS and tostring(sid) or "ERR",
+                    f.cooldownInfo and "yes" or "NO",
+                    okA and tostring(act) or "ERR",
+                    okV and tostring(shown) or "ERR",
+                    okAl and tostring(alpha) or "ERR"))
+            end
+        end
+    end
+end
 
 ns.CDMContainers = {
     GetContainer = function(viewerType) return containers[viewerType] end,
     LayoutContainer = LayoutContainer,
     RefreshAll = RefreshAll,
     RebuildBuffContainer = RebuildBuffContainer,
+    RefreshReanchorRuntimeHooks = function(markDirty)
+        return ownedEngine:RefreshReanchorRuntimeHooks(markDirty)
+    end,
     -- In-place hero-talent swap detection, called from the loadout debounce in
     -- ownedEngine:Initialize. Lives on this table -- not as a direct Initialize
     -- upvalue -- because Initialize is at WoW's 60-upvalue-per-function ceiling;

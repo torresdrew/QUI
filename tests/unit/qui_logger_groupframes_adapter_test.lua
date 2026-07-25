@@ -31,6 +31,10 @@ assert(built.ctx.R ~= nil,       "ctx.R must be the render module")
 assert(built.ctx.Model ~= nil,   "ctx.Model must be the model module")
 assert(built.ctx.frame ~= nil,   "ctx.frame must be the synthetic unit frame")
 assert(built.ctx.auraCache ~= nil, "ctx.auraCache must be the aura cache")
+assert(rawget(built.ctx.frame, "unit") == nil,
+    "aura replay frame must not create the ping-sensitive .unit field")
+assert(built.ctx.frame.previewUnit == "player",
+    "aura replay frame must use the previewUnit accessor path")
 
 local R = built.ctx.R
 assert(type(R.Dispatch)  == "function", "R.Dispatch must be a function")
@@ -115,6 +119,8 @@ assert(dispatchCount > 0 or renderIconCount > 0,
     "after UNIT_AURA dispatch, R.Dispatch or R.RenderIcon callback must fire " ..
     "(Dispatch=" .. dispatchCount .. " RenderIcon=" .. renderIconCount ..
     ") -- proves event reached real group-frame render code")
+assert(rawget(built.ctx.frame, "_quiAuraRender") ~= nil,
+    "UNIT_AURA must pass the unit guard and create real renderer side state")
 
 print(string.format(
     "OK: qui_logger_groupframes_adapter_test  [R.Dispatch=%d  R.RenderIcon=%d]",

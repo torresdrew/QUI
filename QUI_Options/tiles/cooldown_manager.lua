@@ -29,7 +29,9 @@ function V2.Register(frame)
         },
         renderOptions = { surface = "full" },
         relatedSettings = {
-            { label = ns.L["Buff/Debuff"],   tileId = "action_bars", subPageIndex = 2 },
+            -- Buff/Debuff now lives on the Auras hub (Buff/Debuff Frames
+            -- sub-page, tabIndex 21 subTabIndex 4), not the action_bars tile.
+            { label = ns.L["Buff/Debuff"],   tileId = "auras", subPageIndex = 4 },
             { label = ns.L["Raid Buffs"],    tileId = "gameplay", subPageIndex = 5 },
             { label = ns.L["Resource Bars"], tileId = "resource_bars", subPageIndex = 1 },
         },

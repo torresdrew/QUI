@@ -419,7 +419,7 @@ function RestoreContainerPosition(barKey)
             local oy = Helpers.SafeToNumber(y, 0)
             local anchorParent = relativeTo or UIParent
             local anchorRelative = relPoint or point
-            local setOk = pcall(container.SetPoint, container, point, anchorParent, anchorRelative, ox, oy)
+            local setOk = ns.SafeCallMethod("best-effort-style", container, "SetPoint", point, anchorParent, anchorRelative, ox, oy)
             if setOk then
                 return true
             end

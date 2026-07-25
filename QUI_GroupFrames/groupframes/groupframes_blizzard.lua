@@ -17,7 +17,6 @@ local GetDB = Helpers.CreateDBGetter("quiGroupFrames")
 
 -- Upvalue hot-path globals
 local pairs = pairs
-local pcall = pcall
 local wipe = wipe
 local CreateFrame = CreateFrame
 local InCombatLockdown = InCombatLockdown
@@ -52,9 +51,7 @@ end
 local function EnsureHiddenParent()
     if not hiddenParent then
         hiddenParent = CreateFrame("Frame", "QUI_GroupFramesHiddenParent", UIParent)
-        if hiddenParent.SetAllPoints then
-            pcall(hiddenParent.SetAllPoints, hiddenParent, UIParent)
-        end
+        ns.SafeCallMethodIfPresent("best-effort-style", hiddenParent, "SetAllPoints", UIParent)
         hiddenParent:Hide()
     end
     return hiddenParent
@@ -67,19 +64,19 @@ local function CaptureMouseState(frame)
     state = {}
     local ok, value
     if frame.IsMouseEnabled then
-        ok, value = pcall(frame.IsMouseEnabled, frame)
+        ok, value = ns.SafeCallMethod("best-effort-style", frame, "IsMouseEnabled")
         if ok then state.mouseEnabled = value and true or false end
     end
     if frame.IsMouseClickEnabled then
-        ok, value = pcall(frame.IsMouseClickEnabled, frame)
+        ok, value = ns.SafeCallMethod("best-effort-style", frame, "IsMouseClickEnabled")
         if ok then state.mouseClickEnabled = value and true or false end
     end
     if frame.IsMouseMotionEnabled then
-        ok, value = pcall(frame.IsMouseMotionEnabled, frame)
+        ok, value = ns.SafeCallMethod("best-effort-style", frame, "IsMouseMotionEnabled")
         if ok then state.mouseMotionEnabled = value and true or false end
     end
     if frame.IsMouseWheelEnabled then
-        ok, value = pcall(frame.IsMouseWheelEnabled, frame)
+        ok, value = ns.SafeCallMethod("best-effort-style", frame, "IsMouseWheelEnabled")
         if ok then state.mouseWheelEnabled = value and true or false end
     end
 
@@ -92,18 +89,10 @@ local function SuppressFrameMouse(frame)
 
     CaptureMouseState(frame)
 
-    if frame.EnableMouse then
-        pcall(frame.EnableMouse, frame, false)
-    end
-    if frame.SetMouseClickEnabled then
-        pcall(frame.SetMouseClickEnabled, frame, false)
-    end
-    if frame.SetMouseMotionEnabled then
-        pcall(frame.SetMouseMotionEnabled, frame, false)
-    end
-    if frame.EnableMouseWheel then
-        pcall(frame.EnableMouseWheel, frame, false)
-    end
+    ns.SafeCallMethodIfPresent("best-effort-style", frame, "EnableMouse", false)
+    ns.SafeCallMethodIfPresent("best-effort-style", frame, "SetMouseClickEnabled", false)
+    ns.SafeCallMethodIfPresent("best-effort-style", frame, "SetMouseMotionEnabled", false)
+    ns.SafeCallMethodIfPresent("best-effort-style", frame, "EnableMouseWheel", false)
 end
 
 local function RestoreFrameMouse(frame)
@@ -113,16 +102,16 @@ local function RestoreFrameMouse(frame)
     if not state then return true end
 
     if state.mouseEnabled ~= nil and frame.EnableMouse then
-        pcall(frame.EnableMouse, frame, state.mouseEnabled)
+        ns.SafeCallMethod("best-effort-style", frame, "EnableMouse", state.mouseEnabled)
     end
     if state.mouseClickEnabled ~= nil and frame.SetMouseClickEnabled then
-        pcall(frame.SetMouseClickEnabled, frame, state.mouseClickEnabled)
+        ns.SafeCallMethod("best-effort-style", frame, "SetMouseClickEnabled", state.mouseClickEnabled)
     end
     if state.mouseMotionEnabled ~= nil and frame.SetMouseMotionEnabled then
-        pcall(frame.SetMouseMotionEnabled, frame, state.mouseMotionEnabled)
+        ns.SafeCallMethod("best-effort-style", frame, "SetMouseMotionEnabled", state.mouseMotionEnabled)
     end
     if state.mouseWheelEnabled ~= nil and frame.EnableMouseWheel then
-        pcall(frame.EnableMouseWheel, frame, state.mouseWheelEnabled)
+        ns.SafeCallMethod("best-effort-style", frame, "EnableMouseWheel", state.mouseWheelEnabled)
     end
 
     mouseStates[frame] = nil
@@ -139,7 +128,7 @@ local function CaptureBanishState(frame)
 
     local originalParent = UIParent
     if frame.GetParent then
-        local ok, parent = pcall(frame.GetParent, frame)
+        local ok, parent = ns.SafeCallMethod("best-effort-style", frame, "GetParent")
         if ok and parent then
             originalParent = parent
         end
@@ -152,9 +141,7 @@ local function BanishFrame(frame)
     if not frame then return false end
 
     if InCombatLockdown() then
-        if frame.SetAlpha then
-            pcall(frame.SetAlpha, frame, 0)
-        end
+        ns.SafeCallMethodIfPresent("best-effort-style", frame, "SetAlpha", 0)
         hiddenFrames[frame] = true
         QUI_GFB.pendingHide = true
         return false
@@ -162,12 +149,10 @@ local function BanishFrame(frame)
 
     local state = CaptureBanishState(frame)
     local reparented = false
-    if frame.SetParent then
-        reparented = pcall(frame.SetParent, frame, EnsureHiddenParent())
-    end
-    if frame.SetAlpha then
-        pcall(frame.SetAlpha, frame, 0)
-    end
+    -- == true: IfPresent is three-state (nil = skipped); banished stays a
+    -- plain boolean in the state table.
+    reparented = ns.SafeCallMethodIfPresent("best-effort-style", frame, "SetParent", EnsureHiddenParent()) == true
+    ns.SafeCallMethodIfPresent("best-effort-style", frame, "SetAlpha", 0)
     SuppressFrameMouse(frame)
 
     hiddenFrames[frame] = true
@@ -185,7 +170,7 @@ end
 ---------------------------------------------------------------------------
 local function HideSelectionHighlights(frame)
     if not frame then return end
-    pcall(function()
+    ns.SafeCall("best-effort-style", function()
         if frame.selectionHighlight and frame.selectionHighlight.SetShown then
             frame.selectionHighlight:SetShown(false)
         end
@@ -200,7 +185,7 @@ end
 ---------------------------------------------------------------------------
 local function StripUnitFrameEvents(frame)
     if not frame then return end
-    pcall(function()
+    ns.SafeCall("best-effort-style", function()
         frame:UnregisterAllEvents()
         -- PERF: Do NOT re-register UNIT_AURA on hidden Blizzard frames.
         -- QUI calls GetUnitAuras directly and never reads Blizzard's aura
@@ -214,7 +199,7 @@ end
 
 local function RestoreUnitFrameEvents(frame)
     if not frame or not strippedFrames[frame] then return end
-    pcall(function()
+    ns.SafeCall("best-effort-style", function()
         if CompactUnitFrame_UpdateUnitEvents then
             CompactUnitFrame_UpdateUnitEvents(frame)
         end
@@ -270,7 +255,7 @@ local function RestoreFrame(frame)
 
     local state = banishStates[frame]
     if state and state.originalParent and frame.SetParent then
-        pcall(frame.SetParent, frame, state.originalParent)
+        ns.SafeCallMethod("best-effort-style", frame, "SetParent", state.originalParent)
     end
     if state then
         state.banished = false
@@ -278,7 +263,7 @@ local function RestoreFrame(frame)
     end
 
     RestoreFrameMouse(frame)
-    pcall(frame.SetAlpha, frame, 1)
+    ns.SafeCallMethod("best-effort-style", frame, "SetAlpha", 1)
     hiddenFrames[frame] = nil
     return true
 end
@@ -394,8 +379,8 @@ local function HideBlizzardPartyFrames()
                 HideSelectionHighlights(mf)
                 StripUnitFrameEvents(mf)
                 InstallShowHook(mf)
-                if mf.readyCheckIcon then pcall(mf.readyCheckIcon.SetAlpha, mf.readyCheckIcon, 0) end
-                if mf.readyCheckDecline then pcall(mf.readyCheckDecline.SetAlpha, mf.readyCheckDecline, 0) end
+                if mf.readyCheckIcon then ns.SafeCallMethod("best-effort-style", mf.readyCheckIcon, "SetAlpha", 0) end
+                if mf.readyCheckDecline then ns.SafeCallMethod("best-effort-style", mf.readyCheckDecline, "SetAlpha", 0) end
             end
         end
     end

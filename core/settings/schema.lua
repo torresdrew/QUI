@@ -359,6 +359,22 @@ function Schema:RerenderSection(runtime, sectionId)
     return LayoutSections(runtime)
 end
 
+-- Update one rendered section's measured height without destroying/rebuilding
+-- its frame tree. Embedded editors use this after local disclosure reflows so
+-- later sections and the scroll child move immediately, with no second paint.
+function Schema:ResizeSection(runtime, sectionId, height)
+    if type(runtime) ~= "table" or type(sectionId) ~= "string" or type(height) ~= "number" then
+        return nil
+    end
+    if not (runtime.sectionsById and runtime.sectionsById[sectionId])
+        or not (runtime.sectionHosts and runtime.sectionHosts[sectionId]) then
+        return nil
+    end
+
+    runtime.sectionHeights[sectionId] = math.max(height, 1)
+    return LayoutSections(runtime)
+end
+
 function Schema:RerenderFeature(runtime)
     if type(runtime) ~= "table" then
         return nil
@@ -418,6 +434,10 @@ function Schema:RenderFeature(feature, host, options)
 
     function ctx:RerenderSection(sectionId)
         return Schema:RerenderSection(runtime, sectionId)
+    end
+
+    function ctx:ResizeSection(sectionId, height)
+        return Schema:ResizeSection(runtime, sectionId, height)
     end
 
     function ctx:RerenderFeature()

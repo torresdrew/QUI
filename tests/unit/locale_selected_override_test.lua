@@ -24,17 +24,17 @@ end
 
 -- selectedLocale overrides the client locale
 check("selected overrides client",
-    loadLocale("core/locale/frFR.lua", "deDE", "frFR") == true,
+    loadLocale("QUI_OptionsSearch_frFR/frFR.lua", "deDE", "frFR") == true,
     "frFR.lua should load when selectedLocale=frFR on a deDE client")
 
 -- a non-matching selectedLocale keeps other files out
 check("non-match stays out",
-    loadLocale("core/locale/deDE.lua", "deDE", "frFR") == false,
+    loadLocale("QUI_OptionsSearch_deDE/deDE.lua", "deDE", "frFR") == false,
     "deDE.lua should NOT load when selectedLocale=frFR")
 
 -- nil selectedLocale falls back to client locale
 check("nil falls back to client",
-    loadLocale("core/locale/deDE.lua", "deDE", nil) == true,
+    loadLocale("QUI_OptionsSearch_deDE/deDE.lua", "deDE", nil) == true,
     "deDE.lua should load via GetLocale() fallback when selectedLocale is nil")
 
 _G.QUI_TEST_LOCALE, _G.QUIDB = nil, nil
