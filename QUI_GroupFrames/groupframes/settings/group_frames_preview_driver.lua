@@ -3,9 +3,10 @@
 
     Renders the docked group-frame settings preview: a mock unit-frame roster
     that reflects every group setting live and animates via one OnUpdate ticker.
-    Aura elements are rendered through the REAL renderer
-    (ns.QUI_GroupFrameAuraRender) fed fabricated matches, so the preview can
-    never drift from the live aura code.
+    Aura elements follow the live ownership split: health tint, border and
+    missing raid buffs use ns.QUI_GroupFrameAuraRender with fabricated matches;
+    engine-owned filter strips and tracked icon/square/bar containers use
+    ns.AuraPreview placeholders laid out with the live pin math.
 
     Public surface (also published as the 3 _G.QUI_*GroupFramePreview seams):
         ns.QUI_GroupFramesPreview.Build(host)
@@ -98,7 +99,10 @@ end
 
 -- Preview focus-filter keys. Each maps to an element group gated in the preview
 -- ON TOP OF the normal config gates. Default all-on.
-local FILTER_KEYS = { "threat", "dispel", "auras", "indicators", "highlights" }
+local FILTER_KEYS = {
+    "threat", "dispel", "auras", "indicators", "targetedSpells",
+    "targetHighlight", "pets", "range",
+}
 
 -- Normalize an arbitrary filter table to exactly FILTER_KEYS, defaulting any
 -- missing key to true and dropping unknown keys.
@@ -132,7 +136,9 @@ function Driver._ChipEnabledInConfig(vdb, chipKey)
         return ind.showThreatBorder ~= false
     elseif chipKey == "dispel" then
         local d = healer.dispelOverlay
-        return (d ~= nil) and (d.enabled ~= false)
+        local glow = healer.cleanseGlow
+        return ((d ~= nil) and (d.enabled ~= false))
+            or ((glow ~= nil) and (glow.enabled == true))
     elseif chipKey == "auras" then
         local a = vdb.auras
         return (a ~= nil) and (a.enabled ~= false)
@@ -141,31 +147,31 @@ function Driver._ChipEnabledInConfig(vdb, chipKey)
             if ind[k] then return true end
         end
         return false
-    elseif chipKey == "highlights" then
-        if healer.targetHighlight and healer.targetHighlight.enabled then return true end
-        if vdb.targetedSpells and vdb.targetedSpells.enabled ~= false then return true end
-        if vdb.pets and vdb.pets.enabled then return true end
-        if vdb.name and vdb.name.showName then return true end
-        if vdb.name and vdb.name.showLevel then return true end
-        if vdb.health and vdb.health.showHealthText then return true end
-        return false
+    elseif chipKey == "targetedSpells" then
+        return (vdb.targetedSpells ~= nil) and (vdb.targetedSpells.enabled ~= false)
+    elseif chipKey == "targetHighlight" then
+        return (healer.targetHighlight ~= nil) and (healer.targetHighlight.enabled == true)
+    elseif chipKey == "pets" then
+        return (vdb.pets ~= nil) and (vdb.pets.enabled == true)
+    elseif chipKey == "range" then
+        return (vdb.range ~= nil) and (vdb.range.enabled == true)
     end
     return false
 end
 
--- Frame level for the indicator host sub-frame. Aura icons render at frame+8 and
--- aura bars at frame+9; +12 keeps corner indicators visible above them in the
--- preview.
-local INDICATOR_HOST_OFFSET = 12
-function Driver._IndicatorHostLevel(baseLevel)
-    return (tonumber(baseLevel) or 0) + INDICATOR_HOST_OFFSET
+-- One contract for both the full refresh and the aura-only refresh: the Aura
+-- focus chip supplies the configured aura table when ON and nil when OFF. nil
+-- drives RenderFrameAuras' complete release/hide path.
+function Driver._AuraSettingsForFilter(vdb, filter)
+    if filter and filter.auras == false then return nil end
+    return vdb and vdb.auras or nil
 end
 
--- filterStrip + tracked icon/square/bar previews are now drawn by the shared
--- placeholder renderer (ns.AuraPreview) in RenderFrameAuras — the old
--- _BuildFilterStripMatches / _BuildTrackedMatches fabricators that fed fake
--- matches into the real renderer are gone. MRB (below) and healthTint still
--- fabricate matches for the real renderer (icon strip / bar tint respectively).
+function Driver._AuraHostLevel(baseLevel)
+    local chrome = ns.QUI_GroupFrameChrome
+    local levels = chrome and chrome.LEVELS
+    return (tonumber(baseLevel) or 0) + ((levels and levels.AURA_HOST) or 11)
+end
 
 function Driver._BuildMissingRaidBuffMatches(element, now)
     local out = {}
@@ -201,7 +207,10 @@ function Driver._ComputeGridPositions(contextMode, count, layout, w, h)
     layout = layout or {}
     local grow = ResolveGrow(layout)
     local horizontal = (grow == "LEFT" or grow == "RIGHT")
-    local spacing = tonumber(layout.spacing) or 0
+    -- Default matches the live header math (groupframes.lua CalculateHeaderSize
+    -- uses `layout.spacing or 2`); previewing an unset spacing as 0 drew the
+    -- tiles flush when the real frames have a 2px gap.
+    local spacing = tonumber(layout.spacing) or 2
     local isRaid = (contextMode == "raid")
 
     local perGroup, colSpacing, groupGrow
@@ -271,7 +280,60 @@ function Driver._BuildRoster(contextMode, count)
             role      = RoleForIndex(contextMode, i),
             healthPct = HP_PATTERN[((i - 1) % #HP_PATTERN) + 1],
             level     = 80 - ((i - 1) % 6),
+            group     = math.ceil(i / 5),
+            isSelf    = i == 1,
+            sourceIndex = i,
         }
+    end
+    return out
+end
+
+local ROLE_ORDER = { TANK = 1, HEALER = 2, DAMAGER = 3 }
+
+-- Apply the roster settings that are visually meaningful in a synthetic
+-- preview: party player/DPS filters, group/role/class grouping, name/role sort
+-- and the explicit self-first pin.
+function Driver._PrepareRoster(contextMode, count, layout, gfdb)
+    layout = layout or {}
+    gfdb = gfdb or {}
+    local source = Driver._BuildRoster(contextMode, count)
+    local out = {}
+    for _, member in ipairs(source) do
+        local keep = true
+        if contextMode == "party" then
+            if layout.showPlayer == false and member.isSelf then keep = false end
+            if layout.hideDPS == true and member.role == "DAMAGER" then keep = false end
+        end
+        if keep then out[#out + 1] = member end
+    end
+
+    local groupBy = contextMode == "raid" and (layout.groupBy or "GROUP") or "NONE"
+    local byName = layout.sortMethod == "NAME"
+    local byRole = layout.sortByRole == true or groupBy == "ROLE"
+    table.sort(out, function(a, b)
+        if groupBy == "GROUP" and a.group ~= b.group then return a.group < b.group end
+        if groupBy == "CLASS" and a.class ~= b.class then return a.class < b.class end
+        if byRole and a.role ~= b.role then
+            return (ROLE_ORDER[a.role] or 9) < (ROLE_ORDER[b.role] or 9)
+        end
+        if byName and a.name ~= b.name then return a.name < b.name end
+        return a.sourceIndex < b.sourceIndex
+    end)
+
+    local selfFirst
+    if contextMode == "raid" then
+        selfFirst = gfdb.raidSelfFirst
+    else
+        selfFirst = gfdb.partySelfFirst
+    end
+    if selfFirst then
+        for i = 2, #out do
+            if out[i].isSelf then
+                local member = table.remove(out, i)
+                table.insert(out, 1, member)
+                break
+            end
+        end
     end
     return out
 end
@@ -309,33 +371,23 @@ local function CreateMockFrame(parent, fakeUnitToken)
     local f = CreateFrame("Button", nil, parent, "BackdropTemplate")
     f.previewUnit = fakeUnitToken           -- routed through QUI_GF.GetFrameUnit
     f._bottomPad = 0
+    -- Dirty-check table Chrome.ResizeHealthForPower keeps its geometry in (the
+    -- runtime uses the frame's own state entry for exactly the same purpose).
+    f._chromeState = {}
 
-    f.healthBar = CreateFrame("StatusBar", nil, f)
-    f.healthBar:SetMinMaxValues(0, 100)
-    f.healthBar:SetValue(100)
+    -- The health bar, power bar, overlay bars, text frame, name/level/health
+    -- text, corner indicator textures, threat / target-highlight / dispel /
+    -- cleanse overlays and the portrait are ALL built by
+    -- ns.QUI_GroupFrameChrome.Apply -- the same builder DecorateGroupFrame
+    -- runs on live frames -- so preview layering IS runtime layering and there
+    -- is nothing to re-derive here.
 
-    f.powerBar = CreateFrame("StatusBar", nil, f)
-    f.powerBar:SetMinMaxValues(0, 100)
-    f.powerBar:SetValue(80)
-
-    -- Text overlay sits ABOVE the child bars (mirrors the live builder's _textFrame
-    -- at healthBar+3, see groupframes.lua:2717-2719). Fontstrings parented to the
-    -- button render on the button's OVERLAY layer, which is BENEATH the child health
-    -- bar (button level +1) -- so name/level/group-number were buried under the bar.
-    f._textFrame = CreateFrame("Frame", nil, f)
-    f._textFrame:SetAllPoints(f)
-    f._textFrame:SetFrameLevel(f.healthBar:GetFrameLevel() + 3)
-
-    f.nameText        = f._textFrame:CreateFontString(nil, "OVERLAY")
-    f.levelText       = f._textFrame:CreateFontString(nil, "OVERLAY")
-    f.healthText      = f.healthBar:CreateFontString(nil, "OVERLAY")
-
-    -- Indicator host: a sub-frame above the aura sub-frames so corner indicators
-    -- (role/leader/readyCheck/targetMarker/phase/res/summon) are never buried by
-    -- the child health bar or the aura icons. See Driver._IndicatorHostLevel.
-    f._indHost = CreateFrame("Frame", nil, f)
-    f._indHost:SetAllPoints(f)
-    f._indHost:SetFrameLevel(Driver._IndicatorHostLevel(f:GetFrameLevel()))
+    -- Placeholder host for the elements the ENGINE draws live (filter strips,
+    -- tracked icon/square/bar): parked at the shared live aura-host level so
+    -- placeholders sit exactly where the real containers do.
+    f._auraHost = CreateFrame("Frame", nil, f)
+    f._auraHost:SetAllPoints(f)
+    f._auraHost:SetFrameLevel(Driver._AuraHostLevel(f:GetFrameLevel()))
     return f
 end
 Driver._CreateMockFrame = CreateMockFrame
@@ -345,7 +397,7 @@ Driver._CreateMockFrame = CreateMockFrame
 ---------------------------------------------------------------------------
 -- Dispel-type seed mirrors the settings UI's 4-color palette (no Bleed) so the
 -- preview border colors match what the dispel-overlay tab pickers default to.
-local DISPEL_SEED = {
+local DISPEL_SEED_FALLBACK = {
     Magic   = { 0.2, 0.6, 1.0 },
     Curse   = { 0.6, 0.0, 1.0 },
     Disease = { 0.6, 0.4, 0.0 },
@@ -353,7 +405,7 @@ local DISPEL_SEED = {
 }
 
 -- Role atlases mirror the live builder (ns.QUI_GroupFrameRoleAtlas / ROLE_ATLAS).
-local ROLE_ATLAS = {
+local ROLE_ATLAS_FALLBACK = {
     TANK    = "roleicon-tiny-tank",
     HEALER  = "roleicon-tiny-healer",
     DAMAGER = "roleicon-tiny-dps",
@@ -377,12 +429,8 @@ local function GetContextDB(gfdb, contextMode)
 end
 Driver._GetContextDB = GetContextDB
 
-local function StatusBarTexture(general)
-    local sm = ns.LSM
-    local name = (general and general.texture) or "Quazii v5"
-    return (sm and sm.Fetch and sm:Fetch("statusbar", name, true))
-        or "Interface\\TargetingFrame\\UI-StatusBar"
-end
+-- (statusbar texture resolution now comes from the shared chrome module --
+-- Chrome.ApplyStatusBarTexture -- so the preview cannot pick a different one.)
 
 local function FontPath(general)
     local sm = ns.LSM
@@ -398,165 +446,81 @@ local function ClassColor(class)
     return 0.6, 0.6, 0.6
 end
 
+-- The shared frame chrome (core/group_frame_chrome.lua) ships in the core addon,
+-- so it is always loaded before this file. Resolve it lazily anyway: the
+-- headless driver tests load this file against a bare ns.
+local function GetChrome() return ns.QUI_GroupFrameChrome end
+
+-- Fallback colors and the role/dispel palettes come from the modules that OWN
+-- them (chrome, groupframes.lua, icon layout) so the preview cannot drift from
+-- the live defaults the way its private copies did.
+local function DefaultColor(key)
+    local C = GetChrome()
+    local t = C and C.DEFAULT_COLORS
+    return (t and t[key]) or { 1, 1, 1, 1 }
+end
+
+local function RoleAtlas()
+    return ns.QUI_GroupFrameRoleAtlas or ROLE_ATLAS_FALLBACK
+end
+
+local function DispelPalette()
+    local IL = ns.QUI_GroupFrameIconLayout
+    return (IL and IL.DISPEL_DEFAULT_COLORS) or DISPEL_SEED_FALLBACK
+end
+
 -- Add bottomPad to a Y offset whenever the anchor is a BOTTOM* point (mirrors the
--- live builder's BottomPadY so indicators clear the power bar).
+-- live builder's BottomPadY so preview-only overlays clear the power bar).
 local function BottomPadY(anchor, offY, bottomPad)
     if anchor and anchor:find("BOTTOM") then return (offY or 0) + (bottomPad or 0) end
     return offY or 0
 end
 
--- appearance/general backdrop: borderSize, darkMode + dark/default bg color/opacity.
-local function ApplyAppearance(f, general)
-    local borderPx = tonumber(general.borderSize) or 1
-    local hasBorder = borderPx > 0
-    local bg, bgOpacity
-    if general.darkMode then
-        bg = general.darkModeBgColor or { 0.25, 0.25, 0.25, 1 }
-        bgOpacity = tonumber(general.darkModeBgOpacity) or 1
-    else
-        bg = general.defaultBgColor or { 0.1, 0.1, 0.1, 0.9 }
-        bgOpacity = tonumber(general.defaultBgOpacity) or 1
-    end
-    ns.SkinBase.ApplyPixelBackdrop(f, hasBorder and borderPx or 0, true, false,
-        hasBorder and { 0, 0, 0, 1 } or nil,
-        { bg[1] or 0.1, bg[2] or 0.1, bg[3] or 0.1, (bg[4] or 1) * bgOpacity })
-    f._borderPx = hasBorder and borderPx or 0
-end
+---------------------------------------------------------------------------
+-- SETTINGS STYLING
+--
+-- Everything structural -- backdrop, health bar, the three overlay bars, power
+-- bar, text frame, name/level/health/status text, corner indicator textures,
+-- threat / target-highlight / dispel / cleanse overlays, portrait -- is built
+-- and positioned by ns.QUI_GroupFrameChrome.Apply, the SAME builder
+-- DecorateGroupFrame runs on live frames. What is left here is only what a
+-- preview legitimately owns: fabricated values (health percentages, sample
+-- colors, mock names), the demo gating for transient states, and preview-only
+-- extras (targeted-spell markers, pets, range fade).
+---------------------------------------------------------------------------
 
--- health bar fill + color (general.texture/useClassColor/darkMode*/defaultHealthOpacity)
--- + health.healthFillDirection (drives f._isVerticalFill + the StatusBar orientation).
-local function ApplyHealthBar(f, member, general, health)
-    local hb = f.healthBar
-    local border = f._borderPx or 0
-    local bottomPad = f._bottomPad or 0
-    hb:ClearAllPoints()
-    hb:SetPoint("TOPLEFT", f, "TOPLEFT", border, -border)
-    hb:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -border, bottomPad)
-    hb:SetStatusBarTexture(StatusBarTexture(general))
-    local vertical = (health.healthFillDirection == "VERTICAL")
-    hb:SetOrientation(vertical and "VERTICAL" or "HORIZONTAL")
-    f._isVerticalFill = vertical
-    f._baseHealthPct = member.healthPct
-    f._healthPct = member.healthPct
-    hb:SetMinMaxValues(0, 100)
-    hb:SetValue(member.healthPct)
-    local healthOpacity = general.darkMode
-        and (tonumber(general.darkModeHealthOpacity) or 1)
-        or (tonumber(general.defaultHealthOpacity) or 1)
-    hb:SetAlpha(healthOpacity)
-    local r, g, b = 0.2, 0.8, 0.2
-    if general.useClassColor then
-        r, g, b = ClassColor(member.class)
-    elseif general.darkMode and general.darkModeHealthColor then
-        local c = general.darkModeHealthColor; r, g, b = c[1] or r, c[2] or g, c[3] or b
-    end
-    hb:SetStatusBarColor(r, g, b, 1)
-end
-
--- name text (name.showName/nameFontSize/nameAnchor/nameJustify/maxNameLength/
---            nameOffsetX/Y/nameTextUseClassColor/nameTextColor)
-local function ApplyName(f, member, nameCfg, font, fontSize, allowed)
-    if allowed == false then
-        if f.nameText then f.nameText:Hide() end
-        return
-    end
-    local nt = f.nameText
-    if nameCfg.showName == false then nt:Hide(); return end
-    nt:Show()
-    CJKFont(nt, font, tonumber(nameCfg.nameFontSize) or fontSize, "OUTLINE")
-    local label = member.name
-    local maxLen = tonumber(nameCfg.maxNameLength) or 0
-    if maxLen > 0 then label = label:sub(1, maxLen) end
-    nt:SetText(label)
-    nt:SetJustifyH(nameCfg.nameJustify or "LEFT")
-    nt:ClearAllPoints()
-    local anchor = nameCfg.nameAnchor or "TOPLEFT"
-    nt:SetPoint(anchor, f, anchor,
-        tonumber(nameCfg.nameOffsetX) or 0,
-        BottomPadY(anchor, tonumber(nameCfg.nameOffsetY) or 0, f._bottomPad))
-    if nameCfg.nameTextUseClassColor then
-        nt:SetTextColor(ClassColor(member.class))
-    elseif nameCfg.nameTextColor then
-        local c = nameCfg.nameTextColor; nt:SetTextColor(c[1] or 1, c[2] or 1, c[3] or 1)
-    else
-        nt:SetTextColor(1, 1, 1)
-    end
-end
-
--- level text (name.showLevel/levelFont/levelFontSize/levelAnchor/
---             levelJustify/levelOffsetX/Y/levelTextColor)
-local function ApplyLevel(f, member, nameCfg, font, fontSize, allowed)
-    if allowed == false then
-        if f.levelText then f.levelText:Hide() end
-        return
-    end
-    local lt = f.levelText
-    if nameCfg.showLevel ~= true then lt:Hide(); return end
-    lt:Show()
-    local levelFont = font
-    if ns.LSM and ns.LSM.Fetch and type(nameCfg.levelFont) == "string" and nameCfg.levelFont ~= "" then
-        levelFont = ns.LSM:Fetch("font", nameCfg.levelFont, true) or font
-    end
-    CJKFont(lt, levelFont, tonumber(nameCfg.levelFontSize) or fontSize, "OUTLINE")
-    lt:SetText(tostring(member.level or 80))
-    lt:SetJustifyH(nameCfg.levelJustify or "RIGHT")
-    lt:ClearAllPoints()
-    local anchor = nameCfg.levelAnchor or "RIGHT"
-    lt:SetPoint(anchor, f, anchor,
-        tonumber(nameCfg.levelOffsetX) or 0,
-        BottomPadY(anchor, tonumber(nameCfg.levelOffsetY) or 0, f._bottomPad))
-    if nameCfg.levelTextColor then
-        local c = nameCfg.levelTextColor; lt:SetTextColor(c[1] or 1, c[2] or 1, c[3] or 1)
-    else
-        lt:SetTextColor(1, 1, 1)
-    end
-end
-
--- role icon (indicators.showRoleIcon + showRoleTank/Healer/DPS + size/anchor/offset)
-local function ApplyRoleIcon(f, member, ind, allowed)
-    if allowed == false then
-        if f._roleIcon then f._roleIcon:Hide() end
-        return
-    end
-    f._indHost:SetFrameLevel(Driver._IndicatorHostLevel(f:GetFrameLevel()))
-    f._roleIcon = f._roleIcon or f._indHost:CreateTexture(nil, "OVERLAY")
-    local toggleKey = ROLE_TOGGLE_KEY[member.role]
-    local show = ind.showRoleIcon and ROLE_ATLAS[member.role]
-        and (not toggleKey or ind[toggleKey] ~= false)
-    if not show then f._roleIcon:Hide(); return end
-    local sz = tonumber(ind.roleIconSize) or 12
-    f._roleIcon:SetSize(sz, sz)
-    f._roleIcon:ClearAllPoints()
-    local anchor = ind.roleIconAnchor or "TOPLEFT"
-    f._roleIcon:SetPoint(anchor, f, anchor,
-        tonumber(ind.roleIconOffsetX) or 0,
-        BottomPadY(anchor, tonumber(ind.roleIconOffsetY) or 0, f._bottomPad))
-    f._roleIcon:SetAtlas(ROLE_ATLAS[member.role])
-    f._roleIcon:SetAlpha(1)
-    f._roleIcon:Show()
-end
-
--- power bar (power.showPowerBar/powerBarHeight/powerBarOnlyHealers/powerBarOnlyTanks/
---            powerBarUsePowerColor/powerBarColor). Hides the bar for roles that
--- don't match the only-Healers/only-Tanks filter.
-local function ApplyPowerBar(f, member, power, general)
-    local pb = f.powerBar
-    if power.showPowerBar == false then pb:Hide(); f._bottomPad = 0; return end
-    local onlyHealers = power.powerBarOnlyHealers
-    local onlyTanks = power.powerBarOnlyTanks
+-- Role filter for the power bar: the live path is UpdatePower ->
+-- ShouldShowPowerForUnit -> Chrome.ResizeHealthForPower.
+local function PowerVisibleFor(member, power)
+    if power.showPowerBar == false then return false end
+    local onlyHealers, onlyTanks = power.powerBarOnlyHealers, power.powerBarOnlyTanks
     if onlyHealers or onlyTanks then
-        local ok = (onlyHealers and member.role == "HEALER")
-            or (onlyTanks and member.role == "TANK")
-        if not ok then pb:Hide(); f._bottomPad = 0; return end
+        return (onlyHealers and member.role == "HEALER")
+            or (onlyTanks and member.role == "TANK") or false
     end
-    local border = f._borderPx or 0
-    local h = tonumber(power.powerBarHeight) or 4
-    f._bottomPad = border + h + 1
-    pb:ClearAllPoints()
-    pb:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", border, border)
-    pb:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -border, border)
-    pb:SetHeight(h)
-    pb:SetStatusBarTexture(StatusBarTexture(general))
+    return true
+end
+
+-- Health + power VALUES and colors (geometry/texture/orientation are Chrome's).
+local function ApplyBarValues(f, member, general, power, showPower)
+    local hb = f.healthBar
+    if hb then
+        f._baseHealthPct = member.healthPct
+        f._healthPct = member.healthPct
+        hb:SetMinMaxValues(0, 100)
+        hb:SetValue(member.healthPct)
+        local r, g, b = 0.2, 0.8, 0.2
+        if general.useClassColor then
+            r, g, b = ClassColor(member.class)
+        elseif general.darkMode and general.darkModeHealthColor then
+            local c = general.darkModeHealthColor; r, g, b = c[1] or r, c[2] or g, c[3] or b
+        end
+        hb:SetStatusBarColor(r, g, b, 1)
+    end
+
+    local pb = f.powerBar
+    if not pb then return end
+    if not showPower then pb:Hide(); return end
     pb:SetMinMaxValues(0, 100)
     pb:SetValue(80)
     -- Default mana-blue stands in for the live power-type color; when the user
@@ -567,6 +531,75 @@ local function ApplyPowerBar(f, member, power, general)
     end
     pb:SetStatusBarColor(r, g, b, 1)
     pb:Show()
+end
+
+-- Overlay bar VALUES: Chrome already styled absorb / heal-absorb / heal-pred
+-- (draw order, texture, fill origin, detached geometry, spark, outline), so
+-- the preview only fills them with a representative amount and color.
+local OVERLAY_SAMPLE = {
+    { key = "healPredictionBar", cfg = "healPrediction", value = 20, alpha = 0.5, r = 0.2, g = 1,   b = 0.2 },
+    { key = "absorbBar",         cfg = "absorbs",        value = 25, alpha = 0.3, r = 1,   g = 1,   b = 1   },
+    { key = "healAbsorbBar",     cfg = "healAbsorbs",    value = 15, alpha = 0.6, r = 0.5, g = 0.1, b = 0.1 },
+}
+
+local function ApplyHealthOverlays(f, member, vdb)
+    for _, spec in ipairs(OVERLAY_SAMPLE) do
+        local bar = f[spec.key]
+        local settings = vdb[spec.cfg]
+        if bar then
+            if not settings or settings.enabled == false then
+                bar:Hide()
+            else
+                bar:SetMinMaxValues(0, 100)
+                bar:SetValue(spec.value)
+                local r, g, b = spec.r, spec.g, spec.b
+                if settings.useClassColor then
+                    r, g, b = ClassColor(member.class)
+                elseif settings.color then
+                    local c = settings.color; r, g, b = c[1] or r, c[2] or g, c[3] or b
+                end
+                bar:SetStatusBarColor(r, g, b, tonumber(settings.opacity) or spec.alpha)
+                bar:Show()
+            end
+        end
+    end
+end
+
+-- Name / level text CONTENT (Chrome owns font, anchors and justification).
+local function ApplyTextContent(f, member, nameCfg)
+    local nt = f.nameText
+    if nt then
+        if nameCfg.showName == false then
+            nt:Hide()
+        else
+            local label = member.name
+            local maxLen = tonumber(nameCfg.maxNameLength) or 0
+            if maxLen > 0 then label = label:sub(1, maxLen) end
+            nt:SetText(label)
+            if nameCfg.nameTextUseClassColor then
+                nt:SetTextColor(ClassColor(member.class))
+            elseif nameCfg.nameTextColor then
+                local c = nameCfg.nameTextColor; nt:SetTextColor(c[1] or 1, c[2] or 1, c[3] or 1)
+            else
+                nt:SetTextColor(1, 1, 1)
+            end
+            nt:Show()
+        end
+    end
+
+    local lt = f.levelText
+    if not lt then return end
+    if nameCfg.showLevel ~= true then
+        lt:Hide()
+        return
+    end
+    lt:SetText(tostring(member.level or 80))
+    if nameCfg.levelTextColor then
+        local c = nameCfg.levelTextColor; lt:SetTextColor(c[1] or 1, c[2] or 1, c[3] or 1)
+    else
+        lt:SetTextColor(1, 1, 1)
+    end
+    lt:Show()
 end
 
 -- Build the configured health-text string from a percent + a fake max HP.
@@ -589,237 +622,153 @@ local function FormatHealthText(style, pct, hideSymbol)
     return hideSymbol and ("%d"):format(pct) or ("%d%%"):format(pct)
 end
 
--- health text (health.showHealthText/healthDisplayStyle/healthFontSize/healthAnchor/
---   healthJustify/healthOffsetX/Y/healthTextColor + hideHealthPercentSymbol). Also
--- publishes f._UpdateHealthText(pct) so the live ticker can refresh the string.
-local function ApplyHealthText(f, health, font, allowed)
-    if allowed == false then
-        if f.healthText then f.healthText:Hide() end
-        return
-    end
+-- Health text CONTENT + the ticker hook (Chrome owns font/anchor/justify).
+local function ApplyHealthText(f, health)
     local ht = f.healthText
+    if not ht then return end
     if health.showHealthText == false then
         ht:Hide()
         f._UpdateHealthText = nil
         return
     end
-    ht:Show()
-    CJKFont(ht, font, tonumber(health.healthFontSize) or 12, "OUTLINE")
-    ht:SetJustifyH(health.healthJustify or "RIGHT")
-    ht:ClearAllPoints()
-    local anchor = health.healthAnchor or "RIGHT"
-    ht:SetPoint(anchor, f, anchor,
-        tonumber(health.healthOffsetX) or 0,
-        BottomPadY(anchor, tonumber(health.healthOffsetY) or 0, f._bottomPad))
     local tc = health.healthTextColor
     if tc then ht:SetTextColor(tc[1] or 1, tc[2] or 1, tc[3] or 1, tc[4] or 1)
     else ht:SetTextColor(1, 1, 1, 1) end
     local style = health.healthDisplayStyle or "percent"
     local hideSymbol = health.hideHealthPercentSymbol
     ht:SetText(FormatHealthText(style, f._healthPct or 100, hideSymbol))
+    ht:Show()
     f._UpdateHealthText = function(pct)
         ht:SetText(FormatHealthText(style, pct or 0, hideSymbol))
     end
 end
 
--- portrait (portrait.showPortrait/portraitSide/portraitSize) — a side-attached
--- bordered frame matching the live builder.
-local function ApplyPortrait(f, portrait)
-    if not portrait.showPortrait then
-        if f._portrait then f._portrait:Hide() end
-        return
-    end
-    f._portrait = f._portrait or CreateFrame("Frame", nil, f, "BackdropTemplate")
-    local p = f._portrait
-    local sz = tonumber(portrait.portraitSize) or 30
-    p:SetSize(sz, sz)
-    p:ClearAllPoints()
-    if (portrait.portraitSide or "LEFT") == "LEFT" then
-        p:SetPoint("RIGHT", f, "LEFT", 0, 0)
-    else
-        p:SetPoint("LEFT", f, "RIGHT", 0, 0)
-    end
-    ns.SkinBase.ApplyPixelBackdrop(p, 1, false, false, { 0, 0, 0, 1 })
-    f._portraitTex = f._portraitTex or p:CreateTexture(nil, "ARTWORK")
-    f._portraitTex:ClearAllPoints()
-    f._portraitTex:SetPoint("TOPLEFT", 1, -1)
-    f._portraitTex:SetPoint("BOTTOMRIGHT", -1, 1)
-    f._portraitTex:SetColorTexture(0.15, 0.15, 0.2, 1)
-    p:Show()
+-- Role icon: Chrome sized and positioned frame.roleIcon; the preview picks the
+-- atlas for the mock member's role and honors the per-role toggles.
+local function ApplyRoleIcon(f, member, ind, allowed)
+    local icon = f.roleIcon
+    if not icon then return end
+    local atlasMap = RoleAtlas()
+    local toggleKey = ROLE_TOGGLE_KEY[member.role]
+    local show = allowed ~= false and ind.showRoleIcon and atlasMap[member.role]
+        and (not toggleKey or ind[toggleKey] ~= false)
+    if not show then icon:Hide(); return end
+    icon:SetAtlas(atlasMap[member.role])
+    icon:SetAlpha(1)
+    icon:Show()
 end
 
--- Health overlays: absorbs / healAbsorbs / healPrediction — simple colored
--- textures sized to a fraction of the health bar (the live bars are StatusBars,
--- but a static preview only needs a representative tint).
-local function MakeOverlayTex(f, key, layer)
-    f[key] = f[key] or f.healthBar:CreateTexture(nil, layer or "ARTWORK")
-    return f[key]
-end
-
-local function ApplyHealthOverlays(f, member, absorbs, healAbsorbs, healPrediction)
-    -- Heal prediction (peeks out past the fill from the right, ~20% width)
-    local hp = MakeOverlayTex(f, "_healPredTex", "ARTWORK")
-    if healPrediction and healPrediction.enabled then
-        local r, g, b = 0.2, 1, 0.2
-        if healPrediction.useClassColor then r, g, b = ClassColor(member.class)
-        elseif healPrediction.color then local c = healPrediction.color; r, g, b = c[1] or r, c[2] or g, c[3] or b end
-        hp:SetColorTexture(r, g, b, tonumber(healPrediction.opacity) or 0.5)
-        hp:ClearAllPoints()
-        if healPrediction.mode == "detached" then
-            hp:SetSize(tonumber(healPrediction.width) or 60, tonumber(healPrediction.height) or 8)
-            local a = healPrediction.anchor or "BOTTOM"
-            hp:SetPoint(a, f, a, tonumber(healPrediction.offsetX) or 0, tonumber(healPrediction.offsetY) or 0)
-        else
-            hp:SetPoint("TOPLEFT", f.healthBar, "TOPLEFT", 0, 0)
-            hp:SetPoint("BOTTOMRIGHT", f.healthBar, "BOTTOMLEFT", (f.healthBar:GetWidth() or 100) * 0.2, 0)
-        end
-        hp:Show()
-    else
-        hp:Hide()
-    end
-    -- Absorbs (reverse-fill tint from the right, ~25% width)
-    local ab = MakeOverlayTex(f, "_absorbTex", "OVERLAY")
-    if absorbs and absorbs.enabled then
-        local r, g, b = 1, 1, 1
-        if absorbs.useClassColor then r, g, b = ClassColor(member.class)
-        elseif absorbs.color then local c = absorbs.color; r, g, b = c[1] or r, c[2] or g, c[3] or b end
-        ab:SetColorTexture(r, g, b, tonumber(absorbs.opacity) or 0.3)
-        ab:ClearAllPoints()
-        if absorbs.mode == "detached" then
-            ab:SetSize(tonumber(absorbs.width) or 60, tonumber(absorbs.height) or 8)
-            local a = absorbs.anchor or "BOTTOM"
-            ab:SetPoint(a, f, a, tonumber(absorbs.offsetX) or 0, tonumber(absorbs.offsetY) or 0)
-        else
-            ab:SetPoint("TOPRIGHT", f.healthBar, "TOPRIGHT", 0, 0)
-            ab:SetPoint("BOTTOMLEFT", f.healthBar, "BOTTOMRIGHT", -(f.healthBar:GetWidth() or 100) * 0.25, 0)
-        end
-        ab:Show()
-    else
-        ab:Hide()
-    end
-    -- Heal absorbs (reverse-fill tint from the right, ~15% width)
-    local ha = MakeOverlayTex(f, "_healAbsorbTex", "OVERLAY")
-    if healAbsorbs and healAbsorbs.enabled then
-        local r, g, b = 0.5, 0.1, 0.1
-        if healAbsorbs.color then local c = healAbsorbs.color; r, g, b = c[1] or r, c[2] or g, c[3] or b end
-        ha:SetColorTexture(r, g, b, tonumber(healAbsorbs.opacity) or 0.6)
-        ha:ClearAllPoints()
-        if healAbsorbs.mode == "detached" then
-            ha:SetSize(tonumber(healAbsorbs.width) or 60, tonumber(healAbsorbs.height) or 8)
-            local a = healAbsorbs.anchor or "BOTTOM"
-            ha:SetPoint(a, f, a, tonumber(healAbsorbs.offsetX) or 0, tonumber(healAbsorbs.offsetY) or 0)
-        else
-            ha:SetPoint("TOPRIGHT", f.healthBar, "TOPRIGHT", 0, 0)
-            ha:SetPoint("BOTTOMLEFT", f.healthBar, "BOTTOMRIGHT", -(f.healthBar:GetWidth() or 100) * 0.15, 0)
-        end
-        ha:Show()
-    else
-        ha:Hide()
-    end
-end
-
--- Single indicator-icon helper: size + anchor + offset, with a sample atlas/texture.
-local function PlaceIndicator(f, key, ind, showKey, prefix, defaultSize, defaultAnchor)
-    f[key] = f[key] or f._indHost:CreateTexture(nil, "OVERLAY")
-    local tex = f[key]
-    if ind[showKey] == false or not ind[showKey] then tex:Hide(); return tex end
-    local sz = tonumber(ind[prefix .. "Size"]) or defaultSize
-    tex:SetSize(sz, sz)
-    tex:ClearAllPoints()
-    local anchor = ind[prefix .. "Anchor"] or defaultAnchor
-    tex:SetPoint(anchor, f, anchor,
-        tonumber(ind[prefix .. "OffsetX"]) or 0,
-        BottomPadY(anchor, tonumber(ind[prefix .. "OffsetY"]) or 0, f._bottomPad))
-    tex:Show()
-    return tex
-end
+-- No demo slots (spotlight tiles, or a roster past the demo table): every
+-- transient indicator stays hidden on that tile.
+local EMPTY_DEMO = {}
 
 -- indicators: readyCheck / resurrection / summon / leader / targetMarker / phase.
--- Shows every enabled one on the frame so the layout is fully visible in preview.
-local function ApplyIndicators(f, ind, allowed)
-    if allowed == false then
-        for _, k in ipairs({ "_readyCheckIcon", "_resIcon", "_summonIcon",
-                             "_leaderIcon", "_targetMarker", "_phaseIcon" }) do
-            if f[k] then f[k]:Hide() end
+-- Every one of these is TRANSIENT at runtime (a ready check in progress, a
+-- pending res/summon, the marked unit, the leader, a phased unit) -- drawing
+-- them all on every tile stacked three CENTER-anchored icons on top of each
+-- other on all five frames, which is nothing the runtime ever renders. Each
+-- demos on one representative tile (INDICATOR_DEMO, assigned by
+-- AssignSampleFlags); pairs that share a tile use non-overlapping anchors.
+--
+-- Size/anchor/offset all come from Chrome (it created and placed these exact
+-- textures); the preview only decides visibility and supplies the sample art.
+local INDICATOR_ART = {
+    { key = "readyCheckIcon", show = "showReadyCheck",     demo = "readyCheck",
+      texture = "Interface\\RAIDFRAME\\ReadyCheck-Ready" },
+    { key = "resIcon",        show = "showResurrection",   demo = "resurrection" },
+    { key = "summonIcon",     show = "showSummonPending",  demo = "summon" },
+    { key = "leaderIcon",     show = "showLeaderIcon",     demo = "leader",
+      atlas = "groupfinder-icon-leader" },
+    { key = "targetMarker",   show = "showTargetMarker",   demo = "targetMarker",
+      texture = "Interface\\TargetingFrame\\UI-RaidTargetingIcons", raidIcon = 8 },
+    { key = "phaseIcon",      show = "showPhaseIcon",      demo = "phase" },
+}
+
+local function ApplyIndicators(f, ind, allowed, demo)
+    demo = demo or EMPTY_DEMO
+    for _, spec in ipairs(INDICATOR_ART) do
+        local tex = f[spec.key]
+        if tex then
+            if allowed == false or not demo[spec.demo] or not ind[spec.show] then
+                tex:Hide()
+            else
+                -- res/summon/phase already carry their live texture from Chrome.
+                if spec.atlas then tex:SetAtlas(spec.atlas)
+                elseif spec.texture then tex:SetTexture(spec.texture) end
+                if spec.raidIcon and SetRaidTargetIconTexture then
+                    SetRaidTargetIconTexture(tex, spec.raidIcon)  -- 8 = skull sample
+                end
+                tex:Show()
+            end
         end
-        return
     end
-    f._indHost:SetFrameLevel(Driver._IndicatorHostLevel(f:GetFrameLevel()))
-    local rc = PlaceIndicator(f, "_readyCheckIcon", ind, "showReadyCheck", "readyCheck", 16, "CENTER")
-    if rc:IsShown() then rc:SetTexture("Interface\\RAIDFRAME\\ReadyCheck-Ready") end
-
-    local res = PlaceIndicator(f, "_resIcon", ind, "showResurrection", "resurrection", 16, "CENTER")
-    if res:IsShown() then res:SetTexture("Interface\\RaidFrame\\Raid-Icon-Rez") end
-
-    local sum = PlaceIndicator(f, "_summonIcon", ind, "showSummonPending", "summon", 20, "CENTER")
-    if sum:IsShown() then sum:SetAtlas("RaidFrame-Icon-SummonPending") end
-
-    local ldr = PlaceIndicator(f, "_leaderIcon", ind, "showLeaderIcon", "leader", 12, "TOP")
-    if ldr:IsShown() then ldr:SetAtlas("groupfinder-icon-leader") end
-
-    local tm = PlaceIndicator(f, "_targetMarker", ind, "showTargetMarker", "targetMarker", 14, "TOPRIGHT")
-    if tm:IsShown() then
-        tm:SetTexture("Interface\\TargetingFrame\\UI-RaidTargetingIcons")
-        if SetRaidTargetIconTexture then SetRaidTargetIconTexture(tm, 8) end -- 8 = skull sample
-    end
-
-    local ph = PlaceIndicator(f, "_phaseIcon", ind, "showPhaseIcon", "phase", 16, "BOTTOMLEFT")
-    if ph:IsShown() then ph:SetTexture("Interface\\TargetingFrame\\UI-PhasingIcon") end
 end
 
--- threat (indicators.showThreatBorder/threatBorderSize/threatColor/threatFillOpacity)
--- — a colored backdrop border + fill tint on a representative frame.
+-- threat (indicators.showThreatBorder/threatColor) on Chrome's threatBorder,
+-- colored the way UpdateThreat colors it at runtime.
 local function ApplyThreat(f, ind, isSample)
-    f._threatBorder = f._threatBorder or CreateFrame("Frame", nil, f, "BackdropTemplate")
-    local tb = f._threatBorder
+    local tb = f.threatBorder
+    if not tb then return end
     if ind.showThreatBorder == false or not isSample then tb:Hide(); return end
-    local sz = tonumber(ind.threatBorderSize) or 3
-    tb:ClearAllPoints()
-    tb:SetPoint("TOPLEFT", -1, 1)
-    tb:SetPoint("BOTTOMRIGHT", 1, -1)
-    tb:SetFrameLevel(f:GetFrameLevel() + 3)
-    local c = ind.threatColor or { 1, 0, 0, 0.8 }
-    ns.SkinBase.ApplyPixelBackdrop(tb, sz, true, false,
-        { c[1] or 1, c[2] or 0, c[3] or 0, c[4] or 0.8 },
-        { c[1] or 1, c[2] or 0, c[3] or 0, tonumber(ind.threatFillOpacity) or 0 })
+    local c = ind.threatColor or DefaultColor("threat")
+    local C = GetChrome()
+    if not C then tb:Hide(); return end
+    C.SetBackdropOverlayColor(tb, c[1], c[2], c[3], c[4] or 0.8)
     tb:Show()
 end
 
--- target highlight (healer.targetHighlight.enabled/.color/.fillOpacity) — tint one
--- frame as "the current target".
+-- target highlight (healer.targetHighlight) on Chrome's targetHighlight,
+-- colored the way UpdateTargetHighlight colors it at runtime.
 local function ApplyTargetHighlight(f, healer, isTarget)
-    f._targetHL = f._targetHL or CreateFrame("Frame", nil, f, "BackdropTemplate")
-    local th = f._targetHL
+    local th = f.targetHighlight
+    if not th then return end
     local cfg = healer and healer.targetHighlight
     if not cfg or cfg.enabled == false or not isTarget then th:Hide(); return end
-    th:ClearAllPoints()
-    th:SetPoint("TOPLEFT", -1, 1)
-    th:SetPoint("BOTTOMRIGHT", 1, -1)
-    th:SetFrameLevel(f:GetFrameLevel() + 4)
-    local c = cfg.color or { 1, 1, 1, 0.6 }
-    ns.SkinBase.ApplyPixelBackdrop(th, 2, true, false,
-        { c[1] or 1, c[2] or 1, c[3] or 1, c[4] or 0.6 },
-        { c[1] or 1, c[2] or 1, c[3] or 1, tonumber(cfg.fillOpacity) or 0 })
+    local c = cfg.color or DefaultColor("targetHighlight")
+    local C = GetChrome()
+    if not C then th:Hide(); return end
+    C.SetBackdropOverlayColor(th, c[1], c[2], c[3], c[4] or 0.6)
     th:Show()
 end
 
--- dispel overlay (healer.dispelOverlay.enabled/.borderSize/.opacity/.fillOpacity/
---   .colors.Magic|Curse|Disease|Poison) — a colored border on a representative frame.
+-- dispel overlay (healer.dispelOverlay) on Chrome's dispelOverlay, tinted
+-- through the shared Chrome.SetDispelBorderColor the runtime uses.
 local function ApplyDispelOverlay(f, healer, dispelType)
-    f._dispelOverlay = f._dispelOverlay or CreateFrame("Frame", nil, f, "BackdropTemplate")
-    local ov = f._dispelOverlay
+    local ov = f.dispelOverlay
+    if not ov then return end
     local cfg = healer and healer.dispelOverlay
     if not cfg or cfg.enabled == false or not dispelType then ov:Hide(); return end
-    local colors = cfg.colors or {}
-    local c = colors[dispelType] or DISPEL_SEED[dispelType] or { 0.2, 0.6, 1.0 }
-    local sz = tonumber(cfg.borderSize) or 3
-    ov:ClearAllPoints()
-    ov:SetAllPoints(f)
-    ov:SetFrameLevel(f:GetFrameLevel() + 6)
-    ns.SkinBase.ApplyPixelBackdrop(ov, sz, true, false,
-        { c[1] or 0.2, c[2] or 0.6, c[3] or 1, tonumber(cfg.opacity) or 1 },
-        { c[1] or 0.2, c[2] or 0.6, c[3] or 1, tonumber(cfg.fillOpacity) or 0 })
+    local C = GetChrome()
+    if not C then ov:Hide(); return end
+    local seed = DispelPalette()
+    local colors = cfg.colors or seed
+    local c = colors[dispelType] or seed[dispelType] or DefaultColor("dispelFallback")
+    C.SetDispelBorderColor(ov, c[1], c[2], c[3], tonumber(cfg.opacity) or 1)
     ov:Show()
+end
+
+-- cleanse-ready glow shares the dispellable sample with the border but has its
+-- own enable/color settings and can run with the border disabled.
+local function ApplyCleanseGlow(f, healer, hasDispellable)
+    local glow = f.cleanseGlow
+    if not glow then return end
+    local cfg = healer and healer.cleanseGlow
+    if not cfg or cfg.enabled ~= true or not hasDispellable then
+        glow:Hide()
+        return
+    end
+    local c = cfg.color or { 0.1, 1.0, 0.1, 1 }
+    if glow.tex then
+        glow.tex:SetVertexColor(c[1] or 0.1, c[2] or 1, c[3] or 0.1, c[4] or 1)
+    end
+    glow:Show()
+end
+
+-- Portrait: Chrome built and anchored the bordered frame; the preview fills it
+-- with a flat swatch (there is no unit to portrait).
+local function ApplyPortraitTint(f)
+    local tex = f.portraitTexture
+    if tex then tex:SetColorTexture(0.15, 0.15, 0.2, 1) end
 end
 
 -- targetedSpells (enabled/maxIcons/iconSize/reverseSwipe/growDirection/spacing/
@@ -861,7 +810,9 @@ local function ApplyTargetedSpells(f, targeted, sampleCount, allowed)
                 f._targetedSpellIcons[i] = ic
             end
 
-            ic:SetFrameLevel(f:GetFrameLevel() + 11)
+            local C = GetChrome()
+            local levels = C and C.LEVELS
+            ic:SetFrameLevel(f:GetFrameLevel() + ((levels and levels.TARGETED) or 13))
             ic:SetSize(iconSize, iconSize)
             ic._icon:SetTexture(TARGETED_SPELL_SAMPLES[((i - 1) % #TARGETED_SPELL_SAMPLES) + 1])
 
@@ -929,36 +880,128 @@ local function ApplyPets(f, pets, hasPet)
     pet:Show()
 end
 
--- Orchestrator: style a mock frame from EVERY group-frame setting. Decomposed into
--- per-subsystem Apply* calls to stay under the Lua 5.1 200-local / 60-upvalue caps.
--- `member._sampleTarget/._sampleThreat/._sampleDispel/._samplePet/._sampleOOR` are
--- representative flags set by the roster builder so a single frame demos the
--- "current target", threat, a dispellable debuff, a pet and an out-of-range fade.
+-- Party target companion: mirrors groupframes_party_targets.lua's dimensions,
+-- four-way anchor, gap and name visibility. It is ordinary frame chrome, not a
+-- transient highlight, so the Highlights focus chip never suppresses it.
+local function ApplyCompanionAnchor(frame, memberFrame, cfg)
+    local gap = tonumber(cfg and cfg.anchorGap) or 2
+    local side = (cfg and cfg.anchorTo) or "BOTTOM"
+    frame:ClearAllPoints()
+    if side == "TOP" then
+        frame:SetPoint("BOTTOM", memberFrame, "TOP", 0, gap)
+    elseif side == "RIGHT" then
+        frame:SetPoint("LEFT", memberFrame, "RIGHT", gap, 0)
+    elseif side == "LEFT" then
+        frame:SetPoint("RIGHT", memberFrame, "LEFT", -gap, 0)
+    else
+        frame:SetPoint("TOP", memberFrame, "BOTTOM", 0, -gap)
+    end
+end
+Driver._ApplyCompanionAnchor = ApplyCompanionAnchor
+
+local function ApplyPartyTarget(f, member, cfg, general, contextMode)
+    if contextMode ~= "party" or not cfg or cfg.enabled ~= true then
+        if f._partyTargetPreview then f._partyTargetPreview:Hide() end
+        return
+    end
+
+    local target = f._partyTargetPreview
+    if not target then
+        target = CreateFrame("Frame", nil, f, "BackdropTemplate")
+        local C = GetChrome()
+        if C then
+            C.EnsureBackdrop(target, C.GetCachedBackdrop(
+                "Interface\\Buttons\\WHITE8x8",
+                "Interface\\Buttons\\WHITE8x8",
+                1
+            ))
+        end
+        target:SetBackdropBorderColor(0, 0, 0, 1)
+
+        local hb = CreateFrame("StatusBar", nil, target)
+        hb:SetPoint("TOPLEFT", target, "TOPLEFT", 1, -1)
+        hb:SetPoint("BOTTOMRIGHT", target, "BOTTOMRIGHT", -1, 1)
+        hb:SetMinMaxValues(0, 100)
+        hb:EnableMouse(false)
+        target.healthBar = hb
+
+        local name = hb:CreateFontString(nil, "OVERLAY")
+        name:SetPoint("LEFT", hb, "LEFT", 3, 0)
+        name:SetPoint("RIGHT", hb, "RIGHT", -3, 0)
+        name:SetJustifyH("LEFT")
+        name:SetWordWrap(false)
+        target.nameText = name
+        f._partyTargetPreview = target
+    end
+
+    local C = GetChrome()
+    if C then
+        C.SetBackdropFillColor(target, 0, 0, 0, 1)
+        C.ApplyStatusBarTexture(target.healthBar, nil, general)
+    end
+    target:SetSize(tonumber(cfg.width) or 120, tonumber(cfg.height) or 22)
+    ApplyCompanionAnchor(target, f, cfg)
+    target.healthBar:SetValue(68)
+    target.healthBar:SetStatusBarColor(0.65, 0.2, 0.2, 1)
+    CJKFont(target.nameText, FontPath(general), tonumber(general and general.fontSize) or 11,
+        (general and general.fontOutline) or "OUTLINE")
+    target.nameText:SetText((member and member.name or "Member") .. " Target")
+    if cfg.showName == false then target.nameText:Hide() else target.nameText:Show() end
+    target:Show()
+end
+
+-- Orchestrator: style a mock tile from EVERY group-frame setting.
+-- Step 1 hands the tile to the LIVE builder (ns.QUI_GroupFrameChrome.Apply);
+-- steps 2+ add only what a preview owns -- fabricated values, demo gating and
+-- the preview-only extras. `member._sampleTarget/._sampleThreat/._sampleDispel/
+-- ._samplePet/._sampleOOR/._sampleIndicators` are representative flags set by
+-- the roster builder so a single tile demos each single-unit feature.
 local function ApplyFrameSettings(f, member, vdb, gfdb, contextMode)
     local general = vdb.general or {}
     local health  = vdb.health or {}
-    local font = FontPath(general)
-    local fontSize = tonumber(general.fontSize) or 11
+    local power   = vdb.power or {}
     local F = Driver._state.filter or Driver._NormalizeFilter(nil)
 
-    -- Backdrop + power FIRST: power establishes f._bottomPad, which the health bar
-    -- and BOTTOM-anchored text/indicators read.
-    ApplyAppearance(f, general)
-    ApplyPowerBar(f, member, vdb.power or {}, general)
-    ApplyHealthBar(f, member, general, health)
-    ApplyName(f, member, vdb.name or {}, font, fontSize, F.highlights ~= false)
-    ApplyLevel(f, member, vdb.name or {}, font, fontSize, F.highlights ~= false)
-    ApplyHealthText(f, health, font, F.highlights ~= false)
-    ApplyPortrait(f, vdb.portrait or {})
-    ApplyHealthOverlays(f, member, vdb.absorbs, vdb.healAbsorbs, vdb.healPrediction)
+    local Chrome = GetChrome()
+    if not Chrome or not Chrome.Apply then return end
+
+    -- 1. The shared builder: skeleton + every settings-driven geometry, font,
+    --    texture and frame level. Identical call the live frames get, including
+    --    the state table it reseeds -- tiles are POOLED, so without that reseed
+    --    the second refresh would leave a role-filtered tile with the power-bar
+    --    gap this pass just rewrote from the global setting.
+    f._chromeState = f._chromeState or {}
+    Chrome.Apply(f, vdb, f._chromeState)
+
+    -- 2. Per-unit power visibility (role filters) -- live does this from
+    --    UpdatePower; it re-anchors the health bar and rewrites f._bottomPad.
+    local showPower = PowerVisibleFor(member, power)
+    Chrome.ResizeHealthForPower(f, vdb, showPower, f._chromeState)
+    f._isVerticalFill = (health.healthFillDirection == "VERTICAL")
+
+    -- 3. Fabricated values + content.
+    ApplyBarValues(f, member, general, power, showPower)
+    ApplyHealthOverlays(f, member, vdb)
+    -- Name, level and health text are baseline frame chrome, not highlights:
+    -- focus chips may hide demo effects but must never erase ordinary text.
+    ApplyTextContent(f, member, vdb.name or {})
+    ApplyHealthText(f, health)
+    ApplyPortraitTint(f)
     ApplyRoleIcon(f, member, vdb.indicators or {}, F.indicators ~= false)
-    ApplyIndicators(f, vdb.indicators or {}, F.indicators ~= false)
+    ApplyIndicators(f, vdb.indicators or {}, F.indicators ~= false, member._sampleIndicators)
     ApplyThreat(f, vdb.indicators or {}, member._sampleThreat == true and F.threat ~= false)
-    ApplyTargetHighlight(f, vdb.healer, member._sampleTarget == true and F.highlights ~= false)
-    ApplyDispelOverlay(f, vdb.healer, (F.dispel ~= false) and member._sampleDispel or nil)
-    ApplyTargetedSpells(f, vdb.targetedSpells, member._sampleTargetedSpells, F.highlights ~= false)
-    ApplyPets(f, vdb.pets, member._samplePet == true and F.highlights ~= false)
-    ApplyRangeFade(f, vdb.range, member._sampleOOR == true)
+    ApplyTargetHighlight(f, vdb.healer,
+        member._sampleTarget == true and F.targetHighlight ~= false)
+    local sampleDispel = (F.dispel ~= false) and member._sampleDispel or nil
+    ApplyDispelOverlay(f, vdb.healer, sampleDispel)
+    ApplyCleanseGlow(f, vdb.healer, sampleDispel ~= nil)
+
+    -- 4. Preview-only extras (no live counterpart on the frame itself).
+    ApplyTargetedSpells(f, vdb.targetedSpells, member._sampleTargetedSpells,
+        F.targetedSpells ~= false)
+    ApplyPets(f, vdb.pets, member._samplePet == true and F.pets ~= false)
+    ApplyPartyTarget(f, member, vdb.targetFrames, general, contextMode)
+    ApplyRangeFade(f, vdb.range, member._sampleOOR == true and F.range ~= false)
 end
 Driver._ApplyFrameSettings = ApplyFrameSettings
 
@@ -968,9 +1011,8 @@ Driver._ApplyFrameSettings = ApplyFrameSettings
 local state = Driver._state
 local AURA_PREVIEW_LIMIT = 5
 
--- AURA ELEMENTS: filterStrip + tracked icon/square/bar preview through the
--- SHARED placeholder renderer (ns.AuraPreview); MRB + healthTint stay on the
--- REAL renderer with fabricated matches -----------------------------------
+-- AURA ELEMENTS: renderer-owned modes use fabricated matches; engine-owned
+-- containers use placeholders because they require real unit auras. ----------
 local function GetPreviewSpecID()
     local idx = GetSpecialization and GetSpecialization()
     if idx and GetSpecializationInfo then return (GetSpecializationInfo(idx)) end
@@ -994,56 +1036,107 @@ local function BuildHealthTintMatches(element, now)
     return out
 end
 
+-- Placeholder pin that mirrors the LIVE unit-frame path (RenderIcon,
+-- groupframes_aura_render.lua) instead of the generic default:
+--   * icon corner = IconLayout.GetIconAnchorForGrow(anchor, grow). The generic
+--     derivation takes its horizontal side from the grow direction alone, so a
+--     column-growing strip on a RIGHT-side anchor pinned the wrong corner.
+--   * BOTTOM-anchored strips add frame._bottomPad so they clear the power bar.
+local function MakeAuraPin(f)
+    return function(element)
+        local G = ns.AuraGlue
+        if not (G and G.ElementProfile) then return nil end
+        local p = G.ElementProfile(element)
+        local anchor = element.anchor or "TOPLEFT"
+        local offY = tonumber(element.offsetY) or 0
+        if anchor:find("BOTTOM") then offY = offY + (f._bottomPad or 0) end
+        local IL = ns.QUI_GroupFrameIconLayout
+        local corner = IL and IL.GetIconAnchorForGrow
+            and IL.GetIconAnchorForGrow(anchor, p.grow) or nil
+        return p, anchor, tonumber(element.offsetX) or 0, offY, corner
+    end
+end
+Driver._MakeAuraPin = MakeAuraPin
+
+-- Real spell art for tracked placeholders: the element names its spells, so a
+-- preview has no excuse for question marks. Filter strips stay generic -- their
+-- content is whatever the engine's filter matches at runtime, which is exactly
+-- what the placeholder's "worst-case footprint" is standing in for.
+local function MakePlaceholderIcon(element, index)
+    if element.mode ~= "tracked" then return nil end
+    local spells = element.spells
+    local sid = type(spells) == "table" and spells[index] or nil
+    return sid and ResolveSpellIcon(sid) or nil
+end
+Driver._MakePlaceholderIcon = MakePlaceholderIcon
+
+-- WHICH ELEMENTS THE RENDERER DRAWS is not the preview's call: it asks the live
+-- module (QUI_GFA.EngineRendersElement). At runtime only missingRaidBuff and the
+-- healthTint/border feeders go through ns.QUI_GroupFrameAuraRender; filter strips
+-- and tracked icon/square/bar are drawn by a secure CustomAuraContainer that the
+-- ENGINE fills from real unit auras. A preview cannot feed that container fake
+-- data, so those elements get placeholders (ns.AuraPreview) laid out with the
+-- live layout math -- and dispatching them through the renderer instead would
+-- resurrect the pre-cutover path the live release reconciliation tears down.
 local function RenderFrameAuras(f, auras, now)
     local Render  = ns.QUI_GroupFrameAuraRender
     local Model   = ns.QUI_GroupFramesAuraModel
     local Preview = ns.AuraPreview
+    local GFA     = ns.QUI_GroupFrameAuras
     if not Render or not Model or not Model.ActiveElementsForSpec then return end
     if auras and Model.EnsureSeeded then Model.EnsureSeeded(auras, state.contextMode) end
+    -- Placeholders live on the dedicated host at the shared live container
+    -- level, never on `f` itself -- see CreateMockFrame.
+    local auraHost = f._auraHost or f
+
     if not auras or auras.enabled == false then
         if Render.ReleaseAll then Render:ReleaseAll(f) end
-        if Preview then Preview.Hide(f) end
+        if Preview then Preview.Hide(auraHost) end
         f._previewAuraWork = nil
         f._previewAuraIDs = nil
         return
     end
+
     -- Preview the bucket the EDITOR is on (per-context), not the player's live
     -- spec -- otherwise editing "All Specs" while your current spec has its own
     -- bucket shows the wrong auras. nil (no editor push yet) falls back to live
     -- spec so the preview is sensible before the auras tab is ever opened.
     local bucketKey = state.previewBucket and state.previewBucket[state.contextMode]
     if bucketKey == nil then bucketKey = GetPreviewSpecID() end
+    -- ActiveElementsForSpec drops `enabled == false` elements, so a disabled
+    -- element is absent here: the renderer release pass below reclaims its
+    -- widgets and AuraPreview hides its surplus placeholders.
     local elements = Model.ActiveElementsForSpec(auras, bucketKey)
 
-    -- `work`/`current` track ONLY the real-renderer elements (MRB + healthTint)
-    -- for the animation ticker + stale-element release. filterStrip and tracked
-    -- icon/square/bar go into `previewElements`; ns.AuraPreview owns their pool
-    -- (hides its own surplus), so they are never added to `current`.
     local previewElements = {}
     local work, current = {}, {}
     for _, element in ipairs(elements) do
-        if element.mode == "missingRaidBuff" then
-            local matches = Driver._BuildMissingRaidBuffMatches(element, now)
+        local engineDrawn = GFA and GFA.EngineRendersElement
+            and GFA.EngineRendersElement(element) or false
+        if engineDrawn then
+            local matches
+            if element.mode == "missingRaidBuff" then
+                matches = Driver._BuildMissingRaidBuffMatches(element, now)
+            else
+                -- healthTint / border: frame-level feeders keyed by spellID.
+                matches = BuildHealthTintMatches(element, now)
+            end
             work[#work + 1] = { element = element, matches = matches }
-            current[element.id] = true
-            Render:Dispatch(f, element, matches)
-        elseif element.mode == "tracked"
-            and (element.displayType == "healthTint" or element.displayType == "border") then
-            -- Both are frame-level feeders drawn by the real renderer (healthTint
-            -- overlay / border outline); BuildHealthTintMatches supplies a fake
-            -- match keyed by spellID for either.
-            local matches = BuildHealthTintMatches(element, now)
-            work[#work + 1] = { element = element, matches = matches }
-            current[element.id] = true
+            if element.id then current[element.id] = true end
             Render:Dispatch(f, element, matches)
         else
             previewElements[#previewElements + 1] = element
         end
     end
-    if Preview then Preview.Show(f, previewElements) end
+    if Preview then
+        Preview.Show(auraHost, previewElements, {
+            resolve = MakeAuraPin(f),
+            icon = MakePlaceholderIcon,
+        })
+    end
 
-    -- Release any MRB/healthTint element the real renderer owned last pass but no
-    -- longer does (e.g. a healthTint tracked element flipped to icon, or removed).
+    -- Release any renderer-owned element from last pass that is gone now
+    -- (disabled, deleted, moved bucket, or flipped to a container display type).
     local prev = f._previewAuraIDs
     if prev then
         for id in pairs(prev) do
@@ -1053,19 +1146,13 @@ local function RenderFrameAuras(f, auras, now)
     f._previewAuraWork = work
     f._previewAuraIDs = current
 end
+Driver._RenderFrameAuras = RenderFrameAuras
 
 -- FRAME DIMENSIONS (mirror groupframes.lua GetFrameDimensions) --------------
 local function GetMockDimensions(vdb, contextMode, count)
-    local dims = vdb.dimensions or {}
-    if contextMode ~= "raid" then
-        return tonumber(dims.partyWidth) or 150, tonumber(dims.partyHeight) or 80
-    end
-    if count <= 15 then
-        return tonumber(dims.smallRaidWidth) or 180, tonumber(dims.smallRaidHeight) or 36
-    elseif count <= 25 then
-        return tonumber(dims.mediumRaidWidth) or 160, tonumber(dims.mediumRaidHeight) or 30
-    end
-    return tonumber(dims.largeRaidWidth) or 140, tonumber(dims.largeRaidHeight) or 24
+    local Chrome = GetChrome()
+    if not Chrome or not Chrome.FrameDimensions then return 200, 40 end
+    return Chrome.FrameDimensions(vdb, Chrome.DimensionMode(count, contextMode))
 end
 
 -- Teardown helper: hide every pooled frame (frames are POOLED, never destroyed,
@@ -1082,14 +1169,58 @@ end
 
 -- Pick representative frames to demo single-frame features (threat/target/
 -- dispel/pet/out-of-range). Match the value each Apply* function checks for.
-local function AssignSampleFlags(roster, count)
-    if count >= 1 then roster[1]._sampleTarget = true; roster[1]._samplePet = true end
+--
+-- INDICATOR_DEMO does the same for the six transient corner indicators: one
+-- tile each so the preview shows what the runtime shows (a ready check on one
+-- unit, a pending res on another) instead of three CENTER icons stacked on
+-- every tile. Tiles that share a slot use anchors that cannot collide (leader
+-- TOP + target marker TOPRIGHT).
+local INDICATOR_DEMO = {
+    [1] = { leader = true, targetMarker = true },
+    [2] = { phase = true },
+    [3] = { readyCheck = true },
+    [4] = { resurrection = true },
+    [5] = { summon = true },
+}
+Driver._INDICATOR_DEMO = INDICATOR_DEMO
+
+-- Put an attached Pet sample on the roster's OUTER edge whenever its anchor
+-- points along the party growth axis. A BOTTOM pet on the first tile of a
+-- DOWN-growing party otherwise lands directly on top of tile 2 and looks like
+-- an unexplained full-frame overlay.
+function Driver._EdgeSampleIndex(count, grow, anchorTo)
+    if not count or count < 1 then return nil end
+    grow = grow or "DOWN"
+    anchorTo = anchorTo or "BOTTOM"
+    if (grow == "DOWN" and anchorTo == "BOTTOM")
+        or (grow == "UP" and anchorTo == "TOP")
+        or (grow == "RIGHT" and anchorTo == "RIGHT")
+        or (grow == "LEFT" and anchorTo == "LEFT")
+    then
+        return count
+    end
+    return 1
+end
+
+local function AssignSampleFlags(roster, count, vdb, layout)
+    if count >= 1 then roster[1]._sampleTarget = true end
+    local petCfg = vdb and vdb.pets
+    local petIndex = Driver._EdgeSampleIndex(
+        count,
+        ResolveGrow(layout),
+        petCfg and petCfg.anchorTo
+    )
+    if petIndex then roster[petIndex]._samplePet = true end
     if count >= 2 then roster[2]._sampleThreat = true end
     if count >= 3 then roster[3]._sampleDispel = "Magic" end
     if count >= 4 then roster[4]._sampleOOR = true end
     if count >= 2 then roster[2]._sampleTargetedSpells = 1 end
     if count >= 4 then roster[4]._sampleTargetedSpells = 2 end
+    for i = 1, math.min(count, #INDICATOR_DEMO) do
+        roster[i]._sampleIndicators = INDICATOR_DEMO[i]
+    end
 end
+Driver._AssignSampleFlags = AssignSampleFlags
 
 -- ANIMATION TICKER ---------------------------------------------------------
 local function OscillateHealth(base, phase, clock)
@@ -1159,22 +1290,54 @@ end
 -- SPOTLIGHT (raid only) — a separate mock cluster shown when enabled.
 -- gridRight = horizontal extent of the main grid (root is sized 1x1, so we
 -- must NOT read root:GetWidth()).
+function Driver._SpotlightOffset(index, w, h, spacing, orientation, grow)
+    local n = index - 1
+    local horizontal = orientation == "HORIZONTAL" or grow == "LEFT" or grow == "RIGHT"
+    if horizontal then
+        local dx = n * (w + spacing)
+        if grow == "LEFT" then dx = -dx end
+        return dx, 0
+    end
+    local dy = n * (h + spacing)
+    if grow ~= "UP" then dy = -dy end
+    return 0, dy
+end
+
 function Driver._RenderSpotlight(root, vdb, gfdb, now, gridRight)
-    state.spotlightFrames = state.spotlightFrames or {}
-    for _, f in ipairs(state.spotlightFrames) do f:Hide(); f:SetParent(nil) end
+    state.spotlightPool = state.spotlightPool or {}
     state.spotlightFrames = {}
 
     local sp = vdb.spotlight
-    if not sp or sp.enabled ~= true then return end
+    if not sp or sp.enabled ~= true then
+        local Render = ns.QUI_GroupFrameAuraRender
+        for _, f in ipairs(state.spotlightPool) do
+            if Render and Render.ReleaseAll then Render:ReleaseAll(f) end
+            f:Hide()
+        end
+        return
+    end
 
     local w = tonumber(sp.frameWidth) or 180
     local h = tonumber(sp.frameHeight) or 36
     local spacing = tonumber(sp.spacing) or 2
     local grow = sp.growDirection or "DOWN"
+    local orientation = sp.orientation
+        or ((grow == "LEFT" or grow == "RIGHT") and "HORIZONTAL" or "VERTICAL")
     local sample
     if (sp.filterMode or "ROLE") == "NAME" then
-        sample = { { role = "DAMAGER", class = "MAGE",  name = "Pinned1", healthPct = 90 },
-                   { role = "DAMAGER", class = "ROGUE", name = "Pinned2", healthPct = 70 } }
+        sample = {}
+        for name in tostring(sp.nameList or ""):gmatch("[^,]+") do
+            name = name:match("^%s*(.-)%s*$")
+            if name ~= "" then
+                sample[#sample + 1] = {
+                    role = "DAMAGER", class = "MAGE", name = name, healthPct = 90,
+                }
+            end
+            if #sample >= 4 then break end
+        end
+        if #sample == 0 then
+            sample[1] = { role = "DAMAGER", class = "MAGE", name = "Pinned1", healthPct = 90 }
+        end
     else
         sample = {}
         if sp.filterTank ~= false then
@@ -1183,6 +1346,9 @@ function Driver._RenderSpotlight(root, vdb, gfdb, now, gridRight)
         if sp.filterHealer then
             sample[#sample+1] = { role = "HEALER", class = "PRIEST", name = "Healena", healthPct = 76 }
         end
+        if sp.filterDamager then
+            sample[#sample+1] = { role = "DAMAGER", class = "MAGE", name = "Frostina", healthPct = 68 }
+        end
         if #sample == 0 then
             sample[1] = { role = "TANK", class = "PALADIN", name = "Lightbeam", healthPct = 82 }
         end
@@ -1190,16 +1356,29 @@ function Driver._RenderSpotlight(root, vdb, gfdb, now, gridRight)
 
     local startX = (tonumber(gridRight) or 200) + 30
     for i, m in ipairs(sample) do
-        local f = Driver._CreateMockFrame(root, "quiPreviewSpot" .. i)
+        local f = state.spotlightPool[i]
+        if not f then
+            f = Driver._CreateMockFrame(root, "quiPreviewSpot" .. i)
+            state.spotlightPool[i] = f
+        elseif f:GetParent() ~= root then
+            f:SetParent(root)
+        end
         f._phase = i * 0.9
         f:SetSize(w, h)
-        local step = (i - 1) * (h + spacing)
-        local oy = (grow == "UP") and step or -step
+        local ox, oy = Driver._SpotlightOffset(i, w, h, spacing, orientation, grow)
         f:ClearAllPoints()
-        f:SetPoint("TOPLEFT", root, "TOPLEFT", startX, oy - 4)
+        f:SetPoint("TOPLEFT", root, "TOPLEFT", startX + ox, oy - 4)
         f:Show()
         Driver._ApplyFrameSettings(f, m, vdb, gfdb, "raid")
+        RenderFrameAuras(f, Driver._AuraSettingsForFilter(vdb, state.filter), now)
+        state.auraFrames[#state.auraFrames + 1] = f
         state.spotlightFrames[i] = f
+    end
+    local Render = ns.QUI_GroupFrameAuraRender
+    for i = #sample + 1, #state.spotlightPool do
+        local f = state.spotlightPool[i]
+        if Render and Render.ReleaseAll then Render:ReleaseAll(f) end
+        f:Hide()
     end
 end
 
@@ -1303,10 +1482,11 @@ function Driver.Refresh(contextMode)
     state.frames = {}
     state.auraFrames = {}
 
-    local roster = Driver._BuildRoster(state.contextMode, count)
-    AssignSampleFlags(roster, count)
-    local w, h = GetMockDimensions(vdb, state.contextMode, count)
     local layout = vdb.layout or {}
+    local roster = Driver._PrepareRoster(state.contextMode, count, layout, gfdb)
+    count = #roster
+    AssignSampleFlags(roster, count, vdb, layout)
+    local w, h = GetMockDimensions(vdb, state.contextMode, count)
     local positions = Driver._ComputeGridPositions(state.contextMode, count, layout, w, h)
 
     local pad = 4
@@ -1341,7 +1521,7 @@ function Driver.Refresh(contextMode)
         state.frames[i] = f
         if i <= AURA_PREVIEW_LIMIT then
             state.auraFrames[#state.auraFrames + 1] = f
-            RenderFrameAuras(f, (state.filter and state.filter.auras == false) and nil or vdb.auras, now)
+            RenderFrameAuras(f, Driver._AuraSettingsForFilter(vdb, state.filter), now)
         end
     end
 
@@ -1384,7 +1564,7 @@ function Driver.RefreshAuras()
     local vdb = Driver._GetContextDB(gfdb, state.contextMode)
     if not vdb then return end
     local now = (GetTime and GetTime()) or 0
-    local auras = (state.filter and state.filter.auras == false) and nil or vdb.auras
+    local auras = Driver._AuraSettingsForFilter(vdb, state.filter)
     for _, f in ipairs(state.auraFrames) do
         RenderFrameAuras(f, auras, now)
     end
@@ -1399,10 +1579,11 @@ end
 
 function Driver.Teardown()
     ReleaseFrames()
-    if state.spotlightFrames then
-        for _, f in ipairs(state.spotlightFrames) do f:Hide(); f:SetParent(nil) end
-        state.spotlightFrames = {}
+    if state.spotlightPool then
+        for _, f in ipairs(state.spotlightPool) do f:Hide(); f:SetParent(nil) end
+        state.spotlightPool = {}
     end
+    state.spotlightFrames = {}
     if state.root then state.root:Hide() end
     if state.ticker then state.ticker:Hide() end
 end

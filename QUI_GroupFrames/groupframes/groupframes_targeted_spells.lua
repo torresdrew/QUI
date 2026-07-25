@@ -41,6 +41,8 @@ local IsSecretValue = Helpers.IsSecretValue
 
 local TargetedSpells = ns.QUI_GroupFrameTargetedSpells or {}
 ns.QUI_GroupFrameTargetedSpells = TargetedSpells
+local CHROME_LEVELS = (ns.QUI_GroupFrameChrome and ns.QUI_GroupFrameChrome.LEVELS)
+    or { TARGETED = 13 }
 
 local TIMING = {
     firstRead = 0.10,
@@ -343,7 +345,7 @@ local function ApplyMarkerStyle(marker)
     local isRaid = marker._quiTargetedRaid and true or false
     local size = MarkerSize(isRaid)
     marker:SetSize(size, size)
-    marker:SetFrameLevel((marker:GetParent():GetFrameLevel() or 0) + 12)
+    marker:SetFrameLevel((marker:GetParent():GetFrameLevel() or 0) + CHROME_LEVELS.TARGETED)
 
     if marker._border then
         marker._border:SetFrameLevel(marker:GetFrameLevel() + 1)

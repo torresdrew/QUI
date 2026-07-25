@@ -51,7 +51,10 @@ local State = {
     previewHost = nil,
     activeBody  = nil,
     repaintTabs = nil,
-    previewFilter = { threat = true, dispel = true, auras = true, indicators = true, highlights = true },
+    previewFilter = {
+        threat = true, dispel = true, auras = true, indicators = true,
+        targetedSpells = true, targetHighlight = true, pets = true, range = true,
+    },
 }
 
 local TabModel
@@ -127,12 +130,15 @@ local FILTER_DEFS = {
     { key = "dispel",     label = ns.L["Dispel"] },
     { key = "auras",      label = ns.L["Auras"] },
     { key = "indicators", label = ns.L["Indicators"] },
-    { key = "highlights", label = ns.L["Highlights"] },
+    { key = "targetedSpells", label = ns.L["Targeted Spells"] },
+    { key = "targetHighlight", label = ns.L["Target Highlight"] },
+    { key = "pets",       label = ns.L["Pet Frames"] },
+    { key = "range",      label = ns.L["Range Fade"] },
 }
 
--- Strip height: 3 card rows (32 each) + gap + one slider row (28) + pad.
+-- Strip height: 4 card rows (32 each) + gap + one slider row (28) + pad.
 local STRIP_CARD_ROW_H = 32
-local STRIP_HEIGHT = (3 * STRIP_CARD_ROW_H) + 8 + 28 + 6
+local STRIP_HEIGHT = (4 * STRIP_CARD_ROW_H) + 8 + 28 + 6
 
 function CurrentPreviewVDB()
     local Driver = ns.QUI_GroupFramesPreview
@@ -171,7 +177,8 @@ local function BuildControlStrip(panel)
     end
     card.AddRow(cells.threat, cells.dispel)
     card.AddRow(cells.auras, cells.indicators)
-    card.AddRow(cells.highlights)
+    card.AddRow(cells.targetedSpells, cells.targetHighlight)
+    card.AddRow(cells.pets, cells.range)
     card.Finalize()
 
     -- gfdb captured once per build: testMode is mutated in place (never replaced)

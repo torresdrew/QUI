@@ -887,6 +887,12 @@ local function loadFullGroupFrames(opts)
     --   local initFrame = CreateFrame("Frame")
     --   initFrame:RegisterEvent("ADDON_LOADED")
     --   initFrame:SetScript("OnEvent", fn)               → capturedHandlers[?]
+    -- Shared frame chrome first (QUI.toc loads it before any sub-addon):
+    -- groupframes.lua reads ns.QUI_GroupFrameChrome at file scope.
+    local chromeLoader = assert(loadfile("core/group_frame_chrome.lua"),
+        "core/group_frame_chrome.lua must exist")
+    chromeLoader("QUI", ns)
+
     local loader = assert(loadfile("QUI_GroupFrames/groupframes/groupframes.lua"),
         "QUI_GroupFrames/groupframes/groupframes.lua must exist")
     loader("QUI_GroupFrames", ns)

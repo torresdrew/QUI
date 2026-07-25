@@ -89,6 +89,28 @@ check("UF threads its corner flip through opts.resolve (live helpers, no dup)",
 check("UF old fake-icon renderer gone (PREVIEW_AURAS table removed)",
     uf:find("PREVIEW_AURAS", 1, true) == nil and uf:find("previewBuffIcons", 1, true) == nil)
 
+-- Group frames split by what the LIVE module says the renderer draws: only
+-- missingRaidBuff + healthTint/border feeders go through the real renderer;
+-- filter strips and tracked icon/square/bar are drawn live by a secure
+-- CustomAuraContainer the ENGINE fills, which a preview cannot feed -- those
+-- get placeholders here.
+local gfp = readAll("QUI_GroupFrames/groupframes/settings/group_frames_preview_driver.lua")
+check("GF asks the live module which elements the renderer draws",
+    gfp:find("GFA.EngineRendersElement(element)", 1, true) ~= nil
+    and gfp:find("ns.QUI_GroupFrameAuras", 1, true) ~= nil)
+check("GF drives ns.AuraPreview for the engine-container elements",
+    gfp:find("Preview.Show(auraHost, previewElements", 1, true) ~= nil
+    and gfp:find("Preview.Hide(auraHost)", 1, true) ~= nil)
+check("GF threads the live RenderIcon pin + real spell art through opts",
+    gfp:find("resolve = MakeAuraPin(f)", 1, true) ~= nil
+    and gfp:find("icon = MakePlaceholderIcon", 1, true) ~= nil
+    and gfp:find("IL.GetIconAnchorForGrow(anchor, p.grow)", 1, true) ~= nil)
+check("GF hosts placeholders at the live container level",
+    gfp:find("f._auraHost:SetFrameLevel(Driver._AuraHostLevel", 1, true) ~= nil)
+check("GF does NOT resurrect the pre-cutover renderer path for strips",
+    gfp:find("BuildFilterStripMatches", 1, true) == nil
+    and gfp:find("BuildTrackedMatches", 1, true) == nil)
+
 local bb = readAll("QUI_ActionBars/actionbars/buffborders.lua")
 check("BB drives ns.AuraPreview on the mover hosts (Show + Hide)",
     bb:find("ns.AuraPreview", 1, true) ~= nil
@@ -101,8 +123,6 @@ check("BB bespoke preview-grid code removed (CreatePreviewGrid / overlay gone)",
     and bb:find("PREVIEW_BUFF_TEXTURES", 1, true) == nil)
 
 local gf = readAll("QUI_GroupFrames/groupframes/settings/group_frames_preview_driver.lua")
-check("GF drives ns.AuraPreview for filterStrip + tracked previews",
-    gf:find("ns.AuraPreview", 1, true) ~= nil and gf:find("Preview.Show(f, previewElements)", 1, true) ~= nil)
 -- The two fake-match fabricators are deleted (only the removal-note comment may
 -- still name them). Pin that no FUNCTION definition survives.
 check("GF fabricators deleted (_BuildFilterStripMatches / _BuildTrackedMatches)",
@@ -198,6 +218,34 @@ check("UF flip: border compensation offset applied (+1px)",
     ufPool[1].point.x == 1)
 check("UF flip: wrap row extends DOWN, away from the frame (dy negative)",
     ufPool[3].point.y == -22)
+
+-- (c2) POSITION FIDELITY: a resolve may override the pin CORNER outright. The
+-- GF unit-frame path takes the corner's horizontal side from the FRAME anchor
+-- (IconLayout.GetIconAnchorForGrow) -- information the flow derivation, which
+-- reads only grow/wrap, cannot reconstruct.
+local cornerHost = {}
+P.Show(cornerHost, { filterStrip({ anchor = "BOTTOMRIGHT", growDirection = "UP", maxIcons = 2 }) }, {
+    resolve = function(e)
+        return ns.AuraGlue.ElementProfile(e), "BOTTOMRIGHT", 0, 0, "BOTTOMRIGHT"
+    end,
+})
+local cornerPool = cornerHost._quiAuraPreview
+check("resolve's 5th return overrides the flow-derived pin corner",
+    cornerPool[1].point.p == "BOTTOMRIGHT" and cornerPool[1].point.rp == "BOTTOMRIGHT")
+check("corner override leaves flow DIRECTION alone (grow UP still marches +y)",
+    cornerPool[2].point.y > 0)
+
+-- (c3) opts.icon supplies real spell art per slot; nil falls back to the
+-- placeholder question mark.
+local iconHost = {}
+P.Show(iconHost, { filterStrip({ maxIcons = 2 }) }, {
+    icon = function(_, index) return index == 1 and 12345 or nil end,
+})
+local iconPool = iconHost._quiAuraPreview
+check("opts.icon paints the caller's texture on the slot it names",
+    iconPool[1]._tex.tex == 12345)
+check("slots the caller cannot name keep the placeholder icon",
+    iconPool[2]._tex.tex == 134400)
 
 -- (d) POSITION FIDELITY: 10 icons, perRow 4, grow LEFT, wrap UP (BOTTOMRIGHT
 -- anchor) — flow origin BOTTOMRIGHT, dx marches negative, row 2 dy positive.

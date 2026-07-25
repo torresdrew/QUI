@@ -43,6 +43,8 @@ local function NewFrame()
     function f:RegisterForClicks() end
     function f:SetClampedToScreen() end
     function f:SetFrameStrata() end
+    function f:SetToplevel(v) self.topLevel = v and true or false end
+    function f:Raise() self.raiseCount = (self.raiseCount or 0) + 1 end
     function f:SetFrameLevel(l) self.level = l end
     function f:GetFrameLevel() return self.level end
     function f:GetParent() return self.parent end
@@ -52,6 +54,10 @@ local function NewFrame()
         local t = { SetAllPoints = function() end, SetTexture = function() end,
             SetVertexColor = function() end, SetColorTexture = function() end,
             SetGradient = function() end, SetPoint = function() end,
+            SetHeight = function(s, h) s.height = h end,
+            GetHeight = function(s) return s.height end,
+            SetShown = function(s, v) s.shown = v and true or false end,
+            IsShown = function(s) return s.shown end,
             Show = function(s) s.shown = true end, Hide = function(s) s.shown = false end }
         t.shown = true
         return t

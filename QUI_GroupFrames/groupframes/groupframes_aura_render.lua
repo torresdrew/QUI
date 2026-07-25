@@ -41,6 +41,8 @@ local ADDON_NAME, ns = ...
 local R = ns.QUI_GroupFrameAuraRender or {}
 ns.QUI_GroupFrameAuraRender = R
 
+local CHROME_LEVELS = (ns.QUI_GroupFrameChrome and ns.QUI_GroupFrameChrome.LEVELS)
+    or { AURA_HOST = 11, AURA_BAR = 12 }
 
 local function CJKFont(fs, p, s, f)
     if ns.Helpers and ns.Helpers.ApplyFontWithFallback then
@@ -948,7 +950,7 @@ function R.RenderIcon(self, frame, element, matches)
         container:SetSize(1, 1)
         state.container = container
     end
-    container:SetFrameLevel(frame:GetFrameLevel() + 8)
+    container:SetFrameLevel(frame:GetFrameLevel() + CHROME_LEVELS.AURA_HOST)
     container:ClearAllPoints()
     container:SetAllPoints(frame)
     container:Show()
@@ -1083,7 +1085,7 @@ function R.RenderSquare(self, frame, element, matches)
     end
 
     icon:SetSize(size, size)
-    icon:SetFrameLevel(frame:GetFrameLevel() + 8)
+    icon:SetFrameLevel(frame:GetFrameLevel() + CHROME_LEVELS.AURA_HOST)
     icon:ClearAllPoints()
     icon:SetPoint(anchor, frame, anchor, offX, offY)
 
@@ -1140,7 +1142,7 @@ function R.RenderBar(self, frame, element, matches)
         bar = AcquireBarFrame(frame)
         state.bar = bar
     end
-    bar:SetFrameLevel(frame:GetFrameLevel() + 9)
+    bar:SetFrameLevel(frame:GetFrameLevel() + CHROME_LEVELS.AURA_BAR)
 
     local barCfg = GetBarConfig(element) or {}
     local orientation = barCfg.orientation == "VERTICAL" and "VERTICAL" or "HORIZONTAL"
@@ -1398,7 +1400,7 @@ local function GetOrCreateBorderOverlay(frame, thickness)
     -- Outset by the edge thickness so the outline hugs the frame's OUTER edge.
     overlay:SetPoint("TOPLEFT", anchorTo, "TOPLEFT", -size, size)
     overlay:SetPoint("BOTTOMRIGHT", anchorTo, "BOTTOMRIGHT", size, -size)
-    overlay:SetFrameLevel(anchorTo:GetFrameLevel() + 2)
+    overlay:SetFrameLevel(frame:GetFrameLevel() + CHROME_LEVELS.AURA_HOST)
     return overlay
 end
 

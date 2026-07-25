@@ -59,8 +59,12 @@ end
 --     matching the live renderer's min(#ordered, maxIcons) cap;
 --   * tracked bar -> bar.length x bar.thickness rectangle in element.color;
 --     tracked square -> iconSize^2 swatch in element.color.
-local function LayoutElement(host, pool, poolCursor, element, resolve)
-    local p, framePoint, offX, offY = resolve(element)
+local function LayoutElement(host, pool, poolCursor, element, resolve, iconFor)
+    -- A resolve may return a 5th value: the pin corner, when the surface's live
+    -- path derives it from something the generic flow math cannot see (the GF
+    -- unit-frame path takes the corner's horizontal side from the FRAME anchor,
+    -- not from the grow direction). nil keeps the generic derivation below.
+    local p, framePoint, offX, offY, pinCorner = resolve(element)
     if not p then return poolCursor end
 
     local count
@@ -81,7 +85,7 @@ local function LayoutElement(host, pool, poolCursor, element, resolve)
     local left = (grow == "LEFT")
     local up
     if column then up = (grow == "UP") else up = (p.wrap == "UP") end
-    local corner = (up and "BOTTOM" or "TOP") .. (left and "RIGHT" or "LEFT")
+    local corner = pinCorner or ((up and "BOTTOM" or "TOP") .. (left and "RIGHT" or "LEFT"))
 
     -- Column growth degrades to one icon per line (engine parity: a row-major
     -- flow layout can't express a multi-column vertical grid); the line index
@@ -109,7 +113,10 @@ local function LayoutElement(host, pool, poolCursor, element, resolve)
             f._tex:SetColorTexture((color and color[1]) or 1, (color and color[2]) or 1,
                 (color and color[3]) or 1, (color and color[4]) or 1)
         else
-            f._tex:SetTexture(PLACEHOLDER_ICON)
+            -- Real spell art when the surface can name the spell for this slot
+            -- (a tracked element lists them); the question mark is the fallback
+            -- for slots whose content only exists at runtime (filter strips).
+            f._tex:SetTexture((iconFor and iconFor(element, i)) or PLACEHOLDER_ICON)
             f._tex:SetTexCoord(0.08, 0.92, 0.08, 0.92)
         end
         -- `row` is the wrap-line index, `col` the position within the line. For
@@ -142,9 +149,13 @@ end
 -- larger render are hidden. healthTint tracked elements draw no placeholder
 -- (they tint a health bar, not an icon slot) so they are skipped here.
 -- opts.only (optional): filter fn(element) -> bool applied AFTER the mode gate.
+-- opts.icon (optional): fn(element, slotIndex) -> texture, letting a surface
+-- supply real spell art for slots it can name; nil per slot keeps the
+-- placeholder question mark.
 -- opts.resolve (optional): fn(element) -> profile, framePoint, offsetX, offsetY
--- replacing DefaultResolve when the surface folds its own anchoring into the
--- profile/pin (the unit-frame corner flip).
+-- [, pinCorner] replacing DefaultResolve when the surface folds its own
+-- anchoring into the profile/pin (the unit-frame corner flip). The optional
+-- 5th return overrides the flow-derived pin corner outright.
 function P.Show(hostFrame, elements, opts)
     local pool = hostFrame._quiAuraPreview
     if not pool then
@@ -159,7 +170,7 @@ function P.Show(hostFrame, elements, opts)
             or (e.mode == "tracked" and e.displayType ~= "healthTint" and e.displayType ~= "border")
         if render and opts and opts.only then render = opts.only(e) end
         if render then
-            cursor = LayoutElement(hostFrame, pool, cursor, e, resolve)
+            cursor = LayoutElement(hostFrame, pool, cursor, e, resolve, opts and opts.icon)
         end
     end
     for i = cursor + 1, #pool do pool[i]:Hide() end

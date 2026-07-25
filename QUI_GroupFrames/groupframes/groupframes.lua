@@ -11,6 +11,11 @@ local ADDON_NAME, ns = ...
 local QUICore = ns.Addon
 local LSM = ns.LSM
 local Helpers = ns.Helpers
+-- Shared frame chrome (core/group_frame_chrome.lua, loaded by the core addon
+-- every sub-addon depends on): the one implementation of a group frame's
+-- skeleton + settings styling, used by the runtime here AND by the settings
+-- preview driver.
+local Chrome = ns.QUI_GroupFrameChrome
 local IsSecretValue = Helpers.IsSecretValue
 local SafeValue = Helpers.SafeValue
 local SafeToNumber = Helpers.SafeToNumber
@@ -106,17 +111,9 @@ local _state = {
         "UNIT_LEVEL",
         "UNIT_CONNECTION",
     },
-    defaultColors = {
-        darkHealth = { 0.15, 0.15, 0.15, 1 },
-        powerBar = { 0.2, 0.4, 0.8, 1 },
-        healAbsorb = { 0.5, 0.1, 0.1, 1 },
-        threat = { 1, 0, 0, 0.8 },
-        targetHighlight = { 1, 1, 1, 0.6 },
-        dispelFallback = { 0.2, 0.6, 1.0, 1 },
-        darkModeBg = { 0.25, 0.25, 0.25, 1 },
-        frameBg = { 0.1, 0.1, 0.1, 0.9 },
-        healPrediction = { 0.2, 1, 0.2, 1 },
-    },
+    -- Fallback colors: owned by core/group_frame_chrome.lua so live and preview
+    -- fall back to the same values.
+    defaultColors = ns.QUI_GroupFrameChrome.DEFAULT_COLORS,
     backdropReapplyInterval = 0.5,
 }
 
@@ -248,59 +245,13 @@ ns.QUI_GroupFrameIconLayout.HEADER_INIT_CONFIG_FUNC = [[
 -- memprobes registered in SetupDebugInstrumentation (debug gate)
 
 ---------------------------------------------------------------------------
--- CACHED BACKDROP TABLES: Avoid allocating a new table every SetBackdrop
--- call. SetBackdrop does field-by-field comparison, but reusing the same
--- table reference lets it short-circuit and reduces GC pressure.
+-- Backdrop helpers (cached backdrop tables + the taint-safe fill color) live
+-- in core/group_frame_chrome.lua; both the live frames and the settings preview
+-- go through that one copy.
 ---------------------------------------------------------------------------
-local _backdropCache = {}
--- memprobes registered in SetupDebugInstrumentation (debug gate)
-local function GetCachedBackdrop(bgFile, edgeFile, edgeSize)
-    local key = (bgFile or "") .. "|" .. (edgeFile or "") .. "|" .. (edgeSize or 0)
-    local bd = _backdropCache[key]
-    if not bd then
-        bd = {
-            bgFile = bgFile,
-            edgeFile = edgeFile or nil,
-            edgeSize = edgeSize and edgeSize > 0 and edgeSize or nil,
-        }
-        _backdropCache[key] = bd
-    end
-    return bd
-end
-
--- Skip SetBackdrop when the same cached backdrop table is already applied.
--- Blizzard's SetBackdrop does NOT short-circuit on identical backdropInfo —
--- it unconditionally runs NineSliceUtil.ApplyLayout, which walks every
--- piece (corners + edges + center) and is expensive enough that repeated
--- calls across a full raid can exhaust WoW's 200ms script budget
--- ("script ran too long" in NineSlice.lua). Tracking the last-applied
--- cached table on the frame lets re-decoration passes skip the rebuild.
-local function EnsureBackdrop(frame, bd)
-    if frame._quiBackdrop == bd then return end
-    frame._quiBackdrop = bd
-    frame:SetBackdrop(bd)
-end
-
--- Color the bg fill of a BackdropTemplate frame WITHOUT going through the
--- Lua mixin SetBackdropColor.
---
--- BackdropTemplateMixin:SetBackdropColor reads self.Center to find the
--- texture to color. Because EnsureBackdrop -> frame:SetBackdrop runs in
--- QUI's tainted execution context, the assignment to self.Center inherits
--- QUI's taint stamp. Every subsequent frame:SetBackdropColor(...) call
--- crosses from Blizzard secure code into a QUI-tainted field read,
--- emitting "Execution tainted by QUI while reading field Center" on every
--- raid-frame health update (~80+ events/session in the taint log).
---
--- SetVertexColor is C-side on the Texture object, so reading frame.Center
--- inside our own tainted code (no Blizzard-secure boundary crossed) and
--- forwarding straight to a C-side sink avoids the propagation entirely.
-local function SetBackdropFillColor(frame, r, g, b, a)
-    local center = frame and frame.Center
-    if center then
-        center:SetVertexColor(r, g, b, a)
-    end
-end
+local GetCachedBackdrop    = Chrome.GetCachedBackdrop
+local EnsureBackdrop       = Chrome.EnsureBackdrop
+local SetBackdropFillColor = Chrome.SetBackdropFillColor
 
 ---------------------------------------------------------------------------
 -- GROUP_ROSTER_UPDATE coalescing: GRU fires in bursts of 5-20 during roster
@@ -311,9 +262,7 @@ local gruCoalesceFrame = CreateFrame("Frame")
 gruCoalesceFrame:Hide()
 -- _state.gruDeferredPending: true while the 0.2s deferred timer is active
 
--- Font/texture caching
-local _fontCache = {}
--- memprobes registered in SetupDebugInstrumentation (debug gate)
+-- Font/texture caches live in core/group_frame_chrome.lua (Chrome.InvalidateAssetCache)
 
 -- Pre-allocated color tables for common colors
 local COLORS = {
@@ -651,218 +600,43 @@ local function GetPortraitSettings(isRaid)
 end
 
 ---------------------------------------------------------------------------
--- HELPERS: Font and texture
+-- HELPERS: Font and texture — resolved by core/group_frame_chrome.lua (shared
+-- with the settings preview). These wrappers keep the isRaid-flavored
+-- signatures the ~15 call sites below already use.
 ---------------------------------------------------------------------------
 local function GetFontPath(isRaid)
-    if _fontCache.fontPath then return _fontCache.fontPath end
-    local general = GetGeneralSettings(isRaid)
-    local fontName = general and general.font or "Quazii"
-    _fontCache.fontPath = LSM:Fetch("font", fontName) or "Fonts\\FRIZQT__.TTF"
-    return _fontCache.fontPath
+    return Chrome.FontPath(GetGeneralSettings(isRaid))
 end
 
 local function GetFontOutline(isRaid)
-    if _fontCache.fontOutline then return _fontCache.fontOutline end
-    local general = GetGeneralSettings(isRaid)
-    _fontCache.fontOutline = general and general.fontOutline or "OUTLINE"
-    return _fontCache.fontOutline
+    return Chrome.FontOutline(GetGeneralSettings(isRaid))
 end
 
-local function GetTexturePath(textureName)
-    if not textureName then
-        if _fontCache.texturePath then return _fontCache.texturePath end
-        local general = GetGeneralSettings()
-        textureName = general and general.texture or "Quazii v5"
-    end
-    local path = LSM and LSM:Fetch("statusbar", textureName, true)
-    if not path and textureName and textureName:find("[/\\]") then
-        path = textureName
-    end
-    if not _fontCache.texturePath then
-        _fontCache.texturePath = path
-    end
-    return path or "Interface\\Buttons\\WHITE8X8"
+local function GetTexturePath(textureName, isRaid)
+    return Chrome.TexturePath(textureName, GetGeneralSettings(isRaid))
 end
 
-local function ApplyStatusBarTexture(statusBar, textureName)
-    if not statusBar then return end
-
-    statusBar:SetStatusBarTexture(GetTexturePath(textureName))
-
-    -- Some texture objects retain stale coords/tiling after reload/layout churn.
-    -- Re-selecting the texture in options fixes that because WoW rebuilds the
-    -- internal region state; do the same normalization here.
-    local tex = statusBar:GetStatusBarTexture()
-    if tex then
-        tex:SetTexCoord(0, 1, 0, 1)
-        if tex.SetHorizTile then tex:SetHorizTile(false) end
-        if tex.SetVertTile then tex:SetVertTile(false) end
-    end
+local function ApplyStatusBarTexture(statusBar, textureName, isRaid)
+    return Chrome.ApplyStatusBarTexture(statusBar, textureName, GetGeneralSettings(isRaid))
 end
 
--- >>> QUI_TEST_EXTRACT ApplyOverlayBar (sentinel used by
--- tests/unit/groupframes_overlay_bar_test.lua; do not remove)
--- Shared config + geometry for the three health-bar overlay StatusBars
--- (absorb, heal-absorb, heal-prediction). Idempotent: called from
--- DecorateGroupFrame at build and on every options refresh (RefreshSettings
--- clears _quiDecorated and re-decorates). Per-event Update* paths push only
--- SetValue/SetMinMaxValues/SetStatusBarColor; everything that changes on
--- config/layout lives here.
---   opts.drawOrderDefault : frame-level offset above healthBar when settings.drawOrder unset
---   opts.fillOrigin       : honor settings.fillFrom (absorb / heal-absorb)
---   opts.anchorToHealth   : pin to the health fill edge and grow outward (heal-pred)
-local function ApplyOverlayBar(bar, settings, healthBar, isVertical, opts)
-    if not bar or not healthBar then return end
-    settings = settings or {}
-    opts = opts or {}
-
-    -- Texture (config-driven; replaces the old hardcoded Shield-Fill build path)
-    ApplyStatusBarTexture(bar, settings.texture)
-
-    -- Draw order among the overlays (never exposes raw strata)
-    local order = settings.drawOrder or opts.drawOrderDefault or 1
-    bar:SetFrameLevel(healthBar:GetFrameLevel() + order)
-    bar:SetFrameStrata(healthBar:GetFrameStrata())
-
-    -- Geometry + fill origin
-    local reverse = false
-    local resolvedVertical = isVertical
-    bar:ClearAllPoints()
-    if settings.mode == "detached" then
-        -- Detached mini-bar: own size, anchored to the unit frame (options-only).
-        local frame = opts.frame or healthBar:GetParent()
-        local w = settings.width or 60
-        local h = settings.height or 8
-        resolvedVertical = h > w
-        bar:SetSize(w, h)
-        local anchor = settings.anchor or "BOTTOM"
-        bar:SetPoint(anchor, frame, anchor, settings.offsetX or 0, settings.offsetY or 0)
-        if opts.fillOrigin then
-            reverse = (settings.fillFrom or "reverse") ~= "default"
-        else
-            reverse = true
-        end
-        bar:SetReverseFill(reverse)
-        bar:SetOrientation(resolvedVertical and "VERTICAL" or "HORIZONTAL")
-    elseif opts.anchorToHealth then
-        local healthTex = healthBar:GetStatusBarTexture()
-        if isVertical then
-            bar:SetPoint("BOTTOMLEFT", healthTex, "TOPLEFT", 0, 0)
-            bar:SetPoint("TOPRIGHT", healthBar, "TOPRIGHT", 0, 0)
-            bar:SetOrientation("VERTICAL")
-        else
-            bar:SetPoint("TOPLEFT", healthTex, "TOPRIGHT", 0, 0)
-            bar:SetPoint("BOTTOMRIGHT", healthBar, "BOTTOMRIGHT", 0, 0)
-            bar:SetOrientation("HORIZONTAL")
-        end
-    else
-        bar:SetAllPoints(healthBar)
-        if opts.fillOrigin then
-            reverse = (settings.fillFrom or "reverse") ~= "default"
-        else
-            reverse = true
-        end
-        bar:SetReverseFill(reverse)
-        bar:SetOrientation(isVertical and "VERTICAL" or "HORIZONTAL")
-    end
-
-    -- Spark: 1px overlay pinned to the fill texture's leading edge. Position
-    -- tracks the (possibly secret) bar value through the anchor with NO Lua
-    -- arithmetic; never read GetValue/GetMinMaxValues.
-    if settings.spark then
-        local spark = bar._quiSpark
-        if not spark then
-            spark = bar:CreateTexture(nil, "OVERLAY")
-            spark:SetColorTexture(1, 1, 1, 1)
-            bar._quiSpark = spark
-        end
-        local sc = settings.sparkColor
-        spark:SetVertexColor(sc and sc[1] or 1, sc and sc[2] or 1, sc and sc[3] or 1, 1)
-        local fillTex = bar:GetStatusBarTexture()
-        spark:ClearAllPoints()
-        if resolvedVertical then
-            spark:SetPoint("LEFT", fillTex, "LEFT", 0, 0)
-            spark:SetPoint("RIGHT", fillTex, "RIGHT", 0, 0)
-            spark:SetHeight(1)
-            local edge = reverse and "BOTTOM" or "TOP"
-            spark:SetPoint(edge, fillTex, edge, 0, 0)
-        else
-            spark:SetPoint("TOP", fillTex, "TOP", 0, 0)
-            spark:SetPoint("BOTTOM", fillTex, "BOTTOM", 0, 0)
-            spark:SetWidth(1)
-            local edge = reverse and "LEFT" or "RIGHT"
-            spark:SetPoint(edge, fillTex, edge, 0, 0)
-        end
-        spark:Show()
-    elseif bar._quiSpark then
-        bar._quiSpark:Hide()
-    end
-
-    -- Outline: 4 static overlay edges framing the full bar. Config color
-    -- (non-secret) so plain textures are fine -- no SetVertexColor-secret concern.
-    if settings.outline then
-        local o = bar._quiOutline
-        if not o then
-            o = {
-                top    = bar:CreateTexture(nil, "OVERLAY"),
-                bottom = bar:CreateTexture(nil, "OVERLAY"),
-                left   = bar:CreateTexture(nil, "OVERLAY"),
-                right  = bar:CreateTexture(nil, "OVERLAY"),
-            }
-            bar._quiOutline = o
-        end
-        local oc = settings.outlineColor or { 0, 0, 0, 1 }
-        local r, g, b, a = oc[1] or 0, oc[2] or 0, oc[3] or 0, oc[4] or 1
-        o.top:ClearAllPoints(); o.top:SetColorTexture(r, g, b, a)
-        o.top:SetPoint("TOPLEFT", bar, "TOPLEFT", 0, 0)
-        o.top:SetPoint("TOPRIGHT", bar, "TOPRIGHT", 0, 0); o.top:SetHeight(1)
-        o.bottom:ClearAllPoints(); o.bottom:SetColorTexture(r, g, b, a)
-        o.bottom:SetPoint("BOTTOMLEFT", bar, "BOTTOMLEFT", 0, 0)
-        o.bottom:SetPoint("BOTTOMRIGHT", bar, "BOTTOMRIGHT", 0, 0); o.bottom:SetHeight(1)
-        o.left:ClearAllPoints(); o.left:SetColorTexture(r, g, b, a)
-        o.left:SetPoint("TOPLEFT", bar, "TOPLEFT", 0, 0)
-        o.left:SetPoint("BOTTOMLEFT", bar, "BOTTOMLEFT", 0, 0); o.left:SetWidth(1)
-        o.right:ClearAllPoints(); o.right:SetColorTexture(r, g, b, a)
-        o.right:SetPoint("TOPRIGHT", bar, "TOPRIGHT", 0, 0)
-        o.right:SetPoint("BOTTOMRIGHT", bar, "BOTTOMRIGHT", 0, 0); o.right:SetWidth(1)
-        o.top:Show(); o.bottom:Show(); o.left:Show(); o.right:Show()
-    elseif bar._quiOutline then
-        local o = bar._quiOutline
-        o.top:Hide(); o.bottom:Hide(); o.left:Hide(); o.right:Hide()
-    end
-end
--- <<< QUI_TEST_EXTRACT ApplyOverlayBar
-
+-- ApplyOverlayBar (the three health overlay bars: absorb / heal-absorb /
+-- heal-prediction) now lives in core/group_frame_chrome.lua so the settings
+-- preview styles its bars through the very same function. Its test extracts
+-- it from there via the QUI_TEST_EXTRACT sentinel.
+local ApplyOverlayBar = Chrome.ApplyOverlayBar
 local function InvalidateCache()
-    wipe(_fontCache)
+    Chrome.InvalidateAssetCache()
     _state.cachedVDB_party = nil
     _state.cachedVDB_raid = nil
     InvalidateDispelColors()
 end
 
 ---------------------------------------------------------------------------
--- HELPERS: Anchor info
+-- HELPERS: Anchor info (owned by core/group_frame_chrome.lua so the live frames,
+-- the Edit Mode preview and the settings preview all place text identically)
 ---------------------------------------------------------------------------
-local ANCHOR_MAP = {
-    LEFT       = { point = "LEFT",       leftPoint = "LEFT",       rightPoint = "RIGHT",        justify = "LEFT",   justifyV = "MIDDLE" },
-    RIGHT      = { point = "RIGHT",      leftPoint = "LEFT",       rightPoint = "RIGHT",        justify = "RIGHT",  justifyV = "MIDDLE" },
-    CENTER     = { point = "CENTER",     leftPoint = "LEFT",       rightPoint = "RIGHT",        justify = "CENTER", justifyV = "MIDDLE" },
-    TOPLEFT    = { point = "TOPLEFT",    leftPoint = "TOPLEFT",    rightPoint = "TOPRIGHT",     justify = "LEFT",   justifyV = "TOP" },
-    TOPRIGHT   = { point = "TOPRIGHT",   leftPoint = "TOPLEFT",    rightPoint = "TOPRIGHT",     justify = "RIGHT",  justifyV = "TOP" },
-    TOP        = { point = "TOP",        leftPoint = "TOPLEFT",    rightPoint = "TOPRIGHT",     justify = "CENTER", justifyV = "TOP" },
-    BOTTOMLEFT = { point = "BOTTOMLEFT", leftPoint = "BOTTOMLEFT", rightPoint = "BOTTOMRIGHT",  justify = "LEFT",   justifyV = "BOTTOM" },
-    BOTTOMRIGHT= { point = "BOTTOMRIGHT",leftPoint = "BOTTOMLEFT", rightPoint = "BOTTOMRIGHT",  justify = "RIGHT",  justifyV = "BOTTOM" },
-    BOTTOM     = { point = "BOTTOM",     leftPoint = "BOTTOMLEFT", rightPoint = "BOTTOMRIGHT",  justify = "CENTER", justifyV = "BOTTOM" },
-}
-
--- Publish for the Edit Mode preview (groupframes_editmode.lua, loaded later)
--- so its text placement always matches the live frames. The preview only reads
--- leftPoint/rightPoint/justify/justifyV; the extra `point` field is harmless.
-ns.QUI_GroupFrameTextAnchorMap = ANCHOR_MAP
-
-local function GetTextAnchorInfo(anchorName)
-    return ANCHOR_MAP[anchorName] or ANCHOR_MAP.LEFT
-end
+local GetTextAnchorInfo = Chrome.TextAnchorInfo
 
 function _state.FormatLevelText(unit)
     local ok, text = pcall(function()
@@ -936,20 +710,11 @@ local function GetGroupMode()
 end
 
 local function GetFrameDimensions(mode)
+    -- Tier sizes live in core/group_frame_chrome.lua so the settings preview
+    -- sizes its mock tiles with the same numbers (its private copy had drifted
+    -- to a 150x80 party default against this file's 200x40).
     local isRaid = (mode ~= "party")
-    local dims = GetDimensionSettings(isRaid)
-    if not dims then return 200, 40 end
-
-    if mode == "party" then
-        return dims.partyWidth or 200, dims.partyHeight or 40
-    elseif mode == "small" then
-        return dims.smallRaidWidth or 180, dims.smallRaidHeight or 36
-    elseif mode == "medium" then
-        return dims.mediumRaidWidth or 160, dims.mediumRaidHeight or 30
-    elseif mode == "large" then
-        return dims.largeRaidWidth or 140, dims.largeRaidHeight or 24
-    end
-    return 200, 40
+    return Chrome.FrameDimensions(GetVisualDB(isRaid), mode)
 end
 
 --- Compute expected header pixel dimensions from settings + member count.
@@ -1270,36 +1035,9 @@ local function ShouldShowPowerForUnit(unit, isRaid)
 end
 
 local function ResizeHealthForPower(frame, showPowerForUnit)
-    if not frame.healthBar then return end
-    local isRaid = frame._isRaid
-    local general = GetGeneralSettings(isRaid)
-    local borderPx = general and general.borderSize or 1
-    local borderSize = borderPx > 0 and (QUICore.Pixels and QUICore:Pixels(borderPx, frame) or borderPx) or 0
-    local px = QUICore.GetPixelSize and QUICore:GetPixelSize(frame) or 1
-
-    local bottomPad = borderSize
-    if showPowerForUnit then
-        local powerSettings = GetPowerSettings(isRaid)
-        local rawPowerHeight = (powerSettings and powerSettings.powerBarHeight) or 4
-        local powerHeight = QUICore.PixelRound and QUICore:PixelRound(rawPowerHeight, frame) or rawPowerHeight
-        bottomPad = borderSize + powerHeight + px
-    end
-
-    local state = GetFrameState(frame)
-    if state.healthPowerShow == showPowerForUnit
-        and state.healthPowerBorder == borderSize
-        and state.healthPowerBottom == bottomPad
-    then
-        return
-    end
-    state.healthPowerShow = showPowerForUnit
-    state.healthPowerBorder = borderSize
-    state.healthPowerBottom = bottomPad
-    frame._bottomPad = bottomPad
-
-    frame.healthBar:ClearAllPoints()
-    frame.healthBar:SetPoint("TOPLEFT", frame, "TOPLEFT", borderSize, -borderSize)
-    frame.healthBar:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -borderSize, bottomPad)
+    -- Geometry lives in core/group_frame_chrome.lua (shared with the settings
+    -- preview); this wrapper supplies the frame's context + dirty-check state.
+    Chrome.ResizeHealthForPower(frame, GetVisualDB(frame._isRaid), showPowerForUnit, GetFrameState(frame))
 end
 
 local function UpdatePower(frame)
@@ -1887,10 +1625,10 @@ local function UpdateThreat(frame)
     end
     if status and status >= 2 then
         local tc = indSettings.threatColor or _state.defaultColors.threat
-        frame.threatBorder:SetBackdropBorderColor(tc[1], tc[2], tc[3], tc[4] or 0.8)
+        Chrome.SetBackdropOverlayColor(frame.threatBorder, tc[1], tc[2], tc[3], tc[4] or 0.8)
         -- Keep threat border below icons/indicators — re-level in case frame
         -- base level shifted since decoration (secure header can re-level children)
-        frame.threatBorder:SetFrameLevel(frame:GetFrameLevel() + 3)
+        frame.threatBorder:SetFrameLevel(frame:GetFrameLevel() + Chrome.LEVELS.THREAT)
         frame.threatBorder:Show()
     else
         frame.threatBorder:Hide()
@@ -2030,7 +1768,8 @@ local function UpdateTargetHighlight(frame)
 
     if unit and _state.IsUnitTarget(unit) then
         local c = healerSettings.targetHighlight.color or _state.defaultColors.targetHighlight
-        frame.targetHighlight:SetBackdropBorderColor(c[1], c[2], c[3], c[4] or 0.6)
+        Chrome.SetBackdropOverlayColor(frame.targetHighlight, c[1], c[2], c[3], c[4] or 0.6)
+        frame.targetHighlight:SetFrameLevel(frame:GetFrameLevel() + Chrome.LEVELS.TARGET)
         frame.targetHighlight:Show()
         -- Keep fast-path cache in sync (used by PLAYER_TARGET_CHANGED fast unhighlight)
         local list = QUI_GF._targetHighlightFrames
@@ -2051,18 +1790,7 @@ end
 -- UPDATE: Dispel Overlay
 ---------------------------------------------------------------------------
 -- Helper: apply color to all 4 StatusBar borders + fill
-local function SetDispelBorderColor(overlay, r, g, b, a)
-    for _, key in ipairs(_dispel.borderKeys) do
-        local border = overlay[key]
-        if border then
-            border:GetStatusBarTexture():SetVertexColor(r, g, b, a)
-        end
-    end
-    if overlay.fill then
-        local fillA = overlay._fillOpacity or 0
-        overlay.fill:SetVertexColor(r, g, b, fillA)
-    end
-end
+local SetDispelBorderColor = Chrome.SetDispelBorderColor
 
 -- Helper: apply a ColorMixin (secret-safe) to all 4 StatusBar borders + fill
 local function SetDispelBorderColorMixin(overlay, color)
@@ -2385,465 +2113,15 @@ local function DecorateGroupFrame(frame)
     frame._isRaid = isRaidParent
     local isRaid = frame._isRaid
 
-    local db = GetSettings()
-    local general = GetGeneralSettings(isRaid)
-
-    -- Backdrop
-    local borderPx = general and general.borderSize or 1
-    local borderSize = borderPx > 0 and (QUICore.Pixels and QUICore:Pixels(borderPx, frame) or borderPx) or 0
-    local px = QUICore.GetPixelSize and QUICore:GetPixelSize(frame) or 1
-
-    EnsureBackdrop(frame, GetCachedBackdrop(
-        "Interface\\Buttons\\WHITE8x8",
-        borderSize > 0 and "Interface\\Buttons\\WHITE8x8" or nil,
-        borderSize > 0 and borderSize or nil
-    ))
-
-    local bgColor, healthOpacity, bgOpacity
-    if general and general.darkMode then
-        bgColor = general.darkModeBgColor or _state.defaultColors.darkModeBg
-        healthOpacity = general.darkModeHealthOpacity or 1.0
-        bgOpacity = general.darkModeBgOpacity or 1.0
-    else
-        bgColor = general and general.defaultBgColor or _state.defaultColors.frameBg
-        healthOpacity = general and general.defaultHealthOpacity or 1.0
-        bgOpacity = general and general.defaultBgOpacity or 1.0
-    end
-    local bgAlpha = (bgColor[4] or 1) * bgOpacity
-    frame._lastBackdropColorR = bgColor[1]
-    frame._lastBackdropColorG = bgColor[2]
-    frame._lastBackdropColorB = bgColor[3]
-    frame._lastBackdropColorA = bgAlpha
-    frame._lastBackdropReapplyTime = GetTime()
-    SetBackdropFillColor(frame, bgColor[1], bgColor[2], bgColor[3], bgAlpha)
-    if borderSize > 0 then
-        local bdr, bdg, bdb, bda = 0, 0, 0, 1
-        if Helpers and Helpers.GetSkinBorderColor then bdr, bdg, bdb, bda = Helpers.GetSkinBorderColor() end
-        frame:SetBackdropBorderColor(bdr, bdg, bdb, bda)
-    end
-
-    -- Power bar height calculation
-    local powerSettings = GetPowerSettings(isRaid)
-    local showPower = powerSettings and powerSettings.showPowerBar ~= false
-    local powerHeight = showPower and (QUICore.PixelRound and QUICore:PixelRound(powerSettings.powerBarHeight or 4, frame) or 4) or 0
-    local separatorHeight = showPower and px or 0
-
-    -- Health bar (reuse existing to avoid frame leaks on re-decoration)
-    local healthBar = frame.healthBar or CreateFrame("StatusBar", nil, frame)
-    healthBar:ClearAllPoints()
-    healthBar:SetPoint("TOPLEFT", frame, "TOPLEFT", borderSize, -borderSize)
-    healthBar:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -borderSize, borderSize + powerHeight + separatorHeight)
-    ApplyStatusBarTexture(healthBar)
-    healthBar:SetMinMaxValues(0, 100)
-    healthBar:SetValue(100)
-    healthBar:EnableMouse(false)
-    healthBar:SetAlpha(healthOpacity)
-    local isVertical = (GetHealthFillDirection(isRaid) == "VERTICAL")
-    healthBar:SetOrientation(isVertical and "VERTICAL" or "HORIZONTAL")
-    frame._isVerticalFill = isVertical
-    frame.healthBar = healthBar
-
-    -- No separate healthBg texture — the frame backdrop shows through the
-    -- unfilled StatusBar area, matching unit frame behavior.
-    if frame.healthBg then
-        frame.healthBg:Hide()
-        frame.healthBg = nil
-    end
-
-    -- Heal-bar overlays (absorb / heal-absorb / heal-prediction). Texture,
-    -- draw order, fill origin, spark and outline are all owned by the shared
-    -- ApplyOverlayBar; the per-event Update* paths only push value/color.
     local vdb = GetVisualDB(isRaid)
 
-    local healPredictionBar = frame.healPredictionBar or CreateFrame("StatusBar", nil, healthBar)
-    frame.healPredictionBar = healPredictionBar
-    healPredictionBar:SetMinMaxValues(0, 1)
-    healPredictionBar:SetValue(0)
-    ApplyOverlayBar(healPredictionBar, vdb and vdb.healPrediction, healthBar, isVertical,
-        { drawOrderDefault = 1, anchorToHealth = true, frame = frame })
-    healPredictionBar:Hide()
-
-    local absorbBar = frame.absorbBar or CreateFrame("StatusBar", nil, healthBar)
-    frame.absorbBar = absorbBar
-    absorbBar:SetMinMaxValues(0, 1)
-    absorbBar:SetValue(0)
-    ApplyOverlayBar(absorbBar, vdb and vdb.absorbs, healthBar, isVertical,
-        { drawOrderDefault = 2, fillOrigin = true, frame = frame })
-    absorbBar:Hide()
-
-    local healAbsorbBar = frame.healAbsorbBar or CreateFrame("StatusBar", nil, healthBar)
-    frame.healAbsorbBar = healAbsorbBar
-    healAbsorbBar:SetMinMaxValues(0, 1)
-    healAbsorbBar:SetValue(0)
-    ApplyOverlayBar(healAbsorbBar, vdb and vdb.healAbsorbs, healthBar, isVertical,
-        { drawOrderDefault = 3, fillOrigin = true, frame = frame })
-    healAbsorbBar:Hide()
-
-    -- Power bar
-    if showPower then
-        local powerBar = frame.powerBar or CreateFrame("StatusBar", nil, frame)
-        powerBar:ClearAllPoints()
-        powerBar:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", borderSize, borderSize)
-        powerBar:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -borderSize, borderSize)
-        powerBar:SetHeight(powerHeight)
-        ApplyStatusBarTexture(powerBar)
-        powerBar:SetMinMaxValues(0, 100)
-        powerBar:SetValue(100)
-        powerBar:EnableMouse(false)
-        frame.powerBar = powerBar
-
-        -- Power bar background
-        if not frame._powerBg then
-            local powerBg = powerBar:CreateTexture(nil, "BACKGROUND")
-            powerBg:SetAllPoints()
-            powerBg:SetTexture("Interface\\Buttons\\WHITE8x8")
-            powerBg:SetVertexColor(0.05, 0.05, 0.05, 0.9)
-            frame._powerBg = powerBg
-        end
-
-        -- Separator
-        if not frame._powerSeparator then
-            local separator = powerBar:CreateTexture(nil, "OVERLAY")
-            separator:SetHeight(px)
-            separator:SetPoint("BOTTOMLEFT", powerBar, "TOPLEFT", 0, 0)
-            separator:SetPoint("BOTTOMRIGHT", powerBar, "TOPRIGHT", 0, 0)
-            separator:SetTexture("Interface\\Buttons\\WHITE8x8")
-            separator:SetVertexColor(0, 0, 0, 1)
-            frame._powerSeparator = separator
-        end
-    end
-
-    -- Text frame (above health bar for layering)
-    local textFrame = frame._textFrame or CreateFrame("Frame", nil, frame)
-    textFrame:SetAllPoints()
-    textFrame:SetFrameLevel(healthBar:GetFrameLevel() + 3)
-    frame._textFrame = textFrame
-
-    -- Centered status text (DEAD / OFFLINE overlay)
-    local statusText = frame.statusText or textFrame:CreateFontString(nil, "OVERLAY")
-    statusText:ClearAllPoints()
-    if ns.Helpers and ns.Helpers.ApplyFontWithFallback then
-        ns.Helpers.ApplyFontWithFallback(statusText, GetFontPath(), 14, "OUTLINE")
-    else
-        statusText:SetFont(GetFontPath(), 14, "OUTLINE")
-    end
-    statusText:SetPoint("CENTER", frame, "CENTER", 0, 0)
-    statusText:SetJustifyH("CENTER")
-    statusText:SetJustifyV("MIDDLE")
-    statusText:SetTextColor(0.9, 0.9, 0.9, 1)
-    statusText:Hide()
-    frame.statusText = statusText
-
-    -- Bottom-anchor offset: push elements above power bar + separator
-    local bottomPad = powerHeight + separatorHeight + borderSize
-    frame._bottomPad = bottomPad
-
-    -- Sync the ResizeHealthForPower dirty-check to the geometry written above.
-    -- This build path (re-run on every settings change via the _quiDecorated
-    -- reset in RefreshSettings) reseeds the gap from the GLOBAL showPowerBar,
-    -- ignoring the per-unit role filter. Without syncing state, a later
-    -- ResizeHealthForPower whose per-unit show value is UNCHANGED (e.g. a damager
-    -- staying hidden when the second of Only-Healers/Only-Tanks is enabled) would
-    -- dirty-check-match the stale state and refuse to reclaim this gap — making
-    -- showPowerBar behave as an override of the role filter.
-    local hpState = GetFrameState(frame)
-    hpState.healthPowerShow = showPower
-    hpState.healthPowerBorder = borderSize
-    hpState.healthPowerBottom = bottomPad
-
-    -- Name text
-    local fontPath = GetFontPath()
-    local fontOutline = GetFontOutline()
-    local nameSettings = GetNameSettings(isRaid)
-    local nameFontSize = nameSettings and nameSettings.nameFontSize or 12
-    local nameAnchor = GetTextAnchorInfo(nameSettings and nameSettings.nameAnchor or "LEFT")
-    local nameOffsetX = nameSettings and nameSettings.nameOffsetX or 4
-    local nameOffsetY = nameSettings and nameSettings.nameOffsetY or 0
-    local nameBottomPad = nameAnchor.point:find("BOTTOM") and bottomPad or 0
-
-    local nameText = frame.nameText or textFrame:CreateFontString(nil, "OVERLAY")
-    nameText:ClearAllPoints()
-    Helpers.ApplyFontWithFallback(nameText, fontPath, nameFontSize, fontOutline)
-    local namePadX = math.abs(nameOffsetX)
-    nameText:SetPoint(nameAnchor.leftPoint, frame, nameAnchor.leftPoint, namePadX, nameOffsetY + nameBottomPad)
-    nameText:SetPoint(nameAnchor.rightPoint, frame, nameAnchor.rightPoint, -namePadX, nameOffsetY + nameBottomPad)
-    local nameJustify = nameSettings and nameSettings.nameJustify or nameAnchor.justify
-    nameText:SetJustifyH(nameJustify)
-    nameText:SetJustifyV(nameAnchor.justifyV)
-    nameText:SetTextColor(1, 1, 1, 1)
-    nameText:SetWordWrap(false)
-    frame.nameText = nameText
-
-    -- Level text
-    local levelText = frame.levelText or textFrame:CreateFontString(nil, "OVERLAY")
-    levelText:ClearAllPoints()
-    local levelFontPath = fontPath
-    if nameSettings and type(nameSettings.levelFont) == "string" and nameSettings.levelFont ~= "" then
-        levelFontPath = LSM:Fetch("font", nameSettings.levelFont, true) or fontPath
-    end
-    Helpers.ApplyFontWithFallback(levelText, levelFontPath, nameSettings and nameSettings.levelFontSize or nameFontSize, fontOutline)
-    local levelAnchor = GetTextAnchorInfo(nameSettings and nameSettings.levelAnchor or "RIGHT")
-    local levelOffsetX = nameSettings and nameSettings.levelOffsetX or -4
-    local levelOffsetY = nameSettings and nameSettings.levelOffsetY or 0
-    local levelBottomPad = levelAnchor.point:find("BOTTOM") and bottomPad or 0
-    local levelPadX = math.abs(levelOffsetX)
-    levelText:SetPoint(levelAnchor.leftPoint, frame, levelAnchor.leftPoint, levelPadX, levelOffsetY + levelBottomPad)
-    levelText:SetPoint(levelAnchor.rightPoint, frame, levelAnchor.rightPoint, -levelPadX, levelOffsetY + levelBottomPad)
-    levelText:SetJustifyH(nameSettings and nameSettings.levelJustify or levelAnchor.justify)
-    levelText:SetJustifyV(levelAnchor.justifyV)
-    levelText:SetTextColor(1, 1, 1, 1)
-    levelText:SetWordWrap(false)
-    if nameSettings and nameSettings.showLevel == true then
-        levelText:Show()
-    else
-        levelText:Hide()
-    end
-    frame.levelText = levelText
-
-    -- Health text
-    local healthSettings = GetHealthSettings(isRaid)
-    local healthFontSize = healthSettings and healthSettings.healthFontSize or 12
-    local healthAnchor = GetTextAnchorInfo(healthSettings and healthSettings.healthAnchor or "RIGHT")
-    local healthOffsetX = healthSettings and healthSettings.healthOffsetX or -4
-    local healthOffsetY = healthSettings and healthSettings.healthOffsetY or 0
-    local healthBottomPad = healthAnchor.point:find("BOTTOM") and bottomPad or 0
-
-    local healthText = frame.healthText or textFrame:CreateFontString(nil, "OVERLAY")
-    healthText:ClearAllPoints()
-    if ns.Helpers and ns.Helpers.ApplyFontWithFallback then
-        ns.Helpers.ApplyFontWithFallback(healthText, fontPath, healthFontSize, fontOutline)
-    else
-        healthText:SetFont(fontPath, healthFontSize, fontOutline)
-    end
-    local healthPadX = math.abs(healthOffsetX)
-    healthText:SetPoint(healthAnchor.leftPoint, frame, healthAnchor.leftPoint, healthPadX, healthOffsetY + healthBottomPad)
-    healthText:SetPoint(healthAnchor.rightPoint, frame, healthAnchor.rightPoint, -healthPadX, healthOffsetY + healthBottomPad)
-    local healthJustify = healthSettings and healthSettings.healthJustify or healthAnchor.justify
-    healthText:SetJustifyH(healthJustify)
-    healthText:SetJustifyV(healthAnchor.justifyV)
-    healthText:SetTextColor(1, 1, 1, 1)
-    healthText:SetWordWrap(false)
-    frame.healthText = healthText
-
-    -- Read indicator positioning from DB
-    local indDB = GetIndicatorSettings(isRaid) or {}
-
-    -- Helper: add bottomPad to Y offset for any BOTTOM* anchor
-    local function BottomPadY(anchor, offY)
-        if anchor:find("BOTTOM") then return offY + bottomPad end
-        return offY
-    end
-
-    -- Role icon
-    local roleIconSize = indDB.roleIconSize or 12
-    local roleAnchor = indDB.roleIconAnchor or "TOPLEFT"
-    local roleOffX = indDB.roleIconOffsetX or 2
-    local roleOffY = indDB.roleIconOffsetY or -2
-
-    local roleIcon = frame.roleIcon or textFrame:CreateTexture(nil, "OVERLAY")
-    roleIcon:ClearAllPoints()
-    roleIcon:SetSize(roleIconSize, roleIconSize)
-    roleIcon:SetPoint(roleAnchor, frame, roleAnchor, roleOffX, BottomPadY(roleAnchor, roleOffY))
-    roleIcon:Hide()
-    frame.roleIcon = roleIcon
-
-    -- Ready check icon
-    local readyCheckIcon = frame.readyCheckIcon or textFrame:CreateTexture(nil, "OVERLAY")
-    readyCheckIcon:ClearAllPoints()
-    local rcSize = indDB.readyCheckSize or 16
-    readyCheckIcon:SetSize(rcSize, rcSize)
-    local rcAnchor = indDB.readyCheckAnchor or "CENTER"
-    readyCheckIcon:SetPoint(rcAnchor, frame, rcAnchor, indDB.readyCheckOffsetX or 0, BottomPadY(rcAnchor, indDB.readyCheckOffsetY or 0))
-    readyCheckIcon:Hide()
-    frame.readyCheckIcon = readyCheckIcon
-
-    -- Resurrection icon
-    local resIcon = frame.resIcon or textFrame:CreateTexture(nil, "OVERLAY")
-    resIcon:ClearAllPoints()
-    local resSize = indDB.resurrectionSize or 16
-    resIcon:SetSize(resSize, resSize)
-    local resAnchor = indDB.resurrectionAnchor or "CENTER"
-    resIcon:SetPoint(resAnchor, frame, resAnchor, indDB.resurrectionOffsetX or 0, BottomPadY(resAnchor, indDB.resurrectionOffsetY or 0))
-    resIcon:SetTexture("Interface\\RaidFrame\\Raid-Icon-Rez")
-    resIcon:Hide()
-    frame.resIcon = resIcon
-
-    -- Summon pending icon
-    local summonIcon = frame.summonIcon or textFrame:CreateTexture(nil, "OVERLAY")
-    summonIcon:ClearAllPoints()
-    local sumSize = indDB.summonSize or 20
-    summonIcon:SetSize(sumSize, sumSize)
-    local sumAnchor = indDB.summonAnchor or "CENTER"
-    summonIcon:SetPoint(sumAnchor, frame, sumAnchor, indDB.summonOffsetX or 16, BottomPadY(sumAnchor, indDB.summonOffsetY or 0))
-    summonIcon:SetAtlas("RaidFrame-Icon-SummonPending")
-    summonIcon:Hide()
-    frame.summonIcon = summonIcon
-
-    -- Leader icon
-    local leaderIcon = frame.leaderIcon or textFrame:CreateTexture(nil, "OVERLAY")
-    leaderIcon:ClearAllPoints()
-    local ldrSize = indDB.leaderSize or 12
-    leaderIcon:SetSize(ldrSize, ldrSize)
-    local ldrAnchor = indDB.leaderAnchor or "TOP"
-    leaderIcon:SetPoint(ldrAnchor, frame, ldrAnchor, indDB.leaderOffsetX or 0, BottomPadY(ldrAnchor, indDB.leaderOffsetY or 6))
-    leaderIcon:Hide()
-    frame.leaderIcon = leaderIcon
-
-    -- Target marker (raid icon)
-    local targetMarker = frame.targetMarker or textFrame:CreateTexture(nil, "OVERLAY")
-    targetMarker:ClearAllPoints()
-    local tmSize = indDB.targetMarkerSize or 14
-    targetMarker:SetSize(tmSize, tmSize)
-    local tmAnchor = indDB.targetMarkerAnchor or "TOPRIGHT"
-    targetMarker:SetPoint(tmAnchor, frame, tmAnchor, indDB.targetMarkerOffsetX or -2, BottomPadY(tmAnchor, indDB.targetMarkerOffsetY or -2))
-    targetMarker:Hide()
-    frame.targetMarker = targetMarker
-
-    -- Phase icon
-    local phaseIcon = frame.phaseIcon or textFrame:CreateTexture(nil, "OVERLAY")
-    phaseIcon:ClearAllPoints()
-    local phSize = indDB.phaseSize or 16
-    phaseIcon:SetSize(phSize, phSize)
-    local phAnchor = indDB.phaseAnchor or "BOTTOMLEFT"
-    phaseIcon:SetPoint(phAnchor, frame, phAnchor, indDB.phaseOffsetX or 2, BottomPadY(phAnchor, indDB.phaseOffsetY or 2))
-    phaseIcon:SetTexture("Interface\\TargetingFrame\\UI-PhasingIcon")
-    phaseIcon:Hide()
-    frame.phaseIcon = phaseIcon
-
-    -- Threat border (overlay frame)
-    indDB = GetIndicatorSettings(isRaid) or {}
-    local threatBorderPx = px * (indDB.threatBorderSize or 3)
-    local threatBorder = frame.threatBorder or CreateFrame("Frame", nil, frame, "BackdropTemplate")
-    threatBorder:ClearAllPoints()
-    threatBorder:SetPoint("TOPLEFT", -px, px)
-    threatBorder:SetPoint("BOTTOMRIGHT", px, -px)
-    threatBorder:SetFrameLevel(frame:GetFrameLevel() + 3)
-    EnsureBackdrop(threatBorder, GetCachedBackdrop(nil, "Interface\\Buttons\\WHITE8x8", threatBorderPx))
-    threatBorder:Hide()
-    frame.threatBorder = threatBorder
-
-    -- Target highlight (overlay frame)
-    local targetHighlight = frame.targetHighlight or CreateFrame("Frame", nil, frame, "BackdropTemplate")
-    targetHighlight:ClearAllPoints()
-    targetHighlight:SetPoint("TOPLEFT", -px, px)
-    targetHighlight:SetPoint("BOTTOMRIGHT", px, -px)
-    targetHighlight:SetFrameLevel(frame:GetFrameLevel() + 4)
-    EnsureBackdrop(targetHighlight, GetCachedBackdrop(nil, "Interface\\Buttons\\WHITE8x8", px * 2))
-    targetHighlight:Hide()
-    frame.targetHighlight = targetHighlight
-
-    -- Dispel overlay (StatusBar borders for secret-value-safe SetVertexColor)
-    local dispelOverlay = frame.dispelOverlay or CreateFrame("Frame", nil, frame)
-    dispelOverlay:ClearAllPoints()
-    dispelOverlay:SetAllPoints(frame)
-    dispelOverlay:SetFrameLevel(frame:GetFrameLevel() + 6)
-
-    local healerDB = GetHealerSettings(isRaid)
-    local dispelSettings = healerDB and healerDB.dispelOverlay
-    local dispelBorderSize = px * (dispelSettings and dispelSettings.borderSize or 3)
-    local function MakeDispelBorder(parent)
-        local sb = CreateFrame("StatusBar", nil, parent)
-        sb:SetStatusBarTexture("Interface\\Buttons\\WHITE8x8")
-        sb:SetMinMaxValues(0, 1)
-        sb:SetValue(1)
-        return sb
-    end
-
-    local bTop = dispelOverlay.borderTop or MakeDispelBorder(dispelOverlay)
-    bTop:ClearAllPoints()
-    bTop:SetPoint("TOPLEFT", dispelOverlay, "TOPLEFT", 0, 0)
-    bTop:SetPoint("TOPRIGHT", dispelOverlay, "TOPRIGHT", 0, 0)
-    bTop:SetHeight(dispelBorderSize)
-    dispelOverlay.borderTop = bTop
-
-    local bBottom = dispelOverlay.borderBottom or MakeDispelBorder(dispelOverlay)
-    bBottom:ClearAllPoints()
-    bBottom:SetPoint("BOTTOMLEFT", dispelOverlay, "BOTTOMLEFT", 0, 0)
-    bBottom:SetPoint("BOTTOMRIGHT", dispelOverlay, "BOTTOMRIGHT", 0, 0)
-    bBottom:SetHeight(dispelBorderSize)
-    dispelOverlay.borderBottom = bBottom
-
-    local bLeft = dispelOverlay.borderLeft or MakeDispelBorder(dispelOverlay)
-    bLeft:ClearAllPoints()
-    bLeft:SetPoint("TOPLEFT", dispelOverlay, "TOPLEFT", 0, 0)
-    bLeft:SetPoint("BOTTOMLEFT", dispelOverlay, "BOTTOMLEFT", 0, 0)
-    bLeft:SetWidth(dispelBorderSize)
-    dispelOverlay.borderLeft = bLeft
-
-    local bRight = dispelOverlay.borderRight or MakeDispelBorder(dispelOverlay)
-    bRight:ClearAllPoints()
-    bRight:SetPoint("TOPRIGHT", dispelOverlay, "TOPRIGHT", 0, 0)
-    bRight:SetPoint("BOTTOMRIGHT", dispelOverlay, "BOTTOMRIGHT", 0, 0)
-    bRight:SetWidth(dispelBorderSize)
-    dispelOverlay.borderRight = bRight
-
-    -- Fill texture (full-frame tint behind borders)
-    local dispelFill = dispelOverlay.fill
-    if not dispelFill then
-        dispelFill = dispelOverlay:CreateTexture(nil, "BACKGROUND")
-        dispelOverlay.fill = dispelFill
-    end
-    dispelFill:SetAllPoints(dispelOverlay)
-    dispelFill:SetColorTexture(1, 1, 1, 1)
-    dispelFill:SetVertexColor(0, 0, 0, 0) -- colored dynamically by SetDispelBorderColor
-    dispelOverlay._fillOpacity = dispelSettings and dispelSettings.fillOpacity or 0
-
-    dispelOverlay:Hide()
-    frame.dispelOverlay = dispelOverlay
-
-    -- Cleanse-ready glow: an additive halo (distinct from the dispel border tint)
-    -- shown when the player can dispel a debuff here. Driven by UpdateDispelOverlay
-    -- off the same non-secret playerDispellable probe; insecure texture, taint-safe.
-    local cleanseGlow = frame.cleanseGlow or CreateFrame("Frame", nil, frame)
-    cleanseGlow:ClearAllPoints()
-    cleanseGlow:SetPoint("TOPLEFT", frame, "TOPLEFT", -4, 4)
-    cleanseGlow:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", 4, -4)
-    cleanseGlow:SetFrameLevel(frame:GetFrameLevel() + 7)
-    local glowTex = cleanseGlow.tex
-    if not glowTex then
-        glowTex = cleanseGlow:CreateTexture(nil, "OVERLAY")
-        glowTex:SetTexture("Interface\\Buttons\\UI-ActionButton-Border")
-        glowTex:SetBlendMode("ADD")
-        cleanseGlow.tex = glowTex
-    end
-    glowTex:SetAllPoints(cleanseGlow)
-    cleanseGlow:Hide()
-    frame.cleanseGlow = cleanseGlow
-
-    -- Portrait (optional, side-attached)
-    local portraitSettings = GetPortraitSettings(isRaid)
-    if portraitSettings and portraitSettings.showPortrait then
-        local portraitSizePx = portraitSettings.portraitSize or 30
-        local portraitSizeRound = QUICore.PixelRound and QUICore:PixelRound(portraitSizePx, frame) or portraitSizePx
-        local portraitBorderPx = QUICore.Pixels and QUICore:Pixels(1, frame) or px
-
-        local portrait = frame.portrait or CreateFrame("Frame", nil, frame, "BackdropTemplate")
-        portrait:SetSize(portraitSizeRound, portraitSizeRound)
-        portrait:ClearAllPoints()
-
-        local side = portraitSettings.portraitSide or "LEFT"
-        if side == "LEFT" then
-            portrait:SetPoint("RIGHT", frame, "LEFT", 0, 0)
-        else
-            portrait:SetPoint("LEFT", frame, "RIGHT", 0, 0)
-        end
-
-        EnsureBackdrop(portrait, GetCachedBackdrop(nil, "Interface\\Buttons\\WHITE8x8", portraitBorderPx))
-        local pbdr, pbdg, pbdb, pbda = 0, 0, 0, 1
-        if Helpers and Helpers.GetSkinBorderColor then pbdr, pbdg, pbdb, pbda = Helpers.GetSkinBorderColor() end
-        portrait:SetBackdropBorderColor(pbdr, pbdg, pbdb, pbda)
-        portrait:SetFrameLevel(frame:GetFrameLevel() + 1)
-
-        local portraitTex = frame.portraitTexture or portrait:CreateTexture(nil, "ARTWORK")
-        portraitTex:ClearAllPoints()
-        portraitTex:SetPoint("TOPLEFT", portraitBorderPx, -portraitBorderPx)
-        portraitTex:SetPoint("BOTTOMRIGHT", -portraitBorderPx, portraitBorderPx)
-        frame.portraitTexture = portraitTex
-        frame.portrait = portrait
-        portrait:Show()
-    elseif frame.portrait then
-        frame.portrait:Hide()
-    end
+    -- Skeleton + settings styling: ONE implementation, shared with the
+    -- settings preview (see core/group_frame_chrome.lua). Everything below this
+    -- call is the UNIT layer -- the part a preview must not have.
+    -- The frame's state table goes in so Chrome reseeds the
+    -- ResizeHealthForPower dirty-check to the geometry it just wrote (see the
+    -- role-filter note on Chrome.Apply).
+    Chrome.Apply(frame, vdb, GetFrameState(frame))
 
     -- One-time hooks (only on first decoration)
     if not frame._quiHooked then
@@ -5902,8 +5180,8 @@ local function SetupDebugInstrumentation()
     mp[#mp + 1] = { name = "GF_allFrames",      fn = function()
         return #QUI_GF.allFrames, 0
     end }
-    mp[#mp + 1] = { name = "GF_backdropCache", tbl = _backdropCache }
-    mp[#mp + 1] = { name = "GF_fontCache", tbl = _fontCache }
+    mp[#mp + 1] = { name = "GF_backdropCache", tbl = Chrome.BackdropCache }
+    mp[#mp + 1] = { name = "GF_fontCache", tbl = Chrome.FontPathCache }
     -- Perf profiler opt-in (no-op until /qui perf → Modules toggle)
     ns.QUI_PerfRegistry = ns.QUI_PerfRegistry or {}
     ns.QUI_PerfRegistry[#ns.QUI_PerfRegistry + 1] = { name = "GroupFrames", frame = eventFrame }

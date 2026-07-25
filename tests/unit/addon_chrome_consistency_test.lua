@@ -339,20 +339,29 @@ end
 -- chrome assertions were removed with the code they guarded.
 
 do
-    -- groupframes.lua: decorated-frame chrome border + portrait chrome border migrated
-    local src = readFile("QUI_GroupFrames/groupframes/groupframes.lua")
+    -- The decorated-frame chrome border, the portrait chrome border and the
+    -- secure fill forwarder all live in core/group_frame_chrome.lua now (the
+    -- ONE builder shared by the live frames and the settings preview), so the
+    -- guards follow the code.
+    local src = readFile("core/group_frame_chrome.lua")
     assertAbsent(src, "SetBackdropBorderColor%(0, 0, 0, 1%)",
-        "groupframes.lua: black chrome borders SetBackdropBorderColor(0,0,0,1) must use GetSkinBorderColor()")
+        "group_frame_chrome.lua: black chrome borders SetBackdropBorderColor(0,0,0,1) must use GetSkinBorderColor()")
     assertContains(src, "GetSkinBorderColor",
-        "groupframes.lua: must reference GetSkinBorderColor() for frame/portrait chrome border")
+        "group_frame_chrome.lua: must reference GetSkinBorderColor() for frame/portrait chrome border")
 
     -- Secure taint-mitigation forwarder must remain byte-for-byte (mechanism, not value)
     assertContains(src, "local function SetBackdropFillColor(frame, r, g, b, a)",
-        "groupframes.lua: secure SetBackdropFillColor forwarder definition must not be altered")
+        "group_frame_chrome.lua: secure SetBackdropFillColor forwarder definition must not be altered")
     assertContains(src, "center:SetVertexColor(r, g, b, a)",
-        "groupframes.lua: secure forwarder frame.Center:SetVertexColor mechanism must not be altered")
+        "group_frame_chrome.lua: secure forwarder frame.Center:SetVertexColor mechanism must not be altered")
     assertContains(src, "SetBackdropFillColor(frame, bgColor[1], bgColor[2], bgColor[3], bgAlpha)",
-        "groupframes.lua: secure fill forwarder call (bgColor) must not be altered")
+        "group_frame_chrome.lua: secure fill forwarder call (bgColor) must not be altered")
+
+    -- The runtime file must keep using that one forwarder, never a raw
+    -- SetBackdropColor (the taint source the forwarder exists to avoid).
+    local live = readFile("QUI_GroupFrames/groupframes/groupframes.lua")
+    assertAbsent(live, "frame:SetBackdropColor%(",
+        "groupframes.lua: must not call SetBackdropColor directly (taint) -- use the chrome forwarder")
 end
 
 do

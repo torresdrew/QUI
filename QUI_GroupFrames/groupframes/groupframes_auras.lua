@@ -11,6 +11,8 @@ local SafeValue = Helpers.SafeValue
 local SafeToNumber = Helpers.SafeToNumber
 local GetDB = Helpers.CreateDBGetter("quiGroupFrames")
 local AuraModel = ns.QUI_GroupFramesAuraModel
+local CHROME_LEVELS = (ns.QUI_GroupFrameChrome and ns.QUI_GroupFrameChrome.LEVELS)
+    or { AURA_HOST = 11 }
 local function GetFrameUnit(frame)
     local GF = ns.QUI_GroupFrames
     return GF and GF.GetFrameUnit and GF.GetFrameUnit(frame) or nil
@@ -1557,6 +1559,17 @@ local function ApplyElementPass(frame, allowCreate)
             end
         end
         if container then
+            -- Secure aura containers otherwise inherit parent+1, which puts
+            -- their engine-created icons under health overlays and text.
+            -- SetFrameLevel is protected: establish/repair it out of combat and
+            -- queue the existing replay path if a combat-created container has
+            -- not received the level yet.
+            local desiredLevel = frame:GetFrameLevel() + CHROME_LEVELS.AURA_HOST
+            if not InCombatLockdown() then
+                container:SetFrameLevel(desiredLevel)
+            elseif container:GetFrameLevel() ~= desiredLevel then
+                incomplete = true
+            end
             -- SetUnit BEFORE group configuration so the container's eager group
             -- registration (inside AuraSkin.Configure) has a valid unit.
             container:SetUnit(unit)

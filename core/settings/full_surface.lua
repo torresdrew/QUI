@@ -530,7 +530,24 @@ function FullSurface.CreateDockedPreviewPanel(opts)
     -- global name would collide across rebuilds.
     local panel = CreateFrame("Frame", nil, window, "BackdropTemplate")
     panel:SetFrameStrata("FULLSCREEN_DIALOG")
-    panel:SetFrameLevel((window:GetFrameLevel() or 500) + 5)
+    -- The main window is itself top-level and raises when interacted with.
+    -- Without an independent top-level panel, clicking ordinary settings
+    -- controls can promote their window tree over a detached preview even
+    -- though the preview started at a higher frame level.
+    panel:SetToplevel(true)
+    -- The panel can be dragged ON TOP of the settings window, so it has to
+    -- outrank everything that window hosts. A +5 offset does not: the sub-tab
+    -- bar is window+5 (tie), the resize handle window+10, sticky strips
+    -- scrollFrame+5, and every nesting step of a widget tree adds a level of
+    -- its own. +40 clears the deepest in-window stack with headroom while
+    -- staying under the confirm dialog (UIParent child, SetToplevel + Raise()
+    -- on show, so it always wins its strata).
+    local LEVEL_OFFSET = 40
+    local function RaiseAboveWindow()
+        panel:SetFrameLevel((window:GetFrameLevel() or 500) + LEVEL_OFFSET)
+        panel:Raise()
+    end
+    RaiseAboveWindow()
     panel:SetClampedToScreen(true)
     panel:SetSize(MIN_W + PAD * 2, HEADER_H + PAD * 2 + 40)
     panel:Hide()
@@ -585,10 +602,38 @@ function FullSurface.CreateDockedPreviewPanel(opts)
         panel._accentGlow = glow
     end
 
-    -- QUI settings font (Quazii) + standard white label color (C.text),
-    -- matching the settings text/label convention, via CreateLabel.
+    -- Title-bar chrome, mirroring the main settings window's own title row
+    -- (accent-light title text + a 1px border-colored separator under it) so
+    -- the strip reads as a grab handle. Regions live on `panel`, NOT on the
+    -- `header` frame below: child-frame regions draw above ALL parent regions
+    -- regardless of layer, so a band on `header` would paint over the title.
+    local HEADER_BAND_H = HEADER_H + PAD
+    local bandColor = C.bgSidebar or { 0, 0, 0, 0.25 }
+    local bandHover = C.accentFaint or { 1, 1, 1, 0.07 }
+
+    local headerBand = panel:CreateTexture(nil, "ARTWORK", nil, 0)
+    headerBand:SetPoint("TOPLEFT", panel, "TOPLEFT", 1, -1)
+    headerBand:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -1, -1)
+    headerBand:SetHeight(HEADER_BAND_H - 1)
+    local function SetBandColor(c)
+        headerBand:SetColorTexture(c[1], c[2], c[3], c[4] or 0.25)
+    end
+    SetBandColor(bandColor)
+    panel._headerBand = headerBand
+
+    -- Separator under the band, inset like the main window's title separator.
+    local headerSep = panel:CreateTexture(nil, "ARTWORK", nil, 1)
+    headerSep:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD, -HEADER_BAND_H)
+    headerSep:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -PAD, -HEADER_BAND_H)
+    headerSep:SetHeight(1)
+    headerSep:SetColorTexture(border[1], border[2], border[3], border[4] or 1)
+    panel._headerSep = headerSep
+
+    -- QUI settings font (Quazii) via CreateLabel. Title takes the main
+    -- window's accentLight title color; the header buttons stay C.text.
     local titleColor = C.text or { 1, 1, 1, 1 }
-    local title = gui:CreateLabel(panel, opts.title or ns.L["Preview"], 13, titleColor, "TOPLEFT", PAD, -PAD)
+    local title = gui:CreateLabel(panel, opts.title or ns.L["Preview"], 13,
+        C.accentLight or titleColor, "TOPLEFT", PAD, -PAD)
     title:SetJustifyH("LEFT")
 
     -- Forward-declared so the header button closures below can close over it
@@ -609,20 +654,36 @@ function FullSurface.CreateDockedPreviewPanel(opts)
     header:EnableMouse(true)
     header:RegisterForDrag("LeftButton")
 
-    local UpdateHeaderButtons, ApplySize, grip -- forward decls
+    local UpdateHeaderButtons, ApplySize, ApplyCollapsedSize, grip -- forward decls
 
     header:SetScript("OnDragStart", function()
         session.detached = true
+        RaiseAboveWindow()
         panel:StartMoving()
         UpdateHeaderButtons()
     end)
     header:SetScript("OnDragStop", function()
         panel:StopMovingOrSizing()
     end)
+    -- Accent-tint the band on hover: the second half of the drag affordance
+    -- (the separator says "title bar", the hover says "this one is live").
+    header:SetScript("OnEnter", function() SetBandColor(bandHover) end)
+    header:SetScript("OnLeave", function() SetBandColor(bandColor) end)
 
-    -- Tiny text-glyph header button (no texture/atlas dependency; the
-    -- settings font + C.text color come from CreateLabel).
+    -- Header buttons use the canonical themed button (pixel border + hover
+    -- wash + press nudge) so "Dock" reads as a button instead of loose text.
+    -- Fallback keeps the old text glyph for hosts without the kit (headless
+    -- tests, and any load order where core/uikit.lua has not run yet).
+    local BTN_H = 18
     local function MakeHeaderButton(text, width, onClick)
+        if UIKit and UIKit.CreateButton then
+            local b = UIKit.CreateButton(header, {
+                text = text, width = width, height = BTN_H,
+                onClick = onClick, variant = "ghost", fontSize = 10,
+            })
+            b._label = b.text          -- keep the pre-kit accessor working
+            return b
+        end
         local b = CreateFrame("Button", nil, header)
         b:SetSize(width, 16)
         b._label = gui:CreateLabel(b, text, 13, titleColor, "CENTER", 0, 0)
@@ -630,20 +691,40 @@ function FullSurface.CreateDockedPreviewPanel(opts)
         return b
     end
 
-    local collapseBtn = MakeHeaderButton("–", 16, function()
+    local COLLAPSE_BTN_W, DOCK_BTN_W = 20, 44
+    local collapseBtn = MakeHeaderButton("–", COLLAPSE_BTN_W, function()
         P.SetCollapsed(not session.collapsed)
     end)
-    collapseBtn:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -PAD, -PAD)
+    collapseBtn:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -PAD, -PAD + 1)
 
-    local dockBtn = MakeHeaderButton(ns.L["Dock"], 34, function()
+    local dockBtn = MakeHeaderButton(ns.L["Dock"], DOCK_BTN_W, function()
         P.Redock()
     end)
     dockBtn:SetPoint("TOPRIGHT", collapseBtn, "TOPLEFT", -4, 0)
+
+    -- Collapsed footprint: the panel shrinks to its title strip in BOTH axes,
+    -- so a minimized preview is a small pill, not a full-width bar. Width is
+    -- measured from the LIVE title string plus whichever header buttons are
+    -- currently shown (Dock only exists while detached), so it is recomputed
+    -- on title change and on detach/redock -- not once at collapse time.
+    local COLLAPSED_MIN_W = 96
+    ApplyCollapsedSize = function()
+        local titleW = (title.GetStringWidth and title:GetStringWidth()) or 0
+        local btnW = collapseBtn:GetWidth() or COLLAPSE_BTN_W
+        if session.detached then
+            btnW = btnW + 4 + (dockBtn:GetWidth() or DOCK_BTN_W)
+        end
+        local w = PAD + titleW + 8 + btnW + PAD
+        if w < COLLAPSED_MIN_W then w = COLLAPSED_MIN_W end
+        panel:SetSize(w, HEADER_H + PAD * 2)
+    end
 
     UpdateHeaderButtons = function()
         dockBtn:SetShown(session.detached and true or false)
         collapseBtn._label:SetText(session.collapsed and "+" or "–")
         grip:SetShown(not session.collapsed)
+        -- Showing/hiding Dock changes the strip's minimum width.
+        if session.collapsed then ApplyCollapsedSize() end
     end
 
     -- Optional control strip (filter chips, raid-size slider) hosted by the
@@ -836,15 +917,31 @@ function FullSurface.CreateDockedPreviewPanel(opts)
     -- Precedent: alts view drag teardown clears tracking in OnHide.
     panel:HookScript("OnHide", CancelGripDrag)
 
-    function P.SetTitle(text) title:SetText(text or ns.L["Preview"]) end
-    function P.Show() panel:Show(); Reflow() end
+    function P.SetTitle(text)
+        title:SetText(text or ns.L["Preview"])
+        -- Collapsed width is title-driven (Party vs Raid differ), so a title
+        -- swap while minimized has to resize + re-dock the pill.
+        if session.collapsed then
+            ApplyCollapsedSize()
+            Reflow()
+        end
+    end
+    function P.Show()
+        panel:Show()
+        RaiseAboveWindow()   -- window level can shift (toplevel raise) between shows
+        Reflow()
+    end
     function P.Hide() panel:Hide() end
     function P.IsDetached() return session.detached and true or false end
     function P.Redock()
         session.detached = false
         panel:ClearAllPoints()
-        Reflow()
+        -- Re-measure BEFORE the dock-side decision. Redocking hides the Dock
+        -- button, which narrows a collapsed pill, and Reflow picks its side
+        -- from panel:GetWidth() -- reflowing first can flip to the left dock
+        -- over a width the panel no longer has.
         UpdateHeaderButtons()
+        Reflow()
     end
     P.header = header
     P.dockButton = dockBtn
@@ -883,10 +980,17 @@ function FullSurface.CreateDockedPreviewPanel(opts)
         if session.collapsed then
             content:Hide()
             if controlStrip then controlStrip:Hide() end
-            panel:SetHeight(HEADER_H + PAD * 2)
+            -- Band fills the whole pill and the separator goes away: with no
+            -- content below it, a divider floating above 8px of empty backdrop
+            -- reads as a rendering glitch.
+            headerBand:SetHeight(HEADER_H + PAD * 2 - 2)
+            headerSep:Hide()
+            ApplyCollapsedSize()
         else
             content:Show()
             if controlStrip then controlStrip:Show() end
+            headerBand:SetHeight(HEADER_BAND_H - 1)
+            headerSep:Show()
             ApplySize()
         end
         UpdateHeaderButtons()

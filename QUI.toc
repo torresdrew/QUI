@@ -140,6 +140,10 @@ core\dispel_roles.lua
 core\aura_glue.lua
 core\aura_slots.lua
 core\aura_preview.lua
+# Shared group-frame chrome: the ONE builder for a group frame's skeleton +
+# settings styling. Lives in core because BOTH QUI_GroupFrames (runtime) and
+# QUI_Options (settings preview) consume it.
+core\group_frame_chrome.lua
 
 
 
