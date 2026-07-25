@@ -180,11 +180,19 @@ function Driver._BuildMissingRaidBuffMatches(element, now)
     local maxIcons = tonumber(element and element.maxIcons) or 1
     if maxIcons <= 0 then maxIcons = buffs and #buffs or 1 end
     if buffs and #buffs > 0 then
-        for i = 1, math.min(maxIcons, #buffs) do
-            local buff = buffs[i]
-            local spellID = buff.iconSpellID or (buff.ids and buff.ids[1])
-            local icon = ResolveSpellIcon(spellID) or PREVIEW_BUFF_ICONS[((i - 1) % #PREVIEW_BUFF_ICONS) + 1]
-            out[i] = MakeFakeAura(icon, i, false, now, spellID)
+        local count = 0
+        for _, buff in ipairs(buffs) do
+            local include = not MRB.ElementShouldCheckBuff
+                or MRB.ElementShouldCheckBuff(element or {}, buff)
+            if include then
+                count = count + 1
+                local i = count
+                local spellID = buff.iconSpellID or (buff.ids and buff.ids[1])
+                local icon = ResolveSpellIcon(spellID)
+                    or PREVIEW_BUFF_ICONS[((i - 1) % #PREVIEW_BUFF_ICONS) + 1]
+                out[i] = MakeFakeAura(icon, i, false, now, spellID)
+                if count >= maxIcons then break end
+            end
         end
     else
         out[1] = MakeFakeAura(PREVIEW_BUFF_ICONS[1], 1, false, now)
@@ -1009,7 +1017,9 @@ Driver._ApplyFrameSettings = ApplyFrameSettings
 -- ASSEMBLY: aura render, lifecycle, ticker, spotlight, seams
 ---------------------------------------------------------------------------
 local state = Driver._state
-local AURA_PREVIEW_LIMIT = 5
+-- Seven raid members cover the deterministic tank/healer/DPS role samples.
+-- Party remains capped by its five-member roster.
+local AURA_PREVIEW_LIMIT = 7
 
 -- AURA ELEMENTS: renderer-owned modes use fabricated matches; engine-owned
 -- containers use placeholders because they require real unit auras. ----------
@@ -1042,11 +1052,11 @@ end
 --     derivation takes its horizontal side from the grow direction alone, so a
 --     column-growing strip on a RIGHT-side anchor pinned the wrong corner.
 --   * BOTTOM-anchored strips add frame._bottomPad so they clear the power bar.
-local function MakeAuraPin(f)
+local function MakeAuraPin(f, profileOverrides)
     return function(element)
         local G = ns.AuraGlue
         if not (G and G.ElementProfile) then return nil end
-        local p = G.ElementProfile(element)
+        local p = G.ElementProfile(element, profileOverrides)
         local anchor = element.anchor or "TOPLEFT"
         local offY = tonumber(element.offsetY) or 0
         if anchor:find("BOTTOM") then offY = offY + (f._bottomPad or 0) end
@@ -1070,6 +1080,29 @@ local function MakePlaceholderIcon(element, index)
 end
 Driver._MakePlaceholderIcon = MakePlaceholderIcon
 
+local function ColorComponents(color)
+    if type(color) ~= "table" then return nil end
+    return color.r or color[1], color.g or color[2], color.b or color[3],
+        color.a or color[4] or 1
+end
+
+-- Harmful placeholders cycle through the same dispel types used by the live
+-- engine. Per-element custom colors take precedence over the shared default
+-- palette, exactly as AuraSkin's registered dispel texture options do.
+local function MakePreviewDispelColor(vdb)
+    local healer = vdb and vdb.healer
+    local overlay = healer and healer.dispelOverlay
+    local palette = (overlay and type(overlay.colors) == "table" and overlay.colors)
+        or DispelPalette()
+    return function(_, index, profile)
+        local dispelType = DISPEL_CYCLE[((index - 1) % #DISPEL_CYCLE) + 1]
+        local colors = profile and type(profile.dispelColors) == "table"
+            and profile.dispelColors or nil
+        return ColorComponents((colors and colors[dispelType]) or palette[dispelType])
+    end
+end
+Driver._MakePreviewDispelColor = MakePreviewDispelColor
+
 -- WHICH ELEMENTS THE RENDERER DRAWS is not the preview's call: it asks the live
 -- module (QUI_GFA.EngineRendersElement). At runtime only missingRaidBuff and the
 -- healthTint/border feeders go through ns.QUI_GroupFrameAuraRender; filter strips
@@ -1078,7 +1111,7 @@ Driver._MakePlaceholderIcon = MakePlaceholderIcon
 -- data, so those elements get placeholders (ns.AuraPreview) laid out with the
 -- live layout math -- and dispatching them through the renderer instead would
 -- resurrect the pre-cutover path the live release reconciliation tears down.
-local function RenderFrameAuras(f, auras, now)
+local function RenderFrameAuras(f, member, auras, now)
     local Render  = ns.QUI_GroupFrameAuraRender
     local Model   = ns.QUI_GroupFramesAuraModel
     local Preview = ns.AuraPreview
@@ -1107,31 +1140,44 @@ local function RenderFrameAuras(f, auras, now)
     -- element is absent here: the renderer release pass below reclaims its
     -- widgets and AuraPreview hides its surplus placeholders.
     local elements = Model.ActiveElementsForSpec(auras, bucketKey)
+    local gfdb = Driver._GetGFDB()
+    local vdb = Driver._GetContextDB(gfdb, state.contextMode)
+    local profileOverrides = GFA and GFA.ProfileOverrides
+        and GFA.ProfileOverrides(auras, gfdb, "groupauras-preview") or nil
 
     local previewElements = {}
     local work, current = {}, {}
     for _, element in ipairs(elements) do
-        local engineDrawn = GFA and GFA.EngineRendersElement
-            and GFA.EngineRendersElement(element) or false
-        if engineDrawn then
-            local matches
-            if element.mode == "missingRaidBuff" then
-                matches = Driver._BuildMissingRaidBuffMatches(element, now)
+        local applies = not Model.ElementAppliesToRole
+            or Model.ElementAppliesToRole(
+                element,
+                member and member.role,
+                member and member.isSelf
+            )
+        if applies then
+            local engineDrawn = GFA and GFA.EngineRendersElement
+                and GFA.EngineRendersElement(element) or false
+            if engineDrawn then
+                local matches
+                if element.mode == "missingRaidBuff" then
+                    matches = Driver._BuildMissingRaidBuffMatches(element, now)
+                else
+                    -- healthTint / border: frame-level feeders keyed by spellID.
+                    matches = BuildHealthTintMatches(element, now)
+                end
+                work[#work + 1] = { element = element, matches = matches }
+                if element.id then current[element.id] = true end
+                Render:Dispatch(f, element, matches)
             else
-                -- healthTint / border: frame-level feeders keyed by spellID.
-                matches = BuildHealthTintMatches(element, now)
+                previewElements[#previewElements + 1] = element
             end
-            work[#work + 1] = { element = element, matches = matches }
-            if element.id then current[element.id] = true end
-            Render:Dispatch(f, element, matches)
-        else
-            previewElements[#previewElements + 1] = element
         end
     end
     if Preview then
         Preview.Show(auraHost, previewElements, {
-            resolve = MakeAuraPin(f),
+            resolve = MakeAuraPin(f, profileOverrides),
             icon = MakePlaceholderIcon,
+            dispelColor = MakePreviewDispelColor(vdb),
         })
     end
 
@@ -1370,7 +1416,8 @@ function Driver._RenderSpotlight(root, vdb, gfdb, now, gridRight)
         f:SetPoint("TOPLEFT", root, "TOPLEFT", startX + ox, oy - 4)
         f:Show()
         Driver._ApplyFrameSettings(f, m, vdb, gfdb, "raid")
-        RenderFrameAuras(f, Driver._AuraSettingsForFilter(vdb, state.filter), now)
+        f._previewMember = m
+        RenderFrameAuras(f, m, Driver._AuraSettingsForFilter(vdb, state.filter), now)
         state.auraFrames[#state.auraFrames + 1] = f
         state.spotlightFrames[i] = f
     end
@@ -1518,10 +1565,16 @@ function Driver.Refresh(contextMode)
             (positions[i].x - minX) + pad, (positions[i].y - maxY) - pad)
         f:Show()
         Driver._ApplyFrameSettings(f, roster[i], vdb, gfdb, state.contextMode)
+        f._previewMember = roster[i]
         state.frames[i] = f
         if i <= AURA_PREVIEW_LIMIT then
             state.auraFrames[#state.auraFrames + 1] = f
-            RenderFrameAuras(f, Driver._AuraSettingsForFilter(vdb, state.filter), now)
+            RenderFrameAuras(
+                f,
+                roster[i],
+                Driver._AuraSettingsForFilter(vdb, state.filter),
+                now
+            )
         end
     end
 
@@ -1566,7 +1619,7 @@ function Driver.RefreshAuras()
     local now = (GetTime and GetTime()) or 0
     local auras = Driver._AuraSettingsForFilter(vdb, state.filter)
     for _, f in ipairs(state.auraFrames) do
-        RenderFrameAuras(f, auras, now)
+        RenderFrameAuras(f, f._previewMember, auras, now)
     end
 end
 

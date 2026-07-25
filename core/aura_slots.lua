@@ -185,8 +185,15 @@ end
 -- Style one slot frame for the element's displayType. All writes are
 -- aura-data-independent config; the engine drives visibility and (for
 -- DurationCooldown / DurationBar) the actual fill.
-local function StyleSlot(frame, element, index)
-    local profile = ns.AuraGlue.ElementProfile(element)
+local function StyleSlot(frame, element, index, profileOverrides)
+    local profile = ns.AuraGlue.ElementProfile(element, profileOverrides)
+    -- External/built-in icon skins own icon chrome only. A tracked square/bar
+    -- deliberately reuses the border texture as its colored body, so letting a
+    -- skin hide that region would make the preview and live indicator vanish.
+    if element.displayType == "square" or element.displayType == "bar" then
+        profile.externalSkinning = false
+        profile.iconSkin = "Default"
+    end
     AuraSkin.WireButton(frame, profile)
 
     local isBar = (element.displayType == "bar")
@@ -327,7 +334,7 @@ end
 -- Reconcile ONE tracked element's spells onto its container's slot pool.
 -- Returns true when fully applied; false when forbidden creation work was
 -- skipped in combat (caller queues a regen replay via AuraGlue.QueueRegenWork).
-function S.Sync(container, element, allowCreate)
+function S.Sync(container, element, allowCreate, profileOverrides)
     if not Deps() then return false end
     local pool = container._quiSlots
     if not pool then
@@ -418,7 +425,7 @@ function S.Sync(container, element, allowCreate)
                     local frame = container:AddAuraSlot(key, base, {
                         candidateFilters = birthFilters,
                         initializeFrame = function(f)
-                            StyleSlot(f, element, slotIndex)
+                            StyleSlot(f, element, slotIndex, profileOverrides)
                             AnchorSlot(f, container, element, slotIndex, slotTotal)
                         end,
                     })
@@ -443,7 +450,7 @@ function S.Sync(container, element, allowCreate)
                     if AurasAreSecret() then
                         complete = false
                     else
-                        if StyleSlot(slot.frame, element, want) == false then
+                        if StyleSlot(slot.frame, element, want, profileOverrides) == false then
                             complete = false
                         end
                         -- CHILD-frame SetPoint in combat is the one surface

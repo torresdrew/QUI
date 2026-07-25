@@ -22,6 +22,7 @@ ns.Addon = ns.Addon or {}
 local AuraTheme = ns.Addon.AuraTheme
 local AuraSkin = {}
 ns.Addon.AuraSkin = AuraSkin
+ns.AuraSkin = AuraSkin
 _G.QUI = _G.QUI or {}
 _G.QUI.AuraSkin = AuraSkin
 
@@ -146,7 +147,22 @@ local function buildButtonArt(button)
     icon:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", -1, 1)
     icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
     button.Icon = icon
-    button:SetIcon(icon)
+    if button.SetIcon then button:SetIcon(icon) end
+
+    -- Optional skin regions shared by live group-aura buttons and plain
+    -- preview frames. Default presentation keeps both hidden.
+    local backdrop = button:CreateTexture(nil, "BACKGROUND", nil, -8)
+    backdrop:SetAllPoints(button)
+    backdrop:SetColorTexture(0, 0, 0, 1)
+    if backdrop.Hide then backdrop:Hide() end
+    button._quiBackdrop = backdrop
+
+    local gloss = button:CreateTexture(nil, "OVERLAY")
+    if ns.IconSkin and gloss.SetTexture then gloss:SetTexture(ns.IconSkin.GlossTexture) end
+    if gloss.SetBlendMode then gloss:SetBlendMode("ADD") end
+    gloss:SetAllPoints(button)
+    if gloss.Hide then gloss:Hide() end
+    button._quiGloss = gloss
 
     -- Dispel text symbol. The engine only shows it when Blizzard's colorblind
     -- mode asks for it, so wiring this is visually inert for the normal case but
@@ -155,17 +171,19 @@ local function buildButtonArt(button)
     local symbol = button:CreateFontString(nil, "OVERLAY", "TextStatusBarText")
     symbol:SetPoint("TOPLEFT", button, "TOPLEFT", 2, -2)
     button._quiSymbol = symbol
-    button:SetDispelTypeText(symbol, {
-        showWhenHarmful = true,
-        showWhenHelpful = false,
-    })
+    if button.SetDispelTypeText then
+        button:SetDispelTypeText(symbol, {
+            showWhenHarmful = true,
+            showWhenHelpful = false,
+        })
+    end
 
     -- Duration cooldown swipe (frame child).
     local cd = CreateFrame("Cooldown", nil, button, "CooldownFrameTemplate")
     cd:SetAllPoints(button)
     cd:SetHideCountdownNumbers(true)
     button._quiCooldown = cd
-    button:SetDurationCooldown(cd)
+    if button.SetDurationCooldown then button:SetDurationCooldown(cd) end
 
     -- Linear duration fill (StatusBar child), created at BIRTH like every
     -- other art piece: initializeFrame runs pre-restriction, so a mid-combat
@@ -191,7 +209,7 @@ local function buildButtonArt(button)
     local durText = button:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     durText:SetPoint("CENTER", button, "CENTER", 0, 0)
     button._quiDuration = durText
-    button:SetDurationText(durText, {})
+    if button.SetDurationText then button:SetDurationText(durText, {}) end
 
     -- Stack count — EXACTLY like duration: fontstring + SetApplicationCount({}), NO
     -- formatter.  The engine's secure `applications > 1` path shows it for 2+ stacks
@@ -199,7 +217,57 @@ local function buildButtonArt(button)
     local count = button:CreateFontString(nil, "OVERLAY", "NumberFontNormalSmall")
     count:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", -1, 1)
     button._quiCount = count
-    button:SetApplicationCount(count, {})
+    if button.SetApplicationCount then button:SetApplicationCount(count, {}) end
+end
+
+-- Surface-owned icon-skin settings arrive as profile overrides. Keeping the
+-- ownership switch beside the shared button styler makes secure live buttons
+-- and ordinary preview frames consume the same built-in/external skin rules.
+local function ApplyIconSkinOwnership(button, profile)
+    local Bridge = ns.ExternalSkinBridge
+    local surfaceKey = profile.externalSkinKey
+    local external = profile.externalSkinning == true
+        and surfaceKey ~= nil
+        and Bridge and Bridge.IsAvailable and Bridge.IsAvailable()
+
+    if external then
+        if button._quiBridgedKey and button._quiBridgedKey ~= surfaceKey then
+            Bridge.RemoveButton(button._quiBridgedKey, button)
+            button._quiBridgedKey = nil
+        end
+        if button._quiBridgedKey ~= surfaceKey then
+            local regions = button._quiRegions or {}
+            button._quiRegions = regions
+            regions.Icon = button.Icon
+            regions.Cooldown = button._quiCooldown
+            Bridge.AddButton(surfaceKey, button, regions)
+            button._quiBridgedKey = surfaceKey
+        end
+        button._quiBridged = true
+        if button._quiBorder and button._quiBorder.Hide then button._quiBorder:Hide() end
+        if button._quiBackdrop and button._quiBackdrop.Hide then button._quiBackdrop:Hide() end
+        if button._quiGloss and button._quiGloss.Hide then button._quiGloss:Hide() end
+        return
+    end
+
+    if button._quiBridgedKey and Bridge then
+        Bridge.RemoveButton(button._quiBridgedKey, button)
+    end
+    button._quiBridgedKey = nil
+    button._quiBridged = nil
+
+    if button._quiBorder and button._quiBorder.Show then button._quiBorder:Show() end
+    local skinName = profile.iconSkin or "Default"
+    if ns.IconSkin and skinName ~= "Default" then
+        local regions = button._quiRegions or {}
+        button._quiRegions = regions
+        regions.Backdrop = button._quiBackdrop
+        regions.Gloss = button._quiGloss
+        ns.IconSkin.ApplySkin(button, regions, skinName)
+    else
+        if button._quiBackdrop and button._quiBackdrop.Hide then button._quiBackdrop:Hide() end
+        if button._quiGloss and button._quiGloss.Hide then button._quiGloss:Hide() end
+    end
 end
 
 -- Apply STATIC appearance (border color, font, swipe) to one button.  Called
@@ -249,6 +317,8 @@ local function styleButton(button, profile)
         button:SetHideTooltipInCombat(profile.tooltipHideInCombat == true)
     end
 
+    ApplyIconSkinOwnership(button, profile)
+
     -- Dispel ring options (dispelColors palette / dispelAssets custom
     -- textures) apply HERE, not at button birth, so an options change
     -- restyles live buttons: Clear + Add mirrors the engine's own
@@ -265,6 +335,11 @@ local function styleButton(button, profile)
         }
         if type(profile.dispelColors) == "table" then
             borderOpts.customDispelColorMap = profile.dispelColors
+        elseif profile.dispelColorCurve then
+            -- Group frames reuse the exact color curve that their legacy
+            -- renderer and Dispel Overlay already consume. A per-element map
+            -- remains the more specific override when one is present.
+            borderOpts.customDispelColorCurve = profile.dispelColorCurve
         end
         -- customDispelAssetMap only applies under the CustomAsset style (4);
         -- dispelColors still composes — the engine applies the custom vertex
@@ -274,7 +349,12 @@ local function styleButton(button, profile)
             borderOpts.customDispelAssetMap = profile.dispelAssets
         end
         button:ClearDispelTypeTextures()
-        button:AddDispelTypeTexture(dispel, borderOpts)
+        if button._quiBridged or profile.showDispelBorder == false then
+            if dispel.Hide then dispel:Hide() end
+        else
+            if dispel.Show then dispel:Show() end
+            button:AddDispelTypeTexture(dispel, borderOpts)
+        end
     end
 
     -- Static QUI border: per-element override when set, else theme color.
@@ -751,4 +831,31 @@ end
 function AuraSkin.WireButton(button, profile)
     buildButtonArt(button)
     styleButton(button, profile or {})
+end
+
+-- Plain-frame adapter for synthetic previews. It deliberately reuses the same
+-- art builder + styleButton; only the engine-owned data setters are shimmed.
+-- AuraPreview supplies representative cooldown/count/dispel data afterward.
+function AuraSkin.WirePreviewButton(button, profile)
+    if not button.SetDurationBar then
+        button.SetDurationBar = function(self, bar, options)
+            self._quiPreviewDurationBar = bar
+            self._quiPreviewDurationOptions = options
+        end
+        button._quiPreviewDurationBarShim = true
+    end
+    buildButtonArt(button)
+    styleButton(button, profile or {})
+    button._tex = button.Icon
+    if button._quiDispel and button._quiDispel.Hide then button._quiDispel:Hide() end
+end
+
+function AuraSkin.ReleasePreviewButton(button)
+    local key = button and button._quiBridgedKey
+    local Bridge = ns.ExternalSkinBridge
+    if key and Bridge then Bridge.RemoveButton(key, button) end
+    if button then
+        button._quiBridgedKey = nil
+        button._quiBridged = nil
+    end
 end

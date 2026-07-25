@@ -238,11 +238,116 @@ test("aura renderer toggle reaches show and complete hide/release paths", functi
         end,
     }
     local frame = { previewUnit = "unit", _auraHost = { kind = "auraHost" } }
-    D._RenderFrameAuras(frame, { enabled = true }, 0)
-    D._RenderFrameAuras(frame, nil, 0)
+    local member = { role = "HEALER", isSelf = false }
+    D._RenderFrameAuras(frame, member, { enabled = true }, 0)
+    D._RenderFrameAuras(frame, member, nil, 0)
     assert(calls.show == 1, "enabled Aura chip renders preview elements")
     assert(calls.hide == 1, "disabled Aura chip hides placeholder elements")
     assert(calls.releaseAll == 1, "disabled Aura chip releases renderer-owned elements")
+end)
+
+test("aura preview applies the live per-member role gate", function()
+    local dispatches, placeholderCounts, releases = 0, {}, 0
+    local rendererElement = {
+        id = "tint", mode = "tracked", displayType = "healthTint",
+        applyToRoles = "tank", spells = { 101 },
+    }
+    local placeholderElement = {
+        id = "icons", mode = "tracked", displayType = "icon",
+        applyToRoles = "healer", spells = { 202 },
+    }
+    ns.QUI_GroupFrameAuraRender = {
+        Dispatch = function() dispatches = dispatches + 1 end,
+        Release = function() releases = releases + 1 end,
+        ReleaseAll = function() end,
+    }
+    ns.QUI_GroupFramesAuraModel = {
+        EnsureSeeded = function() end,
+        ActiveElementsForSpec = function() return { rendererElement, placeholderElement } end,
+        ElementAppliesToRole = function(element, role, isSelf)
+            if element.applyToRoles == "me" then return isSelf == true end
+            if element.applyToRoles == "tank" then return role == "TANK" end
+            if element.applyToRoles == "healer" then return role == "HEALER" end
+            return true
+        end,
+    }
+    ns.QUI_GroupFrameAuras = {
+        EngineRendersElement = function(element)
+            return element.displayType == "healthTint"
+        end,
+        ProfileOverrides = function() return {} end,
+    }
+    ns.AuraPreview = {
+        Show = function(_, elements) placeholderCounts[#placeholderCounts + 1] = #elements end,
+        Hide = function() end,
+    }
+    local frame = { _auraHost = {} }
+
+    D._RenderFrameAuras(frame, { role = "HEALER", isSelf = false }, { enabled = true }, 0)
+    assert(dispatches == 0, "tank-only renderer element must not render on healer")
+    assert(placeholderCounts[1] == 1, "healer placeholder must render on healer")
+
+    -- Switching the same pooled frame to a tank must release the renderer state
+    -- from any previous pass and suppress the healer-only placeholder.
+    frame._previewAuraIDs = { stale = true }
+    D._RenderFrameAuras(frame, { role = "TANK", isSelf = false }, { enabled = true }, 0)
+    assert(dispatches == 1, "tank-only renderer element must render on tank")
+    assert(placeholderCounts[2] == 0, "healer placeholder must not render on tank")
+    assert(releases >= 1, "role transitions must reconcile stale renderer-owned ids")
+end)
+
+test("missing-raid-buff preview honors auto/manual buff selection", function()
+    C_Spell = { GetSpellTexture = function(id) return 1000 + id end }
+    ns.QUI_GroupFrameMissingRaidBuffs = {
+        RaidBuffs = {
+            { key = "fortitude", iconSpellID = 10, providerClass = "PRIEST" },
+            { key = "intellect", iconSpellID = 20, providerClass = "MAGE" },
+            { key = "cdm", iconSpellID = 30, source = "cdm" },
+        },
+        ElementShouldCheckBuff = function(element, buff)
+            if element.classDetection ~= false then
+                return buff.key == "fortitude" or buff.providerClass == nil
+            end
+            return element.buffChecks and element.buffChecks[buff.key] == true
+        end,
+    }
+
+    local auto = D._BuildMissingRaidBuffMatches({ classDetection = true, maxIcons = 5 }, 0)
+    assert(#auto == 2 and auto[1].spellId == 10 and auto[2].spellId == 30,
+        "auto mode must show only the current-class/CDM candidates")
+
+    local manual = D._BuildMissingRaidBuffMatches({
+        classDetection = false, buffChecks = { intellect = true }, maxIcons = 5,
+    }, 0)
+    assert(#manual == 1 and manual[1].spellId == 20,
+        "manual mode must show only checked raid buffs")
+
+    local none = D._BuildMissingRaidBuffMatches({
+        classDetection = false, buffChecks = {}, maxIcons = 5,
+    }, 0)
+    assert(#none == 0, "manual mode with no checked buffs must preview no icon")
+    C_Spell = nil
+end)
+
+test("harmful aura placeholders reuse the configured dispel-overlay palette", function()
+    local color = D._MakePreviewDispelColor({
+        healer = {
+            dispelOverlay = {
+                colors = {
+                    Magic = { 0.11, 0.22, 0.33, 0.44 },
+                },
+            },
+        },
+    })
+    local r, g, b, a = color({}, 1, {})
+    assert(r == 0.11 and g == 0.22 and b == 0.33 and a == 0.44,
+        "preview Magic sample must reuse the saved Dispel Overlay color")
+
+    r, g, b, a = color({}, 1, {
+        dispelColors = { Magic = { r = 0.8, g = 0.7, b = 0.6, a = 0.5 } },
+    })
+    assert(r == 0.8 and g == 0.7 and b == 0.6 and a == 0.5,
+        "a per-element custom color must remain the most specific override")
 end)
 
 test("surface labels every single-tile sample with an independent control", function()
@@ -441,6 +546,21 @@ test("aura pin: BOTTOM anchors clear the power bar via _bottomPad", function()
     assert(offY == -18 + 6, "BOTTOM anchor adds bottomPad, got " .. tostring(offY))
     local _, _, _, topY = pin({ anchor = "TOPLEFT", growDirection = "RIGHT", offsetY = 16 })
     assert(topY == 16)
+end)
+
+test("aura pin threads live group-aura visual overrides into AuraSkin profile", function()
+    local overrides = {
+        showDispelBorder = true,
+        iconSkin = "Gloss",
+        externalSkinning = true,
+        externalSkinKey = "groupauras-preview",
+    }
+    local pin = D._MakeAuraPin({ _bottomPad = 0 }, overrides)
+    local profile = pin({ anchor = "TOPLEFT", growDirection = "RIGHT", iconSize = 16 })
+    assert(profile.showDispelBorder == true)
+    assert(profile.iconSkin == "Gloss")
+    assert(profile.externalSkinning == true)
+    assert(profile.externalSkinKey == "groupauras-preview")
 end)
 
 print("ALL PASS")

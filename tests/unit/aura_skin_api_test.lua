@@ -65,6 +65,13 @@ assert(src:find("InCombatLockdown", 1, true), "Configure must refuse new-group c
 -- WireButton: wiring pair for slot buttons (core/aura_slots.lua), outside the
 -- group initializeFrame path.
 assert(src:find("function AuraSkin.WireButton", 1, true), "must define and export AuraSkin.WireButton")
+assert(src:find("function AuraSkin.WirePreviewButton", 1, true),
+    "must expose a plain-frame preview adapter over the same art/style functions")
+assert(src:find("function AuraSkin.ReleasePreviewButton", 1, true),
+    "must release preview-only external-skin ownership when placeholders hide")
+assert(src:find("if button.SetIcon then", 1, true)
+    and src:find("if button.SetDurationCooldown then", 1, true),
+    "buildButtonArt must feature-detect secure inbound setters for plain preview frames")
 
 -- styleButton is sub-table aware: duration{}/stack{} config drives text-region
 -- styling (element model), with the legacy flat fontSize as fallback.

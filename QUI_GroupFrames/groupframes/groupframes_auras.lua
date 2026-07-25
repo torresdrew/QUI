@@ -75,6 +75,20 @@ local function EngineRendersElement(element)
 end
 QUI_GFA.EngineRendersElement = EngineRendersElement
 
+-- Surface-owned presentation fields that are not part of an aura element.
+-- Both the live secure-container path and the settings preview call this
+-- function, so Debuff Border by Type and icon-skin ownership cannot drift.
+function QUI_GFA.ProfileOverrides(auras, gfdb, surfaceKey, dispelColorCurve)
+    gfdb = gfdb or GetDB()
+    return {
+        showDispelBorder = auras and auras.debuffBorderByType == true,
+        dispelColorCurve = dispelColorCurve,
+        externalSkinning = gfdb and gfdb.externalSkinning == true,
+        iconSkin = (gfdb and gfdb.iconSkin) or "Default",
+        externalSkinKey = surfaceKey or "groupauras",
+    }
+end
+
 -- Build render work for one unit frame from the unified element model.
 -- specID: the unit's active spec (or nil). cache: that unit's unitAuraCache entry.
 -- frame: the owning unit frame (used to pick the surface-aware default bucket).
@@ -1539,6 +1553,10 @@ local function ApplyElementPass(frame, allowCreate)
     local unit = GetFrameUnit(frame)
     if not unit then return end
     if not ResolveAuraDeps() then return end
+    local auras = GetFrameAuraSettings(frame)
+    local curve = ns.QUI_GroupFrameAuraBorderCurve
+        and ns.QUI_GroupFrameAuraBorderCurve(frame._isRaid) or nil
+    local profileOverrides = QUI_GFA.ProfileOverrides(auras, GetDB(), "groupauras", curve)
     local elems = ResolveContainerElements(frame)
     local pool = frame._quiAuraContainers
     if not pool then
@@ -1577,10 +1595,11 @@ local function ApplyElementPass(frame, allowCreate)
             if element.mode == "tracked" then
                 -- Retire any strip groups a re-purposed container carries, then
                 -- reconcile the tracked slots (AddAuraSlot) onto it.
-                if not AuraGlue.RunConfigPass(container, AuraGlue.ElementProfile(element), {}, allowCreate) then incomplete = true end
-                if not AuraSlots.Sync(container, element, allowCreate) then incomplete = true end
+                local profile = AuraGlue.ElementProfile(element, profileOverrides)
+                if not AuraGlue.RunConfigPass(container, profile, {}, allowCreate) then incomplete = true end
+                if not AuraSlots.Sync(container, element, allowCreate, profileOverrides) then incomplete = true end
             else
-                local profile = AuraGlue.ElementProfile(element)
+                local profile = AuraGlue.ElementProfile(element, profileOverrides)
                 local groups = AuraGlue.ElementGroups(unit, element, profile, false)
                 if not AuraGlue.RunConfigPass(container, profile, groups, allowCreate) then incomplete = true end
                 AuraSlots.Park(container)

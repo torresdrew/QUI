@@ -54,8 +54,8 @@ assert(pass:find("AuraGlue.RunConfigPass(container, profile, groups, allowCreate
     "filter strips reconcile groups via AuraGlue.RunConfigPass(..., allowCreate)")
 assert(pass:find("AuraGlue.ElementGroups(unit, element, profile, false)", 1, true),
     "filter strips build descriptors via AuraGlue.ElementGroups")
-assert(pass:find("AuraSlots.Sync(container, element, allowCreate)", 1, true),
-    "tracked elements reconcile slots via AuraSlots.Sync(..., allowCreate)")
+assert(pass:find("AuraSlots.Sync(container, element, allowCreate, profileOverrides)", 1, true),
+    "tracked elements reconcile slots with the shared group-aura visual profile")
 assert(not pass:find("pcall(AuraSkin", 1, true),
     "the combat Configure guard lives in core (AuraGlue.RunConfigPass), not here")
 assert(not pass:find("AuraSkin.Reflow", 1, true),

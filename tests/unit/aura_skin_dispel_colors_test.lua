@@ -47,6 +47,7 @@ local function Stub()
     local t = {}
     function t:SetAllPoints() end
     function t:SetPoint() end
+    function t:SetSize() end
     function t:ClearAllPoints() end
     function t:SetColorTexture() end
     function t:SetTexCoord() end
@@ -79,7 +80,10 @@ local function MakeButton(name)
     function b:SetCancelAuraButtons() end
     function b:SetSize() end
     function b:SetIcon() end
-    function b:AddDispelTypeTexture(_dispel, opts) b._auraBorderOpts = opts end
+    function b:AddDispelTypeTexture(_dispel, opts)
+        b._addDispelCalls = (b._addDispelCalls or 0) + 1
+        b._auraBorderOpts = opts
+    end
     function b:ClearDispelTypeTextures() b._clearCalls = (b._clearCalls or 0) + 1 end
     function b:SetDispelTypeText() end
     -- Engine-faithful tooltip anchor stub: template KeyValues pre-seed
@@ -138,6 +142,17 @@ assert(loadfile("core/aura_skin.lua"))("QUI", ns)
 assert(loadfile("core/aura_elements.lua"))("QUI", ns)
 local AuraSkin = ns.Addon.AuraSkin
 check("core/aura_skin.lua publishes ns.Addon.AuraSkin", AuraSkin ~= nil)
+
+local plainPreview = Stub()
+AuraSkin.WirePreviewButton(plainPreview, {
+    iconSize = 20,
+    showDispelBorder = false,
+})
+check("plain preview adapter builds shared art without secure inbound setters",
+    plainPreview._quiWired == true
+        and plainPreview.Icon ~= nil
+        and plainPreview._quiDuration ~= nil
+        and plainPreview._quiCount ~= nil)
 
 ----------------------------------------------------------------------------
 -- (1) Profile carries dispelColors: the birthed button's AddDispelTypeTexture
@@ -245,7 +260,37 @@ if btn5 then
 end
 
 ----------------------------------------------------------------------------
--- (6) LIVE RESTYLE (stop-gate): dispel options apply in styleButton, not at
+-- (6) Group-frame Debuff Border by Type can suppress the engine registration
+-- entirely, and a later settings refresh can restore it on the same button.
+----------------------------------------------------------------------------
+local borderDisabled = MakeContainer()
+AuraSkin.Configure(borderDisabled, { iconSize = 20, showDispelBorder = false },
+    { { key = "s1", filter = "HARMFUL", maxFrameCount = 5 } })
+local btnDisabled = borderDisabled._birthedButton
+check("showDispelBorder=false clears without registering a dispel texture",
+    btnDisabled ~= nil
+        and (btnDisabled._clearCalls or 0) >= 1
+        and (btnDisabled._addDispelCalls or 0) == 0)
+if btnDisabled then
+    AuraSkin.Restyle(borderDisabled, { iconSize = 20, showDispelBorder = true })
+    check("re-enabling the setting registers the dispel texture on the live button",
+        (btnDisabled._addDispelCalls or 0) == 1 and btnDisabled._auraBorderOpts ~= nil)
+end
+
+local withCurve = MakeContainer()
+local dispelCurve = {}
+AuraSkin.Configure(withCurve, {
+    iconSize = 20,
+    showDispelBorder = true,
+    dispelColorCurve = dispelCurve,
+}, { { key = "s1", filter = "HARMFUL", maxFrameCount = 5 } })
+local btnCurve = withCurve._birthedButton
+check("group dispel palette curve reaches the engine texture options",
+    btnCurve ~= nil
+        and btnCurve._auraBorderOpts.customDispelColorCurve == dispelCurve)
+
+----------------------------------------------------------------------------
+-- (7) LIVE RESTYLE (stop-gate): dispel options apply in styleButton, not at
 -- button birth, so Restyle on an existing container must re-register the
 -- dispel texture with the NEW profile's options — including full reset when
 -- an override is removed. Clear must precede every re-add (no texture
@@ -272,7 +317,7 @@ if btn1 then
 end
 
 ----------------------------------------------------------------------------
--- (7) Tooltip anchor lifecycle (stop-gate): valid set -> clear must restore
+-- (8) Tooltip anchor lifecycle (stop-gate): valid set -> clear must restore
 -- the CACHED pre-override triple (template default), and an invalid imported
 -- token must neither error, nor apply, nor mark the button customized (a
 -- later clear pass must not disturb the engine state).
@@ -310,6 +355,60 @@ if btn6 then
     check("clear after failed set leaves the engine default untouched",
         btn6._tipAnchor[1] == "ANCHOR_BOTTOMLEFT" and btn6._tipAnchor[2] == 0 and btn6._tipAnchor[3] == 0)
 end
+
+----------------------------------------------------------------------------
+-- (9) Surface icon-skin ownership: built-in profiles reach IconSkin, while an
+-- available external bridge owns the button until the setting is disabled.
+----------------------------------------------------------------------------
+local appliedSkin
+ns.IconSkin = {
+    GlossTexture = "gloss",
+    ApplySkin = function(_, regions, skinName)
+        appliedSkin = { regions = regions, skinName = skinName }
+    end,
+}
+local builtinSkin = MakeContainer()
+AuraSkin.Configure(builtinSkin, { iconSize = 20, iconSkin = "Gloss" },
+    { { key = "s1", filter = "HARMFUL", maxFrameCount = 5 } })
+check("built-in group icon skin reaches the shared IconSkin applier",
+    appliedSkin ~= nil
+        and appliedSkin.skinName == "Gloss"
+        and appliedSkin.regions.Backdrop ~= nil
+        and appliedSkin.regions.Gloss ~= nil)
+
+local bridgeCalls = { add = 0, remove = 0 }
+ns.ExternalSkinBridge = {
+    IsAvailable = function() return true end,
+    AddButton = function(key, button, regions)
+        bridgeCalls.add = bridgeCalls.add + 1
+        bridgeCalls.key, bridgeCalls.button, bridgeCalls.regions = key, button, regions
+    end,
+    RemoveButton = function(key, button)
+        bridgeCalls.remove = bridgeCalls.remove + 1
+        bridgeCalls.removeKey, bridgeCalls.removedButton = key, button
+    end,
+}
+local externalSkin = MakeContainer()
+AuraSkin.Configure(externalSkin, {
+    iconSize = 20,
+    externalSkinning = true,
+    externalSkinKey = "groupauras",
+}, { { key = "s1", filter = "HARMFUL", maxFrameCount = 5 } })
+local externalButton = externalSkin._birthedButton
+check("available external skin bridge receives the live aura button",
+    bridgeCalls.add == 1
+        and bridgeCalls.key == "groupauras"
+        and bridgeCalls.button == externalButton
+        and bridgeCalls.regions.Icon == externalButton.Icon)
+AuraSkin.Restyle(externalSkin, {
+    iconSize = 20,
+    externalSkinning = false,
+    externalSkinKey = "groupauras",
+})
+check("disabling external skinning releases the same button",
+    bridgeCalls.remove == 1
+        and bridgeCalls.removeKey == "groupauras"
+        and bridgeCalls.removedButton == externalButton)
 
 if fails > 0 then error(fails .. " failure(s) in aura_skin_dispel_colors_test") end
 print("OK: aura_skin_dispel_colors_test (all checks passed)")
