@@ -9,6 +9,54 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v5.0.0-alpha24 - 2026-07-25
+
+> ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will
+> not load on the 12.0.x live client. Stay on the v4.x beta line for live realms.
+
+### Added
+- The group frame settings preview now shows what the live frames show. It is
+  built from the same frame skeleton the runtime uses, so it picks up cleanse
+  glow, Party Target Frames, Spotlight role and name filters with their growth
+  direction, party show-player / hide-DPS / sort / self-first, and a dedicated
+  Targeted Spells chip instead of that unexplained centre cooldown.
+- Aura previews are drawn with the real icon styler: icon skins, dispel
+  borders, cooldown swipes, duration text, and stack counts all appear in the
+  preview, so settings that only existed on the live path can finally be judged
+  before you commit to them.
+- **Auras > Unit Frames** gets a pinned preview of the unit frame itself,
+  outside the scrolling settings body.
+
+### Changed
+- The aura element editor opens quietly: Basics, Filters, and Appearance &
+  Advanced start collapsed, and expanding a section reflows the rows in place
+  rather than repainting the whole tab. "What to Show" latches manual mode when
+  you pick Custom…, and the spell Browse window stays open for multi-select
+  while the inline list updates live behind it.
+- Both unit frame previews measure what is actually visible — body, portrait,
+  auras, cast bar — recentre on it and shrink the pane to fit, instead of
+  reserving space for a cast bar that is not there.
+- Threat and target fill opacity are no longer inert settings; both now tint a
+  real fill on live frames and in the preview.
+
+### Fixed
+- Buff/debuff settings in search results sent you to **Action Bars > Per-Bar**,
+  a page that contains none of them. All 46 of those entries now land on
+  **Auras > Buff/Debuff Frames**, where they moved.
+- The Cooldown Manager composer listed spells your class can never learn — for
+  example Shaman auras offered on a Demon Hunter — and they looked active while
+  never appearing on the real frame. Those rows are hidden now. Same-class
+  abilities missing from your current loadout keep their Dormant treatment, and
+  spell IDs you entered by hand are still yours to manage.
+- The Group Frames tile and the Auras hub's Group Frames sub-page each keep
+  their own Party/Raid choice; opening one no longer silently retargets the
+  other.
+- An automatic Missing Raid Buff container previewed as empty on classes with
+  no raid buff of their own (Death Knight), leaving nothing to position. The
+  preview now shows a representative icon; live frames are unchanged.
+- Resource bars honour the colour mode dropdown on every path, so a static
+  colour no longer stays white on Blood Death Knight Runic Power.
+
 ## v5.0.0-alpha23 - 2026-07-24
 
 > ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will
