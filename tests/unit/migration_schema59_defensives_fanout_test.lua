@@ -1,13 +1,10 @@
--- tests/unit/migration_v54_defensives_spec_buckets_test.lua
--- Run: lua5.1 tests/unit/migration_v54_defensives_spec_buckets_test.lua
--- v54: backfill the shipped defensives strip into spec-override buckets that
--- v51(e) skipped. Spec buckets REPLACE "*" (E.ActiveElementsForSpec), so a
--- pre-existing override bucket silently lost the indicator for that spec.
---   - numeric spec buckets lacking defensives get a CloneValue copy of the
---     "*" element (enabled state mirrors "*")
---   - string context buckets ("i"../"e"..) are never touched
+-- tests/unit/migration_schema59_defensives_fanout_test.lua
+-- Run: lua5.1 tests/unit/migration_schema59_defensives_fanout_test.lua
+-- Schema 59 folds the shipped defensives strip and its override fan-out into
+-- one pass. Numeric spec buckets REPLACE "*", so every existing non-empty
+-- bucket receives a clone while deliberately empty buckets stay empty.
 --   - a hand-built classify-equivalent strip blocks injection (no duplicate)
---   - the stamp is the one-shot: deletions after v54 stick
+--   - the schema stamp is the one-shot: deletions after migration stick
 local ns = dofile("tools/_addon_env.lua").LoadCore()
 local M = ns.Migrations
 
@@ -32,18 +29,41 @@ local function buildProfile(starEnabled)
         classifications = { bigDefensive = true, externalDefensive = true },
     }
     return {
-        _schemaVersion = 51,
+        _schemaVersion = 47,
         quiGroupFrames = {
             party = { auras = { elementsSeeded = true, elements = {
                 ["*"] = { defensives },
                 [105] = { { id = 7, mode = "filterStrip", auraType = "HARMFUL", filterMode = "off" } },
-                ["i2810"] = { { id = 9, mode = "tracked", spells = { 123 } } },
+                [106] = {},
             } } },
         },
     }
 end
 
-do -- spec bucket backfilled, context bucket untouched, stamp moves
+do -- legacy indicator folds into "*" and fans out without a later migration
+    local p = {
+        _schemaVersion = 47,
+        quiGroupFrames = { party = {
+            healer = { defensiveIndicator = { enabled = true } },
+            auras = { elementsSeeded = true, elements = {
+                ["*"] = { { id = "buffs", mode = "filterStrip" } },
+                [105] = { { id = "custom", mode = "tracked", spells = { 123 } } },
+            } },
+        } },
+    }
+    M.RunOnProfile(p)
+    local elements = p.quiGroupFrames.party.auras.elements
+    check("fold adds defensives to '*'", countDefensives(elements["*"]) == 1)
+    check("same fold pass fans defensives into spec", countDefensives(elements[105]) == 1)
+    local clone
+    for _, e in ipairs(elements[105]) do
+        if e.id == "defensives" then clone = e break end
+    end
+    check("fan-out clone carries legacy enabled=true", clone and clone.enabled == true,
+        clone and tostring(clone.enabled))
+end
+
+do -- numeric buckets are handled in the same pass as the fold
     local p = buildProfile(true)
     M.RunOnProfile(p)
     local elements = p.quiGroupFrames.party.auras.elements
@@ -54,22 +74,7 @@ do -- spec bucket backfilled, context bucket untouched, stamp moves
             check("copy, not alias", e ~= elements["*"][1])
         end
     end
-    -- v54 ITSELF never touches "i2810" (that's what this check proves — see
-    -- ExtendDefensivesToSpecBuckets's numeric-only bucketKey filter); the
-    -- original id=9 element and its position survive. This profile's
-    -- RunOnProfile call cascades to the CURRENT schema, so ONE later,
-    -- independent step in the same chain legitimately appends to this same
-    -- bucket: v58's ExtendDefensivesToInstanceEncounterBuckets closes the
-    -- exact "i/e buckets never got 'defensives'" gap this v54 test section
-    -- title calls out. (The former v57 healerHoTs fan-out that also used to
-    -- land here was deleted with the v59 seed removal.)
-    check("context bucket: v54 leaves the original element untouched (in place)",
-        elements["i2810"][1] and elements["i2810"][1].id == 9)
-    check("context bucket: v58 (not v54) is what lands the 'defensives' element here",
-        countDefensives(elements["i2810"]) == 1, tostring(countDefensives(elements["i2810"])))
-    check("context bucket: original + v58 defensives fan-out, nothing else",
-        #elements["i2810"] == 2 and elements["i2810"][2].id == "defensives",
-        tostring(#elements["i2810"]))
+    check("empty numeric override remains empty", #elements[106] == 0, tostring(#elements[106]))
     check("'*' still has exactly one", countDefensives(elements["*"]) == 1)
     check("stamped 59", p._schemaVersion == 59, tostring(p._schemaVersion))
 end
@@ -96,7 +101,7 @@ do -- hand-built classify-equivalent blocks injection
         tostring(countDefensives(p.quiGroupFrames.party.auras.elements[105])))
 end
 
-do -- one-shot: post-v54 deletion sticks on the next run
+do -- one-shot: post-migration deletion sticks on the next run
     local p = buildProfile(true)
     M.RunOnProfile(p)
     local spec = p.quiGroupFrames.party.auras.elements[105]
@@ -104,8 +109,8 @@ do -- one-shot: post-v54 deletion sticks on the next run
         if spec[i].id == "defensives" then table.remove(spec, i) end
     end
     M.RunOnProfile(p)
-    check("post-v54 deletion sticks", countDefensives(spec) == 0, tostring(countDefensives(spec)))
+    check("post-migration deletion sticks", countDefensives(spec) == 0, tostring(countDefensives(spec)))
 end
 
-print("migration_v54_defensives_spec_buckets_test " .. (failures == 0 and "OK" or "FAILED"))
+print("migration_schema59_defensives_fanout_test " .. (failures == 0 and "OK" or "FAILED"))
 os.exit(failures == 0 and 0 or 1)

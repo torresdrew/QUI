@@ -1,12 +1,8 @@
 -- tests/unit/migration_floor_collapse_test.lua
 -- Run: lua5.1 tests/unit/migration_floor_collapse_test.lua
--- Verifies the 47-floor + v51 squash gate (+ the v54 stamp):
---   - stored < 47 → floored (wiped, _needsStarterReseed, stamped CURRENT=54)
---   - stored == 47 → NOT floored; the single v51 gate runs every squash step
---                    (RestoreBuffDebuffSplit … PurgeOrphanContainerSatellites), stamped 54
---   - stored == 48–50 (shipped alpha stamps) → re-enter the squash gate and heal
---   - stored == 51 → squash gate skipped; the v54 defensives-backfill gate
---                    still runs and stamps 54
+-- Verifies the stable schema-47 floor and the single direct schema-59 gate:
+--   - stored < 47 → floored (wiped, _needsStarterReseed, stamped 59)
+--   - stored == 47 → NOT floored; the complete 5.0 transform runs and stamps 59
 local ns = dofile("tools/_addon_env.lua").LoadCore()
 local M = ns.Migrations
 
@@ -43,13 +39,12 @@ do
     check("at-floor (47) stamped to current (59)", profile._schemaVersion == 59, tostring(profile._schemaVersion))
 end
 
--- 2b) PrunePrivateAuras via a shipped-alpha stamp (48, from alpha14): seeded
+-- 2b) PrunePrivateAuras on the stable schema-47 path: stored
 -- privateAuras subtables are stripped from every tree the removed defaults
--- carried them in; sibling keys survive. Also proves the 48–50 alpha stamps
--- re-enter the squash gate rather than being treated as current.
+-- carried them in; sibling keys survive.
 do
     local profile = {
-        _schemaVersion = 48,
+        _schemaVersion = 47,
         quiUnitFrames = {
             player = { privateAuras = { enabled = true, iconSize = 24 }, portrait = { enabled = true } },
             target = { privateAuras = { enabled = false } },
@@ -75,20 +70,8 @@ do
         and profile.quiUnitFrames.player.portrait.enabled == true, "portrait clobbered")
     check("prune preserves sibling group settings", profile.quiGroupFrames.party.frames
         and profile.quiGroupFrames.party.frames.width == 90, "frames clobbered")
-    check("alpha stamp 48 re-enters squash, stamps to CURRENT (59)", profile._schemaVersion == 59, tostring(profile._schemaVersion))
-end
-
--- 3) Mid-chain alpha stamp (51) re-enters the v58 squash: flat buffborders
--- keys a real 51-stamped profile would have had consumed at its original
--- 51-crossing get the same conversion treatment as a 47 profile (the
--- aura-surface unification is latch-gated, not stamp-gated), and the stamp
--- lands on 58.
-do
-    local profile = { _schemaVersion = 51, buffBorders = { buffIconSize = 35, debuffIconSize = 12 } }
-    M.RunOnProfile(profile)
-    check("alpha stamp 51: leftover flat debuffIconSize consumed by the unification", profile.buffBorders.debuffIconSize == nil, tostring(profile.buffBorders.debuffIconSize))
-    check("alpha stamp 51: leftover flat buffIconSize consumed by the unification", profile.buffBorders.buffIconSize == nil, tostring(profile.buffBorders.buffIconSize))
-    check("pre-v54 (51) stamped to current (59)", profile._schemaVersion == 59, tostring(profile._schemaVersion))
+    check("stable path stamps to CURRENT (59)", profile._schemaVersion == 59,
+        tostring(profile._schemaVersion))
 end
 
 print("migration_floor_collapse_test " .. (failures == 0 and "OK" or "FAILED"))

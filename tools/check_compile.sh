@@ -30,16 +30,21 @@ fi
 fail=0
 count=0
 while IFS= read -r f; do
+  # `git ls-files --cached` includes paths deleted in the working tree until
+  # their deletion is staged. Skip those paths so local verification works
+  # before staging, while `--others` below also compiles newly added files.
+  [ -f "$f" ] || continue
   count=$((count + 1))
   if ! out=$("$luac" -p "$f" 2>&1); then
     echo "COMPILE FAIL: $f"
     echo "  ${out#*: }"
     fail=1
   fi
-done < <(git ls-files '*.lua' | grep -viE '^libs/|^Libs/|^tests/framexml/|^tests/api-docs/')
+done < <(git ls-files --cached --others --exclude-standard '*.lua' | grep -viE '^libs/|^Libs/|^tests/framexml/|^tests/api-docs/')
 
 libcount=0
 while IFS= read -r f; do
+  [ -f "$f" ] || continue
   libcount=$((libcount + 1))
   # BOM-strip (first line only) then compile from stdin; luac reports the
   # file as "stdin", so print the real path ourselves on failure.
@@ -48,7 +53,7 @@ while IFS= read -r f; do
     echo "  ${out#*: }"
     fail=1
   fi
-done < <(git ls-files 'libs/*.lua' 'Libs/*.lua')
+done < <(git ls-files --cached --others --exclude-standard 'libs/*.lua' 'Libs/*.lua')
 
 if [ "$fail" -eq 0 ]; then
   echo "luac (5.1): $count QUI-authored + $libcount vendored lib Lua files compile cleanly"
