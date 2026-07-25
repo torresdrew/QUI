@@ -69,6 +69,28 @@ check("tab builder tags widgets with the hub route",
     and source:find("tabIndex = 21", 1, true) ~= nil
     and source:find('subTabName = ns.L["Buff/Debuff Frames"]', 1, true) ~= nil)
 
+-- Route agreement is load-bearing, not cosmetic: GUI:ResolveSearchNavigation
+-- (QUI_Options/framework.lua) DISCARDS an entry's explicit tileId/subPageIndex
+-- when it disagrees with the navMap route registered for its
+-- (tabIndex, subTabIndex), then falls back to that tab route. The auras tile's
+-- fourth sub-page must therefore register navRoutes {21, 4} -- RegisterFeatureTile
+-- passes the subPages array index as the sub-page (QUI_Options/shared.lua) --
+-- or these entries silently land on the hub's default sub-page instead.
+local tileHandle = assert(io.open("QUI_Options/tiles/auras.lua", "rb"))
+local tileSource = tileHandle:read("*a")
+tileHandle:close()
+local aursActionBarAt = assert(tileSource:find('id = "aurasActionBar"', 1, true),
+    "auras tile must still register the Buff/Debuff Frames sub-page")
+local aursActionBarBlock = tileSource:sub(aursActionBarAt, aursActionBarAt + 600)
+check("hub sub-page registers the matching navMap route",
+    aursActionBarBlock:find("navRoutes = { { tabIndex = 21, subTabIndex = 4 } }", 1, true) ~= nil)
+local subPageOrder = {}
+for id in tileSource:gmatch('id = "(auras%a+)"') do
+    subPageOrder[#subPageOrder + 1] = id
+end
+check("Buff/Debuff Frames is the fourth auras sub-page",
+    subPageOrder[4] == "aurasActionBar")
+
 if failures > 0 then
     error(("search_cache_buffdebuff_route_test: %d check(s) failed"):format(failures), 0)
 end
