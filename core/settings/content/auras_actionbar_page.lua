@@ -27,11 +27,11 @@ local function BuildAurasActionBarContent(host, ctx, section)
         AB.BuildBuffDebuffTab(host) -- self-contained; sets host:SetHeight itself
     end
 
-    -- BuildBuffDebuffTab (above) sets the search context to its OLD surface
-    -- route (Action Bars tile, "Buff/Debuff" sub-page -- see
-    -- action_bars_buffdebuff_content.lua). Re-assert the hub route LAST so
-    -- subsequently-tagged widgets and the tab/subtab nav entry point back
-    -- here, not at the removed surface sub-page.
+    -- BuildBuffDebuffTab (above) already tags its own widgets with this hub
+    -- route (action_bars_buffdebuff_content.lua), carrying the
+    -- actionBarsBuffDebuff featureId so Layout Mode's buffFrame/debuffFrame
+    -- lookups keep resolving. Re-assert the route LAST with this page's own
+    -- featureId so the tab/subtab nav entry resolves to aurasActionBarPage.
     if GUI and type(GUI.SetSearchContext) == "function" then
         GUI:SetSearchContext({
             tabIndex = 21,
