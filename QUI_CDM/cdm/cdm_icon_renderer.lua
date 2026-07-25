@@ -4784,7 +4784,13 @@ local function UpdateCooldownContainerVisibility(icon, entry, containerDB, editM
         end
 
         local shouldShow = visibility.renderVisible
-        if effectiveMode == "active" and not visibility.isOnCooldown and not visibility.rechargeActive then
+        -- Display activity follows the entry, not the compatibility container
+        -- type: mixed custom containers can hold both aura and cooldown entries.
+        -- Aura entries are active while their aura is present; cooldown entries
+        -- are active while their cooldown/recharge is running.
+        local displayActive = entryIsAura and visibility.isActive
+            or (not entryIsAura and (visibility.isOnCooldown or visibility.rechargeActive))
+        if effectiveMode == "active" and not displayActive then
             local keepForGlow = false
             if ns._OwnedGlows and ns._OwnedGlows.ShouldIconGlow then
                 keepForGlow = ns._OwnedGlows.ShouldIconGlow(icon)
