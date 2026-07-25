@@ -9,6 +9,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v5.0.0-alpha26 - 2026-07-25
+
+> ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will
+> not load on the 12.0.x live client. Stay on the v4.x beta line for live realms.
+
+### Added
+- Placing the same ability in more than one cooldown container now shows it in
+  every container you put it in. Blizzard hands out a single frame per ability,
+  so one placement keeps that native icon and the others are drawn from QUI's
+  own timing sources — exact duration for cooldowns, and a managed aura slot
+  for aura-kind entries so stacks and remaining time stay real. Duplicated
+  items, equipment, consumables, and totem instances still show exactly one
+  icon: they have no exact public timing source, so they fail closed with a
+  diagnostic instead of drawing a mirror that could drift.
+- Group frames can show the Blizzard dispel type icon — Magic, Curse, Disease,
+  Poison, or Bleed — with its own size, opacity, anchor, and offset, separate
+  from the colored dispel border. A new **Show For** choice adds *All Typed
+  Debuffs* next to *Dispellable by Me*, so awareness-only types such as Bleed
+  and Enrage can surface without widening Cleanse-Ready Glow, which stays
+  strictly on what you can actually dispel.
+- Hovering an item in your bags now clears its new-item glow immediately
+  instead of waiting for a click.
+
+### Fixed
+- The Cooldown Composer, Action Bars, and Resource Bars settings previews now
+  measure what they actually drew and resize their pane to fit, so tall icon
+  stacks and long value text are no longer clipped or stranded in empty space.
+  All three headers now read *Live Preview*, matching the rest of the settings.
+- The totem bar read the player class token without collapsing a restricted
+  value first, so slot ordering could fall through to the wrong priorities; it
+  now falls back to the standard order when the token is not readable. Active
+  totem buttons also sit above the invisible placeholders they pack over, so a
+  right-click to dismiss always hits the totem you aimed at.
+
 ## v5.0.0-alpha25 - 2026-07-25
 
 > ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will
