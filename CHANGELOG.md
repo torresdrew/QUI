@@ -9,6 +9,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v5.0.0-alpha28 - 2026-07-25
+
+> ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will
+> not load on the 12.0.x live client. Stay on the v4.x beta line for live realms.
+
+### Fixed
+- Auras placed in a cooldown container you built yourself stayed invisible when
+  the container was set to show only active icons. The active check was asking
+  whether the ability was on cooldown, which an aura never is, so buffs like
+  Anti-Magic Shell never appeared even while running. Custom containers now
+  judge auras by whether the aura is actually on you, matching how the built-in
+  containers already behaved. Cooldown entries in the same container are
+  unaffected.
+
 ## v5.0.0-alpha27 - 2026-07-25
 
 > ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will
