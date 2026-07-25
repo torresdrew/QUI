@@ -142,15 +142,6 @@ local function RegisterCDMCacheProbes()
             N(s.capturedAuraUnits) + N(s.capturedAuraSpellKeys) + N(s.capturedAuraNameKeys)
     end)
 
-    AddProbe("CDM_cache_blizzMirror", function()
-        local bm = CallFunction(ns.CDMBlizzMirror and ns.CDMBlizzMirror.GetCacheStats)
-        return N(bm.mirrorStates) + N(bm.packedStates),
-            N(bm.childFrames) + N(bm.cooldownInfo) + N(bm.defaultCooldownInfo)
-            + N(bm.spellMapEntries) + N(bm.directSpellMapEntries)
-            + N(bm.spellNameEntries) + N(bm.totemSpellIDEntries) + N(bm.activeTotems)
-            + N(bm.auraCandidateCaches) + N(bm.spellCandidateCaches)
-    end)
-
     AddProbe("CDM_cache_iconPools", function()
         local ic = CallStats(ns.CDMIcons, "GetCacheStats")
         return N(ic.activeIcons) + N(ic.recycleIcons),
@@ -158,8 +149,12 @@ local function RegisterCDMCacheProbes()
     end)
 
     AddProbe("CDM_cache_runtimeStore", function()
+        -- Frame-owned store: GetStats() no longer returns a central
+        -- `states` count (see cdm_runtime_store.lua) -- report the write
+        -- version and whether the single compat slot is occupied instead,
+        -- matching the shape QUI_Debug/cdm_debug.lua's cache status line reads.
         local rt = CallFunction(ns.CDMRuntimeStore and ns.CDMRuntimeStore.GetStats)
-        return N(rt.states), 0
+        return N(rt.version), N(rt.compatState)
     end)
 
     AddProbe("CDM_cache_tickAura", function()
@@ -206,7 +201,7 @@ local function TakeSnapshot()
         end
     end
 
-    pcall(UpdateAddOnMemoryUsage)
+    ns.SafeCall("best-effort-style", UpdateAddOnMemoryUsage)
     snap._totalKB = SumSuiteMemoryKB()
     snap._time = GetTime()
     snap._combat = InCombatLockdown() and true or false
@@ -785,7 +780,7 @@ local function HandleExperiment(arg)
     if arg == "reset" then
         local exps = GetExperiments()
         for i = 1, #exps do
-            pcall(exps[i].setEnabled, true)
+            ns.SafeCall("report", exps[i].setEnabled, true)
         end
         print("|cff60A5FA[memaudit exp]|r all experiments restored to production (on)")
         return
@@ -1035,10 +1030,10 @@ end
 
 _G.QUI_MemAudit = function(subcmd, arg)
     if subcmd == "gc" then
-        pcall(UpdateAddOnMemoryUsage)
+        ns.SafeCall("best-effort-style", UpdateAddOnMemoryUsage)
         local before = SumSuiteMemoryKB()
         collectgarbage("collect")
-        pcall(UpdateAddOnMemoryUsage)
+        ns.SafeCall("best-effort-style", UpdateAddOnMemoryUsage)
         local after = SumSuiteMemoryKB()
         print(string.format("|cff60A5FAQUI GC:|r Before: %s  After: %s  Freed: |cff44FF44%s|r",
             FormatKB(before), FormatKB(after), FormatKB(before - after)))

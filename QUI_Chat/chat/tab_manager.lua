@@ -77,6 +77,18 @@ local EVENT_GROUP_ALIAS = {
     RAID_BOSS_WHISPER = "MONSTER_BOSS_WHISPER",
 }
 
+-- Message-group family fallback: GUILD_DISCORD (12.1) postdates every curated
+-- (whitelist) tab a player already saved, so a tab whitelisting GUILD but
+-- authored before 12.1 has no GUILD_DISCORD key at all -- and a curated tab
+-- treats an absent key as exclusion, silently dropping the Discord guild-chat
+-- stream. Rule: a GUILD_DISCORD key ABSENT from tabData.groups inherits the
+-- tab's GUILD verdict; a GUILD_DISCORD key PRESENT (true or false) always
+-- wins over the inherited value -- explicit user intent, including an
+-- explicit false on an otherwise GUILD-true tab, is never overridden.
+local GROUP_FAMILY_FALLBACK = {
+    GUILD_DISCORD = "GUILD",
+}
+
 -- Returns a filter closure, or nil when tabData expresses no constraint
 -- (nil filter = show everything; cheaper than an always-true closure).
 --
@@ -87,6 +99,11 @@ function TabManager.BuildFilter(tabData)
     local channelsOff = NormalizeFalseSetUpper(tabData.channels)
     if not groups and not channels and not channelsOff then return nil end
     local invert = tabData.invert and true or false
+    -- Raw (un-normalized) groups table, kept only to distinguish "key absent"
+    -- from "key present with value false" for the family fallback below --
+    -- NormalizeSet drops false-valued keys entirely, collapsing that
+    -- distinction.
+    local rawGroups = type(tabData.groups) == "table" and tabData.groups or nil
 
     -- Named channel traffic is routed by channel name first (case-insensitive,
     -- matching Blizzard's routing). A tab that curates a channel list must not
@@ -120,6 +137,18 @@ function TabManager.BuildFilter(tabData)
         else
             if groups then
                 if entry.k and groups[entry.k] then listed = true end
+                -- Family fallback: entry.k has no direct groups[] entry, but
+                -- it belongs to a family (GUILD_DISCORD -> GUILD) whose key
+                -- is entirely absent from the tab's raw groups table --
+                -- inherit the family head's verdict. A present key (even
+                -- false) already fell through to the direct check above and
+                -- is never touched here.
+                if not listed and entry.k then
+                    local fallbackFrom = GROUP_FAMILY_FALLBACK[entry.k]
+                    if fallbackFrom and (not rawGroups or rawGroups[entry.k] == nil) then
+                        listed = groups[fallbackFrom] or false
+                    end
+                end
                 -- Normalize typeKey -> message group (PARTY_LEADER lives in
                 -- group PARTY): the stored/derived sets use GROUP names.
                 if not listed and entry.e then

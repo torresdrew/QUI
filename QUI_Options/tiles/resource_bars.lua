@@ -25,7 +25,12 @@ function V2.Register(frame)
             height = 120,
             build = function(pv)
                 if _G.QUI_BuildResourceBarPreview then
-                    _G.QUI_BuildResourceBarPreview(pv)
+                    _G.QUI_BuildResourceBarPreview(pv, {
+                        autoHeight = true,
+                        contentTop = 20,
+                        minHeight = 60,
+                        verticalPadding = 2,
+                    })
                 end
             end,
         },

@@ -156,7 +156,7 @@ function GUI:AttachTooltip(frame, description, label)
             GameTooltip:SetText(description, 1, 1, 1, 1, true)
         end
         if type(self._quiTooltipAugment) == "function" then
-            pcall(self._quiTooltipAugment, self, GameTooltip)
+            ns.SafeCallMethod("bulkhead", self, "_quiTooltipAugment", GameTooltip)
         end
         GameTooltip:Show()
     end)
@@ -223,7 +223,10 @@ function GUI:ResolveThemePreset(presetName)
     -- Dynamic presets
     if presetName == "Class Colored" then
         local _, class = UnitClass("player")
-        local color = RAID_CLASS_COLORS and RAID_CLASS_COLORS[class]
+        -- @secret-policy: collapse-only — UnitClass can return SECRET on 12.1 PTR7
+        -- (SecretWhenUnitIdentityRestricted); collapse so the static fallback applies.
+        if issecretvalue and issecretvalue(class) then class = nil end
+        local color = class and RAID_CLASS_COLORS and RAID_CLASS_COLORS[class]
         if color then return color.r, color.g, color.b end
         return 0.376, 0.647, 0.980
     end
@@ -454,9 +457,11 @@ end
 -- after the first call; until it loads (or if the addon is absent/disabled),
 -- search degrades gracefully to the tile-seeded routes registered at panel build.
 local function SearchCacheAddonName()
-    local loc = (ns.GetLocalizationLocale and ns.GetLocalizationLocale())
-        or (GetLocale and GetLocale())
-        or "enUS"
+    -- Match the locale chunks' resolution (core/locale/*.lua): a UI-language
+    -- override in QUIDB.global.selectedLocale must select the same-language
+    -- search index, not the client locale's.
+    local loc = (QUIDB and QUIDB.global and QUIDB.global.selectedLocale)
+        or (GetLocale and GetLocale()) or "enUS"
     return (loc == "enUS") and "QUI_OptionsSearch" or ("QUI_OptionsSearch_" .. loc)
 end
 function GUI:EnsureSearchCacheLoaded()
@@ -464,12 +469,20 @@ function GUI:EnsureSearchCacheLoaded()
         return
     end
     self._searchCacheLoadAttempted = true
+    -- Combined locale addons (QUI_OptionsSearch_<loc>) already loaded at
+    -- login for their UI strings (core/locale/load_overlay.lua): their
+    -- load-time self-apply no-oped because QUI_Options wasn't loaded, and
+    -- the index is parked on the shared ns. Apply it here — a second
+    -- LoadAddOn on an already-loaded addon is a no-op, never a re-apply.
+    if ns.QUI_SearchCache then
+        self:ApplyGeneratedSearchCache(ns.QUI_SearchCache)
+    end
     local loader = (C_AddOns and C_AddOns.LoadAddOn) or LoadAddOn
-    if type(loader) == "function" then
-        local ok = pcall(loader, SearchCacheAddonName())
+    if not self:HasGeneratedSearchCache() and type(loader) == "function" then
+        local ok = ns.SafeCall("report", loader, SearchCacheAddonName())
         -- Fallback: missing locale cache (e.g. unshipped) -> English index.
         if not self:HasGeneratedSearchCache() then
-            pcall(loader, "QUI_OptionsSearch")
+            ns.SafeCall("report", loader, "QUI_OptionsSearch")
         end
     end
     -- Pre-split, the cache applied at QUI_Options load (before the panel built),
@@ -1115,7 +1128,7 @@ function GUI:ScrollToRegisteredSection(tabIndex, subTabIndex, sectionName, opts)
         local scrollTop = scroll:GetTop()
         if sectionTop and scrollTop then
             local offset = math.max(0, (scrollTop - sectionTop) + 10)
-            pcall(scroll.SetVerticalScroll, scroll, offset)
+            scroll:SetVerticalScroll(offset)
         end
     end
 
@@ -1582,10 +1595,10 @@ function GUI:ShowConfirmation(options)
         confirmDialog.acceptBtn.text:SetPoint("CENTER", 0, 0)
 
         confirmDialog.acceptBtn:SetScript("OnEnter", function(self)
-            pcall(self.SetBackdropBorderColor, self, C.accent[1], C.accent[2], C.accent[3], 1)
+            self:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 1)
         end)
         confirmDialog.acceptBtn:SetScript("OnLeave", function(self)
-            pcall(self.SetBackdropBorderColor, self, C.border[1], C.border[2], C.border[3], 1)
+            self:SetBackdropBorderColor(C.border[1], C.border[2], C.border[3], 1)
         end)
 
         -- Cancel button (right)
@@ -1602,10 +1615,10 @@ function GUI:ShowConfirmation(options)
         confirmDialog.cancelBtn.text:SetPoint("CENTER", 0, 0)
 
         confirmDialog.cancelBtn:SetScript("OnEnter", function(self)
-            pcall(self.SetBackdropBorderColor, self, C.accent[1], C.accent[2], C.accent[3], 1)
+            self:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 1)
         end)
         confirmDialog.cancelBtn:SetScript("OnLeave", function(self)
-            pcall(self.SetBackdropBorderColor, self, C.border[1], C.border[2], C.border[3], 1)
+            self:SetBackdropBorderColor(C.border[1], C.border[2], C.border[3], 1)
         end)
 
         -- ESC to close
@@ -1919,7 +1932,7 @@ local function CreateDropdownScrollBody(menuFrame)
         local frameH = self:GetHeight()
         local maxScroll = math.max(0, contentH - frameH)
         local newScroll = math.max(0, math.min(currentScroll - (delta * SCROLL_STEP), maxScroll))
-        pcall(self.SetVerticalScroll, self, newScroll)
+        self:SetVerticalScroll(newScroll)
         UpdateThumb()
     end)
 
@@ -2072,7 +2085,14 @@ local function BuildPillToggle(parent, label, dbKey, dbTable, onChange, registry
     RegisterWidgetInstance(container, dbTable, dbKey)
     MaybeBindPinnedWidget(container, "checkbox", label, dbKey, dbTable, toggle, registryInfo)
 
-    SetValue(GetValue(), true)  -- Skip callback on init
+    -- Init is display-only: never write the DB from widget construction.
+    -- The inverted variant computes GetValue() as `not db`, so an absent
+    -- key (nil) reads as display-ON; routing that through SetValue would
+    -- write the inverted value (false) back and seed the absent key. An
+    -- absent key must stay absent (raw-SV absent-key-means-default stores).
+    local initialOn = GetValue() and true or false
+    container.checked = initialOn
+    UpdateVisual(initialOn)
 
     if ns.UIKit and ns.UIKit.RegisterScaleRefresh then
         local scaleKey = invert and "formToggleInvertedScale" or "formToggleScale"
@@ -2410,7 +2430,15 @@ function GUI:CreateFormEditBox(parent, label, dbKey, dbTable, onChange, options,
     end
 
     RegisterWidgetInstance(container, dbTable, dbKey)
-    SetValue(GetValue(), true)
+
+    -- Init is display-only: never write the DB from widget construction.
+    -- GetValue() falls back to initialValue/"" for an absent key so the
+    -- field has something to show; routing that through SetValue would
+    -- write the fallback back to dbTable and seed the absent key (raw-SV
+    -- absent-key-means-default stores must stay absent until the user
+    -- actually commits an edit).
+    container.value = GetValue()
+    UpdateVisual(container.value)
 
     editBox:SetScript("OnTextChanged", function(self, userInput)
         if isSyncingVisual then return end
@@ -2812,8 +2840,8 @@ function GUI:CreateFormSlider(parent, label, min, max, step, dbKey, dbTable, onC
         value = math.floor(value / container.step + 0.5) * container.step
         editBox:SetText(FormatValue(value))
         UpdateTrackFill(value)
-        if dbTable and dbKey then dbTable[dbKey] = value end
         if userInput then
+            if dbTable and dbKey then dbTable[dbKey] = value end
             MaybeUpdatePinnedWidgetValue(container, value)
             BroadcastToSiblings(container, value)
             if deferOnDrag and isDragging then
@@ -2876,8 +2904,12 @@ function GUI:CreateFormSlider(parent, label, min, max, step, dbKey, dbTable, onC
         end
     end)
 
-    -- Initialize value (visual update will happen via OnSizeChanged when layout completes)
-    SetValue(GetValue(), true)
+    -- Init is display-only: never write the DB from widget construction.
+    -- A stored value outside the widget range must survive (display clamps,
+    -- store doesn't), and an absent key must stay absent (raw-SV
+    -- absent-key-means-default stores).
+    container.value = math.max(container.min, math.min(container.max, GetValue()))
+    UpdateVisual(container.value)
 
     -- EditBox:SetText() doesn't persist when called inside a hidden parent
     -- hierarchy (e.g. collapsed composer sections with alpha 0). Expose a
@@ -2990,7 +3022,7 @@ function GUI:CreateFormDropdown(parent, label, options, dbKey, dbTable, onChange
         if useUIKitBorders then
             UIKit.UpdateBorderLines(dropdown, 1, r, g, b, a or 1, false)
         else
-            pcall(dropdown.SetBackdropBorderColor, dropdown, r, g, b, a or 1)
+            dropdown:SetBackdropBorderColor(r, g, b, a or 1)
         end
     end
 
@@ -3215,7 +3247,7 @@ function GUI:CreateFormDropdown(parent, label, options, dbKey, dbTable, onChange
 
         -- Reset scroll to top when filtering
         if isFiltering then
-            pcall(scrollFrame.SetVerticalScroll, scrollFrame, 0)
+            scrollFrame:SetVerticalScroll(0)
         end
 
         for i, opt in ipairs(container.options) do
@@ -3593,7 +3625,7 @@ function GUI:CreateFormColorPicker(parent, label, dbKey, dbTable, onChange, opti
         if useUIKitBorders then
             UIKit.UpdateBorderLines(swatch, 1, r, g, b, a or 1, false)
         else
-            pcall(swatch.SetBackdropBorderColor, swatch, r, g, b, a or 1)
+            swatch:SetBackdropBorderColor(r, g, b, a or 1)
         end
     end
 
@@ -4081,7 +4113,7 @@ function GUI:CreateSearchBox(parent, placeholderText)
     local icon = container:CreateTexture(nil, "OVERLAY")
     icon:SetSize(12, 12)
     icon:SetPoint("LEFT", container, "LEFT", 8, 0)
-    local atlasOk = pcall(function() icon:SetAtlas("common-search-magnifier") end)
+    local atlasOk = ns.SafeCall("best-effort-style", function() icon:SetAtlas("common-search-magnifier") end)
     if not atlasOk or not icon:GetAtlas() then
         icon:SetTexture("Interface\\FriendsFrame\\UI-Searchbox-Icon")
     end
@@ -4332,7 +4364,7 @@ function GUI:HandleSearchDescriptorChange(descriptor)
         or nil
 
     if feature and type(feature.apply) == "function" then
-        pcall(feature.apply)
+        ns.SafeCall("bulkhead", feature.apply)
     end
 
     local compat = settings and settings.RenderAdapters
@@ -5100,7 +5132,9 @@ function GUI:CreateMainFrame()
             end
             if name == "Class Colored" then
                 local _, class = UnitClass("player")
-                local cc = RAID_CLASS_COLORS[class]
+                -- @secret-policy: collapse-only — secret class ⇒ no swatch (text-only entry).
+                if issecretvalue and issecretvalue(class) then class = nil end
+                local cc = class and RAID_CLASS_COLORS[class]
                 if cc then presetColor = {cc.r, cc.g, cc.b} end
             elseif name == "Faction Auto" then
                 local faction = UnitFactionGroup("player")
@@ -5235,16 +5269,6 @@ function GUI:CreateMainFrame()
         })
     end)
 
-    local function UpdateAccentFromDB()
-        local db = QUI.QUICore and QUI.QUICore.db and QUI.QUICore.db.profile and QUI.QUICore.db.profile.general
-        if not db then return end
-        local preset = db.themePreset or "Sky Blue"
-        themeDropText:SetText(preset)
-        local r, g, b = GUI:ResolveThemePreset(preset)
-        ApplyAccentToAll(r, g, b)
-        accentSwatch:SetAlpha(preset == "Custom" and 1 or 0.5)
-    end
-
     -- Initialize theme from DB
     do
         local initDB = QUI.QUICore and QUI.QUICore.db and QUI.QUICore.db.profile and QUI.QUICore.db.profile.general
@@ -5255,7 +5279,6 @@ function GUI:CreateMainFrame()
         accentSwatch:SetAlpha(preset == "Custom" and 1 or 0.5)
     end
 
-    local localizationEnabled = not ns.IsLocalizationEnabled or ns.IsLocalizationEnabled()
     -- Language picker (account-wide; reload required to apply)
     local LOCALE_NAMES = {
         enUS = "English",          deDE = "Deutsch",
@@ -5271,12 +5294,8 @@ function GUI:CreateMainFrame()
     }
 
     local function GetSelectedLocale()
-        if not localizationEnabled then
-            return "enUS"
-        end
-        return (ns.GetLocalizationLocale and ns.GetLocalizationLocale())
-            or (GetLocale and GetLocale())
-            or "enUS"
+        local g = QUI.QUICore and QUI.QUICore.db and QUI.QUICore.db.global
+        return (g and g.selectedLocale) or GetLocale()
     end
 
     local langLabel = titleBar:CreateFontString(nil, "OVERLAY", "GameFontNormal")
@@ -5290,10 +5309,6 @@ function GUI:CreateMainFrame()
     UIKit.CreateBackground(langDropBtn, 0.1, 0.1, 0.1, 0.8)
     UIKit.CreateBorderLines(langDropBtn)
     UIKit.UpdateBorderLines(langDropBtn, 1, 0.3, 0.3, 0.3, 1)
-    langDropBtn:EnableMouse(localizationEnabled)
-    if not localizationEnabled then
-        langDropBtn:SetAlpha(0.55)
-    end
 
     local langDropText = langDropBtn:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     SetFont(langDropText, 10, "", C.text)
@@ -5305,7 +5320,7 @@ function GUI:CreateMainFrame()
 
     local langDropArrow = langDropBtn:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     SetFont(langDropArrow, 8, "", C.textMuted)
-    langDropArrow:SetText(localizationEnabled and "v" or "")
+    langDropArrow:SetText("v")
     langDropArrow:SetPoint("RIGHT", -3, 0)
 
     local langMenu = CreateFrame("Frame", nil, langDropBtn)
@@ -5371,27 +5386,25 @@ function GUI:CreateMainFrame()
         end
     end
 
-    if localizationEnabled then
-        langDropBtn:SetScript("OnClick", function()
-            if langMenu:IsShown() then
-                langMenu:Hide()
-            else
-                BuildLangMenu()
-                langMenu:Show()
-            end
-        end)
-        langDropBtn:SetScript("OnEnter", function()
-            UIKit.UpdateBorderLines(langDropBtn, 1, C.accent[1], C.accent[2], C.accent[3], 1)
-        end)
-        langDropBtn:SetScript("OnLeave", function()
-            if not langMenu:IsShown() then
-                UIKit.UpdateBorderLines(langDropBtn, 1, 0.3, 0.3, 0.3, 1)
-            end
-        end)
-        langMenu:SetScript("OnHide", function()
+    langDropBtn:SetScript("OnClick", function()
+        if langMenu:IsShown() then
+            langMenu:Hide()
+        else
+            BuildLangMenu()
+            langMenu:Show()
+        end
+    end)
+    langDropBtn:SetScript("OnEnter", function()
+        UIKit.UpdateBorderLines(langDropBtn, 1, C.accent[1], C.accent[2], C.accent[3], 1)
+    end)
+    langDropBtn:SetScript("OnLeave", function()
+        if not langMenu:IsShown() then
             UIKit.UpdateBorderLines(langDropBtn, 1, 0.3, 0.3, 0.3, 1)
-        end)
-    end
+        end
+    end)
+    langMenu:SetScript("OnHide", function()
+        UIKit.UpdateBorderLines(langDropBtn, 1, 0.3, 0.3, 0.3, 1)
+    end)
 
     -- Panel Scale (compact inline: label + editbox + slider)
     local scaleContainer = CreateFrame("Frame", nil, titleBar)
@@ -5619,7 +5632,7 @@ function GUI:CreateMainFrame()
     glow:SetAllPoints(contentArea)
     glow:SetTexture("Interface\\BUTTONS\\WHITE8x8")
     if glow.SetGradient then
-        local ok = pcall(function()
+        local ok = ns.SafeCall("best-effort-style", function()
             glow:SetGradient("HORIZONTAL",
                 CreateColor(C.accentGlow[1], C.accentGlow[2], C.accentGlow[3], C.accentGlow[4]),
                 CreateColor(C.accentGlow[1], C.accentGlow[2], C.accentGlow[3], 0))
@@ -6434,7 +6447,7 @@ function GUI:BuildTilePage(frame, tile)
                     print("|cff60A5FAQUI:|r Cannot open Layout Mode during combat.")
                     return
                 end
-                if GUI and GUI.Hide then pcall(GUI.Hide, GUI) end
+                if GUI and GUI.Hide then GUI:Hide() end
                 if _G.QUI_OpenLayoutMode then _G.QUI_OpenLayoutMode() end
                 if moverKey ~= "" and _G.QUI_LayoutModeSelectMover then
                     -- SelectMover works once handles are created. Open is
@@ -6742,7 +6755,7 @@ function GUI:SelectFeatureTile(frame, index, opts)
                         local sectionTop = target.GetTop and target:GetTop() or nil
                         if bodyTop and sectionTop and scroll.SetVerticalScroll then
                             local offset = math.max(0, bodyTop - sectionTop)
-                            pcall(scroll.SetVerticalScroll, scroll, offset)
+                            scroll:SetVerticalScroll(offset)
                             scrolledToSection = true
                         end
                     end
@@ -6775,7 +6788,7 @@ function GUI:SelectFeatureTile(frame, index, opts)
                             -- correct absolute scroll value to bring the
                             -- widget into view (with ~50px breathing room).
                             local offset = math.max(0, bodyTop - widgetTop - 50)
-                            pcall(scroll.SetVerticalScroll, scroll, offset)
+                            scroll:SetVerticalScroll(offset)
                         end
                     end
                 end
@@ -6967,6 +6980,24 @@ function GUI:RenderSubPageTabs(tile, contentArea, subPages, onSelect, headerFram
         container:Hide()
         tile._subPageBodies[i] = container
 
+        -- An optional per-sub-page preview is a sibling of the scroll root,
+        -- so it remains pinned while only the settings body scrolls. This is
+        -- the sub-page equivalent of the tile-level persistent preview built
+        -- in BuildTilePage.
+        local contentRoot = container
+        if sp.preview and type(sp.preview.build) == "function" then
+            local preview = CreateFrame("Frame", nil, container)
+            preview:SetPoint("TOPLEFT", container, "TOPLEFT", 0, 0)
+            preview:SetPoint("TOPRIGHT", container, "TOPRIGHT", 0, 0)
+            preview:SetHeight(sp.preview.height or 90)
+            sp.preview.build(preview)
+            container._preview = preview
+
+            contentRoot = CreateFrame("Frame", nil, container)
+            contentRoot:SetPoint("TOPLEFT", preview, "BOTTOMLEFT", 0, -8)
+            contentRoot:SetPoint("BOTTOMRIGHT", container, "BOTTOMRIGHT", 0, 0)
+        end
+
         local function installRegisterSection(targetBody)
             targetBody._sections = {}
             function targetBody:RegisterSection(id, label, frame)
@@ -6998,19 +7029,20 @@ function GUI:RenderSubPageTabs(tile, contentArea, subPages, onSelect, headerFram
         -- registrations silently if the method is missing.
         local scrollFrame, contentBody
         if sp.noScroll then
-            contentBody = container
+            contentBody = contentRoot
             installRegisterSection(contentBody)
             RunOnSelect(sp, contentBody)
         elseif ns.QUI_Options and ns.QUI_Options.CreateScrollableContent then
-            scrollFrame, contentBody = ns.QUI_Options.CreateScrollableContent(container)
+            scrollFrame, contentBody = ns.QUI_Options.CreateScrollableContent(contentRoot)
             installRegisterSection(contentBody)
             RunOnSelect(sp, contentBody)
         else
-            contentBody = container
+            contentBody = contentRoot
             installRegisterSection(contentBody)
             RunOnSelect(sp, contentBody)
         end
 
+        container._contentRoot = contentRoot
         container._scrollFrame = scrollFrame
         container._contentBody = contentBody
 
@@ -7793,7 +7825,7 @@ function GUI:ApplyFeatureSearchNavigation(tile, entry, opts)
         return false
     end
 
-    local ok, handled = pcall(feature.searchNavigate, entry, {
+    local ok, handled = ns.SafeCall("bulkhead", feature.searchNavigate, entry, {
         tile = tile,
         pageFrame = tile._pageFrame,
         opts = opts,
@@ -7976,7 +8008,7 @@ function GUI:FocusSearchBox()
     local box = frame._searchBox.editBox or frame._searchBox
     if box and box.SetFocus then
         box:SetFocus()
-        if box.HighlightText then pcall(box.HighlightText, box) end
+        if box.HighlightText then box:HighlightText() end
     end
 end
 

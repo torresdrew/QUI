@@ -1,12 +1,11 @@
 -- cdm_icon_factory.lua
--- Icon pool lifecycle and mirror binding adapters for the QUI CDM owned
--- engine. CDMIcons owns the public runtime update interface.
+-- Icon pool lifecycle for the QUI CDM owned engine. CDMIcons owns the
+-- public runtime update interface.
 
 local _, ns = ...
 local Helpers = ns.Helpers
 local Resolvers = ns.CDMResolvers
 local Sources = ns.CDMSources
-local Shared = ns.CDMShared
 
 local function CJKFont(fs, p, s, f)
     if ns.Helpers and ns.Helpers.ApplyFontWithFallback then
@@ -53,6 +52,101 @@ local function IsMouseoverRevealContext(context)
     return visibility and not visibility.showAlways and visibility.showOnMouseover
 end
 
+local function ResolveTooltipContext(owner, fallbackContext)
+    if not owner then return fallbackContext or "cdm" end
+    return owner._quiTooltipContext
+        or owner.__quiTooltipContext
+        or (owner.__customTrackerIcon and "customTrackers")
+        or fallbackContext
+        or "cdm"
+end
+
+function CDMIconFactory.HideEntryTooltip()
+    if GameTooltip and GameTooltip.Hide then
+        GameTooltip.Hide(GameTooltip)
+    end
+end
+
+function CDMIconFactory.ShowEntryTooltip(owner, entry, tooltipContext)
+    if not (owner and entry and GameTooltip) then return false end
+    if GameTooltip.IsForbidden and GameTooltip:IsForbidden() then return false end
+
+    tooltipContext = ResolveTooltipContext(owner, tooltipContext)
+    local tooltipProvider = ns.TooltipProvider
+    if tooltipProvider then
+        if tooltipProvider.IsOwnerFadedOut
+           and tooltipProvider:IsOwnerFadedOut(owner)
+           and not IsMouseoverRevealContext(tooltipContext) then
+            CDMIconFactory.HideEntryTooltip()
+            return false
+        end
+        if tooltipProvider.ShouldShowTooltip
+           and not tooltipProvider:ShouldShowTooltip(tooltipContext) then
+            CDMIconFactory.HideEntryTooltip()
+            return false
+        end
+    end
+
+    local tooltipSettings = QUICore and QUICore.db and QUICore.db.profile and QUICore.db.profile.tooltip
+    if (not tooltipProvider) and tooltipSettings and tooltipSettings.hideInCombat and InCombatLockdown() then
+        return false
+    end
+    if tooltipSettings and tooltipSettings.anchorToCursor then
+        local anchorTooltip = ns.QUI_AnchorTooltipToCursor
+        if anchorTooltip then
+            anchorTooltip(GameTooltip, owner, tooltipSettings)
+        else
+            GameTooltip:SetOwner(owner, "ANCHOR_CURSOR")
+        end
+    else
+        GameTooltip:SetOwner(owner, "ANCHOR_BOTTOM")
+    end
+
+    -- Prefer the resolver's active aura identity. Avoid ad-hoc live aura
+    -- lookups here; tooltip hover should not bypass the same filtering
+    -- rules that drive the icon face and swipe.
+    local sid = owner._activeAuraSpellID
+    if not sid then
+        sid = owner._runtimeSpellID
+    end
+    if not sid and ns.CDMSpellData and ns.CDMSpellData.ResolveDisplaySpellID then
+        sid = ns.CDMSpellData:ResolveDisplaySpellID(entry)
+    end
+    if sid then
+        if entry.type == "trinket" or entry.type == "slot" then
+            local itemID = entry.itemID
+            if not itemID and Sources and Sources.QueryInventoryItemID then
+                itemID = Sources.QueryInventoryItemID("player", entry.id)
+            end
+            if itemID then
+                GameTooltip.SetItemByID(GameTooltip, itemID)
+            end
+        elseif entry.type == "item" then
+            local itemID = (Sources and Sources.QueryBestOwnedItemVariant
+                and Sources.QueryBestOwnedItemVariant(entry.id)) or entry.id
+            GameTooltip.SetItemByID(GameTooltip, itemID)
+        else
+            GameTooltip.SetSpellByID(GameTooltip, sid)
+        end
+    end
+
+    -- Append a source-spec line for entries migrated from a legacy
+    -- spec-specific bar so the user can see at a glance where the
+    -- entry came from (e.g. "Source: Discipline Priest"). Resolver
+    -- writes _sourceSpecID at migration time.
+    local srcSpecID = entry._sourceSpecID
+    if type(srcSpecID) == "number" and GetSpecializationInfoByID then
+        local _, specName, _, _, _, classToken = GetSpecializationInfoByID(srcSpecID)
+        if specName then
+            local label = classToken and ("%s %s"):format(specName, classToken) or specName
+            local formatText = (ns.L and ns.L["Source: %s"]) or "Source: %s"
+            GameTooltip.AddLine(GameTooltip, formatText:format(label), 0.75, 0.85, 1, true)
+        end
+    end
+    GameTooltip.Show(GameTooltip)
+    return true
+end
+
 ---------------------------------------------------------------------------
 -- POOL STATE
 ---------------------------------------------------------------------------
@@ -63,11 +157,13 @@ local iconPools = {
 }
 -- Pools for custom containers are created dynamically via EnsurePool().
 local recyclePool = {}
+local recycleProtectedPool = {}  -- dedicated, capped pool for clickButton-protected icons
 local iconCounter = 0
 
 local function SetupDebugInstrumentation()
     local mp = ns._memprobes or {}; ns._memprobes = mp
     mp[#mp + 1] = { name = "CDM_iconRecyclePool", tbl = recyclePool }
+    mp[#mp + 1] = { name = "CDM_iconRecycleProtectedPool", tbl = recycleProtectedPool }
     -- iconPools is a multi-key map of arrays; count across every sub-pool
     -- (incl. dynamically created Composer pools) so retention growth surfaces.
     mp[#mp + 1] = { name = "CDM_iconPools", fn = function()
@@ -114,20 +210,53 @@ end
 function CDMIconFactory:ClearPool(viewerType)
     local pool = iconPools[viewerType]
     if pool then
+        -- Honor the release-refusal contract: ReleaseIcon returns false when it
+        -- refuses to recycle a combat-protected icon (secure clickButton child) --
+        -- that icon is NOT hidden. Wiping it from the pool anyway would strand an
+        -- untracked, still-visible/clickable icon. Keep refused icons in the pool
+        -- so they stay tracked; a later out-of-combat ClearPool recycles them.
+        local kept
         for _, icon in ipairs(pool) do
-            self:ReleaseIcon(icon)
+            if self:ReleaseIcon(icon) == false then
+                kept = kept or {}
+                kept[#kept + 1] = icon
+            end
         end
         wipe(pool)
+        if kept then
+            for i = 1, #kept do
+                pool[i] = kept[i]
+            end
+        end
     else
         iconPools[viewerType] = CreateIconPool()
     end
     return iconPools[viewerType]
 end
 
+-- True when any icon still pooled for this viewer carries a secure clickButton
+-- child. Such an icon is visibility-protected for its lifetime (the child is
+-- retained even after clickableIcons is toggled off and the button hidden), so
+-- rebuilding/releasing the pool in combat would raise ADDON_ACTION_BLOCKED.
+-- The container combat gate (cdm_containers ShouldDeferContainerLayoutInCombat)
+-- reads this to defer such a container until PLAYER_REGEN_ENABLED.
+function CDMIconFactory:PoolHasProtectedIcon(viewerType)
+    local pool = iconPools[viewerType]
+    if not pool then return false end
+    for i = 1, #pool do
+        local icon = pool[i]
+        if icon and icon.clickButton ~= nil then
+            return true
+        end
+    end
+    return false
+end
+
 -- Expose pool tables so renderer code can read the same table object while
 -- factory remains the writer for frame lifecycle and pool membership.
 CDMIconFactory._iconPools   = iconPools
 CDMIconFactory._recyclePool = recyclePool
+CDMIconFactory._recycleProtectedPool = recycleProtectedPool
 
 ---------------------------------------------------------------------------
 -- ICON CREATION — BARE
@@ -248,81 +377,10 @@ local function CreateIcon(parent, spellEntry)
     -- Tooltip support
     icon:EnableMouse(true)
     icon:SetScript("OnEnter", function(self)
-        if GameTooltip.IsForbidden and GameTooltip:IsForbidden() then return end
-        local tooltipProvider = ns.TooltipProvider
-        local tooltipContext = self._quiTooltipContext
-            or self.__quiTooltipContext
-            or (self.__customTrackerIcon and "customTrackers")
-            or "cdm"
-        if tooltipProvider then
-            if tooltipProvider.IsOwnerFadedOut
-               and tooltipProvider:IsOwnerFadedOut(self)
-               and not IsMouseoverRevealContext(tooltipContext) then
-                GameTooltip.Hide(GameTooltip)
-                return
-            end
-            if tooltipProvider.ShouldShowTooltip and not tooltipProvider:ShouldShowTooltip(tooltipContext) then
-                GameTooltip.Hide(GameTooltip)
-                return
-            end
-        end
-        local entry = self._spellEntry
-        if not entry then return end
-        local tooltipSettings = QUICore and QUICore.db and QUICore.db.profile and QUICore.db.profile.tooltip
-        if (not tooltipProvider) and tooltipSettings and tooltipSettings.hideInCombat and InCombatLockdown() then return end
-        if tooltipSettings and tooltipSettings.anchorToCursor then
-            local anchorTooltip = ns.QUI_AnchorTooltipToCursor
-            if anchorTooltip then
-                anchorTooltip(GameTooltip, self, tooltipSettings)
-            else
-                GameTooltip:SetOwner(self, "ANCHOR_CURSOR")
-            end
-        else
-            GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
-        end
-        -- Prefer the resolver's active aura identity. Avoid ad-hoc live aura
-        -- lookups here; tooltip hover should not bypass the same filtering
-        -- rules that drive the icon face and swipe.
-        local sid = self._activeAuraSpellID
-        if not sid then
-            sid = self._runtimeSpellID
-        end
-        if not sid then
-            sid = ns.CDMSpellData:ResolveDisplaySpellID(entry)
-        end
-        if sid then
-            if entry.type == "trinket" or entry.type == "slot" then
-                local itemID = entry.itemID
-                if not itemID and Sources and Sources.QueryInventoryItemID then
-                    itemID = Sources.QueryInventoryItemID("player", entry.id)
-                end
-                if itemID then
-                    GameTooltip.SetItemByID(GameTooltip, itemID)
-                end
-            elseif entry.type == "item" then
-                local itemID = (Sources and Sources.QueryBestOwnedItemVariant
-                    and Sources.QueryBestOwnedItemVariant(entry.id)) or entry.id
-                GameTooltip.SetItemByID(GameTooltip, itemID)
-            else
-                GameTooltip.SetSpellByID(GameTooltip, sid)
-            end
-        end
-        -- Append a source-spec line for entries migrated from a legacy
-        -- spec-specific bar so the user can see at a glance where the
-        -- entry came from (e.g. "Source: Discipline Priest"). Resolver
-        -- writes _sourceSpecID at migration time.
-        local srcSpecID = entry._sourceSpecID
-        if type(srcSpecID) == "number" and GetSpecializationInfoByID then
-            local _, specName, _, _, _, classToken = GetSpecializationInfoByID(srcSpecID)
-            if specName then
-                local label = classToken and ("%s %s"):format(specName, classToken) or specName
-                GameTooltip.AddLine(GameTooltip, (ns.L["Source: %s"]):format(label), 0.75, 0.85, 1, true)
-            end
-        end
-        GameTooltip.Show(GameTooltip)
+        CDMIconFactory.ShowEntryTooltip(self, self._spellEntry)
     end)
     icon:SetScript("OnLeave", function()
-        GameTooltip.Hide(GameTooltip)
+        CDMIconFactory.HideEntryTooltip()
     end)
 
     icon:Hide()
@@ -332,9 +390,23 @@ end
 ---------------------------------------------------------------------------
 -- ICON POOL LIFECYCLE
 ---------------------------------------------------------------------------
-function CDMIconFactory:AcquireIcon(parent, spellEntry)
+function CDMIconFactory:AcquireIcon(parent, spellEntry, clickable)
     local icons = GetIcons()
-    local icon = table.remove(recyclePool)
+    -- Reuse a protected (clickButton) icon only for a clickable destination AND
+    -- only when mutation is safe: the SetParent/SetSize below are protected calls,
+    -- so in combat (outside the init-safe window) we must never hand out a
+    -- protected icon (ADDON_ACTION_BLOCKED). Non-clickable / combat acquisitions
+    -- draw from the plain recyclePool (or mint fresh), so protected icons never
+    -- spread to non-clickable containers. Preferring the protected pool for
+    -- clickable OOC acquisitions keeps it drained -- protected frames are reused,
+    -- not leaked (retention is also hard-capped in ReleaseIcon).
+    local icon
+    if clickable and ((not InCombatLockdown()) or (ns and ns._inInitSafeWindow)) then
+        icon = table.remove(recycleProtectedPool)
+    end
+    if not icon then
+        icon = table.remove(recyclePool)
+    end
     if icon then
         icon:SetParent(parent)
         icon:SetSize(DEFAULT_ICON_SIZE, DEFAULT_ICON_SIZE)
@@ -402,12 +474,6 @@ function CDMIconFactory:AcquireIcon(parent, spellEntry)
             icons.OnFactoryIconAcquired(icon, spellEntry, true)
         end
         icon:Hide()
-        -- Bind to a Blizzard CDM child if this entry has one. On a recycled
-        -- icon this also clears any stale binding from the previous owner.
-        -- Routed through CDMIconFactory.* (table lookup) because the helper
-        -- is defined later in this file and the local upvalue isn't visible
-        -- here at parse time.
-        CDMIconFactory.TryBindIconToBlizz(icon, spellEntry)
         -- Notify rotation helper that an icon was assigned a spell
         if ns._onIconAssigned then ns._onIconAssigned(icon) end
         return icon
@@ -416,8 +482,6 @@ function CDMIconFactory:AcquireIcon(parent, spellEntry)
     if icons and icons.OnFactoryIconAcquired then
         icons.OnFactoryIconAcquired(newIcon, spellEntry, false)
     end
-    -- Bind to a Blizzard mirror child if this entry has one.
-    CDMIconFactory.TryBindIconToBlizz(newIcon, spellEntry)
     -- Notify rotation helper that an icon was assigned a spell
     if ns._onIconAssigned then ns._onIconAssigned(newIcon) end
     return newIcon
@@ -425,10 +489,18 @@ end
 
 function CDMIconFactory:ReleaseIcon(icon)
     if not icon then return end
+    -- Fail-closed combat backstop. A pooled icon that owns a SecureActionButton
+    -- child (clickButton) is visibility-protected: the Hide/ClearAllPoints/
+    -- SetParent below raise ADDON_ACTION_BLOCKED in combat (QUICDMIconN:Hide()).
+    -- Refuse BEFORE any callback or mutation and signal the caller to keep the
+    -- icon tracked -- clearing the ledger without a successful recycle strands a
+    -- visible/clickable ghost. The reanchor runtime already defers such passes
+    -- (RefreshContainer gate); this covers any other in-combat release path.
+    if icon.clickButton and InCombatLockdown and InCombatLockdown()
+        and not (ns and ns._inInitSafeWindow) then
+        return false
+    end
     local icons = GetIcons()
-    -- Drop any Blizzard mirror binding before the rest of release-state
-    -- cleanup runs. Table-routed because the helper is defined later here.
-    CDMIconFactory.ClearIconBlizzMirrorBinding(icon)
     if icons and icons.OnFactoryIconReleased then
         icons.OnFactoryIconReleased(icon)
     end
@@ -490,14 +562,26 @@ function CDMIconFactory:ReleaseIcon(icon)
     icon.Border:Hide()
     icon._pendingSecureUpdate = nil
 
-    if #recyclePool < MAX_RECYCLE_POOL_SIZE then
+    if icon.clickButton ~= nil then
+        -- Protected (SecureActionButton) icons go to a DEDICATED, UNCAPPED pool --
+        -- never the shared recyclePool. AcquireIcon reuses them only for a clickable
+        -- destination when mutation-safe, so they are recycled (stable identity)
+        -- instead of abandoned, and a combat rebuild of a non-clickable viewer can
+        -- never pop one (SetParent/SetSize/Hide would ADDON_ACTION_BLOCK).
+        -- NO cap: secure frames cannot be destroyed, so dropping an overflow frame
+        -- would both abandon it permanently AND force a fresh one next refresh ->
+        -- unbounded churn for a >MAX-icon clickable container. With reuse the pool
+        -- self-bounds to the working set of protected icons -- bounded by config,
+        -- not by refresh count.
+        icon:SetParent(UIParent)
+        recycleProtectedPool[#recycleProtectedPool + 1] = icon
+    elseif #recyclePool < MAX_RECYCLE_POOL_SIZE then
         icon:SetParent(UIParent)
         recyclePool[#recyclePool + 1] = icon
     end
+    return true
 end
 
-
--- BLIZZ MIRROR
 
 -- Keep CooldownFrame ready-flash ("bling") disabled on owned cooldowns.
 -- The Blizzard ready-flash is especially visible after short GCD bindings and
@@ -512,159 +596,6 @@ end
 
 CDMIconFactory.SyncCooldownBling = SyncCooldownBling
 
-
----------------------------------------------------------------------------
--- BLIZZARD MIRROR CONSUMERS
---
--- For entries that map to a Blizzard CDM cooldownID, the Blizzard child stays
--- in Blizzard's hidden viewer and acts only as the producer for the mirror.
--- QUI icons keep their native widgets and render from that exact cID state.
--- Aura entries use the mirror for visibility plus duration; cooldown entries
--- use it only as a preferred duration source.
----------------------------------------------------------------------------
-local function ShowNativeIconWidgets(icon)
-    if icon.Icon then icon.Icon.Show(icon.Icon) end
-    if icon.Cooldown then
-        -- Restore the QUI native Cooldown's rendering primitives to their
-        -- factory defaults (mirrors CreateIcon's setup). The swipe color is
-        -- intentionally black at 0.8 alpha — that's the QUI swipe style.
-        icon.Cooldown.SetDrawSwipe(icon.Cooldown, true)
-        icon.Cooldown.SetDrawBling(icon.Cooldown, false)
-        icon._drawBlingEnabled = false
-        icon.Cooldown.SetSwipeTexture(icon.Cooldown, "Interface\\Buttons\\WHITE8X8")
-        icon.Cooldown.SetSwipeColor(icon.Cooldown, 0, 0, 0, 0.8)
-        icon.Cooldown.SetHideCountdownNumbers(icon.Cooldown, false)
-        icon.Cooldown.Show(icon.Cooldown)
-    end
-    -- DurationText / StackText / Border are content-driven (only Show'd when
-    -- they have text/atlas). Don't force Show — let the per-tick driver
-    -- restore visibility based on actual state.
-    if icon.TextOverlay  then icon.TextOverlay.Show(icon.TextOverlay)  end
-end
-
-local function SetIconBlizzMirrorBinding(icon, cooldownID, viewerCategory)
-    if not (icon and cooldownID) then return end
-    icon._mirrorNativeDurObjApplied = nil
-    -- Three-field change-detection state for SyncBlizzMirrorIconState. Used
-    -- to be a single concatenated string `_lastMirrorNativeAuraSourceID` —
-    -- per-tick string allocation was ~150 KB/s of garbage.
-    icon._lastMirrorNativeAuraSourceCat = nil
-    icon._lastMirrorNativeAuraSourceCDID = nil
-    icon._lastMirrorNativeAuraSourceEpoch = nil
-    icon.cooldownChargesCount = nil
-    icon.cooldownChargesShown = nil
-    icon.chargeCountFrameShown = nil
-    icon.chargeTextOwnerShown = nil
-    icon.stackText = nil
-    icon.stackTextSource = nil
-    icon.stackTextShown = nil
-    icon.stackTextEpoch = nil
-    icon.wasSetFromCooldown = nil
-    icon.wasSetFromCharges = nil
-    icon._blizzMirrorState = nil
-    icon._blizzMirrorStateCooldownID = nil
-    icon._blizzMirrorStateCategory = nil
-    icon._blizzMirrorSourceID = nil
-    icon._blizzMirrorSourceCooldownID = nil
-    icon._blizzMirrorSourceEpoch = nil
-    icon._blizzMirrorCooldownID = cooldownID
-    icon._blizzMirrorCategory = viewerCategory
-    ShowNativeIconWidgets(icon)
-    local icons = GetIcons()
-    if icons and icons.OnFactoryMirrorBound then
-        icons.OnFactoryMirrorBound(icon, cooldownID, viewerCategory)
-    end
-end
-
-local function ClearIconBlizzMirrorBinding(icon)
-    if not icon or not icon._blizzMirrorCooldownID then return end
-    local icons = GetIcons()
-    if icons and icons.OnFactoryMirrorUnbound then
-        icons.OnFactoryMirrorUnbound(icon)
-    end
-    icon._mirrorNativeDurObjApplied = nil
-    icon._lastMirrorNativeAuraSourceCat = nil
-    icon._lastMirrorNativeAuraSourceCDID = nil
-    icon._lastMirrorNativeAuraSourceEpoch = nil
-    icon.cooldownChargesCount = nil
-    icon.cooldownChargesShown = nil
-    icon.chargeCountFrameShown = nil
-    icon.chargeTextOwnerShown = nil
-    icon.stackText = nil
-    icon.stackTextSource = nil
-    icon.stackTextShown = nil
-    icon.stackTextEpoch = nil
-    icon.wasSetFromCooldown = nil
-    icon.wasSetFromCharges = nil
-    icon._blizzMirrorState = nil
-    icon._blizzMirrorStateCooldownID = nil
-    icon._blizzMirrorStateCategory = nil
-    icon._blizzMirrorSourceID = nil
-    icon._blizzMirrorSourceCooldownID = nil
-    icon._blizzMirrorSourceEpoch = nil
-    icon._blizzMirrorCooldownID = nil
-    icon._blizzMirrorCategory = nil
-    ShowNativeIconWidgets(icon)
-end
-
-CDMIconFactory.SetIconBlizzMirrorBinding   = SetIconBlizzMirrorBinding
-CDMIconFactory.ClearIconBlizzMirrorBinding = ClearIconBlizzMirrorBinding
-
--- Blizzard mirror debug helpers live in the load-on-demand debug addon.
--- Placeholders below are rebound by cdm_debug.lua's BindAll() when loaded.
-local ShouldDebugBlizzEntry = function() return false end
-local FormatMirrorState     = function() return "nil" end
----@type fun(...)
-local DebugBlizzEntry       = function() end
-
--- Resolve entry -> exact Blizzard mirror identity. Bars use the same resolver,
--- so entry type/category semantics stay centralized.
-local function ResolveBlizzCooldownIDForEntry(entry)
-    local resolver = Resolvers and Resolvers.ResolveBlizzardMirrorIdentityState
-    if not (entry and resolver) then return nil end
-
-    local debugBlizz
-    if _G.QUI_CDM_BLIZZ_DEBUG or _G.QUI_CDM_ICON_DEBUG then
-        debugBlizz = ShouldDebugBlizzEntry(entry)
-        if debugBlizz then
-            DebugBlizzEntry(debugBlizz, entry, "begin-shared")
-        end
-    end
-
-    local identity = resolver(entry)
-    if not (identity and identity.cooldownID) then
-        if debugBlizz then
-            DebugBlizzEntry(debugBlizz, entry, "miss")
-        end
-        return nil
-    end
-
-    if debugBlizz then
-        DebugBlizzEntry(debugBlizz, entry, "resolved", FormatMirrorState(identity.state))
-    end
-    return identity.cooldownID, identity.category
-end
-
-local function TryBindIconToBlizz(icon, spellEntry)
-    local cdID, catName = ResolveBlizzCooldownIDForEntry(spellEntry)
-    if not cdID then
-        -- Recycled icon may carry a stale Blizzard binding; clear it so
-        -- native rendering takes over.
-        ClearIconBlizzMirrorBinding(icon)
-        return false
-    end
-    -- Same binding as before: no-op.
-    if icon._blizzMirrorCooldownID == cdID
-        and icon._blizzMirrorCategory == catName then
-        return true
-    end
-    -- Different binding — clear and rebind
-    if icon._blizzMirrorCooldownID then ClearIconBlizzMirrorBinding(icon) end
-    SetIconBlizzMirrorBinding(icon, cdID, catName)
-    return true
-end
-
-CDMIconFactory.TryBindIconToBlizz = TryBindIconToBlizz
 
 ---------------------------------------------------------------------------
 -- PREVIEW ENTRY POINTS
@@ -696,92 +627,4 @@ function CDMIconFactory.ReleaseForPreview(icon)
     icon:SetParent(nil)
     -- Preview icons are NOT returned to recyclePool: keeping the runtime
     -- pool free of preview-state contamination is a hard invariant.
-end
-
--- Retry binding for icons that lost their initial bind because Blizzard's
--- viewer hadn't created a child for the cdID yet. The mirror invokes this
--- via its OnChildBound listener (fired from BindNewChildren) after a new
--- cdID is freshly indexed mid-session — typical case: DT's buff cdID is
--- created lazily by BuffIconCooldownViewer when the buff applies, well
--- after addon load.
---
--- Filter heuristic: only retry icons whose entry's built-in container
--- family matches the bound child's mirror category. Custom/unknown
--- container keys probe all categories during bind.
--- Skips icons that are already bound; TryBindIconToBlizz would otherwise
--- clear-and-rebind on a transient miss, which we want to avoid.
-local function GetBuiltinContainerEntryKind(viewerType)
-    if Shared and Shared.GetBuiltinContainerEntryKind then
-        return Shared.GetBuiltinContainerEntryKind(viewerType)
-    end
-    return nil
-end
-
-local function IsCooldownMirrorCategory(category)
-    if Shared and Shared.IsCooldownMirrorCategory then
-        return Shared.IsCooldownMirrorCategory(category)
-    end
-    return GetBuiltinContainerEntryKind(category) == "cooldown"
-end
-
-local function IsAuraMirrorCategory(category)
-    if Shared and Shared.IsAuraMirrorCategory then
-        return Shared.IsAuraMirrorCategory(category)
-    end
-    return GetBuiltinContainerEntryKind(category) == "aura"
-end
-
-local function CategoryMatchesViewerType(catName, viewerType)
-    if not catName then return false end
-    local matchesCooldown = IsCooldownMirrorCategory(catName)
-    local matchesAura = IsAuraMirrorCategory(catName)
-    if not matchesCooldown and not matchesAura then
-        return false
-    end
-
-    local entryKind = GetBuiltinContainerEntryKind(viewerType)
-    if not entryKind then
-        return true
-    end
-    if matchesCooldown then
-        return entryKind == "cooldown"
-    end
-    return entryKind == "aura"
-end
-
-local function RetryUnboundIconsForChild(cdID, catName)
-    if not (cdID and catName) then return end
-    for _, pool in pairs(iconPools) do
-        if type(pool) == "table" then
-            for _, icon in ipairs(pool) do
-                local entry = icon and icon._spellEntry
-                if entry
-                    and icon._blizzMirrorCooldownID == nil
-                    and CategoryMatchesViewerType(catName, entry.viewerType) then
-                    TryBindIconToBlizz(icon, entry)
-                end
-            end
-        end
-    end
-end
-
--- Register the listener with the mirror as soon as the mirror module is
--- available. The icon factory loads after the mirror per cdm.xml, so
--- ns.CDMBlizzMirror should be present already; gate on existence to keep
--- load-order assumptions explicit.
-if ns.CDMBlizzMirror and ns.CDMBlizzMirror.AddOnChildBoundListener then
-    ns.CDMBlizzMirror.AddOnChildBoundListener(RetryUnboundIconsForChild)
-end
-
----------------------------------------------------------------------------
--- DEBUG IMPORT BINDING
--- Blizzard mirror debug helpers are defined by the load-on-demand debug addon.
----------------------------------------------------------------------------
-function CDMIconFactory._BindDebugImports()
-    local d = ns.CDMDebug
-    if d then
-        ShouldDebugBlizzEntry  = d.ShouldBlizz   or ShouldDebugBlizzEntry
-        FormatMirrorState      = d.FormatMirrorState or FormatMirrorState
-        DebugBlizzEntry        = d.Blizz         or DebugBlizzEntry
-    end
 end

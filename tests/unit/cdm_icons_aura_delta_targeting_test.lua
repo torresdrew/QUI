@@ -42,13 +42,17 @@ local itemAuraReverse
 local itemAuraApplyCount = 0
 local itemAuraActive = true
 local itemAuraPublishesInstanceID = true
-local mirroredBuffTargetDur = { token = "mirrored-buff-target-duration" }
-local mirroredBuffPlayerDur = { token = "mirrored-buff-player-duration" }
-local mirroredBuffAppliedDuration
-local mirroredBuffReverse
 local runtimeBatches = 0
 local buffAuraResolutionUnit = "player"
 local buffAuraResolutionInstanceID = 621
+local customContainerSettings = {
+    containerType = "customBar",
+    iconDisplayMode = "active",
+    showOnlyWhenActive = false,
+    showOnlyInCombat = false,
+    hideNonUsable = false,
+    dynamicLayout = false,
+}
 
 local function makeIcon(name, cooldownID)
     local icon = {
@@ -60,10 +64,12 @@ local function makeIcon(name, cooldownID)
             viewerType = "essential",
             type = "spell",
         },
-        _blizzMirrorCooldownID = cooldownID,
-        _blizzMirrorCategory = "essential",
         Cooldown = {
             Clear = noop,
+            SetDrawSwipe = noop,
+            SetDrawEdge = noop,
+            SetSwipeTexture = noop,
+            SetSwipeColor = noop,
             SetReverse = noop,
         },
         Icon = {
@@ -85,7 +91,12 @@ end
 local matchingIcon = makeIcon("matching", 88001)
 local unrelatedIcon = makeIcon("unrelated", 88002)
 local nonMirrorIcon = makeIcon("nonMirror", 88003)
-nonMirrorIcon._blizzMirrorCooldownID = nil
+-- Live aura-delta targeting matches the icon's stamped aura instance/unit
+-- (previously sourced from the removed Blizzard mirror state lookup).
+matchingIcon._auraInstanceID = 101
+matchingIcon._auraUnit = "target"
+unrelatedIcon._auraInstanceID = 202
+unrelatedIcon._auraUnit = "target"
 local buffAuraIcon = makeIcon("buffAura", 48707)
 buffAuraIcon._spellEntry = {
     id = 48707,
@@ -95,26 +106,17 @@ buffAuraIcon._spellEntry = {
     viewerType = "buff",
     type = "spell",
 }
-buffAuraIcon._blizzMirrorCooldownID = nil
 buffAuraIcon._shown = false
-local mirroredBuffAuraIcon = makeIcon("mirroredBuffAura", 191587)
-mirroredBuffAuraIcon._spellEntry = {
-    id = 191587,
-    spellID = 191587,
-    name = "mirroredBuffAura",
+local customAuraIcon = makeIcon("customAura", 455397)
+customAuraIcon._spellEntry = {
+    id = 455397,
+    spellID = 455397,
+    name = "customAura",
     kind = "aura",
-    viewerType = "buff",
+    viewerType = "custom",
     type = "spell",
 }
-mirroredBuffAuraIcon._blizzMirrorCooldownID = 102373
-mirroredBuffAuraIcon._blizzMirrorCategory = "buff"
-mirroredBuffAuraIcon._shown = false
-mirroredBuffAuraIcon.Cooldown.SetCooldownFromDurationObject = function(_, durObj)
-    mirroredBuffAppliedDuration = durObj
-end
-mirroredBuffAuraIcon.Cooldown.SetReverse = function(_, reverse)
-    mirroredBuffReverse = reverse
-end
+customAuraIcon._shown = false
 local itemAuraIcon = makeIcon("itemAura", 241288)
 itemAuraIcon._spellEntry = {
     id = 241288,
@@ -125,7 +127,6 @@ itemAuraIcon._spellEntry = {
     type = "item",
 }
 itemAuraIcon._runtimeSpellID = 241288
-itemAuraIcon._blizzMirrorCooldownID = nil
 itemAuraIcon.Cooldown.SetCooldownFromDurationObject = function(_, durObj)
     itemAuraApplyCount = itemAuraApplyCount + 1
     itemAuraAppliedDuration = durObj
@@ -133,30 +134,6 @@ end
 itemAuraIcon.Cooldown.SetReverse = function(_, reverse)
     itemAuraReverse = reverse
 end
-
-local mirrorStates = {
-    [88001] = {
-        auraInstanceID = 101,
-        auraUnit = "target",
-        isActive = true,
-    },
-    [88002] = {
-        auraInstanceID = 202,
-        auraUnit = "target",
-        isActive = true,
-    },
-    [102373] = {
-        cooldownID = 102373,
-        viewerCategory = "buff",
-        spellID = 77575,
-        overrideTooltipSpellID = 191587,
-        auraInstanceID = 344,
-        auraUnit = "target",
-        auraDurObj = mirroredBuffTargetDur,
-        auraDurObjSource = "aura-child-frame",
-        mirrorEpoch = 1,
-    },
-}
 
 local ns = {
     Helpers = {
@@ -175,6 +152,7 @@ local ns = {
                         rangeIndicator = false,
                         usabilityIndicator = false,
                     },
+                    custom = customContainerSettings,
                 }
             end
         end,
@@ -191,7 +169,10 @@ local ns = {
                 ncdm = {
                     essential = { iconDisplayMode = "always" },
                     buff = { iconDisplayMode = "active" },
-                    containers = {},
+                    custom = customContainerSettings,
+                    containers = {
+                        custom = customContainerSettings,
+                    },
                 },
             },
             char = { ncdm = {} },
@@ -216,11 +197,6 @@ local ns = {
                 return 555001
             end
             return nil
-        end,
-    },
-    CDMBlizzMirror = {
-        GetStateByCooldownID = function(cooldownID)
-            return mirrorStates[cooldownID]
         end,
     },
     CDMResolvers = {
@@ -262,20 +238,18 @@ local ns = {
                     resolvedAuraSpellID = 48707,
                 }
             end
-            if name == "mirroredBuffAura" then
+            if name == "customAura" then
                 return {
                     mode = "aura",
                     active = true,
                     isActive = true,
-                    sourceID = "aura:direct:191587",
-                    spellID = 191587,
+                    sourceID = "aura:direct:455397",
+                    spellID = 455397,
                     auraResolved = true,
-                    auraInstanceID = 444,
+                    auraInstanceID = 731,
                     auraUnit = "player",
-                    resolvedAuraSpellID = 77575,
-                    durObj = mirroredBuffPlayerDur,
-                    hasDurationObject = true,
-                    hasRenderableCooldown = true,
+                    resolvedAuraSpellID = 455397,
+                    isOnCooldown = false,
                 }
             end
             if name == "itemAura" then
@@ -320,7 +294,8 @@ local ns = {
     CDMIconFactory = {
         _iconPools = {
             essential = { matchingIcon, unrelatedIcon, nonMirrorIcon, itemAuraIcon },
-            buff = { buffAuraIcon, mirroredBuffAuraIcon },
+            buff = { buffAuraIcon },
+            custom = { customAuraIcon },
         },
         _recyclePool = {},
         _FinalizeImports = noop,
@@ -368,7 +343,8 @@ do
 end
 assert(loadfile("QUI_CDM/cdm/cdm_icon_renderer.lua"))("QUI", ns)
 ns.CDMIconFactory._iconPools.essential = { matchingIcon, unrelatedIcon, nonMirrorIcon, itemAuraIcon }
-ns.CDMIconFactory._iconPools.buff = { buffAuraIcon, mirroredBuffAuraIcon }
+ns.CDMIconFactory._iconPools.buff = { buffAuraIcon }
+ns.CDMIconFactory._iconPools.custom = { customAuraIcon }
 
 local icons = assert(ns.CDMIcons, "CDMIcons should be exported")
 runtimeBatches = 0
@@ -385,21 +361,6 @@ assert(resolveCounts.matching == 1, "matching aura-instance icon should be re-re
 assert(resolveCounts.unrelated == nil, "unrelated mirror aura instance should not be re-resolved")
 assert(resolveCounts.nonMirror == nil, "non-mirror icons should not be reached by a target aura-instance delta")
 
-icons.HandleRuntimeRefresh("UNIT_AURA", "target", {
-    updatedAuraInstanceIDs = { 344 },
-})
-
-assert(mirroredBuffAuraIcon._auraUnit == "target",
-    "mirrored buff aura refresh should keep the exact target aura unit")
-assert(mirroredBuffAuraIcon._auraInstanceID == 344,
-    "mirrored buff aura refresh should keep the exact target aura instance")
-assert(mirroredBuffAuraIcon._lastAuraDurObj == mirroredBuffTargetDur,
-    "mirrored buff aura refresh should keep the mirror target DurationObject")
-assert(mirroredBuffAppliedDuration == mirroredBuffTargetDur,
-    "mirrored buff aura refresh should bind the mirror target DurationObject")
-assert(mirroredBuffReverse == true,
-    "mirrored buff aura refresh should use aura/reverse cooldown mode")
-
 icons.HandleRuntimeRefresh("UNIT_AURA", "player", {
     isFullUpdate = false,
     addedAuras = {
@@ -411,6 +372,27 @@ assert(resolveCounts.buffAura == 1, "added player aura should re-resolve matchin
 assert(buffAuraIcon._shown == true, "active buff aura icon should be shown by the aura-delta visibility path")
 assert(layoutRequests > 0, "buff aura visibility flips should request buff icon layout")
 assert(buffContainerShows > 0, "buff aura visibility flips should wake the owning buff container")
+
+local customRefreshesBefore = resolveCounts.customAura or 0
+customAuraIcon._shown = false
+icons:UpdateRuntimeForType("custom")
+
+assert(resolveCounts.customAura == customRefreshesBefore + 1,
+    "custom-container runtime refresh should resolve aura-kind entries")
+assert(customAuraIcon._auraActive == true,
+    "custom-container aura refresh should stamp the entry active")
+assert(customAuraIcon._shown == true and customAuraIcon._alpha == 1,
+    "active display mode should visibly render an active aura-kind custom-container entry out of combat")
+
+customAuraIcon._shown = false
+inCombat = true
+icons:UpdateRuntimeForType("custom")
+inCombat = false
+
+assert(resolveCounts.customAura == customRefreshesBefore + 2,
+    "combat aura updates should re-resolve matching custom-container aura entries")
+assert(customAuraIcon._shown == true and customAuraIcon._alpha == 1,
+    "active display mode should visibly render an active aura-kind custom-container entry in combat")
 
 buffAuraIcon._shown = false
 buffAuraIcon._auraActive = false

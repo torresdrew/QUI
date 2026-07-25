@@ -3,7 +3,7 @@
 -- Inventory slots 1..19 (INVSLOT_FIRST_EQUIPPED..INVSLOT_LAST_EQUIPPED,
 -- vendored Blizzard_FrameXMLBase/Constants.lua:152-173) read through the
 -- legacy globals GetInventoryItemID/Link/Texture/Quality("player", slot)
--- (verified against vendored EquipmentManager.lua / PaperDollFrame.lua).
+-- (verified against vendored tests/framexml/Interface/AddOns/Blizzard_FrameXML/Mainline/EquipmentManager.lua).
 -- PLAYER_EQUIPMENT_CHANGED(equipmentSlot, hasCurrent) gives a per-slot
 -- dirty unit; login catch-up is a MarkAllDirty from the deferred block.
 -- Nil quality or nil ilvl (C_Item.GetDetailedItemLevelInfo is

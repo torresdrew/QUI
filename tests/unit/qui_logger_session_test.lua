@@ -1,5 +1,6 @@
 -- tests/unit/qui_logger_session_test.lua
 -- Run: lua tests/unit/qui_logger_session_test.lua
+-- luacheck: globals QUI_LoggerDB QUI_LOGGER_ENABLE (recorder SavedVariables)
 local ns = {}
 assert(loadfile("QUI_Logger/recorder.lua"))("QUI_Logger", ns)
 

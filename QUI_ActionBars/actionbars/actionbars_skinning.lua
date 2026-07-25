@@ -163,7 +163,7 @@ PROC_ALERT_REGION_KEYS = {
 function SuppressProcVisualFrame(frame)
     if not frame then return end
 
-    pcall(function()
+    ns.SafeCall("best-effort-style", function()
         if frame.Hide then
             frame:Hide()
         end
@@ -203,7 +203,7 @@ function SuppressButtonProcVisuals(button)
     if not ShouldSuppressNativeProc() then return end
     if not button then return end
 
-    pcall(function()
+    ns.SafeCall("best-effort-style", function()
         local alert = button.SpellActivationAlert
         if alert then
             SuppressProcVisualFrame(alert)
@@ -214,11 +214,11 @@ function SuppressButtonProcVisuals(button)
         end
     end)
 
-    pcall(function()
+    ns.SafeCall("best-effort-style", function()
         SuppressProcVisualFrame(button.OverlayGlow)
     end)
 
-    pcall(function()
+    ns.SafeCall("best-effort-style", function()
         SuppressProcVisualFrame(button._ButtonGlow)
     end)
 end
@@ -246,7 +246,7 @@ UpdateButtonProfessionQuality = function(button, settings)
         return
     end
 
-    local ok, qualityInfo = pcall(C_ActionBar.GetProfessionQualityInfo, action)
+    local ok, qualityInfo = ns.SafeCall("best-effort-style", C_ActionBar.GetProfessionQualityInfo, action)
     local atlas = ok and qualityInfo and qualityInfo.iconInventory
     if not atlas then
         if overlay then

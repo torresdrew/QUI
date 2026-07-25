@@ -123,7 +123,7 @@ do
 
     local function DecodePotentialSecretBoolean(value)
         if Helpers.IsSecretValue(value) then
-            return nil
+            return nil -- @secret-policy: reject-secret-value
         end
         if value == true then return true end
         if value == false then return false end
@@ -239,15 +239,19 @@ do
         _cooldownBatchActive = false
     end
 
+    -- cdInfo is a SpellCooldownInfo structure — non-nilable by
+    -- ActionBarFrameDocumentation and never itself a secret (only its
+    -- fields secretize under cooldown restriction), so no nil-guard.
     local function GetSafeCooldownTiming(cdInfo)
-        if not cdInfo then return nil, nil end
+        -- startTime/duration are non-nilable numbers (SpellCooldownInfo,
+        -- SpellSharedDocumentation) but secret-capable under cooldown
+        -- restriction — probe BEFORE any comparison (== on a secret throws).
+        -- No legacy .start fallback: the field does not exist in the
+        -- structure and a nil-compare on a secret startTime would throw.
         local start = cdInfo.startTime
-        if start == nil then
-            start = cdInfo.start
-        end
         local duration = cdInfo.duration
         if Helpers.IsSecretValue(start) or Helpers.IsSecretValue(duration) then
-            return nil, nil
+            return nil, nil -- @secret-policy: reject-secret-value
         end
         if type(start) ~= "number" or type(duration) ~= "number" then
             return nil, nil
@@ -265,11 +269,15 @@ do
             and _cooldownBatchActive
             and _batchCooldownInfoSeen[action] == _cooldownBatchToken then
             if _abCooldownStats then _abCooldownStats.actionCooldownHits = _abCooldownStats.actionCooldownHits + 1 end
-            return _batchCooldownInfo[action] or DEFAULT_CD_INFO
+            -- Seen-token match ⇒ the slot holds the (non-nilable) API
+            -- result; a fallback would be dead code.
+            return _batchCooldownInfo[action]
         end
 
         if _abCooldownStats then _abCooldownStats.actionCooldownQueries = _abCooldownStats.actionCooldownQueries + 1 end
-        local cdInfo = C_ActionBar.GetActionCooldown(action) or DEFAULT_CD_INFO
+        -- SpellCooldownInfo is non-nilable by ActionBarFrameDocumentation
+        -- and never itself a secret (fields secretize) — no fallback.
+        local cdInfo = C_ActionBar.GetActionCooldown(action)
         if actionCanBeCached and _cooldownBatchActive then
             _batchCooldownInfoSeen[action] = _cooldownBatchToken
             _batchCooldownInfo[action] = cdInfo
@@ -309,7 +317,9 @@ do
                         _abCooldownStats.actionDurationHits = _abCooldownStats.actionDurationHits + 1
                         _abCooldownStats.actionDurationActiveHits = _abCooldownStats.actionDurationActiveHits + 1
                     end
-                    return _buttonCooldownInfo[button] or DEFAULT_CD_INFO, durationObject, true
+                    -- durationObject non-nil ⇒ the info slot was cached
+                    -- alongside it (both written/cleared together below).
+                    return _buttonCooldownInfo[button], durationObject, true
                 end
             end
 
@@ -362,11 +372,12 @@ do
         return cdInfo, durationObject, cdActive
     end
 
+    -- chargeInfo is a SpellChargeInfo structure — non-nilable by
+    -- ActionBarFrameDocumentation and never itself a secret, so no nil-guard.
     local function ChargeInfoMayHaveCharges(chargeInfo)
-        if not chargeInfo then return false end
         local maxCharges = chargeInfo.maxCharges
         if Helpers.IsSecretValue(maxCharges) then
-            return true
+            return true -- @secret-policy: probe-charges-when-unknown
         end
         maxCharges = Helpers.SafeToNumber(maxCharges, 0) or 0
         return maxCharges > 1
@@ -402,7 +413,11 @@ do
                 _batchChargeMayHaveCharges[action] = mayHaveCharges
             end
         end
-        local chargeActive = chargeInfo and DecodePotentialSecretBoolean(chargeInfo.isActive)
+        -- SpellChargeInfo.isActive is NeverSecret per SpellSharedDocumentation
+        -- (chargeInfo itself is a non-nilable plain structure whose OTHER
+        -- fields secretize under cooldown restriction);
+        -- DecodePotentialSecretBoolean (IsSecretValue-guarded) is belt-and-braces
+        local chargeActive = DecodePotentialSecretBoolean(chargeInfo.isActive)
         if mayHaveCharges and chargeActive == true then
             if _abCooldownStats then _abCooldownStats.chargeInfoActive = _abCooldownStats.chargeInfoActive + 1 end
             if actionCanBeCached and _cooldownBatchActive then
@@ -444,11 +459,15 @@ do
             and _cooldownBatchActive
             and _batchLoCInfoSeen[action] == _cooldownBatchToken then
             if _abCooldownStats then _abCooldownStats.lossOfControlInfoHits = _abCooldownStats.lossOfControlInfoHits + 1 end
-            return _batchLoCInfo[action] or DEFAULT_LOC_INFO
+            -- Seen-token match ⇒ the slot holds the (non-nilable) API
+            -- result; a fallback would be dead code.
+            return _batchLoCInfo[action]
         end
 
         if _abCooldownStats then _abCooldownStats.lossOfControlInfoQueries = _abCooldownStats.lossOfControlInfoQueries + 1 end
-        local locInfo = C_ActionBar.GetActionLossOfControlCooldownInfo(action) or DEFAULT_LOC_INFO
+        -- SpellLossOfControlInfo is non-nilable by ActionBarFrameDocumentation
+        -- and never itself a secret (fields secretize) — no fallback.
+        local locInfo = C_ActionBar.GetActionLossOfControlCooldownInfo(action)
         if actionCanBeCached and _cooldownBatchActive then
             _batchLoCInfoSeen[action] = _cooldownBatchToken
             _batchLoCInfo[action] = locInfo
@@ -459,8 +478,8 @@ do
     function ActionBarsOwned.UpdateCooldown(button)
         -- Hot path: called every ~100ms for all active buttons. Every
         -- saved Lua op compounds to measurable ms/sec in raid combat.
-        -- `button.action` is always set by SafeSyncAction/state driver,
-        -- so the GetAttribute fallback is dead code and has been removed.
+        -- `button.action` is owned by Blizzard's UpdateAction lifecycle, so
+        -- the GetAttribute fallback is dead code and has been removed.
         if _abCooldownStats then _abCooldownStats.buttons = _abCooldownStats.buttons + 1 end
         local action = button.action
         if not action or action == 0 then return end
@@ -521,9 +540,9 @@ do
                 button.lossOfControlCooldown:Clear()
             end
         else
-            -- Pre-12.0.5 fallback: delegate to Blizzard's handler (pcall for safety)
+            -- Pre-12.0.5 fallback: delegate to Blizzard's handler (SafeCall for safety)
             if ActionButton_UpdateCooldown then
-                pcall(ActionButton_UpdateCooldown, button)
+                ns.SafeCall("compat", ActionButton_UpdateCooldown, button)
             end
         end
     end

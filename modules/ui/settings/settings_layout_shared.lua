@@ -19,56 +19,17 @@ local HEADER_GAP = 26
 local SECTION_GAP = 14
 
 -- Canonical 9-point anchor dropdown options (value + display text), shared by
--- the layout composer and the third-party anchoring settings surface.
-SettingsLayout.NINE_POINT_OPTIONS = {
-    { value = "TOPLEFT",     text = ns.L["Top Left"] },
-    { value = "TOP",         text = ns.L["Top"] },
-    { value = "TOPRIGHT",    text = ns.L["Top Right"] },
-    { value = "LEFT",        text = ns.L["Left"] },
-    { value = "CENTER",      text = ns.L["Center"] },
-    { value = "RIGHT",       text = ns.L["Right"] },
-    { value = "BOTTOMLEFT",  text = ns.L["Bottom Left"] },
-    { value = "BOTTOM",      text = ns.L["Bottom"] },
-    { value = "BOTTOMRIGHT", text = ns.L["Bottom Right"] },
-}
+-- the layout composer and the third-party anchoring settings surface; single
+-- retained instance from the core factory.
+SettingsLayout.NINE_POINT_OPTIONS = ns.QUI_SettingsLayoutShared.BuildNinePointAnchorOptions()
 
 -- Build a body-layout helper bound to `content`. `startY` defaults to -10.
 -- The returned table exposes headerAt/sectionAt/closeSection/placeCustom/finish.
 function SettingsLayout.MakeLayout(content, startY)
-    local Shared = ns.QUI_Options
-    local PAD = (Shared and Shared.PADDING) or 15
-    local y = startY or -10
-    local L = {}
-    function L.headerAt(text)
-        local h = Shared.CreateAccentDotLabel(content, text, y)
-        h:ClearAllPoints()
-        h:SetPoint("TOPLEFT", content, "TOPLEFT", PAD, y)
-        h:SetPoint("TOPRIGHT", content, "TOPRIGHT", -PAD, y)
-        y = y - HEADER_GAP
-    end
-    function L.sectionAt()
-        local c = Shared.CreateSettingsCardGroup(content, y)
-        c.frame:ClearAllPoints()
-        c.frame:SetPoint("TOPLEFT", content, "TOPLEFT", PAD, y)
-        c.frame:SetPoint("TOPRIGHT", content, "TOPRIGHT", -PAD, y)
-        return c
-    end
-    function L.closeSection(c)
-        c.Finalize()
-        y = y - c.frame:GetHeight() - SECTION_GAP
-    end
-    function L.placeCustom(frame, height)
-        frame:ClearAllPoints()
-        frame:SetPoint("TOPLEFT", content, "TOPLEFT", PAD, y)
-        frame:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
-        frame:SetHeight(height)
-        y = y - height - SECTION_GAP
-    end
-    function L.finish()
-        content:SetHeight(math.abs(y) + 10)
-        return content:GetHeight()
-    end
-    return L
+    -- Delegates to THE builder (core/settings_layout_shared.lua); this
+    -- surface has no layout-mode utils (nil U); startY passes through
+    -- (hud_layering starts at -38 below its page banner).
+    return ns.QUI_SettingsLayoutShared.MakeLayout(content, nil, startY)
 end
 
 -- Single settings row wrapper (label + widget + optional description).

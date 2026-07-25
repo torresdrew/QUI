@@ -430,7 +430,7 @@ return {
             zone = true
           },
           currencyFilter = {},
-          enabled = false,
+          enabled = true,
           reputationFilter = {},
           scanners = {
             lockouts = true,
@@ -654,46 +654,6 @@ return {
         },
         buffBorders = {
           borderSize = 1,
-          buffDurationTextAnchor = "CENTER",
-          buffDurationTextOffsetX = 0,
-          buffDurationTextOffsetY = 0,
-          buffFilterBigDefensive = false,
-          buffFilterCancelable = false,
-          buffFilterNotCancelable = false,
-          buffFilterPlayer = false,
-          buffFilterRaid = false,
-          buffGrowLeft = true,
-          buffGrowUp = false,
-          buffIconSize = 35,
-          buffIconSpacing = 0,
-          buffIconsPerRow = 10,
-          buffInvertSwipeDarkening = false,
-          buffRowSpacing = 0,
-          buffSortReverse = false,
-          buffSortRule = "INDEX",
-          buffStackTextAnchor = "BOTTOMRIGHT",
-          buffStackTextOffsetX = -1,
-          buffStackTextOffsetY = 1,
-          debuffDurationTextAnchor = "CENTER",
-          debuffDurationTextOffsetX = 0,
-          debuffDurationTextOffsetY = 0,
-          debuffFilterCrowdControl = false,
-          debuffFilterIncludeNameplateOnly = false,
-          debuffFilterPlayer = false,
-          debuffFilterRaid = false,
-          debuffFilterRaidPlayerDispellable = false,
-          debuffGrowLeft = true,
-          debuffGrowUp = false,
-          debuffIconSize = 35,
-          debuffIconSpacing = 0,
-          debuffIconsPerRow = 10,
-          debuffInvertSwipeDarkening = false,
-          debuffRowSpacing = 0,
-          debuffSortReverse = false,
-          debuffSortRule = "INDEX",
-          debuffStackTextAnchor = "BOTTOMRIGHT",
-          debuffStackTextOffsetX = -1,
-          debuffStackTextOffsetY = 1,
           enableBuffs = true,
           enableDebuffs = true,
           externalSkinning = false,
@@ -1006,8 +966,8 @@ return {
         configPanelScale = 1,
         configPanelWidth = 750,
         cooldownEffects = {
-          hideEssential = true,
-          hideUtility = true
+          hideEssential = false,
+          hideUtility = false
         },
         cooldownHighlighter = {
           color = {
@@ -1657,6 +1617,7 @@ return {
           buffFrame = {
             autoHeight = false,
             autoWidth = false,
+            growAnchor = "TOPRIGHT",
             heightAdjust = 0,
             hideWithParent = false,
             keepInPlace = true,
@@ -1739,11 +1700,12 @@ return {
           debuffFrame = {
             autoHeight = false,
             autoWidth = false,
+            growAnchor = "TOPRIGHT",
             heightAdjust = 0,
             hideWithParent = false,
             keepInPlace = true,
             offsetX = 0,
-            offsetY = 0,
+            offsetY = -5,
             parent = "buffFrame",
             point = "TOPRIGHT",
             relative = "BOTTOMRIGHT",
@@ -2294,9 +2256,9 @@ return {
             heightAdjust = 0,
             hideWithParent = false,
             keepInPlace = true,
-            offsetX = 0,
-            offsetY = 0,
-            parent = "extraActionButton",
+            offsetX = 150,
+            offsetY = -27.5,
+            parent = "screen",
             point = "CENTER",
             relative = "CENTER",
             sizeStable = true,
@@ -2376,6 +2338,7 @@ return {
           autoTurnInQuest = true,
           autoUnwrapCollections = false,
           closeBagsOnKeystoneInsert = false,
+          communitiesPrivacy = false,
           consumableAnchorMode = true,
           consumableCheckEnabled = true,
           consumableExpirationThreshold = 300,
@@ -2437,6 +2400,13 @@ return {
           },
           darkModeHealthOpacity = 0.69999999999999996,
           darkModeOpacity = 0.69999999999999996,
+          deathAlert = {
+            enabled = false,
+            fontSize = 24,
+            offsetX = 0,
+            offsetY = 220,
+            sound = "None"
+          },
           defaultBgColor = {
             [1] = 0,
             [2] = 0,
@@ -2454,6 +2424,7 @@ return {
           defaultOpacity = 1,
           defaultUseClassColor = true,
           disableScrollingCombatText = false,
+          ejLootSpecIcons = false,
           eventSounds = {
             enabled = false,
             lfgProposal = "None",
@@ -2490,11 +2461,24 @@ return {
             },
             useClassColor = false
           },
+          focusMarker = {
+            enabled = false,
+            marker = 8,
+            useMouseover = true,
+            writeMacro = true
+          },
           font = "Quazii",
           fontOutline = "OUTLINE",
           friendsClassColor = true,
           gameMenuDim = true,
           gameMenuFontSize = 12,
+          gemSocketPicker = false,
+          healerMana = {
+            enabled = false,
+            instanceOnly = true,
+            offsetX = 0,
+            offsetY = -260
+          },
           hideObjectiveTrackerBorder = true,
           hostilityColorFriendly = {
             [1] = 0.20000000000000001,
@@ -2535,6 +2519,8 @@ return {
             minKeepIlvl = 0,
             minQuality = 0
           },
+          mailContactsPanel = false,
+          mailRememberRecipient = false,
           masterColorCastbarText = false,
           masterColorHealthText = false,
           masterColorNameText = false,
@@ -2665,7 +2651,22 @@ return {
           statusTrackingBarsShowBarText = true,
           statusTrackingBarsShowBorder = true,
           texture = "Quazii v5",
-          uiScale = 0.64000000000000001
+          tradeMailLog = {
+            enabled = false,
+            logReceivedMail = true,
+            logSentMail = true,
+            logTrades = true
+          },
+          uiScale = 0.64000000000000001,
+          vendorRules = {
+            enabled = false,
+            forceSell = "",
+            maxIlvl = 0,
+            maxQuality = 1,
+            neverSell = "",
+            previewOnly = true
+          },
+          worldMapTeleports = false
         },
         hudLayering = {
           bossFrames = 4,
@@ -2699,7 +2700,7 @@ return {
           },
           borderColorSource = "inherit",
           borderSize = 1,
-          enabled = false,
+          enabled = true,
           fadeRestOpacity = 0,
           fontSize = 12,
           height = 22,
@@ -4075,6 +4076,7 @@ return {
           width = 250
         },
         quiDatatexts = {
+          enabled = true,
           panels = {}
         },
         quiGroupFrames = {
@@ -4236,21 +4238,15 @@ return {
                 },
                 enabled = false
               },
-              defensiveIndicator = {
-                durationTextSize = 12,
-                enabled = false,
-                growDirection = "RIGHT",
-                iconSize = 16,
-                maxIcons = 3,
-                offsetX = 0,
-                offsetY = 0,
-                position = "CENTER",
-                reverseSwipe = true,
-                spacing = 2
-              },
               dispelOverlay = {
                 borderSize = 3,
                 colors = {
+                  Bleed = {
+                    [1] = 0.80000000000000004,
+                    [2] = 0,
+                    [3] = 0,
+                    [4] = 1
+                  },
                   Curse = {
                     [1] = 0.59999999999999998,
                     [2] = 0,
@@ -4278,7 +4274,14 @@ return {
                 },
                 enabled = true,
                 fillOpacity = 0.17999999999999999,
-                opacity = 0.80000000000000004
+                iconAnchor = "TOPRIGHT",
+                iconOffsetX = 0,
+                iconOffsetY = 0,
+                iconOpacity = 1,
+                iconSize = 20,
+                opacity = 0.80000000000000004,
+                scope = "PLAYER_DISPELLABLE",
+                showIcon = false
               },
               targetHighlight = {
                 color = {
@@ -4422,21 +4425,6 @@ return {
               powerBarOnlyTanks = false,
               powerBarUsePowerColor = true,
               showPowerBar = true
-            },
-            privateAuras = {
-              anchor = "RIGHT",
-              anchorOffsetX = -2,
-              anchorOffsetY = 0,
-              borderScale = 1,
-              enabled = true,
-              growDirection = "RIGHT",
-              iconSize = 20,
-              maxPerFrame = 2,
-              reverseSwipe = false,
-              showCountdown = true,
-              showCountdownNumbers = true,
-              spacing = 2,
-              textScale = 1
             },
             range = {
               enabled = true,
@@ -4639,21 +4627,15 @@ return {
                 },
                 enabled = false
               },
-              defensiveIndicator = {
-                durationTextSize = 12,
-                enabled = false,
-                growDirection = "RIGHT",
-                iconSize = 16,
-                maxIcons = 3,
-                offsetX = 0,
-                offsetY = 0,
-                position = "CENTER",
-                reverseSwipe = true,
-                spacing = 2
-              },
               dispelOverlay = {
                 borderSize = 3,
                 colors = {
+                  Bleed = {
+                    [1] = 0.80000000000000004,
+                    [2] = 0,
+                    [3] = 0,
+                    [4] = 1
+                  },
                   Curse = {
                     [1] = 0.59999999999999998,
                     [2] = 0,
@@ -4681,7 +4663,14 @@ return {
                 },
                 enabled = true,
                 fillOpacity = 0.17999999999999999,
-                opacity = 0.80000000000000004
+                iconAnchor = "TOPRIGHT",
+                iconOffsetX = 0,
+                iconOffsetY = 0,
+                iconOpacity = 1,
+                iconSize = 20,
+                opacity = 0.80000000000000004,
+                scope = "PLAYER_DISPELLABLE",
+                showIcon = false
               },
               targetHighlight = {
                 color = {
@@ -4827,21 +4816,6 @@ return {
               powerBarUsePowerColor = true,
               showPowerBar = true
             },
-            privateAuras = {
-              anchor = "RIGHT",
-              anchorOffsetX = -2,
-              anchorOffsetY = 0,
-              borderScale = 1,
-              enabled = true,
-              growDirection = "RIGHT",
-              iconSize = 20,
-              maxPerFrame = 2,
-              reverseSwipe = false,
-              showCountdown = true,
-              showCountdownNumbers = true,
-              spacing = 2,
-              textScale = 1
-            },
             range = {
               enabled = true,
               outOfRangeAlpha = 0.40000000000000002
@@ -4907,22 +4881,7 @@ return {
               opacity = 0.69999999999999996,
               texture = "QUI Stripes"
             },
-            auras = {
-              buffAnchor = "BOTTOMLEFT",
-              buffGrow = "RIGHT",
-              buffIconSize = 22,
-              buffMaxIcons = 4,
-              buffOffsetX = 0,
-              buffOffsetY = 0,
-              debuffAnchor = "TOPLEFT",
-              debuffGrow = "RIGHT",
-              debuffMaxIcons = 4,
-              debuffOffsetX = 0,
-              debuffOffsetY = 0,
-              iconSize = 22,
-              showBuffs = false,
-              showDebuffs = false
-            },
+            auras = {},
             borderSize = 1,
             castbar = {
               anchor = "unitframe",
@@ -5076,22 +5035,7 @@ return {
               opacity = 0.69999999999999996,
               texture = "QUI Stripes"
             },
-            auras = {
-              buffAnchor = "BOTTOMLEFT",
-              buffGrow = "RIGHT",
-              buffIconSize = 20,
-              buffMaxIcons = 16,
-              buffOffsetX = 0,
-              buffOffsetY = -2,
-              debuffAnchor = "TOPLEFT",
-              debuffGrow = "RIGHT",
-              debuffMaxIcons = 16,
-              debuffOffsetX = 0,
-              debuffOffsetY = 2,
-              iconSize = 20,
-              showBuffs = false,
-              showDebuffs = false
-            },
+            auras = {},
             borderSize = 1,
             castbar = {
               anchor = "unitframe",
@@ -5211,21 +5155,6 @@ return {
             powerTextOffsetY = 2,
             powerTextUseClassColor = false,
             powerTextUsePowerColor = true,
-            privateAuras = {
-              anchor = "TOPLEFT",
-              anchorOffsetX = 2,
-              anchorOffsetY = -2,
-              borderScale = 1,
-              enabled = true,
-              frameLevel = 50,
-              growDirection = "RIGHT",
-              iconSize = 22,
-              maxPerFrame = 3,
-              reverseSwipe = false,
-              showCountdown = true,
-              showCountdownNumbers = true,
-              spacing = 2
-            },
             showHealth = true,
             showHealthAbsolute = true,
             showHealthPercent = true,
@@ -5320,22 +5249,7 @@ return {
               opacity = 0.69999999999999996,
               texture = "QUI Stripes"
             },
-            auras = {
-              buffAnchor = "BOTTOMLEFT",
-              buffGrow = "RIGHT",
-              buffIconSize = 22,
-              buffMaxIcons = 4,
-              buffOffsetX = 0,
-              buffOffsetY = 0,
-              debuffAnchor = "TOPLEFT",
-              debuffGrow = "RIGHT",
-              debuffMaxIcons = 4,
-              debuffOffsetX = 0,
-              debuffOffsetY = 0,
-              iconSize = 22,
-              showBuffs = false,
-              showDebuffs = false
-            },
+            auras = {},
             borderSize = 1,
             castbar = {
               anchor = "unitframe",
@@ -5458,138 +5372,7 @@ return {
             anchorGap = 10,
             anchorTo = "disabled",
             anchorYOffset = 0,
-            auras = {
-              buffAnchor = "BOTTOMLEFT",
-              buffClassifications = {
-                bigDefensive = false,
-                cancelable = false,
-                externalDefensive = false,
-                helpful = false,
-                notCancelable = false
-              },
-              buffDuration = {
-                anchor = "CENTER",
-                color = {
-                  [1] = 1,
-                  [2] = 1,
-                  [3] = 1,
-                  [4] = 1
-                },
-                fontSize = 12,
-                offsetX = 0,
-                offsetY = 0,
-                show = true
-              },
-              buffFilterMode = "off",
-              buffFilterOnlyMine = true,
-              buffGrow = "RIGHT",
-              buffIconSize = 22,
-              buffMaxIcons = 4,
-              buffMaxPerRow = 0,
-              buffOffsetX = 0,
-              buffOffsetY = 0,
-              buffShowStack = true,
-              buffSpacing = 2,
-              buffStack = {
-                anchor = "BOTTOMRIGHT",
-                color = {
-                  [1] = 1,
-                  [2] = 1,
-                  [3] = 1,
-                  [4] = 1
-                },
-                fontSize = 10,
-                offsetX = -1,
-                offsetY = 1,
-                show = true
-              },
-              buffStackAnchor = "BOTTOMRIGHT",
-              buffStackColor = {
-                [1] = 1,
-                [2] = 1,
-                [3] = 1,
-                [4] = 1
-              },
-              buffStackOffsetX = -1,
-              buffStackOffsetY = 1,
-              buffStackSize = 10,
-              debuffAnchor = "TOPLEFT",
-              debuffClassifications = {
-                crowdControl = false,
-                dispellable = false,
-                harmful = false
-              },
-              debuffDuration = {
-                anchor = "CENTER",
-                color = {
-                  [1] = 1,
-                  [2] = 1,
-                  [3] = 1,
-                  [4] = 1
-                },
-                fontSize = 10,
-                offsetX = 0,
-                offsetY = 0,
-                show = false
-              },
-              debuffFilterMode = "off",
-              debuffGrow = "RIGHT",
-              debuffMaxIcons = 4,
-              debuffMaxPerRow = 0,
-              debuffOffsetX = 0,
-              debuffOffsetY = 0,
-              debuffShowStack = true,
-              debuffSpacing = 2,
-              debuffStack = {
-                anchor = "BOTTOMRIGHT",
-                color = {
-                  [1] = 1,
-                  [2] = 1,
-                  [3] = 1,
-                  [4] = 1
-                },
-                fontSize = 10,
-                offsetX = -1,
-                offsetY = 1,
-                show = true
-              },
-              debuffStackAnchor = "BOTTOMRIGHT",
-              debuffStackColor = {
-                [1] = 1,
-                [2] = 1,
-                [3] = 1,
-                [4] = 1
-              },
-              debuffStackOffsetX = -1,
-              debuffStackOffsetY = 1,
-              debuffStackSize = 10,
-              durationAnchor = "CENTER",
-              durationColor = {
-                [1] = 1,
-                [2] = 1,
-                [3] = 1,
-                [4] = 1
-              },
-              durationOffsetX = 0,
-              durationOffsetY = 0,
-              durationSize = 12,
-              iconSize = 22,
-              iconSpacing = 2,
-              showBuffs = false,
-              showDebuffs = false,
-              showDuration = false,
-              showStack = true,
-              stackAnchor = "BOTTOMRIGHT",
-              stackColor = {
-                [1] = 1,
-                [2] = 1,
-                [3] = 1,
-                [4] = 1
-              },
-              stackOffsetX = -1,
-              stackOffsetY = 1,
-              stackSize = 10
-            },
+            auras = {},
             borderSize = 1,
             castbar = {
               anchor = "none",
@@ -5769,21 +5552,6 @@ return {
             powerTextOffsetY = 4,
             powerTextUseClassColor = false,
             powerTextUsePowerColor = true,
-            privateAuras = {
-              anchor = "BOTTOMLEFT",
-              anchorOffsetX = 2,
-              anchorOffsetY = 2,
-              borderScale = 1,
-              enabled = true,
-              frameLevel = 50,
-              growDirection = "RIGHT",
-              iconSize = 24,
-              maxPerFrame = 3,
-              reverseSwipe = false,
-              showCountdown = true,
-              showCountdownNumbers = true,
-              spacing = 2
-            },
             showHealth = true,
             showHealthAbsolute = true,
             showHealthPercent = true,
@@ -5819,136 +5587,7 @@ return {
             anchorGap = 10,
             anchorTo = "disabled",
             anchorYOffset = 0,
-            auras = {
-              buffAnchor = "BOTTOMLEFT",
-              buffClassifications = {
-                bigDefensive = false,
-                cancelable = false,
-                externalDefensive = false,
-                helpful = false,
-                notCancelable = false
-              },
-              buffDuration = {
-                anchor = "CENTER",
-                color = {
-                  [1] = 1,
-                  [2] = 1,
-                  [3] = 1,
-                  [4] = 1
-                },
-                fontSize = 12,
-                offsetX = 0,
-                offsetY = 0,
-                show = true
-              },
-              buffFilterMode = "off",
-              buffFilterOnlyMine = true,
-              buffGrow = "RIGHT",
-              buffIconSize = 18,
-              buffMaxIcons = 4,
-              buffOffsetX = 0,
-              buffOffsetY = 0,
-              buffShowStack = true,
-              buffSpacing = 2,
-              buffStack = {
-                anchor = "BOTTOMRIGHT",
-                color = {
-                  [1] = 1,
-                  [2] = 1,
-                  [3] = 1,
-                  [4] = 1
-                },
-                fontSize = 10,
-                offsetX = -1,
-                offsetY = 1,
-                show = true
-              },
-              buffStackAnchor = "BOTTOMRIGHT",
-              buffStackColor = {
-                [1] = 1,
-                [2] = 1,
-                [3] = 1,
-                [4] = 1
-              },
-              buffStackOffsetX = -1,
-              buffStackOffsetY = 1,
-              buffStackSize = 10,
-              debuffAnchor = "TOPLEFT",
-              debuffClassifications = {
-                crowdControl = false,
-                dispellable = false,
-                harmful = false
-              },
-              debuffDuration = {
-                anchor = "CENTER",
-                color = {
-                  [1] = 1,
-                  [2] = 1,
-                  [3] = 1,
-                  [4] = 1
-                },
-                fontSize = 10,
-                offsetX = 0,
-                offsetY = 0,
-                show = false
-              },
-              debuffFilterMode = "off",
-              debuffGrow = "RIGHT",
-              debuffMaxIcons = 4,
-              debuffOffsetX = 0,
-              debuffOffsetY = 0,
-              debuffShowStack = true,
-              debuffSpacing = 2,
-              debuffStack = {
-                anchor = "BOTTOMRIGHT",
-                color = {
-                  [1] = 1,
-                  [2] = 1,
-                  [3] = 1,
-                  [4] = 1
-                },
-                fontSize = 10,
-                offsetX = -1,
-                offsetY = 1,
-                show = true
-              },
-              debuffStackAnchor = "BOTTOMRIGHT",
-              debuffStackColor = {
-                [1] = 1,
-                [2] = 1,
-                [3] = 1,
-                [4] = 1
-              },
-              debuffStackOffsetX = -1,
-              debuffStackOffsetY = 1,
-              debuffStackSize = 10,
-              durationAnchor = "CENTER",
-              durationColor = {
-                [1] = 1,
-                [2] = 1,
-                [3] = 1,
-                [4] = 1
-              },
-              durationOffsetX = 0,
-              durationOffsetY = 0,
-              durationSize = 12,
-              iconSize = 26,
-              iconSpacing = 2,
-              showBuffs = false,
-              showDebuffs = false,
-              showDuration = false,
-              showStack = true,
-              stackAnchor = "BOTTOMRIGHT",
-              stackColor = {
-                [1] = 1,
-                [2] = 1,
-                [3] = 1,
-                [4] = 1
-              },
-              stackOffsetX = -1,
-              stackOffsetY = 1,
-              stackSize = 10
-            },
+            auras = {},
             borderSize = 1,
             castbar = {
               anchor = "unitframe",
@@ -6117,21 +5756,6 @@ return {
             powerTextOffsetY = 2,
             powerTextUseClassColor = false,
             powerTextUsePowerColor = false,
-            privateAuras = {
-              anchor = "TOPLEFT",
-              anchorOffsetX = 2,
-              anchorOffsetY = -2,
-              borderScale = 1,
-              enabled = true,
-              frameLevel = 50,
-              growDirection = "RIGHT",
-              iconSize = 24,
-              maxPerFrame = 4,
-              reverseSwipe = false,
-              showCountdown = true,
-              showCountdownNumbers = true,
-              spacing = 2
-            },
             showHealth = true,
             showHealthAbsolute = true,
             showHealthPercent = true,
@@ -6175,22 +5799,7 @@ return {
               opacity = 0.69999999999999996,
               texture = "QUI Stripes"
             },
-            auras = {
-              buffAnchor = "BOTTOMLEFT",
-              buffGrow = "RIGHT",
-              buffIconSize = 22,
-              buffMaxIcons = 4,
-              buffOffsetX = 0,
-              buffOffsetY = 0,
-              debuffAnchor = "TOPLEFT",
-              debuffGrow = "RIGHT",
-              debuffMaxIcons = 4,
-              debuffOffsetX = 0,
-              debuffOffsetY = 0,
-              iconSize = 22,
-              showBuffs = false,
-              showDebuffs = false
-            },
+            auras = {},
             borderSize = 1,
             castbar = {
               anchor = "unitframe",
@@ -6522,6 +6131,9 @@ return {
           useRawPixels = true,
           visibility = "always",
           width = 234
+        },
+        skinning = {
+          enabled = true
         },
         skyriding = {
           backgroundColor = {
@@ -6897,7 +6509,7 @@ return {
       Default = {
         _defaultsVersion = 3,
         _needsLateAbImport = true,
-        _schemaVersion = 47,
+        _schemaVersion = 59,
         actionBars = {
           bars = {
             bags = {
@@ -7434,7 +7046,6 @@ return {
             [3418] = false,
             [3420] = false
           },
-          enabled = true,
           reputationFilter = {
             [21] = false,
             [47] = false,
@@ -8088,11 +7699,78 @@ return {
             isHorizontal = true,
             verticalLayout = false
           },
+          buffAuras = {
+            elements = {
+              ["*"] = {
+                [1] = {
+                  anchor = "TOPRIGHT",
+                  applyToRoles = "all",
+                  auraType = "HELPFUL",
+                  blacklist = {},
+                  classifications = {
+                    bigDefensive = false,
+                    cancelable = false,
+                    externalDefensive = false,
+                    notCancelable = false,
+                    raid = false,
+                    raidInCombat = false
+                  },
+                  dispelFilterMode = "off",
+                  dispelTypes = {},
+                  duration = {
+                    anchor = "CENTER",
+                    color = {
+                      [1] = 1,
+                      [2] = 1,
+                      [3] = 1,
+                      [4] = 1
+                    },
+                    fontSize = 12,
+                    offsetX = 0,
+                    offsetY = 0,
+                    show = true
+                  },
+                  enabled = true,
+                  filterFlags = {},
+                  filterMode = "off",
+                  growDirection = "LEFT",
+                  hidePermanent = false,
+                  hideSwipe = false,
+                  iconSize = 35,
+                  iconsPerRow = 10,
+                  id = "buffs",
+                  maxDurationSec = 0,
+                  maxIcons = 40,
+                  mode = "filterStrip",
+                  offsetX = 0,
+                  offsetY = 0,
+                  onlyMine = false,
+                  reverseSwipe = false,
+                  rightClickCancel = true,
+                  sortReverse = false,
+                  sortRule = "INDEX",
+                  spacing = 1,
+                  stack = {
+                    anchor = "BOTTOMRIGHT",
+                    color = {
+                      [1] = 1,
+                      [2] = 1,
+                      [3] = 1,
+                      [4] = 1
+                    },
+                    fontSize = 12,
+                    offsetX = 0,
+                    offsetY = 0,
+                    show = true
+                  },
+                  swipeStyle = "radial",
+                  whitelist = {}
+                }
+              }
+            },
+            elementsSeeded = true
+          },
           buffBottomPadding = 25,
-          buffIconSpacing = 1,
-          buffRowSpacing = 1,
-          buffStackTextOffsetX = 0,
-          buffStackTextOffsetY = 0,
           debuff = {
             addIconsToRight = false,
             addIconsToTop = false,
@@ -8101,6 +7779,73 @@ return {
             iconStride = 16,
             isHorizontal = true,
             verticalLayout = false
+          },
+          debuffAuras = {
+            elements = {
+              ["*"] = {
+                [1] = {
+                  anchor = "TOPRIGHT",
+                  applyToRoles = "all",
+                  auraType = "HARMFUL",
+                  blacklist = {},
+                  classifications = {
+                    crowdControl = true,
+                    raid = true
+                  },
+                  dispelFilterMode = "off",
+                  dispelTypes = {},
+                  duration = {
+                    anchor = "CENTER",
+                    color = {
+                      [1] = 1,
+                      [2] = 1,
+                      [3] = 1,
+                      [4] = 1
+                    },
+                    fontSize = 12,
+                    offsetX = 0,
+                    offsetY = 0,
+                    show = true
+                  },
+                  enabled = true,
+                  filterFlags = {},
+                  filterMode = "off",
+                  growDirection = "LEFT",
+                  hidePermanent = false,
+                  hideSwipe = false,
+                  iconSize = 35,
+                  iconsPerRow = 10,
+                  id = "debuffs",
+                  maxDurationSec = 0,
+                  maxIcons = 40,
+                  mode = "filterStrip",
+                  offsetX = 0,
+                  offsetY = 0,
+                  onlyMine = false,
+                  reverseSwipe = false,
+                  rightClickCancel = false,
+                  sortReverse = false,
+                  sortRule = "INDEX",
+                  spacing = 2,
+                  stack = {
+                    anchor = "BOTTOMRIGHT",
+                    color = {
+                      [1] = 1,
+                      [2] = 1,
+                      [3] = 1,
+                      [4] = 1
+                    },
+                    fontSize = 12,
+                    offsetX = -1,
+                    offsetY = 1,
+                    show = true
+                  },
+                  swipeStyle = "radial",
+                  whitelist = {}
+                }
+              }
+            },
+            elementsSeeded = true
           },
           debuffBottomPadding = 0,
           debuffFilterImportant = false,
@@ -8372,7 +8117,6 @@ return {
           },
           copyButtonMode = "hover",
           customDisplay = {
-            _friendStatusUpgrade = 1,
             whisperTabs = {
               autoIncoming = true,
               autoOutgoing = true
@@ -8479,7 +8223,6 @@ return {
             filterSensitive = false,
             maxEntries = 500
           },
-          enabled = false,
           fade = {
             delay = 30
           },
@@ -8527,7 +8270,6 @@ return {
           showIntroMessage = false,
           tabs = {
             [1] = {
-              _groupsVersion = 1,
               channels = {
                 [1] = "LocalDefense",
                 [2] = "PremadeFilter",
@@ -8573,7 +8315,6 @@ return {
               }
             },
             [2] = {
-              _groupsVersion = 1,
               channels = {},
               customized = true,
               groups = {
@@ -8583,13 +8324,11 @@ return {
               }
             },
             [3] = {
-              _groupsVersion = 1,
               channels = {},
               customized = true,
               groups = {}
             },
             [4] = {
-              _groupsVersion = 1,
               channels = {
                 [1] = "Trade"
               },
@@ -8597,7 +8336,6 @@ return {
               groups = {}
             },
             [5] = {
-              _groupsVersion = 1,
               channels = {
                 [1] = "Services"
               },
@@ -8605,19 +8343,16 @@ return {
               groups = {}
             },
             [6] = {
-              _groupsVersion = 1,
               channels = {},
               customized = true,
               groups = {}
             },
             [7] = {
-              _groupsVersion = 1,
               channels = {},
               customized = false,
               groups = {}
             },
             [8] = {
-              _groupsVersion = 1,
               channels = {},
               customized = false,
               groups = {}
@@ -8641,9 +8376,6 @@ return {
         },
         configPanelAlpha = 0.90000000000000002,
         configPanelWidth = 1136.9384765625,
-        cooldownEffects = {
-          hideEssential = false
-        },
         cooldownHighlighter = {
           duration = 0.10000000000000001,
           glowType = "Hammer"
@@ -8671,34 +8403,11 @@ return {
           customBar_anon_1Lines = 1,
           customBar_anon_1PandemicBuffEnabled = true,
           customBar_anon_1PandemicDebuffEnabled = true,
+          customBar_anon_1PandemicEnabled = true,
           customBar_anon_1Scale = 0.5,
           customBar_anon_1Thickness = 1,
           customBar_anon_1XOffset = -20,
           customBar_anon_1YOffset = -20,
-          custom_1776292480_7595Frequency = 0.10000000000000001,
-          custom_1776292480_7595Lines = 1,
-          custom_1776292480_7595PandemicBuffEnabled = true,
-          custom_1776292480_7595PandemicDebuffEnabled = true,
-          custom_1776292480_7595Scale = 0.5,
-          custom_1776292480_7595Thickness = 1,
-          custom_1776292480_7595XOffset = -20,
-          custom_1776292480_7595YOffset = -20,
-          custom_1778883503_8224Frequency = 0.10000000000000001,
-          custom_1778883503_8224Lines = 1,
-          custom_1778883503_8224PandemicBuffEnabled = true,
-          custom_1778883503_8224PandemicDebuffEnabled = true,
-          custom_1778883503_8224Scale = 0.5,
-          custom_1778883503_8224Thickness = 1,
-          custom_1778883503_8224XOffset = -20,
-          custom_1778883503_8224YOffset = -20,
-          custom_1778883847_7294Frequency = 0.10000000000000001,
-          custom_1778883847_7294Lines = 1,
-          custom_1778883847_7294PandemicBuffEnabled = true,
-          custom_1778883847_7294PandemicDebuffEnabled = true,
-          custom_1778883847_7294Scale = 0.5,
-          custom_1778883847_7294Thickness = 1,
-          custom_1778883847_7294XOffset = -20,
-          custom_1778883847_7294YOffset = -20,
           essentialColor = {
             [1] = 0.9490196704864502,
             [2] = 0.15294118225574491,
@@ -8880,6 +8589,7 @@ return {
         },
         dandersFrames = {
           party = {
+            absolutePoint = "CENTER",
             absoluteX = 467,
             absoluteY = 119,
             offsetX = -200,
@@ -8888,6 +8598,7 @@ return {
             targetPoint = "TOPLEFT"
           },
           raid = {
+            absolutePoint = "CENTER",
             absoluteX = -520,
             absoluteY = 98,
             offsetY = 0,
@@ -8990,7 +8701,6 @@ return {
             widthAdjust = 0
           },
           buffFrame = {
-            growAnchor = "TOPRIGHT",
             offsetX = -5
           },
           buffIcon = {
@@ -9018,185 +8728,6 @@ return {
             parent = "playerFrame",
             point = "BOTTOMRIGHT",
             relative = "TOPRIGHT",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          cdmCustom_custom_1773732474_9051 = {
-            offsetX = -36,
-            offsetY = 197,
-            sizeStable = true
-          },
-          cdmCustom_custom_1773733541_2555 = {
-            autoHeight = false,
-            autoWidth = false,
-            heightAdjust = 0,
-            hideWithParent = false,
-            offsetX = 0,
-            offsetY = 250,
-            parent = "screen",
-            point = "CENTER",
-            relative = "CENTER",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          cdmCustom_custom_1773733818_8394 = {
-            autoHeight = false,
-            autoWidth = false,
-            heightAdjust = 0,
-            hideWithParent = false,
-            offsetX = 18,
-            offsetY = 0,
-            parent = "screen",
-            point = "CENTER",
-            relative = "CENTER",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          cdmCustom_custom_1773734550_1197 = {
-            autoHeight = false,
-            autoWidth = false,
-            heightAdjust = 0,
-            hideWithParent = false,
-            offsetX = 592,
-            offsetY = 68,
-            parent = "disabled",
-            point = "CENTER",
-            relative = "CENTER",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          cdmCustom_custom_1773735332_5886 = {
-            autoHeight = false,
-            autoWidth = false,
-            heightAdjust = 0,
-            hideWithParent = false,
-            offsetX = 580,
-            offsetY = 86,
-            parent = "disabled",
-            point = "CENTER",
-            relative = "CENTER",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          cdmCustom_custom_1773736290_3035 = {
-            autoHeight = false,
-            autoWidth = false,
-            heightAdjust = 0,
-            hideWithParent = false,
-            offsetX = 585,
-            offsetY = 16,
-            parent = "disabled",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          cdmCustom_custom_1773737333_6934 = {
-            autoHeight = false,
-            autoWidth = false,
-            heightAdjust = 0,
-            hideWithParent = false,
-            offsetX = 444,
-            offsetY = 145,
-            parent = "disabled",
-            point = "CENTER",
-            relative = "CENTER",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          cdmCustom_custom_1776292480_7595 = {
-            autoHeight = false,
-            autoWidth = false,
-            heightAdjust = 0,
-            hideWithParent = false,
-            keepInPlace = true,
-            offsetX = -95,
-            offsetY = 186,
-            parent = "screen",
-            point = "CENTER",
-            relative = "CENTER",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          cdmCustom_custom_1777668072_7086 = {
-            offsetX = -29,
-            offsetY = 254.9998779296875,
-            point = "CENTER",
-            relative = "CENTER",
-            sizeStable = true
-          },
-          cdmCustom_custom_1778104536_3894 = {
-            autoHeight = false,
-            autoWidth = false,
-            heightAdjust = 0,
-            hideWithParent = false,
-            keepInPlace = true,
-            offsetX = -16,
-            offsetY = 149.99993896484381,
-            parent = "screen",
-            point = "CENTER",
-            relative = "CENTER",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          cdmCustom_custom_1778882227_3588 = {
-            autoHeight = false,
-            autoWidth = false,
-            heightAdjust = 0,
-            hideWithParent = false,
-            keepInPlace = true,
-            offsetX = -480,
-            offsetY = -106.0000305175781,
-            parent = "screen",
-            point = "CENTER",
-            relative = "CENTER",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          cdmCustom_custom_1778883503_8224 = {
-            autoHeight = false,
-            autoWidth = false,
-            heightAdjust = 0,
-            hideWithParent = false,
-            keepInPlace = true,
-            offsetX = -16,
-            offsetY = -101.0000305175781,
-            parent = "screen",
-            point = "CENTER",
-            relative = "CENTER",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          cdmCustom_custom_1778883847_7294 = {
-            offsetX = -13,
-            offsetY = -101.00006103515631,
-            point = "CENTER",
-            relative = "CENTER",
-            sizeStable = true
-          },
-          cdmCustom_custom_1779289520_3571 = {
-            autoHeight = false,
-            autoWidth = false,
-            heightAdjust = 0,
-            hideWithParent = false,
-            keepInPlace = true,
-            offsetX = 184,
-            offsetY = 196.00006103515631,
-            parent = "screen",
-            point = "CENTER",
-            relative = "CENTER",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          cdmCustom_custom_1779291574_6636 = {
-            autoHeight = false,
-            autoWidth = false,
-            heightAdjust = 0,
-            hideWithParent = false,
-            keepInPlace = true,
-            offsetX = 429,
-            offsetY = -2.99993896484375,
-            parent = "screen",
-            point = "CENTER",
-            relative = "CENTER",
             sizeStable = true,
             widthAdjust = 0
           },
@@ -9368,10 +8899,6 @@ return {
             relative = "CENTER",
             sizeStable = true,
             widthAdjust = 0
-          },
-          debuffFrame = {
-            growAnchor = "TOPRIGHT",
-            offsetY = -25
           },
           equipmentDurability = {
             autoHeight = false,
@@ -9761,7 +9288,6 @@ return {
         },
         infobar = {
           bgOpacity = 35,
-          enabled = true,
           height = 25,
           micromenu = {
             buttons = {
@@ -10061,3435 +9587,6 @@ return {
             showKeybinds = false,
             showRotationHelper = false
           },
-          _dbgOwned_essential = 6,
-          _lastCharacterIdentity = "Player-57-0BD77FD2",
-          _lastEssentialHeight = 39,
-          _lastEssentialWidth = 351,
-          _lastSpecCharKey = "Drewsit - Illidan",
-          _lastSpecID = 263,
-          _lastUtilityHeight = 60,
-          _lastUtilityWidth = 210,
-          _snapshotVersion = 363,
-          _specProfiles = {
-            [62] = {
-              buff = {
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 79684,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {
-                  [343294] = true,
-                  [377587] = true,
-                  [390259] = true,
-                  [454822] = true
-                }
-              },
-              essential = {
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 5143,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 1449,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 44425,
-                    row = 1,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {
-                  [13] = true,
-                  [14] = true,
-                  [49998] = true
-                }
-              },
-              utility = {
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 1953,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 342245,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 235450,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [4] = {
-                    id = 45438,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [5] = {
-                    id = 66,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [6] = {
-                    id = 55342,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [7] = {
-                    id = 2139,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [8] = {
-                    id = 120,
-                    row = 2,
-                    type = "spell"
-                  },
-                  [9] = {
-                    id = 122,
-                    row = 2,
-                    type = "spell"
-                  },
-                  [10] = {
-                    id = 80353,
-                    row = 2,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {
-                  [55090] = true
-                }
-              }
-            },
-            [64] = {
-              buff = {
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 1246769,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 460590,
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 1247729,
-                    type = "spell"
-                  },
-                  [4] = {
-                    id = 205473,
-                    type = "spell"
-                  },
-                  [5] = {
-                    id = 205708,
-                    type = "spell"
-                  },
-                  [6] = {
-                    id = 1222865,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {
-                  [118] = true,
-                  [122] = true,
-                  [130] = true,
-                  [11426] = true,
-                  [41425] = true,
-                  [44544] = true,
-                  [45438] = true,
-                  [55342] = true,
-                  [110959] = true,
-                  [190447] = true,
-                  [342246] = true,
-                  [382293] = true,
-                  [390218] = true,
-                  [461261] = true
-                }
-              },
-              essential = {
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 30455,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 84714,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 44614,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [4] = {
-                    id = 190356,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [5] = {
-                    id = 205021,
-                    row = 1,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {}
-              },
-              utility = {
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 212653,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 342245,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 11426,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [4] = {
-                    id = 45438,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [5] = {
-                    id = 110959,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [6] = {
-                    id = 55342,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [7] = {
-                    id = 2139,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [8] = {
-                    id = 475,
-                    row = 2,
-                    type = "spell"
-                  },
-                  [9] = {
-                    id = 122,
-                    row = 2,
-                    type = "spell"
-                  },
-                  [10] = {
-                    id = 120,
-                    row = 2,
-                    type = "spell"
-                  },
-                  [11] = {
-                    id = 80353,
-                    row = 2,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {}
-              }
-            },
-            [65] = {
-              buff = {
-                dormantSequence = 0,
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 1242008,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 223817,
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 53576,
-                    type = "spell"
-                  },
-                  [4] = {
-                    id = 642,
-                    type = "spell"
-                  },
-                  [5] = {
-                    id = 498,
-                    type = "spell"
-                  },
-                  [6] = {
-                    id = 31884,
-                    type = "spell"
-                  },
-                  [7] = {
-                    id = 385414,
-                    type = "spell"
-                  },
-                  [8] = {
-                    id = 1022,
-                    type = "spell"
-                  },
-                  [9] = {
-                    id = 190784,
-                    type = "spell"
-                  },
-                  [10] = {
-                    id = 1044,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {}
-              },
-              essential = {
-                dormantSequence = 0,
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 20473,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 275773,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 31884,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [4] = {
-                    id = 432459,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [5] = {
-                    id = 633,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [6] = {
-                    id = 26573,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [7] = {
-                    id = 31821,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [8] = {
-                    id = 85673,
-                    row = 1,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {
-                  [19750] = true,
-                  [53563] = true,
-                  [82326] = true,
-                  [85222] = true,
-                  [156910] = true
-                }
-              },
-              trackedBar = {
-                dormantSequence = 0,
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 1242008,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 223817,
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 431377,
-                    type = "spell"
-                  },
-                  [4] = {
-                    id = 385414,
-                    type = "spell"
-                  },
-                  [5] = {
-                    id = 31884,
-                    type = "spell"
-                  },
-                  [6] = {
-                    id = 498,
-                    type = "spell"
-                  },
-                  [7] = {
-                    id = 1022,
-                    type = "spell"
-                  },
-                  [8] = {
-                    id = 642,
-                    type = "spell"
-                  },
-                  [9] = {
-                    id = 190784,
-                    type = "spell"
-                  },
-                  [10] = {
-                    id = 1044,
-                    type = "spell"
-                  },
-                  [11] = {
-                    id = 431404,
-                    type = "spell"
-                  },
-                  [12] = {
-                    id = 53576,
-                    type = "spell"
-                  },
-                  [13] = {
-                    id = 431406,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {}
-              },
-              utility = {
-                dormantSequence = 0,
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 190784,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 1022,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 6940,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [4] = {
-                    id = 642,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [5] = {
-                    id = 1044,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [6] = {
-                    id = 115750,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [7] = {
-                    id = 853,
-                    row = 1,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {
-                  [498] = true,
-                  [4987] = true
-                }
-              }
-            },
-            [70] = {
-              buff = {
-                dormantSequence = 0,
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 387170,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 433674,
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 1261562,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {}
-              },
-              essential = {
-                dormantSequence = 0,
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 255937,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 184575,
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 20271,
-                    type = "spell"
-                  },
-                  [4] = {
-                    id = 343527,
-                    type = "spell"
-                  },
-                  [5] = {
-                    id = 375576,
-                    type = "spell"
-                  },
-                  [6] = {
-                    id = 31884,
-                    type = "spell"
-                  },
-                  [7] = {
-                    id = 85256,
-                    kind = "cooldown",
-                    row = 1,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {}
-              },
-              trackedBar = {
-                dormantSequence = 1,
-                dormantSpells = {
-                  [384029] = {
-                    seq = 1,
-                    slot = 6
-                  }
-                },
-                ownedSpells = {
-                  [1] = {
-                    id = 404542,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 343527,
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 431536,
-                    type = "spell"
-                  },
-                  [4] = {
-                    id = 432929,
-                    type = "spell"
-                  },
-                  [5] = {
-                    id = 31884,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {}
-              },
-              utility = {
-                dormantSequence = 0,
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 190784,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 403876,
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 96231,
-                    type = "spell"
-                  },
-                  [4] = {
-                    id = 853,
-                    type = "spell"
-                  },
-                  [5] = {
-                    id = 642,
-                    type = "spell"
-                  },
-                  [6] = {
-                    id = 633,
-                    type = "spell"
-                  },
-                  [7] = {
-                    id = 1044,
-                    type = "spell"
-                  },
-                  [8] = {
-                    id = 6940,
-                    type = "spell"
-                  },
-                  [9] = {
-                    id = 1022,
-                    type = "spell"
-                  },
-                  [10] = {
-                    id = 391054,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {}
-              }
-            },
-            [72] = {
-              buff = {
-                dormantSequence = 0,
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 772,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 12950,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {}
-              },
-              essential = {
-                dormantSequence = 0,
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 184367,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 23881,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 85288,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [4] = {
-                    id = 772,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [5] = {
-                    id = 6343,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [6] = {
-                    id = 280735,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [7] = {
-                    id = 1719,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [8] = {
-                    id = 107574,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [9] = {
-                    id = 385059,
-                    row = 1,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {}
-              },
-              trackedBar = {
-                dormantSequence = 0,
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 184361,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {}
-              },
-              utility = {
-                dormantSequence = 0,
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 100,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 6544,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 107570,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [4] = {
-                    id = 46968,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [5] = {
-                    id = 12323,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [6] = {
-                    id = 6552,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [7] = {
-                    id = 18499,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [8] = {
-                    id = 202168,
-                    row = 2,
-                    type = "spell"
-                  },
-                  [9] = {
-                    id = 23920,
-                    row = 2,
-                    type = "spell"
-                  },
-                  [10] = {
-                    id = 97462,
-                    row = 2,
-                    type = "spell"
-                  },
-                  [11] = {
-                    id = 384110,
-                    row = 2,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {}
-              }
-            },
-            [73] = {
-              buff = {
-                dormantSequence = 0,
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 386478,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 386486,
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 6343,
-                    type = "spell"
-                  },
-                  [4] = {
-                    id = 23920,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {}
-              },
-              essential = {
-                dormantSequence = 1,
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 190456,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 2565,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 23922,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [4] = {
-                    id = 6343,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [5] = {
-                    id = 6572,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [6] = {
-                    id = 385952,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [7] = {
-                    id = 107574,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [8] = {
-                    id = 1160,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [9] = {
-                    id = 871,
-                    row = 1,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {}
-              },
-              trackedBar = {
-                dormantSequence = 0,
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 190456,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 871,
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 2565,
-                    type = "spell"
-                  },
-                  [4] = {
-                    id = 6343,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {}
-              },
-              utility = {
-                dormantSequence = 2,
-                dormantSpells = {
-                  [107570] = {
-                    row = 1,
-                    seq = 1,
-                    slot = 4
-                  },
-                  [386071] = {
-                    row = 2,
-                    seq = 2,
-                    slot = 10
-                  }
-                },
-                ownedSpells = {
-                  [1] = {
-                    id = 100,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 6544,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 6552,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [4] = {
-                    id = 46968,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [5] = {
-                    id = 202168,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [6] = {
-                    id = 97462,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [7] = {
-                    id = 18499,
-                    row = 2,
-                    type = "spell"
-                  },
-                  [8] = {
-                    id = 355,
-                    row = 2,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {}
-              }
-            },
-            [102] = {
-              buff = {
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 48517,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 48518,
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 102560,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {
-                  [231042] = true
-                }
-              },
-              essential = {
-                dormantSpells = {
-                  [391528] = 10
-                },
-                ownedSpells = {
-                  [1] = {
-                    id = 190984,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 194153,
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 8921,
-                    type = "spell"
-                  },
-                  [4] = {
-                    id = 93402,
-                    type = "spell"
-                  },
-                  [5] = {
-                    id = 78674,
-                    type = "spell"
-                  },
-                  [6] = {
-                    id = 191034,
-                    type = "spell"
-                  },
-                  [7] = {
-                    id = 1233346,
-                    type = "spell"
-                  },
-                  [8] = {
-                    id = 194223,
-                    type = "spell"
-                  },
-                  [9] = {
-                    id = 205636,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {}
-              },
-              trackedBar = {
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 48518,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 48517,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {}
-              },
-              utility = {
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 1850,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 22812,
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 20484,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {}
-              }
-            },
-            [103] = {
-              buff = {
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 16864,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 405189,
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 391872,
-                    type = "spell"
-                  },
-                  [4] = {
-                    id = 106951,
-                    type = "spell"
-                  },
-                  [5] = {
-                    id = 5217,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {}
-              },
-              essential = {
-                dormantSpells = {
-                  [274837] = 4,
-                  [391528] = 8,
-                  [1244258] = 6
-                },
-                ownedSpells = {
-                  [1] = {
-                    id = 1822,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 22568,
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 1079,
-                    type = "spell"
-                  },
-                  [4] = {
-                    id = 5217,
-                    type = "spell"
-                  },
-                  [5] = {
-                    id = 106951,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {}
-              },
-              trackedBar = {
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 404542,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 343527,
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 431536,
-                    type = "spell"
-                  },
-                  [4] = {
-                    id = 432929,
-                    type = "spell"
-                  },
-                  [5] = {
-                    id = 31884,
-                    type = "spell"
-                  },
-                  [6] = {
-                    id = 384029,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {}
-              },
-              utility = {
-                dormantSpells = {
-                  [2637] = 8,
-                  [102359] = 10,
-                  [132469] = 9
-                },
-                ownedSpells = {
-                  [1] = {
-                    id = 1850,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 102401,
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 22812,
-                    type = "spell"
-                  },
-                  [4] = {
-                    id = 61336,
-                    type = "spell"
-                  },
-                  [5] = {
-                    id = 106839,
-                    type = "spell"
-                  },
-                  [6] = {
-                    id = 2908,
-                    type = "spell"
-                  },
-                  [7] = {
-                    id = 2782,
-                    type = "spell"
-                  },
-                  [8] = {
-                    id = 22842,
-                    type = "spell"
-                  },
-                  [9] = {
-                    id = 106898,
-                    type = "spell"
-                  },
-                  [10] = {
-                    id = 20484,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {}
-              }
-            },
-            [250] = {
-              buff = {
-                dormantSequence = 0,
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 43265,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 55233,
-                    kind = "aura",
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 48265,
-                    kind = "aura",
-                    type = "spell"
-                  },
-                  [4] = {
-                    id = 48707,
-                    kind = "aura",
-                    type = "spell"
-                  },
-                  [5] = {
-                    id = 194878,
-                    kind = "aura",
-                    type = "spell"
-                  }
-                },
-                removedSpells = {
-                  [443404] = true
-                }
-              },
-              essential = {
-                dormantSequence = 4,
-                dormantSpells = {
-                  [42650] = 6,
-                  [55090] = 2,
-                  [85948] = 1,
-                  [207317] = 4,
-                  [343294] = 8,
-                  [1233448] = 5,
-                  [1247378] = 4
-                },
-                ownedSpells = {
-                  [1] = {
-                    id = 50842,
-                    kind = "cooldown",
-                    row = 1,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 49998,
-                    kind = "cooldown",
-                    row = 1,
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 206930,
-                    kind = "cooldown",
-                    row = 1,
-                    type = "spell"
-                  },
-                  [4] = {
-                    id = 195182,
-                    kind = "cooldown",
-                    row = 1,
-                    type = "spell"
-                  },
-                  [5] = {
-                    id = 43265,
-                    kind = "cooldown",
-                    row = 1,
-                    type = "spell"
-                  },
-                  [6] = {
-                    id = 195292,
-                    kind = "cooldown",
-                    row = 1,
-                    type = "spell"
-                  },
-                  [7] = {
-                    id = 49028,
-                    kind = "cooldown",
-                    row = 1,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {
-                  [42650] = true
-                }
-              },
-              trackedBar = {
-                dormantSequence = 1,
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 48707,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 48265,
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 43265,
-                    type = "spell"
-                  },
-                  [4] = {
-                    id = 1263569,
-                    kind = "aura",
-                    type = "spell"
-                  }
-                },
-                removedSpells = {
-                  [77535] = true
-                }
-              },
-              utility = {
-                dormantSequence = 16,
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 61999,
-                    kind = "cooldown",
-                    row = 2,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 49039,
-                    kind = "cooldown",
-                    row = 2,
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 55233,
-                    kind = "cooldown",
-                    row = 2,
-                    type = "spell"
-                  },
-                  [4] = {
-                    id = 1263569,
-                    kind = "cooldown",
-                    type = "spell"
-                  },
-                  [5] = {
-                    id = 48792,
-                    kind = "cooldown",
-                    row = 2,
-                    type = "spell"
-                  },
-                  [6] = {
-                    id = 51052,
-                    kind = "cooldown",
-                    row = 2,
-                    type = "spell"
-                  },
-                  [7] = {
-                    id = 48707,
-                    kind = "cooldown",
-                    row = 2,
-                    type = "spell"
-                  },
-                  [8] = {
-                    id = 47528,
-                    kind = "cooldown",
-                    row = 1,
-                    type = "spell"
-                  },
-                  [9] = {
-                    id = 49576,
-                    kind = "cooldown",
-                    row = 1,
-                    type = "spell"
-                  },
-                  [10] = {
-                    id = 56222,
-                    kind = "cooldown",
-                    row = 1,
-                    type = "spell"
-                  },
-                  [11] = {
-                    id = 48265,
-                    kind = "cooldown",
-                    row = 1,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {}
-              }
-            },
-            [252] = {
-              buff = {
-                dormantSequence = 92,
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 48792,
-                    kind = "aura",
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 48707,
-                    kind = "aura",
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 391566,
-                    kind = "aura",
-                    type = "spell"
-                  },
-                  [4] = {
-                    id = 1233448,
-                    kind = "aura",
-                    type = "spell"
-                  },
-                  [5] = {
-                    id = 51052,
-                    kind = "aura",
-                    type = "spell"
-                  },
-                  [6] = {
-                    id = 343294,
-                    kind = "aura",
-                    type = "spell"
-                  }
-                },
-                removedSpells = {
-                  [45524] = true,
-                  [49039] = true,
-                  [49530] = true,
-                  [51986] = true,
-                  [194878] = true,
-                  [207200] = true,
-                  [207272] = true,
-                  [212552] = true,
-                  [374049] = true,
-                  [374504] = true,
-                  [377587] = true,
-                  [454822] = true,
-                  [1241567] = true,
-                  [1242147] = true
-                }
-              },
-              essential = {
-                dormantSequence = 18,
-                dormantSpells = {},
-                ownedSpells = {},
-                removedSpells = {
-                  [43265] = true,
-                  [46584] = true,
-                  [49998] = true
-                }
-              },
-              trackedBar = {
-                dormantSequence = 1,
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 48707,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 48792,
-                    kind = "aura",
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 1233448,
-                    kind = "aura",
-                    type = "spell"
-                  },
-                  [4] = {
-                    id = 343294,
-                    kind = "aura",
-                    type = "spell"
-                  },
-                  [5] = {
-                    id = 51052,
-                    kind = "aura",
-                    type = "spell"
-                  }
-                },
-                removedSpells = {
-                  [101568] = true
-                }
-              },
-              utility = {
-                dormantSequence = 110,
-                dormantSpells = {},
-                ownedSpells = {},
-                removedSpells = {
-                  [47541] = true,
-                  [1233448] = true
-                }
-              }
-            },
-            [253] = {
-              buff = {
-                dormantSequence = 92,
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 257284,
-                    kind = "aura",
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 466930,
-                    kind = "aura",
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 217200,
-                    kind = "aura",
-                    type = "spell"
-                  }
-                },
-                removedSpells = {
-                  [45524] = true,
-                  [48707] = true,
-                  [48792] = true,
-                  [49039] = true,
-                  [49530] = true,
-                  [51052] = true,
-                  [51986] = true,
-                  [191587] = true,
-                  [194878] = true,
-                  [207200] = true,
-                  [207272] = true,
-                  [212552] = true,
-                  [343294] = true,
-                  [374049] = true,
-                  [374504] = true,
-                  [377440] = true,
-                  [377587] = true,
-                  [390259] = true,
-                  [391566] = true,
-                  [392490] = true,
-                  [444347] = true,
-                  [454822] = true,
-                  [455397] = true,
-                  [1233448] = true,
-                  [1235261] = true,
-                  [1240996] = true,
-                  [1241567] = true,
-                  [1242147] = true,
-                  [1242158] = true,
-                  [1242608] = true,
-                  [1242998] = true,
-                  [1254252] = true,
-                  [1256565] = true
-                }
-              },
-              essential = {
-                dormantSequence = 18,
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 257284,
-                    kind = "cooldown",
-                    row = 1,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 34026,
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 193455,
-                    type = "spell"
-                  },
-                  [4] = {
-                    id = 217200,
-                    type = "spell"
-                  },
-                  [5] = {
-                    id = 1264359,
-                    type = "spell"
-                  },
-                  [6] = {
-                    id = 19574,
-                    type = "spell"
-                  },
-                  [7] = {
-                    id = 466930,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {
-                  [136] = true,
-                  [5384] = true,
-                  [19577] = true,
-                  [19801] = true,
-                  [109248] = true,
-                  [109304] = true,
-                  [147362] = true,
-                  [186257] = true,
-                  [186265] = true,
-                  [187650] = true,
-                  [195645] = true,
-                  [264735] = true,
-                  [272651] = true
-                }
-              },
-              trackedBar = {
-                dormantSequence = 1,
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 1242998,
-                    kind = "aura",
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 1235261,
-                    kind = "aura",
-                    type = "spell"
-                  }
-                },
-                removedSpells = {
-                  [101568] = true
-                }
-              },
-              utility = {
-                dormantSequence = 110,
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 781,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 186257,
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 19577,
-                    type = "spell"
-                  },
-                  [4] = {
-                    id = 187650,
-                    type = "spell"
-                  },
-                  [5] = {
-                    id = 272651,
-                    type = "spell"
-                  },
-                  [6] = {
-                    id = 186265,
-                    type = "spell"
-                  },
-                  [7] = {
-                    id = 5384,
-                    type = "spell"
-                  },
-                  [8] = {
-                    id = 136,
-                    row = 2,
-                    type = "spell"
-                  },
-                  [9] = {
-                    id = 109248,
-                    row = 2,
-                    type = "spell"
-                  },
-                  [10] = {
-                    id = 19801,
-                    row = 2,
-                    type = "spell"
-                  },
-                  [11] = {
-                    id = 147362,
-                    row = 2,
-                    type = "spell"
-                  },
-                  [12] = {
-                    id = 109304,
-                    row = 2,
-                    type = "spell"
-                  },
-                  [13] = {
-                    id = 264735,
-                    row = 2,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {
-                  [195645] = true
-                }
-              }
-            },
-            [254] = {
-              buff = {
-                dormantSequence = 0,
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 260240,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 473370,
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 1219616,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {}
-              },
-              essential = {
-                dormantSequence = 0,
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 257284,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 19434,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 257044,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [4] = {
-                    id = 288613,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [5] = {
-                    id = 260243,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [6] = {
-                    id = 257620,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [7] = {
-                    id = 56641,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [8] = {
-                    id = 474421,
-                    row = 1,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {}
-              },
-              trackedBar = {
-                dormantSequence = 0,
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 389019,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {}
-              },
-              utility = {
-                dormantSequence = 0,
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 186257,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 781,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 186265,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [4] = {
-                    id = 264735,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [5] = {
-                    id = 109304,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [6] = {
-                    id = 272651,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [7] = {
-                    id = 147362,
-                    row = 1,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {
-                  [5384] = true,
-                  [34477] = true,
-                  [187650] = true,
-                  [195645] = true,
-                  [199483] = true,
-                  [466904] = true,
-                  [474421] = true
-                }
-              }
-            },
-            [255] = {
-              buff = {
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 260285,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {
-                  [343294] = true,
-                  [377587] = true,
-                  [390259] = true,
-                  [454822] = true
-                }
-              },
-              essential = {
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 259489,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 259495,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 1250646,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [4] = {
-                    id = 1261193,
-                    row = 1,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {
-                  [49998] = true
-                }
-              },
-              trackedBar = {
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 1252708,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 186289,
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 1250646,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {
-                  [1242608] = true
-                }
-              },
-              utility = {
-                dormantSpells = {
-                  [272678] = 4
-                },
-                ownedSpells = {
-                  [1] = {
-                    id = 781,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 190925,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 186257,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [4] = {
-                    id = 186265,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [5] = {
-                    id = 264735,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [6] = {
-                    id = 109304,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [7] = {
-                    id = 187707,
-                    row = 2,
-                    type = "spell"
-                  },
-                  [8] = {
-                    id = 19801,
-                    row = 2,
-                    type = "spell"
-                  },
-                  [9] = {
-                    id = 19577,
-                    row = 2,
-                    type = "spell"
-                  },
-                  [10] = {
-                    id = 187650,
-                    row = 2,
-                    type = "spell"
-                  },
-                  [11] = {
-                    id = 5384,
-                    row = 2,
-                    type = "spell"
-                  },
-                  [12] = {
-                    id = 34477,
-                    row = 2,
-                    type = "spell"
-                  },
-                  [13] = {
-                    id = 186289,
-                    row = 3,
-                    type = "spell"
-                  },
-                  [14] = {
-                    id = 195645,
-                    row = 3,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {
-                  [55090] = true
-                }
-              }
-            },
-            [256] = {
-              buff = {
-                dormantSequence = 0,
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 589,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 186440,
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 472433,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {
-                  [231042] = true
-                }
-              },
-              essential = {
-                dormantSequence = 1,
-                dormantSpells = {
-                  [62618] = {
-                    seq = 1,
-                    slot = 6
-                  }
-                },
-                ownedSpells = {
-                  [1] = {
-                    id = 17,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 47540,
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 8092,
-                    type = "spell"
-                  },
-                  [4] = {
-                    id = 194509,
-                    type = "spell"
-                  },
-                  [5] = {
-                    id = 472433,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {}
-              },
-              trackedBar = {
-                dormantSequence = 1,
-                dormantSpells = {
-                  [447444] = {
-                    seq = 1,
-                    slot = 1
-                  }
-                },
-                ownedSpells = {},
-                removedSpells = {}
-              },
-              utility = {
-                dormantSequence = 2,
-                dormantSpells = {
-                  [8122] = {
-                    seq = 1,
-                    slot = 3
-                  },
-                  [205364] = {
-                    seq = 2,
-                    slot = 4
-                  }
-                },
-                ownedSpells = {
-                  [1] = {
-                    id = 121536,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 527,
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 33206,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {}
-              }
-            },
-            [258] = {
-              buff = {
-                dormantSequence = 0,
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 121536,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 34914,
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 589,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {
-                  [17] = true,
-                  [453] = true,
-                  [586] = true,
-                  [8122] = true,
-                  [10060] = true,
-                  [15286] = true,
-                  [15487] = true,
-                  [19236] = true,
-                  [45243] = true,
-                  [47585] = true,
-                  [64129] = true,
-                  [111759] = true,
-                  [228264] = true,
-                  [231042] = true,
-                  [232698] = true,
-                  [335467] = true,
-                  [373202] = true,
-                  [373212] = true,
-                  [375767] = true,
-                  [375888] = true,
-                  [390972] = true,
-                  [391090] = true,
-                  [449880] = true,
-                  [450193] = true,
-                  [451234] = true,
-                  [1230339] = true,
-                  [1243069] = true
-                }
-              },
-              essential = {
-                dormantSequence = 0,
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 8092,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 15407,
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 589,
-                    type = "spell"
-                  },
-                  [4] = {
-                    id = 34914,
-                    type = "spell"
-                  },
-                  [5] = {
-                    id = 335467,
-                    type = "spell"
-                  },
-                  [6] = {
-                    id = 1227280,
-                    type = "spell"
-                  },
-                  [7] = {
-                    id = 32379,
-                    type = "spell"
-                  },
-                  [8] = {
-                    id = 263165,
-                    type = "spell"
-                  },
-                  [9] = {
-                    id = 228260,
-                    type = "spell"
-                  },
-                  [10] = {
-                    id = 10060,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {}
-              },
-              trackedBar = {
-                dormantSequence = 0,
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 121536,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {}
-              },
-              utility = {
-                dormantSequence = 0,
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 121536,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 17,
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 47585,
-                    type = "spell"
-                  },
-                  [4] = {
-                    id = 19236,
-                    type = "spell"
-                  },
-                  [5] = {
-                    id = 15286,
-                    type = "spell"
-                  },
-                  [6] = {
-                    id = 586,
-                    type = "spell"
-                  },
-                  [7] = {
-                    id = 8122,
-                    type = "spell"
-                  },
-                  [8] = {
-                    id = 15487,
-                    type = "spell"
-                  },
-                  [9] = {
-                    id = 32375,
-                    type = "spell"
-                  },
-                  [10] = {
-                    id = 73325,
-                    type = "spell"
-                  },
-                  [11] = {
-                    id = 453,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {}
-              }
-            },
-            [260] = {
-              buff = {
-                dormantSequence = 0,
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 256170,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 1214909,
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 31230,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {
-                  [315341] = true
-                }
-              },
-              essential = {
-                dormantSequence = 0,
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 1214909,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 193315,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 315496,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [4] = {
-                    id = 185763,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [5] = {
-                    id = 2098,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [6] = {
-                    id = 315341,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [7] = {
-                    id = 13877,
-                    row = 1,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {}
-              },
-              trackedBar = {
-                dormantSequence = 0,
-                dormantSpells = {},
-                ownedSpells = {},
-                removedSpells = {
-                  [13877] = true,
-                  [256170] = true,
-                  [1214909] = true
-                }
-              },
-              utility = {
-                dormantSequence = 0,
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 2983,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 195457,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 1966,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [4] = {
-                    id = 1856,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [5] = {
-                    id = 1766,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [6] = {
-                    id = 408,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [7] = {
-                    id = 1833,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [8] = {
-                    id = 185311,
-                    row = 2,
-                    type = "spell"
-                  },
-                  [9] = {
-                    id = 114018,
-                    row = 2,
-                    type = "spell"
-                  },
-                  [10] = {
-                    id = 1725,
-                    row = 2,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {}
-              }
-            },
-            [261] = {
-              buff = {
-                dormantSequence = 0,
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 196912,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 441321,
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 441423,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {}
-              },
-              essential = {
-                dormantSequence = 0,
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 196819,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 280719,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 185313,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [4] = {
-                    id = 121471,
-                    row = 1,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {}
-              },
-              utility = {
-                dormantSequence = 0,
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 2983,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 36554,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 1966,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [4] = {
-                    id = 1856,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [5] = {
-                    id = 31224,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [6] = {
-                    id = 5277,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [7] = {
-                    id = 1766,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [8] = {
-                    id = 5938,
-                    row = 2,
-                    type = "spell"
-                  },
-                  [9] = {
-                    id = 1833,
-                    row = 2,
-                    type = "spell"
-                  },
-                  [10] = {
-                    id = 408,
-                    row = 2,
-                    type = "spell"
-                  },
-                  [11] = {
-                    id = 185311,
-                    row = 2,
-                    type = "spell"
-                  },
-                  [12] = {
-                    id = 114018,
-                    row = 2,
-                    type = "spell"
-                  },
-                  [13] = {
-                    id = 57934,
-                    row = 2,
-                    type = "spell"
-                  },
-                  [14] = {
-                    id = 1725,
-                    row = 3,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {}
-              }
-            },
-            [266] = {
-              buff = {
-                dormantSequence = 92,
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 1242998,
-                    kind = "aura",
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 1240996,
-                    kind = "aura",
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 1235261,
-                    kind = "aura",
-                    type = "spell"
-                  },
-                  [4] = {
-                    id = 1254252,
-                    kind = "aura",
-                    type = "spell"
-                  },
-                  [5] = {
-                    id = 392490,
-                    kind = "aura",
-                    type = "spell"
-                  },
-                  [6] = {
-                    id = 191587,
-                    kind = "aura",
-                    type = "spell"
-                  }
-                },
-                removedSpells = {
-                  [45524] = true,
-                  [49039] = true,
-                  [49530] = true,
-                  [51986] = true,
-                  [194878] = true,
-                  [207200] = true,
-                  [207272] = true,
-                  [212552] = true,
-                  [374049] = true,
-                  [374504] = true,
-                  [377587] = true,
-                  [454822] = true,
-                  [1241567] = true,
-                  [1242147] = true
-                }
-              },
-              custom_1778131105_4328 = {
-                dormantSequence = 1,
-                dormantSpells = {},
-                ownedSpells = {},
-                removedSpells = {
-                  [3714] = true,
-                  [47541] = true,
-                  [48792] = true,
-                  [51462] = true,
-                  [85948] = true,
-                  [194878] = true,
-                  [212552] = true,
-                  [391566] = true,
-                  [1242608] = true,
-                  [1242998] = true
-                }
-              },
-              essential = {
-                dormantSequence = 9,
-                dormantSpells = {},
-                ownedSpells = {},
-                removedSpells = {
-                  [49576] = true,
-                  [49998] = true,
-                  [51052] = true,
-                  [61999] = true
-                }
-              },
-              trackedBar = {
-                dormantSequence = 1,
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 1242998,
-                    kind = "aura",
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 1235261,
-                    kind = "aura",
-                    type = "spell"
-                  }
-                },
-                removedSpells = {
-                  [101568] = true
-                }
-              },
-              utility = {
-                dormantSequence = 17,
-                dormantSpells = {},
-                ownedSpells = {},
-                removedSpells = {
-                  [55090] = true
-                }
-              }
-            },
-            [268] = {
-              buff = {
-                dormantSequence = 0,
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 322120,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 450508,
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 116847,
-                    type = "spell"
-                  },
-                  [4] = {
-                    id = 388812,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {}
-              },
-              essential = {
-                dormantSequence = 0,
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 205523,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 121253,
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 119582,
-                    type = "spell"
-                  },
-                  [4] = {
-                    id = 123986,
-                    type = "spell"
-                  },
-                  [5] = {
-                    id = 322109,
-                    type = "spell"
-                  },
-                  [6] = {
-                    id = 115203,
-                    type = "spell"
-                  },
-                  [7] = {
-                    id = 325153,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {}
-              },
-              trackedBar = {
-                dormantSequence = 0,
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 1249625,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {}
-              },
-              utility = {
-                dormantSequence = 0,
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 109132,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 116841,
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 101643,
-                    type = "spell"
-                  },
-                  [4] = {
-                    id = 119996,
-                    type = "spell"
-                  },
-                  [5] = {
-                    id = 115546,
-                    type = "spell"
-                  },
-                  [6] = {
-                    id = 116705,
-                    type = "spell"
-                  },
-                  [7] = {
-                    id = 119381,
-                    type = "spell"
-                  },
-                  [8] = {
-                    id = 115078,
-                    type = "spell"
-                  },
-                  [9] = {
-                    id = 116844,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {}
-              }
-            },
-            [269] = {
-              buff = {
-                dormantSequence = 0,
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 116645,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 325202,
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 122470,
-                    type = "spell"
-                  },
-                  [4] = {
-                    id = 115636,
-                    type = "spell"
-                  },
-                  [5] = {
-                    id = 450615,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {}
-              },
-              essential = {
-                dormantSequence = 1,
-                dormantSpells = {
-                  [392983] = {
-                    seq = 1,
-                    slot = 3
-                  }
-                },
-                ownedSpells = {
-                  [1] = {
-                    id = 113656,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 107428,
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 100784,
-                    type = "spell"
-                  },
-                  [4] = {
-                    id = 100780,
-                    type = "spell"
-                  },
-                  [5] = {
-                    id = 101546,
-                    type = "spell"
-                  },
-                  [6] = {
-                    id = 117952,
-                    type = "spell"
-                  },
-                  [7] = {
-                    id = 322109,
-                    type = "spell"
-                  },
-                  [8] = {
-                    id = 1249625,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {}
-              },
-              trackedBar = {
-                dormantSequence = 0,
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 1249625,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {}
-              },
-              utility = {
-                dormantSequence = 0,
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 109132,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 101545,
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 119381,
-                    type = "spell"
-                  },
-                  [4] = {
-                    id = 116841,
-                    type = "spell"
-                  },
-                  [5] = {
-                    id = 122470,
-                    type = "spell"
-                  },
-                  [6] = {
-                    id = 115078,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {}
-              }
-            },
-            [270] = {
-              buff = {
-                dormantSequence = 0,
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 116645,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {
-                  [343294] = true,
-                  [390259] = true,
-                  [454822] = true
-                }
-              },
-              essential = {
-                dormantSequence = 4,
-                dormantSpells = {
-                  [116849] = {
-                    row = 1,
-                    seq = 3,
-                    slot = 7
-                  },
-                  [388615] = {
-                    row = 1,
-                    seq = 4,
-                    slot = 8
-                  }
-                },
-                ownedSpells = {
-                  [1] = {
-                    id = 115151,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 107428,
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 100784,
-                    type = "spell"
-                  },
-                  [4] = {
-                    id = 101546,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [5] = {
-                    id = 117952,
-                    row = 1,
-                    type = "spell"
-                  },
-                  [6] = {
-                    id = 116670,
-                    row = 1,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {}
-              },
-              trackedBar = {
-                dormantSequence = 2,
-                dormantSpells = {
-                  [322118] = {
-                    seq = 2,
-                    slot = 2
-                  },
-                  [443294] = {
-                    seq = 1,
-                    slot = 1
-                  }
-                },
-                ownedSpells = {},
-                removedSpells = {}
-              },
-              utility = {
-                dormantSequence = 2,
-                dormantSpells = {
-                  [115294] = {
-                    row = 1,
-                    seq = 2,
-                    slot = 7
-                  }
-                },
-                ownedSpells = {
-                  [1] = {
-                    id = 119996,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 109132,
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 115078,
-                    type = "spell"
-                  },
-                  [4] = {
-                    id = 119381,
-                    type = "spell"
-                  },
-                  [5] = {
-                    id = 115450,
-                    type = "spell"
-                  },
-                  [6] = {
-                    id = 322109,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {
-                  [100784] = true
-                }
-              }
-            },
-            [577] = {
-              buff = {
-                dormantSequence = 0,
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 427640,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 258881,
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 388106,
-                    type = "spell"
-                  },
-                  [4] = {
-                    id = 343311,
-                    type = "spell"
-                  },
-                  [5] = {
-                    id = 390154,
-                    type = "spell"
-                  },
-                  [6] = {
-                    id = 198589,
-                    type = "spell"
-                  },
-                  [7] = {
-                    id = 370965,
-                    type = "spell"
-                  },
-                  [8] = {
-                    id = 452402,
-                    type = "spell"
-                  },
-                  [9] = {
-                    id = 388108,
-                    type = "spell"
-                  },
-                  [10] = {
-                    id = 452412,
-                    type = "spell"
-                  },
-                  [11] = {
-                    id = 258920,
-                    type = "spell"
-                  },
-                  [12] = {
-                    id = 191427,
-                    type = "spell"
-                  },
-                  [13] = {
-                    id = 179057,
-                    type = "spell"
-                  },
-                  [14] = {
-                    id = 258887,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {
-                  [1214887] = true
-                }
-              },
-              essential = {
-                dormantSequence = 0,
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 162794,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 188499,
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 258920,
-                    type = "spell"
-                  },
-                  [4] = {
-                    id = 198013,
-                    type = "spell"
-                  },
-                  [5] = {
-                    id = 185123,
-                    type = "spell"
-                  },
-                  [6] = {
-                    id = 370965,
-                    type = "spell"
-                  },
-                  [7] = {
-                    id = 191427,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {}
-              },
-              trackedBar = {
-                dormantSequence = 0,
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 388108,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 191427,
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 452402,
-                    type = "spell"
-                  },
-                  [4] = {
-                    id = 258887,
-                    type = "spell"
-                  },
-                  [5] = {
-                    id = 427640,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {}
-              },
-              utility = {
-                dormantSequence = 0,
-                dormantSpells = {
-                  [207684] = {
-                    slot = 7
-                  }
-                },
-                ownedSpells = {
-                  [1] = {
-                    id = 195072,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 232893,
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 198793,
-                    type = "spell"
-                  },
-                  [4] = {
-                    id = 183752,
-                    type = "spell"
-                  },
-                  [5] = {
-                    id = 198589,
-                    type = "spell"
-                  },
-                  [6] = {
-                    id = 179057,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {}
-              }
-            },
-            [581] = {
-              buff = {
-                dormantSequence = 1,
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 203981,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 389958,
-                    kind = "aura",
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 187827,
-                    kind = "aura",
-                    type = "spell"
-                  },
-                  [4] = {
-                    id = 207407,
-                    type = "spell"
-                  },
-                  [5] = {
-                    id = 1253304,
-                    type = "spell"
-                  },
-                  [6] = {
-                    id = 204021,
-                    type = "spell"
-                  },
-                  [7] = {
-                    id = 203720,
-                    kind = "aura",
-                    type = "spell"
-                  },
-                  [8] = {
-                    id = 258920,
-                    kind = "aura",
-                    type = "spell"
-                  },
-                  [9] = {
-                    id = 204596,
-                    kind = "aura",
-                    type = "spell"
-                  }
-                },
-                removedSpells = {}
-              },
-              essential = {
-                dormantSequence = 0,
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 203720,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 247454,
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 228477,
-                    type = "spell"
-                  },
-                  [4] = {
-                    id = 263642,
-                    type = "spell"
-                  },
-                  [5] = {
-                    id = 258920,
-                    type = "spell"
-                  },
-                  [6] = {
-                    id = 204596,
-                    type = "spell"
-                  },
-                  [7] = {
-                    id = 212084,
-                    type = "spell"
-                  },
-                  [8] = {
-                    id = 390163,
-                    type = "spell"
-                  },
-                  [9] = {
-                    id = 187827,
-                    type = "spell"
-                  },
-                  [10] = {
-                    id = 204021,
-                    type = "spell"
-                  },
-                  [11] = {
-                    id = 204157,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {}
-              },
-              trackedBar = {
-                dormantSequence = 0,
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 187827,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 203720,
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 204021,
-                    type = "spell"
-                  },
-                  [4] = {
-                    id = 207407,
-                    kind = "aura",
-                    type = "spell"
-                  },
-                  [5] = {
-                    id = 258920,
-                    kind = "aura",
-                    type = "spell"
-                  },
-                  [6] = {
-                    id = 207684,
-                    kind = "aura",
-                    type = "spell"
-                  },
-                  [7] = {
-                    id = 204596,
-                    kind = "aura",
-                    type = "spell"
-                  },
-                  [8] = {
-                    id = 389958,
-                    kind = "aura",
-                    type = "spell"
-                  },
-                  [9] = {
-                    id = 1253304,
-                    kind = "aura",
-                    type = "spell"
-                  },
-                  [10] = {
-                    id = 203981,
-                    kind = "aura",
-                    type = "spell"
-                  }
-                },
-                removedSpells = {
-                  [1242608] = true
-                }
-              },
-              utility = {
-                dormantSequence = 0,
-                dormantSpells = {
-                  [179057] = 4,
-                  [202137] = 6,
-                  [217832] = 8
-                },
-                ownedSpells = {
-                  [1] = {
-                    id = 189110,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 232893,
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 183752,
-                    type = "spell"
-                  },
-                  [4] = {
-                    id = 185245,
-                    type = "spell"
-                  },
-                  [5] = {
-                    id = 207684,
-                    type = "spell"
-                  },
-                  [6] = {
-                    id = 188501,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {}
-              }
-            },
-            [1473] = {
-              buff = {
-                dormantSpells = {
-                  [392268] = 2
-                },
-                ownedSpells = {
-                  [1] = {
-                    id = 438587,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 357208,
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 403631,
-                    type = "spell"
-                  },
-                  [4] = {
-                    id = 434300,
-                    type = "spell"
-                  },
-                  [5] = {
-                    id = 459537,
-                    type = "spell"
-                  },
-                  [6] = {
-                    id = 1260745,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {}
-              },
-              essential = {
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 395160,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 409311,
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 395152,
-                    type = "spell"
-                  },
-                  [4] = {
-                    id = 396286,
-                    type = "spell"
-                  },
-                  [5] = {
-                    id = 357208,
-                    type = "spell"
-                  },
-                  [6] = {
-                    id = 357210,
-                    type = "spell"
-                  },
-                  [7] = {
-                    id = 370553,
-                    type = "spell"
-                  },
-                  [8] = {
-                    id = 360827,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {}
-              },
-              utility = {
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 370665,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 363916,
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 358267,
-                    type = "spell"
-                  },
-                  [4] = {
-                    id = 357214,
-                    type = "spell"
-                  },
-                  [5] = {
-                    id = 368970,
-                    type = "spell"
-                  },
-                  [6] = {
-                    id = 358385,
-                    type = "spell"
-                  },
-                  [7] = {
-                    id = 355913,
-                    type = "spell"
-                  },
-                  [8] = {
-                    id = 360995,
-                    type = "spell"
-                  },
-                  [9] = {
-                    id = 365585,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {}
-              }
-            },
-            [1480] = {
-              buff = {
-                dormantSequence = 0,
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 1227619,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 1238488,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {}
-              },
-              essential = {
-                dormantSequence = 0,
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 1226019,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 473728,
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 1217605,
-                    type = "spell"
-                  },
-                  [4] = {
-                    id = 1245412,
-                    type = "spell"
-                  },
-                  [5] = {
-                    id = 185123,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {}
-              },
-              trackedBar = {
-                dormantSequence = 0,
-                dormantSpells = {},
-                ownedSpells = {},
-                removedSpells = {
-                  [1242608] = true
-                }
-              },
-              utility = {
-                dormantSequence = 0,
-                dormantSpells = {},
-                ownedSpells = {
-                  [1] = {
-                    id = 1234796,
-                    type = "spell"
-                  },
-                  [2] = {
-                    id = 183752,
-                    type = "spell"
-                  },
-                  [3] = {
-                    id = 198589,
-                    type = "spell"
-                  },
-                  [4] = {
-                    id = 196718,
-                    type = "spell"
-                  },
-                  [5] = {
-                    id = 207684,
-                    type = "spell"
-                  },
-                  [6] = {
-                    id = 1234195,
-                    type = "spell"
-                  },
-                  [7] = {
-                    id = 278326,
-                    type = "spell"
-                  },
-                  [8] = {
-                    id = 217832,
-                    type = "spell"
-                  },
-                  [9] = {
-                    id = 198793,
-                    type = "spell"
-                  },
-                  [10] = {
-                    id = 1251417,
-                    type = "spell"
-                  }
-                },
-                removedSpells = {}
-              }
-            }
-          },
-          _specProfilesFixed = true,
           actionBarsVisibility = {
             dontHideInDungeonsRaids = false,
             hideWhenFlying = false,
@@ -13498,7 +9595,6 @@ return {
             hideWhenSkyriding = false
           },
           buff = {
-            _dormantSequence = 0,
             opacity = 1,
             ownedSpells = {
               [1] = {
@@ -13671,27 +9767,22 @@ return {
               ownedSpells = {
                 [1] = {
                   id = 49998,
-                  kind = "aura",
                   type = "spell"
                 },
                 [2] = {
                   id = 77535,
-                  kind = "aura",
                   type = "spell"
                 },
                 [3] = {
                   id = 207167,
-                  kind = "aura",
                   type = "spell"
                 },
                 [4] = {
                   id = 454822,
-                  kind = "aura",
                   type = "spell"
                 },
                 [5] = {
                   id = 391477,
-                  kind = "aura",
                   type = "spell"
                 }
               },
@@ -13703,7 +9794,6 @@ return {
               showKeybinds = false
             },
             customBar_anon_1 = {
-              _dormantSequence = 0,
               _legacyId = "anon_1",
               _migratedFromCustomTrackers = true,
               activeGlowColor = {
@@ -14054,7 +10144,6 @@ return {
             hideWhenSkyriding = false
           },
           essential = {
-            _dormantSequence = 0,
             anchorGap = -200,
             clickableIcons = true,
             greyOutInactive = true,
@@ -14171,7 +10260,6 @@ return {
             width = 326
           },
           trackedBar = {
-            _dormantSequence = 0,
             borderSize = 1,
             durationAnchor = "CENTER",
             durationSize = 14,
@@ -14200,7 +10288,6 @@ return {
             showWhenHealthBelow100 = false
           },
           utility = {
-            _dormantSequence = 0,
             clickableIcons = true,
             growthDirection = "DOWN",
             ownedSpells = {
@@ -14395,9 +10482,6 @@ return {
           lockedToEssential = false,
           offsetY = -210,
           showPercent = false,
-          textSize = 16,
-          textX = 1,
-          textY = 3,
           texture = "Quazii v6",
           tickThickness = 2,
           unthrottledCPU = false,
@@ -14507,7 +10591,6 @@ return {
               opacity = 0.70000000000000007
             },
             auras = {
-              _specBucketsNormalized = true,
               buffOffsetX = 0,
               buffOffsetY = 0,
               debuffBlacklist = {
@@ -14529,6 +10612,7 @@ return {
                 ["*"] = {
                   [1] = {
                     anchor = "BOTTOMLEFT",
+                    applyToRoles = "all",
                     auraType = "HARMFUL",
                     blacklist = {
                       [26013] = true,
@@ -14551,25 +10635,112 @@ return {
                       raid = false,
                       raidInCombat = true
                     },
-                    dedupeDefensives = true,
-                    durationFontSize = 10,
+                    dispelFilterMode = "off",
+                    dispelTypes = {},
+                    duration = {
+                      anchor = "CENTER",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 10,
+                      offsetX = 0,
+                      offsetY = 0,
+                      show = true
+                    },
                     enabled = true,
-                    filterMode = "classification",
+                    filterFlags = {},
+                    filterMode = "classify",
                     growDirection = "RIGHT",
                     hidePermanent = true,
                     hideSwipe = false,
                     iconSize = 14,
                     id = "e5",
+                    maxDurationSec = 0,
                     maxIcons = 3,
                     mode = "filterStrip",
                     offsetX = 0,
                     offsetY = 0,
                     onlyMine = false,
                     reverseSwipe = false,
-                    showDurationColor = true,
-                    showDurationText = true,
-                    showExpiringPulse = false,
+                    rightClickCancel = true,
+                    sortReverse = false,
+                    sortRule = "INDEX",
                     spacing = 0,
+                    stack = {
+                      anchor = "BOTTOMRIGHT",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 9,
+                      offsetX = -1,
+                      offsetY = 1,
+                      show = true
+                    },
+                    whitelist = {}
+                  },
+                  [2] = {
+                    anchor = "BOTTOMRIGHT",
+                    auraType = "HELPFUL",
+                    blacklist = {},
+                    borderColor = {
+                      [1] = 0,
+                      [2] = 0.80000000000000004,
+                      [3] = 0,
+                      [4] = 1
+                    },
+                    classifications = {
+                      bigDefensive = true,
+                      externalDefensive = true
+                    },
+                    duration = {
+                      anchor = "BOTTOM",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 9,
+                      offsetX = 0,
+                      offsetY = -6,
+                      show = true
+                    },
+                    enabled = true,
+                    filterFlags = {},
+                    filterMode = "classify",
+                    growDirection = "LEFT",
+                    hideSwipe = false,
+                    iconSize = 15,
+                    id = "defensives",
+                    maxIcons = 3,
+                    mode = "filterStrip",
+                    offsetX = 0,
+                    offsetY = 4,
+                    reverseSwipe = true,
+                    rightClickCancel = false,
+                    sortReverse = false,
+                    sortRule = "INDEX",
+                    spacing = 0,
+                    stack = {
+                      anchor = "BOTTOMRIGHT",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 9,
+                      offsetX = -1,
+                      offsetY = 1,
+                      show = true
+                    },
+                    swipeStyle = "radial",
                     whitelist = {}
                   }
                 }
@@ -14582,14 +10753,6 @@ return {
               opacity = 0.60000000000000009
             },
             healer = {
-              defensiveIndicator = {
-                enabled = true,
-                growDirection = "LEFT",
-                iconSize = 15,
-                offsetY = 4,
-                position = "BOTTOMRIGHT",
-                spacing = 0
-              },
               dispelOverlay = {
                 enabled = false,
                 fillOpacity = 0.20000000000000001
@@ -14634,13 +10797,6 @@ return {
             power = {
               powerBarOnlyHealers = true,
               powerBarOnlyTanks = true
-            },
-            privateAuras = {
-              anchor = "CENTER",
-              anchorOffsetX = 0,
-              iconSize = 25,
-              spacing = 0,
-              textScale = 0.5
             }
           },
           partyTracker = {
@@ -14695,7 +10851,6 @@ return {
               maxIndicators = 3
             },
             auras = {
-              _specBucketsNormalized = true,
               buffBlacklist = {
                 [1126] = true,
                 [1459] = true,
@@ -14731,12 +10886,30 @@ return {
                 [250] = {
                   [1] = {
                     anchor = "TOP",
+                    applyToRoles = "all",
+                    auraType = "HELPFUL",
+                    border = {
+                      thickness = 2
+                    },
                     color = {
                       [1] = 1,
                       [2] = 1,
                       [3] = 1
                     },
                     displayType = "icon",
+                    duration = {
+                      anchor = "CENTER",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 9,
+                      offsetX = 0,
+                      offsetY = 0,
+                      show = true
+                    },
                     hideSwipe = true,
                     iconSize = 8,
                     mode = "tracked",
@@ -14746,10 +10919,142 @@ return {
                     onlyMineSpells = {},
                     spells = {
                       [1] = 31821
+                    },
+                    stack = {
+                      anchor = "BOTTOMRIGHT",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 9,
+                      offsetX = -1,
+                      offsetY = 1,
+                      show = true
                     }
+                  },
+                  [2] = {
+                    anchor = "BOTTOMRIGHT",
+                    auraType = "HELPFUL",
+                    blacklist = {},
+                    borderColor = {
+                      [1] = 0,
+                      [2] = 0.80000000000000004,
+                      [3] = 0,
+                      [4] = 1
+                    },
+                    classifications = {
+                      bigDefensive = true,
+                      externalDefensive = true
+                    },
+                    duration = {
+                      anchor = "BOTTOM",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 9,
+                      offsetX = 0,
+                      offsetY = -6,
+                      show = true
+                    },
+                    enabled = false,
+                    filterFlags = {},
+                    filterMode = "classify",
+                    growDirection = "LEFT",
+                    hideSwipe = false,
+                    iconSize = 15,
+                    id = "defensives",
+                    maxIcons = 3,
+                    mode = "filterStrip",
+                    offsetX = 0,
+                    offsetY = 4,
+                    reverseSwipe = true,
+                    rightClickCancel = false,
+                    sortReverse = false,
+                    sortRule = "INDEX",
+                    spacing = 0,
+                    stack = {
+                      anchor = "BOTTOMRIGHT",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 9,
+                      offsetX = -1,
+                      offsetY = 1,
+                      show = true
+                    },
+                    swipeStyle = "radial",
+                    whitelist = {}
                   }
                 },
-                ["*"] = {}
+                ["*"] = {
+                  [1] = {
+                    anchor = "BOTTOMRIGHT",
+                    auraType = "HELPFUL",
+                    blacklist = {},
+                    borderColor = {
+                      [1] = 0,
+                      [2] = 0.80000000000000004,
+                      [3] = 0,
+                      [4] = 1
+                    },
+                    classifications = {
+                      bigDefensive = true,
+                      externalDefensive = true
+                    },
+                    duration = {
+                      anchor = "BOTTOM",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 9,
+                      offsetX = 0,
+                      offsetY = -6,
+                      show = true
+                    },
+                    enabled = false,
+                    filterFlags = {},
+                    filterMode = "classify",
+                    growDirection = "LEFT",
+                    hideSwipe = false,
+                    iconSize = 15,
+                    id = "defensives",
+                    maxIcons = 3,
+                    mode = "filterStrip",
+                    offsetX = 0,
+                    offsetY = 4,
+                    reverseSwipe = true,
+                    rightClickCancel = false,
+                    sortReverse = false,
+                    sortRule = "INDEX",
+                    spacing = 0,
+                    stack = {
+                      anchor = "BOTTOMRIGHT",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 9,
+                      offsetX = -1,
+                      offsetY = 1,
+                      show = true
+                    },
+                    swipeStyle = "radial",
+                    whitelist = {}
+                  }
+                }
               },
               elementsSeeded = true,
               filterMode = "classification",
@@ -14761,12 +11066,6 @@ return {
               opacity = 0.60000000000000009
             },
             healer = {
-              defensiveIndicator = {
-                iconSize = 8,
-                offsetX = -28,
-                offsetY = -1,
-                position = "RIGHT"
-              },
               dispelOverlay = {
                 enabled = false,
                 fillOpacity = 0.5,
@@ -14836,14 +11135,6 @@ return {
                 [268] = {}
               }
             },
-            privateAuras = {
-              anchor = "CENTER",
-              anchorOffsetX = 0,
-              enabled = false,
-              iconSize = 21,
-              spacing = 0,
-              textScale = 0.5
-            },
             spotlight = {
               filterHealer = false,
               filterMode = "ROLE",
@@ -14869,71 +11160,136 @@ return {
               opacity = 0.70000000000000007
             },
             auras = {
-              buffDurationAnchor = "CENTER",
-              buffDurationColor = {
-                [1] = 1,
-                [2] = 1,
-                [3] = 1,
-                [4] = 1
-              },
-              buffDurationOffsetX = 0,
-              buffDurationOffsetY = 0,
-              buffDurationSize = 12,
-              buffFilter = {
-                modifiers = {
-                  CANCELABLE = false,
-                  NOT_CANCELABLE = false,
-                  PLAYER = false,
-                  RAID = false
+              elements = {
+                ["*"] = {
+                  [1] = {
+                    anchor = "TOPLEFT",
+                    applyToRoles = "all",
+                    auraType = "HARMFUL",
+                    blacklist = {},
+                    classifications = {
+                      crowdControl = true,
+                      raid = true
+                    },
+                    dispelFilterMode = "off",
+                    dispelTypes = {},
+                    duration = {
+                      anchor = "CENTER",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 10,
+                      offsetX = 0,
+                      offsetY = 0,
+                      show = false
+                    },
+                    enabled = false,
+                    filterFlags = {},
+                    filterMode = "off",
+                    growDirection = "RIGHT",
+                    hidePermanent = false,
+                    hideSwipe = false,
+                    iconSize = 22,
+                    iconsPerRow = 0,
+                    id = "debuffs",
+                    maxDurationSec = 0,
+                    maxIcons = 4,
+                    mode = "filterStrip",
+                    offsetX = 0,
+                    offsetY = 0,
+                    onlyMine = false,
+                    reverseSwipe = false,
+                    rightClickCancel = false,
+                    sortReverse = false,
+                    sortRule = "INDEX",
+                    spacing = 2,
+                    stack = {
+                      anchor = "BOTTOMRIGHT",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 10,
+                      offsetX = -1,
+                      offsetY = 1,
+                      show = true
+                    },
+                    swipeStyle = "radial",
+                    whitelist = {}
+                  },
+                  [2] = {
+                    anchor = "BOTTOMLEFT",
+                    applyToRoles = "all",
+                    auraType = "HELPFUL",
+                    blacklist = {},
+                    classifications = {
+                      bigDefensive = false,
+                      cancelable = false,
+                      externalDefensive = false,
+                      notCancelable = false,
+                      raid = false,
+                      raidInCombat = false
+                    },
+                    dispelFilterMode = "off",
+                    dispelTypes = {},
+                    duration = {
+                      anchor = "CENTER",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 12,
+                      offsetX = 0,
+                      offsetY = 0,
+                      show = true
+                    },
+                    enabled = false,
+                    filterFlags = {},
+                    filterMode = "off",
+                    growDirection = "RIGHT",
+                    hidePermanent = false,
+                    hideSwipe = false,
+                    iconSize = 22,
+                    iconsPerRow = 0,
+                    id = "buffs",
+                    maxDurationSec = 0,
+                    maxIcons = 4,
+                    mode = "filterStrip",
+                    offsetX = 0,
+                    offsetY = 0,
+                    onlyMine = false,
+                    reverseSwipe = false,
+                    rightClickCancel = false,
+                    sortReverse = false,
+                    sortRule = "INDEX",
+                    spacing = 2,
+                    stack = {
+                      anchor = "BOTTOMRIGHT",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 10,
+                      offsetX = -1,
+                      offsetY = 1,
+                      show = true
+                    },
+                    swipeStyle = "radial",
+                    whitelist = {}
+                  }
                 }
               },
-              buffHideSwipe = false,
-              buffMaxPerRow = 0,
-              buffShowDuration = true,
-              buffShowStack = true,
-              buffSpacing = 2,
-              buffStackAnchor = "BOTTOMRIGHT",
-              buffStackColor = {
-                [1] = 1,
-                [2] = 1,
-                [3] = 1,
-                [4] = 1
-              },
-              buffStackOffsetX = -1,
-              buffStackOffsetY = 1,
-              buffStackSize = 10,
-              debuffDurationAnchor = "CENTER",
-              debuffDurationColor = {
-                [1] = 1,
-                [2] = 1,
-                [3] = 1,
-                [4] = 1
-              },
-              debuffDurationOffsetX = 0,
-              debuffDurationOffsetY = 0,
-              debuffDurationSize = 12,
-              debuffFilter = {
-                modifiers = {
-                  INCLUDE_NAME_PLATE_ONLY = false,
-                  PLAYER = true,
-                  RAID = false
-                }
-              },
-              debuffHideSwipe = false,
-              debuffMaxPerRow = 0,
-              debuffShowDuration = true,
-              debuffShowStack = true,
-              debuffSpacing = 2,
-              debuffStackAnchor = "BOTTOMRIGHT",
-              debuffStackColor = {
-                [1] = 1,
-                [2] = 1,
-                [3] = 1,
-                [4] = 1
-              },
-              debuffStackOffsetX = -1,
-              debuffStackOffsetY = 1,
-              debuffStackSize = 10
+              elementsSeeded = true,
+              onlyMyDebuffs = true
             },
             castbar = {
               bgColor = {
@@ -15091,72 +11447,138 @@ return {
               opacity = 0.70000000000000007
             },
             auras = {
-              buffDurationAnchor = "CENTER",
-              buffDurationColor = {
-                [1] = 1,
-                [2] = 1,
-                [3] = 1,
-                [4] = 1
-              },
-              buffDurationOffsetX = 0,
-              buffDurationOffsetY = 0,
-              buffDurationSize = 12,
-              buffFilter = {
-                modifiers = {
-                  CANCELABLE = false,
-                  NOT_CANCELABLE = false,
-                  PLAYER = false,
-                  RAID = true
+              elements = {
+                ["*"] = {
+                  [1] = {
+                    anchor = "TOPLEFT",
+                    applyToRoles = "all",
+                    auraType = "HARMFUL",
+                    blacklist = {},
+                    classifications = {
+                      crowdControl = true,
+                      raid = true
+                    },
+                    dispelFilterMode = "off",
+                    dispelTypes = {},
+                    duration = {
+                      anchor = "CENTER",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 10,
+                      offsetX = 0,
+                      offsetY = 0,
+                      show = false
+                    },
+                    enabled = false,
+                    filterFlags = {},
+                    filterMode = "off",
+                    growDirection = "RIGHT",
+                    hidePermanent = false,
+                    hideSwipe = false,
+                    iconSize = 20,
+                    iconsPerRow = 0,
+                    id = "debuffs",
+                    maxDurationSec = 0,
+                    maxIcons = 16,
+                    mode = "filterStrip",
+                    offsetX = 0,
+                    offsetY = 2,
+                    onlyMine = false,
+                    reverseSwipe = false,
+                    rightClickCancel = false,
+                    sortReverse = false,
+                    sortRule = "INDEX",
+                    spacing = 2,
+                    stack = {
+                      anchor = "BOTTOMRIGHT",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 10,
+                      offsetX = -1,
+                      offsetY = 1,
+                      show = true
+                    },
+                    swipeStyle = "radial",
+                    whitelist = {}
+                  },
+                  [2] = {
+                    anchor = "BOTTOMLEFT",
+                    applyToRoles = "all",
+                    auraType = "HELPFUL",
+                    blacklist = {},
+                    classifications = {
+                      bigDefensive = false,
+                      cancelable = false,
+                      externalDefensive = false,
+                      notCancelable = false,
+                      raid = false,
+                      raidInCombat = false
+                    },
+                    dispelFilterMode = "off",
+                    dispelTypes = {},
+                    duration = {
+                      anchor = "CENTER",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 12,
+                      offsetX = 0,
+                      offsetY = 0,
+                      show = true
+                    },
+                    enabled = true,
+                    filterFlags = {
+                      RAID = true
+                    },
+                    filterMode = "flags",
+                    growDirection = "RIGHT",
+                    hidePermanent = false,
+                    hideSwipe = false,
+                    iconSize = 20,
+                    iconsPerRow = 0,
+                    id = "buffs",
+                    maxDurationSec = 0,
+                    maxIcons = 16,
+                    mode = "filterStrip",
+                    offsetX = 0,
+                    offsetY = -2,
+                    onlyMine = false,
+                    reverseSwipe = false,
+                    rightClickCancel = false,
+                    sortReverse = false,
+                    sortRule = "INDEX",
+                    spacing = 2,
+                    stack = {
+                      anchor = "BOTTOMRIGHT",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 10,
+                      offsetX = -1,
+                      offsetY = 1,
+                      show = true
+                    },
+                    swipeStyle = "radial",
+                    whitelist = {}
+                  }
                 }
               },
-              buffHideSwipe = false,
-              buffMaxPerRow = 0,
-              buffShowDuration = true,
-              buffShowStack = true,
-              buffSpacing = 2,
-              buffStackAnchor = "BOTTOMRIGHT",
-              buffStackColor = {
-                [1] = 1,
-                [2] = 1,
-                [3] = 1,
-                [4] = 1
-              },
-              buffStackOffsetX = -1,
-              buffStackOffsetY = 1,
-              buffStackSize = 10,
-              debuffDurationAnchor = "CENTER",
-              debuffDurationColor = {
-                [1] = 1,
-                [2] = 1,
-                [3] = 1,
-                [4] = 1
-              },
-              debuffDurationOffsetX = 0,
-              debuffDurationOffsetY = 0,
-              debuffDurationSize = 12,
-              debuffFilter = {
-                modifiers = {
-                  INCLUDE_NAME_PLATE_ONLY = false,
-                  PLAYER = false,
-                  RAID = false
-                }
-              },
-              debuffHideSwipe = false,
-              debuffMaxPerRow = 0,
-              debuffShowDuration = true,
-              debuffShowStack = true,
-              debuffSpacing = 2,
-              debuffStackAnchor = "BOTTOMRIGHT",
-              debuffStackColor = {
-                [1] = 1,
-                [2] = 1,
-                [3] = 1,
-                [4] = 1
-              },
-              debuffStackOffsetX = -1,
-              debuffStackOffsetY = 1,
-              debuffStackSize = 10,
-              showBuffs = true
+              elementsSeeded = true,
+              onlyMyDebuffs = false
             },
             castbar = {
               bgColor = {
@@ -15305,11 +11727,136 @@ return {
               opacity = 0.70000000000000007
             },
             auras = {
-              debuffFilter = {
-                modifiers = {
-                  PLAYER = true
+              elements = {
+                ["*"] = {
+                  [1] = {
+                    anchor = "TOPLEFT",
+                    applyToRoles = "all",
+                    auraType = "HARMFUL",
+                    blacklist = {},
+                    classifications = {
+                      crowdControl = true,
+                      raid = true
+                    },
+                    dispelFilterMode = "off",
+                    dispelTypes = {},
+                    duration = {
+                      anchor = "CENTER",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 10,
+                      offsetX = 0,
+                      offsetY = 0,
+                      show = false
+                    },
+                    enabled = false,
+                    filterFlags = {},
+                    filterMode = "off",
+                    growDirection = "RIGHT",
+                    hidePermanent = false,
+                    hideSwipe = false,
+                    iconSize = 22,
+                    iconsPerRow = 0,
+                    id = "debuffs",
+                    maxDurationSec = 0,
+                    maxIcons = 16,
+                    mode = "filterStrip",
+                    offsetX = 0,
+                    offsetY = 2,
+                    onlyMine = false,
+                    reverseSwipe = false,
+                    rightClickCancel = false,
+                    sortReverse = false,
+                    sortRule = "INDEX",
+                    spacing = 2,
+                    stack = {
+                      anchor = "BOTTOMRIGHT",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 10,
+                      offsetX = -1,
+                      offsetY = 1,
+                      show = true
+                    },
+                    swipeStyle = "radial",
+                    whitelist = {}
+                  },
+                  [2] = {
+                    anchor = "BOTTOMLEFT",
+                    applyToRoles = "all",
+                    auraType = "HELPFUL",
+                    blacklist = {},
+                    classifications = {
+                      bigDefensive = false,
+                      cancelable = false,
+                      externalDefensive = false,
+                      notCancelable = false,
+                      raid = false,
+                      raidInCombat = false
+                    },
+                    dispelFilterMode = "off",
+                    dispelTypes = {},
+                    duration = {
+                      anchor = "CENTER",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 12,
+                      offsetX = 0,
+                      offsetY = 0,
+                      show = true
+                    },
+                    enabled = false,
+                    filterFlags = {},
+                    filterMode = "off",
+                    growDirection = "RIGHT",
+                    hidePermanent = false,
+                    hideSwipe = false,
+                    iconSize = 22,
+                    iconsPerRow = 0,
+                    id = "buffs",
+                    maxDurationSec = 0,
+                    maxIcons = 16,
+                    mode = "filterStrip",
+                    offsetX = 0,
+                    offsetY = -2,
+                    onlyMine = false,
+                    reverseSwipe = false,
+                    rightClickCancel = false,
+                    sortReverse = false,
+                    sortRule = "INDEX",
+                    spacing = 2,
+                    stack = {
+                      anchor = "BOTTOMRIGHT",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 10,
+                      offsetX = -1,
+                      offsetY = 1,
+                      show = true
+                    },
+                    swipeStyle = "radial",
+                    whitelist = {}
+                  }
                 }
-              }
+              },
+              elementsSeeded = true,
+              onlyMyDebuffs = true
             },
             offsetX = -540,
             offsetY = 123
@@ -15319,25 +11866,136 @@ return {
               opacity = 0.70000000000000007
             },
             auras = {
-              buffFilter = {
-                modifiers = {
-                  CANCELABLE = false,
-                  NOT_CANCELABLE = false,
-                  PLAYER = false,
-                  RAID = false
+              elements = {
+                ["*"] = {
+                  [1] = {
+                    anchor = "TOPLEFT",
+                    applyToRoles = "all",
+                    auraType = "HARMFUL",
+                    blacklist = {},
+                    classifications = {
+                      crowdControl = true,
+                      raid = true
+                    },
+                    dispelFilterMode = "off",
+                    dispelTypes = {},
+                    duration = {
+                      anchor = "CENTER",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 10,
+                      offsetX = 0,
+                      offsetY = 0,
+                      show = false
+                    },
+                    enabled = false,
+                    filterFlags = {},
+                    filterMode = "off",
+                    growDirection = "RIGHT",
+                    hidePermanent = false,
+                    hideSwipe = false,
+                    iconSize = 22,
+                    iconsPerRow = 0,
+                    id = "debuffs",
+                    maxDurationSec = 0,
+                    maxIcons = 4,
+                    mode = "filterStrip",
+                    offsetX = 0,
+                    offsetY = 0,
+                    onlyMine = false,
+                    reverseSwipe = false,
+                    rightClickCancel = false,
+                    sortReverse = false,
+                    sortRule = "INDEX",
+                    spacing = 2,
+                    stack = {
+                      anchor = "BOTTOMRIGHT",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 10,
+                      offsetX = -1,
+                      offsetY = 1,
+                      show = true
+                    },
+                    swipeStyle = "radial",
+                    whitelist = {}
+                  },
+                  [2] = {
+                    anchor = "BOTTOMLEFT",
+                    applyToRoles = "all",
+                    auraType = "HELPFUL",
+                    blacklist = {},
+                    classifications = {
+                      bigDefensive = false,
+                      cancelable = false,
+                      externalDefensive = false,
+                      notCancelable = false,
+                      raid = false,
+                      raidInCombat = false
+                    },
+                    dispelFilterMode = "off",
+                    dispelTypes = {},
+                    duration = {
+                      anchor = "CENTER",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 12,
+                      offsetX = 0,
+                      offsetY = 0,
+                      show = true
+                    },
+                    enabled = false,
+                    filterFlags = {},
+                    filterMode = "off",
+                    growDirection = "RIGHT",
+                    hidePermanent = false,
+                    hideSwipe = false,
+                    iconSize = 22,
+                    iconsPerRow = 0,
+                    id = "buffs",
+                    maxDurationSec = 0,
+                    maxIcons = 4,
+                    mode = "filterStrip",
+                    offsetX = 0,
+                    offsetY = 0,
+                    onlyMine = false,
+                    reverseSwipe = false,
+                    rightClickCancel = false,
+                    sortReverse = false,
+                    sortRule = "INDEX",
+                    spacing = 2,
+                    stack = {
+                      anchor = "BOTTOMRIGHT",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 10,
+                      offsetX = -1,
+                      offsetY = 1,
+                      show = true
+                    },
+                    swipeStyle = "radial",
+                    whitelist = {}
+                  }
                 }
               },
-              buffHideSwipe = false,
-              buffMaxPerRow = 0,
-              debuffFilter = {
-                modifiers = {
-                  INCLUDE_NAME_PLATE_ONLY = false,
-                  PLAYER = true,
-                  RAID = false
-                }
-              },
-              debuffHideSwipe = false,
-              debuffMaxPerRow = 0
+              elementsSeeded = true,
+              onlyMyDebuffs = true
             },
             castbar = {
               anchor = "none",
@@ -15485,48 +12143,135 @@ return {
             anchorGap = 0,
             anchorTo = "essential",
             auras = {
-              buffDurationAnchor = "CENTER",
-              buffDurationColor = {
-                [1] = 1,
-                [2] = 1,
-                [3] = 1,
-                [4] = 1
-              },
-              buffDurationOffsetX = 0,
-              buffDurationOffsetY = 0,
-              buffDurationSize = 12,
-              buffFilter = {
-                modifiers = {
-                  CANCELABLE = false,
-                  NOT_CANCELABLE = false,
-                  PLAYER = false,
-                  RAID = false
+              elements = {
+                ["*"] = {
+                  [1] = {
+                    anchor = "TOPLEFT",
+                    applyToRoles = "all",
+                    auraType = "HARMFUL",
+                    blacklist = {},
+                    classifications = {
+                      crowdControl = true,
+                      raid = true
+                    },
+                    dispelFilterMode = "off",
+                    dispelTypes = {},
+                    duration = {
+                      anchor = "CENTER",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 10,
+                      offsetX = 0,
+                      offsetY = 0,
+                      show = false
+                    },
+                    enabled = true,
+                    filterFlags = {},
+                    filterMode = "off",
+                    growDirection = "RIGHT",
+                    hidePermanent = false,
+                    hideSwipe = false,
+                    iconSize = 16,
+                    iconsPerRow = 0,
+                    id = "debuffs",
+                    maxDurationSec = 0,
+                    maxIcons = 4,
+                    mode = "filterStrip",
+                    offsetX = 0,
+                    offsetY = 0,
+                    onlyMine = false,
+                    reverseSwipe = false,
+                    rightClickCancel = false,
+                    sortReverse = false,
+                    sortRule = "INDEX",
+                    spacing = 0,
+                    stack = {
+                      anchor = "BOTTOMRIGHT",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 10,
+                      offsetX = -1,
+                      offsetY = 1,
+                      show = true
+                    },
+                    swipeStyle = "radial",
+                    whitelist = {}
+                  },
+                  [2] = {
+                    anchor = "BOTTOMLEFT",
+                    applyToRoles = "all",
+                    auraType = "HELPFUL",
+                    blacklist = {},
+                    classifications = {
+                      bigDefensive = false,
+                      cancelable = false,
+                      externalDefensive = false,
+                      notCancelable = false,
+                      raid = false,
+                      raidInCombat = false
+                    },
+                    dispelFilterMode = "off",
+                    dispelTypes = {},
+                    duration = {
+                      anchor = "CENTER",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 12,
+                      offsetX = 0,
+                      offsetY = 0,
+                      show = true
+                    },
+                    enabled = false,
+                    filterFlags = {},
+                    filterMode = "off",
+                    growDirection = "RIGHT",
+                    hidePermanent = false,
+                    hideSwipe = false,
+                    iconSize = 22,
+                    iconsPerRow = 0,
+                    id = "buffs",
+                    maxDurationSec = 0,
+                    maxIcons = 4,
+                    mode = "filterStrip",
+                    offsetX = 0,
+                    offsetY = 0,
+                    onlyMine = false,
+                    reverseSwipe = false,
+                    rightClickCancel = true,
+                    sortReverse = false,
+                    sortRule = "INDEX",
+                    spacing = 2,
+                    stack = {
+                      anchor = "BOTTOMRIGHT",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 10,
+                      offsetX = -1,
+                      offsetY = 1,
+                      show = true
+                    },
+                    swipeStyle = "radial",
+                    whitelist = {}
+                  }
                 }
               },
-              buffHideSwipe = false,
-              buffShowDuration = true,
-              debuffDurationAnchor = "CENTER",
-              debuffDurationColor = {
-                [1] = 1,
-                [2] = 1,
-                [3] = 1,
-                [4] = 1
-              },
-              debuffDurationOffsetX = 0,
-              debuffDurationOffsetY = 0,
-              debuffDurationSize = 12,
-              debuffFilter = {
-                modifiers = {
-                  INCLUDE_NAME_PLATE_ONLY = false,
-                  PLAYER = false,
-                  RAID = false
-                }
-              },
-              debuffHideSwipe = false,
-              debuffShowDuration = true,
-              debuffSpacing = 0,
-              iconSize = 16,
-              showDebuffs = true
+              elementsSeeded = true
             },
             castbar = {
               anchor = "unitframe",
@@ -15679,11 +12424,136 @@ return {
               opacity = 0.70000000000000007
             },
             auras = {
-              debuffFilter = {
-                modifiers = {
-                  PLAYER = true
+              elements = {
+                ["*"] = {
+                  [1] = {
+                    anchor = "TOPLEFT",
+                    applyToRoles = "all",
+                    auraType = "HARMFUL",
+                    blacklist = {},
+                    classifications = {
+                      crowdControl = true,
+                      raid = true
+                    },
+                    dispelFilterMode = "off",
+                    dispelTypes = {},
+                    duration = {
+                      anchor = "CENTER",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 10,
+                      offsetX = 0,
+                      offsetY = 0,
+                      show = false
+                    },
+                    enabled = false,
+                    filterFlags = {},
+                    filterMode = "off",
+                    growDirection = "RIGHT",
+                    hidePermanent = false,
+                    hideSwipe = false,
+                    iconSize = 22,
+                    iconsPerRow = 0,
+                    id = "debuffs",
+                    maxDurationSec = 0,
+                    maxIcons = 16,
+                    mode = "filterStrip",
+                    offsetX = 0,
+                    offsetY = 2,
+                    onlyMine = false,
+                    reverseSwipe = false,
+                    rightClickCancel = false,
+                    sortReverse = false,
+                    sortRule = "INDEX",
+                    spacing = 2,
+                    stack = {
+                      anchor = "BOTTOMRIGHT",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 10,
+                      offsetX = -1,
+                      offsetY = 1,
+                      show = true
+                    },
+                    swipeStyle = "radial",
+                    whitelist = {}
+                  },
+                  [2] = {
+                    anchor = "BOTTOMLEFT",
+                    applyToRoles = "all",
+                    auraType = "HELPFUL",
+                    blacklist = {},
+                    classifications = {
+                      bigDefensive = false,
+                      cancelable = false,
+                      externalDefensive = false,
+                      notCancelable = false,
+                      raid = false,
+                      raidInCombat = false
+                    },
+                    dispelFilterMode = "off",
+                    dispelTypes = {},
+                    duration = {
+                      anchor = "CENTER",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 12,
+                      offsetX = 0,
+                      offsetY = 0,
+                      show = true
+                    },
+                    enabled = false,
+                    filterFlags = {},
+                    filterMode = "off",
+                    growDirection = "RIGHT",
+                    hidePermanent = false,
+                    hideSwipe = false,
+                    iconSize = 22,
+                    iconsPerRow = 0,
+                    id = "buffs",
+                    maxDurationSec = 0,
+                    maxIcons = 16,
+                    mode = "filterStrip",
+                    offsetX = 0,
+                    offsetY = -2,
+                    onlyMine = false,
+                    reverseSwipe = false,
+                    rightClickCancel = false,
+                    sortReverse = false,
+                    sortRule = "INDEX",
+                    spacing = 2,
+                    stack = {
+                      anchor = "BOTTOMRIGHT",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 10,
+                      offsetX = -1,
+                      offsetY = 1,
+                      show = true
+                    },
+                    swipeStyle = "radial",
+                    whitelist = {}
+                  }
                 }
-              }
+              },
+              elementsSeeded = true,
+              onlyMyDebuffs = true
             },
             enabled = true,
             offsetX = -687,
@@ -15698,55 +12568,138 @@ return {
             anchorGap = 0,
             anchorTo = "essential",
             auras = {
-              buffAnchor = "TOPRIGHT",
-              buffDurationAnchor = "CENTER",
-              buffDurationColor = {
-                [1] = 1,
-                [2] = 1,
-                [3] = 1,
-                [4] = 1
-              },
-              buffDurationOffsetX = 0,
-              buffDurationOffsetY = 0,
-              buffDurationSize = 12,
-              buffFilter = {
-                modifiers = {
-                  CANCELABLE = false,
-                  NOT_CANCELABLE = false,
-                  PLAYER = false,
-                  RAID = false
+              elements = {
+                ["*"] = {
+                  [1] = {
+                    anchor = "TOPLEFT",
+                    applyToRoles = "all",
+                    auraType = "HARMFUL",
+                    blacklist = {},
+                    classifications = {
+                      crowdControl = true,
+                      raid = true
+                    },
+                    dispelFilterMode = "off",
+                    dispelTypes = {},
+                    duration = {
+                      anchor = "CENTER",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 10,
+                      offsetX = 0,
+                      offsetY = 0,
+                      show = false
+                    },
+                    enabled = true,
+                    filterFlags = {
+                      PLAYER = true
+                    },
+                    filterMode = "flags",
+                    growDirection = "RIGHT",
+                    hidePermanent = false,
+                    hideSwipe = false,
+                    iconSize = 26,
+                    iconsPerRow = 0,
+                    id = "debuffs",
+                    maxDurationSec = 0,
+                    maxIcons = 4,
+                    mode = "filterStrip",
+                    offsetX = 0,
+                    offsetY = 0,
+                    onlyMine = false,
+                    reverseSwipe = false,
+                    rightClickCancel = false,
+                    sortReverse = false,
+                    sortRule = "INDEX",
+                    spacing = 0,
+                    stack = {
+                      anchor = "BOTTOMRIGHT",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 10,
+                      offsetX = -1,
+                      offsetY = 1,
+                      show = true
+                    },
+                    swipeStyle = "radial",
+                    whitelist = {}
+                  },
+                  [2] = {
+                    anchor = "TOPRIGHT",
+                    applyToRoles = "all",
+                    auraType = "HELPFUL",
+                    blacklist = {},
+                    classifications = {
+                      bigDefensive = false,
+                      cancelable = false,
+                      externalDefensive = false,
+                      notCancelable = false,
+                      raid = false,
+                      raidInCombat = false
+                    },
+                    dispelFilterMode = "off",
+                    dispelTypes = {},
+                    duration = {
+                      anchor = "CENTER",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 12,
+                      offsetX = 0,
+                      offsetY = 0,
+                      show = true
+                    },
+                    enabled = true,
+                    filterFlags = {},
+                    filterMode = "off",
+                    growDirection = "LEFT",
+                    hidePermanent = false,
+                    hideSwipe = true,
+                    iconSize = 18,
+                    iconsPerRow = 0,
+                    id = "buffs",
+                    maxDurationSec = 0,
+                    maxIcons = 4,
+                    mode = "filterStrip",
+                    offsetX = 0,
+                    offsetY = 0,
+                    onlyMine = false,
+                    reverseSwipe = false,
+                    rightClickCancel = false,
+                    sortReverse = false,
+                    sortRule = "INDEX",
+                    spacing = 0,
+                    stack = {
+                      anchor = "BOTTOMRIGHT",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 10,
+                      offsetX = -1,
+                      offsetY = 1,
+                      show = true
+                    },
+                    swipeStyle = "radial",
+                    whitelist = {}
+                  }
                 }
               },
-              buffGrow = "LEFT",
-              buffHideSwipe = true,
-              buffMaxPerRow = 0,
-              buffShowDuration = true,
-              buffSpacing = 0,
-              debuffDurationAnchor = "CENTER",
-              debuffDurationColor = {
-                [1] = 1,
-                [2] = 1,
-                [3] = 1,
-                [4] = 1
-              },
-              debuffDurationOffsetX = 0,
-              debuffDurationOffsetY = 0,
-              debuffDurationSize = 12,
-              debuffFilter = {
-                modifiers = {
-                  INCLUDE_NAME_PLATE_ONLY = false,
-                  PLAYER = true,
-                  RAID = false
-                }
-              },
-              debuffHideSwipe = false,
-              debuffMaxPerRow = 0,
-              debuffShowDuration = true,
-              debuffSpacing = 0,
-              debuffStackOffsetX = 0,
-              debuffStackOffsetY = 0,
-              showBuffs = true,
-              showDebuffs = true
+              elementsSeeded = true,
+              onlyMyDebuffs = true
             },
             castbar = {
               channelFillForward = false,
@@ -15879,74 +12832,136 @@ return {
               opacity = 0.70000000000000007
             },
             auras = {
-              buffDurationAnchor = "CENTER",
-              buffDurationColor = {
-                [1] = 1,
-                [2] = 1,
-                [3] = 1,
-                [4] = 1
-              },
-              buffDurationOffsetX = 0,
-              buffDurationOffsetY = 0,
-              buffDurationSize = 12,
-              buffFilter = {
-                modifiers = {
-                  CANCELABLE = false,
-                  NOT_CANCELABLE = false,
-                  PLAYER = false,
-                  RAID = false
+              elements = {
+                ["*"] = {
+                  [1] = {
+                    anchor = "TOPRIGHT",
+                    applyToRoles = "all",
+                    auraType = "HARMFUL",
+                    blacklist = {},
+                    classifications = {
+                      crowdControl = true,
+                      raid = true
+                    },
+                    dispelFilterMode = "off",
+                    dispelTypes = {},
+                    duration = {
+                      anchor = "CENTER",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 10,
+                      offsetX = 0,
+                      offsetY = 0,
+                      show = false
+                    },
+                    enabled = true,
+                    filterFlags = {},
+                    filterMode = "off",
+                    growDirection = "LEFT",
+                    hidePermanent = false,
+                    hideSwipe = false,
+                    iconSize = 22,
+                    iconsPerRow = 0,
+                    id = "debuffs",
+                    maxDurationSec = 0,
+                    maxIcons = 4,
+                    mode = "filterStrip",
+                    offsetX = 0,
+                    offsetY = 0,
+                    onlyMine = false,
+                    reverseSwipe = false,
+                    rightClickCancel = false,
+                    sortReverse = false,
+                    sortRule = "INDEX",
+                    spacing = 0,
+                    stack = {
+                      anchor = "BOTTOMRIGHT",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 10,
+                      offsetX = -1,
+                      offsetY = 1,
+                      show = true
+                    },
+                    swipeStyle = "radial",
+                    whitelist = {}
+                  },
+                  [2] = {
+                    anchor = "BOTTOMLEFT",
+                    applyToRoles = "all",
+                    auraType = "HELPFUL",
+                    blacklist = {},
+                    classifications = {
+                      bigDefensive = false,
+                      cancelable = false,
+                      externalDefensive = false,
+                      notCancelable = false,
+                      raid = false,
+                      raidInCombat = false
+                    },
+                    dispelFilterMode = "off",
+                    dispelTypes = {},
+                    duration = {
+                      anchor = "CENTER",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 12,
+                      offsetX = 0,
+                      offsetY = 0,
+                      show = true
+                    },
+                    enabled = false,
+                    filterFlags = {},
+                    filterMode = "off",
+                    growDirection = "RIGHT",
+                    hidePermanent = false,
+                    hideSwipe = false,
+                    iconSize = 22,
+                    iconsPerRow = 0,
+                    id = "buffs",
+                    maxDurationSec = 0,
+                    maxIcons = 4,
+                    mode = "filterStrip",
+                    offsetX = 0,
+                    offsetY = 0,
+                    onlyMine = false,
+                    reverseSwipe = false,
+                    rightClickCancel = false,
+                    sortReverse = false,
+                    sortRule = "INDEX",
+                    spacing = 2,
+                    stack = {
+                      anchor = "BOTTOMRIGHT",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 10,
+                      offsetX = -1,
+                      offsetY = 1,
+                      show = true
+                    },
+                    swipeStyle = "radial",
+                    whitelist = {}
+                  }
                 }
               },
-              buffHideSwipe = false,
-              buffMaxPerRow = 0,
-              buffShowDuration = true,
-              buffShowStack = true,
-              buffSpacing = 2,
-              buffStackAnchor = "BOTTOMRIGHT",
-              buffStackColor = {
-                [1] = 1,
-                [2] = 1,
-                [3] = 1,
-                [4] = 1
-              },
-              buffStackOffsetX = -1,
-              buffStackOffsetY = 1,
-              buffStackSize = 10,
-              debuffAnchor = "TOPRIGHT",
-              debuffDurationAnchor = "CENTER",
-              debuffDurationColor = {
-                [1] = 1,
-                [2] = 1,
-                [3] = 1,
-                [4] = 1
-              },
-              debuffDurationOffsetX = 0,
-              debuffDurationOffsetY = 0,
-              debuffDurationSize = 12,
-              debuffFilter = {
-                modifiers = {
-                  INCLUDE_NAME_PLATE_ONLY = false,
-                  PLAYER = false,
-                  RAID = false
-                }
-              },
-              debuffGrow = "LEFT",
-              debuffHideSwipe = false,
-              debuffMaxPerRow = 0,
-              debuffShowDuration = true,
-              debuffShowStack = true,
-              debuffSpacing = 0,
-              debuffStackAnchor = "BOTTOMRIGHT",
-              debuffStackColor = {
-                [1] = 1,
-                [2] = 1,
-                [3] = 1,
-                [4] = 1
-              },
-              debuffStackOffsetX = -1,
-              debuffStackOffsetY = 1,
-              debuffStackSize = 10,
-              showDebuffs = true
+              elementsSeeded = true,
+              onlyMyDebuffs = false
             },
             castbar = {
               anchor = "none",

@@ -18,10 +18,13 @@
 std = "lua51"
 max_line_length = false   -- WoW addons commonly run wider than 120 cols
 
--- meta/ holds LuaLS ---@meta definition stubs for the editor only (never loaded
--- in-game). They are generated function stubs, so linting them is meaningless
--- and noisy (unused args, "setting read-only global").
-exclude_files = { "meta" }
+-- Exclude code that is not part of QUI's lint ownership:
+--   meta/  — generated LuaLS definition stubs (never loaded in-game)
+--   tests/ — vendored Blizzard FrameXML/API fixtures and test harnesses
+--   libs/  — vendored third-party libraries maintained upstream
+-- This keeps `luacheck .` aligned with the warning-clean addon scope enforced
+-- by CI without hiding findings in QUI-owned addon directories.
+exclude_files = { "meta", "tests", "libs" }
 
 -- Suppress noise from common WoW idioms:
 --   212/self   — frames pass `self` to OnEvent/OnUpdate scripts; often unused
@@ -55,6 +58,7 @@ globals = {
     "SLASH_QUISCAN1",
     "SLASH_QUISCAN2",
     "SLASH_QUIKB1",
+    "SLASH_QUILOG1",
     "SLASH_QUI_CDM1",
     "SlashCmdList",
     "BINDING_NAME_QUI_TOGGLE_OPTIONS",
@@ -63,11 +67,11 @@ globals = {
 -- WoW client globals — read-only from addon code.
 read_globals = {
     -- Frame creation / UI primitives
-    "CreateFrame", "EnumerateFrames", "UIParent", "WorldFrame", "GameTooltip",
+    "CreateFrame", "CreateFont", "EnumerateFrames", "UIParent", "WorldFrame", "GameTooltip",
     "QuickKeybindFrame", "ShowUIPanel", "UIFrameFadeOut", "Settings",
-    "CooldownViewerSettings", "EventRegistry", "AssistedCombatManager",
+    "CooldownViewerSettings", "CooldownViewerItemMixin", "CooldownViewerMixin", "EventRegistry", "AssistedCombatManager",
     "STANDARD_TEXT_FONT", "UIErrorsFrame", "UISpecialFrames",
-    "MouseIsOver", "StaticPopup_Show", "StopDrag",
+    "StaticPopup_Show", "StopDrag",
     "GENERAL", "MAX_TOTEMS", "NUM_CHAT_WINDOWS", "RAID_CLASS_COLORS",
     "CUSTOM_CLASS_COLORS", "SetPortraitTexture",
 
@@ -103,7 +107,7 @@ read_globals = {
     -- C_* namespace tables (whitelisted whole — methods accessed via dot/colon)
     "C_ActionBar", "C_AddOnProfiler", "C_AddOns", "C_AssistedCombat",
     "C_PartyInfo", "C_Spell", "C_Timer", "C_UnitAuras", "C_TooltipInfo",
-    "C_NamePlate", "C_ItemCallbacks",
+    "C_NamePlate", "C_ItemCallbacks", "C_Secrets",
     "C_ChallengeMode", "C_ClassTalents", "C_Container", "C_CooldownViewer",
     "C_CurveUtil", "C_DurationUtil", "C_Item", "C_ScenarioInfo",
     "C_SpellActivationOverlay",
@@ -113,14 +117,16 @@ read_globals = {
     "DIFFICULTY_MYTHIC_PLUS",
 
     -- Enum and utility tables
-    "Enum", "AuraUtil", "TextureKitConstants",
+    "Enum", "AuraUtil", "TextureKitConstants", "AnchorUtil", "TimeUtil",
+    "AuraContainerSortMethod", "AuraContainerSortDirection",
+    "AuraContainerItemEnchantmentSlot", "CustomAuraContainerItemEnchantmentPlacement",
 
     -- WoW Lua extensions (Lua 5.1 base + Blizzard additions)
     "wipe", "strsplit", "strjoin", "strtrim", "strconcat", "format",
     "tContains", "tInvert", "tDeleteItem", "Mixin", "CreateFromMixins",
     "hooksecurefunc", "issecure", "issecurevariable", "IsSecureCmd",
-    "tostringall", "issecretvalue", "Clamp",
-    "CopyTable", "debugprofilestop", "geterrorhandler", "time", "tinsert",
+    "securecallfunction", "tostringall", "issecretvalue", "canaccesstable", "canaccessvalue", "Clamp",
+    "CopyTable", "debugprofilestop", "geterrorhandler", "seterrorhandler", "time", "tinsert",
 
     -- debug.upvaluejoin is a Blizzard backport (Lua 5.2+) used by the ActionBars
     -- chunk-env setfenv shim (actionbars_env.lua); allow this one field while
@@ -140,6 +146,9 @@ BonusRollFrame BonusRollFrame_StartBonusRoll CLASS_ICON_TCOORDS LootWonAlertFram
 ADVENTURE_JOURNAL ARMOR ATTACK_POWER_MAGIC_NUMBER ATTACK_SPEED AbbreviateLargeNumbers AbbreviateNumbers AcceptGroup AcceptQuest CancelDuel CancelTrade CloseAllBags DeclineGroup RepopMe FRIENDS_BUTTON_TYPE_WOW FRIENDS_BUTTON_TYPE_BNET Sound_GameSystem_GetNumOutputDrivers Sound_GameSystem_GetOutputDriverNameByIndex MuteSoundFile UnmuteSoundFile
 MainMenuMicroButton_HideAlert CollectionsMicroButton_SetAlertShown LE_MOUNT_JOURNAL_FILTER_COLLECTED LE_MOUNT_JOURNAL_FILTER_UNUSABLE C_PetJournal C_ToyBoxInfo COLLECTION_UNOPENED_PLURAL COLLECTION_UNOPENED_SINGULAR
 C_AutoComplete FACTION_ALLIANCE FACTION_HORDE FACTION_NEUTRAL PVP_ENABLED PVP UnitIsInMyGuild
+GetSpecializationInfoForClassID GetNumClasses EJ_GetDifficulty EJ_SetLootFilter EJ_GetLootFilter EJ_GetNumLoot EJ_GetEncounterInfo EJ_GetEncounterInfoByIndex EJ_SelectInstance EJ_GetInstanceInfo EJ_SelectTier EJ_GetCurrentTier EJ_GetInstanceByIndex EJ_GetNumTiers EncounterJournal_GetIconIndexFromFlag GetEJTierDataTableID GetExpansionLevel GetServerExpansionLevel C_EncounterJournal ScrollBoxListMixin CommunitiesFrameMixin
+MAX_TRADE_ITEMS TRADE_ENCHANT_SLOT GetTradePlayerItemInfo GetTradeTargetItemInfo GetTradePlayerItemLink GetTradeTargetItemLink GetPlayerTradeMoney GetTargetTradeMoney GetRealZoneText
+GetSendMailMoney GetSendMailCOD HasSendMailItem GetSendMailItem GetSendMailItemLink GetInboxHeaderInfo GetInboxItem GetInboxItemLink ATTACHMENTS_MAX_SEND ATTACHMENTS_MAX_RECEIVE MAX_ACCOUNT_MACROS UnitIsFeignDeath
 AchievementAlertSystem ActionBarController_UpdateAll ActionButtonSpellAlertManager ActionButton_ShowOverlayGlow ActionButton_StartFlash ActionButton_StopFlash ActionButton_Update ActionButton_UpdateCooldown
 AddonCompartmentFrame AlertFrame AuctionFrame AuctionHouseFrame BASE_MOVEMENT_SPEED BATTLEFIELD_MINIMAP BLOCK_CHANCE BNConnected
 BNET_CLIENT_WOW BNGetNumFriends BNInviteFriend BNToastFrame BOOKTYPE_SPELL BackpackTokenFrame BagsBar BonusRollLootWonFrame
@@ -150,7 +159,7 @@ CR_VERSATILITY_DAMAGE_DONE CR_VERSATILITY_DAMAGE_TAKEN CR_VERSATILITY_TOOLTIP C_
 C_ClassColor C_Club C_CreatureInfo C_CurrencyInfo C_Cursor C_DateAndTime C_EncodingUtil C_FriendList
 C_GossipInfo C_GuildInfo C_IncomingSummon C_LevelLink C_MajorFactions C_Map C_MountJournal C_MythicPlus C_PaperDollInfo
 C_PetBattles C_PlayerInfo C_PvP C_QuestLog C_Reputation C_SpecializationInfo C_SummonInfo C_TaskQuest C_TransmogCollection
-C_Texture C_ToyBox C_UIWidgetManager C_WeeklyRewards C_WowTokenPublic CanExitVehicle CanGuildBankRepair CanInspect CanMerchantRepair ChallengesFrame ChallengesKeystoneFrame
+C_Texture C_ToyBox C_UIWidgetManager C_WeeklyRewards C_WowTokenPublic CanExitVehicle CanGuildBankRepair CanInspect CanMerchantRepair CancelItemTempEnchantment CancelUnitBuff ChallengesFrame ChallengesKeystoneFrame
 ChangeChatColor CharacterBackSlot CharacterChestSlot CharacterFeetSlot CharacterFinger0Slot CharacterFinger1Slot CharacterFrame CharacterFrameBg
 CharacterFrameInset CharacterFrameInsetRight CharacterFramePortrait CharacterFrameTab1 CharacterFrameTab2 CharacterFrameTab3 CharacterFrameTitleText CharacterHandsSlot
 CharacterHeadSlot CharacterLegsSlot CharacterLevelText CharacterMainHandSlot CharacterModelScene CharacterNeckSlot CharacterReagentBag0Slot CharacterSecondaryHandSlot
@@ -178,7 +187,7 @@ GetNetIpTypes GetNetStats GetNormalizedRealmName GetNumGroupMembers GetNumGuildM
 GetNumSavedInstances GetNumSavedWorldBosses GetNumShapeshiftForms GetNumSpecializations GetNumSubgroupMembers GetParryChance GetParryChanceFromAttribute GetPetActionCooldown
 GetPetActionInfo GetPetActionSlotUsable GetPhysicalScreenSize GetPlayerInfoByGUID GetPowerBarColor GetPowerRegenForPowerType GetProfessionInfo GetProfessions GetQuestDifficultyColor GetQuestProgressBarPercent
 GetQuestReward GetRaidRosterInfo GetRaidTargetIndex GetReadyCheckStatus GetRepairAllCost GetRestState GetRuneCooldown GetSavedInstanceInfo
-GetSavedWorldBossInfo GetScaledCursorPosition GetScreenHeight GetScreenWidth GetServerTime GetShapeshiftForm GetShapeshiftFormCooldown GetShapeshiftFormID
+GetSavedWorldBossInfo GetScreenHeight GetScreenWidth GetServerTime GetShapeshiftForm GetShapeshiftFormCooldown GetShapeshiftFormID
 GetShapeshiftFormInfo GetShieldBlock GetSpecializationMasterySpells GetSpecializationRole GetSpeed GetSpellBonusDamage GetSpellCharges GetSpellCooldown
 GetSpellCritChance GetSpellTexture GetStaggerPercentage GetSubZoneText GetTimePreciseSec GetTotemTimeLeft GetUnitChargedPowerPoints GetUnitEmpowerHoldAtMaxTime
 GetUnitMaxHealthModifier GetUnitName GetUnitPowerBarInfo GetUnitPowerBarStrings GetUnitSpeed GetVersatilityBonus GetWeaponEnchantInfo GetWorldElapsedTime
@@ -224,7 +233,7 @@ UnitAura UnitCanAssist UnitCastingDuration UnitChannelDuration UnitClassificatio
 UnitFullName UnitGUID UnitGetDetailedHealPrediction UnitGetIncomingHeals UnitGetTotalAbsorbs UnitGetTotalHealAbsorbs UnitGroupRolesAssigned UnitHPPerStamina
 UnitHasIncomingResurrection UnitHasVehicleUI UnitHealth UnitHealthMax UnitHealthMissing UnitInParty UnitInRaid UnitInRange
 UnitInVehicle UnitIsAFK UnitIsConnected UnitIsDeadOrGhost UnitIsFriend UnitIsGhost UnitIsGroupAssistant UnitIsGroupLeader UnitIsPlayer
-UnitIsUnit UnitLevel UnitPhaseReason UnitPower UnitPowerPercent UnitPowerType UnitReaction UnitSex
+UnitIsUnit UnitIsVisible UnitLevel UnitPhaseReason UnitPower UnitPowerPercent UnitPowerType UnitReaction UnitSex
 UnitShouldDisplaySpellTargetName UnitSpellHaste UnitStagger UnitStat UnitThreatSituation UnitXP UnitXPMax UnregisterStateDriver UpdateAddOnCPUUsage
 UpdateMicroButtons UpdateMicroButtonsParent WOW_PROJECT_ID WOW_PROJECT_MAINLINE WardrobeFrame WardrobeTransmogFrame WeeklyRewardsFrame WeeklyRewards_ShowUI WorldMapFrame
 WorldQuestCompleteAlertSystem ZoneAbilityFrame debugprofilestart gsub strupper tremove table.unpack table.wipe
@@ -239,7 +248,9 @@ GUILD_BANK GUILDBANK_AWARD_MONEY_SUMMARY_FORMAT GUILDBANK_BUYTAB_MONEY_FORMAT GU
 GUILDBANK_MOVE_FORMAT GUILDBANK_REPAIR_MONEY_FORMAT GUILDBANK_UNLOCKTAB_FORMAT GUILDBANK_WITHDRAW_FORMAT GUILDBANK_WITHDRAWFORTAB_MONEY_FORMAT GUILDBANK_WITHDRAW_MONEY_FORMAT MAX_GUILDBANK_TABS
 ChatEdit_InsertLink HandleModifiedItemClick IsModifiedClick GetDenominationsFromCopper RecentTimeDate ColorManager MonthlyActivitiesFrameMixin SetCVarBitfield StaticPopup_OnClick
 ACCEPT CANCEL BANK QUESTION_MARK_ICON UNKNOWN NORMAL_FONT_COLOR_CODE bit debugstack
+AuraButtonBorderStyle PrivateAurasTooltipMixin
 ButtonFrameTemplate_ShowButtonBar WeeklyRewardsMixin
+GetBestMapForUnit
 ]]
 
 for name in additional_read_globals:gmatch("%S+") do
@@ -386,7 +397,7 @@ files["QUI_ActionBars/actionbars/actionbars_skinning.lua"] = {
     ignore = { "111", "112", "113", "121" },
 }
 
-files["QUI_QoL/dungeon/party_keystones.lua"] = {
+files["modules/dungeon/party_keystones.lua"] = {
     ignore = { "113" },
 }
 
@@ -407,5 +418,14 @@ files["tests/"] = {
         "121", -- setting a read-only global (stubbing a WoW API global)
         "122", -- setting a read-only field of a global
         "131", -- unused implicitly defined global
+    },
+    -- Instrumentation helper globals installed by
+    -- tests/helpers/secret_sentinel.lua InstallSecretStub and called from
+    -- sources rewritten by tests/helpers/secret_instrument.lua.
+    globals = {
+        "__QUI_SECRET_TT",
+        "__QUI_SECRET_EQ",
+        "__QUI_SECRET_NEQ",
+        "__QUI_SECRET_LEN",
     },
 }

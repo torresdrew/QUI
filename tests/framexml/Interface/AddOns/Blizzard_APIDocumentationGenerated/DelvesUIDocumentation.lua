@@ -196,6 +196,36 @@ local DelvesUI =
 			},
 		},
 		{
+			Name = "GetFlavorNodeForCompanion",
+			Type = "Function",
+			SecretArguments = "AllowedWhenUntainted",
+
+			Arguments =
+			{
+				{ Name = "companionID", Type = "number", Nilable = true },
+			},
+
+			Returns =
+			{
+				{ Name = "nodeID", Type = "number", Nilable = false },
+			},
+		},
+		{
+			Name = "GetFlavorNodeNameForCompanion",
+			Type = "Function",
+			SecretArguments = "AllowedWhenUntainted",
+
+			Arguments =
+			{
+				{ Name = "companionID", Type = "number", Nilable = true },
+			},
+
+			Returns =
+			{
+				{ Name = "name", Type = "cstring", Nilable = false },
+			},
+		},
+		{
 			Name = "GetLockedTextForCompanion",
 			Type = "Function",
 			SecretArguments = "AllowedWhenUntainted",
@@ -349,6 +379,15 @@ local DelvesUI =
 			},
 		},
 		{
+			Name = "HasActiveLair",
+			Type = "Function",
+
+			Returns =
+			{
+				{ Name = "result", Type = "bool", Nilable = false },
+			},
+		},
+		{
 			Name = "IsDelveEntranceTierEnabled",
 			Type = "Function",
 			SecretArguments = "AllowedWhenUntainted",
@@ -361,7 +400,7 @@ local DelvesUI =
 			Returns =
 			{
 				{ Name = "isEnabled", Type = "bool", Nilable = false },
-				{ Name = "failureReason", Type = "cstring", Nilable = true },
+				{ Name = "failureReason", Type = "string", Nilable = true },
 			},
 		},
 		{
@@ -540,11 +579,14 @@ local DelvesUI =
 			{
 				{ Name = "tier", Type = "number", Nilable = false },
 				{ Name = "suggestedILvl", Type = "number", Nilable = false },
+				{ Name = "overrideTooltipSpellID", Type = "number", Nilable = false },
 				{ Name = "unlocked", Type = "bool", Nilable = false },
 				{ Name = "tierDescription", Type = "string", Nilable = false },
 				{ Name = "rewards", Type = "table", InnerType = "TieredEntranceRewardInfo", Nilable = false },
 				{ Name = "modifierUIWidgetSetID", Type = "number", Nilable = false },
-				{ Name = "lockedReason", Type = "cstring", Nilable = true },
+				{ Name = "lockedReason", Type = "string", Nilable = true },
+				{ Name = "queueAsLFG", Type = "bool", Nilable = false },
+				{ Name = "difficultyID", Type = "number", Nilable = false },
 			},
 		},
 	},

@@ -14,12 +14,13 @@
         ns.CDMComposerPreview.Refresh(containerKey)
         ns.CDMComposerPreview.Teardown()
         ns.CDMComposerPreview.SetScale(scale)
+        ns.CDMComposerPreview.GetContentFrames()
+        ns.CDMComposerPreview.Relayout()
 
     Invariants:
         * No game events are registered.
         * Never calls into CDM runtime event scheduling.
-        * Never touches the Blizzard CDM mirror (enforced by
-          CDMIconFactory.AcquireForPreview skipping TryBindIconToBlizz).
+        * Bypasses runtime icon binding (uses CDMIconFactory.AcquireForPreview).
         * Preview icons/bars are not pooled with runtime frames.
         * Glow is delegated to the shared runtime applier
           (ns._OwnedGlows.ApplyGlowWithKey) so every glow setting renders
@@ -620,7 +621,15 @@ end
 ---------------------------------------------------------------------------
 
 function CDMComposerPreview.Build(gridArea)
-    if state.ticker then return end  -- idempotent
+    if state.ticker then
+        -- Cached settings surfaces can be detached and rebuilt with a new
+        -- preview host. Keep the single ticker, but move the driver to the
+        -- current grid so newly acquired content is measured and painted in
+        -- the visible composer.
+        state.gridArea = gridArea
+        state.ticker:SetParent(gridArea)
+        return
+    end
     state.gridArea = gridArea
     state.ticker = CreateFrame("Frame", nil, gridArea)
     state.ticker:SetScript("OnUpdate", function(_, elapsed)
@@ -712,4 +721,36 @@ end
 
 function CDMComposerPreview.SetScale(scale)
     state.scale = scale or 1.5
+end
+
+-- Return only the driver-owned content roots. Callers use these frames for
+-- geometry measurement; exposing the explicit list avoids treating the
+-- ticker or preview-only effect children as layout content.
+function CDMComposerPreview.GetContentFrames()
+    if state.scriptKind == "bar" then
+        return state.previewBars
+    end
+    return state.previewIcons
+end
+
+-- Re-center the existing frames after the preview host changes height.
+-- This deliberately does not reacquire or restyle content, so an auto-fit
+-- pass cannot reset the preview animation state.
+function CDMComposerPreview.Relayout()
+    if state.scriptKind == "bar" then
+        if _G.QUI_LayoutCDMPreviewBars and state.containerDB then
+            _G.QUI_LayoutCDMPreviewBars(
+                state.previewBars,
+                state.containerDB,
+                state.scale,
+                state.containerKey
+            )
+        end
+    elseif _G.QUI_LayoutCDMPreviewIcons and state.containerKey then
+        _G.QUI_LayoutCDMPreviewIcons(
+            state.previewIcons,
+            state.containerKey,
+            state.scale
+        )
+    end
 end

@@ -8,7 +8,7 @@ local function readFile(path)
     return data
 end
 
-local source = readFile("QUI_QoL/qol/tooltip.lua")
+local source = readFile("modules/qol/tooltip.lua")
 
 assert(source:find("local function AddTooltipInfoLine", 1, true),
     "tooltip QoL additions should use a shared left-aligned wrapped line helper")
@@ -281,13 +281,20 @@ local function runHideFadeSelfFocusRegression()
                 return left == right
             end,
         },
+        SafeCall = function(_policy, fn, ...)
+            return pcall(fn, ...)
+        end,
+        SafeCallMethod = function(_policy, obj, name, ...)
+            return pcall(function(...) return obj[name](obj, ...) end, ...)
+        end,
+        SafeCallMethodIfPresent = function(_policy, obj, name, ...) if obj == nil then return nil end local okP, m = pcall(function() return obj[name] end) if not okP then return false end if m == nil then return nil end return pcall(m, obj, ...) end,
         L = setmetatable({}, {
             __index = function(_, key) return key end,
         }),
     }
 
-    assert(loadfile("QUI_QoL/qol/tooltip_provider.lua"))("QUI", testNS)
-    assert(loadfile("QUI_QoL/qol/tooltip.lua"))("QUI", testNS)
+    assert(loadfile("modules/qol/tooltip_provider.lua"))("QUI", testNS)
+    assert(loadfile("modules/qol/tooltip.lua"))("QUI", testNS)
     testNS.TooltipProvider:InitializeEngine()
 
     local visibilityWatcher

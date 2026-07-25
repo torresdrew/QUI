@@ -69,6 +69,9 @@ end
 
 local function HiddenUnlessDisciplinePriest()
     local _, class = UnitClass("player")
+    -- @secret-policy: collapse-only — UnitClass can return SECRET on 12.1 PTR7
+    -- (SecretWhenUnitIdentityRestricted); collapse ⇒ hidden (the safe default below).
+    if issecretvalue and issecretvalue(class) then class = nil end
     if class ~= "PRIEST" then return true end
     local spec = GetSpecialization and GetSpecialization()
     if spec then
@@ -100,12 +103,6 @@ local VISUAL_MODULES = {
     {
         key = "buffFrame", group = ns.L["Display"], label = ns.L["Buff Frame"],
         caption = ns.L["Active beneficial auras with custom borders."],
-        combatLocked = true,
-        hidden = HiddenFromFeatureToggles,
-    },
-    {
-        key = "debuffFrame", group = ns.L["Display"], label = ns.L["Debuff Frame"],
-        caption = ns.L["Active harmful auras with custom borders."],
         combatLocked = true,
         hidden = HiddenFromFeatureToggles,
     },

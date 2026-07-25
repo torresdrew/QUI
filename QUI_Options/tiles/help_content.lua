@@ -198,13 +198,6 @@ QUI_HelpContent.Diagnostics = {
     { label = ns.L["Open CDM Composer"],    command = "/qui cdm",
       tooltip = ns.L["Open the QUI CDM Spell Composer for editing custom CDM tracking entries."],
       run = function() QUI:SlashCommandOpen("cdm") end },
-    { label = ns.L["CDM Cache Status"],     command = "/qui cdm_cache status",
-      tooltip = ns.L["Print sizes and dirty flags for every CDM internal cache. Use first when CDM seems stuck."],
-      run = function() QUI:SlashCommandOpen("cdm_cache status") end },
-    { label = ns.L["CDM Cache Reset"],      command = "/qui cdm_cache reset",
-      tooltip = ns.L["Wipe and rebuild every CDM cache. Out-of-combat only. Run when /qui cdm_cache status reports stale state."],
-      danger = true,
-      run = function() QUI:SlashCommandOpen("cdm_cache reset") end },
     -- Migrations & profiles
     { label = ns.L["Migration Status"],     command = "/qui migration status",
       tooltip = ns.L["Print the active profile's schema version and any available rollback slots."],

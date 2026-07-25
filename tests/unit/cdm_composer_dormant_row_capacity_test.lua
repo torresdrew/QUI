@@ -18,6 +18,8 @@ local helperPos = assert(source:find("local function EntryCountsForCooldownRowCa
     "composer should centralize dormant-aware cooldown row capacity checks")
 assert(source:find("local function IsEntryDormantOnCurrentPlayer", 1, true),
     "composer should ask CDMSpellData for display-time dormant state")
+assert(source:find("local function IsEntryApplicableOnCurrentPlayer", 1, true),
+    "composer should distinguish current-class applicability from dormancy")
 assert(not source:find('if entry.kind == "aura" then return true end', 1, true),
     "aura entries must not bypass dormant classification")
 
@@ -27,6 +29,8 @@ local groupingStart = assert(source:find("local rowEntries = {}", refreshStart, 
     "RefreshEntryList should build cooldown row groupings")
 assert(source:find("EntryCountsForCooldownRowCapacity(entry)", groupingStart, true),
     "cooldown row grouping should skip dormant entries when counting row capacity")
+assert(source:find("entry and IsEntryApplicableOnCurrentPlayer(entry)", groupingStart, true),
+    "cooldown row grouping should omit foreign-class entries instead of labeling them dormant")
 
 local cooldownRenderStart = assert(source:find("if isCooldown and #activeRowNums > 0 then", groupingStart, true),
     "RefreshEntryList should render built-in cooldown rows")
@@ -70,6 +74,10 @@ assert(source:find("local entrySource = entryRef.source", 1, true),
     "composer should preserve add-list provenance for CDM-backed spell picks")
 assert(source:find("AddSpell(activeContainer, addID, kindFromTab, targetRow, entrySource)", 1, true),
     "right-click add should persist source provenance on spell entries")
+assert(source:find("AddTrinketSlot(activeContainer, entryRef._slotID, targetRow, itemKind, entrySource)", 1, true),
+    "right-click add should persist source provenance on Blizzard-backed slot entries")
+assert(source:find("AddConsumable(activeContainer, addID, targetRow, itemKind, entrySource)", 1, true),
+    "right-click add should persist source provenance on Blizzard-backed consumable entries")
 assert(source:find('local BLIZZARD_CDM_ENTRY_SOURCE = "blizzardCDM"', 1, true)
     and source:find("entry.source ~= BLIZZARD_CDM_ENTRY_SOURCE", 1, true),
     "only Blizzard-CDM-sourced entries should be eligible for the Not added to /cdm warning")
@@ -97,6 +105,8 @@ local splitStart = assert(source:find("-- For non-specSpecific", refreshStart, t
     "RefreshEntryList should document the dormant split for non-row containers")
 assert(source:find("local splitDormant = not (isCustomBar and db.specSpecific)", splitStart, true),
     "aura, bar, and non-spec custom containers should render dormant entries in their own section")
+assert(source:find("entry and IsEntryApplicableOnCurrentPlayer(entry)", splitStart, true),
+    "non-row Composer lists should omit foreign-class entries before the dormant split")
 
 assert(helperPos < refreshStart,
     "row-capacity helper should be defined before refresh and menu handlers use it")

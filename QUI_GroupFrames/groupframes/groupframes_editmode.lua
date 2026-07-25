@@ -15,6 +15,11 @@ end
 local Helpers = ns.Helpers
 local QUICore = ns.Addon
 local GetDB = Helpers.CreateDBGetter("quiGroupFrames")
+local CHROME_LEVELS = (ns.QUI_GroupFrameChrome and ns.QUI_GroupFrameChrome.LEVELS)
+    or {
+        THREAT = 6, TARGET = 7, DISPEL = 8, TEXT = 9,
+        DISPEL_ICON = 10, CLEANSE = 11, AURA_HOST = 12,
+    }
 
 -- Upvalue hot-path globals
 local pairs = pairs
@@ -80,7 +85,7 @@ local FAKE_DEBUFF_ICONS = {
 local PREVIEW_INDICATORS = {
     [1] = { leader = true, targetHighlight = true, threatBorder = true, buffs = 1 },
     [2] = { readyCheck = true, raidMarker = 1, debuffs = 2, buffs = 1 },
-    [3] = { phaseIcon = true, resurrection = true, debuffs = 1, defensiveIndicator = 2 },
+    [3] = { phaseIcon = true, resurrection = true, debuffs = 1 },
     [4] = { dispelOverlay = true, summonPending = true, debuffs = 3 },
     [5] = { raidMarker = 8, buffs = 2 },
 }
@@ -111,10 +116,10 @@ end
 -- Standalone preview of the unified aura element model: one representative
 -- visual per enabled element in the "*" + active-spec buckets, placed via the
 -- shared icon-layout helpers so it matches the live renderer's geometry.
-local function RenderAuraElementsPreview(frame, auras, auraLevel, powerHeight, px, texturePath)
+local function RenderAuraElementsPreview(frame, auras, auraLevel, powerHeight, px, texturePath, frameType)
     local Model = ns.QUI_GroupFramesAuraModel
     if not Model or not Model.ActiveElementsForSpec then return end
-    if Model.EnsureSeeded then Model.EnsureSeeded(auras) end
+    if Model.EnsureSeeded then Model.EnsureSeeded(auras, frameType) end
     local IconLayout = ns.QUI_GroupFrameIconLayout
     local elements = Model.ActiveElementsForSpec(auras, GetPreviewSpecID())
     if not elements or #elements == 0 then return end
@@ -233,6 +238,20 @@ local function RenderAuraElementsPreview(frame, auras, auraLevel, powerHeight, p
                 tint:SetAllPoints(hb)
                 tint:SetColorTexture(color[1] or 0.2, color[2] or 0.8, color[3] or 0.2, (color[4] or 1) * 0.4)
             end
+
+        elseif mode == "tracked" and displayType == "border" then
+            -- Border preview: a colored outline hugging the frame's outer edge
+            -- (the live renderer draws this via SetBackdropBorderColor).
+            local anchorTo = frame.healthBar or frame
+            local color = element.color or { 0.2, 0.8, 0.2, 1 }
+            local size = math.max(1, (element.border and element.border.thickness) or 2)
+            local outline = CreateFrame("Frame", nil, frame, "BackdropTemplate")
+            outline:SetFrameLevel(auraLevel + 2)
+            outline:ClearAllPoints()
+            outline:SetPoint("TOPLEFT", anchorTo, "TOPLEFT", -size, size)
+            outline:SetPoint("BOTTOMRIGHT", anchorTo, "BOTTOMRIGHT", size, -size)
+            outline:SetBackdrop({ edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = size })
+            outline:SetBackdropBorderColor(color[1] or 0.2, color[2] or 0.8, color[3] or 0.2, color[4] or 1)
         end
     end
 end
@@ -360,7 +379,7 @@ local function CreateTestFrame(parent, index, totalCount, classToken, name, role
     -- Text frame
     local textFrame = CreateFrame("Frame", nil, frame)
     textFrame:SetAllPoints()
-    textFrame:SetFrameLevel(healthBar:GetFrameLevel() + 3)
+    textFrame:SetFrameLevel(frame:GetFrameLevel() + CHROME_LEVELS.TEXT)
 
     local fontName = general and general.font or "Quazii"
     local fontPath = LSM:Fetch("font", fontName) or "Fonts\\FRIZQT__.TTF"
@@ -581,7 +600,7 @@ local function CreateTestFrame(parent, index, totalCount, classToken, name, role
         if prev.threatBorder and indSettings.showThreatBorder ~= false then
             local threatOverlay = CreateFrame("Frame", nil, frame, "BackdropTemplate")
             threatOverlay:SetAllPoints()
-            threatOverlay:SetFrameLevel(baseLevel + 3)
+            threatOverlay:SetFrameLevel(baseLevel + CHROME_LEVELS.THREAT)
             local tc = indSettings.threatColor or { 1, 0, 0, 0.8 }
             ns.SkinBase.ApplyPixelBackdrop(threatOverlay, indSettings.threatBorderSize or 3, true, false, { tc[1], tc[2], tc[3], tc[4] or 0.8 }, { tc[1], tc[2], tc[3], indSettings.threatFillOpacity or 0.15 })
         end
@@ -597,75 +616,33 @@ local function CreateTestFrame(parent, index, totalCount, classToken, name, role
                 local highlight = CreateFrame("Frame", nil, frame, "BackdropTemplate")
                 highlight:SetPoint("TOPLEFT", -px, px)
                 highlight:SetPoint("BOTTOMRIGHT", px, -px)
-                highlight:SetFrameLevel(baseLevel + 4)
+                highlight:SetFrameLevel(baseLevel + CHROME_LEVELS.TARGET)
                 local hc = th.color or { 1, 1, 1, 0.6 }
                 ns.SkinBase.ApplyPixelBackdrop(highlight, 2, true, false, { hc[1], hc[2], hc[3], hc[4] or 0.6 }, { hc[1], hc[2], hc[3], th.fillOpacity or 0.12 })
             end
         end
 
-        -- Dispel Overlay — edge + tinted fill
+        -- Dispel border + native type icon. Use Bleed for the all-typed
+        -- awareness scope; the default actionable scope previews Magic.
         if prev.dispelOverlay then
             local dsp = healerSettings.dispelOverlay
-            if dsp and dsp.enabled ~= false then
-                local dispel = CreateFrame("Frame", nil, frame, "BackdropTemplate")
-                dispel:SetPoint("TOPLEFT", -px, px)
-                dispel:SetPoint("BOTTOMRIGHT", px, -px)
-                dispel:SetFrameLevel(baseLevel + 6)
-                local dc = dsp.color or { 0.26, 0.54, 1, 0.8 }
-                local opacity = dsp.opacity or 0.8
-                ns.SkinBase.ApplyPixelBackdrop(dispel, dsp.borderSize or 3, true, false, { dc[1], dc[2], dc[3], opacity }, { dc[1], dc[2], dc[3], dsp.fillOpacity or 0.18 })
-            end
-        end
-    end
-
-    -- Defensive indicator preview (shows up to maxIcons)
-    if prev and prev.defensiveIndicator then
-        local defSettings = healerSettings and healerSettings.defensiveIndicator
-        if defSettings and defSettings.enabled ~= false then
-            local iconSize = defSettings.iconSize or 16
-            local position = defSettings.position or "CENTER"
-            local offsetX = defSettings.offsetX or 0
-            local offsetY = defSettings.offsetY or 0
-            local spacing = defSettings.spacing or 2
-            local growDir = defSettings.growDirection or "RIGHT"
-            local maxIcons = defSettings.maxIcons or 3
-
-            -- Growth direction offsets
-            local stepX, stepY = 0, 0
-            if growDir == "RIGHT" then stepX = iconSize + spacing
-            elseif growDir == "LEFT" then stepX = -(iconSize + spacing)
-            elseif growDir == "CENTER" then stepX = iconSize + spacing
-            elseif growDir == "UP" then stepY = iconSize + spacing
-            elseif growDir == "DOWN" then stepY = -(iconSize + spacing)
-            end
-
-            -- CENTER: centering offset
-            local defCenterOff = 0
-            if growDir == "CENTER" then
-                local totalSpan = maxIcons * iconSize + math.max(maxIcons - 1, 0) * spacing
-                defCenterOff = -totalSpan / 2
-            end
-
-            -- Lift above the power bar on BOTTOM* positions, mirroring the aura
-            -- element preview above and the live UpdateDefensiveIndicator fix.
-            if type(position) == "string" and position:find("BOTTOM") then
-                offsetY = offsetY + powerHeight
-            end
-
-            -- Sample defensive textures for preview
-            local previewTextures = { 135936, 135987, 136120, 135874, 236220 }
-
-            for i = 1, maxIcons do
-                local defIcon = CreateFrame("Frame", nil, frame, "BackdropTemplate")
-                defIcon:SetSize(iconSize, iconSize)
-                defIcon:SetPoint(position, frame, position, offsetX + defCenterOff + stepX * (i - 1), offsetY + stepY * (i - 1))
-                defIcon:SetFrameLevel(baseLevel + 10)
-                ns.SkinBase.ApplyPixelBackdrop(defIcon, 1, false, false, { 0, 0.8, 0, 1 })
-
-                local icon = defIcon:CreateTexture(nil, "ARTWORK")
-                icon:SetAllPoints()
-                icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-                icon:SetTexture(previewTextures[i] or previewTextures[1])
+            if dsp then
+                local sampleType = dsp.scope == "ALL_TYPED" and "Bleed" or "Magic"
+                if dsp.enabled ~= false then
+                    local dispel = CreateFrame("Frame", nil, frame, "BackdropTemplate")
+                    dispel:SetPoint("TOPLEFT", -px, px)
+                    dispel:SetPoint("BOTTOMRIGHT", px, -px)
+                    dispel:SetFrameLevel(baseLevel + CHROME_LEVELS.DISPEL)
+                    local palette = dsp.colors or {}
+                    local dc = palette[sampleType] or { 0.26, 0.54, 1, 0.8 }
+                    local opacity = dsp.opacity or 0.8
+                    ns.SkinBase.ApplyPixelBackdrop(dispel, dsp.borderSize or 3, true, false, { dc[1], dc[2], dc[3], opacity }, { dc[1], dc[2], dc[3], dsp.fillOpacity or 0.18 })
+                end
+                local Chrome = ns.QUI_GroupFrameChrome
+                if dsp.showIcon == true and Chrome and Chrome.ApplyDispelIconLayout then
+                    Chrome.ApplyDispelIconLayout(frame, dsp)
+                    Chrome.ShowDispelTypeIcon(frame, sampleType)
+                end
             end
         end
     end
@@ -677,7 +654,8 @@ local function CreateTestFrame(parent, index, totalCount, classToken, name, role
     -- only; this is a standalone preview (no live renderer / no real unit).
     local auraSettings = vdb.auras
     if prev and auraSettings and auraSettings.enabled ~= false then
-        RenderAuraElementsPreview(frame, auraSettings, baseLevel + 8, powerHeight, px, texturePath)
+        RenderAuraElementsPreview(frame, auraSettings, baseLevel + CHROME_LEVELS.AURA_HOST, powerHeight, px, texturePath,
+            isRaid and "raid" or "party")
     end
 
     -- Absorb + Heal prediction overlays (clamped to remaining health bar space)
@@ -729,12 +707,6 @@ local function CreateTestFrame(parent, index, totalCount, classToken, name, role
 end
 
 local function DestroyTestFrames(onlyType)
-    -- Clean up private aura placeholders
-    local PA = ns.QUI_GroupFramePrivateAuras
-    if PA and PA.CleanupTestFrames then
-        PA:CleanupTestFrames()
-    end
-
     if onlyType then
         -- Destroy only the specified type's test frames (keep container for reuse)
         local frames = testFramesByType[onlyType]
@@ -936,12 +908,6 @@ function QUI_GFEM:EnableTestMode(previewType)
                 testFrame:SetPoint(anchor, container, anchor, xOff, yOff)
                 table_insert(testFrames, testFrame)
                 table_insert(testFramesByType[previewType], testFrame)
-
-                -- Attach private aura placeholders
-                local PA = ns.QUI_GroupFramePrivateAuras
-                if PA and PA.SetupTestFrame then
-                    PA:SetupTestFrame(testFrame)
-                end
             end
         end
     end
@@ -1974,10 +1940,10 @@ do
                 if not target then return end
                 if hide then
                     target:SetAlpha(0)
-                    pcall(target.EnableMouse, target, false)
+                    ns.SafeCallMethod("best-effort-style", target, "EnableMouse", false)
                 else
                     target:SetAlpha(1)
-                    pcall(target.EnableMouse, target, true)
+                    ns.SafeCallMethod("best-effort-style", target, "EnableMouse", true)
                 end
             end,
             onOpen = function()
@@ -2007,10 +1973,10 @@ do
                 if not target then return end
                 if hide then
                     target:SetAlpha(0)
-                    pcall(target.EnableMouse, target, false)
+                    ns.SafeCallMethod("best-effort-style", target, "EnableMouse", false)
                 else
                     target:SetAlpha(1)
-                    pcall(target.EnableMouse, target, true)
+                    ns.SafeCallMethod("best-effort-style", target, "EnableMouse", true)
                 end
             end,
             getFrame = function()
@@ -2077,10 +2043,10 @@ do
                 if not container then return end
                 if hide then
                     container:SetAlpha(0)
-                    pcall(container.EnableMouse, container, false)
+                    ns.SafeCallMethod("best-effort-style", container, "EnableMouse", false)
                 else
                     container:SetAlpha(1)
-                    pcall(container.EnableMouse, container, true)
+                    ns.SafeCallMethod("best-effort-style", container, "EnableMouse", true)
                 end
             end,
             getFrame = function()

@@ -210,10 +210,11 @@ local function dofileFrom(relp)
     return result
 end
 
-local Config   = dofileFrom("tests/taint/config.lua")
-local Registry = dofileFrom("tests/taint/registry.lua")
-local Findings = dofileFrom("tests/taint/findings.lua")
-local Analyzer = dofileFrom("tests/taint/analyzer.lua")
+local Config    = dofileFrom("tests/taint/config.lua")
+local Registry  = dofileFrom("tests/taint/registry.lua")
+local Findings  = dofileFrom("tests/taint/findings.lua")
+local Analyzer  = dofileFrom("tests/taint/analyzer.lua")
+local IndexLoad = dofileFrom("tests/taint/index_load.lua")
 
 -- ---------------------------------------------------------------------------
 -- Load config
@@ -238,6 +239,11 @@ local cfg = Config.loadFromFile(cfgPath)
 
 local registry = Registry.new()
 
+-- event:* entries harvested from the api-index (event name → meta table);
+-- cross-checked against the config's event_payload_params below. Populated
+-- by IndexLoad.populate when the index loads successfully.
+local indexedEvents = {}
+
 -- Load api-index from <rootDir>/tests/api-docs/api-index.lua (if it exists)
 local apiIndexPath = rootDir .. "/tests/api-docs/api-index.lua"
 local fIdx = io.open(apiIndexPath, "rb")
@@ -250,23 +256,8 @@ if fIdx then
     else
         local ok, indexTable = pcall(chunk)
         if ok and type(indexTable) == "table" then
-            for funcName, meta in pairs(indexTable) do
-                -- Filter by coverage flags from config
-                local include = false
-                if type(meta) == "table" then
-                    for coverageKey, _ in pairs(meta) do
-                        if cfg.coverage[coverageKey] then
-                            include = true
-                            break
-                        end
-                    end
-                else
-                    include = true
-                end
-                if include then
-                    registry:addSource(funcName)
-                end
-            end
+            indexedEvents = IndexLoad.populate(registry, indexTable, cfg,
+                function(msg) io.stderr:write(msg) end)
         else
             io.stderr:write("WARNING: api-index did not return a table\n")
         end
@@ -292,6 +283,56 @@ end
 if cfg.clean_fields then
     for _, name in ipairs(cfg.clean_fields) do
         registry:addCleanField(name)
+    end
+end
+if cfg.extra_guards then
+    for _, name in ipairs(cfg.extra_guards) do
+        registry:addGuard(name)
+    end
+end
+-- Round-23 element-secret container track: config-listed call-site spellings
+-- register on the element track (same shape as extra_guards above).
+if cfg.element_secret_functions then
+    for _, name in ipairs(cfg.element_secret_functions) do
+        registry:addElementSecretFunction(name)
+    end
+end
+-- Round-23 helper-param seeding: declared function name → DECLARED argument
+-- positions holding element-secret containers ("<param>[*]" seeds in the
+-- analyzer's walkFunctionBody). Spellings should be exact — "M.Copy" covers
+-- both `function M.Copy` and `function M:Copy` (positions index the declared
+-- list, which omits the implicit colon `self`).
+if cfg.element_container_params then
+    for fnName, positions in pairs(cfg.element_container_params) do
+        if type(positions) == "table" and #positions > 0 then
+            registry:addElementContainerParams(fnName, positions)
+        end
+    end
+end
+if cfg.extra_restriction_gates then
+    for _, name in ipairs(cfg.extra_restriction_gates) do
+        registry:addRestrictionGate(name)
+    end
+end
+-- event_payload_params registration is config wiring and stays here; the
+-- paired forward cross-check (a configured event missing from the index) is
+-- config-side validation too, so it stays alongside the registration and
+-- reads the indexedEvents IndexLoad.populate returned above. The REVERSE
+-- cross-check (an index event with no configured payload positions) is pure
+-- index-scan logic and lives inside IndexLoad.populate instead.
+if cfg.event_payload_params then
+    for eventName, params in pairs(cfg.event_payload_params) do
+        if type(params) == "table" and #params > 0 then
+            registry:addSecretPayloadEvent(eventName, params)
+            -- A configured event that vanished from the api-index is stale
+            -- config (removed/renamed in a client bump) — warn, don't fail.
+            if next(indexedEvents) ~= nil and not indexedEvents[eventName] then
+                io.stderr:write(string.format(
+                    "WARNING: event_payload_params[%q] has no event:* entry in the api-index "
+                    .. "(removed or renamed?) — its handler coverage is dead config\n",
+                    eventName))
+            end
+        end
     end
 end
 
@@ -332,6 +373,11 @@ if options.self_test then
     local fxRegistry = Registry.new()
     fxRegistry:addSource("C_Spell.GetSpellCharges")
     fxRegistry:addSource("C_Spell.GetSpellCooldownDuration")
+    -- Safe-sink method the C-side-pipe safe fixture relies on: an api-index safe
+    -- sink (durationObjectArg) at real scan time. Register it so that fixture
+    -- exercises the safe-sink branch instead of the round-13 default-reject
+    -- fall-through, which now flags unregistered method consumers.
+    fxRegistry:addSafeSinkMethod("SetCooldownFromDurationObject")
 
     local categories = listDirs(fixturesRoot)
     local failures = 0
@@ -419,7 +465,14 @@ for _, fullPath in ipairs(allFiles) do
 
     -- Config ignore_paths check uses rel path
     if Config.isIgnoredPath(cfg, rel) then
-        -- skip
+        -- precondition_only_paths re-admits ignored files (vendored libs)
+        -- for the raw guarded-call scan alone — restriction crash paths in
+        -- library code stay covered without taint-tier noise.
+        if Config.isPreconditionOnlyPath(cfg, rel)
+            and not (options.only and not fullPath:find(options.only, 1, true)) then
+            filesToAnalyze[#filesToAnalyze + 1] =
+                { full = fullPath, rel = rel, preconditionOnly = true }
+        end
     elseif options.only and not fullPath:find(options.only, 1, true) then
         -- skip: does not match --only pattern
     else
@@ -461,7 +514,15 @@ for _, entry in ipairs(filesToAnalyze) do
         local source = fh:read("*a")
         fh:close()
 
-        local findings, err = Analyzer.analyze(source, rel, registry, cfg)
+        -- Strip a UTF-8 BOM (several vendored lib locale files ship one —
+        -- luac accepts it, the LuaMinify lexer does not; check_compile.sh
+        -- does the same strip).
+        if source:sub(1, 3) == "\239\187\191" then
+            source = source:sub(4)
+        end
+
+        local findings, err = Analyzer.analyze(source, rel, registry, cfg,
+            entry.preconditionOnly and { preconditionOnly = true } or nil)
         if not findings then
             parseErrors[#parseErrors + 1] = { file = rel, err = err }
             if options.verbose then

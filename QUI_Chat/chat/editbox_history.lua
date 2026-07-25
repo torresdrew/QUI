@@ -142,7 +142,9 @@ local function captureSent(editBox)
     local s = settings and settings.editboxHistory
     if not s or not s.enabled then return end
 
-    local text = editBox:GetText() or ""
+    -- Probe before any truth-test — `GetText() or ""` truth-tests the raw
+    -- result at the `or`, and a secret throws on that test before the probe.
+    local text = editBox:GetText()
     if Helpers.IsSecretValue and Helpers.IsSecretValue(text) then return end
     if not text or text == "" then return end
 
@@ -171,7 +173,8 @@ local function captureSent(editBox)
     elseif chatType == "CHANNEL" then
         target = editBox:GetAttribute("channelTarget")
     end
-    if target and Helpers.IsSecretValue and Helpers.IsSecretValue(target) then
+    -- Probe before any truth-test — a secret target throws on `target and`.
+    if Helpers.IsSecretValue and Helpers.IsSecretValue(target) then
         target = nil
     end
 
@@ -206,8 +209,10 @@ local function captureSlashCommand(editBox, text)
     local s = settings and settings.editboxHistory
     if not s or not s.enabled then return end
 
-    if not text or text == "" then return end
+    -- Probe before the empty-check — `not text` truth-tests, and a secret
+    -- throws on that test before the probe.
     if Helpers.IsSecretValue and Helpers.IsSecretValue(text) then return end
+    if not text or text == "" then return end
 
     local command = text:match("^(/[^%s]+)")
     if not command then return end
@@ -252,7 +257,7 @@ local function RegisterPreSendCallback()
 
     preSendCallbackRegistered = true
     EventRegistry:RegisterCallback("ChatFrame.OnEditBoxPreSendText", function(_, editBox)
-        pcall(captureSent, editBox)
+        ns.SafeCall("bulkhead", captureSent, editBox)
     end, PRE_SEND_OWNER)
 end
 
@@ -343,9 +348,11 @@ local function navigateUp(editBox)
     -- Capture the user's current input if starting fresh, so walking back past
     -- the newest entry can restore exactly what they were typing.
     if cursors[editBox] == nil then
-        local current = editBox:GetText() or ""
-        if Helpers.IsSecretValue and Helpers.IsSecretValue(current) then current = "" end
-        originalInput[editBox] = { text = current }
+        -- Probe before any truth-test — `GetText() or ""` truth-tests the raw
+        -- result at the `or`, and a secret throws on that test before the probe.
+        local current = editBox:GetText()
+        if Helpers.IsSecretValue and Helpers.IsSecretValue(current) then current = nil end
+        originalInput[editBox] = { text = current or "" }
     end
 
     local cursor = cursors[editBox] or 0
@@ -460,7 +467,7 @@ function InitializeForFrame(chatFrame)
     -- hooksecurefunc is taint-safe (post-hook, never replaces the secure method).
     if hooksecurefunc and editBox.AddHistoryLine then
         hooksecurefunc(editBox, "AddHistoryLine", function(self, text)
-            pcall(captureSlashCommand, self, text)
+            ns.SafeCall("bulkhead", captureSlashCommand, self, text)
         end)
     end
 end

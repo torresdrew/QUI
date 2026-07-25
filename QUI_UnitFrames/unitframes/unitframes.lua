@@ -57,6 +57,23 @@ local inInitSafeWindow = false
 local QUI_UF = {}
 ns.QUI_UnitFrames = QUI_UF
 
+-- Keep the runtime unit token off the secure button itself. Blizzard's 12.1
+-- PingableType_UnitFrameMixin prefers the Lua field `self.unit` over the
+-- secure `unit` attribute; an addon-written field taints the target info the
+-- ping flow hands to C_PingSecure.SendUnitPing. QUI reads its own weak side
+-- state while the ping mixin falls through to the frame's unit attribute.
+-- (Mirrors QUI_GF.GetFrameUnit / SetFrameUnit in groupframes.lua.)
+local ufUnitState, GetUFUnitState = Helpers.CreateStateTable()
+function QUI_UF.GetFrameUnit(frame)
+    if not frame then return nil end
+    local state = ufUnitState[frame]
+    return state and state.unit or nil
+end
+function QUI_UF.SetFrameUnit(frame, unit)
+    if not frame then return end
+    GetUFUnitState(frame).unit = unit
+end
+
 -- Frame references
 QUI_UF.frames = {}
 QUI_UF.castbars = {}
@@ -186,10 +203,13 @@ local function GetPowerPct(unit, powerType, usePredicted)
         if CurveConstants and CurveConstants.ScaleTo100 then
             ok, pct = pcall(UnitPowerPercent, unit, powerType, usePredicted, CurveConstants.ScaleTo100)
         end
+        -- An opaque (secret) percent is forwarded raw to the bar SetValue sink.
+        if IsSecretValue(pct) then return pct end
         -- Fallback for older builds
         if not ok or pct == nil then
             ok, pct = pcall(UnitPowerPercent, unit, powerType, usePredicted)
         end
+        if IsSecretValue(pct) then return pct end
         if ok and pct ~= nil then
             return pct
         end
@@ -438,7 +458,7 @@ local function ShowUnitTooltip(frame)
     end
 
     -- Determine the unit
-    local unit = frame.unit or (frame.GetAttribute and frame:GetAttribute("unit"))
+    local unit = QUI_UF.GetFrameUnit(frame) or (frame.GetAttribute and frame:GetAttribute("unit"))
     if not unit then
         -- Try parent for child frames (healthBar, powerBar, etc.)
         local parent = frame:GetParent()
@@ -566,20 +586,18 @@ end
 -- HELPER: Truncate name to max length (UTF-8 safe)
 ---------------------------------------------------------------------------
 local function TruncateName(name, maxLength)
+    -- Probe FIRST: `not name` truth-tests the value and throws on a secret
+    -- name (UpdateName forwards secrets here whenever truncation is set).
+    -- Secret path returns a shortened name via %.Ns — not utf-8 safe.
+    if IsSecretValue(name) then
+        if not maxLength or maxLength <= 0 then return name end
+        return string_format("%." .. maxLength .. "s", name)
+    end
     if not name or type(name) ~= "string" then return name end
     if not maxLength or maxLength <= 0 then return name end
 
-    -- If name is secret return shortened name, but not utf-8 safe
-    if IsSecretValue(name) then
-        return string_format("%." .. maxLength .. "s", name)
-    end
-
     -- ok to get length and shorten utf-8 safe if too long
-    local lenOk, nameLen = pcall(function() return #name end)
-    if not lenOk then
-        -- if get length somehow still fails return
-        return string_format("%." .. maxLength .. "s", name)
-    end
+    local nameLen = #name
 
     -- short enough
     if nameLen <= maxLength then
@@ -604,13 +622,7 @@ local function TruncateName(name, maxLength)
         end
     end
 
-    local subOk, truncated = pcall(string.sub, name, 1, i - 1)
-    if subOk and truncated then
-        return truncated
-    end
-
-    -- Last resort fallback (works with secret values in M+/dungeons)
-    return string_format("%." .. maxLength .. "s", name)
+    return string.sub(name, 1, i - 1)
 end
 
 ---------------------------------------------------------------------------
@@ -621,6 +633,15 @@ local function FormatHealthText(hp, hpPct, style, divider, maxHp, hidePercentSym
     divider = divider or " | "
     local pctSuffix = hidePercentSymbol and "" or "%"
 
+    -- hp/hpPct/maxHp can be secret (UnitHealth / UnitHealthPercent at full HP /
+    -- UnitHealthMax). Probe BEFORE the bare `if hpPct` / `if hp and maxHp`
+    -- truth-tests below — those run OUTSIDE the pcalls, which only guard the
+    -- arithmetic. A secret entering a branch degrades to "" via its pcall,
+    -- matching this formatter's existing secret policy.
+    local hpSecret = IsSecretValue(hp)
+    local pctSecret = IsSecretValue(hpPct)
+    local maxSecret = IsSecretValue(maxHp)
+
     -- Use pcall to handle Midnight secret values from UnitHealth()
     -- Prefer AbbreviateNumbers (Midnight API) over AbbreviateLargeNumbers (legacy)
     local success, hpStr = pcall(function()
@@ -630,7 +651,7 @@ local function FormatHealthText(hp, hpPct, style, divider, maxHp, hidePercentSym
     if not success then hpStr = "" end
 
     if style == "percent" then
-        if hpPct then
+        if pctSecret or hpPct then
             local success, result = pcall(function() return string_format("%d%s", hpPct, pctSuffix) end)
             return success and result or ""
         end
@@ -638,19 +659,19 @@ local function FormatHealthText(hp, hpPct, style, divider, maxHp, hidePercentSym
     elseif style == "absolute" then
         return hpStr or ""
     elseif style == "both" then
-        if hpPct then
+        if pctSecret or hpPct then
             local success, result = pcall(function() return string_format("%s%s%d%s", hpStr or "", divider, hpPct, pctSuffix) end)
             return success and result or hpStr or ""
         end
         return hpStr or ""
     elseif style == "both_reverse" then
-        if hpPct then
+        if pctSecret or hpPct then
             local success, result = pcall(function() return string_format("%d%s%s%s", hpPct, pctSuffix, divider, hpStr or "") end)
             return success and result or hpStr or ""
         end
         return hpStr or ""
     elseif style == "missing_percent" then
-        if hpPct then
+        if pctSecret or hpPct then
             -- Use pcall to handle Midnight secret values
             local success, missing = pcall(function() return 100 - hpPct end)
             if not success then return "" end
@@ -661,7 +682,7 @@ local function FormatHealthText(hp, hpPct, style, divider, maxHp, hidePercentSym
         end
         return ""
     elseif style == "missing_value" then
-        if hp and maxHp then
+        if (hpSecret or hp) and (maxSecret or maxHp) then
             -- Use pcall to handle Midnight secret values from UnitHealth()
             local success, missing = pcall(function() return maxHp - hp end)
             if not success then return "" end
@@ -707,10 +728,7 @@ local function FormatPowerText(power, powerPct, style, divider, hidePercentSymbo
         end)
         if not fmtOk then result = "" end
     elseif style == "current" then
-        local fmtOk = pcall(function()
-            result = powerStr or ""
-        end)
-        if not fmtOk then result = "" end
+        result = powerStr or ""
     elseif style == "both" then
         local fmtOk = pcall(function()
             if powerPct then
@@ -721,10 +739,7 @@ local function FormatPowerText(power, powerPct, style, divider, hidePercentSymbo
         end)
         if not fmtOk then result = "" end
     else
-        local fmtOk = pcall(function()
-            result = powerStr or ""
-        end)
-        if not fmtOk then result = "" end
+        result = powerStr or ""
     end
 
     return result
@@ -756,6 +771,12 @@ local function GetHealthBarColor(unit, settings)
 
     if useClassColor and UnitIsPlayer(unit) then
         local _, class = UnitClass(unit)
+        -- PTR7 (announced in Blizzard's addon-dev notes, next PTR build): classFile
+        -- is SECRET on compound tokens (targettarget, bossNtarget). type() is a
+        -- safe inspection, but the class-color table-index below throws on a
+        -- secret — probe first.
+        -- @secret-policy: collapse-only — fall through to hostility/default color
+        if issecretvalue and issecretvalue(class) then class = nil end
         if type(class) == "string" then
             local color = RAID_CLASS_COLORS[class]
             if color then
@@ -766,8 +787,13 @@ local function GetHealthBarColor(unit, settings)
 
     -- Check HostilityColor - applies to NPCs
     if settings and settings.useHostilityColor then
+        -- SafeToNumber returns 0 for nil/secret reactions, and 0 is truthy in
+        -- Lua, so a bare `if reaction` sent unknown-reaction units down the
+        -- hostile-red branch. Valid UnitReaction values are 1-8; require >0 so
+        -- unknowns fall through to the custom/class color paths below (mirrors
+        -- Helpers.GetUnitClassColor in core/utils.lua).
         local reaction = Helpers.SafeToNumber(UnitReaction(unit, "player"), nil)
-        if reaction then
+        if reaction and reaction > 0 then
             if reaction >= 5 then
                 local c = general and general.hostilityColorFriendly or { 0.2, 0.8, 0.2, 1 }
                 return c[1], c[2], c[3], c[4] or 1
@@ -809,8 +835,9 @@ end
 -- UPDATE: Health bar (no comparisons, just pass values directly)
 ---------------------------------------------------------------------------
 local function UpdateHealth(frame)
-    if not frame or not frame.unit or not frame.healthBar then return end
-    local unit = frame.unit
+    if not frame or not frame.healthBar then return end
+    local unit = QUI_UF.GetFrameUnit(frame)
+    if not unit then return end
     local settings = GetUnitSettings(frame.unitKey)
 
     -- Don't update if unit doesn't exist
@@ -820,14 +847,18 @@ local function UpdateHealth(frame)
 
     ApplyHealthFillDirection(frame, settings)
 
-    -- Get health values directly - StatusBar can handle secret values
-    -- The key is to NOT do any comparisons or arithmetic on these values
+    -- Get health values directly - StatusBar can handle secret values.
+    -- NO comparisons, arithmetic, truth-tests, or `or`-defaults on these:
+    -- UnitHealth is SecretReturns and UnitHealthMax is
+    -- SecretWhenUnitHealthMaxRestricted (12.1), and `x or d` truth-tests x —
+    -- a throw when x is secret. Both returns are non-nilable per
+    -- UnitDocumentation, so the old defaults were dead code anyway.
     local hp = UnitHealth(unit)
     local maxHP = UnitHealthMax(unit)
 
     -- Pass directly to StatusBar - it handles secret values gracefully
-    frame.healthBar:SetMinMaxValues(0, maxHP or 1)
-    frame.healthBar:SetValue(hp or 0)
+    frame.healthBar:SetMinMaxValues(0, maxHP)
+    frame.healthBar:SetValue(hp)
 
     -- Update health text using new display style system
     if frame.healthText then
@@ -857,7 +888,10 @@ local function UpdateHealth(frame)
             local divider = settings and settings.healthDivider or " | "
             local hidePercentSymbol = settings and settings.hideHealthPercentSymbol == true
 
-            if hp then
+            -- Probe BEFORE the truth-test: UnitHealth is SecretReturns and
+            -- `if hp` throws on a secret. A secret hp takes the text path —
+            -- every branch below routes through pcall'd C-side sinks.
+            if IsSecretValue(hp) or hp then
                 -- Combat-safe text path:
                 --   * usePredicted=true: the false/curve form returns a
                 --     secret-or-nil at exactly 100% HP, breaking the percent
@@ -875,31 +909,31 @@ local function UpdateHealth(frame)
                 local pctFmt = hidePercentSymbol and "%.0f" or "%.0f%%"
                 local ok
                 if displayStyle == "percent" then
-                    ok = pcall(frame.healthText.SetFormattedText, frame.healthText, pctFmt, hpPct)
+                    ok = ns.SafeCallMethod("sink-forward", frame.healthText, "SetFormattedText", pctFmt, hpPct)
                 elseif displayStyle == "absolute" then
                     if abbr then
-                        ok = pcall(frame.healthText.SetText, frame.healthText, abbr(hp))
+                        ok = ns.SafeCallMethod("sink-forward", frame.healthText, "SetText", abbr(hp))
                     else
-                        ok = pcall(frame.healthText.SetFormattedText, frame.healthText, "%s", hp)
+                        ok = ns.SafeCallMethod("sink-forward", frame.healthText, "SetFormattedText", "%s", hp)
                     end
                 elseif displayStyle == "both" then
                     local bothFmt = hidePercentSymbol and ("%s" .. divider .. "%.0f") or ("%s" .. divider .. "%.0f%%")
                     if abbr then
-                        ok = pcall(frame.healthText.SetFormattedText, frame.healthText, bothFmt, abbr(hp), hpPct)
+                        ok = ns.SafeCallMethod("sink-forward", frame.healthText, "SetFormattedText", bothFmt, abbr(hp), hpPct)
                     else
-                        ok = pcall(frame.healthText.SetFormattedText, frame.healthText, bothFmt, hp, hpPct)
+                        ok = ns.SafeCallMethod("sink-forward", frame.healthText, "SetFormattedText", bothFmt, hp, hpPct)
                     end
                 elseif displayStyle == "both_reverse" then
                     local revFmt = hidePercentSymbol and ("%.0f" .. divider .. "%s") or ("%.0f%%" .. divider .. "%s")
                     if abbr then
-                        ok = pcall(frame.healthText.SetFormattedText, frame.healthText, revFmt, hpPct, abbr(hp))
+                        ok = ns.SafeCallMethod("sink-forward", frame.healthText, "SetFormattedText", revFmt, hpPct, abbr(hp))
                     else
-                        ok = pcall(frame.healthText.SetFormattedText, frame.healthText, revFmt, hpPct, hp)
+                        ok = ns.SafeCallMethod("sink-forward", frame.healthText, "SetFormattedText", revFmt, hpPct, hp)
                     end
                 else
                     -- missing_percent / missing_value need Lua arithmetic; separate concern.
                     local healthStr = FormatHealthText(hp, hpPct, displayStyle, divider, maxHP, hidePercentSymbol)
-                    ok = pcall(frame.healthText.SetText, frame.healthText, healthStr)
+                    ok = ns.SafeCallMethod("sink-forward", frame.healthText, "SetText", healthStr)
                 end
                 if not ok then
                     frame.healthText:SetText("")
@@ -918,7 +952,7 @@ local function UpdateHealth(frame)
         local c = general.darkModeHealthColor or { 0.15, 0.15, 0.15, 1 }
         frame.healthBar:SetStatusBarColor(c[1], c[2], c[3], c[4] or 1)
     else
-        local r, g, b, a = GetHealthBarColor(frame.unit, settings)
+        local r, g, b, a = GetHealthBarColor(unit, settings)
         frame.healthBar:SetStatusBarColor(r, g, b, a)
     end
 end
@@ -928,10 +962,11 @@ end
 -- Uses CreateUnitHealPredictionCalculator to detect when absorb would overflow
 ---------------------------------------------------------------------------
 local function UpdateAbsorbs(frame)
-    if not frame or not frame.unit or not frame.healthBar then return end
+    if not frame or not frame.healthBar then return end
     if not frame.absorbBar then return end
 
-    local unit = frame.unit
+    local unit = QUI_UF.GetFrameUnit(frame)
+    if not unit then return end
     local settings = GetUnitSettings(frame.unitKey)
     local healthReversed = ApplyHealthFillDirection(frame, settings)
 
@@ -961,16 +996,13 @@ local function UpdateAbsorbs(frame)
     local a = absorbSettings.opacity or 0.7
 
     -- StatusBar:SetValue handles secret values natively, and a value of 0
-    -- renders as 0-width (invisible). We skip the secret-value compare and
-    -- pipe the amount straight to the C-side sink. The only branch that
-    -- truly needs to short-circuit is nil (no unit / no data).
-    if not absorbAmount then
-        frame.absorbBar:Hide()
-        if frame.absorbOverflowBar then frame.absorbOverflowBar:Hide() end
-        return
-    end
+    -- renders as 0-width (invisible) — pipe the amount straight to the
+    -- C-side sink. NO truth-test here: UnitGetTotalAbsorbs is SecretReturns
+    -- (`not absorbAmount` throws when secret) and its return is non-nilable
+    -- per UnitDocumentation, so the old nil short-circuit was dead code that
+    -- crashed exactly in restricted combat.
 
-    -- Proceed with display for any non-nil amount (zero, positive, or secret)
+    -- Proceed with display for any amount (zero, positive, or secret)
     do
         -- Create overflow bar once if needed (for overlay mode when absorb too big)
         -- Use stripe texture directly on StatusBar (no overlay) to avoid 1px sliver at 0 width
@@ -1018,11 +1050,11 @@ local function UpdateAbsorbs(frame)
             local calc = frame.absorbCalculator
 
             -- Clamp mode 1 = missing health without subtracting incoming heals.
-            pcall(function() calc:SetDamageAbsorbClampMode(1) end)
+            ns.SafeCall("sink-forward", function() calc:SetDamageAbsorbClampMode(1) end)
 
             local maximumHealthMode = Enum and Enum.UnitMaximumHealthMode
             if maximumHealthMode and calc.SetMaximumHealthMode then
-                pcall(function() calc:SetMaximumHealthMode(maximumHealthMode.Default or 0) end)
+                ns.SafeCall("sink-forward", function() calc:SetMaximumHealthMode(maximumHealthMode.Default or 0) end)
             end
 
             -- Populate calculator with unit data
@@ -1042,7 +1074,7 @@ local function UpdateAbsorbs(frame)
                 -- health. Only after that split is captured do we include
                 -- active shields in max health for group visibility.
                 if maximumHealthMode and maximumHealthMode.WithAbsorbs and calc.SetMaximumHealthMode then
-                    pcall(function() calc:SetMaximumHealthMode(maximumHealthMode.WithAbsorbs) end)
+                    ns.SafeCall("sink-forward", function() calc:SetMaximumHealthMode(maximumHealthMode.WithAbsorbs) end)
                 end
 
                 -- Group visibility via curve — calc evaluates the Step curve
@@ -1090,7 +1122,7 @@ local function UpdateAbsorbs(frame)
         frame.absorbBar:SetHeight(healthBarHeight)
         frame.absorbBar:SetWidth(healthBarWidth)  -- Full width available for absorb to fill
         frame.absorbBar:SetReverseFill(healthReversed)
-        frame.absorbBar:SetMinMaxValues(0, maxHealth or 1)
+        frame.absorbBar:SetMinMaxValues(0, maxHealth)
         frame.absorbBar:SetValue(clampedAbsorbs)  -- Clamped value (secret-safe via StatusBar)
         frame.absorbBar:SetStatusBarTexture(absorbTexturePath)  -- Apply texture from settings
         frame.absorbBar:SetStatusBarColor(c[1], c[2], c[3], a)  -- Apply color directly to StatusBar
@@ -1103,7 +1135,7 @@ local function UpdateAbsorbs(frame)
         frame.absorbOverflowBar:SetPoint("TOPLEFT", frame.healthBar, "TOPLEFT", 0, 0)
         frame.absorbOverflowBar:SetPoint("BOTTOMRIGHT", frame.healthBar, "BOTTOMRIGHT", 0, 0)
         frame.absorbOverflowBar:SetReverseFill(not healthReversed)
-        frame.absorbOverflowBar:SetMinMaxValues(0, maxHealth or 1)
+        frame.absorbOverflowBar:SetMinMaxValues(0, maxHealth)
         frame.absorbOverflowBar:SetValue(absorbAmount)  -- Full unclamped absorb value
         frame.absorbOverflowBar:SetStatusBarColor(c[1], c[2], c[3], a)  -- Apply color directly to StatusBar
         frame.absorbOverflowBar:SetAlpha(frame.overflowVisHelper:GetAlpha())  -- Secret alpha passed directly
@@ -1117,17 +1149,15 @@ local function UpdateAbsorbs(frame)
         frame.healAbsorbBar:SetPoint("TOPLEFT", frame.healthBar, "TOPLEFT", 0, 0)
         frame.healAbsorbBar:SetPoint("BOTTOMRIGHT", frame.healthBar, "BOTTOMRIGHT", 0, 0)
         frame.healAbsorbBar:SetReverseFill(false)  -- Fill from LEFT (eats into health)
-        frame.healAbsorbBar:SetMinMaxValues(0, maxHealth or 1)
-        frame.healAbsorbBar:SetValue(healAbsorbAmount or 0)
+        frame.healAbsorbBar:SetMinMaxValues(0, maxHealth)
+        frame.healAbsorbBar:SetValue(healAbsorbAmount)
 
         -- Skip the zero-check compare: StatusBar at value 0 is 0-width
         -- (invisible), so always Show is visually equivalent without
         -- touching the (potentially secret) heal-absorb amount in Lua.
-        if healAbsorbAmount then
-            frame.healAbsorbBar:Show()
-        else
-            frame.healAbsorbBar:Hide()
-        end
+        -- No truth-test either — UnitGetTotalHealAbsorbs is SecretReturns
+        -- (`if healAbsorbAmount` throws when secret) and non-nilable.
+        frame.healAbsorbBar:Show()
     end
 end
 
@@ -1135,9 +1165,10 @@ end
 -- UPDATE: Incoming heal prediction (clamped to missing health)
 ---------------------------------------------------------------------------
 local function UpdateHealPrediction(frame)
-    if not frame or not frame.unit or not frame.healthBar or not frame.healPredictionBar then return end
+    if not frame or not frame.healthBar or not frame.healPredictionBar then return end
 
-    local unit = frame.unit
+    local unit = QUI_UF.GetFrameUnit(frame)
+    if not unit then return end
     local settings = GetUnitSettings(frame.unitKey)
     local predictionSettings = settings and settings.healPrediction
     local healthReversed = ApplyHealthFillDirection(frame, settings)
@@ -1164,11 +1195,9 @@ local function UpdateHealPrediction(frame)
                 if Enum and Enum.UnitIncomingHealClampMode and Enum.UnitIncomingHealClampMode.MissingHealth then
                     clampMode = Enum.UnitIncomingHealClampMode.MissingHealth
                 end
-                pcall(calc.SetIncomingHealClampMode, calc, clampMode)
+                ns.SafeCallMethod("sink-forward", calc, "SetIncomingHealClampMode", clampMode)
             end
-            if calc and calc.SetIncomingHealOverflowPercent then
-                pcall(calc.SetIncomingHealOverflowPercent, calc, 1.0)
-            end
+            ns.SafeCallMethodIfPresent("sink-forward", calc, "SetIncomingHealOverflowPercent", 1.0)
         end
 
         local calc = frame.healPredictionCalculator
@@ -1181,13 +1210,19 @@ local function UpdateHealPrediction(frame)
         end
     end
 
-    if not incomingHeals then
-        incomingHeals = UnitGetIncomingHeals(unit)
+    -- A secret incomingHeals is an opaque amount forwarded to SetValue below;
+    -- probe first so it is never truth-tested, and never hide on secrecy.
+    if not IsSecretValue(incomingHeals) then
+        if not incomingHeals then
+            incomingHeals = UnitGetIncomingHeals(unit)
+        end
     end
 
-    if not incomingHeals then
-        frame.healPredictionBar:Hide()
-        return
+    if not IsSecretValue(incomingHeals) then
+        if not incomingHeals then
+            frame.healPredictionBar:Hide()
+            return
+        end
     end
 
     -- Visibility is gated below via the same prediction-visibility curve
@@ -1210,7 +1245,7 @@ local function UpdateHealPrediction(frame)
     frame.healPredictionBar:SetHeight(healthBarHeight)
     frame.healPredictionBar:SetWidth(healthBarWidth)
     frame.healPredictionBar:SetReverseFill(healthReversed)
-    frame.healPredictionBar:SetMinMaxValues(0, maxHealth or 1)
+    frame.healPredictionBar:SetMinMaxValues(0, maxHealth)
     frame.healPredictionBar:SetValue(incomingHeals)
     frame.healPredictionBar:SetStatusBarTexture(GetTexturePath(settings.texture))
 
@@ -1242,8 +1277,9 @@ end
 -- UPDATE: Power bar (no comparisons, just pass values directly)
 ---------------------------------------------------------------------------
 local function UpdatePower(frame)
-    if not frame or not frame.unit or not frame.powerBar then return end
-    local unit = frame.unit
+    if not frame or not frame.powerBar then return end
+    local unit = QUI_UF.GetFrameUnit(frame)
+    if not unit then return end
 
     if not UnitExists(unit) then return end
 
@@ -1253,13 +1289,17 @@ local function UpdatePower(frame)
         return
     end
 
-    -- Get power values directly - StatusBar can handle secret values
+    -- Get power values directly - StatusBar can handle secret values.
+    -- No `or`-defaults: UnitPower/UnitPowerMax are SecretWhenUnitPower[Max]
+    -- Restricted (12.1) — `p or 0` truth-tests p and throws when secret; the
+    -- returns are non-nilable per UnitDocumentation, so the defaults were
+    -- dead code anyway.
     local p = UnitPower(unit)
     local pMax = UnitPowerMax(unit)
 
     -- Pass directly to StatusBar - it handles secret values gracefully
-    frame.powerBar:SetMinMaxValues(0, pMax or 1)
-    frame.powerBar:SetValue(p or 0)
+    frame.powerBar:SetMinMaxValues(0, pMax)
+    frame.powerBar:SetValue(p)
     frame.powerBar:Show()
 
     -- Set power color
@@ -1276,10 +1316,10 @@ end
 -- UPDATE: Power text (separate from power bar)
 ---------------------------------------------------------------------------
 local function UpdatePowerText(frame)
-    if not frame or not frame.unit then return end
-    if not frame.powerText then return end
+    if not frame or not frame.powerText then return end
 
-    local unit = frame.unit
+    local unit = QUI_UF.GetFrameUnit(frame)
+    if not unit then return end
     local settings = GetUnitSettings(frame.unitKey)
 
     -- Check if power text is enabled
@@ -1369,7 +1409,7 @@ local function UpdateIndicators(frame)
     -- bool so the target's combat state is safe to test directly)
     if frame.combatIndicator then
         local combat = indSettings.combat
-        if combat and combat.enabled and UnitAffectingCombat(frame.unit or "player") then
+        if combat and combat.enabled and UnitAffectingCombat(QUI_UF.GetFrameUnit(frame) or "player") then
             frame.combatIndicator:Show()
         else
             frame.combatIndicator:Hide()
@@ -1444,6 +1484,8 @@ local function UpdateStance(frame)
     -- Set text color
     if stanceSettings.useClassColor then
         local _, class = UnitClass("player")
+        -- @secret-policy: collapse-only — secret class keeps the current stance text color
+        if issecretvalue and issecretvalue(class) then class = nil end
         if class then
             local color = RAID_CLASS_COLORS[class]
             if color then
@@ -1480,15 +1522,15 @@ end
 -- UPDATE: Target Marker (raid icons like skull, cross, diamond, etc.)
 ---------------------------------------------------------------------------
 local function UpdateTargetMarker(frame)
-    if not frame or not frame.unit or not frame.targetMarker then return end
+    if not frame or not QUI_UF.GetFrameUnit(frame) or not frame.targetMarker then return end
     local settings = GetUnitSettings(frame.unitKey)
     if not settings or not settings.targetMarker or not settings.targetMarker.enabled then
         frame.targetMarker:Hide()
         return
     end
 
-    local index = GetRaidTargetIndex(frame.unit)
-    if index then
+    local index = GetRaidTargetIndex(QUI_UF.GetFrameUnit(frame))
+    if not IsSecretValue(index) and index then
         SetRaidTargetIconTexture(frame.targetMarker, index)
         frame.targetMarker:Show()
     else
@@ -1500,7 +1542,7 @@ end
 -- UPDATE: Leader/Assistant Icon (crown for leader, flag for assistant)
 ---------------------------------------------------------------------------
 local function UpdateLeaderIcon(frame)
-    if not frame or not frame.unit or not frame.leaderIcon then return end
+    if not frame or not QUI_UF.GetFrameUnit(frame) or not frame.leaderIcon then return end
     local settings = GetUnitSettings(frame.unitKey)
     if not settings or not settings.leaderIcon or not settings.leaderIcon.enabled then
         frame.leaderIcon:Hide()
@@ -1515,11 +1557,23 @@ local function UpdateLeaderIcon(frame)
 
     -- Check if unit is leader or assistant
     -- Note: Assistants only exist in raids, not parties
-    if UnitIsGroupLeader(frame.unit) then
+    -- PTR7: both APIs return secrets for secret-identity units (hostile
+    -- players in combat on target/focus frames); collapse secret → false,
+    -- the icon simply stays hidden for units we cannot inspect.
+    -- @secret-policy=collapse-only
+    local unit = QUI_UF.GetFrameUnit(frame)
+    local isLeader = UnitIsGroupLeader(unit)
+    if issecretvalue(isLeader) then isLeader = false end
+    local isAssist = false
+    if IsInRaid() then
+        isAssist = UnitIsGroupAssistant(unit)
+        if issecretvalue(isAssist) then isAssist = false end
+    end
+    if isLeader then
         frame.leaderIcon:SetAtlas("groupfinder-icon-leader")
         frame.leaderIcon:SetAlpha(1)
         frame.leaderIcon:Show()
-    elseif IsInRaid() and UnitIsGroupAssistant(frame.unit) then
+    elseif isAssist then
         frame.leaderIcon:SetAtlas("groupfinder-icon-leader")
         frame.leaderIcon:SetAlpha(0.6)
         frame.leaderIcon:Show()
@@ -1542,22 +1596,22 @@ local CLASSIFICATION_DATA = {
 }
 
 local function UpdateClassificationIcon(frame)
-    if not frame or not frame.unit or not frame.classificationIcon then return end
+    if not frame or not QUI_UF.GetFrameUnit(frame) or not frame.classificationIcon then return end
     local settings = GetUnitSettings(frame.unitKey)
     if not settings or not settings.classificationIcon or not settings.classificationIcon.enabled then
         if frame.classificationIcon then frame.classificationIcon:Hide() end
         return
     end
 
-    if not UnitExists(frame.unit) then
+    if not UnitExists(QUI_UF.GetFrameUnit(frame)) then
         frame.classificationIcon:Hide()
         return
     end
 
-    local classification = UnitClassification(frame.unit)
+    local classification = UnitClassification(QUI_UF.GetFrameUnit(frame))
     -- Boss-level mobs (skull, level -1) may return "normal" from UnitClassification
     if not CLASSIFICATION_DATA[classification] then
-        local level = UnitLevel(frame.unit)
+        local level = UnitLevel(QUI_UF.GetFrameUnit(frame))
         if level and level == -1 then
             classification = "worldboss"
         end
@@ -1577,7 +1631,7 @@ end
 -- UPDATE: Health text color (independent of name visibility)
 ---------------------------------------------------------------------------
 local function UpdateHealthTextColor(frame)
-    if not frame or not frame.healthText or not frame.unit then return end
+    if not frame or not frame.healthText or not QUI_UF.GetFrameUnit(frame) then return end
 
     local settings = GetUnitSettings(frame.unitKey)
     if not settings then return end
@@ -1585,16 +1639,16 @@ local function UpdateHealthTextColor(frame)
     local general = GetGeneralSettings()
 
     if general and general.masterColorHealthText then
-        local r, g, b = GetUnitClassColor(frame.unit)
+        local r, g, b = GetUnitClassColor(QUI_UF.GetFrameUnit(frame))
         frame.healthText:SetTextColor(r, g, b, 1)
     elseif settings.healthTextUseClassColor then
-        local r, g, b = GetUnitClassColor(frame.unit)
+        local r, g, b = GetUnitClassColor(QUI_UF.GetFrameUnit(frame))
         frame.healthText:SetTextColor(r, g, b, 1)
     elseif settings.healthTextColor then
         local c = settings.healthTextColor
         frame.healthText:SetTextColor(c[1] or 1, c[2] or 1, c[3] or 1, c[4] or 1)
     elseif general and general.classColorText then
-        local r, g, b = GetUnitClassColor(frame.unit)
+        local r, g, b = GetUnitClassColor(QUI_UF.GetFrameUnit(frame))
         frame.healthText:SetTextColor(r, g, b, 1)
     else
         frame.healthText:SetTextColor(1, 1, 1, 1)
@@ -1615,8 +1669,9 @@ end
 -- UPDATE: Name text (with truncation and inline ToT support)
 ---------------------------------------------------------------------------
 local function UpdateName(frame)
-    if not frame or not frame.unit or not frame.nameText then return end
-    local unit = frame.unit
+    if not frame or not frame.nameText then return end
+    local unit = QUI_UF.GetFrameUnit(frame)
+    if not unit then return end
 
     local settings = GetUnitSettings(frame.unitKey)
     local nameSettings = GetNameSettings(settings)
@@ -1625,7 +1680,11 @@ local function UpdateName(frame)
         return
     end
 
-    local name = UnitName(unit) or ""
+    -- UnitName is SecretWhenUnitIdentityRestricted: probe before the ""-
+    -- default — `x or ""` truth-tests x and throws on a secret. TruncateName
+    -- and SetText below are secret-safe.
+    local name = UnitName(unit)
+    if not IsSecretValue(name) and not name then name = "" end
 
     -- Apply name truncation if maxNameLength is set
     local maxLen = nameSettings.maxNameLength
@@ -1636,13 +1695,16 @@ local function UpdateName(frame)
     -- Inline Target of Target — target frame + boss frames (the boss's own target).
     -- Boss-ToT refreshes on the boss frame's existing UpdateFrame cadence (health
     -- ticks etc.), so it stays current in combat without dedicated UNIT_TARGET
-    -- wiring. Names/colors are secret-safe (GetUnitClassColor returns plain numbers,
-    -- TruncateName C-side-formats secret names, UnitName feeds SetText which accepts
-    -- secrets) so an ally boss-target in restricted combat never errors.
+    -- wiring. A secret name must NOT be concatenated into the inline label: TruncateName
+    -- returns a viral-secret string for secret names, and `..` on a secret throws. The
+    -- build below detects a secret name/ToT-name and skips the concat, leaving the plain
+    -- base name to SetText (which accepts secrets) so restricted combat never errors.
     if (frame.unitKey == "target" or frame.unitKey == "boss") and settings.showInlineToT then
-        local totUnit = (frame.unitKey == "boss") and (frame.unit .. "target") or "targettarget"
+        local totUnit = (frame.unitKey == "boss") and (unit .. "target") or "targettarget"
         if UnitExists(totUnit) then
-            local totName = UnitName(totUnit) or ""
+            -- Same probe-before-`or ""` rule as the base name above.
+            local totName = UnitName(totUnit)
+            if not IsSecretValue(totName) and not totName then totName = "" end
             local totCharLimit = settings.totNameCharLimit
             if totCharLimit and totCharLimit > 0 then
                 totName = TruncateName(totName, totCharLimit)
@@ -1666,21 +1728,26 @@ local function UpdateName(frame)
                 dividerColorHex = "|cFFFFFFFF"
             end
 
-            -- Build the inline text with class coloring for ToT (master override OR per-unit setting)
-            local general = GetGeneralSettings()
-            if general and general.masterColorToTText then
-                -- MASTER OVERRIDE: Color ToT name only
-                local totR, totG, totB = GetUnitClassColor(totUnit)
-                local totColorHex = string_format("|cff%02x%02x%02x", totR * 255, totG * 255, totB * 255)
-                name = name .. dividerColorHex .. separator .. "|r" .. totColorHex .. totName .. "|r"
-            elseif settings.totUseClassColor then
-                -- Per-unit: ToT name colored
-                local totR, totG, totB = GetUnitClassColor(totUnit)
-                local totColorHex = string_format("|cff%02x%02x%02x", totR * 255, totG * 255, totB * 255)
-                name = name .. dividerColorHex .. separator .. "|r" .. totColorHex .. totName .. "|r"
-            else
-                -- Default: Divider colored, ToT name uncolored
-                name = name .. dividerColorHex .. separator .. "|r" .. totName
+            -- Build the inline text with class coloring for ToT (master override OR per-unit
+            -- setting). Concatenating a secret name throws (TruncateName returns a viral-secret
+            -- string), so skip the inline ToT entirely when either name is secret — the base
+            -- name still renders via SetText below.
+            if not IsSecretValue(name) and not IsSecretValue(totName) then
+                local general = GetGeneralSettings()
+                if general and general.masterColorToTText then
+                    -- MASTER OVERRIDE: Color ToT name only
+                    local totR, totG, totB = GetUnitClassColor(totUnit)
+                    local totColorHex = string_format("|cff%02x%02x%02x", totR * 255, totG * 255, totB * 255)
+                    name = name .. dividerColorHex .. separator .. "|r" .. totColorHex .. totName .. "|r"
+                elseif settings.totUseClassColor then
+                    -- Per-unit: ToT name colored
+                    local totR, totG, totB = GetUnitClassColor(totUnit)
+                    local totColorHex = string_format("|cff%02x%02x%02x", totR * 255, totG * 255, totB * 255)
+                    name = name .. dividerColorHex .. separator .. "|r" .. totColorHex .. totName .. "|r"
+                else
+                    -- Default: Divider colored, ToT name uncolored
+                    name = name .. dividerColorHex .. separator .. "|r" .. totName
+                end
             end
         end
     end
@@ -1717,7 +1784,7 @@ end
 -- UPDATE: Level text
 ---------------------------------------------------------------------------
 local function UpdateLevelText(frame)
-    if not frame or not frame.unit or not frame.levelText then return end
+    if not frame or not QUI_UF.GetFrameUnit(frame) or not frame.levelText then return end
 
     local settings = GetUnitSettings(frame.unitKey)
     if not settings or settings.showLevel ~= true then
@@ -1725,13 +1792,13 @@ local function UpdateLevelText(frame)
         return
     end
 
-    if not UnitExists(frame.unit) then
+    if not UnitExists(QUI_UF.GetFrameUnit(frame)) then
         frame.levelText:SetText("")
         frame.levelText:Hide()
         return
     end
 
-    local text = FormatUnitLevelText(frame.unit)
+    local text = FormatUnitLevelText(QUI_UF.GetFrameUnit(frame))
     if text == "" then
         frame.levelText:SetText("")
         frame.levelText:Hide()
@@ -1761,7 +1828,7 @@ local function UpdateFrame(frame)
             frame.healthBar:SetStatusBarColor(c[1], c[2], c[3], c[4] or 1)
         else
             -- Use unit-specific color settings (class color → hostility color → custom color)
-            local r, g, b, a = GetHealthBarColor(frame.unit, settings)
+            local r, g, b, a = GetHealthBarColor(QUI_UF.GetFrameUnit(frame), settings)
             frame.healthBar:SetStatusBarColor(r, g, b, a)
         end
     end
@@ -1782,8 +1849,8 @@ local function UpdateFrame(frame)
 
     -- Update portrait texture (third param disables circular mask for square portrait)
     if frame.portraitTexture and frame.portrait and frame.portrait:IsShown() then
-        if UnitExists(frame.unit) then
-            SetPortraitTexture(frame.portraitTexture, frame.unit, true)
+        if UnitExists(QUI_UF.GetFrameUnit(frame)) then
+            SetPortraitTexture(frame.portraitTexture, QUI_UF.GetFrameUnit(frame), true)
             frame.portraitTexture:SetTexCoord(0.15, 0.85, 0.15, 0.85)  -- Crop to focus on face
         end
     end
@@ -1812,7 +1879,7 @@ local function CreateBossFrame(unit, frameKey, bossIndex)
     local frameName = "QUI_Boss" .. bossIndex
     local frame = CreateFrame("Button", frameName, UIParent, "SecureUnitButtonTemplate, BackdropTemplate, PingableUnitFrameTemplate")
 
-    frame.unit = unit  -- "boss1", "boss2", etc.
+    QUI_UF.SetFrameUnit(frame, unit)  -- "boss1", "boss2", etc.
     frame.unitKey = "boss"  -- Settings key
 
     -- Size and position (config values are virtual coords, snap to pixel grid)
@@ -2089,26 +2156,27 @@ local function CreateBossFrame(unit, frameKey, bossIndex)
     end
 
     frame:SetScript("OnEvent", function(self, event, ...)
+        local frameUnit = QUI_UF.GetFrameUnit(self)
         if event == "UNIT_HEALTH" or event == "UNIT_MAXHEALTH" then
             local eventUnit = ...
-            if eventUnit == self.unit then
+            if eventUnit == frameUnit then
                 UpdateHealth(self)
                 UpdateAbsorbs(self)
             end
         elseif event == "UNIT_ABSORB_AMOUNT_CHANGED" or event == "UNIT_HEAL_ABSORB_AMOUNT_CHANGED" then
             local eventUnit = ...
-            if eventUnit == self.unit then
+            if eventUnit == frameUnit then
                 UpdateAbsorbs(self)
             end
         elseif event == "UNIT_POWER_FREQUENT" then
             local eventUnit = ...
-            if eventUnit == self.unit then
+            if eventUnit == frameUnit then
                 _powerThrottleDirty = true
                 self:SetScript("OnUpdate", PowerThrottleOnUpdate)
             end
         elseif event == "UNIT_POWER_UPDATE" or event == "UNIT_MAXPOWER" then
             local eventUnit = ...
-            if eventUnit == self.unit then
+            if eventUnit == frameUnit then
                 UpdatePower(self)
                 UpdatePowerText(self)
                 _powerThrottleDirty = false  -- just did a full update
@@ -2117,25 +2185,25 @@ local function CreateBossFrame(unit, frameKey, bossIndex)
             end
         elseif event == "UNIT_NAME_UPDATE" then
             local eventUnit = ...
-            if eventUnit == self.unit then
+            if eventUnit == frameUnit then
                 UpdateName(self)
                 UpdateLevelText(self)
             end
         elseif event == "UNIT_LEVEL" then
             local eventUnit = ...
-            if eventUnit == self.unit then
+            if eventUnit == frameUnit then
                 UpdateLevelText(self)
             end
         elseif event == "UNIT_TARGET" then
             local eventUnit = ...
-            if eventUnit == self.unit then
+            if eventUnit == frameUnit then
                 UpdateName(self)
             end
         elseif event == "RAID_TARGET_UPDATE" then
             UpdateTargetMarker(self)
         elseif event == "UNIT_CLASSIFICATION_CHANGED" then
             local eventUnit = ...
-            if eventUnit == self.unit then
+            if eventUnit == frameUnit then
                 UpdateClassificationIcon(self)
                 UpdateLevelText(self)
             end
@@ -2168,28 +2236,108 @@ local function CreateBossFrame(unit, frameKey, bossIndex)
 end
 
 ---------------------------------------------------------------------------
+-- PURE: Frequent-power coalescing decisions (generation token)
+-- C_Timer.After callbacks are uncancellable, so a pending drain cannot be
+-- cancelled when an immediate UNIT_POWER_UPDATE / UNIT_MAXPOWER refresh
+-- makes it redundant. Instead every immediate refresh bumps `gen`; the
+-- drain captured `queuedGen` at queue time and no-ops when they differ.
+-- (C_Timer.NewTimer+Cancel would also work, but allocates a timer object
+-- per queue cycle and adds a handle to juggle across three sites; the token
+-- is one integer in per-frame state — no new file-scope upvalues.)
+-- Pure: no WoW APIs except in the EventPowerMatters wrapper at the bottom.
+-- Tested by tests/unit/unitframes_power_coalesce_test.lua.
+---------------------------------------------------------------------------
+QUI_UF.PowerCoalesce = {}
+
+function QUI_UF.PowerCoalesce.NewState()
+    return { gen = 0, queuedGen = nil }
+end
+
+-- UNIT_POWER_FREQUENT arrived. Returns true when the caller should schedule
+-- a drain timer; false when one is already pending (the pending slot is
+-- re-validated to the current generation so it fires for this newer event).
+function QUI_UF.PowerCoalesce.OnFrequent(state)
+    local schedule = (state.queuedGen == nil)
+    state.queuedGen = state.gen
+    return schedule
+end
+
+-- An immediate refresh ran (UNIT_POWER_UPDATE / UNIT_MAXPOWER). Any drain
+-- queued before this instant is now redundant: bump the generation so it
+-- no-ops on fire. gen is a plain Lua number (double, exact to 2^53), so it
+-- never wraps in any realistic session.
+function QUI_UF.PowerCoalesce.OnImmediate(state)
+    state.gen = state.gen + 1
+end
+
+-- Drain timer fired. Clears the queued slot; returns true when the queued
+-- generation is still current (no immediate refresh superseded it).
+function QUI_UF.PowerCoalesce.OnFire(state)
+    local queued = state.queuedGen
+    state.queuedGen = nil
+    return queued ~= nil and queued == state.gen
+end
+
+-- Should a power event with this payload refresh the display? The frame
+-- renders only the unit's primary power (UpdatePower / UpdatePowerText call
+-- UnitPower / UnitPowerPercent with nil powerType), so events for other
+-- power types are no-ops. Pure: the caller passes the probed secret flag;
+-- nil on either side means "cannot prove irrelevant" -> refresh.
+function QUI_UF.PowerCoalesce.EventMatters(eventPowerType, displayedToken, anySecret)
+    if anySecret then return true end
+    if eventPowerType == nil or displayedToken == nil then return true end
+    return eventPowerType == displayedToken
+end
+
+-- WoW-side wrapper: resolve the unit's displayed power token and probe for
+-- secrets BEFORE EventMatters compares anything. UNIT_POWER_FREQUENT /
+-- UNIT_POWER_UPDATE payload is (unitTarget, powerType cstring) per
+-- tests/api-docs/blizzard/UnitDocumentation.lua:4347-4357 / :4369-4379;
+-- UnitPowerType (:2736-2756) MayReturnNothing, so a nil token also refreshes.
+-- @secret-policy: collapse-only — a secret token on either side makes the
+-- comparison unprovable, so treat the event as relevant and refresh.
+function QUI_UF.EventPowerMatters(unit, eventPowerType)
+    local _, token = UnitPowerType(unit)
+    local eventIsSecret = IsSecretValue(eventPowerType)
+    local tokenIsSecret = IsSecretValue(token)
+    return QUI_UF.PowerCoalesce.EventMatters(eventPowerType, token,
+        eventIsSecret or tokenIsSecret)
+end
+
+---------------------------------------------------------------------------
 -- Force update ToT frame when target-related events fire
 ---------------------------------------------------------------------------
-local function ForceUpdateToT()
+local function ForceUpdateToT(includeIdentity)
     local totFrame = QUI_UF.frames and QUI_UF.frames.targettarget
     if not totFrame or not UnitExists("targettarget") then return end
     UpdateHealth(totFrame)
     UpdateAbsorbs(totFrame)
     UpdatePower(totFrame)
     UpdatePowerText(totFrame)
-    UpdateName(totFrame)
-    UpdateLevelText(totFrame)
+    if includeIdentity then
+        UpdateName(totFrame)
+        UpdateLevelText(totFrame)
+    end
 end
 
 -- ToT polling for health updates (unit events don't fire reliably for targettarget)
+-- Vitals poll every tick. Identity (name/level) is event-driven —
+-- UNIT_NAME_UPDATE / UNIT_LEVEL are registered for the frame and
+-- UNIT_TARGET / PLAYER_TARGET_CHANGED run a full UpdateFrame — but the
+-- client does not route unit events reliably for the compound targettarget
+-- token, so the ticker refreshes identity as a slow fallback every
+-- TOT_IDENTITY_TICKS ticks instead of every tick.
 local totUpdateTicker = nil
 local TOT_UPDATE_INTERVAL = 0.5
 
 local function StartToTTicker()
     if totUpdateTicker then return end
+    local TOT_IDENTITY_TICKS = 4  -- 4 * 0.5s = identity fallback every 2s
+    local tick = 0
     totUpdateTicker = C_Timer.NewTicker(TOT_UPDATE_INTERVAL, function()
         if UnitExists("targettarget") then
-            ForceUpdateToT()
+            tick = (tick + 1) % TOT_IDENTITY_TICKS
+            ForceUpdateToT(tick == 0)
         end
     end)
 end
@@ -2222,12 +2370,19 @@ local function UpdateBossTargetHighlight()
     -- Find which boss frame (if any) is our current target
     for i = 1, 5 do
         local frame = QUI_UF.frames["boss" .. i]
-        if frame and frame.unit and frame.targetHighlight and UnitExists(frame.unit) and UnitIsUnit(frame.unit, "target") then
-            local c = hlSettings.color or { 1, 1, 1, 0.6 }
-            frame.targetHighlight:SetBackdropBorderColor(c[1], c[2], c[3], c[4] or 0.6)
-            frame.targetHighlight:Show()
-            _bossTargetHighlightFrame = frame
-            return
+        local frameUnit = QUI_UF.GetFrameUnit(frame)
+        if frame and frameUnit and frame.targetHighlight and UnitExists(frameUnit) then
+            -- UnitIsUnit is SecretWhenUnitComparisonRestricted; on restricted maps it
+            -- returns a secret boolean (opaque userdata, always truthy in Lua) that would
+            -- light every boss frame. Gate it so only a real, non-secret match highlights.
+            local isTarget = UnitIsUnit(frameUnit, "target")
+            if not IsSecretValue(isTarget) and isTarget then
+                local c = hlSettings.color or { 1, 1, 1, 0.6 }
+                frame.targetHighlight:SetBackdropBorderColor(c[1], c[2], c[3], c[4] or 0.6)
+                frame.targetHighlight:Show()
+                _bossTargetHighlightFrame = frame
+                return
+            end
         end
     end
 end
@@ -2327,29 +2482,42 @@ end
 local function EnsureBossRangeEventFrame()
     if bossRange.eventFrame then return end
 
-    local eventFrame = CreateFrame("Frame")
-    -- Unit-filtered: the engine only delivers boss1-5 range traffic, so no
-    -- global UNIT_IN_RANGE_UPDATE flood ever reaches Lua.
-    eventFrame:RegisterUnitEvent("UNIT_IN_RANGE_UPDATE", "boss1", "boss2", "boss3", "boss4", "boss5")
-    eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
-    eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
-    eventFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
-    eventFrame:SetScript("OnEvent", function(_, event, unit, isInRange)
-        if event == "UNIT_IN_RANGE_UPDATE" then
+    -- UNIT_IN_RANGE_UPDATE is SecretPayloads = true: BOTH payload args (unit,
+    -- isInRange) are ALWAYS secret, and RegisterUnitEvent filtering does NOT
+    -- declassify the delivered payload — indexing QUI_UF.frames with the
+    -- secret unit token threw. One listener per boss token instead: the
+    -- LEXICAL registration token identifies the unit; the secret isInRange
+    -- rides untouched into the alpha sink (ApplyBossRangeAlpha resolves it
+    -- C-side via EvaluateColorValueFromBoolean/SetAlphaFromBoolean).
+    local listeners = {}
+    for i = 1, 5 do
+        local token = "boss" .. i
+        local listener = CreateFrame("Frame")
+        listener:RegisterUnitEvent("UNIT_IN_RANGE_UPDATE", token)
+        listener:SetScript("OnEvent", function(_, _, _, isInRange)
             local range = GetBossRangeSettings()
             if not range or range.enabled == false then return end
             if not ShouldApplyBossRangeAlpha() then return end
-            local frame = QUI_UF.frames and QUI_UF.frames[unit]
-            if frame and frame.unit and UnitExists(frame.unit) then
+            local frame = QUI_UF.frames and QUI_UF.frames[token]
+            local frameUnit = QUI_UF.GetFrameUnit(frame)
+            if frame and frameUnit and UnitExists(frameUnit) then
                 ApplyBossRangeAlpha(frame, isInRange, range.outOfRangeAlpha or 0.4)
             end
-        else
-            -- Zone-in / combat transitions: re-baseline to full alpha; the
-            -- engine re-emits UNIT_IN_RANGE_UPDATE to dim out-of-range bosses.
-            UpdateBossRangeAlpha()
-        end
+        end)
+        listeners[i] = listener
+    end
+
+    local eventFrame = CreateFrame("Frame")
+    eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+    eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+    eventFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
+    eventFrame:SetScript("OnEvent", function()
+        -- Zone-in / combat transitions: re-baseline to full alpha; the
+        -- engine re-emits UNIT_IN_RANGE_UPDATE to dim out-of-range bosses.
+        UpdateBossRangeAlpha()
     end)
     bossRange.eventFrame = eventFrame
+    bossRange.rangeListeners = listeners
 end
 
 local function StartBossRangeCheck()
@@ -2389,7 +2557,7 @@ local function CreateUnitFrame(unit, unitKey)
     local frameName = "QUI_" .. unitKey:gsub("^%l", string.upper)
     local frame = CreateFrame("Button", frameName, UIParent, "SecureUnitButtonTemplate, BackdropTemplate, PingableUnitFrameTemplate")
 
-    frame.unit = unit
+    QUI_UF.SetFrameUnit(frame, unit)
     frame.unitKey = unitKey
 
     -- Size and position (config values are virtual coords, snap to pixel grid)
@@ -2846,7 +3014,24 @@ local function CreateUnitFrame(unit, unitKey)
         frame:RegisterUnitEvent("UNIT_FLAGS", unit)
     end
 
-    frame:SetScript("OnEvent", function(self, event, arg1)
+    -- Coalesce UNIT_POWER_FREQUENT (regen ticks, many/sec) to ~5 Hz.
+    -- UNIT_POWER_UPDATE / UNIT_MAXPOWER are discrete and stay immediate.
+    -- C_Timer drain instead of an OnUpdate script so the frame's OnUpdate
+    -- slot stays free; callbacks are uncancellable, so an immediate refresh
+    -- invalidates a pending drain via the generation token in _freqPower
+    -- (see QUI_UF.PowerCoalesce) instead of cancelling the timer.
+    local _freqPower = QUI_UF.PowerCoalesce.NewState()
+    local function DrainFrequentPower()
+        if not QUI_UF.PowerCoalesce.OnFire(_freqPower) then return end
+        local u = QUI_UF.GetFrameUnit(frame)
+        if u and UnitExists(u) then
+            UpdatePower(frame)
+            UpdatePowerText(frame)
+        end
+    end
+
+    frame:SetScript("OnEvent", function(self, event, arg1, arg2)
+        local frameUnit = QUI_UF.GetFrameUnit(self)
         if event == "PLAYER_ENTERING_WORLD" then
             -- Skip refresh if HUD visibility has this frame hidden — the
             -- visibility system will re-evaluate via its own PEW handler.
@@ -2860,13 +3045,13 @@ local function CreateUnitFrame(unit, unitKey)
         elseif event == "PLAYER_TARGET_CHANGED" then
             if self.unitKey == "target" then
                 -- State driver handles visibility, just update if unit exists
-                if UnitExists(self.unit) then
+                if UnitExists(frameUnit) then
                     UpdateFrame(self)
                 end
             elseif self.unitKey == "targettarget" then
                 -- ToT: update if exists, otherwise clear the display
                 -- NOTE: State driver handles Show/Hide - don't call manually to avoid taint
-                if UnitExists(self.unit) then
+                if UnitExists(frameUnit) then
                     UpdateFrame(self)
                 else
                     -- Clear the ToT display when target has no target
@@ -2880,7 +3065,7 @@ local function CreateUnitFrame(unit, unitKey)
                     UpdateName(self)  -- Refresh name text (includes inline ToT)
                 -- Update standalone ToT frame when target's target changes
                 elseif self.unitKey == "targettarget" then
-                    if UnitExists(self.unit) then
+                    if UnitExists(frameUnit) then
                         UpdateFrame(self)
                     else
                         -- Clear display when target has no target
@@ -2891,14 +3076,14 @@ local function CreateUnitFrame(unit, unitKey)
         elseif event == "PLAYER_FOCUS_CHANGED" then
             if self.unitKey == "focus" then
                 -- State driver handles visibility, just update if unit exists
-                if UnitExists(self.unit) then
+                if UnitExists(frameUnit) then
                     UpdateFrame(self)
                 end
             end
         elseif event == "UNIT_PET" then
             if self.unitKey == "pet" then
                 -- State driver handles visibility, just update if unit exists
-                if UnitExists(self.unit) then
+                if UnitExists(frameUnit) then
                     UpdateFrame(self)
                 end
             end
@@ -2926,11 +3111,11 @@ local function CreateUnitFrame(unit, unitKey)
             UpdateLeaderIcon(self)
         elseif event == "UNIT_CLASSIFICATION_CHANGED" then
             -- Classification changed (elite/rare/boss) - target, focus only
-            if arg1 == self.unit then
+            if arg1 == frameUnit then
                 UpdateClassificationIcon(self)
                 UpdateLevelText(self)
             end
-        elseif arg1 == self.unit then
+        elseif arg1 == frameUnit then
             if event == "UNIT_HEALTH" or event == "UNIT_MAXHEALTH" then
                 UpdateHealth(self)
                 UpdateAbsorbs(self)
@@ -2939,9 +3124,23 @@ local function CreateUnitFrame(unit, unitKey)
                 UpdateHealPrediction(self)
             elseif event == "UNIT_ABSORB_AMOUNT_CHANGED" or event == "UNIT_HEAL_ABSORB_AMOUNT_CHANGED" then
                 UpdateAbsorbs(self)
-            elseif event == "UNIT_POWER_UPDATE" or event == "UNIT_POWER_FREQUENT" or event == "UNIT_MAXPOWER" then
-                UpdatePower(self)
-                UpdatePowerText(self)
+            elseif event == "UNIT_POWER_FREQUENT" then
+                -- arg2 = powerType token ("MANA", "ENERGY", ...). Skip types
+                -- the frame doesn't display; probe/secret handling lives in
+                -- QUI_UF.EventPowerMatters (@secret-policy collapse-only).
+                if QUI_UF.EventPowerMatters(frameUnit, arg2)
+                   and QUI_UF.PowerCoalesce.OnFrequent(_freqPower) then
+                    C_Timer.After(0.2, DrainFrequentPower)
+                end
+            elseif event == "UNIT_POWER_UPDATE" or event == "UNIT_MAXPOWER" then
+                -- UNIT_MAXPOWER always refreshes (pool resize moves the bar);
+                -- UNIT_POWER_UPDATE only when the payload type is displayed.
+                if event == "UNIT_MAXPOWER" or QUI_UF.EventPowerMatters(frameUnit, arg2) then
+                    UpdatePower(self)
+                    UpdatePowerText(self)
+                    -- Any pending frequent drain is now redundant.
+                    QUI_UF.PowerCoalesce.OnImmediate(_freqPower)
+                end
             elseif event == "UNIT_NAME_UPDATE" then
                 UpdateName(self)
                 UpdateLevelText(self)
@@ -3072,6 +3271,8 @@ function QUI_UF:ShowPreview(unitKey)
                     -- Default mode: use class color or custom default health color
                     if general and general.defaultUseClassColor then
                         local _, class = UnitClass("player")
+                        -- @secret-policy: collapse-only — secret class falls back to defaultHealthColor
+                        if issecretvalue and issecretvalue(class) then class = nil end
                         if class and RAID_CLASS_COLORS[class] then
                             local color = RAID_CLASS_COLORS[class]
                             frame.healthBar:SetStatusBarColor(color.r, color.g, color.b, 1)
@@ -3138,7 +3339,7 @@ function QUI_UF:ShowPreview(unitKey)
     -- Set fake name
     if frame.nameText then
         local names = {
-            player = UnitName("player") or ns.L["Player"],
+            player = SafeValue(UnitName("player")) or ns.L["Player"],
             target = ns.L["Target Dummy"],
             targettarget = ns.L["ToT Name"],
             pet = ns.L["Pet Name"],
@@ -3261,6 +3462,8 @@ function QUI_UF:ShowPreview(unitKey)
         -- Default mode: use class color or custom default health color
         if general and general.defaultUseClassColor then
             local _, class = UnitClass("player")
+            -- @secret-policy: collapse-only — secret class falls back to defaultHealthColor
+            if issecretvalue and issecretvalue(class) then class = nil end
             if class and RAID_CLASS_COLORS[class] then
                 local color = RAID_CLASS_COLORS[class]
                 frame.healthBar:SetStatusBarColor(color.r, color.g, color.b, 1)
@@ -3337,7 +3540,7 @@ function QUI_UF:HidePreview(unitKey)
 
     -- Re-register state driver for non-player units
     if not InCombatLockdown() then
-        local unit = frame.unit
+        local unit = QUI_UF.GetFrameUnit(frame)
         if unit == "target" then
             RegisterStateDriver(frame, "visibility", "[@target,exists] show; hide")
         elseif unit == "focus" then
@@ -3355,7 +3558,7 @@ function QUI_UF:HidePreview(unitKey)
     end
 
     -- Restore real state
-    if UnitExists(frame.unit) or unitKey == "player" then
+    if UnitExists(QUI_UF.GetFrameUnit(frame)) or unitKey == "player" then
         UpdateFrame(frame)
         frame:Show()
     else
@@ -3637,7 +3840,7 @@ function QUI_UF:RefreshFrame(unitKey)
                         local classificationIcon = frame.indicatorFrame:CreateTexture(nil, "OVERLAY")
                         classificationIcon:Hide()
                         frame.classificationIcon = classificationIcon
-                        frame:RegisterUnitEvent("UNIT_CLASSIFICATION_CHANGED", frame.unit)
+                        frame:RegisterUnitEvent("UNIT_CLASSIFICATION_CHANGED", QUI_UF.GetFrameUnit(frame))
                     end
                     local ci = settings.classificationIcon
                     frame.classificationIcon:SetSize(ci.size or 16, ci.size or 16)
@@ -3764,8 +3967,8 @@ function QUI_UF:RefreshFrame(unitKey)
         bgOpacity = general and general.defaultBgOpacity or general and general.defaultOpacity or 1.0
     end
     -- Class-colored backdrop (player units only; class is safe to read).
-    if settings and settings.useClassColorBg and frame.unit and UnitIsPlayer(frame.unit) then
-        local cr, cg, cb = GetUnitClassColor(frame.unit)
+    if settings and settings.useClassColorBg and QUI_UF.GetFrameUnit(frame) and UnitIsPlayer(QUI_UF.GetFrameUnit(frame)) then
+        local cr, cg, cb = GetUnitClassColor(QUI_UF.GetFrameUnit(frame))
         if cr then bgColor = { cr, cg, cb, bgColor[4] or 1 } end
     end
     local bgAlpha = (bgColor[4] or 1) * bgOpacity
@@ -3861,7 +4064,7 @@ function QUI_UF:RefreshFrame(unitKey)
             frame.portrait = portrait
 
             -- Secure unit attributes for click targeting
-            portrait:SetAttribute("unit", frame.unit)
+            portrait:SetAttribute("unit", QUI_UF.GetFrameUnit(frame))
             portrait:SetAttribute("*type1", "target")
             portrait:SetAttribute("*type2", "togglemenu")
             portrait:RegisterForClicks("AnyUp")
@@ -3905,8 +4108,8 @@ function QUI_UF:RefreshFrame(unitKey)
         frame.portraitTexture:SetPoint("BOTTOMRIGHT", -portraitBorderSize, portraitBorderSize)
 
         -- Update portrait texture
-        if UnitExists(frame.unit) then
-            SetPortraitTexture(frame.portraitTexture, frame.unit, true)
+        if UnitExists(QUI_UF.GetFrameUnit(frame)) then
+            SetPortraitTexture(frame.portraitTexture, QUI_UF.GetFrameUnit(frame), true)
             frame.portraitTexture:SetTexCoord(0.15, 0.85, 0.15, 0.85)
         end
 
@@ -4080,7 +4283,7 @@ function QUI_UF:RefreshFrame(unitKey)
                 if unitKey == "target" or unitKey == "focus" then
                     frame:RegisterEvent("UNIT_CLASSIFICATION_CHANGED")
                 else
-                    frame:RegisterUnitEvent("UNIT_CLASSIFICATION_CHANGED", frame.unit)
+                    frame:RegisterUnitEvent("UNIT_CLASSIFICATION_CHANGED", QUI_UF.GetFrameUnit(frame))
                 end
             end
             -- Update size and position
@@ -4111,12 +4314,6 @@ function QUI_UF:RefreshFrame(unitKey)
             -- Castbar doesn't exist but is now enabled - create it
             self.castbars[unitKey] = QUI_Castbar:CreateCastbar(frame, unitKey, unitKey)
         end
-    end
-
-    -- Refresh private auras (boss debuffs hidden from the addon API)
-    -- Safe to call for any unit — the module gates on supported unit keys.
-    if ns.QUI_UF_PrivateAuras then
-        ns.QUI_UF_PrivateAuras:Refresh(frame)
     end
 
     -- Restore edit overlay if in Edit Mode (QUI's own Edit Mode)
@@ -4212,10 +4409,6 @@ function QUI_UF:Initialize()
         end
         -- Setup aura tracking for player
         QUI_UF.SetupAuraTracking(self.frames.player)
-        -- Setup private auras (boss debuffs hidden from the addon API)
-        if ns.QUI_UF_PrivateAuras then
-            ns.QUI_UF_PrivateAuras:Setup(self.frames.player)
-        end
     end
 
     -- Create target frame
@@ -4227,10 +4420,6 @@ function QUI_UF:Initialize()
         end
         -- Setup aura tracking for target (debuffs above, buffs below)
         QUI_UF.SetupAuraTracking(self.frames.target)
-        -- Setup private auras (boss debuffs hidden from the addon API)
-        if ns.QUI_UF_PrivateAuras then
-            ns.QUI_UF_PrivateAuras:Setup(self.frames.target)
-        end
     end
 
     -- Create target of target frame
@@ -4264,10 +4453,6 @@ function QUI_UF:Initialize()
         end
         -- Setup aura tracking for focus (debuffs above, buffs below)
         QUI_UF.SetupAuraTracking(self.frames.focus)
-        -- Setup private auras (boss debuffs hidden from the addon API)
-        if ns.QUI_UF_PrivateAuras then
-            ns.QUI_UF_PrivateAuras:Setup(self.frames.focus)
-        end
     end
 
     -- Create boss frames (boss1 through boss5)
@@ -4419,14 +4604,12 @@ _G.QUI_RefreshAuras = function(unitKey)
                 local bossKey = "boss" .. i
                 local frame = QUI_UF.frames[bossKey]
                 if frame then
-                    QUI_UF._lastAuraUpdate[bossKey] = 0
                     QUI_UF.UpdateAuras(frame)
                 end
             end
         else
             local frame = QUI_UF.frames[unitKey]
             if frame then
-                QUI_UF._lastAuraUpdate[unitKey] = 0
                 QUI_UF.UpdateAuras(frame)
             end
         end
@@ -4435,7 +4618,6 @@ _G.QUI_RefreshAuras = function(unitKey)
         for _, key in ipairs({"player", "target", "focus", "pet", "targettarget"}) do
             local frame = QUI_UF.frames[key]
             if frame then
-                QUI_UF._lastAuraUpdate[key] = 0
                 QUI_UF.UpdateAuras(frame)
             end
         end
@@ -4444,7 +4626,6 @@ _G.QUI_RefreshAuras = function(unitKey)
             local bossKey = "boss" .. i
             local frame = QUI_UF.frames[bossKey]
             if frame then
-                QUI_UF._lastAuraUpdate[bossKey] = 0
                 QUI_UF.UpdateAuras(frame)
             end
         end
