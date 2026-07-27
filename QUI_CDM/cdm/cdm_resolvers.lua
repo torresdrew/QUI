@@ -2093,9 +2093,18 @@ local function DeriveMirrorPayloadMode(m, sid, suppressAura)
     -- curve in cdm_icon_renderer.lua, so a cosmetic isOnGCD wobble here only
     -- affects which swipe shows, never the dark/bright state the user sees.
     local baseOnGCD = cdInfo and cdInfo.isOnGCD
+    -- An active override child whose OWN spell has a rolling cooldown lane
+    -- (Shadow Priest Void Volley during Voidform) follows that lane no matter
+    -- what the base reports -- Blizzard's CooldownViewer queries the override
+    -- spell, so the base's major-cooldown swipe must not paint over it. Only
+    -- an actively rolling lane ("cooldown"/"gcd-only") may return here: an
+    -- "inactive" verdict (proc ready, or no lane of its own) falls through --
+    -- ready-classification, the overrideChildReady visibility flag, and the
+    -- charge/gcd/casting fallbacks below own that shape (Brewmaster Empty
+    -- Barrel brew procs are the reference case).
     local overrideMode, overrideAura, overrideCooldownSid =
         ResolveActiveOverrideChildCooldownLane(m, sid)
-    if overrideMode then
+    if overrideMode and overrideMode ~= "inactive" then
         return overrideMode, overrideAura, overrideCooldownSid
     end
     -- A real (non-GCD) cooldown on the base always wins -- EXCEPT when this is a
@@ -2103,26 +2112,16 @@ local function DeriveMirrorPayloadMode(m, sid, suppressAura)
     -- the "cooldown" we just read is the base's shared slot and Blizzard shows
     -- the proc ready. Show ready (inactive) so the proc surfaces + glows.
     if cdActive and baseOnGCD ~= true then
-        -- An active override child whose OWN spell owns a cooldown lane (Shadow
-        -- Priest Void Volley over Voidform) must follow that lane, not the base's
-        -- major cooldown. Resolve it HERE -- gated on the base carrying a real
-        -- (non-GCD) cooldown, the only state where the base would otherwise paint
-        -- over the override. Override children WITHOUT a real base cooldown
-        -- (Brewmaster Empty Barrel brew procs: free-cast override, base idle or
-        -- on a charge recharge) must fall through to the override / charge-
-        -- recharge / gcd / casting chain below that surfaced them before 4.0.4 --
-        -- NOT collapse to inactive and drop off the bar.
-        local overrideMode, overrideAura, overrideCooldownSid =
-            ResolveActiveOverrideChildCooldownLane(m, sid)
+        -- The override-child lane was resolved above; a rolling own lane has
+        -- already returned. An "inactive" verdict landing here means the live
+        -- override child is READY while the base rolls a real cooldown (Empty
+        -- Barrel brew proc). Correct mode -- the proc IS ready -- but
+        -- containers with iconDisplayMode="active" hide inactive icons, so
+        -- flag the shape (4th return) and let the visibility layer keep the
+        -- icon shown. A persistent form override that is merely ready with
+        -- its base idle never reaches this branch (no real base cooldown),
+        -- so it stays hideable.
         if overrideMode then
-            -- "inactive" here means the live override child is READY while
-            -- the base rolls a real cooldown (Empty Barrel brew proc, Void
-            -- Volley ready). Correct mode -- the proc IS ready -- but
-            -- containers with iconDisplayMode="active" hide inactive icons,
-            -- so flag the shape (4th return) and let the visibility layer
-            -- keep the icon shown. A persistent form override that is merely
-            -- ready with its base idle never reaches this branch (no real
-            -- base cooldown), so it stays hideable.
             return overrideMode, overrideAura, overrideCooldownSid,
                 overrideMode == "inactive"
         end
