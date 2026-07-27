@@ -12,7 +12,6 @@ QuickJoinMixin = CreateFromMixins();
 do
 
 	local alwaysEvents = {
-		"SOCIAL_UI_SOCIAL_QUEUE_SYSTEM_STATUS_UPDATED",
 		"SOCIAL_QUEUE_UPDATE",
 	};
 
@@ -27,30 +26,29 @@ do
 	function QuickJoinMixin:OnLoad()
 		FrameUtil.RegisterFrameForEvents(self, alwaysEvents);
 
-		local view = CreateScrollBoxListLinearView();
-		view:SetElementInitializer("QuickJoinButtonTemplate", function(button, elementData)
-			button:Init(elementData, self);
-			if self.buttonBackgroundAtlas then
-				button.Background:SetTexCoord(0,1,0,1);
-				button.Background:SetAtlas(self.buttonBackgroundAtlas);
-			end
-			if self.buttonSelectedAtlas then
-				button.Selected:SetAtlas(self.buttonSelectedAtlas);
-			end
-		end);
-
-		-- Scrollable text in the Quick Join List can be resized by the player so the extent may change during a session
-		view:SetElementExtentCalculator(function(dataIndex, elementData)
-			return elementData:CalculateHeight();
-		end);
-
-		ScrollUtil.InitScrollBoxListWithScrollBar(self.ScrollBox, self.ScrollBar, view);
+		self:InitializeScrollBox();
 
 		self.entries = CreateFromMixins(QuickJoinEntriesMixin);
-		self.entries:Init(self);
+		self.entries:Init();
 
 		self:UpdateScrollFrame();
 	end
+
+function QuickJoinMixin:InitializeScrollBox()
+	local topPadding, bottomPadding, leftPadding, rightPadding = 0, 0, 0, 0;
+	local elementSpacing = 0;
+	local view = CreateScrollBoxListLinearView(topPadding, bottomPadding, leftPadding, rightPadding, elementSpacing);
+	view:SetElementInitializer("QuickJoinButtonTemplate", function(button, elementData)
+		button:Init(elementData, self);
+	end);
+
+	-- Scrollable text in the Quick Join List can be resized by the player so the extent may change during a session
+	view:SetElementExtentCalculator(function(dataIndex, elementData)
+		return elementData:CalculateHeight();
+	end);
+
+	ScrollUtil.InitScrollBoxListWithScrollBar(self.ScrollBox, self.ScrollBar, view);
+end
 
 	function QuickJoinMixin:OnShow()
 		EventRegistry:RegisterCallback("TextSizeManager.OnTextScaleUpdated", function()
@@ -58,7 +56,7 @@ do
 		end);
 
 		FrameUtil.RegisterFrameForEvents(self, dynamicEvents);
-		self.entries:UpdateAll(self);
+		self.entries:UpdateAll();
 		self:SelectGroup(nil);
 		self:UpdateScrollFrame();
 
@@ -84,7 +82,6 @@ function QuickJoinMixin:OnEvent(event, ...)
 		if self:IsShown() then
 			self:UpdateEntry(requester);
 		end
-		self:SocialQueueUpdateWhileNotShown();
 	elseif ( event == "LFG_LIST_SEARCH_RESULT_UPDATED" ) then
 		local lfgListID = ...;
 		local guid = self.entries:GetEntryGUIDByLFGListID(lfgListID);
@@ -112,17 +109,7 @@ function QuickJoinMixin:OnEvent(event, ...)
 		end
 
 		self:UpdateScrollFrame();
-	elseif ( event == "SOCIAL_UI_SOCIAL_QUEUE_SYSTEM_STATUS_UPDATED" ) then
-		self:HandleSystemStatusUpdate();
 	end
-end
-
-function QuickJoinMixin:SocialQueueUpdateWhileNotShown()
-	--intentionally blank
-end
-
-function QuickJoinMixin:HandleSystemStatusUpdate()
-	-- Overridden in QuickJoinFrameSocialMixin for the Social UI
 end
 
 function QuickJoinMixin:RefreshEntries()
@@ -132,7 +119,7 @@ function QuickJoinMixin:RefreshEntries()
 end
 
 function QuickJoinMixin:UpdateEntry(guid)
-	self.entries:UpdateEntry(guid, self);
+	self.entries:UpdateEntry(guid);
 
 	if ( guid == self:GetSelectedGroup() ) then
 		local entry = self.entries:GetEntry(guid);
@@ -188,23 +175,29 @@ function QuickJoinMixin:JoinQueue()
 	end
 end
 
+function QuickJoinMixin:GetJoinButton()
+	return self.JoinQueueButton;
+end
+
 function QuickJoinMixin:UpdateJoinButtonState()
+	local joinButton = self:GetJoinButton();
+
 	-- Request To Join as our default button text if nothing is selected.
-	self.JoinQueueButton:SetText(JOIN_QUEUE);
+	joinButton:SetText(JOIN_QUEUE);
 
 	if ( IsInGroup(LE_PARTY_CATEGORY_HOME) ) then
-		self.JoinQueueButton:Disable();
-		self.JoinQueueButton.tooltip = QUICK_JOIN_ALREADY_IN_PARTY;
+		joinButton:Disable();
+		joinButton.tooltip = QUICK_JOIN_ALREADY_IN_PARTY;
 	elseif ( self:GetSelectedGroup() == nil ) then
-		self.JoinQueueButton:Disable();
-		self.JoinQueueButton.tooltip = nil;
+		joinButton:Disable();
+		joinButton.tooltip = nil;
 	else
-		self.JoinQueueButton:Enable();
-		self.JoinQueueButton.tooltip = nil;
+		joinButton:Enable();
+		joinButton.tooltip = nil;
 
 		local queues = C_SocialQueue.GetGroupQueues(self:GetSelectedGroup());
 		if ( queues and queues[1] and queues[1].queueData.queueType == "lfglist" ) then
-			self.JoinQueueButton:SetText(SIGN_UP);
+			joinButton:SetText(SIGN_UP);
 		end
 	end
 end
@@ -245,11 +238,11 @@ function QuickJoinButtonMixin:GetEntry()
 end
 
 function QuickJoinButtonMixin:Init(elementData, mainPanel)
+	self.mainPanel = mainPanel;
 	self.fontObject = elementData.fontObject;
 	self:SetEntry(elementData);
-	local selected = self:GetEntry():GetGUID() == QuickJoinFrame.selectedGUID;
+	local selected = self:GetEntry():GetGUID() == self.mainPanel:GetSelectedGroup();
 	self:SetSelected(selected);
-	self.mainPanel = mainPanel;
 end
 
 function QuickJoinButtonMixin:SetSelected(selected)
@@ -369,7 +362,7 @@ QuickJoinEntryMixin = {}
 
 function QuickJoinEntryMixin:Init(partyGUID)
 	-- All scrollable text in the Quick Join List uses font that can be resized by the player
-	self.fontObject = UserScaledFontGameNormalSmall;
+	self.fontObject = UserScaledFontGameNormalLarge;
 
 	self.guid = partyGUID;
 	self:UpdateAll();
@@ -495,14 +488,19 @@ function QuickJoinEntryMixin:ApplyToTooltip(tooltip)
 end
 
 local MAX_NUM_DISPLAYED_QUEUES = 6;
+local QUICK_JOIN_DEFAULT_LINE_HEIGHT = 16;
+local QUICK_JOIN_VERTICAL_PADDING = 10;
 function QuickJoinEntryMixin:ApplyToFrame(frame)
 	--Names
+	local memberPoint, memberRelativeTo, memberRelativePoint, memberX = frame.MemberName:GetPoint(1);
+	frame.MemberName:SetPoint(memberPoint, memberRelativeTo, memberRelativePoint, memberX, -TextSizeManager:GetScaledValue(QUICK_JOIN_VERTICAL_PADDING));
 	for i=1, #self.displayedMembers do
 		local name, color, relationship, playerLink = SocialQueueUtil_GetRelationshipInfo(self.displayedMembers[i].guid, nil, self.displayedMembers[i].clubId);
 		local nameObj = frame.Members[i];
 		if ( not nameObj ) then
 			nameObj = frame:CreateFontString(nil, "ARTWORK", "QuickJoinButtonMemberTemplate");
 			nameObj:SetPoint("TOPLEFT", frame.Members[i-1], "BOTTOMLEFT", 0, -QUICK_JOIN_NAME_SEPARATION);
+			nameObj:SetPoint("TOPRIGHT", frame.Members[i-1], "BOTTOMRIGHT", 0, -QUICK_JOIN_NAME_SEPARATION);
 			frame.Members[i] = nameObj;
 		end
 
@@ -531,16 +529,17 @@ function QuickJoinEntryMixin:ApplyToFrame(frame)
 
 	-- Queue Icon
 	local useGroupIcon = #self.displayedQueues > 0 and self.displayedQueues[1].queueData.queueType == "lfglist";
-	frame.Icon:SetAtlas(useGroupIcon and "socialqueuing-icon-group" or "socialqueuing-icon-eye");
-	-- Set the height based on the size of the member names...
-	frame.Icon:SetHeight(math.max(17, frame.MemberName:GetHeight()));
-	-- ...then set the width based on that height
-	frame.Icon:SetWidth(math.max(16, frame.Icon:GetHeight() * .95));
+	frame.Icon:SetAtlas(useGroupIcon and "socialqueuing-icon-group" or "friends-icon-eye");
+	local iconWidth = 20;
+	local iconHeight = useGroupIcon and 18 or 20;
+	frame.Icon:SetSize(TextSizeManager:GetScaledValue(iconWidth), TextSizeManager:GetScaledValue(iconHeight));
 
 	--Queues
 	local groupIsJoinable = self:CanJoin();
 
-	frame.QueueName:SetPoint("TOPLEFT", frame.MemberName, "TOPRIGHT", frame.Icon:GetWidth() + 4, 0);
+	frame.QueueName:ClearAllPoints();
+	frame.QueueName:SetPoint("LEFT", frame.MemberName, "RIGHT", frame.Icon:GetWidth() + 6, 0);
+	frame.QueueName:SetPoint("RIGHT", frame, "RIGHT", -7, 0);
 	for i=1, #self.displayedQueues do
 		local queue = self.displayedQueues[i];
 
@@ -548,6 +547,7 @@ function QuickJoinEntryMixin:ApplyToFrame(frame)
 		if ( not queueObj ) then
 			queueObj = frame:CreateFontString(nil, "ARTWORK", "QuickJoinButtonQueueTemplate");
 			queueObj:SetPoint("TOPLEFT", frame.Queues[i-1], "BOTTOMLEFT", 0, -QUICK_JOIN_NAME_SEPARATION);
+			queueObj:SetPoint("TOPRIGHT", frame.Queues[i-1], "BOTTOMRIGHT", 0, -QUICK_JOIN_NAME_SEPARATION);
 			frame.Queues[i] = queueObj;
 		end
 
@@ -599,11 +599,10 @@ function QuickJoinEntryMixin:ApplyToFrame(frame)
 end
 
 function QuickJoinEntryMixin:CalculateHeight()
-	local bufferHeight = 13;
-	local height = (GetFontInfo(self.fontObject).height + QUICK_JOIN_NAME_SEPARATION);
-	local namesHeight = height * #self.displayedMembers;
-	local queuesHeight = height * min(#self.displayedQueues, MAX_NUM_DISPLAYED_QUEUES)
-	return bufferHeight + math.max(namesHeight, queuesHeight);
+	local numLines = math.max(#self.displayedMembers, min(#self.displayedQueues, MAX_NUM_DISPLAYED_QUEUES));
+	local textHeight = numLines * TextSizeManager:GetScaledValue(QUICK_JOIN_DEFAULT_LINE_HEIGHT) + math.max(numLines - 1, 0) * QUICK_JOIN_NAME_SEPARATION;
+	local verticalPadding = TextSizeManager:GetScaledValue(QUICK_JOIN_VERTICAL_PADDING);
+	return textHeight + (verticalPadding * 2);
 end
 
 ----------------------------

@@ -1,11 +1,5 @@
 local _addonName, addonTable = ...;
 
-AuraButtonBorderStyle =
-{
-	Atlas = 0,
-	Color = 1,
-};
-
 AuraContainerAuraDataType =
 {
 	Aura = 0,
@@ -103,6 +97,9 @@ CustomAuraContainerConstants =
 	-- Number of frames to allocate in our batched allocator. Must be sufficiently
 	-- high to obfuscate the number of auras as this invokes initialization callbacks.
 	FrameCreationBatchSize = 10;
+
+	-- Access restrictions to be applied post-creation of new aura frames.
+	AccessRestrictionFlags = Enum.ScriptObjectAccessRestriction.DenyTaintedAccessWhenAurasAreSecret;
 };
 
 -- Default container-level layout settings for the shared flow layout pass.
@@ -158,6 +155,7 @@ CustomAuraContainerGroupLayoutDefaultOptions =
 	forceNewLine = false;
 	elementWidth = nil;
 	elementHeight = nil;
+	layoutIndex = nil;
 };
 
 -- Default options for aura slot displays. An aura slot renders a single aura
@@ -228,6 +226,7 @@ CustomAuraContainerItemEnchantmentLayoutDefaultOptions =
 	forceNewLine = false;
 	elementWidth = nil;
 	elementHeight = nil;
+	layoutIndex = nil;
 };
 
 CustomAuraContainerItemEnchantmentDefaultOptions =
@@ -248,7 +247,6 @@ CustomAuraContainerItemEnchantmentDefaultOptions =
 
 local _G = GetGlobalEnvironment();
 
-_G.AuraButtonBorderStyle = securecopy(AuraButtonBorderStyle);
 _G.AuraContainerAuraDataType = securecopy(AuraContainerAuraDataType);
 _G.AuraContainerFrameRefreshResult = securecopy(AuraContainerFrameRefreshResult);
 _G.AuraContainerItemEnchantmentSlot = securecopy(AuraContainerItemEnchantmentSlot);

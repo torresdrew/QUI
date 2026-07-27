@@ -115,6 +115,21 @@ function HousingBlueprintImportFrameMixin:OnImportConfirmed(blueprintCode, bluep
 	end
 end
 
+function HousingBlueprintImportFrameMixin:OnReportClicked()
+	if not self.InputContent:IsInputValid() then
+		return;
+	end
+	local blueprintCode, blueprintType = self.InputContent:GetInputValues();
+	local reportInfo = ReportInfo:CreateReportInfoFromType(Enum.ReportType.HousingBlueprint);
+	reportInfo:SetBlueprintShareCode(blueprintCode);
+	ReportFrame:InitiateReport(reportInfo, nil --[[player name]], nil, --[[isBnetReport]] false, --[[sendReportWithoutDialog]] false);
+
+	if C_HouseEditor.IsHouseEditorActive() then
+		HousingFramesUtil.LeaveHouseEditor();
+		self:HideSelf();
+	end
+end
+
 function HousingBlueprintImportFrameMixin:OnImportStarting()
 	-- Replace this as needed when final import "loading visual" handling is implemented
 	HousingBlueprintImportLoadingFrame:OnImportStarting();
@@ -146,7 +161,9 @@ function HousingBlueprintImportInputContentMixin:OnLoad()
 	end);
 
 	self.GearDropdown:SetupMenu(function(_dropdown, rootDescription)
-		rootDescription:CreateButton(HOUSING_BLUEPRINT_REPORT, GenerateClosure(self.OnReportClicked, self));
+		rootDescription:CreateButton(HOUSING_BLUEPRINT_REPORT, function()
+			self:GetParent():OnReportClicked();
+		end);
 	end);
 end
 
@@ -231,7 +248,18 @@ function HousingBlueprintImportValidationContentMixin:OnLoad()
 		self:GetParent():OnValidationNextClicked();
 	end);
 	self.ContentSummary:SetContentUpdatedCallback(GenerateClosure(self.OnContentUpdated, self));
-			PlaySound(SOUNDKIT.HOUSING_BLUEPRINTS_BUTTONS);
+
+	self.GearDropdown:SetupMenu(function(_dropdown, rootDescription)
+		rootDescription:CreateButton(HOUSING_BLUEPRINT_REPORT, function()
+			self:GetParent():OnReportClicked();
+		end);
+
+		rootDescription:CreateButton(HOUSING_BLUEPRINT_COLLECTION_COPY, function()
+			local shareCode = self.ContentSummary:GetBlueprintValues();
+			CopyToClipboard(shareCode);
+			ChatFrameUtil.DisplaySystemMessageInPrimary(HOUSING_BLUEPRINT_EXPORT_CLIPBOARD_CONFIRMATION);
+		end);
+	end);
 end
 
 function HousingBlueprintImportValidationContentMixin:IsShowingBlueprint(shareCode)
@@ -261,14 +289,6 @@ end
 
 function HousingBlueprintImportValidationContentMixin:OnContentUpdated()
 	self:UpdateImportButton();
-
-	if showLoadingState and (not self.loopSoundHandle) then
-		local _, soundHandle = PlaySound(SOUNDKIT.HOUSING_BLUEPRINTS_IMPORT_LOOP);
-		self.loopSoundHandle = soundHandle;
-	elseif (not showLoadingState) and self.loopSoundHandle then
-		StopSound(self.loopSoundHandle);
-		self.loopSoundHandle = nil;
-	end
 end
 
 function HousingBlueprintImportValidationContentMixin:UpdateImportButton()

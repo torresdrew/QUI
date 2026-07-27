@@ -213,6 +213,11 @@ jobs:
           ARTIFACT_URL: ${{ steps.artifact.outputs.artifact-url }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
+          if [ -z "$DISCORD_WEBHOOK" ]; then
+            echo "DISCORD_DEV_WEBHOOK_URL secret not set — skipping Discord notification."
+            exit 0
+          fi
+
           COMMIT_URL="https://github.com/$REPO/commit/$GITHUB_SHA"
 
           # Truncate commit message to first line

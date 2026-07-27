@@ -254,6 +254,16 @@ function PrivateAuraMixin:Update(auraInfo, unit, anchorInfo, visualAlert)
 	self:ApplyVisualAlert(visualAlert);
 end
 
+function PrivateAuraMixin:GetVisualAlertAnchorScale()
+	local iconWidth = self.Icon:GetWidth();
+	local referenceSize = self:GetReferenceSize();
+	if referenceSize == 0 then
+		return 1;
+	end
+	local ratio = iconWidth / referenceSize;
+	return math.max(0.25, ratio);
+end
+
 function PrivateAuraMixin:ApplyVisualAlert(visualAlert)
 	if visualAlert == self.currentVisualAlert then
 		return;
@@ -589,7 +599,8 @@ function PrivateAuraAnchorContainerMixin:CheckUpdateBuffFrames()
 				local bigDefensiveAura = self.bigDefensives:GetTop();
 				self:AddBlockedAura(bigDefensiveAura.auraInstanceID);
 
-				self.BigDefensiveBuff:Update(bigDefensiveAura, self.watcher:GetUnit(), self);
+				local visualAlert = PrivateGroupBuffsManager:GetGroupBuffVisualAlert(bigDefensiveAura.spellId);
+				self.BigDefensiveBuff:Update(bigDefensiveAura, self.watcher:GetUnit(), self, visualAlert);
 			else
 				self.BigDefensiveBuff:Hide();
 			end

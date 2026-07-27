@@ -35,9 +35,9 @@ web-grep is also available at
 
 ## Current snapshot
 
-- **Patch:** 12.1.0.68629 (Midnight 12.1 PTR)
-- **Source branch:** `ptr`
-- **Vendored on:** 2026-07-11
+- **Patch:** 12.1.0.68824 (Midnight 12.1 PTR 6)
+- **Source branch:** local CASC extraction (Gethe `ptr` not yet updated at vendoring time)
+- **Vendored on:** 2026-07-21
 
 The exact patch version is recorded in `version.txt` at the root of this
 directory and should always match the snapshot.

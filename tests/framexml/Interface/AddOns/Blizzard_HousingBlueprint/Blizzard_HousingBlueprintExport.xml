@@ -74,7 +74,6 @@
 							</KeyValues>
 						</FontString>
 						<FontString parentKey="ErrorText" inherits="Game13FontShadow">
-							<Size y="12"/>
 							<KeyValues>
 								<KeyValue key="layoutIndex" value="4" type="number"/>
 								<KeyValue key="expand" value="true" type="boolean" />
@@ -138,6 +137,10 @@
 							<Anchor point="TOPRIGHT" relativeKey="$parent.ShareCodeBox" relativePoint="BOTTOMRIGHT" x="0" y="-15"/>
 							<Anchor point="LEFT" relativePoint="CENTER" x="5" y="0"/>
 						</Anchors>
+						<KeyValues>
+							<KeyValue key="tooltipText" value="TALENT_FRAME_DROP_DOWN_EXPORT_CLIPBOARD" type="global"/>
+							<KeyValue key="tooltipAnchor" value="ANCHOR_BOTTOM" type="string"/>
+						</KeyValues>
 					</Button>
 				</Frames>
 				<Layers>

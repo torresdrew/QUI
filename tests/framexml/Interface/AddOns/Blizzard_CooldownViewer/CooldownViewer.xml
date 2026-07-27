@@ -81,6 +81,9 @@
 				</Animations>
 			</Frame>
 		</Frames>
+		<Scripts>
+			<OnEvent method="OnEvent"/>
+		</Scripts>
 	</Frame>
 
 	<Frame name="CooldownViewerUtilityItemTemplate" inherits="CooldownViewerBaseItemTemplate, PingableCooldownViewerItemTemplate" mixin="CooldownViewerUtilityItemMixin" virtual="true">
@@ -147,6 +150,9 @@
 				</Animations>
 			</Frame>
 		</Frames>
+		<Scripts>
+			<OnEvent method="OnEvent"/>
+		</Scripts>
 	</Frame>
 
 	<Frame name="CooldownViewerBuffIconItemTemplate" inherits="CooldownViewerBaseItemTemplate" mixin="CooldownViewerBuffIconItemMixin" virtual="true">
@@ -176,7 +182,7 @@
 		<Frames>
 			<Cooldown parentKey="Cooldown" reverse="true" setAllPoints="true">
 				<SwipeTexture file="Interface\HUD\UI-HUD-CoolDownManager-Icon-Swipe">
-					<Color r="0" g="0" b="0" a="0.49"/>
+					<Color r="0" g="0" b="0" a="0.7"/>
 				</SwipeTexture>
 				<EdgeTexture file="Interface\Cooldown\UI-HUD-ActionBar-SecondaryCooldown"/>
 			</Cooldown>
