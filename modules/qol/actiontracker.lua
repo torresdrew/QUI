@@ -929,7 +929,7 @@ local function AddSpellToHistory(spellID, castGUID, casting, failed, isChannel)
     local settings = GetSettings()
     if not settings or not settings.enabled then return nil end
 
-    if Helpers.IsSecretValue and Helpers.IsSecretValue(spellID) then return nil end
+    if Helpers.IsSecretValue and Helpers.IsSecretValue(spellID) then return nil end -- @secret-policy: reject-secret-ids
 
     local numericSpellID = tonumber(spellID)
     if not numericSpellID then return nil end
@@ -1199,8 +1199,12 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
     -- each callee — a secret spellID throws as a table key or in a compare,
     -- and a secret castGUID throws as a castByGUID/sentByGUID table key
     -- (every branch below indexes those maps with it).
-    if Helpers.IsSecretValue
-        and (Helpers.IsSecretValue(spellID) or Helpers.IsSecretValue(castGUID)) then
+    -- Statement-split per value: the analyzer only proves the binary
+    -- `Guard and Guard(x)` shape — a joint or-probe is invisible to it.
+    if Helpers.IsSecretValue and Helpers.IsSecretValue(spellID) then
+        return
+    end
+    if Helpers.IsSecretValue and Helpers.IsSecretValue(castGUID) then
         return
     end
 

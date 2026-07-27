@@ -131,11 +131,19 @@ end
 local isLeaderish = false
 
 local function ComputeLeaderish()
+    -- UnitIsGroupLeader/Assistant are secret-capable under identity
+    -- restriction; probe FIRST — `or`/`==` on a secret throws.
     if IsInRaid() then
-        return UnitIsGroupLeader("player") or UnitIsGroupAssistant("player")
+        local lead = UnitIsGroupLeader("player")
+        if Helpers.IsSecretValue(lead) then return false end -- @secret-policy: reject-secret-value — unreadable rank hides the leader rows
+        local assist = UnitIsGroupAssistant("player")
+        if Helpers.IsSecretValue(assist) then return false end -- @secret-policy: reject-secret-value — unreadable rank hides the leader rows
+        return lead == true or assist == true
     end
     if IsInGroup() then
-        return UnitIsGroupLeader("player") == true
+        local lead = UnitIsGroupLeader("player")
+        if Helpers.IsSecretValue(lead) then return false end -- @secret-policy: reject-secret-value — unreadable rank hides the leader rows
+        return lead == true
     end
     return false
 end
@@ -377,7 +385,9 @@ local STRIP_DEFS = {
         title = L["Role Poll"],
         body = L["Ask everyone to confirm their role. Requires group lead."],
         onClick = function()
-            if not UnitIsGroupLeader("player") then
+            local lead = UnitIsGroupLeader("player")
+            if Helpers.IsSecretValue(lead) then lead = nil end -- @secret-policy: collapse-only — unreadable rank treated as not lead
+            if not lead then
                 PrintHint(L["Role polls require group lead."])
                 return
             end

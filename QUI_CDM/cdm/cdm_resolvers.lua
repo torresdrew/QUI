@@ -190,15 +190,15 @@ _runtimeFrame:RegisterUnitEvent("UNIT_SPELLCAST_START", "player")
 -- isn't loaded; the OnEvent body skips the call.
 ns.CDMRuntimeEventTraceHook = nil
 
-_runtimeFrame:SetScript("OnEvent", function(_, evt, arg1, arg2, arg3, arg4)
+_runtimeFrame:SetScript("OnEvent", function(_, evt, arg1, arg2, arg3, arg4, arg5)
     -- Per SpellBookDocumentation.lua:859 the SPELL_UPDATE_COOLDOWN
-    -- payload is (spellID, baseSpellID, category, startRecoveryCategory)
-    -- — capture all four for the trace. The publish() calls below
+    -- payload is (spellID, baseSpellID, category, startRecoveryCategory,
+    -- itemID) — capture all five for the trace. The publish() calls below
     -- intentionally still forward only the fields existing subscribers
-    -- consume; arg3/arg4 propagate to the trace only.
+    -- consume; arg3/arg4/arg5 propagate to the trace only.
     local traceHook = ns.CDMRuntimeEventTraceHook
     if traceHook then
-        traceHook("runtime-pre", evt, arg1, arg2, arg3, arg4)
+        traceHook("runtime-pre", evt, arg1, arg2, arg3, arg4, arg5)
     end
 
     if evt == "SPELL_UPDATE_COOLDOWN" then
@@ -235,7 +235,7 @@ end)
 
 local function IsSafeNumeric(val)
     if ResolverIsSecretValue and ResolverIsSecretValue(val) then
-        return false
+        return false -- @secret-policy: reject-secret-value
     end
     return Shared and Shared.IsSafeNumeric(val) or type(val) == "number"
 end
@@ -249,7 +249,7 @@ local GCD_MAX_DURATION = 1.75
 local GCD_SPELL_ID = 61304
 
 local function DecodePotentialSecretBoolean(value)
-    if ResolverIsSecretValue(value) then return nil end
+    if ResolverIsSecretValue(value) then return nil end -- @secret-policy: reject-secret-value
     if type(value) == "boolean" then
         return value
     end
@@ -258,14 +258,14 @@ end
 
 local function HasOpaqueValue(value)
     if ResolverIsSecretValue(value) then
-        return true
+        return true -- @secret-policy: opaque-value-present
     end
     return value ~= nil
 end
 
 local function CleanOpaqueValue(value)
     if ResolverIsSecretValue(value) then
-        return nil
+        return nil -- @secret-policy: reject-secret-value
     end
     return value
 end
@@ -599,7 +599,7 @@ function CDMResolvers.GetSpellCastInfo(spellID)
     if ResolverIsSecretValue(castSpellID)
         or ResolverIsSecretValue(startMS)
         or ResolverIsSecretValue(endMS) then
-        return nil
+        return nil -- @secret-policy: reject-secret-value
     end
     if castSpellID and castSpellID == spellID and startMS and endMS then
         return true, startMS / 1000, (endMS - startMS) / 1000, "cast"
@@ -613,7 +613,7 @@ function CDMResolvers.GetSpellChannelInfo(spellID)
     if ResolverIsSecretValue(channelSpellID)
         or ResolverIsSecretValue(startMS)
         or ResolverIsSecretValue(endMS) then
-        return nil
+        return nil -- @secret-policy: reject-secret-value
     end
     if channelSpellID and channelSpellID == spellID and startMS and endMS then
         return true, startMS / 1000, (endMS - startMS) / 1000, "channel"
@@ -1253,7 +1253,7 @@ local function HasActiveChargeRecharge(spellID, mayHaveCharges)
     -- A secret spellID (aura-phase GetSpellID in combat) cannot key the
     -- saved cdmChargeSpells table -- indexing a table with a secret key
     -- hard-errors. No charge determination is possible, so treat as none.
-    if ResolverIsSecretValue(spellID) then return false end
+    if ResolverIsSecretValue(spellID) then return false end -- @secret-policy: reject-secret-value
     if InCombatLockdown and InCombatLockdown() and not mayHaveCharges then
         local gdb = QUI and QUI.db and QUI.db.global
         local svCharges = gdb and gdb.cdmChargeSpells
@@ -1309,7 +1309,7 @@ end
 local function GetIconItemDurationObject(icon, sourceID, startTime, duration)
     if not icon then return nil end
     if ResolverIsSecretValue(startTime) or ResolverIsSecretValue(duration) then
-        return nil
+        return nil -- @secret-policy: reject-secret-value
     end
     if not IsSafeNumeric(startTime) or not IsSafeNumeric(duration) then
         return nil
@@ -1323,7 +1323,7 @@ local function GetIconItemDurationObject(icon, sourceID, startTime, duration)
     local priorStart = state.start
     local priorDuration = state.duration
     if ResolverIsSecretValue(priorStart) or ResolverIsSecretValue(priorDuration) then
-        return nil
+        return nil -- @secret-policy: reject-secret-value
     end
     if priorStart ~= startTime or priorDuration ~= duration then
         return nil
@@ -1348,7 +1348,7 @@ end
 
 local function CleanItemCooldownIsDisabled(enabled, requireEnabledOne)
     if ResolverIsSecretValue(enabled) then
-        return false
+        return false -- @secret-policy: reject-secret-value
     end
     if enabled == 0 or enabled == false then
         return true
@@ -1367,7 +1367,7 @@ local function CleanItemCooldownIsInactive(startTime, duration, enabled, require
         return true
     end
     if ResolverIsSecretValue(startTime) or ResolverIsSecretValue(duration) then
-        return false
+        return false -- @secret-policy: reject-secret-value
     end
     if not IsSafeNumeric(startTime) or not IsSafeNumeric(duration) then
         return true
@@ -1389,7 +1389,7 @@ local function CleanItemCooldownIsActive(startTime, duration, enabled, requireEn
         return false
     end
     if ResolverIsSecretValue(startTime) or ResolverIsSecretValue(duration) then
-        return false
+        return false -- @secret-policy: reject-secret-value
     end
     return IsSafeNumeric(startTime)
         and IsSafeNumeric(duration)
@@ -1708,7 +1708,7 @@ end
 local function ApplyCleanItemAuraTiming(state, itemID, spellID, resolvedAuraSpellID, auraUnit, auraInstanceID,
                                         expiration, duration, sourceSuffix)
     if ResolverIsSecretValue(expiration) or ResolverIsSecretValue(duration) then
-        return false
+        return false -- @secret-policy: reject-secret-value
     end
     if not (IsSafeNumeric(expiration) and IsSafeNumeric(duration)) then
         return false
@@ -1880,7 +1880,7 @@ end
 
 local function HasDurationObject(value)
     if ResolverIsSecretValue(value) then
-        return true
+        return true -- @secret-policy: opaque-value-present
     end
     return value ~= nil
 end

@@ -38,9 +38,13 @@ local function ApplyVisibilityGate(fontString, gate)
     end
 end
 
+-- ACTION POLICY, not a truth claim: "route to the text sink". A SECRET
+-- text is INDETERMINATE (may wrap empty) — it must reach the C-side
+-- renderer, which resolves the real content; only readable emptiness is
+-- "no display".
 function CDMIconStackText.TextHasDisplay(text)
     if issecretvalue(text) then
-        return true
+        return true -- @secret-policy: route-to-text-sink
     end
     if type(text) == "string" then
         return text ~= ""
@@ -50,7 +54,7 @@ end
 
 function CDMIconStackText.ValueIsPresent(value)
     if issecretvalue(value) then
-        return true
+        return true -- @secret-policy: opaque-value-present
     end
     return value ~= nil
 end
@@ -129,9 +133,11 @@ end
 
 local issecretvalue = issecretvalue or function() return false end
 
+-- ACTION POLICY (see CDMIconStackText.TextHasDisplay): "route to the text
+-- sink", never "text is non-empty" — a secret is indeterminate.
 local function DefaultTextHasDisplay(text)
     if issecretvalue(text) then
-        return true
+        return true -- @secret-policy: route-to-text-sink
     end
     if type(text) == "string" then
         return text ~= ""
@@ -180,7 +186,7 @@ function CDMIconStackPolicy.Create(callbacks)
             return sink.ValueIsPresent(value)
         end
         if issecretvalue(value) then
-            return true
+            return true -- @secret-policy: opaque-value-present
         end
         return value ~= nil
     end
@@ -191,7 +197,7 @@ function CDMIconStackPolicy.Create(callbacks)
 
     local function AuraCountTextHasDisplay(value)
         if issecretvalue(value) then
-            return true
+            return true -- @secret-policy: route-to-text-sink
         end
         if type(value) == "number" then
             return value > 0
@@ -218,10 +224,11 @@ function CDMIconStackPolicy.Create(callbacks)
         if not auraData then return nil end
 
         local apps = auraData.applications
-        if apps == nil then return nil end
+        -- Probe BEFORE the nil compare — `secret == nil` throws in-game.
         if issecretvalue(apps) then
-            return nil
+            return nil -- @secret-policy: reject-secret-value
         end
+        if apps == nil then return nil end
 
         local appType = type(apps)
         if appType == "number" then
@@ -244,11 +251,18 @@ function CDMIconStackPolicy.Create(callbacks)
         -- ID and returns a secret-safe display string we forward verbatim to SetText
         -- -- a secret applications value is never Lua-compared. minDisplayCount = 1 so
         -- abilities that count from 1 (e.g. Reaper's Mark) show their stack.
+        -- The instance ID itself can be secret in combat: probe before any
+        -- truth-test (`x or y` / `if x and` boolean-test x and throw), and let
+        -- a secret ID flow to the display-count sink untouched.
         local auraInstanceID = callbacks.getAuraDataInstanceID
             and callbacks.getAuraDataInstanceID(auraData)
-            or auraData.auraInstanceID
+        local idSecret = issecretvalue(auraInstanceID)
+        if not idSecret and not auraInstanceID then
+            auraInstanceID = auraData.auraInstanceID
+            idSecret = issecretvalue(auraInstanceID)
+        end
         local sources = Sources()
-        if auraInstanceID and sources and sources.QueryAuraApplicationDisplayCount then
+        if (idSecret or auraInstanceID) and sources and sources.QueryAuraApplicationDisplayCount then
             local stacks = sources.QueryAuraApplicationDisplayCount(unit or "player", auraInstanceID, 1, 99)
             if AuraCountTextHasDisplay(stacks) then
                 return stacks, "display-count"
@@ -428,7 +442,7 @@ function CDMIconStackPolicy.Create(callbacks)
         if C_StringUtil and C_StringUtil.TruncateWhenZero then
             displayText = C_StringUtil.TruncateWhenZero(spellCount)
         end
-        if not controller:TextHasDisplay(displayText) then
+        if not controller:TextHasDisplay(displayText) then -- @secret-safe: TextHasDisplay probes issecretvalue before any truth-test (round-13 hand-audit)
             return nil
         end
         return spellCount, "spell-cast-count"
@@ -1157,7 +1171,7 @@ local issecretvalue = issecretvalue or function() return false end
 
 local function normalizeSpellIdentifier(value)
     if value == nil then return nil end
-    if issecretvalue and issecretvalue(value) then return nil end
+    if issecretvalue and issecretvalue(value) then return nil end -- @secret-policy: reject-secret-ids
     local valueType = type(value)
     if valueType == "number" or valueType == "string" then
         return value
@@ -1650,7 +1664,7 @@ function CDMIconCustomBarPolicy.Create(callbacks)
     end
 
     local function IsReadableNumber(value)
-        if issecretvalue and issecretvalue(value) then return false end
+        if issecretvalue and issecretvalue(value) then return false end -- @secret-policy: reject-secret-value
         return type(value) == "number"
     end
 
@@ -1770,7 +1784,7 @@ function CDMIconCustomBarPolicy.Create(callbacks)
             if sources and sources.QueryItemCount then
                 local count = sources.QueryItemCount(itemID, false, containerDB and containerDB.showItemCharges == true, true)
                 if issecretvalue and issecretvalue(count) then
-                    return true
+                    return true -- @secret-policy: keep-visible-when-unknown
                 end
                 return count and count > 0
             end

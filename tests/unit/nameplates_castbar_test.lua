@@ -170,6 +170,7 @@ local ns = {
     LSM = nil,
 }
 
+assert(loadfile("core/safecall.lua"))("QUI", ns)
 assert(loadfile("core/cast_engine.lua"))("QUI", ns)
 assert(loadfile("QUI_Nameplates/nameplates/shared.lua"))("QUI_Nameplates", ns)
 assert(loadfile("QUI_Nameplates/nameplates/plate_castbar.lua"))("QUI_Nameplates", ns)

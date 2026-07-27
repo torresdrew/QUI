@@ -33,10 +33,12 @@ ns.CastEngine = CastEngine
 -- Nil-returning secret-safe tonumber (deliberately NOT Helpers.SafeToNumber,
 -- which returns fallback-or-0 — callers here branch on nil).
 local function SafeToNumber(v)
-    if v == nil then return nil end
+    -- Probe FIRST — `v == nil` on a secret is itself a compare OF the secret
+    -- and throws; IsSecretValue(nil) is simply false.
     if IsSecretValue(v) then
-        return nil
+        return nil -- @secret-policy: reject-secret-value — callers branch on nil
     end
+    if v == nil then return nil end
     if type(v) == "number" then return v end
     local ok, n = pcall(tonumber, v)
     if ok and type(n) == "number" then return n end
@@ -56,20 +58,36 @@ function CastEngine.GetCastInfo(unit)
     local channelStages = 0
     local channelSpellID = nil
 
-    if not spellName then
+    -- 12.1: the cast NAME is secret-capable (SecretWhenUnitSpellCastRestricted).
+    -- A secret name means a cast IS in progress with restricted identity — it
+    -- must never degrade to "not casting". Probe FIRST; `not <secret>` throws.
+    if IsSecretValue(spellName) then
+        -- Secret casting name: a cast is live; skip the channel fallback.
+    elseif not spellName then
         spellName, text, texture, startTimeMS, endTimeMS, _, notInterruptible, channelSpellID, _, channelStages = UnitChannelInfo(unit)
-        if spellName then
+        if IsSecretValue(spellName) then
+            isChanneled = true -- @secret-policy: opaque-value-present — a secret channel name means a channel is in progress
+        elseif spellName then
             isChanneled = true
-            if channelSpellID and not unitSpellID then
+            if IsSecretValue(channelSpellID) or IsSecretValue(unitSpellID) then
+                -- Unreadable ids: keep unitSpellID exactly as returned.
+            elseif channelSpellID and not unitSpellID then
                 unitSpellID = channelSpellID
             end
         end
+    end
+    -- casting is a PLAIN boolean; a secret name counts as casting.
+    local casting = false
+    if IsSecretValue(spellName) then
+        casting = true -- @secret-policy: opaque-value-present — a secret cast name means a cast is in progress
+    elseif spellName ~= nil then
+        casting = true
     end
 
     -- Duration object for engine-driven animation (Midnight 12.0+); primary
     -- path for non-player units whose timing values may be secret.
     local durationObj = nil
-    if spellName then
+    if casting then
         local getDurationFn = isChanneled and UnitChannelDuration or UnitCastingDuration
         if type(getDurationFn) == "function" then
             local ok, dur = pcall(getDurationFn, unit)
@@ -77,15 +95,15 @@ function CastEngine.GetCastInfo(unit)
         end
     end
 
-    -- Secret-timing detection: IsSecretValue where available, plus a pcall
-    -- arithmetic probe (secrets pass type checks but fail arithmetic).
+    -- Secret-timing detection: IsSecretValue probes lead (truth-testing a
+    -- secret start/end throws), then a pcall arithmetic probe for secrets
+    -- that slip the probe (they pass type checks but fail arithmetic).
     local hasSecretTiming = false
-    if spellName and startTimeMS and endTimeMS then
+    if casting then
         if IsSecretValue(startTimeMS) or IsSecretValue(endTimeMS) then
             hasSecretTiming = true
-        end
-        if not hasSecretTiming then
-            local ok = pcall(function() return startTimeMS + 0 end)
+        elseif startTimeMS and endTimeMS then
+            local ok = pcall(function() return startTimeMS + 0 end) -- @secret-safe: deliberate arithmetic probe under pcall; both operands probed non-secret above
             if not ok then hasSecretTiming = true end
         end
     end
@@ -171,10 +189,10 @@ function CastEngine.ApplyTimerDriven(statusBar, durationObj, direction)
     if not (statusBar and statusBar.SetTimerDuration and durationObj) then
         return false
     end
-    local ok = pcall(statusBar.SetTimerDuration, statusBar, durationObj, 0, direction or 0)
+    local ok = ns.SafeCallMethod("sink-forward", statusBar, "SetTimerDuration", durationObj, 0, direction or 0)
     if not ok then
         -- Fallback: older signature without the direction parameter
-        ok = pcall(statusBar.SetTimerDuration, statusBar, durationObj)
+        ok = ns.SafeCallMethod("sink-forward", statusBar, "SetTimerDuration", durationObj)
     end
     return ok
 end

@@ -37,7 +37,10 @@ local function IsTooltipPlayerItemLevelEnabled()
 end
 
 local function IsSafeGUID(guid)
-    return guid and not Helpers.IsSecretValue(guid)
+    -- Route the param through the SafeValue unwrap: a secret GUID folds to nil
+    -- (issecretvalue-checked inside SafeValue) so no truth-test/compare touches
+    -- an opaque value here or at any call site.
+    return Helpers.SafeValue(guid) ~= nil
 end
 
 local function IsUnitGUIDMatch(unit, expectedGUID)
@@ -50,7 +53,7 @@ local function IsUnitGUIDMatch(unit, expectedGUID)
         return false
     end
 
-    return unitGUID == expectedGUID
+    return Helpers.SafeCompare(unitGUID, expectedGUID) == true
 end
 
 local COUNTED_SLOTS = {
@@ -267,7 +270,7 @@ local function ReadInspectedItemLevel(unit)
         end)
         if ok and itemLevel then
             if Helpers.IsSecretValue(itemLevel) then
-                return nil, true
+                return nil, true -- @secret-policy: reject-secret-value
             end
             local inspectedItemLevel = tonumber(itemLevel)
             if inspectedItemLevel and inspectedItemLevel > 0 then
@@ -314,6 +317,9 @@ local function GetSpecName(unit, useInspectData)
 
     if useInspectData then
         local specID = GetInspectSpecialization(unit)
+        -- @secret-policy: collapse-only — no spec shown for secret units
+        local specIDSecret = issecretvalue and issecretvalue(specID)
+        if specIDSecret then specID = nil end
         if specID and specID > 0 then
             local _, specName = GetSpecializationInfoByID(specID)
             return specName
@@ -321,7 +327,7 @@ local function GetSpecName(unit, useInspectData)
         return nil
     end
 
-    if UnitIsUnit(unit, "player") then
+    if Helpers.SafeValue(UnitIsUnit(unit, "player")) then
         local specIndex = GetSpecialization()
         if specIndex then
             local _, specName = GetSpecializationInfo(specIndex)
@@ -333,7 +339,7 @@ local function GetSpecName(unit, useInspectData)
 end
 
 local function BuildPlayerData(unit, itemLevel, useInspectData)
-    if Helpers.IsSecretValue(itemLevel) then return nil end
+    if Helpers.IsSecretValue(itemLevel) then return nil end -- @secret-policy: reject-secret-value
 
     itemLevel = tonumber(itemLevel)
     if not itemLevel or itemLevel <= 0 then return nil end
@@ -359,7 +365,7 @@ end
 local ProcessQueuedRequest
 
 local function FinalizeRequest(matchingGUID)
-    if activeRequest and IsSafeGUID(activeRequest.guid) and IsSafeGUID(matchingGUID) and activeRequest.guid == matchingGUID then
+    if activeRequest and IsSafeGUID(activeRequest.guid) and IsSafeGUID(matchingGUID) and Helpers.SafeCompare(activeRequest.guid, matchingGUID) == true then
         -- Do not ClearInspectPlayer while the user has InspectFrame open --
         -- it wipes the addon's cached inventory data for the unit they're
         -- looking at, producing the "items flash then disappear" symptom.
@@ -367,7 +373,7 @@ local function FinalizeRequest(matchingGUID)
         local inspectFrame = GetInspectFrame()
         if not (inspectFrame and inspectFrame:IsShown()) then
             if type(ClearInspectPlayer) == "function" then
-                pcall(ClearInspectPlayer)
+                ns.SafeCall("best-effort-style", ClearInspectPlayer)
             end
         end
         ClearActiveRequest()
@@ -411,7 +417,7 @@ function TooltipInspect:GetCachedPlayerData(unit)
     if not IsSafeGUID(guid) then return nil end
     if IsGUIDSuppressed(guid) then return nil end
 
-    if UnitIsUnit(unit, "player") then
+    if Helpers.SafeValue(UnitIsUnit(unit, "player")) then
         local _, equipped = GetAverageItemLevel()
         if Helpers.IsSecretValue(equipped) then
             equipped = nil
@@ -441,7 +447,8 @@ end
 function TooltipInspect:QueueInspect(unit)
     if not IsTooltipPlayerItemLevelEnabled() then return false end
     if not unit or not UnitExists(unit) or InCombatLockdown() then return false end
-    if not UnitIsPlayer(unit) or UnitIsUnit(unit, "player") then return false end
+    if not UnitIsPlayer(unit) then return false end
+    if Helpers.SafeValue(UnitIsUnit(unit, "player")) then return false end
 
     local guid = UnitGUID(unit)
     if not IsSafeGUID(guid) or GetCacheEntry(guid) then return false end
@@ -453,11 +460,11 @@ function TooltipInspect:QueueInspect(unit)
         return false
     end
 
-    if activeRequest and activeRequest.guid == guid then
+    if activeRequest and Helpers.SafeCompare(activeRequest.guid, guid) == true then
         return false
     end
 
-    if queuedRequest and queuedRequest.guid == guid then
+    if queuedRequest and Helpers.SafeCompare(queuedRequest.guid, guid) == true then
         return false
     end
 
@@ -536,7 +543,7 @@ eventFrame:SetScript("OnEvent", function(_, event, guid)
         return
     end
 
-    local preferredUnit = activeRequest and IsSafeGUID(activeRequest.guid) and activeRequest.guid == guid and activeRequest.unit or nil
+    local preferredUnit = activeRequest and IsSafeGUID(activeRequest.guid) and Helpers.SafeCompare(activeRequest.guid, guid) == true and activeRequest.unit or nil
     local unit = ResolveLiveUnit(guid, preferredUnit)
     if unit then
         local itemLevel, isRestricted = ReadInspectedItemLevel(unit)

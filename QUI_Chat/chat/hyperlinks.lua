@@ -192,7 +192,7 @@ local tooltipShownByQUI = false
 local tooltipCallbacksRegistered = false
 
 local function getLinkType(link)
-    if IsSecret(link) then return nil end
+    if IsSecret(link) then return nil end -- @secret-policy: reject-secret-value
     if type(link) ~= "string" or link == "" then return nil end
     local linkType = link:match("^([^:]+):")
     return linkType and linkType:lower() or nil
@@ -283,14 +283,20 @@ local function findUnitForName(name, realm)
         end
     end
 
+    local myRealm = GetRealmName and GetRealmName() or nil
+    if IsSecret(myRealm) then myRealm = nil end
     for _, unit in ipairs(units) do
         if UnitExists(unit) then
             local uname, urealm = UnitFullName(unit)
+            -- 12.1: UnitFullName is identity-restricted — probe before any
+            -- ==; a secret identity simply can't match a plain link name.
+            if IsSecret(uname) then uname = nil end
+            if IsSecret(urealm) then urealm = nil end
             if uname == name then
                 if not realm or realm == "" then
                     return unit
                 end
-                if urealm == realm or (urealm == nil and realm == GetRealmName()) then
+                if urealm == realm or (urealm == nil and realm == myRealm) then
                     return unit
                 end
             end

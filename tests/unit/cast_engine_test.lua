@@ -43,6 +43,7 @@ end
 function UnitCastingDuration(unit) return castingDuration end -- luacheck: ignore
 function UnitChannelDuration(unit) return channelDuration end -- luacheck: ignore
 
+assert(loadfile("core/safecall.lua"))("QUI", ns)
 assert(loadfile("core/cast_engine.lua"))("QUI", ns)
 local CastEngine = ns.CastEngine
 if not CastEngine then fail("ns.CastEngine not exported") end
@@ -91,6 +92,7 @@ ns.Helpers.IsSecretValue = function() return false end
 -- NOTE: IsSecretValue is captured at load time by cast_engine, so the probe
 -- test must reload the module with the always-false checker.
 local ns2 = { Helpers = { IsSecretValue = function() return false end } }
+assert(loadfile("core/safecall.lua"))("QUI", ns2)
 assert(loadfile("core/cast_engine.lua"))("QUI", ns2)
 ns.Helpers.IsSecretValue = realIsSecret
 

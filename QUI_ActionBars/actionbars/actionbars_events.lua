@@ -32,7 +32,7 @@ local function RefreshAllFlyouts()
         local btns = ActionBarsOwned.nativeButtons[barKey]
         if btns then
             for _, btn in ipairs(btns) do
-                if btn.UpdateFlyout then pcall(btn.UpdateFlyout, btn) end
+                ns.SafeCallMethodIfPresent("best-effort-style", btn, "UpdateFlyout")
             end
         end
     end
@@ -243,7 +243,7 @@ abSlotFrame:SetScript("OnUpdate", function(self)
                 if ResetButtonChargeCapabilityCache then
                     ResetButtonChargeCapabilityCache(btn)
                 end
-                pcall(ActionBarsOwned.SafeUpdate, btn)
+                ns.SafeCall("best-effort-style", ActionBarsOwned.SafeUpdate, btn)
                 ActionBarsOwned.UpdateCooldown(btn)
                 ActionBarsOwned.UpdateOverlayGlow(btn)
                 -- Slot content can change without the button's action slot

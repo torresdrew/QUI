@@ -85,7 +85,7 @@ end
 
 function CDMCatalog.IsUsableID(id)
     if type(id) ~= "number" then return false end
-    if issecretvalue(id) then return false end
+    if issecretvalue(id) then return false end -- @secret-policy: reject-secret-ids
     return id > 0
 end
 
@@ -191,14 +191,14 @@ function CDMCatalog.IsCooldownViewerReady()
 
     local ok, isAvailable = pcall(api.IsCooldownViewerAvailable)
     if not ok then return false end
-    if issecretvalue(isAvailable) then return false end
+    if issecretvalue(isAvailable) then return false end -- @secret-policy: reject-secret-value
     return isAvailable == true
 end
 
 function CDMCatalog.GetCategorySet(category, allowUnlearned)
     if not HasCooldownViewerAPI() or not CDMCatalog.IsCooldownViewerReady() then return nil end
     local api = GetCooldownViewerAPI()
-    local ok, ids = pcall(api.GetCooldownViewerCategorySet, category, allowUnlearned and true or false)
+    local ok, ids = ns.SafeCall("best-effort-style", api.GetCooldownViewerCategorySet, category, allowUnlearned and true or false)
     if ok and type(ids) == "table" then
         return ids
     end
@@ -212,7 +212,7 @@ function CDMCatalog.GetTrackedCategorySet(category, allowUnlearned)
 
     local settings = _G.CooldownViewerSettings
     if settings and settings.GetDataProvider then
-        local okProvider, provider = pcall(settings.GetDataProvider, settings)
+        local okProvider, provider = ns.SafeCallMethod("best-effort-style", settings, "GetDataProvider")
         if not okProvider or not provider then
             return nil, false
         end
@@ -256,7 +256,7 @@ end
 function CDMCatalog.GetCooldownInfo(cooldownID)
     if not HasCooldownViewerAPI() or not CDMCatalog.IsCooldownViewerReady() or not cooldownID then return nil end
     local api = GetCooldownViewerAPI()
-    local ok, info = pcall(api.GetCooldownViewerCooldownInfo, cooldownID)
+    local ok, info = ns.SafeCall("best-effort-style", api.GetCooldownViewerCooldownInfo, cooldownID)
     if ok then
         return info
     end

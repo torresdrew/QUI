@@ -73,11 +73,9 @@ local function BindDuration(bar, count, instanceID)
     local ok, durObj = pcall(C_UnitAuras.GetAuraDuration, "player", instanceID)
     if not ok or not durObj then return false end
 
-    local appliedBar = pcall(bar.SetTimerDuration, bar, durObj,
+    local appliedBar = ns.SafeCallMethod("sink-forward", bar, "SetTimerDuration", durObj,
         STATUS_BAR_INTERPOLATION_IMMEDIATE, STATUS_BAR_TIMER_REMAINING)
-    if count and count.SetCooldownFromDurationObject then
-        pcall(count.SetCooldownFromDurationObject, count, durObj)
-    end
+    ns.SafeCallMethodIfPresent("sink-forward", count, "SetCooldownFromDurationObject", durObj)
     return appliedBar and true or false
 end
 
@@ -187,7 +185,17 @@ local function ShowFor(instanceID)
     CreateTimerFrame()
     UpdateAppearance()
     State.activeInstanceID = instanceID
-    BindDuration(State.frame.bar, State.frame.count, instanceID)
+    if not BindDuration(State.frame.bar, State.frame.count, instanceID) then
+        -- Duration bind failed (GetAuraDuration gated/restricted): drop any
+        -- previous instance's stale drain and show a static full bar — Lust
+        -- IS active (we just resolved its aura), only its timing is
+        -- unreadable. In-game note: if a prior SetTimerDuration binding
+        -- keeps engine-driving the fill past SetValue, this still beats
+        -- rendering the OLD instance's drain.
+        if State.frame.count then State.frame.count:Clear() end
+        State.frame.bar:SetMinMaxValues(0, 1)
+        State.frame.bar:SetValue(1)
+    end
     State.frame:Show()
 end
 
@@ -210,9 +218,24 @@ local function ScanForLust()
     if not (C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID) then return end
     for spellID in pairs(LUST_SPELLS) do
         local ok, aura = pcall(C_UnitAuras.GetPlayerAuraBySpellID, spellID)
+        aura = Helpers.SafeValue(aura)
         if ok and aura and aura.auraInstanceID then
             ShowFor(aura.auraInstanceID)
             return
+        end
+    end
+
+    -- No Lust resolved. When auras are NOT restricted that is definitive —
+    -- the tracked instance is gone, so clear it (otherwise a full update that
+    -- swallowed the removal delta leaves the bar up forever). Under
+    -- restriction nil is ambiguous (whitelist fate is an in-game unknown), so
+    -- retain the bound bar and let the PLAYER_REGEN_ENABLED rescan below give
+    -- the definitive answer once restriction lifts.
+    if State.activeInstanceID then
+        local restricted = C_Secrets and C_Secrets.ShouldAurasBeSecret
+            and C_Secrets.ShouldAurasBeSecret()
+        if not restricted then
+            HideTimer()
         end
     end
 end
@@ -229,7 +252,9 @@ local function OnPlayerAura(_, info)
         return
     end
 
-    -- Removals are never secret — drop the bar if our tracked instance ended.
+    -- Element readability is router-guaranteed: core/aura_events.lua promotes
+    -- any delta with secret arrays, elements, or added-aura identity fields to
+    -- the full-update sentinel (info == nil), so the compares below are safe.
     if info.removedAuraInstanceIDs and State.activeInstanceID then
         for _, instID in ipairs(info.removedAuraInstanceIDs) do
             if instID == State.activeInstanceID then
@@ -304,6 +329,18 @@ if ns.WhenLoggedIn then
         RefreshLustTimer()
     end)
 end
+
+-- Restriction-lift recovery: if Lust expired while aura data was restricted
+-- (removal delta swallowed, restricted rescans ambiguous), the bar survives
+-- combat. Regen is the practical lift point — one definitive rescan clears or
+-- rebinds it. Only re-probe when a bar is actually up.
+local regenFrame = CreateFrame("Frame")
+regenFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+regenFrame:SetScript("OnEvent", function()
+    if State.activeInstanceID and not State.isPreviewMode then
+        ScanForLust()
+    end
+end)
 
 ---------------------------------------------------------------------------
 -- Globals + registry

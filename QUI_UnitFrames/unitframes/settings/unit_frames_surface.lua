@@ -105,6 +105,13 @@ local function SetSelectedUnit(key)
     UnitSelection:Set(key)
 end
 
+-- Read-only accessor for consumers (e.g. the Auras hub's Unit Frames
+-- sub-page) that need to source the currently-selected unit without
+-- keeping their own page-local copy of this module-level singleton.
+local function GetSelectedUnit()
+    return State.selectedUnit
+end
+
 local function SetActiveTab(tabKey)
     if type(tabKey) ~= "string" or tabKey == "" then
         return false
@@ -598,6 +605,11 @@ local function RequestPreviewAutoHeight(mock)
 end
 
 local function RefreshMock()
+    -- Search-cache harvest (tools/generate_search_cache.lua) drives this
+    -- build against an auto-vivifying DB where every numeric leaf reads as a
+    -- TABLE — the mock math would error and knock this page's labels out of
+    -- the cache. Nothing to render there anyway.
+    if _G.QUI_SEARCH_HARVEST then return end
     if not State.previewMock or not State.previewHost then return end
     local mock, host = State.previewMock, State.previewHost
 
@@ -747,7 +759,7 @@ local function RefreshMock()
 
         local rawName
         if State.selectedUnit == "player" then
-            rawName = UnitName("player") or ns.L["Player"]
+            rawName = ns.Helpers.SafeValue(UnitName("player")) or ns.L["Player"]
         else
             rawName = MOCK_NAMES[State.selectedUnit] or State.selectedUnit
         end
@@ -1144,7 +1156,7 @@ _G.QUI_RefreshUnitFramePreview = function()
     RefreshMock()
 end
 
-local function BuildPreviewBlock(pv)
+local function BuildPreviewBlock(pv, opts)
     local model = ResolveModel()
     local getUnitOptions = model and model.GetUnitOptions
     local bodyOnly = opts and opts.bodyOnly == true
@@ -1263,5 +1275,6 @@ ns.QUI_UnitFramesSettingsSurface = {
     NavigateSearchEntry = NavigateSearchEntry,
     SetActiveTab = SetActiveTab,
     SetSelectedUnit = SetSelectedUnit,
+    GetSelectedUnit = GetSelectedUnit,
     RenderPage = BuildTileBody,
 }

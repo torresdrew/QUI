@@ -121,6 +121,9 @@ function CDMIcons.EventTraceValue(value)
 end
 
 function CDMIcons.EventTraceSpellIDMatches(targetID, value)
+    -- value can be a secret spellcast payload arg: probe BEFORE the nil
+    -- compare / == match. A secret ID can't be matched — treat as no-match.
+    if DebugIsSecretValue(value) then return false end
     if not targetID or value == nil then return false end
     return value == targetID
 end
@@ -231,6 +234,9 @@ function CDMIcons.EventTraceIconMatches(icon, targetID)
 end
 
 function CDMIcons.EventTraceItemUseSpellMatches(targetID, value)
+    -- Same probe-first rule as EventTraceSpellIDMatches: payload arg can be
+    -- secret; probe before `== nil` / equality matching.
+    if DebugIsSecretValue(value) then return false end
     if not targetID or value == nil then return false end
     local spellID = value
     if not spellID then return false end
@@ -281,7 +287,7 @@ local function EventTraceHasItemOrSlotCooldownIconForTarget(targetID)
     return false
 end
 
-function CDMIcons.EventTraceShouldPrintFrameEvent(event, arg1, arg2, arg3, arg4)
+function CDMIcons.EventTraceShouldPrintFrameEvent(event, arg1, arg2, arg3, arg4, arg5)
     local targetID = CDMIcons._eventTraceSpellID
     if not targetID then return false end
 
@@ -290,6 +296,10 @@ function CDMIcons.EventTraceShouldPrintFrameEvent(event, arg1, arg2, arg3, arg4)
        or event == "UNIT_SPELLCAST_SUCCEEDED"
        or event == "UNIT_SPELLCAST_CHANNEL_START"
        or event == "UNIT_SPELLCAST_CHANNEL_STOP" then
+        -- arg1 = payload unitTarget, secret under SecretWhenUnitSpellCast-
+        -- Restricted (.taintrc UNIT_SPELLCAST_SUCCEEDED = {3,4,5}). Probe
+        -- BEFORE the == "player" compare; a secret unit can't match.
+        if DebugIsSecretValue(arg1) then return false end
         return arg1 == "player" and (
             CDMIcons.EventTraceSpellIDMatches(targetID, arg2)
             or CDMIcons.EventTraceSpellIDMatches(targetID, arg3)
@@ -305,12 +315,25 @@ function CDMIcons.EventTraceShouldPrintFrameEvent(event, arg1, arg2, arg3, arg4)
         -- column but no longer used to filter — the previous filter
         -- ate every fire for spells whose recovery is GCD-typed even
         -- when the underlying cooldown is real.
+        -- Payload spellIDs are secret-capable under cooldown restriction —
+        -- probe each before the nil compares and the matcher's == below
+        -- (statement-split: the analyzer-provable guard shape).
+        if issecretvalue and issecretvalue(arg1) then
+            return false -- @secret-policy: reject-secret-value (unmatchable trace fire)
+        end
+        if issecretvalue and issecretvalue(arg2) then
+            return false -- @secret-policy: reject-secret-value (unmatchable trace fire)
+        end
         if arg1 == nil and arg2 == nil then
             -- nil payload = "update all" sweep; let it through.
             return true
         end
+        -- arg5 is the payload's itemID (SpellBookDocumentation.lua:859) —
+        -- without it an item-targeted watch never matches item-driven SUC
+        -- fires (arg1/arg2 carry the spell identity only).
         return CDMIcons.EventTraceSpellIDMatches(targetID, arg1)
             or CDMIcons.EventTraceSpellIDMatches(targetID, arg2)
+            or CDMIcons.EventTraceSpellIDMatches(targetID, arg5)
     end
 
     if event == "BAG_UPDATE_COOLDOWN" then
@@ -328,11 +351,14 @@ end
 -- startRecoveryCategory + category + per-spell cdInfo.isActive /
 -- chargeInfo.isActive for both the spellID hint and the baseSpellID, so
 -- the trace can be cross-referenced against the resolver's lane choice.
-local function EventTraceBuildSpellUpdateCooldownExtra(arg1, arg2, arg3, arg4)
+local function EventTraceBuildSpellUpdateCooldownExtra(arg1, arg2, arg3, arg4, arg5)
     if not Sources then return nil end
     local parts = {}
     parts[#parts + 1] = "startRec=" .. CDMIcons.EventTraceValue(arg4)
     parts[#parts + 1] = "cat=" .. CDMIcons.EventTraceValue(arg3)
+    if arg5 ~= nil then
+        parts[#parts + 1] = "itemID=" .. CDMIcons.EventTraceValue(arg5)
+    end
 
     local function probeSpell(label, sid)
         if type(sid) ~= "number" then return end
@@ -511,8 +537,10 @@ end
 -- by ApplyNumericCooldown's issecretvalue gate at
 -- cdm_frame_writes.lua:40), "nil" = not present.
 local function ProbeNumeric(v)
+    -- Probe BEFORE the nil compare — `v == nil` on a secret throws (the
+    -- round-17 helper-entry-guard class).
+    if issecretvalue and issecretvalue(v) then return "secret" end -- @secret-policy: report-secret-detected
     if v == nil then return "nil" end
-    if issecretvalue and issecretvalue(v) then return "secret" end
     if type(v) == "number" then return "clean" end
     return type(v)
 end
@@ -744,7 +772,7 @@ local function EventTraceAppendExtra(extra, note)
     return note
 end
 
-function CDMIcons.EventTracePrint(source, event, arg1, arg2, arg3, arg4, extra)
+function CDMIcons.EventTracePrint(source, event, arg1, arg2, arg3, arg4, arg5, extra)
     local targetID = CDMIcons._eventTraceSpellID
     if not targetID then return end
     -- "runtime-pre" comes from cdm_resolvers.lua's runtime frame OnEvent.
@@ -754,7 +782,7 @@ function CDMIcons.EventTracePrint(source, event, arg1, arg2, arg3, arg4, extra)
     -- apply.
     local frameSource = source == "frame" or source == "frame-pre"
         or source == "frame-post" or source == "runtime-pre"
-    if frameSource and not CDMIcons.EventTraceShouldPrintFrameEvent(event, arg1, arg2, arg3, arg4) then
+    if frameSource and not CDMIcons.EventTraceShouldPrintFrameEvent(event, arg1, arg2, arg3, arg4, arg5) then
         return
     end
 
@@ -776,13 +804,13 @@ function CDMIcons.EventTracePrint(source, event, arg1, arg2, arg3, arg4, extra)
 
     if event == "SPELL_UPDATE_COOLDOWN" then
         extra = EventTraceAppendExtra(extra,
-            EventTraceBuildSpellUpdateCooldownExtra(arg1, arg2, arg3, arg4))
+            EventTraceBuildSpellUpdateCooldownExtra(arg1, arg2, arg3, arg4, arg5))
     end
     extra = EventTraceAppendExtra(extra, throttleNote)
 
     local start = CDMIcons._eventTraceStartedAt or now
     print(string.format(
-        "|cff34d399[cdmevents]|r +%.3f sid=%d %s:%s args=(%s,%s,%s,%s) %s %s %s %s",
+        "|cff34d399[cdmevents]|r +%.3f sid=%d %s:%s args=(%s,%s,%s,%s,%s) %s %s %s %s",
         now - start,
         targetID,
         tostring(source or "?"),
@@ -791,6 +819,7 @@ function CDMIcons.EventTracePrint(source, event, arg1, arg2, arg3, arg4, extra)
         CDMIcons.EventTraceValue(arg2),
         CDMIcons.EventTraceValue(arg3),
         CDMIcons.EventTraceValue(arg4),
+        CDMIcons.EventTraceValue(arg5),
         CDMIcons.EventTraceAPISummary(targetID),
         CDMIcons.EventTraceIconSummary(targetID),
         CDMIcons.EventTraceBarSummary(targetID),
@@ -803,8 +832,8 @@ end
 -- The runtime frame uses an indirection slot rather than referencing
 -- CDMIcons directly to satisfy the architectural contract enforced by
 -- cdm_fast_visual_refresh_contract_test.lua:1862.
-ns.CDMRuntimeEventTraceHook = function(source, event, arg1, arg2, arg3, arg4)
-    return CDMIcons.EventTracePrint(source, event, arg1, arg2, arg3, arg4)
+ns.CDMRuntimeEventTraceHook = function(source, event, arg1, arg2, arg3, arg4, arg5)
+    return CDMIcons.EventTracePrint(source, event, arg1, arg2, arg3, arg4, arg5)
 end
 
 ---------------------------------------------------------------------------
@@ -2226,6 +2255,53 @@ local function RunCDMDebugItemAura(msg, seconds)
     end)
 end
 
+-- Secret parity-row sink. SimpleMessageFrame:AddMessage is
+-- AllowedWhenUntainted (SimpleMessageFrameAPIDocumentation), so tainted code
+-- cannot push secret strings into chat; FontString:SetText is
+-- AllowedWhenTainted (adds SecretAspect.Text) and renders them.
+local SecretRows = { count = 0 }
+
+local function AppendSecretRow(label, value)
+    if not (C_StringUtil and C_StringUtil.WrapString) then return end
+    if not SecretRows.frame then
+        local frame = CreateFrame("Frame", "QUI_CDMProbeSecretRows", UIParent)
+        frame:SetSize(760, 190)
+        frame:SetPoint("CENTER", UIParent, "CENTER", 0, -220)
+        frame:SetFrameStrata("DIALOG")
+        frame:EnableMouse(true)
+        frame:SetMovable(true)
+        frame:RegisterForDrag("LeftButton")
+        frame:SetScript("OnDragStart", frame.StartMoving)
+        frame:SetScript("OnDragStop", frame.StopMovingOrSizing)
+        local bg = frame:CreateTexture(nil, "BACKGROUND")
+        bg:SetAllPoints()
+        bg:SetColorTexture(0, 0, 0, 0.8)
+        local text = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        text:SetPoint("TOPLEFT", 8, -8)
+        text:SetPoint("BOTTOMRIGHT", -8, 8)
+        text:SetJustifyH("LEFT")
+        text:SetJustifyV("TOP")
+        SecretRows.frame = frame
+        SecretRows.text = text
+    end
+    local header = "|cff34d399[cdmprobe]|r secret rows (drag to move):"
+    -- Reset decisions read only clean state: the buffer is secret after the
+    -- first append, so `not buffer` would throw here. count == 0 iff the
+    -- buffer is unset (init and every reset keep them in lockstep).
+    if SecretRows.count == 0 or SecretRows.count >= 10 then
+        SecretRows.buffer = header
+        SecretRows.count = 0
+    end
+    -- The buffer rides as WrapString's INFIX (never empty: starts with the
+    -- header literal) so the empty-infix -> "" short-circuit can't drop it;
+    -- the clean label and secret value ride as suffixes.
+    SecretRows.buffer = C_StringUtil.WrapString(SecretRows.buffer, nil, "\n" .. label)
+    SecretRows.buffer = C_StringUtil.WrapString(SecretRows.buffer, nil, value)
+    SecretRows.count = SecretRows.count + 1
+    SecretRows.text:SetText(SecretRows.buffer)
+    SecretRows.frame:Show()
+end
+
 -- Resolver parity probe. Walks every visible CDM icon and
 -- prints (entry name, kind, resolver mode, mirror active?, parity?).
 local function RunCDMDebugProbe()
@@ -2254,10 +2330,15 @@ local function RunCDMDebugProbe()
                 local state = CDMGCDResolveCooldownState(icon)
                 local mode = state and state.mode
                 local rText = CDMIcons.ResolveIconStackText(icon)
-                local curText = icon.StackText and icon.StackText:GetText() or ""
+                -- Probe before ANY use: GetText() can return a secret under
+                -- restrictions, and `or ""`/`~= nil` on a secret throw.
+                local curText = icon.StackText and icon.StackText:GetText()
+                local rIsSecret = DebugIsSecretValue(rText)
+                local cIsSecret = DebugIsSecretValue(curText)
+                if not cIsSecret and curText == nil then
+                    curText = ""
+                end
                 local textParity
-                local rIsSecret = (rText ~= nil) and false
-                local cIsSecret = (curText ~= nil) and false
                 if rIsSecret or cIsSecret then
                     textParity = "secret"
                 elseif not HookTextHasDisplay(rText) and not HookTextHasDisplay(curText) then
@@ -2293,20 +2374,14 @@ local function RunCDMDebugProbe()
                     parity,
                     rTextDisplay, curTextDisplay, textParity))
 
-                -- Secret values can't be Lua-concatenated into the row above,
-                -- but C_StringUtil.WrapString is AllowedWhenTainted and produces
-                -- a (possibly-secret) string that AddMessage renders correctly.
-                if rIsSecret and C_StringUtil and C_StringUtil.WrapString then
-local ok = true; local wrapped = C_StringUtil.WrapString(rText, "  |cff888888\\_ rText[" .. name .. "]:|r ", "")
-                    if wrapped then
-                        DEFAULT_CHAT_FRAME:AddMessage(wrapped)
-                    end
+                -- Secret text rows go to the FontString overlay: AddMessage
+                -- is AllowedWhenUntainted and rejects secrets from tainted
+                -- code (see AppendSecretRow header).
+                if rIsSecret then
+                    AppendSecretRow("  |cff888888\\_ rText[" .. name .. "]:|r ", rText)
                 end
-                if cIsSecret and C_StringUtil and C_StringUtil.WrapString then
-local ok = true; local wrapped = C_StringUtil.WrapString(curText, "  |cff888888\\_ curText[" .. name .. "]:|r ", "")
-                    if wrapped then
-                        DEFAULT_CHAT_FRAME:AddMessage(wrapped)
-                    end
+                if cIsSecret then
+                    AppendSecretRow("  |cff888888\\_ curText[" .. name .. "]:|r ", curText)
                 end
             end
         end
@@ -2548,7 +2623,7 @@ local function CDMDebugCollectCurrentSpecCDMSpells()
 
     local composer = ns.CDMComposer
     if composer and type(composer.CollectKnownCDMSpellIDs) == "function" then
-        pcall(composer.CollectKnownCDMSpellIDs, knownSpells)
+        ns.SafeCall("report", composer.CollectKnownCDMSpellIDs, knownSpells)
     end
     return knownSpells
 end
@@ -3011,14 +3086,35 @@ function CDMDebug.Aura(enabled, ...)
     local fs = _auraDebugFontStrings and _auraDebugFontStrings[_auraDebugWriteIdx]
     if not fs then return end
 
+    local canWrap = (C_StringUtil and C_StringUtil.WrapString) ~= nil
     local message = "|cff34D399[CDM-Aura]|r"
+    local messageSecret = false
     for i = 1, select("#", ...) do
         local v = select(i, ...)
-        if issecretvalue and issecretvalue(v)
-            and C_StringUtil and C_StringUtil.WrapString then
-            message = C_StringUtil.WrapString(v, message .. " ", "")
+        local vSecret = (issecretvalue and issecretvalue(v)) or false
+        local piece
+        if vSecret and canWrap then
+            piece = v
+        elseif vSecret then
+            piece = "<SECRET>"
         else
-            message = message .. " " .. tostring(v)
+            piece = tostring(v)
+        end
+        if messageSecret or (vSecret and canWrap) then
+            -- The message rides as WrapString's INFIX (never empty: starts
+            -- with the prefix literal), so the empty-infix -> "" short-circuit
+            -- can't drop the line and Lua `..` never touches a secret; the
+            -- piece rides as the suffix (stringViews accept secrets).
+            message = C_StringUtil.WrapString(message, nil, " ")
+            message = C_StringUtil.WrapString(message, nil, piece)
+            messageSecret = true
+        else
+            -- messageSecret is kept in lockstep with message secrecy (any
+            -- secret piece flips it and routes every LATER piece through
+            -- WrapString above) — this concat only ever sees a clean
+            -- message and a clean piece.
+            -- @secret-safe: messageSecret lockstep shadow flag; clean-only branch
+            message = message .. " " .. piece
         end
     end
 

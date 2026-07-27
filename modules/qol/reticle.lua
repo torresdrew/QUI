@@ -17,11 +17,17 @@ local CreateFrame = CreateFrame
 -- only, plus a mixin method / _Insecure variant). Reimplement it: raw cursor
 -- position divided by UIParent's effective scale, exactly as the old global.
 local GetCursorPosition = GetCursorPosition
+-- The bare global read below is deliberate (compat shim for pre-12.1 builds
+-- where the global still exists); it is intentionally NOT in .luacheckrc /
+-- meta since 12.1 removed it.
+-- luacheck: push ignore 113
+---@diagnostic disable-next-line: undefined-global
 local GetScaledCursorPosition = GetScaledCursorPosition or function()
     local scale = UIParent:GetEffectiveScale()
     local x, y = GetCursorPosition()
     return x / scale, y / scale
 end
+-- luacheck: pop
 local InCombatLockdown = InCombatLockdown
 local UnitClass = UnitClass
 local C_ClassColor = C_ClassColor
@@ -418,19 +424,31 @@ eventFrame:SetScript("OnEvent", function(self, event, _, _, spellID)
     elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
         -- 68569: registered player-only above (RegisterUnitEvent), so unit is
         -- already C-side filtered — no unit compare needed. spellID may still
-        -- be secret under combat/encounter restriction; probe before any
-        -- table index/== (a secret spellID throws on both). Here it's only
-        -- ever forwarded to ApplyCooldownFromSpell (an API call, safe) or
-        -- truthiness-checked, but the probe keeps this branch boundary-safe
-        -- if that changes and matches the wave's uniform pattern.
+        -- be secret under combat/encounter restriction; probe before ANY
+        -- operation on it — a secret spellID throws on table index, ==, AND
+        -- plain truthiness (`spellID and ...` is already a boolean test of
+        -- the secret). Forwarding to ApplyCooldownFromSpell (an API call)
+        -- stays safe; everything else must sit behind the probe below.
         local settings = GetSettings()
         if not settings or not settings.gcdEnabled then
             if gcdCooldown then gcdCooldown:Hide() end
             return
         end
 
-        -- Check cooldown of cast spell, fall back to GCD spell
-        if spellID and not (IsSecretValue and IsSecretValue(spellID)) then
+        -- Check cooldown of cast spell, fall back to GCD spell.
+        -- Probe FIRST, statement-split: the old compound guard
+        -- `spellID and not (IsSecretValue and IsSecretValue(spellID))`
+        -- truth-tested the secret BEFORE the probe ran — `spellID and ...`
+        -- is itself a boolean test of the secret and throws in-game.
+        -- ACTION POLICY: secret spellID -> generic GCD refresh, the same
+        -- fallback as "no spellID". (Strict taint scan was green on the
+        -- old compound order: analyzer gap, recorded for Task 8.)
+        -- Unconditional probe: core/utils.lua (QUI.toc:77) defines
+        -- Helpers.IsSecretValue unconditionally and loads before this file
+        -- (QUI.toc:245), so the file-local latch is never nil in-game.
+        if IsSecretValue(spellID) then
+            UpdateGCDCooldown()
+        elseif spellID then
             if ApplyCooldownFromSpell and ApplyCooldownFromSpell(gcdCooldown, spellID) then
                 gcdCooldown:Show()
                 UpdateRingAppearance()

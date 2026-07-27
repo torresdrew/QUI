@@ -96,7 +96,6 @@ local function IsSafeNumber(value)
     -- from an every-frame path). issecretvalue(nil) is simply false.
     if Helpers.IsSecretValue and Helpers.IsSecretValue(value) then return false end -- @secret-policy: reject-secret-value
     if value == nil then return false end
-    if IsSecretValue and IsSecretValue(value) then return false end
     return type(value) == "number"
 end
 
@@ -109,7 +108,7 @@ end
 
 local function QueryCurrentUnitSpeed()
     if not GetUnitSpeed then return nil end
-    local ok, currentSpeed = pcall(GetUnitSpeed, "player")
+    local ok, currentSpeed = ns.SafeCall("chain-next", GetUnitSpeed, "player")
     if ok then
         return currentSpeed
     end
@@ -184,7 +183,7 @@ end
 ---------------------------------------------------------------------------
 local function GetVigorInfo()
     local data = C_Spell.GetSpellCharges(VIGOR_SPELL_ID)
-    if not data then return 0, 6, 0, 0, 1 end
+    if not data then return 0, 6, 0, 0, 1 end -- @secret-safe: GetSpellCharges table ref is non-secret (only its fields are, probed below)
 
     -- Restriction probe (API restriction when not skyriding): maxCharges is
     -- NeverSecret (SpellSharedDocumentation SpellChargeInfo) so it can never
@@ -198,7 +197,7 @@ local function GetVigorInfo()
     end
 
     return data.currentCharges or 0,
-           data.maxCharges or 6,
+           data.maxCharges or 6, -- @secret-safe: SpellChargeInfo.maxCharges is NeverSecret (SpellSharedDocumentation)
            data.cooldownStartTime or 0,
            data.cooldownDuration or 0,
            data.chargeModRate or 1
@@ -206,7 +205,7 @@ end
 
 local function GetSecondWindInfo()
     local data = C_Spell.GetSpellCharges(SECOND_WIND_SPELL_ID)
-    if not data then return 0, 0, 0, 0, 1 end
+    if not data then return 0, 0, 0, 0, 1 end -- @secret-safe: GetSpellCharges table ref is non-secret (only its fields are, probed below)
 
     -- Restriction probe: maxCharges is NeverSecret (SpellSharedDocumentation
     -- SpellChargeInfo) so it can never trip; every other field used below is
@@ -219,7 +218,7 @@ local function GetSecondWindInfo()
     end
 
     return data.currentCharges or 0,
-           data.maxCharges or 0,
+           data.maxCharges or 0, -- @secret-safe: SpellChargeInfo.maxCharges is NeverSecret (SpellSharedDocumentation)
            data.cooldownStartTime or 0,
            data.cooldownDuration or 0,
            data.chargeModRate or 1
@@ -318,7 +317,7 @@ local function ApplyCooldownFont(cooldown, fontSize)
     end
 
     -- Method 2: Iterate through cooldown regions
-    local ok, regions = pcall(function() return { cooldown:GetRegions() } end)
+    local ok, regions = ns.SafeCall("best-effort-style", function() return { cooldown:GetRegions() } end)
     if ok and regions then
         for _, region in ipairs(regions) do
             if region and region.GetObjectType and region:GetObjectType() == "FontString" then

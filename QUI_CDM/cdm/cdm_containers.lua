@@ -43,7 +43,7 @@ local function BuildLinkedSpellIDsFingerprint(linkedSpellIDs)
     local parts = {}
     for i, linkedID in ipairs(linkedSpellIDs) do
         if issecretvalue and issecretvalue(linkedID) then
-            parts[i] = "secret"
+            parts[i] = "secret" -- @secret-policy: encode-secret-as-placeholder
         else
             parts[i] = tostring(linkedID or 0)
         end
@@ -165,8 +165,8 @@ local function BlankReanchoredNativeItemFrame(frame)
     if frame.SetAlpha then frame:SetAlpha(0) end
 
     local cd = frame.Cooldown
-    if not cd and frame.GetCooldownFrame then
-        local ok, cooldown = pcall(frame.GetCooldownFrame, frame)
+    if not cd then
+        local ok, cooldown = ns.SafeCallMethodIfPresent("best-effort-style", frame, "GetCooldownFrame")
         if ok then cd = cooldown end
     end
     if cd and cd.SetDrawSwipe then
@@ -270,7 +270,7 @@ end
 
 local function FireLoadoutChangeCallbacks()
     for i = 1, #_loadoutChangeCallbacks do
-        pcall(_loadoutChangeCallbacks[i])
+        ns.SafeCall("bulkhead", _loadoutChangeCallbacks[i])
     end
 end
 
@@ -418,11 +418,20 @@ end
 local function GetCurrentCharacterKey()
     if not UnitName then return nil end
     local name, realm = UnitName("player")
+    -- 12.1: UnitName is identity-restricted (SecretWhenUnitIdentityRestricted).
+    -- type() checks PASS secrets, so they are not guards — probe explicitly
+    -- before any ==/concat. A secret identity can't key anything: bail.
+    if issecretvalue and issecretvalue(name) then return nil end -- @secret-policy: reject-secret-ids
+    if issecretvalue and issecretvalue(realm) then realm = nil end
     if type(name) ~= "string" or name == "" then
         return nil
     end
     if type(realm) ~= "string" or realm == "" then
-        realm = GetRealmName and GetRealmName() or nil
+        realm = nil
+        if GetRealmName then
+            realm = GetRealmName()
+            if issecretvalue and issecretvalue(realm) then realm = nil end
+        end
     end
     if type(realm) ~= "string" or realm == "" then
         return name
@@ -433,7 +442,7 @@ end
 local function GetCurrentProfileName()
     local db = QUICore and QUICore.db
     if db and db.GetCurrentProfile then
-        local ok, profileName = pcall(db.GetCurrentProfile, db)
+        local ok, profileName = ns.SafeCallMethod("best-effort-style", db, "GetCurrentProfile")
         if ok and type(profileName) == "string" and profileName ~= "" then
             return profileName
         end
@@ -3179,7 +3188,7 @@ ApplyUtilityAnchor = function()
 
     local anchorParent = UpdateUtilityAnchorProxy() or essContainer
 
-    local ok = pcall(function()
+    local ok = ns.SafeCall("best-effort-style", function()
         utilContainer:ClearAllPoints()
         utilContainer:SetPoint("TOP", anchorParent, "BOTTOM", 0, -totalOffset)
     end)
@@ -3733,7 +3742,7 @@ end
 function ownedEngine:BootstrapReanchorRuntime()
     if not (ns.CDMReanchorBoot and ns.CDMReanchorRealEnv) then return end
     ResetInitialReanchorDone()
-    local ok, boot = pcall(function()
+    local ok, boot = ns.SafeCall("best-effort-style", function()
         local env = ns.CDMReanchorRealEnv.BuildEnv({
             getSettings = GetTrackerSettings,
             resolveAdditional = function(key)

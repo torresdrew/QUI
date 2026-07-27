@@ -107,24 +107,20 @@ end
 
 local function MaskNativeStatsPane()
     if not CharacterStatsPane then return end
-    pcall(CharacterStatsPane.Show, CharacterStatsPane)
-    pcall(CharacterStatsPane.SetAlpha, CharacterStatsPane, 0)
-    if CharacterStatsPane.EnableMouse then
-        pcall(CharacterStatsPane.EnableMouse, CharacterStatsPane, false)
-    end
+    ns.SafeCallMethod("best-effort-style", CharacterStatsPane, "Show")
+    ns.SafeCallMethod("best-effort-style", CharacterStatsPane, "SetAlpha", 0)
+    ns.SafeCallMethodIfPresent("best-effort-style", CharacterStatsPane, "EnableMouse", false)
     if CharacterStatsPane.ClassBackground then
-        pcall(CharacterStatsPane.ClassBackground.SetAlpha, CharacterStatsPane.ClassBackground, 0)
+        ns.SafeCallMethod("best-effort-style", CharacterStatsPane.ClassBackground, "SetAlpha", 0)
     end
 end
 
 local function RestoreNativeStatsPane()
     if not CharacterStatsPane then return end
-    pcall(CharacterStatsPane.SetAlpha, CharacterStatsPane, 1)
-    if CharacterStatsPane.EnableMouse then
-        pcall(CharacterStatsPane.EnableMouse, CharacterStatsPane, true)
-    end
+    ns.SafeCallMethod("best-effort-style", CharacterStatsPane, "SetAlpha", 1)
+    ns.SafeCallMethodIfPresent("best-effort-style", CharacterStatsPane, "EnableMouse", true)
     if CharacterStatsPane.ClassBackground then
-        pcall(CharacterStatsPane.ClassBackground.SetAlpha, CharacterStatsPane.ClassBackground, 1)
+        ns.SafeCallMethod("best-effort-style", CharacterStatsPane.ClassBackground, "SetAlpha", 1)
     end
 end
 

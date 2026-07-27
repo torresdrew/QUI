@@ -1076,7 +1076,14 @@ function CDMIconRuntimeRefresh.Create(callbacks)
         end
     end
 
-    function controller:HandleFrameEvent(frame, event, arg1, arg2, arg3)
+    -- Signature deliberately mirrors the runtime OnEvent contract
+    -- (self, event, payload...) with the frame LAST, PAST every
+    -- secret-capable payload column: the taint analyzer keys
+    -- event_payload_params positions to that contract, so a leading extra
+    -- arg would shift every column and mis-taint `event` itself, and a frame
+    -- sitting in a wired column (UNIT_SPELLCAST_CHANNEL_STOP taints
+    -- positions 3-6; arg4 = its interruptedBy) would be mis-tainted too.
+    function controller:HandleFrameEvent(event, arg1, arg2, arg3, arg4, frame)
         if not isRuntimeEnabled(callbacks) then
             if callbacks.onRuntimeDisabled then
                 callbacks.onRuntimeDisabled(frame)
@@ -1096,12 +1103,12 @@ function CDMIconRuntimeRefresh.Create(callbacks)
             if callbacks.isSecretValue and callbacks.isSecretValue(arg1) then
                 isPlayerUnit = true
             else
-                isPlayerUnit = arg1 == "player"
+                isPlayerUnit = arg1 == "player" -- @secret-safe: else-branch of the callbacks.isSecretValue(arg1) probe above (callback-indirected guard the analyzer cannot see; tests inject secrets through the stub)
             end
             if isPlayerUnit then
                 if normalizeSpellIdentifier(callbacks, arg3) ~= nil then
                     if runtimeRefreshStats then runtimeRefreshStats.unitSpellcastCooldownSkips = runtimeRefreshStats.unitSpellcastCooldownSkips + 1 end
-                    controller:QueueResolvedCooldownForSpellID(arg3, nil)
+                    controller:QueueResolvedCooldownForSpellID(arg3, nil) -- @secret-safe: reached only when normalizeSpellIdentifier(callbacks, arg3) ~= nil, and that helper probes isSecretValue and returns nil for secrets — arg3 proven readable here
                 elseif callbacks.scheduleUpdate then
                     if runtimeRefreshStats then runtimeRefreshStats.unitSpellcastCooldownFallbacks = runtimeRefreshStats.unitSpellcastCooldownFallbacks + 1 end
                     callbacks.scheduleUpdate(true, UPDATE_COOLDOWN, "unit_spellcast")
@@ -1232,11 +1239,11 @@ function CDMIconRuntimeRefresh.Create(callbacks)
         end
     end
 
-    function controller:Handle(event, arg1, arg2, arg3, frame)
+    function controller:Handle(event, arg1, arg2, arg3, arg4, frame)
         if event == "UNIT_AURA" then
-            return controller:HandleAuraRefresh(arg1, arg2)
+            return controller:HandleAuraRefresh(arg1, arg2) -- @secret-safe: HandleAuraRefresh is reached only via cdm_spelldata NotifyAuraConsumers, which passes a plain non-secret unit; updateInfo is a plain container table (round-13 hand-audit)
         end
-        return controller:HandleFrameEvent(frame, event, arg1, arg2, arg3)
+        return controller:HandleFrameEvent(event, arg1, arg2, arg3, arg4, frame) -- @secret-safe: HandleFrameEvent probes isSecretValue(arg1) before the unit compare and normalizes arg3 through the secret-probing normalizeSpellIdentifier (round-13 hand-audit)
     end
 
     function controller:HandleCooldownChanged(_, spellID, baseSpellID, kind)

@@ -189,7 +189,7 @@ function CDMShared.GetCustomBarVisibilityMode(containerDB)
 end
 
 function CDMShared.NormalizeMirrorCategory(category)
-    if issecretvalue and issecretvalue(category) then return nil end
+    if issecretvalue and issecretvalue(category) then return nil end -- @secret-policy: reject-secret-value
     if category == "essential"
         or category == "utility"
         or category == "buff"
@@ -287,14 +287,14 @@ end
 
 function CDMShared.IsSafeNumeric(value)
     if issecretvalue and issecretvalue(value) then
-        return false
+        return false -- @secret-policy: reject-secret-value
     end
     return type(value) == "number"
 end
 
 function CDMShared.SafeBoolean(value)
     if issecretvalue and issecretvalue(value) then
-        return nil
+        return nil -- @secret-policy: reject-secret-value
     end
     if type(value) == "boolean" then
         return value

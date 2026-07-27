@@ -319,7 +319,7 @@ function Datatexts:AttachToSlot(slotFrame, datatextID, settings)
     end
 
     -- Create datatext instance
-    local success, instance = pcall(datatextDef.OnEnable, slotFrame, settings or {})
+    local success, instance = ns.SafeCall("best-effort-style", datatextDef.OnEnable, slotFrame, settings or {})
 
     if not success then
         print("|cffff0000QUI:|r Failed to enable datatext '" .. datatextID .. "': " .. tostring(instance))
@@ -390,7 +390,7 @@ function Datatexts:DetachFromSlot(slotFrame)
 
     -- Call OnDisable if provided
     if instance.def.OnDisable then
-        pcall(instance.def.OnDisable, instance.frame)
+        ns.SafeCall("bulkhead", instance.def.OnDisable, instance.frame)
     end
 
     -- Providers install these in OnEnable; clearing prevents handler bleed-through across reassignment.
@@ -426,7 +426,7 @@ end
 function Datatexts:UpdateAll()
     for _, active in ipairs(self.activeInstances) do
         if active.instance and active.instance.Update then
-            pcall(active.instance.Update)
+            ns.SafeCall("bulkhead", active.instance.Update)
         end
     end
 end
@@ -740,7 +740,7 @@ Datatexts:Register("system", {
             local addons = {}
             local totalMem = 0
             for i = 1, C_AddOns.GetNumAddOns() do
-                local ok, loaded = pcall(C_AddOns.IsAddOnLoaded, i)
+                local ok, loaded = ns.SafeCall("best-effort-style", C_AddOns.IsAddOnLoaded, i)
                 if ok and loaded then
                     local mem = GetAddOnMemoryUsage(i)
                     totalMem = totalMem + mem
@@ -2151,10 +2151,17 @@ Datatexts:Register("friends", {
         if not frame.friendsModifierHooked then
             frame:HookScript("OnEvent", function(self, event, key)
                 if not self.friendsDatatextEnabled then return end  -- Guard against stale hooks
-                if event == "MODIFIER_STATE_CHANGED" and (key == "LSHIFT" or key == "RSHIFT") then
-                    -- Only refresh if tooltip is owned by this datatext (avoids clobbering other tooltips)
-                    if GameTooltip:IsShown() and GameTooltip:GetOwner() == slotFrame then
-                        BuildFriendsTooltip(slotFrame)
+                -- Nested (not compound) event test: the host frame also
+                -- registers CHAT_MSG events whose pos-4 payload secretizes,
+                -- and the analyzer only narrows event identity on a pure
+                -- event-compare condition — inside this branch `key` is a
+                -- plain modifier string.
+                if event == "MODIFIER_STATE_CHANGED" then
+                    if key == "LSHIFT" or key == "RSHIFT" then
+                        -- Only refresh if tooltip is owned by this datatext (avoids clobbering other tooltips)
+                        if GameTooltip:IsShown() and GameTooltip:GetOwner() == slotFrame then
+                            BuildFriendsTooltip(slotFrame)
+                        end
                     end
                 end
             end)
@@ -2336,7 +2343,7 @@ local function BuildGuildCache()
         end
 
         if guildClubID and not InCombatLockdown() and CommunitiesUtil and CommunitiesUtil.GetAndSortMemberInfo then
-            local ok, members = pcall(CommunitiesUtil.GetAndSortMemberInfo, guildClubID)
+            local ok, members = ns.SafeCall("report", CommunitiesUtil.GetAndSortMemberInfo, guildClubID)
             if ok and members then
                 for _, data in ipairs(members) do
                     if data.guid then
@@ -2577,7 +2584,22 @@ Datatexts:Register("guild", {
                     BuildGuildCache()
                 end
 
-                local playerName = UnitName("player") .. "-" .. GetNormalizedRealmName()
+                -- UnitName/GetNormalizedRealmName are secret-capable under
+                -- identity restriction — probe each before the concat
+                -- (statement-split: the analyzer-provable guard shape).
+                -- Unknown self-name only skips the self-exclusion below.
+                local shortName = UnitName("player")
+                local realmName = GetNormalizedRealmName()
+                if issecretvalue and issecretvalue(shortName) then
+                    shortName = nil -- @secret-policy: reject-secret-value (menu keeps the self row)
+                end
+                if issecretvalue and issecretvalue(realmName) then
+                    realmName = nil -- @secret-policy: reject-secret-value (menu keeps the self row)
+                end
+                local playerName
+                if shortName and realmName then
+                    playerName = shortName .. "-" .. realmName
+                end
 
                 MenuUtil.CreateContextMenu(self, function(_, root)
                     root:CreateTitle(ns.L["Guild Menu"])

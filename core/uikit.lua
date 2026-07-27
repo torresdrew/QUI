@@ -363,7 +363,7 @@ end
 function UIKit.RefreshScaleBoundWidgets()
     for owner, callbacks in pairs(scaleRefreshRegistry) do
         for _, refreshFn in pairs(callbacks) do
-            pcall(refreshFn, owner)
+            ns.SafeCall("bulkhead", refreshFn, owner)
         end
     end
 end
@@ -371,7 +371,7 @@ end
 function UIKit.RefreshPixelBorders()
     local failedBorderFrames
     for frame in pairs(borderLineState) do
-        local ok = pcall(RefreshBorderLines, frame)
+        local ok = ns.SafeCall("bulkhead", RefreshBorderLines, frame)
         if not ok then
             failedBorderFrames = failedBorderFrames or {}
             failedBorderFrames[#failedBorderFrames + 1] = frame
@@ -442,12 +442,12 @@ local function EnsureAnimationDriver()
                 local progress = (state.duration > 0) and (state.elapsed / state.duration) or 1
                 local value = state.fromValue + ((state.toValue - state.fromValue) * progress)
                 if state.onUpdate then
-                    pcall(state.onUpdate, owner, value, progress)
+                    ns.SafeCall("bulkhead", state.onUpdate, owner, value, progress)
                 end
                 if progress >= 1 then
                     states[key] = nil
                     if state.onFinish then
-                        pcall(state.onFinish, owner, state.toValue)
+                        ns.SafeCall("bulkhead", state.onFinish, owner, state.toValue)
                     end
                 else
                     anyActive = true
@@ -494,7 +494,7 @@ function UIKit.AnimateValue(owner, key, options)
         onFinish = options.onFinish,
     }
 
-    pcall(options.onUpdate, owner, options.fromValue or 0, 0)
+    ns.SafeCall("bulkhead", options.onUpdate, owner, options.fromValue or 0, 0)
     local driver = EnsureAnimationDriver()
     driver:SetScript("OnUpdate", animationDriverOnUpdate)
 end
@@ -1479,13 +1479,17 @@ function UIKit.CreateAnchorProxy(sourceFrame, opts)
         local rawSrcScale = source:GetEffectiveScale()
         local rawPxyScale = self:GetEffectiveScale()
         local sourceScale, proxyScale
-        if rawSrcScale and not (issecretvalue and issecretvalue(rawSrcScale)) then
+        -- Probe BEFORE the truthiness check — `rawSrcScale and …` boolean-
+        -- tests a possibly-secret scale and throws.
+        local srcSecret = issecretvalue and issecretvalue(rawSrcScale)
+        if not srcSecret and rawSrcScale then
             sourceScale = rawSrcScale
             cachedSourceScale = rawSrcScale
         else
             sourceScale = cachedSourceScale
         end
-        if rawPxyScale and not (issecretvalue and issecretvalue(rawPxyScale)) then
+        local pxySecret = issecretvalue and issecretvalue(rawPxyScale)
+        if not pxySecret and rawPxyScale then
             proxyScale = rawPxyScale
             cachedProxyScale = rawPxyScale
         else
@@ -1503,7 +1507,7 @@ function UIKit.CreateAnchorProxy(sourceFrame, opts)
             -- pcall: if protection somehow propagated to the proxy (e.g.
             -- brief window at combat boundary), silently defer rather than
             -- throwing ADDON_ACTION_BLOCKED.
-            local ok = pcall(self.SetSize, self, w, h)
+            local ok = ns.SafeCallMethod("defer-ooc", self, "SetSize", w, h)
             if ok then
                 lastWidth, lastHeight = w, h
             else
@@ -1517,8 +1521,8 @@ function UIKit.CreateAnchorProxy(sourceFrame, opts)
             -- pcall: anchoring to source can propagate protection from
             -- Blizzard frames; if the proxy became protected, ClearAllPoints
             -- and SetPoint would be blocked during combat.
-            if pcall(self.ClearAllPoints, self) then
-                pcall(self.SetPoint, self, "CENTER", source, "CENTER", 0, 0)
+            if ns.SafeCallMethod("defer-ooc", self, "ClearAllPoints") then
+                ns.SafeCallMethod("defer-ooc", self, "SetPoint", "CENTER", source, "CENTER", 0, 0)
             end
             lastAnchorSource = source
         end
@@ -1882,13 +1886,21 @@ end
 
 local function TooltipTextHasPrintfPlaceholder(text)
     if type(text) ~= "string" then return false end
-    if Helpers.IsSecretValue and Helpers.IsSecretValue(text) then return false end
+    -- Secret text cannot be pattern-scanned (:gsub throws) — indeterminate;
+    -- the sole caller drops secret text before asking.
+    if Helpers.IsSecretValue and Helpers.IsSecretValue(text) then return false end -- @secret-policy: reject-secret-value (caller drops the line)
 
     local withoutLiteralPercents = text:gsub("%%%%", "")
     return withoutLiteralPercents:find("%%[-+0#%d%.$]*[AacdeEfgGioqsuxX]") ~= nil
 end
 
 local function SanitizeSecretRestrictedTooltipText(text)
+    -- The tooltip consumer (character.lua OnEnter) truth-tests row.tooltip2/3
+    -- and hands them to GameTooltip:AddLine — neither accepts a secret, so a
+    -- secret text must be dropped here, never passed through.
+    if Helpers.IsSecretValue and Helpers.IsSecretValue(text) then
+        return nil -- @secret-policy: reject-secret-value (tooltip line dropped)
+    end
     if TooltipTextHasPrintfPlaceholder(text) then
         return nil
     end
@@ -1911,7 +1923,7 @@ function SkinBase.CreateSecretAwareStatPolicy(opts)
     end
 
     function policy:ReadableNumber(value)
-        if Helpers.IsSecretValue(value) then return nil end
+        if Helpers.IsSecretValue(value) then return nil end -- @secret-policy: reject-secret-value (caller substitutes its fallback)
         return tonumber(value)
     end
 
@@ -1962,7 +1974,7 @@ function SkinBase.CreateSecretAwareStatPolicy(opts)
             row.tooltip3 = SanitizeSecretRestrictedTooltipText(extraBody)
         end
         if self:CanUseRichTooltip() and type(richBuilder) == "function" then
-            pcall(richBuilder, row, self)
+            ns.SafeCall("bulkhead", richBuilder, row, self)
         end
     end
 
@@ -2051,7 +2063,8 @@ function SkinBase.ApplyTextureBackdrop(frame, bgFile, edgeFile, edgeSize, border
     if not frame then return false end
 
     local data = EnsureManualBackdrop(frame)
-    local px = Helpers.SafeToNumber(edgeSize, 1)
+    -- edgeSize is a skinning config argument, never secret — plain coercion.
+    local px = tonumber(edgeSize) or 1
     if px < 0 then px = 0 end
     local inset = bgInset
     if inset == nil then inset = px end
@@ -2528,7 +2541,7 @@ end
 local function NukeTexture(t)
     if not t then return end
     if t.SetAlpha then t:SetAlpha(0) end
-    if t.SetTexture then pcall(t.SetTexture, t, "") end
+    ns.SafeCallMethodIfPresent("best-effort-style", t, "SetTexture", "")
     if t.Hide then t:Hide() end
 end
 
@@ -3058,9 +3071,7 @@ function SkinBase.HookScrollBoxAcquired(scrollBox, callback, opts)
     callbacks[#callbacks + 1] = entry
 
     C_Timer.After(0, function()
-        if scrollBox.ForEachFrame then
-            pcall(scrollBox.ForEachFrame, scrollBox, callback)
-        end
+        ns.SafeCallMethodIfPresent("best-effort-style", scrollBox, "ForEachFrame", callback)
     end)
 
     if SkinBase.GetFrameData(scrollBox, "qScrollHooked") then return end

@@ -142,7 +142,7 @@ local function EnsurePixelBackdropCompat(frame)
     end
 
     if frame.SetBackdrop then
-        pcall(frame.SetBackdrop, frame, nil)
+        frame:SetBackdrop(nil)
     end
 
     if uikit and uikit.CreateBorderLines and uikit.UpdateBorderLines then
@@ -162,7 +162,7 @@ local function EnsurePixelBackdropCompat(frame)
                 compat.bg:Hide()
             end
         elseif compat.originalSetBackdropColor then
-            pcall(compat.originalSetBackdropColor, self, compat.bgColor[1], compat.bgColor[2], compat.bgColor[3], compat.bgColor[4])
+            compat.originalSetBackdropColor(self, compat.bgColor[1], compat.bgColor[2], compat.bgColor[3], compat.bgColor[4])
         end
     end
 
@@ -174,7 +174,7 @@ local function EnsurePixelBackdropCompat(frame)
         if uikit and uikit.UpdateBorderLines then
             uikit.UpdateBorderLines(self, compat.borderPixels or 1, compat.borderColor[1], compat.borderColor[2], compat.borderColor[3], compat.borderColor[4], false)
         elseif compat.originalSetBackdropBorderColor then
-            pcall(compat.originalSetBackdropBorderColor, self, compat.borderColor[1], compat.borderColor[2], compat.borderColor[3], compat.borderColor[4])
+            compat.originalSetBackdropBorderColor(self, compat.borderColor[1], compat.borderColor[2], compat.borderColor[3], compat.borderColor[4])
         end
     end
 
@@ -1287,7 +1287,7 @@ local function BuildClickCastBindings(L, content, cc, refreshClickCast, state)
         local frameH = self:GetHeight()
         local maxScroll = math.max(0, contentH - frameH)
         local newScroll = math.max(0, math.min(currentScroll - (delta * SCROLL_STEP), maxScroll))
-        pcall(self.SetVerticalScroll, self, newScroll)
+        self:SetVerticalScroll(newScroll)
         UpdateBrowseThumb()
     end)
     browseScroll:SetScript("OnScrollRangeChanged", function() UpdateBrowseThumb() end)
@@ -1418,7 +1418,7 @@ local function BuildClickCastBindings(L, content, cc, refreshClickCast, state)
 
         browseScrollChild:SetHeight(math.max(1, math.abs(by)))
         -- Reset scroll to top and update thumb
-        pcall(browseScroll.SetVerticalScroll, browseScroll, 0)
+        browseScroll:SetVerticalScroll(0)
         C_Timer.After(0, UpdateBrowseThumb)
     end
 

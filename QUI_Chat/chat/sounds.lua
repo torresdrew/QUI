@@ -75,7 +75,8 @@ end
 local function GetReadablePlayerGUID()
     if not UnitGUID then return nil end
     local guid = UnitGUID("player")
-    if IsSecret(guid) or type(guid) ~= "string" or guid == "" then return nil end
+    if IsSecret(guid) then return nil end -- @secret-policy: reject-secret-ids
+    if type(guid) ~= "string" or guid == "" then return nil end
     return guid
 end
 

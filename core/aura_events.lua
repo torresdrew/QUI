@@ -269,7 +269,7 @@ local function IsNonRosterEventInteresting(unit)
     -- i.e. token equality against GameTooltip:GetUnit()'s unit return.
     local _, ttUnit = tt:GetUnit()
     if ttUnit == nil then return false end
-    if issecretvalue and issecretvalue(ttUnit) then return false end
+    if issecretvalue and issecretvalue(ttUnit) then return false end -- @secret-policy: reject-secret-value (unknown tooltip unit = not interesting)
     return unit == ttUnit
 end
 

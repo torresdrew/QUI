@@ -139,9 +139,7 @@ function ActionBarsOwned:Initialize()
         _G.AddClassSpellToActionBar = noop
     end
     -- Enable the auto-push watcher so spells still go to bars
-    if _G.AutoPushSpellWatcher and _G.AutoPushSpellWatcher.Start then
-        pcall(_G.AutoPushSpellWatcher.Start, _G.AutoPushSpellWatcher)
-    end
+    ns.SafeCallMethodIfPresent("report", _G.AutoPushSpellWatcher, "Start")
 
     -- Clear override bindings when entering player housing (housing has
     -- its own keybinds).  Restore when leaving.
@@ -206,7 +204,7 @@ function ActionBarsOwned:Initialize()
     -- Assisted combat rotation (one-button rotation arrow overlay).
     if EventRegistry and EventRegistry.RegisterCallback then
         EventRegistry:RegisterCallback("AssistedCombatManager.OnSetActionSpell", function()
-            local okSpell, newSpell = pcall(C_AssistedCombat.GetNextCastSpell, false)
+            local okSpell, newSpell = ns.SafeCall("best-effort-style", C_AssistedCombat.GetNextCastSpell, false)
             if not okSpell then newSpell = nil end
             -- Dedupe: Blizzard fires this every OnUpdate frame under soft
             -- targeting; if the rotation spell hasn't actually changed,
@@ -223,7 +221,7 @@ function ActionBarsOwned:Initialize()
             -- callback since they react to the same recommendation change.
             -- (RotationAssistIcon self-registers in rotationassist.lua.)
             local kb = ns.Keybinds
-            if kb and kb.UpdateAllRotationHelpers then pcall(kb.UpdateAllRotationHelpers) end
+            if kb and kb.UpdateAllRotationHelpers then ns.SafeCall("bulkhead", kb.UpdateAllRotationHelpers) end
         end, "QUI_ActionBars_AssistedCombat")
 
         -- Assisted combat highlight (marching ants on the next-cast button).
@@ -233,7 +231,7 @@ function ActionBarsOwned:Initialize()
         -- gap) — NOT "rotation disabled".  Ignore nil to avoid flicker.
         -- Highlights refresh on HIDEGRID or PLAYER_REGEN_ENABLED.
         EventRegistry:RegisterCallback("AssistedCombatManager.OnAssistedHighlightSpellChange", function()
-            local okHL, nextSpell = pcall(C_AssistedCombat.GetNextCastSpell, false)
+            local okHL, nextSpell = ns.SafeCall("best-effort-style", C_AssistedCombat.GetNextCastSpell, false)
             if not okHL then nextSpell = nil end
             if not nextSpell then return end
             if nextSpell == ActionBarsOwned._lastAssistHighlightSpell then return end
@@ -260,7 +258,7 @@ function ActionBarsOwned:Initialize()
             local resolvedID = spellID
             if not isSecret then
                 -- Forward: base → current override (e.g., Thunder Clap → Thunder Blast)
-                local okOvr, overrideID = pcall(C_Spell.GetOverrideSpell, spellID)
+                local okOvr, overrideID = ns.SafeCall("best-effort-style", C_Spell.GetOverrideSpell, spellID)
                 if okOvr and overrideID and overrideID ~= spellID then
                     resolvedID = overrideID
                 end
@@ -278,7 +276,7 @@ function ActionBarsOwned:Initialize()
             -- overlay, no crash.
             local kb = ns.Keybinds
             if kb and kb.UpdateAllRotationHelpers then
-                pcall(kb.UpdateAllRotationHelpers, resolvedID, spellID)
+                ns.SafeCall("bulkhead", kb.UpdateAllRotationHelpers, resolvedID, spellID)
             end
         end)
     end

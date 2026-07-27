@@ -90,16 +90,38 @@ end
 -- Convert value to plain number (handles secret values from Midnight API)
 -- Simpler approach: trust type check, don't over-validate
 local function SafeToNumber(v)
-    if v == nil then return nil end
+    -- Probe FIRST — `v == nil` on a secret is itself a compare OF the secret
+    -- and throws; IsSecretValue(nil) is simply false.
     if IsSecretValue(v) then
-        return nil
+        return nil -- @secret-policy: reject-secret-value — callers branch on nil
     end
+    if v == nil then return nil end
     -- If already a number, return it directly (trust type check)
     if type(v) == "number" then return v end
     -- Try tonumber for non-number types
     local ok, n = pcall(tonumber, v)
     if ok and type(n) == "number" then return n end
     return nil
+end
+
+-- Plain-boolean cast presence probes. 12.1 makes the cast NAME itself
+-- secret-capable (SecretWhenUnitSpellCastRestricted): `not name` / `name ~=
+-- nil` on the raw return throws. A secret name means a cast IS in progress
+-- with restricted identity — it must never degrade to "not casting".
+local function UnitCastActive(unit)
+    local name = UnitCastingInfo(unit)
+    if IsSecretValue(name) then
+        return true -- @secret-policy: opaque-value-present — a secret name means a live cast
+    end
+    return name ~= nil
+end
+
+local function UnitChannelActive(unit)
+    local name = UnitChannelInfo(unit)
+    if IsSecretValue(name) then
+        return true -- @secret-policy: opaque-value-present — a secret name means a live channel
+    end
+    return name ~= nil
 end
 
 ---------------------------------------------------------------------------
@@ -185,10 +207,10 @@ local CHANNEL_TICK_SUBEVENTS = {
 }
 
 local function NormalizeChannelTickSpellID(spellID)
-    if not spellID then return nil end
     if IsSecretValue(spellID) then
-        return nil
+        return nil -- @secret-policy: reject-secret-ids — tick rules key on plain ids
     end
+    if not spellID then return nil end
     local safeSpellID = SafeToNumber(spellID)
     if not safeSpellID then
         return nil
@@ -197,10 +219,10 @@ local function NormalizeChannelTickSpellID(spellID)
 end
 
 local function NormalizeChannelTickGUID(guid)
-    if not guid then return nil end
     if IsSecretValue(guid) then
-        return nil
+        return nil -- @secret-policy: reject-secret-ids — tick history keys on plain GUIDs
     end
+    if not guid then return nil end
     if type(guid) ~= "string" or guid == "" then
         return nil
     end
@@ -825,7 +847,7 @@ local function GetFixedTimeTextReserveWidth(anchorFrame, currentCastSettings)
 
         local ok
         if nsHelpers.ApplyFontWithFallback then
-            ok = pcall(nsHelpers.ApplyFontWithFallback, probe, safeFontPath, safeFontSize, safeFontFlags)
+            ok = ns.SafeCall("best-effort-style", nsHelpers.ApplyFontWithFallback, probe, safeFontPath, safeFontSize, safeFontFlags)
         end
         if not ok then
             probe:SetFont(GetFontPath(), currentCastSettings.fontSize or 12, GetFontOutline())
@@ -954,7 +976,7 @@ local function UnitHasAuraBySpellID(unit, auraSpellID)
     if not getAura then return false end
     local ok, aura = pcall(getAura, unit, auraSpellID)
     if not ok then return false end
-    if issecretvalue and issecretvalue(aura) then return false end
+    if issecretvalue and issecretvalue(aura) then return false end -- @secret-policy: reject-secret-value — unreadable aura never enables the tick rule
     return aura ~= nil
 end
 
@@ -986,7 +1008,16 @@ local function ResolveRuleBasedTickModel(castbar, castContext)
         end
     end
 
-    if rule.sequenceBonus and castContext and castContext.unit and UnitIsUnit and UnitIsUnit(castContext.unit, "player") then
+    local sequenceSelf = false
+    if rule.sequenceBonus and castContext and castContext.unit and UnitIsUnit then
+        local rawSelf = UnitIsUnit(castContext.unit, "player")
+        if IsSecretValue(rawSelf) then
+            sequenceSelf = false -- @secret-policy: reject-secret-value — unreadable identity skips the sequence bonus
+        elseif rawSelf then
+            sequenceSelf = true
+        end
+    end
+    if sequenceSelf then
         local history = castbar.channelTickRuleHistory or {}
         local now = GetTime()
         local last = history[spellID]
@@ -1700,7 +1731,7 @@ local function ClearPreviewSimulation(castbar)
 
     ClearChannelTickState(castbar)
 
-    if not UnitCastingInfo(castbar.unit) and not UnitChannelInfo(castbar.unit) then
+    if not UnitCastActive(castbar.unit) and not UnitChannelActive(castbar.unit) then
         SetCastbarFrameVisible(castbar, false)
     end
 end
@@ -2070,6 +2101,9 @@ local function AdjustEmpoweredEndTime(castbar, isPlayer, isEmpowered, endTime)
 
     local ok, adjustedEndTime = pcall(function()
         local ht = GetUnitEmpowerHoldAtMaxTime(castbar.unit)
+        if IsSecretValue(ht) then
+            return endTime -- @secret-policy: keep-native-when-unknown — unreadable hold time keeps the raw end time
+        end
         if ht and ht > 0 then
             return endTime + (ht / 1000)
         end
@@ -2193,7 +2227,7 @@ local TryApplyDeferredCastbarRefresh
 -- Handle case when no cast is active
 local function HandleNoCast(castbar, castSettings, isPlayer, onUpdateHandler)
     C_Timer.After(0.1, function()
-        if not UnitCastingInfo(castbar.unit) and not UnitChannelInfo(castbar.unit) then
+        if not UnitCastActive(castbar.unit) and not UnitChannelActive(castbar.unit) then
             if isPlayer then
                 ClearEmpoweredState(castbar)
             end
@@ -2240,6 +2274,9 @@ local function GetGCDCooldownInfo()
     end
 
     local info = C_Spell.GetSpellCooldown(GCD_SPELL_ID)
+    if IsSecretValue(info) then
+        return nil, nil -- @secret-policy: reject-secret-value — the GCD sweep needs readable timing
+    end
     if not info then
         return nil, nil
     end
@@ -2247,6 +2284,9 @@ local function GetGCDCooldownInfo()
     local startTime = SafeToNumber(info.startTime)
     local duration = SafeToNumber(info.duration)
     local isEnabled = info.isEnabled
+    if IsSecretValue(isEnabled) then
+        return nil, nil -- @secret-policy: reject-secret-value — the GCD sweep needs readable timing
+    end
 
     if not ((isEnabled == nil or isEnabled == true or isEnabled == 1) and startTime and duration and duration > 0) then
         return nil, nil
@@ -2322,7 +2362,7 @@ function QUI_Castbar:SetupCastbar(castbar, unit, unitKey, castSettings)
 
     local function HideCastbarIfIdle(self)
         if not self then return false end
-        if UnitCastingInfo(self.unit) or UnitChannelInfo(self.unit) then
+        if UnitCastActive(self.unit) or UnitChannelActive(self.unit) then
             return false
         end
 
@@ -2345,7 +2385,7 @@ function QUI_Castbar:SetupCastbar(castbar, unit, unitKey, castSettings)
 
     local function ShowGCDCast(self, spellID)
         if not isPlayer then return false end
-        if UnitCastingInfo(self.unit) or UnitChannelInfo(self.unit) then return false end
+        if UnitCastActive(self.unit) or UnitChannelActive(self.unit) then return false end
         if not InCombatLockdown() then return false end
 
         local settings = GetUnitSettings(self.unitKey)
@@ -2409,8 +2449,8 @@ function QUI_Castbar:SetupCastbar(castbar, unit, unitKey, castSettings)
 
     -- Unified OnUpdate handler - handles both real casts and preview
     local function CastBar_OnUpdate(self, elapsed)
-        local spellName = UnitCastingInfo(self.unit) ~= nil
-        local channelName = UnitChannelInfo(self.unit) ~= nil
+        local spellName = UnitCastActive(self.unit)
+        local channelName = UnitChannelActive(self.unit)
 
         -- Continue showing castbar during empowered hold phase even when API returns nil
         local isInEmpoweredHold = isPlayer and self.isEmpowered and self.startTime and self.endTime
@@ -2718,20 +2758,20 @@ function QUI_Castbar:SetupCastbar(castbar, unit, unitKey, castSettings)
 
         -- Cast end events - hide immediately without re-querying APIs
         UNIT_SPELLCAST_STOP = function(self, spellID)
-            if self.isGCD and not UnitCastingInfo(self.unit) and not UnitChannelInfo(self.unit) then
+            if self.isGCD and not UnitCastActive(self.unit) and not UnitChannelActive(self.unit) then
                 return
             end
             CastbarTeardown(self, isPlayer)
         end,
         UNIT_SPELLCAST_CHANNEL_STOP = function(self, spellID)
-            if self.isGCD and not UnitCastingInfo(self.unit) and not UnitChannelInfo(self.unit) then
+            if self.isGCD and not UnitCastActive(self.unit) and not UnitChannelActive(self.unit) then
                 return
             end
             CastbarTeardown(self, isPlayer)
         end,
         UNIT_SPELLCAST_FAILED = function(self, spellID)
             -- Don't hide if a channel is still active (e.g., pressing spell key again during channel)
-            if UnitChannelInfo(self.unit) or UnitCastingInfo(self.unit) then
+            if UnitChannelActive(self.unit) or UnitCastActive(self.unit) then
                 return
             end
             if self.isGCD then
@@ -2740,7 +2780,7 @@ function QUI_Castbar:SetupCastbar(castbar, unit, unitKey, castSettings)
             CastbarTeardown(self, isPlayer)
         end,
         UNIT_SPELLCAST_INTERRUPTED = function(self, spellID)
-            if self.isGCD and not UnitCastingInfo(self.unit) and not UnitChannelInfo(self.unit) then
+            if self.isGCD and not UnitCastActive(self.unit) and not UnitChannelActive(self.unit) then
                 return
             end
             CastbarTeardown(self, isPlayer)
@@ -2813,8 +2853,7 @@ function QUI_Castbar:SetupCastbar(castbar, unit, unitKey, castSettings)
             self:Cast(spellID, true)
         end
         eventHandlers.UNIT_SPELLCAST_EMPOWER_STOP = function(self, spellID)
-            local name = UnitCastingInfo(self.unit)
-            if name then
+            if UnitCastActive(self.unit) then
                 -- Another cast started, transition to it
                 ClearEmpoweredState(self)
                 self:Cast(spellID, false)
@@ -2963,8 +3002,8 @@ function QUI_Castbar:CreateBossCastbar(unitFrame, unit, bossIndex)
         end
 
         -- Check if actually casting (real cast takes priority)
-        local spellName = UnitCastingInfo(self.unit)
-        local channelName = UnitChannelInfo(self.unit)
+        local spellName = UnitCastActive(self.unit)
+        local channelName = UnitChannelActive(self.unit)
 
         if spellName or channelName then
             -- Timer-driven mode: engine animates the bar, we just update time text
@@ -3124,7 +3163,7 @@ function QUI_Castbar:CreateBossCastbar(unitFrame, unit, bossIndex)
             -- No real cast - check if preview mode is enabled AND boss frame preview is active
             ClearChannelTickState(self)
             C_Timer.After(0.1, function()
-                if not UnitCastingInfo(self.unit) and not UnitChannelInfo(self.unit) then
+                if not UnitCastActive(self.unit) and not UnitChannelActive(self.unit) then
                     local settings = GetUnitSettings(self.unitKey)
                     local QUI_UF = QUI_Castbar.unitFramesModule
                     local bossFramePreviewActive = QUI_UF and QUI_UF.previewMode and QUI_UF.previewMode["boss" .. self.bossIndex]
@@ -3260,7 +3299,7 @@ end
 
 local function IsRealCastActive(unit)
     if not unit then return false end
-    return UnitCastingInfo(unit) ~= nil or UnitChannelInfo(unit) ~= nil
+    return UnitCastActive(unit) or UnitChannelActive(unit)
 end
 
 local function IsBossPreviewModeActive(bossKey)

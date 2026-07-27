@@ -72,8 +72,8 @@ local function SafeChargeNumber(value)
     if value == nil or Helpers.IsSecretValue(value) then
         return nil
     end
-    local ok, num = pcall(tonumber, value)
-    if ok and type(num) == "number" then
+    local num = tonumber(value)
+    if type(num) == "number" then
         return num
     end
     return nil
@@ -201,7 +201,7 @@ local function CreateBrezFrame()
 
         -- Current charges info
         local chargeInfo = C_Spell.GetSpellCharges(REBIRTH_SPELL_ID)
-        if chargeInfo then
+        if chargeInfo then -- @secret-safe: SpellChargeInfo container is a plain table-or-nil (MayReturnNothing); secret-capable fields go to SafeChargeNumber below
             local currentCharges = SafeChargeNumber(chargeInfo.currentCharges)
             local maxCharges = SafeChargeNumber(chargeInfo.maxCharges)
             local cooldownDuration = SafeChargeNumber(chargeInfo.cooldownDuration)
@@ -280,7 +280,7 @@ local function UpdateDisplay()
     end
 
     local chargeInfo = C_Spell.GetSpellCharges(REBIRTH_SPELL_ID)
-    if not chargeInfo then
+    if not chargeInfo then -- @secret-safe: SpellChargeInfo container is a plain table-or-nil (MayReturnNothing); fields are probed/sunk below
         frame.chargeText:SetText("?")
         frame.timerText:SetText("")
         frame.icon:SetDesaturated(true)
