@@ -211,6 +211,8 @@ local powerThrottle = {}      -- unitToken → last update time
 local absorbThrottle = {}     -- unitToken → last update time
 local healPredThrottle = {}   -- unitToken → last update time
 local THROTTLE_INTERVAL = 0.1 -- 100ms coalesce window
+-- These are the leading edge only; the trailing edge is recovered by the flush
+-- frame built in "THROTTLE: Trailing-edge flush" (see that section for why).
 
 -- initialConfigFunction snippet shared by every QUI secure group header
 -- (party / raid / spotlight). Runs in secure context for each new child.
@@ -5478,11 +5480,7 @@ local function GRU_DeferredWork()
     wipe(_range.cache)  -- Fresh map — force re-evaluate all units
     wipe(_range.cacheTime)
     wipe(_state.cachedMarkers)
-    wipe(powerThrottle)
-    wipe(absorbThrottle)
-    wipe(_state.healAbsorbThrottle)
-    wipe(_state.healthThrottle)
-    wipe(healPredThrottle)
+    _state.ResetThrottles()  -- timestamps + queued trailing flushes for all channels
     -- Evict stale aura cache entries for units no longer in the group
     local GFA = ns.QUI_GroupFrameAuras
     if GFA and GFA.PruneAuraCache then GFA.PruneAuraCache() end
@@ -5511,6 +5509,87 @@ gruCoalesceFrame:SetScript("OnUpdate", function(self)
         _state.gruDeferredPending = true
         C_Timer.After(0.2, GRU_DeferredWork)
     end
+end)
+
+---------------------------------------------------------------------------
+-- THROTTLE: Trailing-edge flush
+---------------------------------------------------------------------------
+-- The per-unit coalesce windows (health, power, absorb, heal-absorb, heal
+-- prediction) are leading-edge only: the first event in a 100ms window is
+-- applied and every later one returns early. On its own that silently drops the
+-- LAST event of a burst. When a unit's final UNIT_HEALTH — the heal that tops
+-- them off — lands inside a window, nothing ever replays it, so the bar keeps
+-- the stale sample until that unit's health changes again. Out of combat that
+-- can be never, which is how a healed-to-full player sits frozen mid-bar.
+--
+-- Blizzard hits the same event volume in CompactUnitFrame and coalesces with a
+-- dirty flag drained on the next OnUpdate (CompactUnitFrame_SetHealthDirty /
+-- CompactUnitFrame_OnUpdate) — batched, but never lossy. Mirror that: a
+-- suppressed event queues its unit, and one shared OnUpdate replays the update
+-- as soon as that unit's window closes. The ~10 updates/sec/unit ceiling the
+-- throttle bought is unchanged; only the trailing sample is recovered.
+_state.throttleChannels = {
+    health     = { throttle = _state.healthThrottle,     pending = {}, apply = UpdateHealth },
+    power      = { throttle = powerThrottle,             pending = {}, apply = UpdatePower },
+    absorb     = { throttle = absorbThrottle,            pending = {}, apply = UpdateAbsorbs },
+    healAbsorb = { throttle = _state.healAbsorbThrottle, pending = {}, apply = UpdateHealAbsorb },
+    healPred   = { throttle = healPredThrottle,          pending = {}, apply = UpdateHealPrediction },
+}
+
+_state.throttleFlushFrame = CreateFrame("Frame")
+_state.throttleFlushFrame:Hide()
+
+-- Leading-edge gate. Returns true when the caller should apply the update now;
+-- on suppression it queues the unit for the trailing flush and returns false.
+function _state.ThrottleAllows(channel, unit, now)
+    if (now - (channel.throttle[unit] or 0)) < THROTTLE_INTERVAL then
+        channel.pending[unit] = true
+        _state.throttleFlushFrame:Show()
+        return false
+    end
+    channel.pending[unit] = nil
+    channel.throttle[unit] = now
+    return true
+end
+
+-- Roster churn invalidates both halves of every channel: the last-applied
+-- timestamps and any queued trailing flush (the unit token may now be a
+-- different player, and the rebuild refreshes every frame anyway).
+function _state.ResetThrottles()
+    for _, channel in pairs(_state.throttleChannels) do
+        wipe(channel.throttle)
+        wipe(channel.pending)
+    end
+end
+
+_state.throttleFlushFrame:SetScript("OnUpdate", function(self)
+    if not (QUI_GF.initialized and _state.cachedModuleEnabled) then
+        _state.ResetThrottles()
+        self:Hide()
+        return
+    end
+
+    local now = GetTime()
+    local stillPending = false
+    for _, channel in pairs(_state.throttleChannels) do
+        local pending = channel.pending
+        for unit in pairs(pending) do
+            if (now - (channel.throttle[unit] or 0)) < THROTTLE_INTERVAL then
+                stillPending = true
+            else
+                -- Clearing during traversal is safe (nil-ing an existing key),
+                -- and has to happen even when the unit has since left the group
+                -- so roster churn cannot leak entries into the queue.
+                pending[unit] = nil
+                local frames = QUI_GF.unitFrameMap[unit]
+                if frames and UnitExists(unit) then
+                    channel.throttle[unit] = now
+                    for i = 1, #frames do channel.apply(frames[i]) end
+                end
+            end
+        end
+    end
+    if not stillPending then self:Hide() end
 end)
 
 ---------------------------------------------------------------------------
@@ -5583,19 +5662,16 @@ local function OnEvent(self, event, arg1, ...)
             -- Per-unit 100ms coalesce mirrors the power/absorb throttle: UNIT_HEALTH
             -- was the one high-frequency event with no throttle. GetTime only, no
             -- value compare (health returns are secret, == would throw).
+            -- Suppressed events are replayed by the trailing flush, so the last
+            -- sample of a burst is never lost (see ThrottleAllows).
             local pf = ns.QUI_PerfFlags  -- dev A/B harness; nil in normal play
             if pf and pf.disabled and pf.disabled.health then return end
             if not UnitExists(arg1) then return end
-            local now = GetTime()
-            if (now - (_state.healthThrottle[arg1] or 0)) < THROTTLE_INTERVAL then return end
-            _state.healthThrottle[arg1] = now
+            if not _state.ThrottleAllows(_state.throttleChannels.health, arg1, GetTime()) then return end
             for i = 1, nFrames do UpdateHealth(frames[i]) end
 
         elseif event == "UNIT_POWER_UPDATE" or event == "UNIT_POWER_FREQUENT" then
-            local now = GetTime()
-            local last = powerThrottle[arg1] or 0
-            if (now - last) < THROTTLE_INTERVAL then return end
-            powerThrottle[arg1] = now
+            if not _state.ThrottleAllows(_state.throttleChannels.power, arg1, GetTime()) then return end
             for i = 1, nFrames do UpdatePower(frames[i]) end
 
         elseif event == "UNIT_MAXPOWER" then
@@ -5609,24 +5685,17 @@ local function OnEvent(self, event, arg1, ...)
             or event == "UNIT_HEAL_ABSORB_AMOUNT_CHANGED"
             or event == "UNIT_HEAL_PREDICTION" then
             -- Throttle: these events fire 50-100×/sec during raid damage.
-            -- 100ms coalesce per unit matches the power throttle pattern.
-            local now = GetTime()
-            local tbl = absorbThrottle
+            -- 100ms coalesce per unit matches the power throttle pattern. Each
+            -- overlay keeps its own channel so one cannot suppress another.
+            local channels = _state.throttleChannels
+            local channel = channels.absorb
             if event == "UNIT_HEAL_PREDICTION" then
-                tbl = healPredThrottle
+                channel = channels.healPred
             elseif event == "UNIT_HEAL_ABSORB_AMOUNT_CHANGED" then
-                tbl = _state.healAbsorbThrottle
+                channel = channels.healAbsorb
             end
-            local last = tbl[arg1] or 0
-            if (now - last) < THROTTLE_INTERVAL then return end
-            tbl[arg1] = now
-            if event == "UNIT_ABSORB_AMOUNT_CHANGED" then
-                for i = 1, nFrames do UpdateAbsorbs(frames[i]) end
-            elseif event == "UNIT_HEAL_ABSORB_AMOUNT_CHANGED" then
-                for i = 1, nFrames do UpdateHealAbsorb(frames[i]) end
-            else
-                for i = 1, nFrames do UpdateHealPrediction(frames[i]) end
-            end
+            if not _state.ThrottleAllows(channel, arg1, GetTime()) then return end
+            for i = 1, nFrames do channel.apply(frames[i]) end
 
         elseif event == "UNIT_NAME_UPDATE" then
             for i = 1, nFrames do
@@ -5940,6 +6009,15 @@ local function SetupDebugInstrumentation()
     mp[#mp + 1] = { name = "GF_absorbThrottle",   tbl = absorbThrottle }
     mp[#mp + 1] = { name = "GF_healAbsorbThrottle", tbl = _state.healAbsorbThrottle }
     mp[#mp + 1] = { name = "GF_healPredThrottle", tbl = healPredThrottle }
+    -- Queued trailing flushes across all channels. Should idle at 0 out of
+    -- combat; a floor that never drains means the flush frame stopped running.
+    mp[#mp + 1] = { name = "GF_throttlePending", fn = function()
+        local n = 0
+        for _, channel in pairs(_state.throttleChannels) do
+            for _ in pairs(channel.pending) do n = n + 1 end
+        end
+        return n, 0
+    end }
     -- Unit-keyed caches that grow as new units are observed across encounters.
     mp[#mp + 1] = { name = "GF_unitGuidCache",  fn = function()
         local n = 0; for _ in pairs(_state.unitGuidCache) do n = n + 1 end; return n, 0
