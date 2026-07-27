@@ -125,7 +125,7 @@ read_globals = {
     "wipe", "strsplit", "strjoin", "strtrim", "strconcat", "format",
     "tContains", "tInvert", "tDeleteItem", "Mixin", "CreateFromMixins",
     "hooksecurefunc", "issecure", "issecurevariable", "IsSecureCmd",
-    "securecallfunction", "tostringall", "issecretvalue", "canaccesstable", "Clamp",
+    "securecallfunction", "tostringall", "issecretvalue", "canaccesstable", "canaccessvalue", "Clamp",
     "CopyTable", "debugprofilestop", "geterrorhandler", "seterrorhandler", "time", "tinsert",
 
     -- debug.upvaluejoin is a Blizzard backport (Lua 5.2+) used by the ActionBars
@@ -234,7 +234,7 @@ UnitAura UnitCanAssist UnitCastingDuration UnitChannelDuration UnitClassificatio
 UnitFullName UnitGUID UnitGetDetailedHealPrediction UnitGetIncomingHeals UnitGetTotalAbsorbs UnitGetTotalHealAbsorbs UnitGroupRolesAssigned UnitHPPerStamina
 UnitHasIncomingResurrection UnitHasVehicleUI UnitHealth UnitHealthMax UnitHealthMissing UnitInParty UnitInRaid UnitInRange
 UnitInVehicle UnitIsAFK UnitIsConnected UnitIsDeadOrGhost UnitIsFriend UnitIsGhost UnitIsGroupAssistant UnitIsGroupLeader UnitIsPlayer
-UnitIsTapDenied UnitIsUnit UnitLevel UnitPhaseReason UnitPower UnitPowerPercent UnitPowerType UnitReaction UnitSex
+UnitIsTapDenied UnitIsUnit UnitIsVisible UnitLevel UnitPhaseReason UnitPower UnitPowerPercent UnitPowerType UnitReaction UnitSex
 UnitShouldDisplaySpellTargetName UnitSpellHaste UnitStagger UnitStat UnitThreatSituation UnitXP UnitXPMax UnregisterStateDriver UpdateAddOnCPUUsage
 UpdateMicroButtons UpdateMicroButtonsParent WOW_PROJECT_ID WOW_PROJECT_MAINLINE WardrobeFrame WardrobeTransmogFrame WeeklyRewardsFrame WeeklyRewards_ShowUI WorldMapFrame
 WorldQuestCompleteAlertSystem ZoneAbilityFrame debugprofilestart gsub strupper tremove table.unpack table.wipe
