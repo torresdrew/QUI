@@ -13,6 +13,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+
+## v4.1.1 - 2026-07-28
+
+### Fixed
+- fix(groupframes): flush trailing throttled unit updates
+- fix(cdm): let inactive override lane fall through
+- fix(cdm): prefer override cooldown lane when child override is active
+- fix(cdm): empty barrel proc override art and visibility
+- fix(cdm): show active auras in custom containers
+- feat(qol,actionbars): ten QoL modules + extra-action container ownership
+- fix(qol): re-assert mail position on panel drift
+- fix(damagemeter): render API rate as-is; pin Current duration
 ## v4.1.0 - 2026-07-07
 
 ### Added
