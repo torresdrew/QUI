@@ -2,9 +2,15 @@ local ADDON_NAME, ns = ...
 local QUI = QUI
 local GUI = QUI.GUI
 local Opts = ns.QUI_Options
-local ACTION_BARS_SEARCH_TILE_ID = "action_bars"
+-- This tab's only settings surface is the Auras hub's "Buff/Debuff Frames"
+-- sub-page (tabIndex 21, subTabIndex 4, auras tile subPages[4] -- see
+-- QUI_Options/tiles/auras.lua and core/settings/content/auras_actionbar_page.lua).
+-- The Action Bars tile's own Buff/Debuff sub-page was removed, and its
+-- array slot 2 now holds "Per-Bar", so the search context below must name the
+-- hub: routing it at action_bars/2 sent every harvested entry to Per-Bar.
+local BUFF_DEBUFF_SEARCH_TILE_ID = "auras"
 local ACTION_BARS_BUFF_DEBUFF_FEATURE_ID = "actionBarsBuffDebuff"
-local ACTION_BARS_BUFF_DEBUFF_SUB_PAGE_INDEX = 2
+local BUFF_DEBUFF_SUB_PAGE_INDEX = 4
 
 local function RefreshBuffBorders()
     if Opts and Opts.RefreshBuffBorders then
@@ -188,12 +194,12 @@ local function BuildBuffDebuffTab(tabContent)
     local y = -10
 
     GUI:SetSearchContext({
-        tabIndex = 8,
-        tabName = "Action Bars",
-        subTabIndex = 2,
-        subTabName = "Buff/Debuff",
-        tileId = ACTION_BARS_SEARCH_TILE_ID,
-        subPageIndex = ACTION_BARS_BUFF_DEBUFF_SUB_PAGE_INDEX,
+        tabIndex = 21,
+        tabName = ns.L["Auras"],
+        subTabIndex = 4,
+        subTabName = ns.L["Buff/Debuff Frames"],
+        tileId = BUFF_DEBUFF_SEARCH_TILE_ID,
+        subPageIndex = BUFF_DEBUFF_SUB_PAGE_INDEX,
         featureId = ACTION_BARS_BUFF_DEBUFF_FEATURE_ID,
         category = "frames",
     })

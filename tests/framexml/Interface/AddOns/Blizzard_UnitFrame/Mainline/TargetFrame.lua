@@ -527,15 +527,15 @@ function TargetFrameMixin:ConfigureAuraContainer()
 
 		auraContainer:SetPlayerIsTarget(UnitIsUnit(PlayerFrame.unit, unitToken));
 		auraContainer:SetTargetIsFriendly(UnitIsFriend("player", unitToken));
-		auraContainer:SetMirrorAurasVertically(self.buffsOnTop == true);
+		auraContainer:SetFlowLayoutMirroredVertically(self.buffsOnTop == true);
 		auraContainer:SetShowAuraCount(self.showAuraCount == true);
 
 		local targetOfTargetShown = self:IsTargetOfTargetShown();
-		local normalAuraRowWidth = defaults.AuraRowWidth;
+		local normalAuraRowWidth = defaults.FlowLayoutLineSize;
 
-		auraContainer:SetAuraRowWidth(normalAuraRowWidth);
-		auraContainer:SetConstrainedAuraRowWidth(targetOfTargetShown and self.TOT_AURA_ROW_WIDTH or normalAuraRowWidth);
-		auraContainer:SetNumConstrainedAuraRows(targetOfTargetShown and NUM_TOT_CONSTRAINED_AURA_ROWS or 0);
+		auraContainer:SetFlowLayoutMaximumLineSize(normalAuraRowWidth);
+		auraContainer:SetConstrainedFlowLayoutLineSize(targetOfTargetShown and self.TOT_AURA_ROW_WIDTH or normalAuraRowWidth);
+		auraContainer:SetNumConstrainedFlowLayoutLines(targetOfTargetShown and NUM_TOT_CONSTRAINED_AURA_ROWS or 0);
 		auraContainer:Show();
 	else
 		auraContainer:Hide();
@@ -546,7 +546,7 @@ function TargetFrameMixin:AnchorAuraContainer()
 	local auraContainer = self:GetAuraContainer();
 	auraContainer:ClearAllPoints();
 
-	local mirrorVertically = auraContainer:ShouldMirrorAurasVertically();
+	local mirrorVertically = auraContainer:IsFlowLayoutMirroredVertically();
 	local point;
 	local relativePoint;
 	local offsetY;
@@ -578,7 +578,7 @@ function TargetFrameMixin:ShouldAnchorSpellBarToAuraContainer()
 	end
 
 	local auraContainer = self:GetAuraContainer();
-	local numVisibleAuraRows = auraContainer:GetNumVisibleAuraRows();
+	local numVisibleAuraRows = auraContainer:GetNumVisibleFlowLayoutLines();
 
 	if self.haveToT then
 		return numVisibleAuraRows > 2;
@@ -843,6 +843,10 @@ function TargetSpellBarMixin:AdjustPosition()
 
 	if not useAuraContainerAnchor and parentFrame.haveToT then
 		pointY = parentFrame.smallSize and -48 or -46;
+	end
+
+	if useAuraContainerAnchor then
+		self:AddForbiddenAspects(parentFrame:GetAuraContainer():GetInheritableForbiddenAspects(Enum.ScriptObjectPropagationPath.Layout));
 	end
 
 	self:ClearAllPoints();

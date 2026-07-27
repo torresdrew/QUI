@@ -52,6 +52,12 @@ function CDMReanchorRuntime.New(deps)
         -- misses them -- it enumerates this registry instead.
         _reanchoredByKey = {},
         _entryByFrame = setmetatable({}, { __mode = "k" }),
+        -- Global placement ledgers. _entryByFrame remains the compatibility
+        -- lookup for the ONE native owner; consumers/placement records retain
+        -- every logical placement that shares that physical Blizzard frame.
+        _nativePlacementByFrame = setmetatable({}, { __mode = "k" }),
+        _consumersByFrame = setmetatable({}, { __mode = "k" }),
+        _placementsByKey = {},
         -- Per-container ledger of owned icons minted THIS pass (frameless curated
         -- + additional entries). mintOwned acquires a fresh Factory icon every
         -- pass; without releasing the previous pass's icons they stay Show()n at
@@ -87,13 +93,60 @@ end
 function CDMReanchorRuntime:ReleaseOwnedIcons(containerKey)
     local minted = self._mintedOwnedByKey[containerKey]
     if not minted then return end
-    self._mintedOwnedByKey[containerKey] = nil
     local release = self._deps.releaseOwned
-    if not release then return end
+    if not release then
+        self._mintedOwnedByKey[containerKey] = nil
+        return
+    end
+    -- Keep icons whose release was REFUSED (returned false: protected in combat).
+    -- Clearing them without a successful Factory recycle strands a visible/
+    -- clickable ghost; they are retried on the next pass / regen drain.
+    local kept
     for i = 1, #minted do
         -- containerKey rides along so realenv can drop the icon from the
         -- Factory pool it was registered in at mint time.
-        release(minted[i], containerKey)
+        local ok = release(minted[i], containerKey)
+        if ok == false then
+            kept = kept or {}
+            kept[#kept + 1] = minted[i]
+        end
+    end
+    self._mintedOwnedByKey[containerKey] = kept
+end
+
+-- Combat protected-owned defer. In combat a QUI-owned icon that carries a secure
+-- clickButton child is visibility-protected: Factory recycle (Hide/ClearAllPoints/
+-- SetParent) raises ADDON_ACTION_BLOCKED. Defer the WHOLE pass for such a container
+-- and recover on PLAYER_REGEN_ENABLED (DrainPendingCombatRefresh). Mirrors
+-- ShouldDeferContainerLayoutInCombat, which only the legacy LayoutContainer path
+-- consults. Inert without a canMutate dep (isolated tests, non-live callers).
+function CDMReanchorRuntime:_ShouldDeferOwnedReleaseInCombat(containerKey)
+    local canMutate = self._deps.canMutate
+    -- OOC / init-safe window: canMutate() true -> never defer. No dep -> never defer.
+    if not canMutate or canMutate() then return false end
+    -- Combat: only the prior pass's owned icons are at risk (they are what
+    -- ReleaseOwnedIcons would Hide). Native reanchored frames are not released here.
+    local minted = self._mintedOwnedByKey[containerKey]
+    if not minted then return false end
+    for i = 1, #minted do
+        local icon = minted[i]
+        if icon and icon.clickButton ~= nil then return true end
+    end
+    return false
+end
+
+-- Re-run every container whose combat refresh was deferred. Called from the
+-- PLAYER_REGEN_ENABLED handler via the boot table (DrainPendingCombatRefresh).
+function CDMReanchorRuntime:DrainPendingCombatRefresh()
+    local pending = self._pendingCombatRefresh
+    if not pending then return end
+    self._pendingCombatRefresh = nil
+    local keys = {}
+    for key in pairs(pending) do keys[#keys + 1] = key end
+    if self.RefreshContainers then
+        self:RefreshContainers(keys)
+    else
+        for i = 1, #keys do self:RefreshContainer(keys[i]) end
     end
 end
 
@@ -117,6 +170,13 @@ function CDMReanchorRuntime:GetEntryForFrame(frame)
     return self._entryByFrame[frame]
 end
 
+-- Every logical placement consuming a native Blizzard source frame. The
+-- returned array belongs to the runtime and must not be mutated.
+function CDMReanchorRuntime:GetPlacementsForFrame(frame)
+    if frame == nil then return nil end
+    return self._consumersByFrame[frame]
+end
+
 function CDMReanchorRuntime:IsFrameClaimedByAnyContainer(frame)
     if frame == nil then return false end
     return self._entryByFrame[frame] ~= nil
@@ -126,19 +186,41 @@ function CDMReanchorRuntime:ClearContainerRegistry(containerKey)
     local previous = self._reanchoredByKey[containerKey]
     if previous then
         for i = 1, #previous do
-            self._entryByFrame[previous[i]] = nil
+            local frame = previous[i]
+            local placement = self._nativePlacementByFrame[frame]
+            -- A sibling container may now own the same frame. Never erase its
+            -- compatibility mapping while clearing this container's old list.
+            if not placement or placement.containerKey == containerKey then
+                self._entryByFrame[frame] = nil
+                self._nativePlacementByFrame[frame] = nil
+            end
         end
     end
     self._reanchoredByKey[containerKey] = {}
 end
 
-function CDMReanchorRuntime:AssembleEntries(containerKey, frameMap, settings)
+function CDMReanchorRuntime:AssembleEntries(containerKey, frameMap, settings, prepared, placementPlan)
     local deps, wiring = self._deps, self._wiring
     -- Swap the owned-icon ledger: release last pass's minted icons before this
     -- pass mints (Factory recycle hands the same frames back, so no churn).
     self:ReleaseOwnedIcons(containerKey)
-    local curated = (deps.getCurated and deps.getCurated(containerKey)) or {}
-    local matched, frameless, claimedFrames = wiring:MatchCuratedToFrames(curated, frameMap, containerKey)
+    local curated = (prepared and prepared.curated)
+        or ((deps.getCurated and deps.getCurated(containerKey)) or {})
+    local matched, frameless, claimedFrames
+    if prepared and prepared.matched then
+        matched = prepared.matched
+        frameless = prepared.frameless
+        -- MatchCuratedToFrames' claim set is per-container classification,
+        -- not final global ownership. Copy it because mirror/stale branches
+        -- remove entries while assembling this placement.
+        claimedFrames = {}
+        local sourceClaims = prepared.claimedFrames or {}
+        for frame, claimed in pairs(sourceClaims) do
+            if claimed then claimedFrames[frame] = true end
+        end
+    else
+        matched, frameless, claimedFrames = wiring:MatchCuratedToFrames(curated, frameMap, containerKey)
+    end
     matched = matched or {}
     frameless = frameless or {}
     claimedFrames = claimedFrames or {}
@@ -157,15 +239,22 @@ function CDMReanchorRuntime:AssembleEntries(containerKey, frameMap, settings)
     -- deps.frameIsActive issecretvalue-guards + fails open, so a combat-secret active
     -- state shows (never hides a possibly-active frame). Re-drives on the per-frame
     -- OnActiveStateChanged hook (cdm_reanchor_hooks) -> MarkDirty -> RefreshBuiltin.
-    local displayMode = (settings and settings.iconDisplayMode) or "always"
-    if displayMode == "combat" then
+    local displayMode = (prepared and prepared.displayMode)
+        or ((settings and settings.iconDisplayMode) or "always")
+    if not (prepared and prepared.displayMode) and displayMode == "combat" then
         displayMode = (deps.inCombat and deps.inCombat()) and "always" or "active"
     end
     -- Never filter while positioning in QUI/CDM layout mode: the mover needs
     -- the full configured surface, not just currently-active frames. Blizzard
     -- Edit Mode is deliberately excluded so CDM does not appear there.
-    local editing = deps.isEditMode and deps.isEditMode()
-    local filterInactive = (displayMode == "active") and (deps.frameIsActive ~= nil) and not editing
+    local editing = prepared and prepared.editing
+    if editing == nil then editing = deps.isEditMode and deps.isEditMode() end
+    local filterInactive = prepared and prepared.filterInactive
+    if filterInactive == nil then
+        filterInactive = (displayMode == "active") and (deps.frameIsActive ~= nil) and not editing
+    end
+    local assignmentByEntry = placementPlan and placementPlan.assignmentsByContainer
+        and placementPlan.assignmentsByContainer[containerKey] or nil
 
     local entries = {}
     local matchedByEntry, framelessByEntry = {}, {}
@@ -211,6 +300,7 @@ function CDMReanchorRuntime:AssembleEntries(containerKey, frameMap, settings)
         curated = #curated,
         matched = 0, frameless = 0, additional = 0,
         nativeClaimed = 0, staleNative = 0,
+        mirrored = 0, unsupportedMirror = 0,
         fallbackLive = 0, minted = 0, mintFailed = 0,
     })
 
@@ -222,7 +312,13 @@ function CDMReanchorRuntime:AssembleEntries(containerKey, frameMap, settings)
         elseif framelessByEntry[e] then
             diag.frameless = diag.frameless + 1
         end
-        if m and filterInactive and not deps.frameIsActive(m.frame, containerKey, e) then
+        local nativeUsable = prepared and prepared.nativeUsableByEntry
+            and prepared.nativeUsableByEntry[e]
+        if nativeUsable == nil and m and filterInactive then
+            nativeUsable = deps.frameIsActive(m.frame, containerKey, e) and true or false
+        end
+        local assignment = assignmentByEntry and assignmentByEntry[e] or nil
+        if m and filterInactive and nativeUsable == false then
             -- active-only mode + this matched frame is not natively usable:
             -- unclaim it and render nothing (Blizzard owns the item lifecycle;
             -- it re-appears when OnActiveStateChanged re-drives the refresh).
@@ -244,6 +340,37 @@ function CDMReanchorRuntime:AssembleEntries(containerKey, frameMap, settings)
                     diag.mintFailed = diag.mintFailed + 1
                 end
             end
+        elseif m and assignment and assignment.renderKind ~= "native" then
+            -- The physical Blizzard frame belongs to another logical
+            -- placement. Keep this configured occurrence by rendering an
+            -- owned mirror; item/equipment sources deliberately fail closed
+            -- until an exact opaque timing carrier exists.
+            claimedFrames[m.frame] = nil
+            if assignment.renderKind == "unsupportedMirror" then
+                diag.unsupportedMirror = diag.unsupportedMirror + 1
+            else
+                local icon = deps.mintOwned and deps.mintOwned(e, containerKey) or nil
+                if icon then
+                    diag.mirrored = diag.mirrored + 1
+                    diag.minted = diag.minted + 1
+                    self:_TrackMintedOwned(containerKey, icon)
+                    local auraMirror
+                    if assignment.renderKind == "auraMirror" and deps.acquireAuraMirror then
+                        auraMirror = deps.acquireAuraMirror(
+                            e, containerKey, assignment.placementKey)
+                    end
+                    entries[#entries + 1] = {
+                        src = e, frame = icon, reanchored = false,
+                        mirrorKind = assignment.renderKind,
+                        auraMirror = auraMirror,
+                        sourceFrame = m.frame,
+                        placementKey = assignment.placementKey,
+                        _assignedRow = e._assignedRow,
+                    }
+                else
+                    diag.mintFailed = diag.mintFailed + 1
+                end
+            end
         elseif m then
             -- Big-bang native model: matched Blizzard CDM items ARE the visible icons.
             -- Essential/Utility no longer mint a visual shell; their secure click target
@@ -254,6 +381,7 @@ function CDMReanchorRuntime:AssembleEntries(containerKey, frameMap, settings)
             entries[#entries + 1] = {
                 src = e, frame = m.frame, liveFrame = m.frame,
                 reanchored = true, directAnchor = true,
+                placementKey = assignment and assignment.placementKey or nil,
                 _assignedRow = e._assignedRow,
             }
         elseif framelessByEntry[e] and ownedAuraFallback(e) then
@@ -379,7 +507,24 @@ function CDMReanchorRuntime:PositionEntries(container, plan, containerKey)
             elseif deps.positionOwned then
                 -- owned synthetic icons need their per-row config forwarded so the
                 -- placement hook (OnContainerIconPlaced -> ConfigureIcon) runs.
-                deps.positionOwned(frame, container, "CENTER", "CENTER", x, y, placement.rowConfig)
+                local positionedByAuraMirror = false
+                if wrapper.auraMirror and deps.positionAuraMirror then
+                    local rc = placement.rowConfig
+                    local w, h = placement.w, placement.h
+                    if not (w and h) then
+                        local size = rc and rc.size
+                        if size then
+                            local aspect = rc.aspectRatioCrop or 1
+                            if type(aspect) ~= "number" or aspect <= 0 then aspect = 1 end
+                            w, h = size, size / aspect
+                        end
+                    end
+                    positionedByAuraMirror = deps.positionAuraMirror(
+                        wrapper.auraMirror, frame, container, x, y, w, h, rc) == true
+                end
+                if not positionedByAuraMirror then
+                    deps.positionOwned(frame, container, "CENTER", "CENTER", x, y, placement.rowConfig)
+                end
                 n = n + 1
             end
         end
@@ -387,26 +532,215 @@ function CDMReanchorRuntime:PositionEntries(container, plan, containerKey)
     return n
 end
 
-function CDMReanchorRuntime:RefreshContainer(containerKey)
-    local deps, wiring, bridge = self._deps, self._wiring, self._bridge
+local DEFAULT_BATCH_KEYS = { "essential", "utility", "buff" }
+
+local function SortContainerKeys(keys)
+    local priority = { essential = 1, utility = 2, buff = 3, buffIcon = 3 }
+    table.sort(keys, function(a, b)
+        local ap, bp = priority[a] or 100, priority[b] or 100
+        if ap ~= bp then return ap < bp end
+        return tostring(a) < tostring(b)
+    end)
+end
+
+-- Read-only collection phase for a batch refresh. No registry, anchor, pool,
+-- visibility, or owned-icon mutation is allowed here.
+function CDMReanchorRuntime:_PrepareContainerState(containerKey)
+    local deps, wiring = self._deps, self._wiring
+    local state = { containerKey = containerKey }
     local viewers = wiring.GetViewersForKey and wiring:GetViewersForKey(containerKey) or nil
     if not viewers or #viewers == 0 then
         local viewer = wiring:GetViewerForKey(containerKey)
-        if viewer then
-            viewers = { viewer }
+        if viewer then viewers = { viewer } end
+    end
+    state.viewers = viewers
+    state.container = deps.getContainer and deps.getContainer(containerKey) or nil
+    if not viewers or #viewers == 0 or not state.container then
+        state.earlyReturn = "no-viewers-or-container"
+        return state
+    end
+
+    state.settings = deps.getSettings and deps.getSettings(containerKey) or nil
+    if not state.settings then
+        state.earlyReturn = "no-settings"
+        return state
+    end
+
+    if wiring.BuildFrameMapForViewers then
+        state.frameMap, state.items = wiring:BuildFrameMapForViewers(viewers)
+    else
+        state.frameMap, state.items = wiring:BuildFrameMap(viewers[1])
+    end
+    state.frameMap = state.frameMap or {}
+    state.items = state.items or {}
+    state.curated = (deps.getCurated and deps.getCurated(containerKey)) or {}
+
+    local displayMode = state.settings.iconDisplayMode or "always"
+    if displayMode == "combat" then
+        displayMode = (deps.inCombat and deps.inCombat()) and "always" or "active"
+    end
+    state.displayMode = displayMode
+    state.editing = (deps.isEditMode and deps.isEditMode()) and true or false
+    state.filterInactive = displayMode == "active"
+        and deps.frameIsActive ~= nil and not state.editing
+
+    if state.settings.enabled == false then
+        state.earlyReturn = "disabled"
+        state.matched, state.frameless, state.claimedFrames = {}, {}, {}
+        return state
+    end
+
+    state.matched, state.frameless, state.claimedFrames =
+        wiring:MatchCuratedToFrames(state.curated, state.frameMap, containerKey)
+    state.matched = state.matched or {}
+    state.frameless = state.frameless or {}
+    state.claimedFrames = state.claimedFrames or {}
+
+    -- MatchCuratedToFrames historically enforced one entry per physical frame
+    -- inside a container. For global placement arbitration that first-wins
+    -- behavior would hide a second configured occurrence before the planner
+    -- could classify it as a mirror. Re-resolve only Blizzard-backed leftovers:
+    -- genuinely frameless QUI-owned entries keep their existing owned fallback.
+    if #state.frameless > 0 then
+        local unresolved = {}
+        for i = 1, #state.frameless do
+            local entry = state.frameless[i]
+            local frame
+            if IsBlizzardCDMEntry(entry) then
+                local cooldownID = wiring.ResolveEntryCooldownID
+                    and wiring:ResolveEntryCooldownID(entry, containerKey) or nil
+                frame = cooldownID ~= nil and state.frameMap[cooldownID] or nil
+                if not frame and wiring.ResolveEntryFrame then
+                    frame = wiring:ResolveEntryFrame(entry, state.frameMap)
+                end
+            end
+            if frame then
+                state.matched[#state.matched + 1] = { entry = entry, frame = frame }
+                state.claimedFrames[frame] = true
+            else
+                unresolved[#unresolved + 1] = entry
+            end
+        end
+        state.frameless = unresolved
+    end
+
+    state.nativeUsableByEntry = {}
+    for i = 1, #state.matched do
+        local match = state.matched[i]
+        local usable = true
+        if state.filterInactive then
+            usable = deps.frameIsActive(match.frame, containerKey, match.entry) and true or false
+        end
+        state.nativeUsableByEntry[match.entry] = usable
+    end
+    return state
+end
+
+-- Global two-phase refresh. Collection and ownership arbitration finish before
+-- the first frame is moved or sunk, so refresh order can never decide which
+-- container owns a shared Blizzard frame.
+function CDMReanchorRuntime:RefreshContainers(containerKeys)
+    local keys, seen = {}, {}
+    containerKeys = containerKeys or DEFAULT_BATCH_KEYS
+    for i = 1, #containerKeys do
+        local key = containerKeys[i]
+        if key and not seen[key] then
+            seen[key] = true
+            keys[#keys + 1] = key
         end
     end
-    local container = deps.getContainer and deps.getContainer(containerKey) or nil
+    SortContainerKeys(keys)
+
+    -- The commit is all-or-nothing around protected owned icons. If any
+    -- participant cannot release its previous owned mirror in combat, defer
+    -- every participant and retry the same batch on regen.
+    for i = 1, #keys do
+        if self:_ShouldDeferOwnedReleaseInCombat(keys[i]) then
+            self._pendingCombatRefresh = self._pendingCombatRefresh or {}
+            for k = 1, #keys do
+                local key = keys[k]
+                self._pendingCombatRefresh[key] = true
+                self:_NextDiag(key, { earlyReturn = "combat-protected-owned" })
+            end
+            return {}
+        end
+    end
+
+    local states, candidates = {}, {}
+    for i = 1, #keys do
+        local key = keys[i]
+        local state = self:_PrepareContainerState(key)
+        states[key] = state
+        if not state.earlyReturn then
+            local ordinalByEntry = {}
+            for ordinal = 1, #state.curated do
+                ordinalByEntry[state.curated[ordinal]] = ordinal
+            end
+            for m = 1, #state.matched do
+                local match = state.matched[m]
+                if state.nativeUsableByEntry[match.entry] ~= false then
+                    candidates[#candidates + 1] = {
+                        containerKey = key,
+                        ordinal = ordinalByEntry[match.entry] or m,
+                        entry = match.entry,
+                        frame = match.frame,
+                    }
+                end
+            end
+        end
+    end
+
+    local planner = self._deps.placementPlanner or ns.CDMPlacementPlanner
+    local placementPlan = planner and planner.Plan and planner.Plan(candidates) or nil
+
+    -- Clear the old owner records for every participant before publishing the
+    -- complete new plan. ClearContainerRegistry is owner-aware, so partial/test
+    -- batches cannot erase a non-participating sibling's live owner.
+    for i = 1, #keys do self:ClearContainerRegistry(keys[i]) end
+    if placementPlan then
+        self._consumersByFrame = placementPlan.consumersByFrame
+        self._placementsByKey = placementPlan.assignmentsByKey
+        for frame, owner in pairs(placementPlan.ownerByFrame) do
+            local assignment = placementPlan.assignmentsByContainer[owner.containerKey]
+                and placementPlan.assignmentsByContainer[owner.containerKey][owner.entry]
+            self._nativePlacementByFrame[frame] = assignment
+            self._entryByFrame[frame] = owner.entry
+        end
+    end
+
+    local counts = {}
+    for i = 1, #keys do
+        local key = keys[i]
+        counts[key] = self:RefreshContainer(key, states[key], placementPlan, true)
+    end
+    return counts
+end
+
+function CDMReanchorRuntime:RefreshContainer(containerKey, prepared, placementPlan, batchCommit)
+    -- Combat protected-owned defer (before ANY registry/ledger mutation): if this
+    -- container's owned icons carry a secure clickButton and we cannot mutate
+    -- protected frames right now, leave all state intact and queue a regen drain.
+    if not batchCommit and self:_ShouldDeferOwnedReleaseInCombat(containerKey) then
+        self._pendingCombatRefresh = self._pendingCombatRefresh or {}
+        self._pendingCombatRefresh[containerKey] = true
+        self:_NextDiag(containerKey, { earlyReturn = "combat-protected-owned" })
+        return #(self._mintedOwnedByKey[containerKey] or {})
+    end
+
+    local deps, wiring, bridge = self._deps, self._wiring, self._bridge
+    prepared = prepared or self:_PrepareContainerState(containerKey)
+    local viewers = prepared.viewers
+    local container = prepared.container
     if not viewers or #viewers == 0 or not container then
         self:_NextDiag(containerKey, { earlyReturn = "no-viewers-or-container" })
-        self:ClearContainerRegistry(containerKey)
+        if not batchCommit then self:ClearContainerRegistry(containerKey) end
         self:ReleaseOwnedIcons(containerKey)
         return 0
     end
-    local settings = deps.getSettings and deps.getSettings(containerKey) or nil
+    local settings = prepared.settings
     if not settings then
         self:_NextDiag(containerKey, { earlyReturn = "no-settings" })
-        self:ClearContainerRegistry(containerKey)
+        if not batchCommit then self:ClearContainerRegistry(containerKey) end
         self:ReleaseOwnedIcons(containerKey)
         return 0
     end
@@ -422,14 +756,10 @@ function CDMReanchorRuntime:RefreshContainer(containerKey)
     elseif deps.resetShells then
         deps.resetShells(container)
     end
+    local auraMirrorPassActive = deps.beginAuraMirrorPass
+        and deps.beginAuraMirrorPass(container) == true
 
-    local frameMap, items
-    if wiring.BuildFrameMapForViewers then
-        frameMap, items = wiring:BuildFrameMapForViewers(viewers)
-    else
-        frameMap, items = wiring:BuildFrameMap(viewers[1])
-    end
-    items = items or {}
+    local frameMap, items = prepared.frameMap or {}, prepared.items or {}
     -- Disabled tracker: claim NOTHING for this key, but keep the pass alive so the
     -- native sink loop below alpha-0s every enumerated frame no other container
     -- claims. LayoutContainer gates on enabled==false for the QUI-container side;
@@ -442,22 +772,36 @@ function CDMReanchorRuntime:RefreshContainer(containerKey)
     local entries, claimedFrames
     if settings.enabled == false then
         self:_NextDiag(containerKey, { earlyReturn = "disabled" })
+        self:ReleaseOwnedIcons(containerKey)
         entries, claimedFrames = {}, {}
     else
-        entries, claimedFrames = self:AssembleEntries(containerKey, frameMap, settings)
+        entries, claimedFrames = self:AssembleEntries(
+            containerKey, frameMap, settings, prepared, placementPlan)
     end
 
     -- Rebuild the per-frame feature registry for this container: which live Blizzard
     -- frames are overlaid here, and the curated entry each was matched for. Keybind /
     -- rotation-glow code reads this to cover the overlaid Blizzard frames (the visible
     -- content), which stay under the viewer and aren't container:GetChildren() icons.
-    self:ClearContainerRegistry(containerKey)
+    if not batchCommit then self:ClearContainerRegistry(containerKey) end
     local reanchored = {}
     for i = 1, #entries do
         local w = entries[i]
         if w.reanchored and w.liveFrame then
             reanchored[#reanchored + 1] = w.liveFrame
             self._entryByFrame[w.liveFrame] = w.src
+            if not self._nativePlacementByFrame[w.liveFrame] then
+                self._nativePlacementByFrame[w.liveFrame] = {
+                    placementKey = w.placementKey,
+                    containerKey = containerKey,
+                    entry = w.src,
+                    frame = w.liveFrame,
+                    renderKind = "native",
+                }
+            end
+            if not self._consumersByFrame[w.liveFrame] then
+                self._consumersByFrame[w.liveFrame] = { self._nativePlacementByFrame[w.liveFrame] }
+            end
             if deps.auraPhase then
                 deps.auraPhase:Hook(w.liveFrame, containerKey)
                 -- Claim-time colour/edge assert: the hooks only fire on the NEXT
@@ -510,6 +854,9 @@ function CDMReanchorRuntime:RefreshContainer(containerKey)
     end
     if shellPassActive and deps.endShellPass then
         deps.endShellPass(container)
+    end
+    if auraMirrorPassActive and deps.endAuraMirrorPass then
+        deps.endAuraMirrorPass(container)
     end
 
     if plan and plan.metrics and deps.applySize then

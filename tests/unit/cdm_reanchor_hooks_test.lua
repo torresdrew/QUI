@@ -406,4 +406,29 @@ do
     assert(#blanked == 0, "essential/utility acquires are not blanked")
 end
 
+-- Global placement mode: a coalesced dirty set is delivered as one ordered
+-- batch, never one refresh per key (which would reintroduce refresh-order
+-- ownership). Immediate lifecycle paths use the same batch seam.
+do
+    local batches = {}
+    local batchHooks = H.New({
+        keys = { "essential", "utility", "buff" },
+        refresh = function() error("refreshMany must own the batch path") end,
+        refreshMany = function(keys)
+            local copy = {}
+            for i = 1, #keys do copy[i] = keys[i] end
+            batches[#batches + 1] = copy
+        end,
+    })
+    batchHooks._dirty.utility = true
+    batchHooks._dirty.essential = true
+    batchHooks:Flush()
+    assert(#batches == 1 and #batches[1] == 2
+        and batches[1][1] == "essential" and batches[1][2] == "utility",
+        "Flush emits one deterministic multi-key refresh")
+    batchHooks:MarkImmediate("buff")
+    assert(#batches == 2 and #batches[2] == 1 and batches[2][1] == "buff",
+        "immediate paths also enter the batch refresh seam")
+end
+
 print("OK: cdm_reanchor_hooks_test")

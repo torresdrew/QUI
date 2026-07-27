@@ -1,15 +1,14 @@
 -- tests/unit/unitframe_auras_combat_mutable_test.lua
 -- Run: lua tests/unit/unitframe_auras_combat_mutable_test.lua
 --
--- Combat-mutation split for the per-element unit-frame aura containers.
--- Creation of a forbidden CustomAuraContainer (+ its AddAuraGroup/AddAuraSlot
--- button pooling) is combat-restricted (crashes the 12.1 client); MUTATION of a
--- pre-created one (SetUnit / filters / anchor / enable) is combat-legal.
--- UpdateAuras applies the mutation subset immediately (pcall-guarded) AND still
--- queues the full pass via the shared AuraGlue.QueueRegenWork queue so a wrong
--- PTR assumption self-heals at regen. This is the SAME split Task 4 landed for
--- group frames, with the unit-frame differences: corner-flip anchoring, a
--- player-only cancel-eligible gate, and per-polarity preview suppression.
+-- Combat contract for the per-element unit-frame aura containers (PTR7 68914):
+-- container creation, AddAuraGroup/AddAuraSlot registration and container
+-- anchoring are COMBAT-LEGAL (proven in-game 2026-07-24), so UpdateAuras runs
+-- the FULL pass live in combat behind a SafeCall belt and queues the
+-- restriction-aware replay only when the belt catches a failure (the pass
+-- itself queues its own secrecy-skipped gaps). Same contract as group frames,
+-- with the unit-frame differences: corner-flip anchoring, a player-only
+-- cancel-eligible gate, and per-polarity preview suppression.
 
 local function readAll(path)
     local file = assert(io.open(path, "rb"))
@@ -31,17 +30,20 @@ end
 -- ApplyElementPass: the single per-element pass, allowCreate-gated.
 local pass = slice("local function ApplyElementPass(frame, allowCreate)")
 
--- Forbidden CREATION (container frame) is allowCreate AND OOC only.
-assert(pass:find("if allowCreate and not InCombatLockdown() and CreateFrame then", 1, true),
-    "container creation must be gated on allowCreate + not InCombatLockdown()")
+-- CREATION is allowCreate-gated only — no combat condition (PTR7 68914).
+assert(pass:find("if allowCreate and CreateFrame then", 1, true),
+    "container creation must be gated on allowCreate only (combat-legal)")
+assert(not pass:find("allowCreate and not InCombatLockdown()", 1, true),
+    "no stale combat condition may remain on container creation")
 assert(pass:find('CreateFrame("AuraContainer", nil, frame, "CustomAuraContainerTemplate")', 1, true),
     "creation uses the CustomAuraContainerTemplate")
 
--- Forbidden-frame SetPoint (anchor) is OOC only; SetUnit mutation is not.
-local anchorGate = pass:find("if not InCombatLockdown() then", 1, true)
-local anchorCall = pass:find("AnchorElementContainer(container, frame, element)", 1, true)
-assert(anchorGate and anchorCall and anchorGate < anchorCall,
-    "AnchorElementContainer (forbidden SetPoint) must be gated on not InCombatLockdown()")
+-- Container anchoring (SetPoint) runs unconditionally — proven combat-legal
+-- pre- and post-group registration; SetUnit likewise.
+assert(pass:find("AnchorElementContainer(container, frame, element)", 1, true),
+    "AnchorElementContainer runs on the pass")
+assert(not pass:find("InCombatLockdown() then\n                AnchorElementContainer", 1, true),
+    "container anchoring must not be combat-gated")
 assert(pass:find("container:SetUnit(QUI_UF.GetFrameUnit(frame))", 1, true),
     "SetUnit is combat-legal mutation and runs before the config/enable branch")
 
@@ -68,17 +70,17 @@ assert(pass:find("previewSuppressed", 1, true)
     and pass:find("debuffPreviewActive", 1, true),
     "a previewed polarity must suppress its matching-polarity element containers")
 
--- Skipped forbidden work queues a regen replay via the shared core queue.
+-- Skipped restricted work queues a regen replay via the shared core queue.
 assert(pass:find("AuraGlue.QueueRegenWork(frame, function(f) ApplyElementPass(f, true) end)", 1, true),
-    "incomplete (forbidden work skipped in combat) must queue a regen replay via AuraGlue.QueueRegenWork")
+    "incomplete (restricted work skipped) must queue a regen replay via AuraGlue.QueueRegenWork")
 
--- UpdateAuras: combat = pcall'd mutable pass now + STILL queue.
+-- UpdateAuras: combat = SafeCall'd FULL pass; queue only on a caught failure.
 local update = slice("local function UpdateAuras(frame)")
 assert(update:find("InCombatLockdown()", 1, true), "UpdateAuras must branch on combat")
-assert(update:find("pcall(ApplyElementPass, frame, false)", 1, true),
-    "UpdateAuras must pcall the mutation-only pass immediately in combat")
+assert(update:find('local ok = ns.SafeCall("best-effort-style", ApplyElementPass, frame, true)', 1, true),
+    "UpdateAuras must SafeCall-guard the full creating pass in combat")
 assert(update:find("AuraGlue.QueueRegenWork(frame, function(f) ApplyElementPass(f, true) end)", 1, true),
-    "UpdateAuras must STILL queue the full pass for regen (self-heal)")
+    "a SafeCall-caught failure must queue the regen replay")
 assert(update:find("ApplyElementPass(frame, true)", 1, true),
     "UpdateAuras runs the full creating pass OOC")
 

@@ -85,6 +85,7 @@ function CDMReanchorHooks.New(deps)
     local self = {
         _deps = deps,
         _refresh = deps.refresh,
+        _refreshMany = deps.refreshMany,
         _keys = deps.keys or { "essential", "utility", "buff" },
         _dirty = {},
         _scheduled = false,
@@ -149,7 +150,11 @@ end
 
 function CDMReanchorHooks:MarkImmediate(key)
     self._dirty[key] = nil
-    if self._refresh then self._refresh(key) end
+    if self._refreshMany then
+        self._refreshMany({ key })
+    elseif self._refresh then
+        self._refresh(key)
+    end
 end
 
 function CDMReanchorHooks:MarkAcquire(key)
@@ -204,6 +209,24 @@ end
 function CDMReanchorHooks:Flush()
     self._scheduled = false
     local dirty = self._dirty
+    if self._refreshMany then
+        local keys, emitted = {}, {}
+        -- Emit known keys in configured order, then any defensive extras.
+        for i = 1, #self._keys do
+            local key = self._keys[i]
+            if dirty[key] then
+                dirty[key] = nil
+                emitted[key] = true
+                keys[#keys + 1] = key
+            end
+        end
+        for key in pairs(dirty) do
+            dirty[key] = nil
+            if not emitted[key] then keys[#keys + 1] = key end
+        end
+        if #keys > 0 then self._refreshMany(keys) end
+        return
+    end
     for key in pairs(dirty) do
         dirty[key] = nil
         if self._refresh then self._refresh(key) end

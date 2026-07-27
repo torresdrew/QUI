@@ -45,7 +45,7 @@ local function GetInternal()
 end
 
 -- Local aliases for built-ins used by the migrated helpers.
-local math_max, math_min, math_floor = math.max, math.min, math.floor
+local math_abs, math_max, math_min, math_floor = math.abs, math.max, math.min, math.floor
 local string_format = string.format
 
 local Module = {}
@@ -70,6 +70,7 @@ local state = {
     ticker     = nil,
     cycle      = { t = 0 },
     previewRef = nil,   -- { pv, primary, secondary, fpath } after Build
+    autoHeight = nil,
 }
 
 ---------------------------------------------------------------------------
@@ -157,6 +158,13 @@ local PREVIEW_MIN_HORIZONTAL_LENGTH = 80
 local PREVIEW_MIN_VERTICAL_LENGTH   = 20
 local PREVIEW_MIN_THICKNESS         = 8
 local PREVIEW_MAX_THICKNESS         = 22
+local PREVIEW_CONTENT_TOP           = 20
+local DEFAULT_PREVIEW_OPTIONS       = {
+    autoHeight = true,
+    contentTop = PREVIEW_CONTENT_TOP,
+    minHeight = 60,
+    verticalPadding = 2,
+}
 
 ---------------------------------------------------------------------------
 -- Preview helpers (migrated from resourcebars.lua in T4)
@@ -220,13 +228,17 @@ end
 
 local function GetPreviewBarColor(cfg, resource)
     local Internal = GetInternal()
-    local mode = cfg and cfg.colorMode or "power"
+    local mode = Internal and Internal.GetResourceBarColorMode
+        and Internal.GetResourceBarColorMode(cfg)
+        or (cfg and cfg.colorMode or "power")
     if mode == "custom" and cfg and cfg.customColor then
         local c = cfg.customColor
         return (c[1] or c.r or 0.2), (c[2] or c.g or 0.5), (c[3] or c.b or 1.0)
     elseif mode == "class" then
         local _, class = UnitClass("player")
-        local cc = RAID_CLASS_COLORS and RAID_CLASS_COLORS[class]
+        -- @secret-policy: collapse-only — secret class falls back to the resource color
+        if issecretvalue and issecretvalue(class) then class = nil end
+        local cc = class and RAID_CLASS_COLORS and RAID_CLASS_COLORS[class]
         if cc then return cc.r, cc.g, cc.b end
     end
     local col = resource and Internal and Internal.GetResourceColor
@@ -414,17 +426,130 @@ local function ApplyDynamics(primaryPct, secondaryPct)
     end
 end
 
+local function IncludeContentBounds(object, bounds, onlyWhenShown)
+    if not object then return end
+    if onlyWhenShown and object.IsShown and not object:IsShown() then return end
+
+    local top = object.GetTop and object:GetTop()
+    local bottom = object.GetBottom and object:GetBottom()
+    if top and bottom then
+        bounds.top = bounds.top and math_max(bounds.top, top) or top
+        bounds.bottom = bounds.bottom and math_min(bounds.bottom, bottom) or bottom
+    end
+end
+
+local function IncludeSectionBounds(section, bounds)
+    if not section or (section.IsShown and not section:IsShown()) then return end
+
+    -- The section frame reserves the configured bar geometry. Its label,
+    -- bar border, and visible value text can extend beyond that reservation.
+    IncludeContentBounds(section, bounds, false)
+    IncludeContentBounds(section.lbl, bounds, true)
+    IncludeContentBounds(section.barFrame, bounds, true)
+
+    local valueText = section.val and section.val.GetText and section.val:GetText()
+    if valueText ~= nil and valueText ~= "" then
+        IncludeContentBounds(section.val, bounds, true)
+    end
+end
+
+local function MeasurePreviewContentBounds()
+    local pr = state.previewRef
+    if not pr then return nil end
+
+    local bounds = {}
+    IncludeSectionBounds(pr.primary, bounds)
+    IncludeSectionBounds(pr.secondary, bounds)
+    if not bounds.top or not bounds.bottom then return nil end
+    return bounds
+end
+
+local function ApplyPreviewTopShift(shift)
+    local pr = state.previewRef
+    if not pr then return end
+
+    for _, section in ipairs({ pr.primary, pr.secondary }) do
+        if section and section._previewStackY
+            and (not section.IsShown or section:IsShown()) then
+            section:ClearAllPoints()
+            section:SetPoint("TOP", pr.pv, "TOP", 0, section._previewStackY - shift)
+        end
+    end
+end
+
+local function ResizePreviewToContent(host)
+    local options = state.autoHeight
+    if not host or not options or options.autoHeight == false then return end
+
+    local desiredHeight = options.minHeight or 0
+    local bounds = MeasurePreviewContentBounds()
+    local hostTop = host.GetTop and host:GetTop()
+    if bounds and hostTop then
+        local padding = options.verticalPadding or 0
+        local contentTop = options.contentTop or PREVIEW_CONTENT_TOP
+        local topLimit = hostTop - contentTop - padding
+        local topShift = math_max(0, bounds.top - topLimit)
+
+        -- Resource sections are top-stacked rather than center-anchored. If
+        -- a positive text Y offset rises into the header, move the complete
+        -- stack down before sizing the pane; height alone only moves the
+        -- bottom edge and cannot cure top clipping.
+        ApplyPreviewTopShift(topShift)
+        desiredHeight = math_floor(hostTop - (bounds.bottom - topShift) + padding + 0.5)
+        desiredHeight = math_max(options.minHeight or 0, desiredHeight)
+    end
+
+    local currentHeight = host.GetHeight and host:GetHeight() or 0
+    if math_abs(currentHeight - desiredHeight) <= 0.5 then return end
+
+    host._previewAutoHeightApplying = true
+    host:SetHeight(desiredHeight)
+    host._previewAutoHeightApplying = nil
+end
+
+local function RequestPreviewAutoHeight()
+    local host = state.host
+    if not host or not state.autoHeight or state.autoHeight.autoHeight == false
+        or host._previewAutoHeightPending then
+        return
+    end
+
+    host._previewAutoHeightPending = true
+    local function Apply()
+        host._previewAutoHeightPending = nil
+        if state.host == host then
+            ResizePreviewToContent(host)
+        end
+    end
+
+    -- Font-string and frame bounds settle after the current refresh returns.
+    if C_Timer and C_Timer.After then
+        C_Timer.After(0, Apply)
+    else
+        Apply()
+    end
+end
+
 ---------------------------------------------------------------------------
 -- Public surface
 ---------------------------------------------------------------------------
 
-function Module.Build(host)
-    if state.ticker then return end  -- idempotent
+function Module.Build(host, options)
+    if state.ticker then
+        if state.host == host then
+            state.autoHeight = options or state.autoHeight or DEFAULT_PREVIEW_OPTIONS
+            Module.Refresh()
+            return
+        end
+        -- Settings pages are cached and can rebuild around a new visible
+        -- preview host. Release the old singleton before rebinding it.
+        Module.Teardown()
+    end
     state.host = host
+    state.autoHeight = options or DEFAULT_PREVIEW_OPTIONS
 
     local GUI    = QUI and QUI.GUI
     local C      = (GUI and GUI.Colors) or {}
-    local accent = C.accent or { 0.204, 0.827, 0.6, 1 }
     local border = C.border or { 1, 1, 1, 0.06 }
     local UIKit  = ns.UIKit
     local fpath  = UIKit and UIKit.ResolveFontPath
@@ -441,12 +566,15 @@ function Module.Build(host)
         UIKit.UpdateBorderLines(host, 1, border[1] or 1, border[2] or 1, border[3] or 1, 0.15, false)
     end
 
-    -- "PREVIEW" label
+    -- Keep the persistent preview title consistent with CDM Composer.
     local lbl = host:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    if fpath then CJKFont(lbl, fpath, 8, "") end
-    lbl:SetTextColor(accent[1], accent[2], accent[3], 0.7)
+    local SkinBase = ns.SkinBase
+    if SkinBase and SkinBase.SkinFontString then
+        SkinBase.SkinFontString(lbl, { fontOnly = true })
+    end
     lbl:SetPoint("TOPLEFT", host, "TOPLEFT", 8, -6)
-    lbl:SetText((ns.L["PREVIEW"]):gsub(".", "%0 "):sub(1, -2))
+    lbl:SetText(ns.L["Live Preview"])
+    lbl:SetTextColor(0.6, 0.6, 0.6, 1)
 
     -- Primary + secondary mock sections
     local primary = MakeMockBar(host, fpath)
@@ -468,7 +596,9 @@ function Module.Build(host)
 
     -- Re-render on host resize
     host:SetScript("OnSizeChanged", function()
-        Module.Refresh()
+        if not host._previewAutoHeightApplying then
+            Module.Refresh()
+        end
     end)
 
     -- First-frame paint
@@ -515,6 +645,9 @@ function Module.Refresh()
     if visibleCount == 0 then
         p:Hide()
         s:Hide()
+        p._previewStackY = nil
+        s._previewStackY = nil
+        RequestPreviewAutoHeight()
         return
     end
 
@@ -533,7 +666,7 @@ function Module.Refresh()
         if secondaryInfo then orderedSections[#orderedSections + 1] = secondaryInfo end
     end
 
-    local nextY = -20
+    local nextY = -PREVIEW_CONTENT_TOP
     for _, info in ipairs(orderedSections) do
         local section = info.section
         local cfg = info.cfg
@@ -544,6 +677,7 @@ function Module.Refresh()
         section:ClearAllPoints()
         ApplyPreviewSectionLayout(section, cfg, pr.pv, visibleCount)
         section:SetPoint("TOP", pr.pv, "TOP", 0, nextY)
+        section._previewStackY = nextY
         nextY = nextY - section:GetHeight() - PREVIEW_SECTION_GAP
 
         section.lbl:SetText(info.label)
@@ -569,6 +703,8 @@ function Module.Refresh()
         local textR, textG, textB, textA = 1, 1, 1, 0.9
         if textCfg and textCfg.textUseClassColor then
             local _, class = UnitClass("player")
+            -- @secret-policy: collapse-only — secret class keeps the default text color
+            if issecretvalue and issecretvalue(class) then class = nil end
             local classColor = class and RAID_CLASS_COLORS and RAID_CLASS_COLORS[class]
             if classColor then
                 textR, textG, textB, textA = classColor.r, classColor.g, classColor.b, 1
@@ -608,6 +744,7 @@ function Module.Refresh()
     -- don't snap to a stale value between Refresh and the next OnUpdate tick.
     local pp, ss = ComputePcts(state.cycle.t)
     ApplyDynamics(pp, ss)
+    RequestPreviewAutoHeight()
 end
 
 function Module.Teardown()
@@ -616,11 +753,13 @@ function Module.Teardown()
     end
     if state.host then
         state.host:SetScript("OnSizeChanged", nil)
+        state.host._previewAutoHeightPending = nil
     end
     state.host       = nil
     state.ticker     = nil
     state.previewRef = nil
     state.cycle      = { t = 0 }
+    state.autoHeight = nil
 end
 
 function Module.GetCurrentPcts()

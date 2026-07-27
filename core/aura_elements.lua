@@ -306,6 +306,113 @@ function E.NormalizeElement(e)
     return e
 end
 
+-- Role-gate check: does an element apply to a frame whose unit resolves to
+-- `frameRole` ("TANK"/"HEALER"/"DAMAGER"/nil) and is-player `isSelf`? "all" and
+-- a nil/unknown gate always pass (backward-compatible). Roles are stable within
+-- an encounter, so this is only re-evaluated on roster/spec events (OOC).
+local ROLE_GATE_TO_ASSIGNED = { tank = "TANK", healer = "HEALER", dps = "DAMAGER" }
+function E.ElementAppliesToRole(element, frameRole, isSelf)
+    local gate = element and element.applyToRoles
+    if gate == nil or gate == "all" then return true end
+    if gate == "me" then return isSelf == true end
+    local want = ROLE_GATE_TO_ASSIGNED[gate]
+    if not want then return true end  -- unknown token: fail open, never hide
+    return frameRole == want
+end
+
+local WHAT_TO_SHOW_KEYS = {
+    HELPFUL = { "all", "mine", "defensives", "purgeable", "whitelist" },
+    HARMFUL = { "all", "dispellable", "crowdControl", "boss", "roleBoss", "whitelist" },
+}
+
+function E.WhatToShowKeys(auraType)
+    return WHAT_TO_SHOW_KEYS[auraType] or WHAT_TO_SHOW_KEYS.HELPFUL
+end
+
+local function clearShowFields(e)
+    e.filterMode = "off"
+    e.filterFlags = {}
+    e.classifications = defaultClassifications(e.auraType)
+    e.onlyMine = false
+    e.dispelFilterMode = "off"
+    e.dispelTypes = {}
+    e.gateStealable = nil
+    e.gateBossAura = nil
+    e.gatePriorityAura = nil
+    e.gateRoleAura = nil
+    e.gateBossOrRoleAura = nil
+end
+
+function E.ApplyWhatToShow(element, key)
+    clearShowFields(element)
+    if key == "mine" then
+        element.onlyMine = true
+    elseif key == "defensives" then
+        element.filterMode = "classify"
+        element.classifications = { bigDefensive = true, externalDefensive = true }
+    elseif key == "purgeable" then
+        element.gateStealable = true
+    elseif key == "dispellable" then
+        -- Engine-evaluated "player can dispel this" (HARMFUL|RAID — 68675
+        -- semantics; RAID_PLAYER_DISPELLABLE means "anyone in the raid can
+        -- dispel" and is the wrong filter for a personal cleanse view): the
+        -- C side knows the player's ACTUAL dispel kit including talents, and
+        -- tracks respecs live — strictly better than our class/spec school
+        -- table (ns.QUI_DispelRoles), which stays only as the resolver for
+        -- manual dispel-TYPE filters ("mine" sentinel) and the dispel-roles
+        -- page.
+        element.filterMode = "classify"
+        element.classifications = { dispellable = true }
+    elseif key == "crowdControl" then
+        element.filterMode = "classify"
+        element.classifications = { crowdControl = true }
+    elseif key == "boss" then
+        element.gateBossAura = true
+    elseif key == "roleBoss" then
+        element.gateBossOrRoleAura = true
+    elseif key == "whitelist" then
+        element.filterMode = "whitelist"
+    end
+    -- key == "all" (or unknown) leaves the cleared/default state
+    return element
+end
+
+-- true iff every listed key is true in tbl AND no other key in tbl is true
+local function onlyClassKeys(tbl, wanted)
+    local want = {}
+    for _, k in ipairs(wanted) do want[k] = true; if tbl[k] ~= true then return false end end
+    for k, v in pairs(tbl) do
+        if v == true and not want[k] then return false end
+    end
+    return true
+end
+
+function E.DeriveWhatToShow(element)
+    local mode = element.filterMode or "off"
+    if mode == "whitelist" then return "whitelist" end
+    if mode == "flags" then return "custom" end
+    if mode == "classify" then
+        local c = element.classifications or {}
+        if onlyClassKeys(c, { "bigDefensive", "externalDefensive" }) then return "defensives" end
+        if onlyClassKeys(c, { "crowdControl" }) then return "crowdControl" end
+        if onlyClassKeys(c, { "dispellable" }) then return "dispellable" end
+        return "custom"
+    end
+    -- mode == "off": any of these fields make it non-default and unrecognised -> custom
+    if next(element.filterFlags or {}) ~= nil then return "custom" end
+    if element.dispelFilterMode == "exclude" then return "custom" end
+    if element.gatePriorityAura == true or element.gateRoleAura == true then return "custom" end
+    local mods = {}
+    if element.onlyMine == true then mods[#mods + 1] = "mine" end
+    if element.gateStealable == true then mods[#mods + 1] = "purgeable" end
+    if element.gateBossAura == true then mods[#mods + 1] = "boss" end
+    if element.gateBossOrRoleAura == true then mods[#mods + 1] = "roleBoss" end
+    if element.dispelFilterMode == "include" then mods[#mods + 1] = "dispellable" end
+    if #mods == 0 then return "all" end
+    if #mods == 1 then return mods[1] end
+    return "custom"
+end
+
 -- Compile a filterStrip element's filter config into Blizzard filter strings.
 -- "classify" fans out one string per enabled classification (OR semantics —
 -- one group each). "flags" AND-composes the tri-state filterFlags tokens onto

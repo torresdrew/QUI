@@ -27,6 +27,9 @@ local function GetValueColor()
     local dt = db and db.datatext
     if dt and dt.useClassColor then
         local _, class = UnitClass("player")
+        -- @secret-policy: collapse-only — UnitClass can return SECRET on 12.1 PTR7
+        -- (SecretWhenUnitIdentityRestricted); collapse so the valueColor fallback applies.
+        if issecretvalue and issecretvalue(class) then class = nil end
         local color = class and RAID_CLASS_COLORS[class]
         if color then
             return floor(color.r * 255), floor(color.g * 255), floor(color.b * 255)

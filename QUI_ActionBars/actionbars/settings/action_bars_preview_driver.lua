@@ -11,7 +11,7 @@
     state; cooldown/glow/charges/push are simulated.
 
     Public surface:
-        ns.QUI_ActionBarsPreviewDriver.Build(host)
+        ns.QUI_ActionBarsPreviewDriver.Build(host, options)
         ns.QUI_ActionBarsPreviewDriver.Refresh()
         ns.QUI_ActionBarsPreviewDriver.SetSelectedBar(barKey)
         ns.QUI_ActionBarsPreviewDriver.Teardown()
@@ -143,15 +143,14 @@ local function FormatPreviewKeybind(keybind)
     return upper
 end
 
-local function IsSecretValue(value)
+local function IsPreviewSecretValue(value)
     return Helpers and Helpers.IsSecretValue and Helpers.IsSecretValue(value) or false
 end
 
-local IsPreviewSecretValue = IsSecretValue
 
 local function HasPreviewTextValue(value)
-    if IsSecretValue(value) then
-        return true
+    if IsPreviewSecretValue(value) then
+        return true -- @secret-policy: route-to-text-sink
     end
     if value == nil then return false end
     return value ~= ""
@@ -316,14 +315,14 @@ local function GetPreviewCountText(slot, sourceButton)
     local ok, count = pcall(C_ActionBar.GetActionDisplayCount, actionSlot)
     if not ok then return nil end
 
-    if IsSecretValue(count) then
+    if IsPreviewSecretValue(count) then
         return count
     else
-        if count == nil or count == "" or count == 0 or count == "0" then
+        if count == nil or count == "" or count == 0 or count == "0" then -- @secret-safe: IsPreviewSecretValue branch above proves count plain here
             return nil
         end
 
-        return tostring(count)
+        return tostring(count) -- @secret-safe: IsPreviewSecretValue branch above proves count plain here
     end
 end
 
@@ -356,7 +355,7 @@ end
 
 local function SetPreviewTextStyle(fontString, button, text, fontPath, outline, fontSize, color, anchor, offsetX, offsetY)
     if not fontString then return end
-    local isSecretText = IsSecretValue(text)
+    local isSecretText = IsPreviewSecretValue(text)
     if isSecretText then
         -- Secret text can be passed directly to SetText below, but must not be
         -- inspected in Lua.
@@ -466,14 +465,111 @@ end
 local state = {
     host             = nil,
     ticker           = nil,
+    previewHost      = nil,
     previewButtons   = {},   -- array of preview button records
     buttonState      = {},   -- per-button cycle records (keyed by button frame)
+    layoutCount      = 0,
+    autoHeight       = nil,
     selectedBar      = "bar1",
     glowOwnerIdx     = 1,
     glowOwnerT       = 0,
     chargeOwnerIdx   = 1,
     chargeOwnerT     = 0,
 }
+
+local function IncludeContentBounds(object, bounds, onlyWhenShown)
+    if not object then return end
+    if onlyWhenShown and object.IsShown and not object:IsShown() then return end
+
+    local top = object.GetTop and object:GetTop()
+    local bottom = object.GetBottom and object:GetBottom()
+    if top and bottom then
+        bounds.top = bounds.top and math.max(bounds.top, top) or top
+        bounds.bottom = bounds.bottom and math.min(bounds.bottom, bottom) or bottom
+    end
+end
+
+local function MeasurePreviewContentHeight()
+    local previewHost = state.previewHost
+    if not previewHost then return 0 end
+
+    local bounds = {}
+    for i = 1, state.layoutCount do
+        local pb = state.previewButtons[i]
+        if pb and pb.frame then
+            -- Every configured slot remains part of the live bar's geometry,
+            -- including hidden empty slots. Visible text can legitimately
+            -- offset beyond the button and must expand the fitted pane.
+            IncludeContentBounds(pb.frame, bounds, false)
+            if not pb.frame.IsShown or pb.frame:IsShown() then
+                IncludeContentBounds(pb.hotkey, bounds, true)
+                IncludeContentBounds(pb.name, bounds, true)
+                IncludeContentBounds(pb.count, bounds, true)
+                local cooldownText = pb.cooldown and pb.cooldown.GetCountdownFontString
+                    and pb.cooldown:GetCountdownFontString()
+                IncludeContentBounds(cooldownText, bounds, true)
+            end
+        end
+    end
+
+    if not bounds.top or not bounds.bottom then return 0 end
+
+    -- Buttons are anchored around previewHost CENTER. Preserve that center
+    -- when text offsets are asymmetric by reserving the larger radius on
+    -- both sides; merely using top-bottom could still clip one edge.
+    local _, centerY = previewHost.GetCenter and previewHost:GetCenter()
+    if centerY then
+        local radius = math.max(
+            math.abs(bounds.top - centerY),
+            math.abs(bounds.bottom - centerY)
+        )
+        return radius * 2
+    end
+    return math.max(0, bounds.top - bounds.bottom)
+end
+
+local function ResizePreviewToContent(host)
+    local options = state.autoHeight
+    if not host or not options or options.autoHeight == false then return end
+
+    local contentHeight = MeasurePreviewContentHeight()
+    local desiredHeight = math.floor(
+        contentHeight
+        + (options.chromeHeight or 0)
+        + (options.verticalPadding or 0) * 2
+        + 0.5
+    )
+    desiredHeight = math.max(options.minHeight or 0, desiredHeight)
+
+    local currentHeight = host.GetHeight and host:GetHeight() or 0
+    if math.abs(currentHeight - desiredHeight) <= 0.5 then return end
+
+    host._previewAutoHeightApplying = true
+    host:SetHeight(desiredHeight)
+    host._previewAutoHeightApplying = nil
+end
+
+local function RequestPreviewAutoHeight()
+    local host = state.host
+    if not host or not state.autoHeight or state.autoHeight.autoHeight == false
+        or host._previewAutoHeightPending then
+        return
+    end
+
+    host._previewAutoHeightPending = true
+    local function Apply()
+        host._previewAutoHeightPending = nil
+        if state.host == host then
+            ResizePreviewToContent(host)
+        end
+    end
+
+    if C_Timer and C_Timer.After then
+        C_Timer.After(0, Apply)
+    else
+        Apply()
+    end
+end
 
 ---------------------------------------------------------------------------
 -- Per-button cycle state
@@ -648,9 +744,19 @@ end
 -- Public surface
 ---------------------------------------------------------------------------
 
-function ActionBarsPreviewDriver.Build(host)
-    if state.ticker then return end  -- idempotent
+function ActionBarsPreviewDriver.Build(host, options)
+    if state.ticker then
+        if state.host == host then
+            state.autoHeight = options or state.autoHeight
+            return
+        end
+        -- A settings-surface rebuild can supply a new preview pane while the
+        -- old cached host still owns the singleton ticker. Release the old
+        -- mock tree before binding this build to the visible host.
+        ActionBarsPreviewDriver.Teardown()
+    end
     state.host = host
+    state.autoHeight = options
 
     local previewHost = CreateFrame("Frame", nil, host)
     previewHost:SetPoint("TOPLEFT",  host, "TOPLEFT",  12, -30)
@@ -768,6 +874,7 @@ function ActionBarsPreviewDriver.Refresh()
     end
 
     local visibleCount = requestedVisible
+    state.layoutCount = visibleCount
     local buttonSize = math.max(20, layout.buttonSize or 30)
     local buttonSpacing = layout.buttonSpacing or 0
     local columns = math.max(1, math.min(layout.columns or visibleCount, visibleCount))
@@ -954,6 +1061,8 @@ function ActionBarsPreviewDriver.Refresh()
             end
         end
     end
+
+    RequestPreviewAutoHeight()
 end
 
 function ActionBarsPreviewDriver.SetSelectedBar(barKey)
@@ -982,8 +1091,12 @@ function ActionBarsPreviewDriver.Teardown()
     end
     if state.ticker then state.ticker:SetScript("OnUpdate", nil) end
     state.ticker = nil  -- clear so Build's `if state.ticker then return end` guard lets it rebuild
+    state.host = nil
+    state.previewHost = nil
     state.previewButtons = {}
     state.buttonState    = {}
+    state.layoutCount    = 0
+    state.autoHeight     = nil
     state.glowOwnerIdx   = 1
     state.glowOwnerT     = 0
     state.chargeOwnerIdx = 1

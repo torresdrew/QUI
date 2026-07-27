@@ -9,6 +9,327 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v5.0.0-alpha28 - 2026-07-25
+
+> ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will
+> not load on the 12.0.x live client. Stay on the v4.x beta line for live realms.
+
+### Fixed
+- Auras placed in a cooldown container you built yourself stayed invisible when
+  the container was set to show only active icons. The active check was asking
+  whether the ability was on cooldown, which an aura never is, so buffs like
+  Anti-Magic Shell never appeared even while running. Custom containers now
+  judge auras by whether the aura is actually on you, matching how the built-in
+  containers already behaved. Cooldown entries in the same container are
+  unaffected.
+
+## v5.0.0-alpha27 - 2026-07-25
+
+> ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will
+> not load on the 12.0.x live client. Stay on the v4.x beta line for live realms.
+
+### Fixed
+- The duplicate-placement aura mirrors added in alpha26 kept a small internal
+  bookkeeping list that grew every time a placement retired and came back —
+  toggling a container off and on, swapping specs, or an entry dropping out for
+  a refresh. Nothing visible went wrong and no frames were retained, but memory
+  crept up over a long session. Retired records are now released exactly, so
+  the list stays bounded.
+
+## v5.0.0-alpha26 - 2026-07-25
+
+> ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will
+> not load on the 12.0.x live client. Stay on the v4.x beta line for live realms.
+
+### Added
+- Placing the same ability in more than one cooldown container now shows it in
+  every container you put it in. Blizzard hands out a single frame per ability,
+  so one placement keeps that native icon and the others are drawn from QUI's
+  own timing sources — exact duration for cooldowns, and a managed aura slot
+  for aura-kind entries so stacks and remaining time stay real. Duplicated
+  items, equipment, consumables, and totem instances still show exactly one
+  icon: they have no exact public timing source, so they fail closed with a
+  diagnostic instead of drawing a mirror that could drift.
+- Group frames can show the Blizzard dispel type icon — Magic, Curse, Disease,
+  Poison, or Bleed — with its own size, opacity, anchor, and offset, separate
+  from the colored dispel border. A new **Show For** choice adds *All Typed
+  Debuffs* next to *Dispellable by Me*, so awareness-only types such as Bleed
+  and Enrage can surface without widening Cleanse-Ready Glow, which stays
+  strictly on what you can actually dispel.
+- Hovering an item in your bags now clears its new-item glow immediately
+  instead of waiting for a click.
+
+### Fixed
+- The Cooldown Composer, Action Bars, and Resource Bars settings previews now
+  measure what they actually drew and resize their pane to fit, so tall icon
+  stacks and long value text are no longer clipped or stranded in empty space.
+  All three headers now read *Live Preview*, matching the rest of the settings.
+- The totem bar read the player class token without collapsing a restricted
+  value first, so slot ordering could fall through to the wrong priorities; it
+  now falls back to the standard order when the token is not readable. Active
+  totem buttons also sit above the invisible placeholders they pack over, so a
+  right-click to dismiss always hits the totem you aimed at.
+
+## v5.0.0-alpha25 - 2026-07-25
+
+> ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will
+> not load on the 12.0.x live client. Stay on the v4.x beta line for live realms.
+
+### Fixed
+- Dark Mode looked inert in the group frame preview whenever Use Class Color
+  was also enabled: the preview painted the class color over the dark fill,
+  while the live frames do it the other way round. The preview now follows the
+  live rule — Dark Mode wins while it is on, with its configured color and
+  alpha honored — so the two surfaces finally agree.
+
+## v5.0.0-alpha24 - 2026-07-25
+
+> ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will
+> not load on the 12.0.x live client. Stay on the v4.x beta line for live realms.
+
+### Added
+- The group frame settings preview now shows what the live frames show. It is
+  built from the same frame skeleton the runtime uses, so it picks up cleanse
+  glow, Party Target Frames, Spotlight role and name filters with their growth
+  direction, party show-player / hide-DPS / sort / self-first, and a dedicated
+  Targeted Spells chip instead of that unexplained centre cooldown.
+- Aura previews are drawn with the real icon styler: icon skins, dispel
+  borders, cooldown swipes, duration text, and stack counts all appear in the
+  preview, so settings that only existed on the live path can finally be judged
+  before you commit to them.
+- **Auras > Unit Frames** gets a pinned preview of the unit frame itself,
+  outside the scrolling settings body.
+
+### Changed
+- The aura element editor opens quietly: Basics, Filters, and Appearance &
+  Advanced start collapsed, and expanding a section reflows the rows in place
+  rather than repainting the whole tab. "What to Show" latches manual mode when
+  you pick Custom…, and the spell Browse window stays open for multi-select
+  while the inline list updates live behind it.
+- Both unit frame previews measure what is actually visible — body, portrait,
+  auras, cast bar — recentre on it and shrink the pane to fit, instead of
+  reserving space for a cast bar that is not there.
+- Threat and target fill opacity are no longer inert settings; both now tint a
+  real fill on live frames and in the preview.
+
+### Fixed
+- Buff/debuff settings in search results sent you to **Action Bars > Per-Bar**,
+  a page that contains none of them. All 46 of those entries now land on
+  **Auras > Buff/Debuff Frames**, where they moved.
+- The Cooldown Manager composer listed spells your class can never learn — for
+  example Shaman auras offered on a Demon Hunter — and they looked active while
+  never appearing on the real frame. Those rows are hidden now. Same-class
+  abilities missing from your current loadout keep their Dormant treatment, and
+  spell IDs you entered by hand are still yours to manage.
+- The Group Frames tile and the Auras hub's Group Frames sub-page each keep
+  their own Party/Raid choice; opening one no longer silently retargets the
+  other.
+- An automatic Missing Raid Buff container previewed as empty on classes with
+  no raid buff of their own (Death Knight), leaving nothing to position. The
+  preview now shows a representative icon; live frames are unchanged.
+- Resource bars honour the colour mode dropdown on every path, so a static
+  colour no longer stays white on Blood Death Knight Runic Power.
+
+## v5.0.0-alpha23 - 2026-07-24
+
+> ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will
+> not load on the 12.0.x live client. Stay on the v4.x beta line for live realms.
+
+> 🔄 **Profile schema migrated to v59.** Removes the tracked auras that earlier
+> alphas seeded into the Healer HoTs element. Your profile is backed up
+> automatically before it runs.
+
+### Removed
+- The 42-spell **Healer HoTs** default seed. Alpha22 shipped that element
+  pre-filled with every healer specialization's healing-over-time spells; the
+  element itself stays, but its tracked auras are now yours to choose. Spells
+  you added by hand are kept — only the seeded ones are swept, on every group
+  frame and raid bucket, including profiles you import.
+- Specialization-based aura suggestions in the aura editor and wizard.
+  Suggestions now come from the Blizzard cooldown-manager catalog only.
+
+### Added
+- Aura tooltip and dispel controls in the options panel, promised in alpha22:
+  hide aura tooltips in combat, anchor them to each icon (or at the cursor),
+  and override the per-dispel-type ring colors for a single element. Dispel
+  types you leave alone keep the engine color.
+- The docked options preview panel can be detached, dragged, collapsed, and
+  scaled by its grip for the rest of the session.
+
+### Changed
+- Dispel-type borders and symbols moved onto the 12.1 dispel-texture API that
+  replaced the names removed after 12.1, and custom dispel artwork now reaches
+  tracked-aura element buttons alongside custom dispel colors.
+
+### Fixed
+- Cooldown-manager icons no longer trigger an action-blocked error when the
+  cooldown manager re-anchors during combat. Clickable icons are held in their
+  own pool and only reused while they are still safe to touch, so nothing is
+  dropped or leaked while you are in a fight.
+- Restored the cast bar detach that a 12.1 PTR guard had been suppressing.
+- A taint-scan gate check no longer accepts a look-alike namespace-prefixed
+  name in place of the real one.
+
+## v5.0.0-alpha22 - 2026-07-23
+
+> ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will
+> not load on the 12.0.x live client. Stay on the v4.x beta line for live realms.
+
+### Added
+- Aura tooltips can now be positioned per element (anchor point and offset)
+  and hidden in combat through profile settings. Options-panel controls for
+  these arrive in a later alpha.
+
+### Changed
+- Aura containers now lay out through the 12.1 native flow layout, giving
+  real multi-column growth where the old layout degraded to a single column.
+- Aura tooltips now carry QUI's backdrop and border styling instead of the
+  default Blizzard chrome.
+- Dispel-type aura borders use the new 12.1 dispel texture API, keeping
+  Blizzard's per-type artwork intact under QUI sizing.
+- Aura "index" sorting uses the client's new instance-ID ordering when
+  available, keeping positions stable as auras refresh.
+
+### Fixed
+- Adopted the re-shipped 12.1 PTR build 68914 API surface.
+- More spots no longer error when the client withholds combat data
+  ("secret" values): the party leader icon, guild names in tooltips, and
+  raid buff class lookups.
+- A full-repo hardening sweep closed out the remaining strict taint-scan
+  findings across 32 files.
+
+## v5.0.0-alpha21 - 2026-07-23
+
+> ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will
+> not load on the 12.0.x live client. Stay on the v4.x beta line for live realms.
+
+### Removed
+- The **Encounters** browser under the Auras tab, along with instance- and
+  encounter-specific aura setups. 12.1 no longer exposes the encounter
+  identity they keyed on. The boss and role-on-boss visibility conditions
+  remain, and per-element boss strips you created keep working; instance- or
+  encounter-specific setups saved by older profiles are ignored.
+
+### Changed
+- Modules now repaint only what an event actually changed instead of doing a
+  full render per event: **Bags** re-dress changed slots in place when the
+  layout provably didn't move, **Resource Bars** route power ticks through a
+  value-only path, **Unit Frames** coalesce rapid power updates, the
+  **Damage Meter** restyles bars only when appearance actually changed and
+  follows the session's own clock for Current-session rates, the **Minimap**
+  clock wakes once a minute instead of once a second, and the consumable
+  check reuses a cached inventory snapshot on aura ticks.
+- **Bags** skip their loading-screen compile entirely when the module is
+  disabled in the profile.
+
+### Fixed
+- Adopted the 12.1 PTR build 68824 API changes: action button cooldown
+  updates, flyout lookups (which now hard-error on unknown IDs), and cast
+  bar suppression no longer error or risk taint.
+- Moving or saving frame positions while the client withholds anchor data
+  ("secret" values) no longer errors, and the extra action button position
+  save skips unreadable coordinates instead of writing 0,0.
+- Several spots that silently treated combat-hidden values as 0 now handle
+  them properly: unknown unit reactions fall through to class colors instead
+  of hostile red, and tooltips with unreadable alpha are treated as visible.
+- Profiles version-stamped by earlier dev builds now re-run all repair
+  migrations, healing states those builds may have left behind.
+
+## v5.0.0-alpha20 - 2026-07-22
+
+> ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will
+> not load on the 12.0.x live client. Stay on the v4.x beta line for live realms.
+
+> 🔄 **Profile schema migrated to v58.** Seeds the new Healer HoTs element into
+> existing profiles and extends the shipped defensives element to instance- and
+> encounter-specific override setups. Your profile is backed up automatically
+> before it runs.
+
+### Added
+- New **Healer HoTs** tracked aura element on group frames, pre-seeded with the
+  healing-over-time spells of every healer specialization so HoT tracking works
+  out of the box. Existing profiles receive it via migration; deleting it is
+  respected and it will not re-seed.
+
+### Changed
+- Aura tracking adopted the latest 12.1 PTR aura API (build 68824): aura groups
+  keep stable identities across updates, filtering uses the native filter
+  string, and weapon enchant frames are enumerated through the engine rather
+  than tracked ad hoc.
+- Buff presence checks now treat combat-hidden ("secret") results as unknown
+  instead of missing, so indicators no longer flicker off when the client
+  withholds aura data mid-combat.
+
+### Fixed
+- Broad 12.1 secret-value hardening (rounds 18–23): class colors, tooltips, the
+  character pane, on-screen error messages, and aura scans no longer error when
+  the client hides unit or aura data during combat.
+- The shipped defensives element now also applies inside instance- and
+  encounter-specific override setups, where it previously vanished.
+- Repairs profiles where an earlier dev build injected a lone Healer HoTs
+  element into spec, instance, or encounter overrides that were deliberately
+  left empty.
+
+## v5.0.0-alpha19 - 2026-07-18
+
+> ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will
+> not load on the 12.0.x live client. Stay on the v4.x beta line for live realms.
+
+### Changed
+- Extra action button and zone ability takeover reworked for 12.1's secure
+  layout: QUI now owns the shared container for the whole session, so
+  disabling the takeover asks for a `/reload` to hand the frames back to
+  Blizzard instead of risking a protected-layout error mid-session.
+- The zone ability mover now defaults to its own screen position instead of
+  riding the extra action button's anchor.
+
+### Fixed
+- In-combat frame moves are now gated behind secret-safe protection probes,
+  fixing errors the 12.1 client could throw when QUI checked whether a frame
+  was movable during combat; blocked moves retry automatically after combat.
+- Action bar cooldown reads no longer risk a secret-value error when the
+  12.1 client hides cooldown data during combat.
+- Cooldown viewer icons whose text or values are hidden by the 12.1 client
+  now count as present and stay visible instead of disappearing.
+- The mail window position is re-asserted when Blizzard's panel manager
+  re-stamps it while open.
+- Frame anchoring resolves retries per consumer, so one frame's pending
+  retry can no longer suppress or hijack another's; anchor work blocked by
+  combat is replayed reliably once combat ends.
+
+## v5.0.0-alpha18 - 2026-07-14
+
+> ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will
+> not load on the 12.0.x live client. Stay on the v4.x beta line for live realms.
+
+> 🔄 **Profile schema migrated to v56.** Repairs boss-debuff strips that
+> earlier alpha dev builds could duplicate or orphan in spec-override buckets,
+> so the Encounters page toggle always addresses the strip that actually
+> renders. Your profile is backed up automatically before it runs.
+
+### Added
+- New **Auras** configuration hub unifying aura setup across unit frames,
+  group frames, and buff/debuff frames, with a guided **Setup Wizard** as its
+  first page.
+- **Encounters** page: a journal-sourced encounter catalog with per-encounter
+  boss aura settings and spec-specific overrides (spec × encounter cascade).
+- **Dispel Colors** page with role-based dispel and bleed seeding.
+
+### Changed
+- "Action Bar Auras" is now named **Buff/Debuff Frames**; cross-links updated.
+- The Setup Wizard replaces a tracked HoT wherever it appears in multi-spell
+  elements, and corner placement now spaces indicators by their real pixel
+  footprint — stacked HoTs on the same corner no longer overlap.
+- The legacy "dispellable by me" debuff filter checkbox is ported to the 12.1
+  filter token that preserves its meaning.
+
+### Fixed
+- Boss-debuff strips duplicated or orphaned by earlier alpha builds are
+  repaired by the v56 migration; the strip the Encounters page controls is
+  the one that renders.
+- A raid-cooldown library no longer scans aura data unguarded while the 12.1
+  client restricts it.
+
 ## v5.0.0-alpha17 - 2026-07-11
 
 > ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will

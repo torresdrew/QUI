@@ -15,10 +15,26 @@
 
   M.InstallSecretStub() -> installs _G.issecretvalue = function(v) ... end,
   recognizing every sentinel ever minted by MakeSecretSentinel in this
-  process. Returns the PREVIOUS _G.issecretvalue so the caller can restore
-  it: `_G.issecretvalue = restore`.
+  process, PLUS the four __QUI_SECRET_TT/EQ/NEQ/LEN helper globals that
+  instrumented loads (M.LoadInstrumented below) route through. Returns the
+  PREVIOUS _G.issecretvalue so the caller can restore it. NOTE:
+  `_G.issecretvalue = restore` is no longer the whole story — it leaves the
+  four helper globals installed (harmless: they late-bind issecretvalue at
+  CALL time, so with the stub gone they become transparent pass-throughs).
+  M.RestoreSecretStub(prev) does the full restore: issecretvalue = prev AND
+  removes the helpers.
 
-  ── CAVEAT 1 — __eq is not a general equality trap ──────────────────────
+  M.LoadInstrumented(path) -> chunk, err. Drop-in for loadfile(path): loads
+  the module through tests/helpers/secret_instrument.lua's AST-guided
+  splicer so truthiness tests, ==/~= (CROSS-TYPE included), and #
+  reproduce the in-game 12.1 secret-value throws offline. CAVEATs 1-2
+  below describe only the RAW (un-instrumented) sentinel; instrumented
+  loads close exactly those gaps. The helpers late-bind _G.issecretvalue,
+  so install order vs load order no longer matters for the HELPERS — but
+  the module's own `local issecretvalue = issecretvalue` latch still needs
+  stub-before-load, see the load-order note below.
+
+  ── CAVEAT 1 — __eq is not a general equality trap (RAW loads only) ─────
   Lua 5.1's __eq only fires when BOTH operands are tables (or both full
   userdata) AND either they share the identical metatable, or both
   metatables define the exact same __eq function object (verified against
@@ -31,22 +47,29 @@
                                  never calls __eq across types)
     sentinel  == {}          -- no throw (a plain table has no __eq, so
                                  get_compTM finds nothing to call)
-  So this fixture CANNOT catch "compare a possibly-secret unit token against
-  a known string" bugs — the actual dangerous real-world case, e.g.
+  So the RAW fixture CANNOT catch "compare a possibly-secret unit token
+  against a known string" bugs — the actual dangerous real-world case, e.g.
   `if unit == "player" then`. That misuse silently evaluates to false here,
-  exactly as an untested read would expect, and is caught only by code
-  review / the `issecretvalue` probe discipline, never by this fixture.
-  Do not name a test "equality misuse throws" — in the general case it
-  doesn't, and overclaiming here would hide the real gap.
+  exactly as an untested read would expect. For modules loaded via
+  M.LoadInstrumented this gap is CLOSED: every ==/~= routes through
+  __QUI_SECRET_EQ/NEQ, which throw when EITHER side is secret, cross-type
+  included — offline now matches the real 12.1 behavior. Raw loadfile()
+  loads keep the caveat; do not name a raw-load test "equality misuse
+  throws" — in the raw case it doesn't, and overclaiming would hide the
+  distinction.
 
-  ── CAVEAT 2 — __len is a no-op on tables in Lua 5.1 ────────────────────
+  ── CAVEAT 2 — __len is a no-op on tables in Lua 5.1 (RAW loads only) ───
   Lua 5.1 only consults a __len metamethod on full userdata; for tables it
   ALWAYS uses the raw length operation (this changed in Lua 5.2). `#sentinel`
   therefore returns 0 silently — it does not throw, even though __len is set
   below. tools/_addon_env.lua's SECRET_MT documents the identical limitation
   for its own sentinel ("#secret is 0"). Kept in this metatable anyway for
   self-documentation (and in case a future variant proxies through
-  userdata); don't assert it throws.
+  userdata); don't assert it throws on a RAW load. Instrumented loads
+  rewrite `#x` to `#__QUI_SECRET_LEN(x)`, so there `#secret` DOES throw.
+  The same applies to truthiness: raw `if sentinel then` silently takes the
+  true branch (table truthiness fires no metamethod); instrumented loads
+  route every truth-tested position through __QUI_SECRET_TT and throw.
 
   ── CAVEAT 3 — string.format("%s", sentinel) throws, but not because of
   this fixture ───────────────────────────────────────────────────────────
@@ -124,16 +147,66 @@ function M.MakeSecretSentinel()
     return s
 end
 
+-- Shared guts of the __QUI_SECRET_* helper globals used by instrumented
+-- loads. Late-binds _G.issecretvalue at CALL time (rawget: strict-_G safe)
+-- so the helpers compose with this fixture OR tools/_addon_env.lua's own
+-- issecretvalue, whichever is currently installed. Transparent for every
+-- non-secret value, including nil/false. error level 3 = the instrumented
+-- caller's line (1 secretcheck, 2 helper, 3 instrumented code).
+local function secretcheck(v, what)
+    local isv = rawget(_G, "issecretvalue")
+    if isv and isv(v) then
+        error("attempt to " .. what .. " a secret value", 3)
+    end
+    return v
+end
+
 -- Installs _G.issecretvalue recognizing every sentinel minted by
--- MakeSecretSentinel. Returns the previous _G.issecretvalue for restore.
--- See the load-order note above: call this BEFORE loading the module under
--- test, not after.
+-- MakeSecretSentinel, plus the four __QUI_SECRET_* helper globals that
+-- instrumented loads call. Returns the previous _G.issecretvalue for
+-- restore (`_G.issecretvalue = restore` keeps working, but leaves the
+-- helpers installed — use M.RestoreSecretStub(restore) for the full
+-- unwind). See the load-order note above: call this BEFORE loading the
+-- module under test, not after.
 function M.InstallSecretStub()
     local prev = _G.issecretvalue
     _G.issecretvalue = function(v)
         return SECRETS[v] == true
     end
+    _G.__QUI_SECRET_TT  = function(v) return secretcheck(v, "perform boolean test on") end
+    _G.__QUI_SECRET_LEN = function(v) return secretcheck(v, "get length of") end
+    _G.__QUI_SECRET_EQ  = function(a, b)
+        secretcheck(a, "compare"); secretcheck(b, "compare")
+        return a == b
+    end
+    _G.__QUI_SECRET_NEQ = function(a, b)
+        secretcheck(a, "compare"); secretcheck(b, "compare")
+        return a ~= b
+    end
     return prev
+end
+
+-- Full restore: puts back the previous issecretvalue AND removes the four
+-- helper globals InstallSecretStub added.
+function M.RestoreSecretStub(prev)
+    _G.issecretvalue = prev
+    _G.__QUI_SECRET_TT  = nil
+    _G.__QUI_SECRET_LEN = nil
+    _G.__QUI_SECRET_EQ  = nil
+    _G.__QUI_SECRET_NEQ = nil
+end
+
+-- Load a module with throw-semantics instrumentation (truthiness, ==/~=,
+-- #). Drop-in for loadfile(): returns chunk, err. Requires
+-- InstallSecretStub() to have run for the throws to fire (the helpers
+-- late-bind issecretvalue, so install order vs load order no longer
+-- matters for the HELPERS — the module's own
+-- `local issecretvalue = issecretvalue` latch still needs
+-- stub-before-load, see the load-order note above).
+local Instrument -- lazy: only instrumented tests pay the parser load
+function M.LoadInstrumented(path)
+    Instrument = Instrument or dofile("tests/helpers/secret_instrument.lua")
+    return Instrument.loadFile(path)
 end
 
 ----------------------------------------------------------------------------
@@ -221,11 +294,47 @@ local function SelfTest()
     assert(_G.issecretvalue == stubA, "restore chain unwinds to the prior stub")
     _G.issecretvalue = nil -- leave the process clean
 
+    -- Instrumented-load block: LoadInstrumented/secret_instrument closes the
+    -- raw CAVEATs (truthiness + cross-type ==) for modules loaded through it.
+    -- The raw assertions above still pin the un-instrumented behavior.
+    local restoreI = M.InstallSecretStub()
+    assert(type(rawget(_G, "__QUI_SECRET_TT")) == "function"
+        and type(rawget(_G, "__QUI_SECRET_EQ")) == "function"
+        and type(rawget(_G, "__QUI_SECRET_NEQ")) == "function"
+        and type(rawget(_G, "__QUI_SECRET_LEN")) == "function",
+        "InstallSecretStub must install the four instrumentation helpers")
+    local Instrument = dofile("tests/helpers/secret_instrument.lua")
+    local si = M.MakeSecretSentinel()
+    local chunk = assert(Instrument.loadString("local s = ...\nif s then end", "=inst"))
+    assert(throws(function() chunk(si) end),
+        "instrumented `if secret` must throw (raw truthiness caveat closed)")
+    local chunk2 = assert(Instrument.loadString('local s = ...\nreturn s == "player"', "=inst2"))
+    assert(throws(function() chunk2(si) end),
+        "instrumented cross-type == must throw (CAVEAT 1 closed)")
+    local chunk3 = assert(Instrument.loadString(
+        'local s = ...\nif issecretvalue(s) then return "probed" end\nreturn "missed"', "=inst3"))
+    local okProbe, probeResult = pcall(chunk3, si)
+    assert(okProbe and probeResult == "probed",
+        "probe-first discipline must pass under instrumentation")
+    M.RestoreSecretStub(restoreI)
+    assert(rawget(_G, "__QUI_SECRET_TT") == nil
+        and rawget(_G, "__QUI_SECRET_EQ") == nil
+        and rawget(_G, "__QUI_SECRET_NEQ") == nil
+        and rawget(_G, "__QUI_SECRET_LEN") == nil,
+        "RestoreSecretStub must remove all four helpers")
+    assert(_G.issecretvalue == nil, "RestoreSecretStub must restore issecretvalue")
+
     print("secret_sentinel self-test: OK")
 end
 
 M.SelfTest = SelfTest
 
-if arg and arg[1] == "--test" then SelfTest() end
+-- arg[0] scoping: dofile-ing this helper from ANOTHER script running with
+-- --test (e.g. secret_instrument.lua --test) must not auto-fire this
+-- self-test.
+if arg and arg[1] == "--test"
+    and tostring(arg[0] or ""):find("secret_sentinel", 1, true) then
+    SelfTest()
+end
 
 return M

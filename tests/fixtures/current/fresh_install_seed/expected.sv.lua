@@ -4487,6 +4487,12 @@ return {
               dispelOverlay = {
                 borderSize = 3,
                 colors = {
+                  Bleed = {
+                    [1] = 0.80000000000000004,
+                    [2] = 0,
+                    [3] = 0,
+                    [4] = 1
+                  },
                   Curse = {
                     [1] = 0.59999999999999998,
                     [2] = 0,
@@ -4514,7 +4520,14 @@ return {
                 },
                 enabled = true,
                 fillOpacity = 0.17999999999999999,
-                opacity = 0.80000000000000004
+                iconAnchor = "TOPRIGHT",
+                iconOffsetX = 0,
+                iconOffsetY = 0,
+                iconOpacity = 1,
+                iconSize = 20,
+                opacity = 0.80000000000000004,
+                scope = "PLAYER_DISPELLABLE",
+                showIcon = false
               },
               targetHighlight = {
                 color = {
@@ -4863,6 +4876,12 @@ return {
               dispelOverlay = {
                 borderSize = 3,
                 colors = {
+                  Bleed = {
+                    [1] = 0.80000000000000004,
+                    [2] = 0,
+                    [3] = 0,
+                    [4] = 1
+                  },
                   Curse = {
                     [1] = 0.59999999999999998,
                     [2] = 0,
@@ -4890,7 +4909,14 @@ return {
                 },
                 enabled = true,
                 fillOpacity = 0.17999999999999999,
-                opacity = 0.80000000000000004
+                iconAnchor = "TOPRIGHT",
+                iconOffsetX = 0,
+                iconOffsetY = 0,
+                iconOpacity = 1,
+                iconSize = 20,
+                opacity = 0.80000000000000004,
+                scope = "PLAYER_DISPELLABLE",
+                showIcon = false
               },
               targetHighlight = {
                 color = {
@@ -6738,7 +6764,7 @@ return {
       Default = {
         _defaultsVersion = 3,
         _needsLateAbImport = true,
-        _schemaVersion = 51,
+        _schemaVersion = 59,
         actionBars = {
           bars = {
             bags = {
@@ -11153,6 +11179,65 @@ return {
                       offsetY = 1,
                       show = true
                     }
+                  },
+                  [2] = {
+                    anchor = "BOTTOMRIGHT",
+                    auraType = "HELPFUL",
+                    blacklist = {},
+                    borderColor = {
+                      [1] = 0,
+                      [2] = 0.80000000000000004,
+                      [3] = 0,
+                      [4] = 1
+                    },
+                    classifications = {
+                      bigDefensive = true,
+                      externalDefensive = true
+                    },
+                    duration = {
+                      anchor = "BOTTOM",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 9,
+                      offsetX = 0,
+                      offsetY = -6,
+                      show = true
+                    },
+                    enabled = false,
+                    filterFlags = {},
+                    filterMode = "classify",
+                    growDirection = "LEFT",
+                    hideSwipe = false,
+                    iconSize = 15,
+                    id = "defensives",
+                    maxIcons = 3,
+                    mode = "filterStrip",
+                    offsetX = 0,
+                    offsetY = 4,
+                    reverseSwipe = true,
+                    rightClickCancel = false,
+                    sortReverse = false,
+                    sortRule = "INDEX",
+                    spacing = 0,
+                    stack = {
+                      anchor = "BOTTOMRIGHT",
+                      color = {
+                        [1] = 1,
+                        [2] = 1,
+                        [3] = 1,
+                        [4] = 1
+                      },
+                      fontSize = 9,
+                      offsetX = -1,
+                      offsetY = 1,
+                      show = true
+                    },
+                    swipeStyle = "radial",
+                    whitelist = {}
                   }
                 },
                 ["*"] = {

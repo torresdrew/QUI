@@ -6,9 +6,9 @@ loadChunk("QUI_CDM/cdm/cdm_reanchor_realenv.lua", "cdm_reanchor_realenv.lua")("Q
 local RE = assert(ns.CDMReanchorRealEnv, "CDMReanchorRealEnv should be exported")
 assert(type(RE.BuildEnv) == "function", "BuildEnv is a function")
 
-local placed, clickOverlayCall, releasedIcon
+local placed, clickOverlayCall, releasedIcon, capturedClickable
 local factoryStub = {
-    AcquireIcon = function(_, c, e) return { c, e } end,
+    AcquireIcon = function(_, c, e, clickable) capturedClickable = clickable; return { c, e } end,
     ReleaseIcon = function(_, icon) releasedIcon = icon end,
     _pools = {},
     EnsurePool = function(self, key)
@@ -17,6 +17,13 @@ local factoryStub = {
     end,
     GetIconPool = function(self, key) return self._pools[key] or {} end,
 }
+-- getSettings backs the acquireIcon closure's clickable computation (EDIT 1):
+-- a clickableIcons=true container's key -> clickable true, false/absent -> false.
+local settingsByKey = {
+    clickyContainer = { clickableIcons = true },
+    plainContainer = { clickableIcons = false },
+}
+local getSettingsStub = function(key) return settingsByKey[key] end
 local env = RE.BuildEnv({
     CDMContainers = { GetContainer = function(k) return "C:" .. k end },
     CDMSpellData = { BuildSpellListFromOwned = function(_, k) return { "S:" .. k } end },
@@ -31,7 +38,7 @@ local env = RE.BuildEnv({
     CDMIconFactory = factoryStub,
     core = { PixelRound = function(_, v) return v + 1 end },
     uiParent = "UIP",
-    getSettings = "GS",
+    getSettings = getSettingsStub,
     resolveAdditional = "RA",
     onMetrics = "OM",
 })
@@ -41,13 +48,31 @@ assert(env.getCurated("buff")[1] == "S:buff", "getCurated -> SpellData:BuildSpel
 assert(env.index == "IDX", "index wired")
 assert(env.buildLayout == "BL", "buildLayout -> CDMLayout.BuildIconLayout")
 assert(env.uiParent == "UIP", "uiParent wired")
-assert(env.getSettings == "GS" and env.resolveAdditional == "RA" and env.onMetrics == "OM", "ctx internals passed through")
+assert(env.getSettings == getSettingsStub and env.resolveAdditional == "RA" and env.onMetrics == "OM", "ctx internals passed through")
 assert(env.pixelRound(5) == 6, "pixelRound -> core:PixelRound")
 local ai = env.acquireIcon("CC", "EE")
 assert(ai[1] == "CC" and ai[2] == "EE", "acquireIcon bound closure -> Factory:AcquireIcon(c,e)")
 assert(type(env.releaseIcon) == "function", "releaseIcon exposed on the env")
 env.releaseIcon("ICON")
 assert(releasedIcon == "ICON", "releaseIcon bound closure -> Factory:ReleaseIcon(icon)")
+
+-- Clickable wiring: acquireIcon computes `clickable` from the destination
+-- container's settings (ctx.getSettings) and forwards it as AcquireIcon's
+-- 3rd arg -- this is what lets AcquireIcon reuse a protected (clickButton)
+-- icon from its dedicated pool instead of minting a fresh one every refresh.
+do
+    env.acquireIcon("CC", "EE", "clickyContainer")
+    assert(capturedClickable == true,
+        "acquireIcon computes clickable=true from a clickableIcons=true container")
+
+    env.acquireIcon("CC", "EE", "plainContainer")
+    assert(capturedClickable == false,
+        "acquireIcon computes clickable=false from a clickableIcons=false container")
+
+    env.acquireIcon("CC", "EE", nil)
+    assert(capturedClickable == false,
+        "acquireIcon computes clickable=false with no containerKey (no settings lookup)")
+end
 
 -- Runtime edit expansion is for QUI/CDM layout mode only. Blizzard Edit Mode
 -- must stay untouched: opening it should not make the reanchor runtime show CDM
@@ -1043,6 +1068,31 @@ do
     _G.CreateFont, ns.CDMRuntimeQueries, ns.CDMSources = oldCreateFont, oldRQ, oldS
     _G.InCombatLockdown, ns.Helpers, _G.C_Spell = oldICL, oldHelpers, oldCSpell
     print("OK: G14 — native stack/count text preserved, zero raw SetFont on native")
+end
+
+-- releaseIcon success contract: when Factory:ReleaseIcon REFUSES (returns false,
+-- protected in combat), releaseIcon returns false AND keeps the icon in the pool
+-- (a refused release must not orphan pool membership). On success it removes the
+-- icon and returns a non-false value, unchanged from before.
+do
+    local refused = false
+    local savedReleaseIcon = factoryStub.ReleaseIcon
+    factoryStub.ReleaseIcon = function(_, icon) releasedIcon = icon; if refused then return false end end
+
+    local pooled = env.acquireIcon("CC", "EE", "essential")
+    assert(#factoryStub._pools.essential == 1, "setup: icon registered in pool")
+
+    refused = true
+    local ret = env.releaseIcon(pooled, "essential")
+    assert(ret == false, "refused Factory:ReleaseIcon -> releaseIcon returns false")
+    assert(#factoryStub._pools.essential == 1, "refused release keeps pool membership")
+
+    refused = false
+    local ret2 = env.releaseIcon(pooled, "essential")
+    assert(ret2 ~= false, "successful release returns non-false")
+    assert(#factoryStub._pools.essential == 0, "successful release removes pool membership")
+
+    factoryStub.ReleaseIcon = savedReleaseIcon
 end
 
 print("OK: cdm_reanchor_realenv_test")

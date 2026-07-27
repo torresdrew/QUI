@@ -346,6 +346,7 @@ function CDMReanchorBoot.BuildRuntime(env)
     runtime = env.CDMReanchorRuntime.New({
         bridge = bridge,
         wiring = wiring,
+        placementPlanner = env.CDMPlacementPlanner or ns.CDMPlacementPlanner,
         auraPhase = auraPhase,
         pandemic = pandemic,
         -- Proc-glow bridge OnClaim reconcile. The instance is built lazily in
@@ -368,6 +369,11 @@ function CDMReanchorBoot.BuildRuntime(env)
         -- Blizzard-CDM buff entries are native-only in the reanchor runtime.
         entryAuraIsPresent = env.entryAuraIsPresent,
         inCombat = env.inCombat,
+        -- Frame-independent protected-mutation gate (realenv canMutateProtectedShells):
+        -- true OOC / init-safe window, false in combat. The runtime defers a whole
+        -- refresh pass when this is false AND the container's owned icons carry a
+        -- secure clickButton (else Factory recycle Hides a protected parent).
+        canMutate = env.canMutate,
         isEditMode = env.isEditMode,
         pixelRound = env.pixelRound,
         mintOwned = MakeMintOwned(env),
@@ -376,6 +382,10 @@ function CDMReanchorBoot.BuildRuntime(env)
         -- can't pile up Show()n at stale slots.
         releaseOwned = env.releaseIcon,
         positionOwned = MakePositionOwned(env),
+        acquireAuraMirror = env.acquireAuraMirror,
+        positionAuraMirror = env.positionAuraMirror,
+        beginAuraMirrorPass = env.beginAuraMirrorPass,
+        endAuraMirrorPass = env.endAuraMirrorPass,
         applySize = MakeApplySize(env),
         decorate = env.decorate,
         mintShell = env.mintShell,
@@ -400,6 +410,16 @@ function CDMReanchorBoot.BuildRuntime(env)
         RefreshBuiltin = function(_, containerKey)
             return runtime:RefreshContainer(containerKey)
         end,
+        -- Atomic global placement pass used by live built-in layout and hook
+        -- churn. RefreshBuiltin remains as a narrow compatibility/test seam.
+        RefreshBuiltins = function(_, containerKeys)
+            return runtime:RefreshContainers(containerKeys)
+        end,
+        -- PLAYER_REGEN_ENABLED drain: re-run every container whose combat refresh
+        -- was deferred by the protected-owned gate.
+        DrainPendingCombatRefresh = function(_)
+            return runtime:DrainPendingCombatRefresh()
+        end,
         -- Per-frame feature registry accessors (keybinds / rotation glow over the
         -- re-anchored Blizzard frames, which aren't QUI-container children).
         GetReanchoredFrames = function(_, containerKey)
@@ -407,6 +427,9 @@ function CDMReanchorBoot.BuildRuntime(env)
         end,
         GetEntryForFrame = function(_, frame)
             return runtime:GetEntryForFrame(frame)
+        end,
+        GetPlacementsForFrame = function(_, frame)
+            return runtime:GetPlacementsForFrame(frame)
         end,
     }
 end

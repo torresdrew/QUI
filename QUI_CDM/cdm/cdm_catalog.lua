@@ -320,6 +320,61 @@ local function SelectPersistentSpellID(info)
     return nil
 end
 
+local function AddCooldownInfoFamilyIDs(outSet, info)
+    if type(outSet) ~= "table" or not info then return end
+    if CDMCatalog.IsUsableID(info.spellID) then
+        outSet[info.spellID] = true
+    end
+    if CDMCatalog.IsUsableID(info.overrideSpellID) then
+        outSet[info.overrideSpellID] = true
+    end
+    if CDMCatalog.IsUsableID(info.overrideTooltipSpellID) then
+        outSet[info.overrideTooltipSpellID] = true
+    end
+    if info.linkedSpellIDs then
+        for _, linkedID in ipairs(info.linkedSpellIDs) do
+            if CDMCatalog.IsUsableID(linkedID) then
+                outSet[linkedID] = true
+            end
+        end
+    end
+end
+
+-- Current-loadout knownness proves class applicability immediately. For an
+-- unlearned row, ask the player spellbook with hidden/future/off-spec lanes
+-- included. A definitive miss across the entire CDM family means the row is
+-- foreign to this class; nil means the spellbook is not ready, so callers
+-- retain the row conservatively.
+local function CooldownInfoAppliesToPlayerClass(info)
+    if not info then return nil end
+    if info.isKnown == true then return true end
+    local Sources = GetSources()
+    local query = Sources and Sources.QuerySpellBookClassAffinity
+    if not query then return nil end
+
+    local sawDefinitiveAnswer = false
+    local function CheckSpellID(spellID)
+        if not CDMCatalog.IsUsableID(spellID) then return false end
+        local applies = query(spellID)
+        if applies == true then return true end
+        if applies == false then sawDefinitiveAnswer = true end
+        return false
+    end
+
+    if CheckSpellID(info.spellID)
+        or CheckSpellID(info.overrideSpellID)
+        or CheckSpellID(info.overrideTooltipSpellID) then
+        return true
+    end
+    if info.linkedSpellIDs then
+        for _, linkedID in ipairs(info.linkedSpellIDs) do
+            if CheckSpellID(linkedID) then return true end
+        end
+    end
+    if sawDefinitiveAnswer then return false end
+    return nil
+end
+
 local function ResolveContainerCategories(containerKey, containerType)
     if containerType == "cooldown" and BUILTIN_COOLDOWN_PICKER_CATEGORIES[containerKey] then
         return BUILTIN_COOLDOWN_PICKER_CATEGORIES[containerKey], true
@@ -379,7 +434,7 @@ function CDMCatalog.SeedFromBlizzard(containerKind)
                     source = BLIZZARD_CDM_ENTRY_SOURCE,
                 }
             end
-        else
+        elseif CooldownInfoAppliesToPlayerClass(info) ~= false then
             local sid = isAuraCategory and SelectPreferredSpellID(info, true)
                 or SelectPersistentSpellID(info)
             if sid and not seen[sid] then
@@ -550,6 +605,70 @@ function CDMCatalog.RebuildCooldownLearnedPreferredIDs(outSet)
     return true
 end
 
+-- Current-spec aura-family membership for dormancy classification.
+--
+-- RebuildBlizzardCatalogMaps intentionally walks allowUnlearned=TRUE so the
+-- picker and saved snapshots can retain talent/loadout choices. That superset
+-- can also contain PTR rows from another class, though, and therefore cannot
+-- answer whether a blizzardCDM aura is valid for the current character. This
+-- set walks the same aura categories with allowUnlearned=FALSE and records all
+-- spell identities attached to each learned row. Keeping the whole family
+-- (base, override, tooltip aura, and linked auras) preserves older snapshots
+-- whose stored identity differs from today's preferred tooltip identity.
+function CDMCatalog.RebuildAuraLearnedFamilyIDs(outSet)
+    if type(outSet) ~= "table" then return false end
+    if not HasCooldownViewerAPI() then return false end
+
+    local ready = true
+    for _, cat in ipairs(PICKER_AURA_CATEGORIES) do
+        local ids = CDMCatalog.GetCategorySet(cat, false)
+        if not ids then
+            ready = false
+        else
+            for _, cdID in ipairs(ids) do
+                local info = CDMCatalog.GetCooldownInfo(cdID)
+                if not info then
+                    ready = false
+                elseif not info.equipSlot and not info.spellCategoryID then
+                    AddCooldownInfoFamilyIDs(outSet, info)
+                end
+            end
+        end
+    end
+    return ready
+end
+
+-- Full current-class spell family used to exclude foreign PTR/stale-profile
+-- rows entirely. Unlike the learned aura set above, this walks
+-- allowUnlearned=true and accepts future/off-spec player-spellbook entries, so
+-- valid same-class talent/loadout choices remain eligible for Dormant status.
+function CDMCatalog.RebuildClassApplicableSpellIDs(outSet)
+    if type(outSet) ~= "table" then return false end
+    if not HasCooldownViewerAPI() then return false end
+
+    local ready = true
+    for _, cat in ipairs(ALL_RENDERED_CATEGORIES) do
+        local ids = CDMCatalog.GetCategorySet(cat, true)
+        if not ids then
+            ready = false
+        else
+            for _, cdID in ipairs(ids) do
+                local info = CDMCatalog.GetCooldownInfo(cdID)
+                if not info then
+                    ready = false
+                elseif not info.equipSlot and not info.spellCategoryID then
+                    local applies = CooldownInfoAppliesToPlayerClass(info)
+                    if applies == nil then ready = false end
+                    if applies ~= false then
+                        AddCooldownInfoFamilyIDs(outSet, info)
+                    end
+                end
+            end
+        end
+    end
+    return ready
+end
+
 function CDMCatalog.GetAvailableSpellsForContainer(containerKey, containerType, ownedSet, correctionMap)
     if not HasCooldownViewerAPI() then
         return {}
@@ -620,7 +739,7 @@ function CDMCatalog.GetAvailableSpellsForContainer(containerKey, containerType, 
                             _entryID   = catID,
                         }
                     end
-                elseif cdInfo then
+                elseif cdInfo and CooldownInfoAppliesToPlayerClass(cdInfo) ~= false then
                     local sid = correctionMap[cdID]
                     if not sid then
                         sid = isAuraContainer and SelectPreferredSpellID(cdInfo, true)

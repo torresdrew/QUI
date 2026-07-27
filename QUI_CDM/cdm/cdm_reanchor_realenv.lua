@@ -210,7 +210,10 @@ local function _BarReskinWork(live, settings)
         local r, g, b
         if settings.useClassColor and UnitClass and RAID_CLASS_COLORS then
             local _, class = UnitClass("player")
-            local cc = class and RAID_CLASS_COLORS[tostring(class)]
+            -- @secret-policy: collapse-only — UnitClass can return SECRET on 12.1 PTR7
+            -- (SecretWhenUnitIdentityRestricted); collapse so the barColor fallback applies.
+            if _issecretvalue(class) then class = nil end
+            local cc = class and RAID_CLASS_COLORS[class]
             if cc then r, g, b = cc.r, cc.g, cc.b end
         end
         if not r then
@@ -944,10 +947,136 @@ function CDMReanchorRealEnv.BuildEnv(ctx)
         return false
     end
 
+    -- Managed aura mirrors: the owned spell icon is the always-available base;
+    -- an engine-owned CustomAuraButton overlays it only while the configured
+    -- player aura is present. The aura child is styled and anchored to a stable
+    -- QUI host at BIRTH, before Blizzard applies aura-secret access denial.
+    local function rowConfigForEntry(entry, containerKey)
+        local settings = ctx.getSettings and ctx.getSettings(containerKey) or {}
+        if Layout and Layout.BuildRows then
+            local rows = Layout.BuildRows(settings)
+            local wanted = entry and entry._assignedRow
+            for i = 1, #rows do
+                if rows[i].rowNum == wanted then return rows[i] end
+            end
+            if rows[1] then return rows[1] end
+        end
+        return {
+            size = settings.iconSize or 42,
+            borderSize = settings.borderSize or 2,
+            borderColorSource = settings.borderColorSource,
+            borderColor = settings.borderColor or settings.borderColorTable,
+            durationSize = settings.durationSize or 14,
+            durationOffsetX = settings.durationOffsetX or 0,
+            durationOffsetY = settings.durationOffsetY or 8,
+            durationTextColor = settings.durationTextColor,
+            durationAnchor = settings.durationAnchor or "TOP",
+            hideDurationText = settings.hideDurationText,
+            stackSize = settings.stackSize or 14,
+            stackOffsetX = settings.stackOffsetX or 0,
+            stackOffsetY = settings.stackOffsetY or -8,
+            stackTextColor = settings.stackTextColor,
+            stackAnchor = settings.stackAnchor or "BOTTOM",
+            hideStackText = settings.hideStackText,
+        }
+    end
+
+    local function auraProfileFromRow(rowConfig)
+        rowConfig = rowConfig or {}
+        local br, bg, bb, ba = 0, 0, 0, 1
+        if Helpers and Helpers.GetSkinBorderColor then
+            br, bg, bb, ba = Helpers.GetSkinBorderColor(rowConfig, "")
+        elseif type(rowConfig.borderColor) == "table" then
+            br, bg, bb, ba = rowConfig.borderColor[1] or 0,
+                rowConfig.borderColor[2] or 0, rowConfig.borderColor[3] or 0,
+                rowConfig.borderColor[4] or 1
+        end
+        return {
+            iconSize = rowConfig.size or 42,
+            borderColor = { br, bg, bb, ba },
+            duration = {
+                fontSize = rowConfig.durationSize or 14,
+                anchor = rowConfig.durationAnchor or "CENTER",
+                offsetX = rowConfig.durationOffsetX or 0,
+                offsetY = rowConfig.durationOffsetY or 0,
+                color = rowConfig.durationTextColor,
+                show = rowConfig.hideDurationText ~= true,
+            },
+            stack = {
+                fontSize = rowConfig.stackSize or 14,
+                anchor = rowConfig.stackAnchor or "BOTTOMRIGHT",
+                offsetX = rowConfig.stackOffsetX or 0,
+                offsetY = rowConfig.stackOffsetY or 0,
+                color = rowConfig.stackTextColor,
+                show = rowConfig.hideStackText ~= true,
+            },
+        }
+    end
+
+    local auraMirrors
+    if ns.CDMManagedAuraMirrors and ns.CDMManagedAuraMirrors.New then
+        auraMirrors = ns.CDMManagedAuraMirrors.New({
+            createFrame = CreateFrame,
+            isSecret = _issecretvalue,
+            canCreate = function()
+                return (not isInCombatLockdown()) or isInitSafeWindow()
+            end,
+            canMutate = canMutateProtectedShells,
+            aurasAreSecret = function()
+                return C_Secrets and C_Secrets.ShouldAurasBeSecret
+                    and C_Secrets.ShouldAurasBeSecret() or false
+            end,
+            styleFrame = function(frame, profile)
+                local skin = ns.AuraSkin or (ns.Addon and ns.Addon.AuraSkin)
+                if skin and skin.WireButton then skin.WireButton(frame, profile) end
+            end,
+            restyleFrame = function(frame, rowConfig)
+                local skin = ns.AuraSkin or (ns.Addon and ns.Addon.AuraSkin)
+                if skin and skin.WireButton then
+                    skin.WireButton(frame, auraProfileFromRow(rowConfig))
+                end
+            end,
+            positionBase = function(icon, host, rowConfig)
+                if icon.GetScale and icon:GetScale() ~= 1 then icon:SetScale(1) end
+                icon:ClearAllPoints()
+                icon:SetPoint("CENTER", host, "CENTER", 0, 0)
+                icon:Show()
+                if Icons and Icons.OnContainerIconPlaced then
+                    Icons.OnContainerIconPlaced(icon, rowConfig)
+                end
+            end,
+        })
+    end
+
+    local function beginAuraMirrorPass(container)
+        return auraMirrors and auraMirrors:BeginPass(container) or false
+    end
+
+    local function acquireAuraMirror(entry, containerKey, placementKey)
+        if not auraMirrors then return nil end
+        local swipe = ns._OwnedSwipe and ns._OwnedSwipe.GetSettings
+            and ns._OwnedSwipe.GetSettings() or nil
+        if swipe and swipe.showCooldownIconAuraPhase == false then return nil end
+        local container = getContainerFor(containerKey)
+        if not container then return nil end
+        local profile = auraProfileFromRow(rowConfigForEntry(entry, containerKey))
+        return auraMirrors:Acquire(container, placementKey, entry, profile)
+    end
+
+    local function positionAuraMirror(record, baseIcon, container, x, y, w, h, rowConfig)
+        return auraMirrors and auraMirrors:Position(
+            record, baseIcon, container, x, y, w, h, rowConfig) or false
+    end
+
+    local function endAuraMirrorPass(container)
+        return auraMirrors and auraMirrors:EndPass(container) or true
+    end
+
     return {
         CDMReanchor        = ns.CDMReanchor,
         CDMReanchorWiring  = ns.CDMReanchorWiring,
         CDMReanchorRuntime = ns.CDMReanchorRuntime,
+        CDMPlacementPlanner = ns.CDMPlacementPlanner,
         uiParent = ctx.uiParent or _G.UIParent,
         index = ctx.CDMIndex or ns.CDMIndex,
         getContainer = function(key)
@@ -1053,7 +1182,16 @@ function CDMReanchorRealEnv.BuildEnv(ctx)
         -- release removes. Un-keyed calls keep the legacy shape untouched.
         acquireIcon = function(c, e, containerKey)
             if not (Factory and Factory.AcquireIcon) then return nil end
-            local icon = Factory:AcquireIcon(c, e)
+            -- Only a clickableIcons container's owned icons ever get a secure
+            -- clickButton; pass that through so AcquireIcon can reuse a protected
+            -- icon from the dedicated pool (mutation-safe) instead of minting a
+            -- fresh one every refresh (bounded, stable identity).
+            local clickable = false
+            if containerKey and ctx.getSettings then
+                local s = ctx.getSettings(containerKey)
+                clickable = (s and s.clickableIcons) and true or false
+            end
+            local icon = Factory:AcquireIcon(c, e, clickable)
             if icon and containerKey and Factory.EnsurePool then
                 local pool = Factory:EnsurePool(containerKey)
                 pool[#pool + 1] = icon
@@ -1064,6 +1202,11 @@ function CDMReanchorRealEnv.BuildEnv(ctx)
         -- pool return) for the runtime's per-pass owned-icon release.
         releaseIcon = function(icon, containerKey)
             if not (Factory and Factory.ReleaseIcon) then return end
+            -- Recycle FIRST: if the Factory refuses (protected in combat) it
+            -- returns false; keep pool membership so the icon stays tracked and
+            -- the caller (ReleaseOwnedIcons) can retry it on the regen drain.
+            local ok = Factory:ReleaseIcon(icon)
+            if ok == false then return false end
             if containerKey and Factory.GetIconPool then
                 local pool = Factory:GetIconPool(containerKey)
                 for i = #pool, 1, -1 do
@@ -1073,7 +1216,7 @@ function CDMReanchorRealEnv.BuildEnv(ctx)
                     end
                 end
             end
-            Factory:ReleaseIcon(icon)
+            return ok
         end,
         onIconPlaced = function(icon, rowConfig)
             if Icons and Icons.OnContainerIconPlaced then Icons.OnContainerIconPlaced(icon, rowConfig) end
@@ -1085,6 +1228,10 @@ function CDMReanchorRealEnv.BuildEnv(ctx)
         mintShell = mintShell,
         positionShell = positionShell,
         positionClickSlot = positionClickSlot,
+        beginAuraMirrorPass = beginAuraMirrorPass,
+        acquireAuraMirror = acquireAuraMirror,
+        positionAuraMirror = positionAuraMirror,
+        endAuraMirrorPass = endAuraMirrorPass,
         -- Native direct-anchor tooltip overlay on the LIVE frame.
         ensureLiveTooltip = ensureLiveTooltip,
         -- Teardown companion: hides + disables mouse on the overlay for a sunk/retired

@@ -116,9 +116,8 @@ local function ValidateCandidateFilters(candidateFilters)
 		ValidateProcessedAuraType(candidateFilters.processedAuraType);
 	end
 
-	-- Additional filters for booleans on auras. These can only match when
-	-- these values are true.
-	local PositiveOnlyCandidateFilterFields =
+	-- Additional filters for booleans on auras.
+	local BooleanOnlyCandidateFilterFields =
 	{
 		"isFromPlayerOrPlayerPet",
 		"isRoleAura",
@@ -131,9 +130,9 @@ local function ValidateCandidateFilters(candidateFilters)
 		"isBossOrRoleAura"
 	};
 
-	for _index, fieldName in ipairs(PositiveOnlyCandidateFilterFields) do
+	for _index, fieldName in ipairs(BooleanOnlyCandidateFilterFields) do
 		if candidateFilters[fieldName] ~= nil then
-			assert(candidateFilters[fieldName] == true, fieldName .. " only supports true or nil.");
+			assert(type(candidateFilters[fieldName]) == "boolean", fieldName .. " must be a boolean or nil.");
 		end
 	end
 end
@@ -145,24 +144,24 @@ local function ValidateAuraGroupLayoutOptions(layoutOptions)
 
 	assert(type(layoutOptions) == "table", "layout must be a table or nil.");
 
-	if layoutOptions.elementSpacingX ~= nil then
-		assert(type(layoutOptions.elementSpacingX) == "number", "elementSpacingX must be a number.");
+	if layoutOptions.elementSpacing ~= nil then
+		assert(type(layoutOptions.elementSpacing) == "number", "elementSpacing must be a number.");
 	end
 
-	if layoutOptions.elementSpacingY ~= nil then
-		assert(type(layoutOptions.elementSpacingY) == "number", "elementSpacingY must be a number.");
+	if layoutOptions.lineSpacing ~= nil then
+		assert(type(layoutOptions.lineSpacing) == "number", "lineSpacing must be a number.");
 	end
 
-	if layoutOptions.gapX ~= nil then
-		assert(type(layoutOptions.gapX) == "number", "gapX must be a number.");
+	if layoutOptions.groupSpacing ~= nil then
+		assert(type(layoutOptions.groupSpacing) == "number", "groupSpacing must be a number.");
 	end
 
-	if layoutOptions.gapY ~= nil then
-		assert(type(layoutOptions.gapY) == "number", "gapY must be a number.");
+	if layoutOptions.groupLineSpacing ~= nil then
+		assert(type(layoutOptions.groupLineSpacing) == "number", "groupLineSpacing must be a number.");
 	end
 
-	if layoutOptions.forceNewRow ~= nil then
-		assert(type(layoutOptions.forceNewRow) == "boolean", "forceNewRow must be a boolean.");
+	if layoutOptions.forceNewLine ~= nil then
+		assert(type(layoutOptions.forceNewLine) == "boolean", "forceNewLine must be a boolean.");
 	end
 
 	if layoutOptions.elementWidth ~= nil then
@@ -171,6 +170,10 @@ local function ValidateAuraGroupLayoutOptions(layoutOptions)
 
 	if layoutOptions.elementHeight ~= nil then
 		assert(IsNonNegativeNumber(layoutOptions.elementHeight), "elementHeight must be a non-negative number.");
+	end
+
+	if layoutOptions.layoutIndex ~= nil then
+		assert(type(layoutOptions.layoutIndex) == "number", "layoutIndex must be a number.");
 	end
 end
 
@@ -208,42 +211,14 @@ local function ValidateItemEnchantmentSortOptions(sortMethod, sortDirection)
 end
 
 local function ValidateItemEnchantmentLayoutOptions(layoutOptions)
+	ValidateAuraGroupLayoutOptions(layoutOptions);
+
 	if layoutOptions == nil then
 		return;
 	end
 
-	assert(type(layoutOptions) == "table", "layout must be a table or nil.");
-
 	if layoutOptions.placement ~= nil then
 		assert(EnumUtil.IsValid(CustomAuraContainerItemEnchantmentPlacement, layoutOptions.placement), "placement must be a valid CustomAuraContainerItemEnchantmentPlacement.");
-	end
-
-	if layoutOptions.elementSpacingX ~= nil then
-		assert(type(layoutOptions.elementSpacingX) == "number", "elementSpacingX must be a number.");
-	end
-
-	if layoutOptions.elementSpacingY ~= nil then
-		assert(type(layoutOptions.elementSpacingY) == "number", "elementSpacingY must be a number.");
-	end
-
-	if layoutOptions.gapX ~= nil then
-		assert(type(layoutOptions.gapX) == "number", "gapX must be a number.");
-	end
-
-	if layoutOptions.gapY ~= nil then
-		assert(type(layoutOptions.gapY) == "number", "gapY must be a number.");
-	end
-
-	if layoutOptions.forceNewRow ~= nil then
-		assert(type(layoutOptions.forceNewRow) == "boolean", "forceNewRow must be a boolean.");
-	end
-
-	if layoutOptions.elementWidth ~= nil then
-		assert(IsNonNegativeNumber(layoutOptions.elementWidth), "elementWidth must be a non-negative number.");
-	end
-
-	if layoutOptions.elementHeight ~= nil then
-		assert(IsNonNegativeNumber(layoutOptions.elementHeight), "elementHeight must be a non-negative number.");
 	end
 end
 
@@ -316,7 +291,8 @@ function CustomAuraContainerSharedMixin:AddAuraGroup(groupKey, filterString, opt
 		{
 			batchSize = CustomAuraContainerConstants.FrameCreationBatchSize,
 			templateNames = options.templateNames,
-			initializeFrame = options.initializeFrame
+			initializeFrame = options.initializeFrame,
+			accessRestrictions = CustomAuraContainerConstants.AccessRestrictionFlags,
 		});
 
 	-- Allocate a batch of frames up-front to make it harder to observe the
@@ -335,12 +311,56 @@ function CustomAuraContainerSharedMixin:AddAuraGroup(groupKey, filterString, opt
 
 	self.layoutOptionsByAuraGroup[auraGroup] = options.layout;
 
+	-- Aura groups resize the container, and so adding any to a group should
+	-- disable OnSizeChanged. This has the side effect of making it impossible
+	-- for user addons to anchor other frames that don't have this aspect
+	-- applied to the container once a group is set - for that, they can
+	-- inherit DisableUntrustedLayoutScriptsTemplate on those frames at the
+	-- point of creation to opt-in to this aspect.
+
+	self:AddForbiddenAspects(Enum.ForbiddenAspect.UntrustedLayoutScriptExecution);
+
 	self:UpdateAllAuras();
 end
 
 function CustomAuraContainerSharedMixin:HasAuraGroup(groupKey)
 	-- Exposing private interface.
 	return ManagedAuraContainerPrivateMixin.HasAuraGroup(self, groupKey);
+end
+
+function CustomAuraContainerSharedMixin:GetAuraGroupFrame(groupKey, frameIndex)
+	-- Non-existent groups are modeled as empty groups for the purpose of
+	-- frame enumeration and access.
+	local auraGroup = self:GetAuraGroup(groupKey);
+	local auraFrame;
+
+	if auraGroup then
+		auraFrame = auraGroup:GetFrameProvider():GetOwnedFrame(frameIndex);
+	end
+
+	return auraFrame;
+end
+
+function CustomAuraContainerSharedMixin:GetAuraGroupFrameCount(groupKey)
+	local auraGroup = self:GetAuraGroup(groupKey);
+	local auraFrameCount = 0;
+
+	if auraGroup then
+		auraFrameCount = auraGroup:GetFrameProvider():GetOwnedFrameCount();
+	end
+
+	return auraFrameCount;
+end
+
+function CustomAuraContainerSharedMixin:SetAuraGroupFilterString(groupKey, filterString)
+	local auraGroup = GetRequiredAuraGroup(self, groupKey);
+	assert(AuraUtil.IsValidFilterString(filterString));
+
+	if auraGroup:GetFilterString() ~= filterString then
+		auraGroup:SetFilterString(filterString);
+		self:RebuildAuraParseFilters();
+		self:UpdateAllAuras();
+	end
 end
 
 function CustomAuraContainerSharedMixin:SetAuraGroupMaxFrameCount(groupKey, maxFrameCount)
@@ -404,9 +424,11 @@ function CustomAuraContainerSharedMixin:SetAuraSlotFilterString(slotKey, filterS
 	local auraSlot = GetRequiredAuraSlot(self, slotKey);
 	assert(AuraUtil.IsValidFilterString(filterString));
 
-	auraSlot:SetFilterString(filterString);
-	self:RebuildAuraParseFilters();
-	self:UpdateAllAuras();
+	if auraSlot:GetFilterString() ~= filterString then
+		auraSlot:SetFilterString(filterString);
+		self:RebuildAuraParseFilters();
+		self:UpdateAllAuras();
+	end
 end
 
 function CustomAuraContainerSharedMixin:SetAuraSlotCandidateFilters(slotKey, candidateFilters)
@@ -463,74 +485,6 @@ function CustomAuraContainerSharedMixin:ResetItemEnchantmentLayout()
 	self:MarkDirty(AuraContainerDirtyMask.AuraFrameLayout);
 end
 
-function CustomAuraContainerSharedMixin:GetAuraLayoutAnchorPoint()
-	return self.layoutAnchorPoint;
-end
-
-function CustomAuraContainerSharedMixin:SetAuraLayoutAnchorPoint(anchorPoint)
-	assert(type(anchorPoint) == "string", "anchorPoint must be a string.");
-
-	if self.layoutAnchorPoint ~= anchorPoint then
-		self.layoutAnchorPoint = anchorPoint;
-		self:MarkDirty(AuraContainerDirtyMask.AuraFrameLayout);
-	end
-end
-
-function CustomAuraContainerSharedMixin:GetAuraLayoutGrowthDirection()
-	return self.layoutHorizontalGrowthDirection, self.layoutVerticalGrowthDirection;
-end
-
-function CustomAuraContainerSharedMixin:SetAuraLayoutGrowthDirection(horizontalDirection, verticalDirection)
-	assert(EnumUtil.IsValid(AnchorUtil.FlowDirection, horizontalDirection), "horizontalDirection must be valid.");
-	assert(EnumUtil.IsValid(AnchorUtil.FlowDirection, verticalDirection), "verticalDirection must be valid.");
-
-	if self.layoutHorizontalGrowthDirection ~= horizontalDirection or self.layoutVerticalGrowthDirection ~= verticalDirection then
-		self.layoutHorizontalGrowthDirection = horizontalDirection;
-		self.layoutVerticalGrowthDirection = verticalDirection;
-		self:MarkDirty(AuraContainerDirtyMask.AuraFrameLayout);
-	end
-end
-
-function CustomAuraContainerSharedMixin:GetAuraLayoutPadding()
-	return self.layoutPaddingLeft, self.layoutPaddingRight, self.layoutPaddingTop, self.layoutPaddingBottom;
-end
-
-function CustomAuraContainerSharedMixin:SetAuraLayoutPadding(left, right, top, bottom)
-	assert(type(left) == "number", "left must be a number.");
-	assert(type(right) == "number", "right must be a number.");
-	assert(type(top) == "number", "top must be a number.");
-	assert(type(bottom) == "number", "bottom must be a number.");
-
-	if self.layoutPaddingLeft ~= left or self.layoutPaddingRight ~= right or self.layoutPaddingTop ~= top or self.layoutPaddingBottom ~= bottom then
-		self.layoutPaddingLeft = left;
-		self.layoutPaddingRight = right;
-		self.layoutPaddingTop = top;
-		self.layoutPaddingBottom = bottom;
-
-		self:MarkDirty(AuraContainerDirtyMask.AuraFrameLayout);
-	end
-end
-
-function CustomAuraContainerSharedMixin:GetAuraLayoutRowWidth()
-	return self.layoutRowWidth;
-end
-
-function CustomAuraContainerSharedMixin:SetAuraLayoutRowWidth(rowWidth)
-	assert(rowWidth == nil or type(rowWidth) == "number", "rowWidth must be a number or nil.");
-
-	rowWidth = rowWidth or math.huge;
-
-	if self.layoutRowWidth ~= rowWidth then
-		self.layoutRowWidth = rowWidth;
-		self:MarkDirty(AuraContainerDirtyMask.AuraFrameLayout);
-	end
-end
-
-function CustomAuraContainerSharedMixin:ResetAuraLayoutOptions()
-	self:ResetAuraLayoutOptionsInternal();
-	self:MarkDirty(AuraContainerDirtyMask.AuraFrameLayout);
-end
-
 function CustomAuraContainerSharedMixin:GetAuraProcessingPolicy()
 	-- Omitting options for now. If someone comes here to add them, please
 	-- securecopy() them on the way out. Thank you.
@@ -555,17 +509,18 @@ function CustomAuraContainerSharedMixin:SetAuraProcessingPolicy(policy, options)
 	self:UpdateAllAuras();
 end
 
-CustomAuraContainerInboundMixin = CreateFromMixins(ManagedAuraContainerInboundMixin, CustomAuraContainerSharedMixin);
-CustomAuraContainerPrivateMixin = CreateFromMixins(ManagedAuraContainerPrivateMixin, CustomAuraContainerSharedMixin);
+CustomAuraContainerInboundMixin = CreateFromMixins(ManagedAuraContainerInboundMixin, AuraContainerFlowLayoutInboundMixin, CustomAuraContainerSharedMixin);
+CustomAuraContainerPrivateMixin = CreateFromMixins(ManagedAuraContainerPrivateMixin, AuraContainerFlowLayoutPrivateMixin, CustomAuraContainerSharedMixin);
 
 function CustomAuraContainerPrivateMixin:OnLoad()
 	self.auraProcessingPolicy = CustomAuraContainerAuraProcessingPolicy.None;
 	self.layoutOptionsByAuraGroup = {};
+	self.flowLayout = CreateAndInitFromMixin(CustomAuraContainerFlowLayoutMixin);
 	self.flowLayoutGroups = {};
 	self.processAuraPolicyOptions = nil;
 
-	self:ResetItemEnchantmentLayoutInternal()
-	self:ResetAuraLayoutOptionsInternal();
+	self:ResetItemEnchantmentLayoutInternal();
+	self:ApplyFlowLayoutDefaults(self.flowLayout);
 	self:MarkDirty(AuraContainerDirtyMask.All);
 end
 
@@ -599,71 +554,80 @@ function CustomAuraContainerPrivateMixin:ApplyAuraMetadata(auraData)
 	end
 end
 
-function CustomAuraContainerPrivateMixin:GetFlowLayoutDescription()
-	return CustomAuraContainerFlowLayoutDescription;
-end
+function CustomAuraContainerPrivateMixin:GetFlowLayoutGroupDescriptions()
+	local descriptions = {};
 
-function CustomAuraContainerPrivateMixin:GetFlowLayoutGroups()
-	return self.flowLayoutGroups;
-end
+	for index, auraGroup in self:EnumerateAuraGroups() do
+		local layoutOptions = self.layoutOptionsByAuraGroup[auraGroup];
 
-function CustomAuraContainerPrivateMixin:AddItemEnchantmentLayoutGroup(flowLayoutGroups)
-	if not self:HasAnyItemEnchantments() then
-		return;
+		local description = {};
+		-- Closures are intentional because aura processing replaces each
+		-- group's visible frame list during refresh.
+		description.elements = function() return auraGroup:GetFramesByIndex(); end;
+		description.layoutIndex = layoutOptions.layoutIndex;
+		description.layoutOptions = layoutOptions;
+		description.registrationIndex = index;
+
+		table.insert(descriptions, description);
 	end
 
-	local layoutOptions = self.itemEnchantmentLayoutOptions;
+	if self:HasAnyItemEnchantments() then
+		local layoutOptions = self.itemEnchantmentLayoutOptions;
 
-	table.insert(flowLayoutGroups,
-		{
-			-- Closures are intentional because aura processing replaces each
-			-- group's visible frame list during refresh.
-			elements = function() return self:GetActiveItemEnchantmentFrames(); end,
-			elementSpacingX = layoutOptions.elementSpacingX,
-			elementSpacingY = layoutOptions.elementSpacingY,
+		local description = {};
+		description.elements = function() return self:GetActiveItemEnchantmentFrames(); end;
+		description.layoutIndex = layoutOptions.layoutIndex;
+		description.layoutOptions = layoutOptions;
 
-			forceNewRow = layoutOptions.forceNewRow,
-			gapX = layoutOptions.gapX,
-			gapY = layoutOptions.gapY,
+		-- Placement support is retained as a convenience over layout indices
+		-- and defines a fallback registration order for sorting.
+		if layoutOptions.placement == CustomAuraContainerItemEnchantmentPlacement.AfterAuraGroups then
+			description.registrationIndex = math.huge;
+		else
+			description.registrationIndex = -math.huge;
+		end
 
-			elementWidth = layoutOptions.elementWidth,
-			elementHeight = layoutOptions.elementHeight,
-		});
+		table.insert(descriptions, description);
+	end
+
+	return descriptions;
 end
 
-function CustomAuraContainerPrivateMixin:ShouldPlaceItemEnchantmentsBeforeAuraGroups()
-	return self.itemEnchantmentLayoutOptions.placement == CustomAuraContainerItemEnchantmentPlacement.BeforeAuraGroups;
+local function GetEffectiveFlowLayoutIndex(description)
+	return description.layoutIndex or description.registrationIndex or math.huge;
+end
+
+
+local function SortFlowLayoutDescriptions(a, b)
+	local layoutIndexA = GetEffectiveFlowLayoutIndex(a);
+	local layoutIndexB = GetEffectiveFlowLayoutIndex(b);
+
+	if layoutIndexA ~= layoutIndexB then
+		return layoutIndexA < layoutIndexB;
+	end
+
+	return a.registrationIndex < b.registrationIndex;
 end
 
 function CustomAuraContainerPrivateMixin:RebuildLayoutGroups()
-	local flowLayoutGroups = {};
+	local flowLayoutGroupDescriptions = self:GetFlowLayoutGroupDescriptions();
+	local flowLayoutGroups = table.create(#flowLayoutGroupDescriptions);
 
-	if self:ShouldPlaceItemEnchantmentsBeforeAuraGroups() then
-		self:AddItemEnchantmentLayoutGroup(flowLayoutGroups);
-	end
+	table.sort(flowLayoutGroupDescriptions, SortFlowLayoutDescriptions);
 
-	for _index, auraGroup in self:EnumerateAuraGroups() do
-		local layoutOptions = self.layoutOptionsByAuraGroup[auraGroup];
+	for index, description in ipairs(flowLayoutGroupDescriptions) do
+		local layoutOptions = description.layoutOptions;
 
-		table.insert(flowLayoutGroups,
-			{
-				-- Closures are intentional because aura processing replaces each
-				-- group's visible frame list during refresh.
-				elements = function() return auraGroup:GetFramesByIndex(); end,
-				elementSpacingX = layoutOptions.elementSpacingX,
-				elementSpacingY = layoutOptions.elementSpacingY,
-
-				forceNewRow = layoutOptions.forceNewRow,
-				gapX = layoutOptions.gapX,
-				gapY = layoutOptions.gapY,
-
-				elementWidth = layoutOptions.elementWidth,
-				elementHeight = layoutOptions.elementHeight,
-			});
-	end
-
-	if not self:ShouldPlaceItemEnchantmentsBeforeAuraGroups() then
-		self:AddItemEnchantmentLayoutGroup(flowLayoutGroups);
+		flowLayoutGroups[index] = {
+			elements = description.elements,
+			elementSpacing = layoutOptions.elementSpacing,
+			lineSpacing = layoutOptions.lineSpacing,
+			groupSpacing = layoutOptions.groupSpacing,
+			groupLineSpacing = layoutOptions.groupLineSpacing,
+			forceNewLine = layoutOptions.forceNewLine,
+			elementWidth = layoutOptions.elementWidth,
+			elementHeight = layoutOptions.elementHeight,
+		};
 	end
 
 	self.flowLayoutGroups = flowLayoutGroups;
@@ -673,19 +637,16 @@ function CustomAuraContainerPrivateMixin:ResetItemEnchantmentLayoutInternal()
 	self.itemEnchantmentLayoutOptions = GetInboundItemEnchantmentLayoutOptions();
 end
 
-function CustomAuraContainerPrivateMixin:ResetAuraLayoutOptionsInternal()
-	self.layoutAnchorPoint = CustomAuraContainerLayoutDefaults.anchorPoint;
-	self.layoutHorizontalGrowthDirection = CustomAuraContainerLayoutDefaults.horizontalGrowthDirection;
-	self.layoutVerticalGrowthDirection = CustomAuraContainerLayoutDefaults.verticalGrowthDirection;
-	self.layoutPaddingLeft = CustomAuraContainerLayoutDefaults.paddingLeft;
-	self.layoutPaddingRight = CustomAuraContainerLayoutDefaults.paddingRight;
-	self.layoutPaddingTop = CustomAuraContainerLayoutDefaults.paddingTop;
-	self.layoutPaddingBottom = CustomAuraContainerLayoutDefaults.paddingBottom;
-	self.layoutRowWidth = CustomAuraContainerLayoutDefaults.rowWidth;
+function CustomAuraContainerPrivateMixin:ApplyFlowLayoutDefaults(flowLayout)
+	flowLayout:SetLayoutAxis(CustomAuraContainerLayoutDefaults.axis);
+	flowLayout:SetAnchorPoint(CustomAuraContainerLayoutDefaults.anchorPoint);
+	flowLayout:SetGrowthDirection(CustomAuraContainerLayoutDefaults.horizontalGrowthDirection, CustomAuraContainerLayoutDefaults.verticalGrowthDirection);
+	flowLayout:SetPadding(CustomAuraContainerLayoutDefaults.paddingLeft, CustomAuraContainerLayoutDefaults.paddingRight, CustomAuraContainerLayoutDefaults.paddingTop, CustomAuraContainerLayoutDefaults.paddingBottom);
+	flowLayout:SetMaximumLineSize(CustomAuraContainerLayoutDefaults.maximumLineSize);
 end
 
 function CustomAuraContainerPrivateMixin:ApplyLayout()
-	AnchorUtil.ApplyFlowLayout(self, self.flowLayoutGroups, self:GetFlowLayoutDescription());
+	self:ApplyFlowLayout();
 end
 
 function CustomAuraContainerPrivateMixin:CreateAuraSlotFrame(options)
@@ -697,43 +658,24 @@ function CustomAuraContainerPrivateMixin:CreateAuraSlotFrame(options)
 		batchSize = 1,
 		templateNames = options.templateNames,
 		initializeFrame = options.initializeFrame,
+		accessRestrictions = CustomAuraContainerConstants.AccessRestrictionFlags,
 	});
 
 	return frameProvider:AcquireFrame();
 end
 
-CustomAuraContainerFlowLayoutDescription = CreateFromMixins(AnchorUtil.FlowLayoutDescriptionBaseMixin);
+CustomAuraContainerFlowLayoutMixin = CreateFromMixins(AnchorUtil.FlowLayoutMixin);
 
-function CustomAuraContainerFlowLayoutDescription:GetAnchorPoint(container)
-	return container.layoutAnchorPoint;
-end
-
-function CustomAuraContainerFlowLayoutDescription:GetHorizontalGrowthDirection(container)
-	return container.layoutHorizontalGrowthDirection;
-end
-
-function CustomAuraContainerFlowLayoutDescription:GetVerticalGrowthDirection(container)
-	return container.layoutVerticalGrowthDirection;
-end
-
-function CustomAuraContainerFlowLayoutDescription:GetPadding(container)
-	return container.layoutPaddingLeft, container.layoutPaddingRight, container.layoutPaddingTop, container.layoutPaddingBottom;
-end
-
-function CustomAuraContainerFlowLayoutDescription:GetRowWidth(container, _rowIndex, _group)
-	return container.layoutRowWidth;
-end
-
-function CustomAuraContainerFlowLayoutDescription:GetElementSize(_container, element, group)
+function CustomAuraContainerFlowLayoutMixin:GetElementSize(_container, element, group)
 	local width, height = element:GetSize();
 	return group.elementWidth or width, group.elementHeight or height;
 end
 
-function CustomAuraContainerFlowLayoutDescription:ApplyElementLayout(container, element, anchorPoint, offsetX, offsetY, _width, _height)
+function CustomAuraContainerFlowLayoutMixin:ApplyElementLayout(container, element, anchorPoint, offsetX, offsetY, _width, _height)
 	element:ClearAllPoints();
 	element:SetPoint(secretwrap(anchorPoint, container, anchorPoint, offsetX, offsetY));
 end
 
-function CustomAuraContainerFlowLayoutDescription:OnLayoutComplete(container, width, height, _hasPlacedElement, _rowCount)
+function CustomAuraContainerFlowLayoutMixin:OnLayoutComplete(container, width, height, _hasPlacedElement, _lineCount)
 	container:SetSize(secretwrap(width, height));
 end

@@ -15,6 +15,11 @@ end
 local Helpers = ns.Helpers
 local QUICore = ns.Addon
 local GetDB = Helpers.CreateDBGetter("quiGroupFrames")
+local CHROME_LEVELS = (ns.QUI_GroupFrameChrome and ns.QUI_GroupFrameChrome.LEVELS)
+    or {
+        THREAT = 6, TARGET = 7, DISPEL = 8, TEXT = 9,
+        DISPEL_ICON = 10, CLEANSE = 11, AURA_HOST = 12,
+    }
 
 -- Upvalue hot-path globals
 local pairs = pairs
@@ -360,7 +365,7 @@ local function CreateTestFrame(parent, index, totalCount, classToken, name, role
     -- Text frame
     local textFrame = CreateFrame("Frame", nil, frame)
     textFrame:SetAllPoints()
-    textFrame:SetFrameLevel(healthBar:GetFrameLevel() + 3)
+    textFrame:SetFrameLevel(frame:GetFrameLevel() + CHROME_LEVELS.TEXT)
 
     local fontName = general and general.font or "Quazii"
     local fontPath = LSM:Fetch("font", fontName) or "Fonts\\FRIZQT__.TTF"
@@ -581,7 +586,7 @@ local function CreateTestFrame(parent, index, totalCount, classToken, name, role
         if prev.threatBorder and indSettings.showThreatBorder ~= false then
             local threatOverlay = CreateFrame("Frame", nil, frame, "BackdropTemplate")
             threatOverlay:SetAllPoints()
-            threatOverlay:SetFrameLevel(baseLevel + 3)
+            threatOverlay:SetFrameLevel(baseLevel + CHROME_LEVELS.THREAT)
             local tc = indSettings.threatColor or { 1, 0, 0, 0.8 }
             ns.SkinBase.ApplyPixelBackdrop(threatOverlay, indSettings.threatBorderSize or 3, true, false, { tc[1], tc[2], tc[3], tc[4] or 0.8 }, { tc[1], tc[2], tc[3], indSettings.threatFillOpacity or 0.15 })
         end
@@ -597,23 +602,33 @@ local function CreateTestFrame(parent, index, totalCount, classToken, name, role
                 local highlight = CreateFrame("Frame", nil, frame, "BackdropTemplate")
                 highlight:SetPoint("TOPLEFT", -px, px)
                 highlight:SetPoint("BOTTOMRIGHT", px, -px)
-                highlight:SetFrameLevel(baseLevel + 4)
+                highlight:SetFrameLevel(baseLevel + CHROME_LEVELS.TARGET)
                 local hc = th.color or { 1, 1, 1, 0.6 }
                 ns.SkinBase.ApplyPixelBackdrop(highlight, 2, true, false, { hc[1], hc[2], hc[3], hc[4] or 0.6 }, { hc[1], hc[2], hc[3], th.fillOpacity or 0.12 })
             end
         end
 
-        -- Dispel Overlay — edge + tinted fill
+        -- Dispel border + native type icon. Use Bleed for the all-typed
+        -- awareness scope; the default actionable scope previews Magic.
         if prev.dispelOverlay then
             local dsp = healerSettings.dispelOverlay
-            if dsp and dsp.enabled ~= false then
-                local dispel = CreateFrame("Frame", nil, frame, "BackdropTemplate")
-                dispel:SetPoint("TOPLEFT", -px, px)
-                dispel:SetPoint("BOTTOMRIGHT", px, -px)
-                dispel:SetFrameLevel(baseLevel + 6)
-                local dc = dsp.color or { 0.26, 0.54, 1, 0.8 }
-                local opacity = dsp.opacity or 0.8
-                ns.SkinBase.ApplyPixelBackdrop(dispel, dsp.borderSize or 3, true, false, { dc[1], dc[2], dc[3], opacity }, { dc[1], dc[2], dc[3], dsp.fillOpacity or 0.18 })
+            if dsp then
+                local sampleType = dsp.scope == "ALL_TYPED" and "Bleed" or "Magic"
+                if dsp.enabled ~= false then
+                    local dispel = CreateFrame("Frame", nil, frame, "BackdropTemplate")
+                    dispel:SetPoint("TOPLEFT", -px, px)
+                    dispel:SetPoint("BOTTOMRIGHT", px, -px)
+                    dispel:SetFrameLevel(baseLevel + CHROME_LEVELS.DISPEL)
+                    local palette = dsp.colors or {}
+                    local dc = palette[sampleType] or { 0.26, 0.54, 1, 0.8 }
+                    local opacity = dsp.opacity or 0.8
+                    ns.SkinBase.ApplyPixelBackdrop(dispel, dsp.borderSize or 3, true, false, { dc[1], dc[2], dc[3], opacity }, { dc[1], dc[2], dc[3], dsp.fillOpacity or 0.18 })
+                end
+                local Chrome = ns.QUI_GroupFrameChrome
+                if dsp.showIcon == true and Chrome and Chrome.ApplyDispelIconLayout then
+                    Chrome.ApplyDispelIconLayout(frame, dsp)
+                    Chrome.ShowDispelTypeIcon(frame, sampleType)
+                end
             end
         end
     end
@@ -625,7 +640,7 @@ local function CreateTestFrame(parent, index, totalCount, classToken, name, role
     -- only; this is a standalone preview (no live renderer / no real unit).
     local auraSettings = vdb.auras
     if prev and auraSettings and auraSettings.enabled ~= false then
-        RenderAuraElementsPreview(frame, auraSettings, baseLevel + 8, powerHeight, px, texturePath,
+        RenderAuraElementsPreview(frame, auraSettings, baseLevel + CHROME_LEVELS.AURA_HOST, powerHeight, px, texturePath,
             isRaid and "raid" or "party")
     end
 

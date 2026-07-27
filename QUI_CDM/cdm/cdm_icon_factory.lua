@@ -157,11 +157,13 @@ local iconPools = {
 }
 -- Pools for custom containers are created dynamically via EnsurePool().
 local recyclePool = {}
+local recycleProtectedPool = {}  -- dedicated, capped pool for clickButton-protected icons
 local iconCounter = 0
 
 local function SetupDebugInstrumentation()
     local mp = ns._memprobes or {}; ns._memprobes = mp
     mp[#mp + 1] = { name = "CDM_iconRecyclePool", tbl = recyclePool }
+    mp[#mp + 1] = { name = "CDM_iconRecycleProtectedPool", tbl = recycleProtectedPool }
     -- iconPools is a multi-key map of arrays; count across every sub-pool
     -- (incl. dynamically created Composer pools) so retention growth surfaces.
     mp[#mp + 1] = { name = "CDM_iconPools", fn = function()
@@ -208,20 +210,53 @@ end
 function CDMIconFactory:ClearPool(viewerType)
     local pool = iconPools[viewerType]
     if pool then
+        -- Honor the release-refusal contract: ReleaseIcon returns false when it
+        -- refuses to recycle a combat-protected icon (secure clickButton child) --
+        -- that icon is NOT hidden. Wiping it from the pool anyway would strand an
+        -- untracked, still-visible/clickable icon. Keep refused icons in the pool
+        -- so they stay tracked; a later out-of-combat ClearPool recycles them.
+        local kept
         for _, icon in ipairs(pool) do
-            self:ReleaseIcon(icon)
+            if self:ReleaseIcon(icon) == false then
+                kept = kept or {}
+                kept[#kept + 1] = icon
+            end
         end
         wipe(pool)
+        if kept then
+            for i = 1, #kept do
+                pool[i] = kept[i]
+            end
+        end
     else
         iconPools[viewerType] = CreateIconPool()
     end
     return iconPools[viewerType]
 end
 
+-- True when any icon still pooled for this viewer carries a secure clickButton
+-- child. Such an icon is visibility-protected for its lifetime (the child is
+-- retained even after clickableIcons is toggled off and the button hidden), so
+-- rebuilding/releasing the pool in combat would raise ADDON_ACTION_BLOCKED.
+-- The container combat gate (cdm_containers ShouldDeferContainerLayoutInCombat)
+-- reads this to defer such a container until PLAYER_REGEN_ENABLED.
+function CDMIconFactory:PoolHasProtectedIcon(viewerType)
+    local pool = iconPools[viewerType]
+    if not pool then return false end
+    for i = 1, #pool do
+        local icon = pool[i]
+        if icon and icon.clickButton ~= nil then
+            return true
+        end
+    end
+    return false
+end
+
 -- Expose pool tables so renderer code can read the same table object while
 -- factory remains the writer for frame lifecycle and pool membership.
 CDMIconFactory._iconPools   = iconPools
 CDMIconFactory._recyclePool = recyclePool
+CDMIconFactory._recycleProtectedPool = recycleProtectedPool
 
 ---------------------------------------------------------------------------
 -- ICON CREATION — BARE
@@ -355,9 +390,23 @@ end
 ---------------------------------------------------------------------------
 -- ICON POOL LIFECYCLE
 ---------------------------------------------------------------------------
-function CDMIconFactory:AcquireIcon(parent, spellEntry)
+function CDMIconFactory:AcquireIcon(parent, spellEntry, clickable)
     local icons = GetIcons()
-    local icon = table.remove(recyclePool)
+    -- Reuse a protected (clickButton) icon only for a clickable destination AND
+    -- only when mutation is safe: the SetParent/SetSize below are protected calls,
+    -- so in combat (outside the init-safe window) we must never hand out a
+    -- protected icon (ADDON_ACTION_BLOCKED). Non-clickable / combat acquisitions
+    -- draw from the plain recyclePool (or mint fresh), so protected icons never
+    -- spread to non-clickable containers. Preferring the protected pool for
+    -- clickable OOC acquisitions keeps it drained -- protected frames are reused,
+    -- not leaked (retention is also hard-capped in ReleaseIcon).
+    local icon
+    if clickable and ((not InCombatLockdown()) or (ns and ns._inInitSafeWindow)) then
+        icon = table.remove(recycleProtectedPool)
+    end
+    if not icon then
+        icon = table.remove(recyclePool)
+    end
     if icon then
         icon:SetParent(parent)
         icon:SetSize(DEFAULT_ICON_SIZE, DEFAULT_ICON_SIZE)
@@ -440,6 +489,17 @@ end
 
 function CDMIconFactory:ReleaseIcon(icon)
     if not icon then return end
+    -- Fail-closed combat backstop. A pooled icon that owns a SecureActionButton
+    -- child (clickButton) is visibility-protected: the Hide/ClearAllPoints/
+    -- SetParent below raise ADDON_ACTION_BLOCKED in combat (QUICDMIconN:Hide()).
+    -- Refuse BEFORE any callback or mutation and signal the caller to keep the
+    -- icon tracked -- clearing the ledger without a successful recycle strands a
+    -- visible/clickable ghost. The reanchor runtime already defers such passes
+    -- (RefreshContainer gate); this covers any other in-combat release path.
+    if icon.clickButton and InCombatLockdown and InCombatLockdown()
+        and not (ns and ns._inInitSafeWindow) then
+        return false
+    end
     local icons = GetIcons()
     if icons and icons.OnFactoryIconReleased then
         icons.OnFactoryIconReleased(icon)
@@ -502,10 +562,24 @@ function CDMIconFactory:ReleaseIcon(icon)
     icon.Border:Hide()
     icon._pendingSecureUpdate = nil
 
-    if #recyclePool < MAX_RECYCLE_POOL_SIZE then
+    if icon.clickButton ~= nil then
+        -- Protected (SecureActionButton) icons go to a DEDICATED, UNCAPPED pool --
+        -- never the shared recyclePool. AcquireIcon reuses them only for a clickable
+        -- destination when mutation-safe, so they are recycled (stable identity)
+        -- instead of abandoned, and a combat rebuild of a non-clickable viewer can
+        -- never pop one (SetParent/SetSize/Hide would ADDON_ACTION_BLOCK).
+        -- NO cap: secure frames cannot be destroyed, so dropping an overflow frame
+        -- would both abandon it permanently AND force a fresh one next refresh ->
+        -- unbounded churn for a >MAX-icon clickable container. With reuse the pool
+        -- self-bounds to the working set of protected icons -- bounded by config,
+        -- not by refresh count.
+        icon:SetParent(UIParent)
+        recycleProtectedPool[#recycleProtectedPool + 1] = icon
+    elseif #recyclePool < MAX_RECYCLE_POOL_SIZE then
         icon:SetParent(UIParent)
         recyclePool[#recyclePool + 1] = icon
     end
+    return true
 end
 
 

@@ -157,6 +157,10 @@ local function AuraInstanceAllowsHelpful(unit, auraInstanceID)
     return true
 end
 
+-- ACTION POLICY on the secret branches below (retain-on-secrecy): an
+-- unreadable result is INDETERMINATE, never "still present" as truth — the
+-- policy RETAINS the tracked instance so restriction can't wipe live
+-- tracking; readable results decide normally and regen rescans reconcile.
 local function AuraInstanceIsStillPresent(unit, auraInstanceID, hasAuraInstanceID)
     if hasAuraInstanceID ~= true then return false end
     if not (C_UnitAuras and C_UnitAuras.GetAuraDataByAuraInstanceID) then
@@ -164,7 +168,7 @@ local function AuraInstanceIsStillPresent(unit, auraInstanceID, hasAuraInstanceI
     end
     local ok, aura = pcall(C_UnitAuras.GetAuraDataByAuraInstanceID, unit or "player", auraInstanceID)
     if not ok then return false end
-    if ScannerIsSecretValue(aura) then return true end
+    if ScannerIsSecretValue(aura) then return true end -- @secret-policy: opaque-value-present
     return aura ~= nil
 end
 
@@ -209,7 +213,7 @@ local function ItemCooldownLooksActive(itemID)
     if ScannerIsSecretValue(startTime)
         or ScannerIsSecretValue(duration)
         or ScannerIsSecretValue(enabled) then
-        return true
+        return true -- @secret-policy: assume-cooldown-when-unknown
     end
     if enabled == 0 or enabled == false then
         return false
@@ -232,7 +236,7 @@ local function QueryCleanItemCooldownState(itemID)
     if ScannerIsSecretValue(startTime)
         or ScannerIsSecretValue(duration)
         or ScannerIsSecretValue(enabled) then
-        return nil, nil, nil, nil, false
+        return nil, nil, nil, nil, false -- @secret-policy: reject-secret-value
     end
 
     local active = false
@@ -291,7 +295,11 @@ end
 -- payload's own unit arg (not read here); probe updateInfo before any field
 -- access.
 local function HandleUnitAura(updateInfo)
-    if updateInfo and ScannerIsSecretValue(updateInfo) then
+    -- Probe UNCONDITIONALLY: a whole-secret updateInfo throws on the bare
+    -- truth test itself, so `updateInfo and ScannerIsSecretValue(updateInfo)`
+    -- would crash before the probe ran. issecretvalue(nil) is false, so no
+    -- nil pre-check is needed.
+    if ScannerIsSecretValue(updateInfo) then
         updateInfo = nil -- opaque invalidation → full-rescan path
     end
     -- 12.1 per-field secrecy: the table itself can read fine while its scalar
@@ -440,15 +448,34 @@ end
 -- SCANNING LOGIC
 ---------------------------------------------------------------------------
 
--- 12.1: GetAuraDataByIndex throws while aura data is secret (combat). Collapse
--- the 1..40 player-buff scan bound to 0 when secret; the cast stays pending and
--- is retried after combat (PLAYER_REGEN_ENABLED -> ProcessPendingScanning).
+-- 12.1: GetAuraDataByIndex throws while aura data is secret (combat). When
+-- auras are secret the walk doesn't start; the cast stays pending and is
+-- retried after combat (PLAYER_REGEN_ENABLED -> ProcessPendingScanning).
+-- Otherwise the walk is UNBOUNDED, matching the iterator's own termination
+-- contract: plain nil terminates, pcall-fail terminates, and a per-spell
+-- SECRET entry is SKIPPED (secret entry ≠ end-of-list) — the old 1..40 bound
+-- silently truncated heavy aura sets, and folding a secret entry to nil then
+-- breaking ended the scan at the first secret element. Callback returning
+-- true stops the walk early.
 local C_Secrets = C_Secrets
-local function AuraScanCount()
+local function ForEachPlayerHelpfulAura(callback)
     if C_Secrets and C_Secrets.ShouldAurasBeSecret and C_Secrets.ShouldAurasBeSecret() then
-        return 0
+        return
     end
-    return 40
+    local i = 0
+    while true do
+        i = i + 1
+        local ok, aura = pcall(C_UnitAuras.GetAuraDataByIndex, "player", i, "HELPFUL")
+        if not ok then return end
+        if ScannerIsSecretValue(aura) then
+            aura = nil -- @secret-policy: reject-secret-value — skip, keep walking
+        elseif aura == nil then
+            return
+        end
+        if aura ~= nil and callback(aura) then
+            return
+        end
+    end
 end
 
 local function ScanSpellFromBuffs(castSpellID, itemID)
@@ -480,14 +507,17 @@ local function ScanSpellFromBuffs(castSpellID, itemID)
     local now = GetTime()
     local bestMatch = nil
 
-    for i = 1, AuraScanCount() do
-        local aura = C_UnitAuras.GetAuraDataByIndex("player", i, "HELPFUL")
-        if not aura then break end
-
-        -- Secret values in Midnight: reading doesn't error, but comparisons/arithmetic do
+    ForEachPlayerHelpfulAura(function(aura)
+        -- Secret values in Midnight: reading doesn't error, but comparisons/arithmetic do.
+        -- Fold any secret field to nil (ScannerIsSecretValue is a registered guard) so the
+        -- Lua-side comparisons/arithmetic below never touch an opaque value; IsCleanNumber
+        -- rejects nil the same as a secret, so the match logic is unchanged.
         local spellId = aura.spellId
+        if ScannerIsSecretValue(spellId) then spellId = nil end
         local duration = aura.duration
+        if ScannerIsSecretValue(duration) then duration = nil end
         local expirationTime = aura.expirationTime
+        if ScannerIsSecretValue(expirationTime) then expirationTime = nil end
         local icon = aura.icon
         local name = aura.name
 
@@ -518,7 +548,7 @@ local function ScanSpellFromBuffs(castSpellID, itemID)
                 }
             end
         end
-    end
+    end)
 
     if bestMatch then
         -- Save spell and item mappings in their own namespaces. Item use
@@ -722,8 +752,13 @@ function SpellScanner.IsSpellActive(spellID)
     local data = GetScannedSpell(spellID)
     if data and data.buffSpellID and not InCombatLockdown() then
         local ok, aura = pcall(C_UnitAuras.GetPlayerAuraBySpellID, data.buffSpellID)
-        if ok and aura and IsFutureExpiration(aura.expirationTime, GetTime()) then
-            return true, aura.expirationTime, aura.duration, GetRawAuraInstanceID(aura), "player"
+        if ScannerIsSecretValue(aura) then aura = nil end
+        if ok and aura then
+            local exp = aura.expirationTime
+            if ScannerIsSecretValue(exp) then exp = nil end
+            if IsFutureExpiration(exp, GetTime()) then
+                return true, aura.expirationTime, aura.duration, GetRawAuraInstanceID(aura), "player"
+            end
         end
     end
 

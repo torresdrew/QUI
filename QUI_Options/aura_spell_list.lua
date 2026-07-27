@@ -163,8 +163,9 @@ local BROWSE_SCROLL_STEP = 24
 local browse = {
     popup = nil,
     key = nil,   -- identity of the spell list being edited ("<prefix><kind>:<elementId>")
-    opts = nil,  -- { title, presets, isSelected(id), onToggle(id) }
+    opts = nil,  -- { title, presets, isSelected(id), onToggle(id), onClose() }
     scopeKept = false,
+    dirty = false,
 }
 
 local function BrowseFont(fs, path, size, flags)
@@ -351,10 +352,16 @@ local function EnsureBrowsePopup()
     end)
 
     popup:SetScript("OnHide", function()
+        local opts = browse.opts
+        local dirty = browse.dirty
         browse.key = nil
         browse.opts = nil
+        browse.dirty = false
         search:SetText("")
         placeholder:Show()
+        if dirty and opts and type(opts.onClose) == "function" then
+            opts.onClose()
+        end
     end)
 
     browse.popup = popup
@@ -403,9 +410,10 @@ local function AcquireBrowseSpellRow(index)
         row:SetScript("OnClick", function(self)
             local opts = browse.opts
             if self.spellId and opts and type(opts.onToggle) == "function" then
-                -- onToggle mutates the element and rebuilds the editor detail,
-                -- which re-binds opts and re-renders these rows; the extra
-                -- rebuild below covers callers that skip the detail rebuild.
+                -- Keep the popup open for multi-select. The owning editor may
+                -- refresh its inline list in onToggle; these popup rows refresh
+                -- immediately as well. onClose remains an optional batch hook.
+                browse.dirty = true
                 opts.onToggle(self.spellId)
                 RebuildBrowseRows(browse.popup._search:GetText())
             end
@@ -497,8 +505,14 @@ function SpellList.ToggleBrowsePopup(key, opts)
         popup:Hide()
         return
     end
+    if popup:IsShown() then
+        -- Finish (and, when dirty, commit) the previous browser session before
+        -- reusing this singleton popup for a different spell list.
+        popup:Hide()
+    end
     browse.key = key
     browse.opts = opts
+    browse.dirty = false
     popup._title:SetText((opts and opts.title) or ns.L["Browse Spells"])
     popup._search:SetText("")
     popup._placeholder:Show()
@@ -739,7 +753,10 @@ function SpellList.CreateListFrame(parent, listTable, presets, onChange, onLayou
     local frame = CreateFrame("Frame", nil, parent)
     frame:SetHeight(1)
     frame._onLayoutChanged = onLayoutChanged
-    RebuildSpellToggleRows(frame, listTable, presets, onChange)
+    function frame:Refresh()
+        RebuildSpellToggleRows(self, listTable, presets, onChange)
+    end
+    frame:Refresh()
     return frame
 end
 

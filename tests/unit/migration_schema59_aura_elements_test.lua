@@ -1,7 +1,7 @@
--- tests/unit/migration_v50_aura_elements_test.lua
--- Run: lua5.1 tests/unit/migration_v50_aura_elements_test.lua
+-- tests/unit/migration_schema59_aura_elements_test.lua
+-- Run: lua5.1 tests/unit/migration_schema59_aura_elements_test.lua
 --
--- v50 = Migrations.SeedAuraElements: the aura-surface unification migration.
+-- Schema-59 aura-surface unification via Migrations.SeedAuraElements.
 --   * buffborders flat per-strip keys -> buffAuras/debuffAuras element stores.
 --   * unit-frame flat per-strip keys  -> auras.elements element stores.
 --   * group-frame already-element stores -> NormalizeElement in place.
@@ -99,11 +99,11 @@ end
 ----------------------------------------------------------------------------
 do
     local profile = {
-        _schemaVersion = 49,
+        _schemaVersion = 47,
         buffBorders = {
             enableBuffs = true, buffIconSize = 30, buffIconsPerRow = 8, buffIconSpacing = 1,
             buffGrowLeft = false, buffGrowUp = true, buffSortRule = "EXPIRY", buffSortReverse = true,
-            buffFilterPlayer = true, buffFilterCancelable = true,
+            buffFilterPlayer = true, buffFilterNotCancelable = true,
             buffDurationTextAnchor = "BOTTOM", buffStackTextAnchor = "TOPLEFT",
             enableDebuffs = false, debuffIconSize = 28,
             iconSkin = "Default", borderSize = 1, fontSize = 12,
@@ -127,7 +127,8 @@ do
     check("BB buff enabled=true", buff and buff.enabled == true, buff and tostring(buff.enabled))
     check("BB buff filterMode=flags", buff and buff.filterMode == "flags", buff and tostring(buff.filterMode))
     check("BB buff filterFlags.PLAYER", buff and buff.filterFlags and buff.filterFlags.PLAYER == true, "no PLAYER")
-    check("BB buff filterFlags.CANCELABLE", buff and buff.filterFlags and buff.filterFlags.CANCELABLE == true, "no CANCELABLE")
+    check("BB removed NOT_CANCELABLE -> !CANCELABLE", buff and buff.filterFlags
+        and buff.filterFlags.CANCELABLE == "exclude", "legacy intent lost")
     check("BB buff duration.anchor=BOTTOM", buff and buff.duration and buff.duration.anchor == "BOTTOM", buff and buff.duration and tostring(buff.duration.anchor))
     check("BB buff stack.anchor=TOPLEFT", buff and buff.stack and buff.stack.anchor == "TOPLEFT", buff and buff.stack and tostring(buff.stack.anchor))
     check("BB buff rightClickCancel=true", buff and buff.rightClickCancel == true, buff and tostring(buff.rightClickCancel))
@@ -149,7 +150,8 @@ do
     check("BB prune buffSortRule", bb.buffSortRule == nil, tostring(bb.buffSortRule))
     check("BB prune buffSortReverse", bb.buffSortReverse == nil, tostring(bb.buffSortReverse))
     check("BB prune buffFilterPlayer", bb.buffFilterPlayer == nil, tostring(bb.buffFilterPlayer))
-    check("BB prune buffFilterCancelable", bb.buffFilterCancelable == nil, tostring(bb.buffFilterCancelable))
+    check("BB prune buffFilterNotCancelable", bb.buffFilterNotCancelable == nil,
+        tostring(bb.buffFilterNotCancelable))
     check("BB prune buffDurationTextAnchor", bb.buffDurationTextAnchor == nil, tostring(bb.buffDurationTextAnchor))
     check("BB prune buffStackTextAnchor", bb.buffStackTextAnchor == nil, tostring(bb.buffStackTextAnchor))
     check("BB prune debuffIconSize", bb.debuffIconSize == nil, tostring(bb.debuffIconSize))
@@ -163,7 +165,7 @@ do
     check("BB survive enableBuffs=true", bb.enableBuffs == true, tostring(bb.enableBuffs))
     check("BB survive enableDebuffs=false", bb.enableDebuffs == false, tostring(bb.enableDebuffs))
 
-    check("BB stamped to current (51)", profile._schemaVersion == 51, tostring(profile._schemaVersion))
+    check("BB stamped to current (59)", profile._schemaVersion == 59, tostring(profile._schemaVersion))
 end
 
 ----------------------------------------------------------------------------
@@ -175,7 +177,7 @@ end
 ----------------------------------------------------------------------------
 do
     local profile = {
-        _schemaVersion = 49,
+        _schemaVersion = 47,
         buffBorders = {
             enableBuffs = true, buffIconSize = 0, buffIconsPerRow = 0, buffIconSpacing = 0,
             enableDebuffs = true, debuffIconSize = 0, debuffIconsPerRow = 0, debuffIconSpacing = 0,
@@ -202,7 +204,7 @@ end
 ----------------------------------------------------------------------------
 do
     local profile = {
-        _schemaVersion = 49,
+        _schemaVersion = 47,
         buffBorders = { buffFilterPlayer = true },
     }
     M.RunOnProfile(profile)
@@ -228,7 +230,7 @@ end
 ----------------------------------------------------------------------------
 do
     local profile = {
-        _schemaVersion = 49,
+        _schemaVersion = 47,
         quiUnitFrames = {
             player = {
                 auras = {
@@ -258,11 +260,13 @@ do
                     -- The REAL legacy UF filter shape is NESTED (HEAD's
                     -- BuildFilterString read { modifiers = {TOKEN=bool},
                     -- exclusive = "TOKEN"|nil }). The outer container keys must
-                    -- NEVER leak into filterFlags as tokens — the shipped v50
+                    -- NEVER leak into filterFlags as tokens — the old staged converter
                     -- did exactly that ("HARMFUL|modifiers" fails the
                     -- container's IsValidFilterString assert on 12.1).
                     showBuffs = true,
-                    buffFilter = { modifiers = { PLAYER = true, RAID = false }, exclusive = "CANCELABLE" },
+                    buffFilter = { modifiers = {
+                        PLAYER = true, RAID = false, NOT_CANCELABLE = true,
+                    } },
                     showDebuffs = true,
                     debuffFilter = { modifiers = { PLAYER = false, RAID = false } },
                 },
@@ -335,8 +339,8 @@ do
     local petDebuff = findByType(peta.elements and peta.elements["*"], "HARMFUL")
     check("UF pet buff nested filter -> filterMode=flags", petBuff and petBuff.filterMode == "flags",
         petBuff and tostring(petBuff.filterMode))
-    check("UF pet buff filterFlags == {PLAYER, CANCELABLE}", petBuff and petBuff.filterFlags
-        and deepEqual(petBuff.filterFlags, { PLAYER = true, CANCELABLE = true }),
+    check("UF pet buff filterFlags == {PLAYER, !CANCELABLE}", petBuff and petBuff.filterFlags
+        and deepEqual(petBuff.filterFlags, { PLAYER = true, CANCELABLE = "exclude" }),
         petBuff and petBuff.filterFlags and table.concat((function()
             local t = {} for k in pairs(petBuff.filterFlags) do t[#t + 1] = k end
             table.sort(t) return t
@@ -353,7 +357,7 @@ do
         petDebuff and #E.CompileFilters(petDebuff) == 0,
         petDebuff and table.concat(E.CompileFilters(petDebuff), " , "))
 
-    check("UF stamped to current (51)", profile._schemaVersion == 51, tostring(profile._schemaVersion))
+    check("UF stamped to current (59)", profile._schemaVersion == 59, tostring(profile._schemaVersion))
 end
 
 ----------------------------------------------------------------------------
@@ -366,7 +370,7 @@ end
 ----------------------------------------------------------------------------
 do
     local profile = {
-        _schemaVersion = 49,
+        _schemaVersion = 47,
         quiUnitFrames = {
             player = { auras = { showBuffs = true } },
             boss   = { auras = { showDebuffs = true } },
@@ -419,7 +423,7 @@ end
 ----------------------------------------------------------------------------
 do
     local profile = {
-        _schemaVersion = 49,
+        _schemaVersion = 47,
         quiUnitFrames = {
             player = {
                 auras = {
@@ -455,7 +459,7 @@ end
 ----------------------------------------------------------------------------
 do
     local profile = {
-        _schemaVersion = 49,
+        _schemaVersion = 47,
         quiGroupFrames = {
             party = {
                 auras = {
@@ -488,7 +492,7 @@ do
     check("GF elementsSeeded still true", profile.quiGroupFrames.party.auras.elementsSeeded == true, "flag lost")
     check("GF classifications untouched (raid only)", e.classifications and e.classifications.raid == true
         and e.classifications.helpful == nil and e.classifications.harmful == nil, "classifications mutated")
-    check("GF stamped to current (51)", profile._schemaVersion == 51, tostring(profile._schemaVersion))
+    check("GF stamped to current (59)", profile._schemaVersion == 59, tostring(profile._schemaVersion))
 end
 
 ----------------------------------------------------------------------------
@@ -496,7 +500,7 @@ end
 ----------------------------------------------------------------------------
 do
     local profile = {
-        _schemaVersion = 49,
+        _schemaVersion = 47,
         buffBorders = {
             enableBuffs = true, buffFilterPlayer = true, buffFilterCancelable = true,
         },
@@ -533,7 +537,7 @@ end
 ----------------------------------------------------------------------------
 do
     local input = {
-        _schemaVersion = 49,
+        _schemaVersion = 47,
         buffBorders = {
             enableBuffs = true, buffIconSize = 30, buffIconsPerRow = 8, buffIconSpacing = 1,
             buffGrowLeft = false, buffGrowUp = true, buffSortRule = "EXPIRY", buffSortReverse = true,
@@ -545,7 +549,7 @@ do
     M.RunOnProfile(profile)
     local snapshotBuff = deepCopy(profile.buffBorders.buffAuras)
     local snapshotDebuff = deepCopy(profile.buffBorders.debuffAuras)
-    -- Second RunOnProfile (stored now 51 -> version gate returns early).
+    -- Second RunOnProfile (stored now 59 -> version gate returns early).
     M.RunOnProfile(profile)
     -- Direct SeedAuraElements call (bypasses the version gate; must hit the
     -- elementsSeeded short-circuit and change nothing).
@@ -554,7 +558,7 @@ do
     local eqD, whyD = deepEqual(snapshotDebuff, profile.buffBorders.debuffAuras, "debuffAuras")
     check("idempotent buffAuras tree", eqB, whyB)
     check("idempotent debuffAuras tree", eqD, whyD)
-    check("idempotent stays at current (51)", profile._schemaVersion == 51, tostring(profile._schemaVersion))
+    check("idempotent stays at current (59)", profile._schemaVersion == 59, tostring(profile._schemaVersion))
 end
 
 -- F5 (re-review): "Hide Duration Swipe" was a real HEAD checkbox writing the
@@ -563,7 +567,7 @@ end
 -- (element default false would silently re-enable the swipe).
 do
     local profile = {
-        _schemaVersion = 49,
+        _schemaVersion = 47,
         quiUnitFrames = {
             player = { auras = { showBuffs = true, buffHideSwipe = true } },
             target = { auras = { showDebuffs = true, hideSwipe = true } },      -- shared fallback
@@ -585,5 +589,5 @@ do
         and profile.quiUnitFrames.target.auras.hideSwipe == nil)
 end
 
-print("migration_v50_aura_elements_test " .. (failures == 0 and "OK" or "FAILED"))
+print("migration_schema59_aura_elements_test " .. (failures == 0 and "OK" or "FAILED"))
 os.exit(failures == 0 and 0 or 1)

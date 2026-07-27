@@ -108,8 +108,10 @@ check("QUI_GFA.UpdateStripContainers exposed",
     src:find("QUI_GFA.UpdateStripContainers = UpdateStripContainers", 1, true) ~= nil)
 check("QUI_GFA.DisableStripContainers exposed (unit clear)",
     src:find("QUI_GFA.DisableStripContainers = DisableStripContainers", 1, true) ~= nil)
-check("QUI_GFA.EnsureContainersForFrame exposed (mid-combat joiner prealloc)",
-    src:find("function QUI_GFA.EnsureContainersForFrame(frame)", 1, true) ~= nil)
+check("prealloc surface retired (creation is combat-legal since PTR7 68914)",
+    src:find("EnsureContainersForFrame", 1, true) == nil
+    and src:find("PrebuildHeadroomGroups", 1, true) == nil
+    and src:find("PREALLOC_HEADROOM", 1, true) == nil)
 check("groupframes.lua wires UpdateStripContainers on unit assign",
     callSrc:find("UpdateStripContainers(", 1, true) ~= nil)
 check("groupframes.lua wires DisableStripContainers on unit clear",
@@ -136,11 +138,17 @@ check("healthTint tracked feeder kept in the engine gate",
 check("RenderFrameElements still defined + exported (MRB + tint renderer)",
     src:find("QUI_GFA.RenderFrameElements = RenderFrameElements", 1, true) ~= nil)
 
--- COMBAT SAFETY: forbidden-object work deferred to PLAYER_REGEN_ENABLED -------
+-- COMBAT SAFETY: forbidden-object work deferred until BOTH combat lockdown
+-- and the 12.1 aura restriction clear. The replay routes through the shared
+-- restriction-aware queue (core/aura_glue.lua QueueRegenWork: regen event +
+-- restriction poll) — a PLAYER_REGEN_ENABLED-only local flush left tracked
+-- slots stale when secrecy began and ended without a combat window.
 check("container setup guards on InCombatLockdown()",
     src:find("InCombatLockdown()", 1, true) ~= nil)
-check("deferred container work replays on PLAYER_REGEN_ENABLED",
-    src:find('"PLAYER_REGEN_ENABLED"', 1, true) ~= nil)
+check("deferred container work replays via the restriction-aware shared queue",
+    src:find("AuraGlue.QueueRegenWork", 1, true) ~= nil)
+check("no module-local PLAYER_REGEN_ENABLED flush remains (shared queue owns it)",
+    src:find('"PLAYER_REGEN_ENABLED"', 1, true) == nil)
 check("a combat-deferral queue exists for forbidden container work",
     src:find("QueueContainerCombatWork", 1, true) ~= nil)
 

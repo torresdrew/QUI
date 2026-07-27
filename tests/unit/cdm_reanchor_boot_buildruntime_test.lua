@@ -44,6 +44,11 @@ local env = {
         IsUsableID = function(id) return type(id) == "number" and id > 0 end,
         Get = function(id) if id == 500 then return { cooldownID = 11 } end end,
     },
+    -- Combat-defer wiring: canMutate mirrors realenv canMutateProtectedShells --
+    -- true OOC/init-safe-window. Stub always-true so no test behavior changes;
+    -- captured below via the CDMReanchorRuntime.New wrapper to prove it threads
+    -- through to the runtime deps.
+    canMutate = function() return true end,
     getContainer = function() return container end,
     getCurated = function() return { curatedEntry } end,
     getSettings = function() return { row1 = { iconCount = 4, iconSize = 40 } } end,
@@ -119,6 +124,19 @@ env.CDMReanchorWiring = {
     end,
 }
 
+-- Combat-defer wiring: capture the deps BuildRuntime hands to CDMReanchorRuntime.New
+-- so we can assert canMutate threads through, without altering the real runtime.
+local capturedRuntimeDeps
+do
+    local realNew = env.CDMReanchorRuntime.New
+    env.CDMReanchorRuntime = {
+        New = function(d)
+            capturedRuntimeDeps = d
+            return realNew(d)
+        end,
+    }
+end
+
 -- G13: capture the auraPhase deps so we can exercise the reassertEdge closure that
 -- BuildRuntime wires (re-hides the recharge draw-edge when showRechargeEdge is off).
 local capturedAuraDeps
@@ -129,6 +147,8 @@ ns._OwnedSwipe = { GetSettings = function() return swipeStub end }
 local facade = B.BuildRuntime(env)
 assert(type(facade) == "table" and facade.bridge and facade.wiring and facade.runtime, "facade has bridge/wiring/runtime")
 assert(type(facade.RefreshBuiltin) == "function", "facade:RefreshBuiltin exists")
+assert(type(facade.RefreshBuiltins) == "function", "facade:RefreshBuiltins exposes atomic placement refresh")
+assert(type(facade.GetPlacementsForFrame) == "function", "facade exposes placement consumers")
 
 local count = facade:RefreshBuiltin("essential")
 assert(count == 1, "one curated entry assembled (matched)")
@@ -192,5 +212,14 @@ assert(firstPassIcon.acquiredKey == "essential",
     "boot passes the containerKey to acquireIcon for pool membership")
 assert(#releasedKeys > 0 and releasedKeys[#releasedKeys] == "essential",
     "runtime release passes the containerKey back to releaseIcon")
+
+-- Combat-defer wiring: BuildRuntime threads env.canMutate into the runtime and
+-- exposes DrainPendingCombatRefresh on the boot table (PLAYER_REGEN_ENABLED drain).
+assert(capturedRuntimeDeps and capturedRuntimeDeps.canMutate ~= nil,
+    "runtime receives the canMutate dep")
+assert(type(facade.DrainPendingCombatRefresh) == "function",
+    "boot exposes DrainPendingCombatRefresh")
+-- calling it with no deferred keys is a safe no-op
+facade:DrainPendingCombatRefresh()
 
 print("OK: cdm_reanchor_boot_buildruntime_test")

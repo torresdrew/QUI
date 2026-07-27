@@ -64,11 +64,49 @@ local AURA_TYPE_OPTIONS = {
     { value = "HARMFUL", text = ns.L["Debuffs (Harmful)"] },
 }
 
+-- "What to Show" leads the Filters section: a plain-language intent that
+-- maps onto the raw filter mechanisms in Appearance & Advanced (E.WhatToShowKeys
+-- / E.ApplyWhatToShow / E.DeriveWhatToShow — core/aura_elements.lua). Covers
+-- every key either polarity can offer; WhatToShowOptions below narrows the
+-- list to what E.WhatToShowKeys(auraType) actually offers for the element in
+-- front of the user, plus the "custom" escape hatch.
+local WHAT_TO_SHOW_LABELS = {
+    all          = ns.L["All"],
+    mine         = ns.L["Only my auras"],
+    defensives   = ns.L["Defensives"],
+    purgeable    = ns.L["Purgeable"],
+    dispellable  = ns.L["Dispellable by me"],
+    crowdControl = ns.L["Crowd control"],
+    boss         = ns.L["Boss debuffs"],
+    roleBoss     = ns.L["Role-relevant boss debuffs"],
+    whitelist    = ns.L["Specific spells"],
+    custom       = ns.L["Custom…"],
+}
+
+local function WhatToShowOptions(auraType)
+    local out = {}
+    for _, key in ipairs(E.WhatToShowKeys(auraType)) do
+        out[#out + 1] = { value = key, text = WHAT_TO_SHOW_LABELS[key] or key }
+    end
+    out[#out + 1] = { value = "custom", text = WHAT_TO_SHOW_LABELS.custom }
+    return out
+end
+
 local TRACKED_DISPLAY_OPTIONS_ALL = {
     { value = "icon", text = ns.L["Icon"] },
     { value = "square", text = ns.L["Colored Square"] },
     { value = "bar", text = ns.L["Bar"] },
     { value = "healthTint", text = ns.L["Health Bar Tint"] },
+    { value = "border", text = ns.L["Colored Border"] },
+}
+
+-- applyToRoles gate options (core/aura_elements.lua ElementAppliesToRole).
+local APPLY_TO_ROLES_OPTIONS = {
+    { value = "all", text = ns.L["Everyone"] },
+    { value = "tank", text = ns.L["Tanks"] },
+    { value = "healer", text = ns.L["Healers"] },
+    { value = "dps", text = ns.L["Damage"] },
+    { value = "me", text = ns.L["Only Me"] },
 }
 
 -- Container sort rules → AuraContainerSortMethod (see core/aura_glue.lua).
@@ -104,6 +142,22 @@ local DISPEL_TYPES = {
     { key = "Disease", label = ns.L["Disease"] },
     { key = "Poison", label = ns.L["Poison"] },
     { key = "Bleed", label = ns.L["Bleed"] },
+}
+
+-- GameTooltip anchor TOKENS — SetTooltipAnchorPoint hard-asserts on anything
+-- else (Blizzard_AuraButton.lua:53); frame-point strings are NOT valid here.
+-- ANCHOR_NONE (the engine-default reset) is expressed by unchecking the
+-- Custom Tooltip Anchor row, not offered as a dropdown value.
+local TOOLTIP_ANCHOR_OPTIONS = {
+    { value = "ANCHOR_TOPRIGHT", text = ns.L["Top Right"] },
+    { value = "ANCHOR_TOP", text = ns.L["Top"] },
+    { value = "ANCHOR_TOPLEFT", text = ns.L["Top Left"] },
+    { value = "ANCHOR_RIGHT", text = ns.L["Right"] },
+    { value = "ANCHOR_LEFT", text = ns.L["Left"] },
+    { value = "ANCHOR_BOTTOMRIGHT", text = ns.L["Bottom Right"] },
+    { value = "ANCHOR_BOTTOM", text = ns.L["Bottom"] },
+    { value = "ANCHOR_BOTTOMLEFT", text = ns.L["Bottom Left"] },
+    { value = "ANCHOR_CURSOR", text = ns.L["At Cursor"] },
 }
 
 local HEALTH_TINT_ANIMATION_OPTIONS = {
@@ -148,19 +202,24 @@ local HARMFUL_CLASSIFICATIONS = {
 -- Raw AuraFilters tokens offered in "flags" mode, per aura type. HELPFUL-only
 -- tokens are never offered on HARMFUL (a "HARMFUL|RAID_IN_COMBAT"-class combo
 -- hard-errors in C_UnitAuras; the model also drops them defensively).
+-- Labels follow the 68675 AuraFilters semantics: RAID = the PLAYER can
+-- apply (helpful) / dispel (harmful); RAID_PLAYER_DISPELLABLE = ANYONE in
+-- the raid can dispel; DISPELLABLE = dispellable by any source at all.
 local HELPFUL_FLAG_TOKENS = {
     { token = "PLAYER", label = ns.L["Player"] },
-    { token = "RAID", label = ns.L["Raid"] },
+    { token = "RAID", label = ns.L["Castable by Me"] },
     { token = "CANCELABLE", label = ns.L["Cancelable"] },
     { token = "BIG_DEFENSIVE", label = ns.L["Big Defensive"] },
     { token = "EXTERNAL_DEFENSIVE", label = ns.L["External Defensive"] },
+    { token = "IMPORTANT", label = ns.L["Important"] },
 }
 
 local HARMFUL_FLAG_TOKENS = {
     { token = "PLAYER", label = ns.L["Player"] },
-    { token = "RAID", label = ns.L["Raid"] },
+    { token = "RAID", label = ns.L["Dispellable by Me"] },
     { token = "INCLUDE_NAME_PLATE_ONLY", label = ns.L["Nameplate Auras Only"] },
-    { token = "RAID_PLAYER_DISPELLABLE", label = ns.L["Dispellable by Me"] },
+    { token = "RAID_PLAYER_DISPELLABLE", label = ns.L["Raid-Dispellable (Anyone)"] },
+    { token = "DISPELLABLE", label = ns.L["Dispellable (Any Source)"] },
     { token = "CROWD_CONTROL", label = ns.L["Crowd Control"] },
 }
 
@@ -172,7 +231,7 @@ local function DefaultCapabilities()
     local AuraDefaults = ns.QUI_GroupFramesAuraDefaults
     return {
         elementTypes        = { filterStrip = true, tracked = true, missingRaidBuff = true },
-        trackedDisplayTypes = { icon = true, square = true, bar = true, healthTint = true },
+        trackedDisplayTypes = { icon = true, square = true, bar = true, healthTint = true, border = true },
         cancelEligible      = false,
         maxStripElements    = 4,
         allowSpecOverride   = true,
@@ -204,7 +263,7 @@ end
 local function DefaultTrackedDisplay(caps)
     local t = caps and caps.trackedDisplayTypes
     if type(t) ~= "table" then return "icon" end
-    for _, v in ipairs({ "icon", "square", "bar", "healthTint" }) do
+    for _, v in ipairs({ "icon", "square", "bar", "healthTint", "border" }) do
         if t[v] then return v end
     end
     return "icon"
@@ -222,13 +281,13 @@ end
 
 local function GetSpellName(spellID)
     if C_Spell and C_Spell.GetSpellName then
-        local ok, name = pcall(C_Spell.GetSpellName, spellID)
+        local ok, name = ns.SafeCall("best-effort-style", C_Spell.GetSpellName, spellID)
         if ok and name and name ~= "" then
             return name
         end
     end
     if GetSpellInfo then
-        local ok, name = pcall(GetSpellInfo, spellID)
+        local ok, name = ns.SafeCall("best-effort-style", GetSpellInfo, spellID)
         if ok and name and name ~= "" then
             return name
         end
@@ -238,7 +297,7 @@ end
 
 local function GetSpellTexture(spellID)
     if C_Spell and C_Spell.GetSpellTexture then
-        local ok, texture = pcall(C_Spell.GetSpellTexture, spellID)
+        local ok, texture = ns.SafeCall("best-effort-style", C_Spell.GetSpellTexture, spellID)
         if ok and texture then
             return texture
         end
@@ -280,7 +339,7 @@ local function GetElementLabel(element)
         if buffs and buffs[1] then
             local spellID = buffs[1].iconSpellID or (buffs[1].ids and buffs[1].ids[1])
             if spellID and C_Spell and C_Spell.GetSpellTexture then
-                local ok, texture = pcall(C_Spell.GetSpellTexture, spellID)
+                local ok, texture = ns.SafeCall("best-effort-style", C_Spell.GetSpellTexture, spellID)
                 if ok and texture then icon = texture end
             end
         end
@@ -306,6 +365,79 @@ end
 -- returns nothing; the caller tracks the running Y. Kept at file scope so the
 -- big RenderAuras closure stays under the Lua 5.1 60-upvalue cap.
 ---------------------------------------------------------------------------
+
+-- Derive the plain-language "What to Show" intent for an element, coerced to
+-- "custom" when the raw derive yields a key this element's polarity doesn't
+-- offer (hand-edited SV, or a stale key surviving an auraType flip). Used by
+-- the dropdown so it never receives a value outside its offered option list.
+local function EffectiveWhatToShow(element)
+    local derived = E.DeriveWhatToShow(element)
+    for _, key in ipairs(E.WhatToShowKeys(element.auraType)) do
+        if key == derived then return derived end
+    end
+    return "custom"
+end
+
+-- Per-element collapsible-section view state (NOT persisted to SV).
+local sectionExpand = {}
+local function sectionState(element)
+    local s = sectionExpand[element.id]
+    if not s then
+        s = { basics = false, filters = false, advanced = false }
+        s.manualCustom = false
+        sectionExpand[element.id] = s
+    end
+    return s
+end
+
+-- Emit a full-width clickable section header with a chevron. Section bodies
+-- stay built for the current detail view, so disclosure clicks only hide/show
+-- and reflow existing rows instead of allocating another complete widget tree.
+local function MakeSectionHeader(ctx, element, sectionKey, labelText)
+    local state = sectionState(element)
+    local header = CreateFrame("Button", nil, ctx.detailArea)
+    header:SetHeight(FORM_ROW)
+    local fs = header:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    local textColor = ctx.C.text or { 1, 1, 1, 1 }
+    CJKFont(fs, ctx.GUI.FONT_PATH or [[Interface\\AddOns\\QUI\\assets\\Quazii.ttf]], 11, "")
+    fs:SetTextColor(textColor[1], textColor[2], textColor[3], textColor[4] or 1)
+    fs:SetPoint("LEFT", header, "LEFT", 20, 0)
+    fs:SetText(labelText)
+    local caret
+    if ns.UIKit and ns.UIKit.CreateChevronCaret then
+        caret = ns.UIKit.CreateChevronCaret(header, {
+            point = "LEFT", relativeTo = header, relativePoint = "LEFT",
+            xPixels = 4, sizePixels = 8, collapsedDirection = "right",
+            expanded = state[sectionKey],
+        })
+    end
+    if ctx._detailSectionCarets then
+        ctx._detailSectionCarets[sectionKey] = caret
+    end
+    header:SetScript("OnClick", function()
+        local expanded = not state[sectionKey]
+        if ctx.SetDetailSectionExpanded then
+            ctx.SetDetailSectionExpanded(sectionKey, expanded)
+        else
+            state[sectionKey] = expanded
+            if caret and ns.UIKit.SetChevronCaretExpanded then
+                ns.UIKit.SetChevronCaretExpanded(caret, expanded)
+            end
+            if not expanded and SpellList and SpellList.CloseBrowsePopup then
+                SpellList.CloseBrowsePopup(ctx.browsePrefix)
+            end
+            if ctx.RelayoutDetail then
+                ctx.RelayoutDetail()
+                if ctx.RelayoutList then
+                    ctx.RelayoutList()
+                end
+            else
+                ctx.rebuild()
+            end
+        end
+    end)
+    ctx.BeginDetailSection(header, FORM_ROW, sectionKey)
+end
 
 local function AddPlacementWidgets(ctx, element, includeStrip)
     local GUI = ctx.GUI
@@ -390,6 +522,100 @@ local function AddSwipeWidgets(ctx, element)
     row(ns.L["Swipe Style"], GUI:CreateFormDropdown(ctx.detailArea, nil, SWIPE_STYLE_OPTIONS, "swipeStyle", element, onChange, {
         description = ns.L["Radial or linear (horizontal/vertical) cooldown animation over aura icons."],
     }))
+end
+
+-- Per-button tooltip + dispel-ring overrides (PTR7). Every field is OPTIONAL
+-- on the element -- absent = engine default -- so the stamp/nil checkbox
+-- pattern from Custom Border Color applies throughout: widget construction
+-- never writes the DB, only a real user click stamps or clears the keys.
+-- dispelAssets (customDispelAssetMap) stays profile/import-only: a
+-- struct-valued texture-asset map has no honest row widget.
+local function AddDispelTooltipWidgets(ctx, element)
+    local GUI = ctx.GUI
+    local row = ctx.AddFormRow
+    local onChange = ctx.onChange
+    local rebuild = ctx.rebuild
+
+    row(ns.L["Hide Tooltips in Combat"], GUI:CreateFormCheckbox(ctx.detailArea, nil, "tooltipHideInCombat", element, onChange, {
+        description = ns.L["Suppress aura tooltips from this element while you are in combat."],
+    }))
+
+    row(ns.L["Custom Tooltip Anchor"], GUI:CreateFormCheckbox(ctx.detailArea, nil, "_customTooltipAnchor", {
+        _customTooltipAnchor = element.tooltipAnchor ~= nil,
+        _quiTransientOptionsProxy = true,
+    }, function(checked)
+        if checked and element.tooltipAnchor == nil then
+            element.tooltipAnchor = "ANCHOR_TOPRIGHT"
+            element.tooltipAnchorX = 0
+            element.tooltipAnchorY = 0
+        elseif not checked then
+            element.tooltipAnchor = nil
+            element.tooltipAnchorX = nil
+            element.tooltipAnchorY = nil
+        end
+        ctx.NotifyChanged()
+        rebuild()
+    end, {
+        description = ns.L["Anchor aura tooltips to each icon instead of the default tooltip position."],
+    }))
+    if element.tooltipAnchor ~= nil then
+        -- Legacy/imported values that predate the token list (or hand-edited
+        -- frame points) would hard-assert engine-side; normalize before the
+        -- dropdown binds so the control always shows a real state.
+        local valid = false
+        for _, opt in ipairs(TOOLTIP_ANCHOR_OPTIONS) do
+            if opt.value == element.tooltipAnchor then valid = true break end
+        end
+        if not valid then element.tooltipAnchor = "ANCHOR_TOPRIGHT" end
+        if type(element.tooltipAnchorX) ~= "number" then element.tooltipAnchorX = 0 end
+        if type(element.tooltipAnchorY) ~= "number" then element.tooltipAnchorY = 0 end
+        row(ns.L["Tooltip Anchor"], GUI:CreateFormDropdown(ctx.detailArea, nil, TOOLTIP_ANCHOR_OPTIONS, "tooltipAnchor", element, onChange, {
+            description = ns.L["Where the tooltip appears relative to the icon."],
+        }))
+        row(ns.L["Tooltip X Offset"], GUI:CreateFormSlider(ctx.detailArea, nil, -50, 50, 1, "tooltipAnchorX", element, onChange, { deferOnDrag = true }, {
+            description = ns.L["Horizontal pixel offset from the tooltip anchor."],
+        }))
+        row(ns.L["Tooltip Y Offset"], GUI:CreateFormSlider(ctx.detailArea, nil, -50, 50, 1, "tooltipAnchorY", element, onChange, { deferOnDrag = true }, {
+            description = ns.L["Vertical pixel offset from the tooltip anchor."],
+        }))
+    end
+
+    -- Dispel ring colors: optional map keyed by dispel type. The engine's
+    -- colorRGB shape ({r=,g=,b=}) differs from the picker's array shape, so
+    -- each picker binds a transient proxy and its onChange writes the
+    -- canonical shape into element.dispelColors.
+    row(ns.L["Custom Dispel Ring Colors"], GUI:CreateFormCheckbox(ctx.detailArea, nil, "_customDispelColors", {
+        _customDispelColors = type(element.dispelColors) == "table",
+        _quiTransientOptionsProxy = true,
+    }, function(checked)
+        if checked and type(element.dispelColors) ~= "table" then
+            element.dispelColors = {}
+        elseif not checked then
+            element.dispelColors = nil
+        end
+        ctx.NotifyChanged()
+        rebuild()
+    end, {
+        description = ns.L["Override the engine's per-dispel-type ring colors for icons in this element. Types you never touch keep the engine color."],
+    }))
+    if type(element.dispelColors) == "table" then
+        for _, entry in ipairs(DISPEL_TYPES) do
+            local key = entry.key
+            local stored = element.dispelColors[key]
+            local proxy = {
+                _quiTransientOptionsProxy = true,
+                color = stored and { stored.r or 1, stored.g or 1, stored.b or 1, 1 }
+                    or { 1, 1, 1, 1 },
+            }
+            row(string.format(ns.L["%s Ring Color"], entry.label),
+                GUI:CreateFormColorPicker(ctx.detailArea, nil, "color", proxy, function(r, g, b)
+                    element.dispelColors[key] = { r = r, g = g, b = b }
+                    onChange()
+                end, nil, {
+                    description = string.format(ns.L["Dispel ring color used for %s auras in this element."], entry.label),
+                }))
+        end
+    end
 end
 
 -- Shared text-region widget block for the duration{} / stack{} sub-tables. key
@@ -483,6 +709,15 @@ local function AddSpellMapEditor(ctx, map, headerText, onMutate, browseCfg)
     addManualText:SetText(ns.L["Add"])
     StyleSpellInputText(GUI, C, inputBox, inputLabel, addManualText)
 
+    local listFrame
+    local function RefreshInlineList()
+        if listFrame and type(listFrame.Refresh) == "function" then
+            listFrame:Refresh()
+        else
+            ctx.rebuild()
+        end
+    end
+
     local function CommitManual()
         local spellID = tonumber(inputBox:GetText())
         if spellID and spellID > 0 then
@@ -490,7 +725,7 @@ local function AddSpellMapEditor(ctx, map, headerText, onMutate, browseCfg)
             inputBox:SetText("")
             inputBox:ClearFocus()
             notify()
-            ctx.rebuild()
+            RefreshInlineList()
         end
     end
     addManualButton:SetScript("OnClick", CommitManual)
@@ -499,21 +734,25 @@ local function AddSpellMapEditor(ctx, map, headerText, onMutate, browseCfg)
     -- Browse popup trigger. Re-binding via RefreshBrowsePopup on every render
     -- keeps an already-open popup's closures fresh across list rebuilds.
     if browseCfg and browseCfg.key and SpellList.ToggleBrowsePopup then
+        local toggleSpell = browseCfg.onToggle or function(spellID)
+            if map[spellID] then
+                map[spellID] = nil
+            else
+                map[spellID] = true
+            end
+            notify()
+        end
         local browseOpts = {
             title = browseCfg.title or headerText,
             presets = browseCfg.presets or {},
             isSelected = browseCfg.isSelected or function(spellID)
                 return map[spellID] == true
             end,
-            onToggle = browseCfg.onToggle or function(spellID)
-                if map[spellID] then
-                    map[spellID] = nil
-                else
-                    map[spellID] = true
-                end
-                notify()
-                ctx.rebuild()
+            onToggle = function(spellID)
+                toggleSpell(spellID)
+                RefreshInlineList()
             end,
+            onClose = browseCfg.onClose,
         }
         local browseButton = GUI:CreateButton(manualRow, ns.L["Browse"], 70, 20)
         browseButton:ClearAllPoints()
@@ -528,10 +767,10 @@ local function AddSpellMapEditor(ctx, map, headerText, onMutate, browseCfg)
     add(manualRow, 26, true)
 
     -- Current spells only (no preset groups — those live in the Browse popup).
-    local listFrame = SpellList.CreateListFrame(ctx.detailArea, map, nil, function()
+    listFrame = SpellList.CreateListFrame(ctx.detailArea, map, nil, function()
         notify()
-    end, function()
-        ctx.rebuild()
+    end, function(_, newHeight)
+        ctx.UpdateDetailWidgetHeight(listFrame, newHeight)
     end)
     add(listFrame, math.max(1, listFrame:GetHeight() or 1), true)
 end
@@ -589,17 +828,31 @@ local function AddTrackedSpellListEditor(ctx, element)
                 for i = #arr, 1, -1 do
                     if arr[i] == spellID then
                         table.remove(arr, i)
+                        mapView[spellID] = nil
                         ctx.NotifyChanged()
-                        ctx.rebuild()
                         return
                     end
                 end
                 arr[#arr + 1] = spellID
                 table.sort(arr)
+                mapView[spellID] = true
                 ctx.NotifyChanged()
-                ctx.rebuild()
             end,
         })
+end
+
+-- Per-frame role gate row (applyToRoles). Shown on group-frame surfaces only
+-- (caps.roleGate ~= false); a self-only surface like action bars has no roster
+-- roles so it opts out. "me" restricts to the player's own frame.
+local function AddRoleGateRow(ctx, element)
+    local caps = ctx.caps
+    if caps and caps.roleGate == false then return end
+    if element.applyToRoles == nil then element.applyToRoles = "all" end
+    ctx.AddFormRow(ns.L["Show On Roles"],
+        ctx.GUI:CreateFormDropdown(ctx.detailArea, nil, APPLY_TO_ROLES_OPTIONS, "applyToRoles", element, ctx.onChange, {
+            description = ns.L["Which group members' frames show this aura (by assigned role). 'Only Me' shows it on your own frame."],
+            keywords = { "role", "tank", "healer", "dps", "personal" },
+        }))
 end
 
 local function AddFilterStripConfig(ctx, element)
@@ -610,215 +863,317 @@ local function AddFilterStripConfig(ctx, element)
     local onChange = ctx.onChange
     local rebuild = ctx.rebuild
     local caps = ctx.caps
+    local state = sectionState(element)
 
+    -- The surface owns this strip's polarity (BB buff/debuff zones): hard-
+    -- assert against hand-edited SVs. This must run every render regardless
+    -- of which section is expanded -- element.auraType below gates widgets
+    -- in every section (dispel/gate checkboxes, whitelist/blacklist presets,
+    -- the polarity warning), so it cannot be deferred behind Basics' gate.
     if caps.fixedAuraType then
-        -- The surface owns this strip's polarity (BB buff/debuff zones): no
-        -- dropdown, and hard-assert against hand-edited SVs.
         element.auraType = caps.fixedAuraType
-    else
-        row(ns.L["Aura Type"], GUI:CreateFormDropdown(ctx.detailArea, nil, AURA_TYPE_OPTIONS, "auraType", element, function()
-            ctx.NotifyChanged()
-            rebuild()
-        end, {
-            description = ns.L["Whether this strip shows helpful buffs or harmful debuffs."],
-        }))
     end
 
-    AddPlacementWidgets(ctx, element, true)
-    AddSwipeWidgets(ctx, element)
-    AddTextRegionWidgets(ctx, element, "duration", ns.L["Duration Text"])
-    AddTextRegionWidgets(ctx, element, "stack", ns.L["Stack Text"])
-
-    row(ns.L["Sort Order"], GUI:CreateFormDropdown(ctx.detailArea, nil, SORT_OPTIONS, "sortRule", element, onChange, {
-        description = ns.L["Order icons in this strip are displayed in."],
-    }))
-    row(ns.L["Reverse Sort"], GUI:CreateFormCheckbox(ctx.detailArea, nil, "sortReverse", element, onChange, {
-        description = ns.L["Reverse the sort order of icons in this strip."],
-    }))
-
-    -- Right-click-cancel is only honored on cancel-eligible (player-unit) hosts
-    -- for HELPFUL strips, so only offer the toggle there.
-    if caps.cancelEligible and element.auraType == "HELPFUL" then
-        row(ns.L["Right-Click to Cancel"], GUI:CreateFormCheckbox(ctx.detailArea, nil, "rightClickCancel", element, onChange, {
-            description = ns.L["Allow right-clicking an icon in this strip to cancel the aura."],
-        }))
-    end
-
-    row(ns.L["Filter Mode"], GUI:CreateFormDropdown(ctx.detailArea, nil, FILTER_MODE_OPTIONS, "filterMode", element, function()
-        ctx.NotifyChanged()
-        rebuild()
-    end, {
-        description = ns.L["Off shows everything; Flags composes the raw aura filter tokens below; Classification shows only the categories ticked below; Spell Whitelist shows only the spells listed below."],
-        keywords = { "filter", "include", "flags" },
-    }))
-    row(ns.L["Only My Auras"], GUI:CreateFormCheckbox(ctx.detailArea, nil, "onlyMine", element, onChange, {
-        description = ns.L["Only show auras you applied."],
-        keywords = { "Only Mine", "mine only" },
-    }))
-    row(ns.L["Hide Permanent"], GUI:CreateFormCheckbox(ctx.detailArea, nil, "hidePermanent", element, onChange, {
-        description = ns.L["Hide auras with no remaining duration."],
-    }))
-    row(ns.L["Max Duration (seconds)"], GUI:CreateFormSlider(ctx.detailArea, nil, 0, 600, 5, "maxDurationSec", element, onChange, { deferOnDrag = true }, {
-        description = ns.L["Hide auras whose base duration is longer than this. 0 disables. Any value also hides permanent auras."],
-    }))
-    row(ns.L["Dispel Type Filter"], GUI:CreateFormDropdown(ctx.detailArea, nil, DISPEL_FILTER_MODE_OPTIONS, "dispelFilterMode", element, function()
-        ctx.NotifyChanged()
-        rebuild()
-    end, {
-        description = ns.L["Include or exclude auras by dispel type. Works on every unit."],
-        keywords = { "dispel", "magic", "curse", "disease", "poison", "bleed" },
-    }))
-    if element.dispelFilterMode == "include" or element.dispelFilterMode == "exclude" then
-        if type(element.dispelTypes) ~= "table" then element.dispelTypes = {} end
-        for _, entry in ipairs(DISPEL_TYPES) do
-            row(entry.label, GUI:CreateFormCheckbox(ctx.detailArea, nil, entry.key, element.dispelTypes, onChange, {
-                description = string.format(ns.L["Match auras with the %s dispel type."], entry.label),
-            }))
-        end
-    end
-    if element.auraType == "HELPFUL" then
-        row(ns.L["Stealable (Purge)"], GUI:CreateFormCheckbox(ctx.detailArea, nil, "gateStealable", element, onChange, {
-            description = ns.L["Only show buffs that can be stolen or purged. Combines with the other filters."],
-        }))
-    end
-    if element.auraType == "HARMFUL" then
-        row(ns.L["Priority Debuffs"], GUI:CreateFormCheckbox(ctx.detailArea, nil, "gatePriorityAura", element, onChange, {
-            description = ns.L["Only show debuffs Blizzard flags as priority. Combines with the other filters."],
-        }))
-    end
-    row(ns.L["Boss Auras"], GUI:CreateFormCheckbox(ctx.detailArea, nil, "gateBossAura", element, onChange, {
-        description = ns.L["Only show auras applied by bosses. Combines with the other filters."],
-    }))
-    row(ns.L["Role Auras"], GUI:CreateFormCheckbox(ctx.detailArea, nil, "gateRoleAura", element, onChange, {
-        description = ns.L["Only show role-relevant auras. Combines with the other filters."],
-    }))
-    row(ns.L["Boss or Role Auras"], GUI:CreateFormCheckbox(ctx.detailArea, nil, "gateBossOrRoleAura", element, onChange, {
-        description = ns.L["Only show auras that are boss-applied or role-relevant. Combines with the other filters."],
-    }))
-
-    -- Custom border color: borderColor is OPTIONAL on the element -- absent
-    -- means "theme border" (aura_skin styleButton falls back to
-    -- AuraTheme.BorderColor). The checkbox is the explicit nil/stamped
-    -- switch: the picker widget itself can't express "unset", so checking
-    -- stamps a starting value and unchecking nils the key back to theme.
-    -- Bound to a throwaway state table (never element) so widget
-    -- CONSTRUCTION never writes the DB -- only the onChange callback
-    -- (fired on a real user click) stamps or clears element.borderColor.
-    -- _quiTransientOptionsProxy: framework marker for one-off state tables
-    -- (IsTransientOptionsBinding) -- keeps this row out of the widget-sync
-    -- registry and the search-cache descriptor path, which key on real DB
-    -- tables and would otherwise churn a fresh key every rebuild.
-    row(ns.L["Custom Border Color"], GUI:CreateFormCheckbox(ctx.detailArea, nil, "_customBorder", {
-        _customBorder = element.borderColor ~= nil,
-        _quiTransientOptionsProxy = true,
-    }, function(checked)
-        if checked and element.borderColor == nil then
-            element.borderColor = { 1, 1, 1, 1 }
-        elseif not checked then
-            element.borderColor = nil
-        end
-        ctx.NotifyChanged()
-        rebuild()
-    end, {
-        description = ns.L["Override the theme border color for icons in this strip."],
-    }))
-    if element.borderColor ~= nil then
-        row(ns.L["Border Color"], GUI:CreateFormColorPicker(ctx.detailArea, nil, "borderColor", element, onChange, nil, {
-            description = ns.L["Border color for icons in this strip."],
-        }))
-    end
-
-    local filterMode = element.filterMode or "off"
-    if filterMode == "classify" then
-        if type(element.classifications) ~= "table" then
-            element.classifications = {}
-        end
-        local list = element.auraType == "HARMFUL" and HARMFUL_CLASSIFICATIONS or HELPFUL_CLASSIFICATIONS
-        for _, entry in ipairs(list) do
-            row(entry.label, GUI:CreateFormCheckbox(ctx.detailArea, nil, entry.key, element.classifications, onChange, {
-                description = ns.L["Include auras Blizzard flags as "] .. entry.label .. ".",
-            }))
-        end
-    elseif filterMode == "flags" then
-        if type(element.filterFlags) ~= "table" then
-            element.filterFlags = {}
-        end
-        local tokens = element.auraType == "HARMFUL" and HARMFUL_FLAG_TOKENS or HELPFUL_FLAG_TOKENS
-        for _, entry in ipairs(tokens) do
-            -- CreateFormDropdown writes dbTable[dbKey] directly, so bind a
-            -- scratch cell and translate to the stored tri-state on change
-            -- (off = absent so untouched tokens stay invisible to compile).
-            local cur = element.filterFlags[entry.token]
-            local scratch = { value = (cur == true and "require") or (cur == "exclude" and "exclude") or "off" }
-            row(entry.label, GUI:CreateFormDropdown(ctx.detailArea, nil, TRI_STATE_OPTIONS, "value", scratch, function()
-                local v = scratch.value
-                if v == "require" then
-                    element.filterFlags[entry.token] = true
-                elseif v == "exclude" then
-                    element.filterFlags[entry.token] = "exclude"
-                else
-                    element.filterFlags[entry.token] = nil
-                end
-                onChange()
+    -- ===== BASICS =====
+    MakeSectionHeader(ctx, element, "basics", ns.L["Basics"])
+    do
+        if not caps.fixedAuraType then
+            row(ns.L["Aura Type"], GUI:CreateFormDropdown(ctx.detailArea, nil, AURA_TYPE_OPTIONS, "auraType", element, function()
+                ctx.NotifyChanged()
+                rebuild()
             end, {
-                description = string.format(ns.L["Require or exclude the %s aura filter flag."], entry.label),
+                description = ns.L["Whether this strip shows helpful buffs or harmful debuffs."],
             }))
         end
-    elseif filterMode == "whitelist" then
-        if type(element.whitelist) ~= "table" then element.whitelist = {} end
-        AddSpellMapEditor(ctx, element.whitelist,
-            ns.L["Whitelisted Spells — only these show. Buff lists apply on friendly units, debuff lists on enemies; empty list shows everything."],
+
+        AddPlacementWidgets(ctx, element, true)
+    end
+
+    -- ===== FILTERS =====
+    MakeSectionHeader(ctx, element, "filters", ns.L["Filters"])
+    do
+        -- "What to Show" leads Filters: pick a plain-language intent and QUI
+        -- stamps the raw fields for you (E.ApplyWhatToShow); the raw controls
+        -- themselves live under Appearance & Advanced for full control.
+        -- "Custom…" is the escape hatch -- it leaves whatever raw config is
+        -- already there untouched (never zeroed by picking it), latches the
+        -- dropdown in manual mode, and opens the raw controls below.
+        -- EffectiveWhatToShow already coerces a non-offered/hand-edited derive
+        -- to "custom", so the dropdown never renders a value outside its own
+        -- option list.
+        local derived = state.manualCustom and "custom" or EffectiveWhatToShow(element)
+
+        -- Bound to a transient proxy (never element) so widget CONSTRUCTION
+        -- never writes the DB -- same pattern as the Custom Border Color
+        -- checkbox in Appearance & Advanced below (_quiTransientOptionsProxy
+        -- keeps it out of the widget-sync registry and the search-cache
+        -- descriptor path, which key on real DB tables).
+        local whatToShowProxy = { whatToShow = derived, _quiTransientOptionsProxy = true }
+        row(ns.L["What to Show"], GUI:CreateFormDropdown(ctx.detailArea, nil,
+            WhatToShowOptions(element.auraType), "whatToShow", whatToShowProxy, function()
+                local key = whatToShowProxy.whatToShow
+                if key == "custom" then
+                    state.manualCustom = true
+                    ctx.SetDetailSectionExpanded("advanced", true)
+                    return
+                end
+                state.manualCustom = false
+                E.ApplyWhatToShow(element, key)
+                ctx.NotifyChanged()
+                rebuild()
+            end, {
+                description = ns.L["Pick what this strip shows in plain terms. QUI writes the underlying filters. Choose Custom… (or edit Appearance & Advanced) for full control."],
+                keywords = { "what to show", "intent", "dispellable", "defensives", "boss" },
+            }))
+        -- Per-frame role gate: restrict this strip to tank/healer/dps frames (or
+        -- your own). Roles resolve out of combat; a mismatch simply omits the
+        -- element from that frame's active list.
+        AddRoleGateRow(ctx, element)
+        -- NOTE(Task 5): the dispel-school checkboxes (DISPEL_TYPES loop
+        -- against element.dispelTypes) live where Task 4 left them, under
+        -- Appearance & Advanced -- not duplicated here. They're gated on
+        -- element.dispelFilterMode ("include"/"exclude"), i.e. the MANUAL
+        -- raw "Dispel Type Filter" dropdown (and legacy pre-engine-token
+        -- "dispellable" SVs). The "dispellable" what-to-show preset itself
+        -- now compiles to the engine's HARMFUL|RAID classification (68675:
+        -- RAID on HARMFUL = player-dispellable; talent-aware, live on
+        -- respec), so it neither sets dispelFilterMode nor surfaces those
+        -- checkboxes.
+
+        -- 2c (classification honesty): Blizzard's engine drops identity-based
+        -- candidateFilters (includeSpellIDs/excludeSpellIDs — whitelist lives
+        -- in Appearance & Advanced, blacklist below) whenever
+        -- CanApplyIdentityCandidateFilters fails. Quote (vendored
+        -- tests/framexml/.../Blizzard_AuraContainerUtil.lua:11-28):
+        --   "if auraData.isHarmful and UnitCanAssist("player", unitToken) then
+        --      return false end
+        --    if auraData.isHelpful and not UnitCanAssist("player", unitToken) then
+        --      return false end"
+        -- i.e. a HARMFUL element's whitelist/blacklist is silently ignored on
+        -- assistable (friendly) units, and a HELPFUL element's on non-assistable
+        -- (hostile) units — runtime already degrades to "show everything" there
+        -- (E.CompileCandidateFilters still emits the candidateFilters; the ENGINE
+        -- is what ignores them — this hint changes nothing about that, it just
+        -- stops the editor from staying silent about it).
+        --
+        -- caps.unitPolarity ("friendly"/"hostile") is only set by callers whose
+        -- surface is STATICALLY one or the other every time (player/pet unit
+        -- frames, group frames, buff borders = always friendly; boss unit frames
+        -- = always hostile). Ambiguous surfaces (target/focus/targettarget, whose
+        -- reaction depends on the live target) leave it nil/absent and get no
+        -- hint — a static warning would be wrong about half the time there.
+        local unitPolarity = caps.unitPolarity
+        if (unitPolarity == "friendly" and element.auraType == "HARMFUL")
+            or (unitPolarity == "hostile" and element.auraType == "HELPFUL") then
+            local warnText = (element.auraType == "HARMFUL")
+                and ns.L["Blizzard disables per-spell debuff filtering on units you can assist, so critical incoming debuffs can't be hidden — the whitelist/blacklist below will not affect what shows here."]
+                or ns.L["Blizzard disables per-spell buff filtering on units you cannot assist, so buffs can't be faked on enemies — the whitelist/blacklist below will not affect what shows here."]
+            local warn = GUI:CreateLabel(ctx.detailArea, warnText, 11, C.warning)
+            warn:SetJustifyH("LEFT")
+            warn:SetWordWrap(true)
+            warn:SetNonSpaceWrap(true)
+            add(warn, 34, true)
+        end
+
+        -- Blacklist compiles in EVERY filter mode (excludeSpellIDs composes with
+        -- flags/classify/whitelist alike), so it renders unconditionally.
+        if type(element.blacklist) ~= "table" then element.blacklist = {} end
+        AddSpellMapEditor(ctx, element.blacklist,
+            ns.L["Blacklisted Spells — never show. Buff lists apply on friendly units, debuff lists on enemies."],
             nil, {
-                key = ctx.browsePrefix .. "whitelist:" .. tostring(element.id),
-                title = ns.L["Add Whitelisted Spells"],
+                key = ctx.browsePrefix .. "blacklist:" .. tostring(element.id),
+                title = ns.L["Add Blacklisted Spells"],
                 presets = BuildFilterBrowsePresets(element.auraType),
             })
     end
 
-    -- 2c (classification honesty): Blizzard's engine drops identity-based
-    -- candidateFilters (includeSpellIDs/excludeSpellIDs — whitelist above,
-    -- blacklist below) whenever CanApplyIdentityCandidateFilters fails.
-    -- Quote (vendored tests/framexml/.../Blizzard_AuraContainerUtil.lua:11-28):
-    --   "if auraData.isHarmful and UnitCanAssist("player", unitToken) then
-    --      return false end
-    --    if auraData.isHelpful and not UnitCanAssist("player", unitToken) then
-    --      return false end"
-    -- i.e. a HARMFUL element's whitelist/blacklist is silently ignored on
-    -- assistable (friendly) units, and a HELPFUL element's on non-assistable
-    -- (hostile) units — runtime already degrades to "show everything" there
-    -- (E.CompileCandidateFilters still emits the candidateFilters; the ENGINE
-    -- is what ignores them — this hint changes nothing about that, it just
-    -- stops the editor from staying silent about it).
-    --
-    -- caps.unitPolarity ("friendly"/"hostile") is only set by callers whose
-    -- surface is STATICALLY one or the other every time (player/pet unit
-    -- frames, group frames, buff borders = always friendly; boss unit frames
-    -- = always hostile). Ambiguous surfaces (target/focus/targettarget, whose
-    -- reaction depends on the live target) leave it nil/absent and get no
-    -- hint — a static warning would be wrong about half the time there.
-    local unitPolarity = caps.unitPolarity
-    if (unitPolarity == "friendly" and element.auraType == "HARMFUL")
-        or (unitPolarity == "hostile" and element.auraType == "HELPFUL") then
-        local warnText = (element.auraType == "HARMFUL")
-            and ns.L["Blizzard disables per-spell debuff filtering on units you can assist, so critical incoming debuffs can't be hidden — the whitelist/blacklist below will not affect what shows here."]
-            or ns.L["Blizzard disables per-spell buff filtering on units you cannot assist, so buffs can't be faked on enemies — the whitelist/blacklist below will not affect what shows here."]
-        local warn = GUI:CreateLabel(ctx.detailArea, warnText, 11, C.warning)
-        warn:SetJustifyH("LEFT")
-        warn:SetWordWrap(true)
-        warn:SetNonSpaceWrap(true)
-        add(warn, 34, true)
-    end
+    -- ===== APPEARANCE & ADVANCED =====
+    MakeSectionHeader(ctx, element, "advanced", ns.L["Appearance & Advanced"])
+    do
+        AddSwipeWidgets(ctx, element)
+        AddTextRegionWidgets(ctx, element, "duration", ns.L["Duration Text"])
+        AddTextRegionWidgets(ctx, element, "stack", ns.L["Stack Text"])
 
-    -- Blacklist compiles in EVERY filter mode (excludeSpellIDs composes with
-    -- flags/classify/whitelist alike), so it renders unconditionally.
-    if type(element.blacklist) ~= "table" then element.blacklist = {} end
-    AddSpellMapEditor(ctx, element.blacklist,
-        ns.L["Blacklisted Spells — never show. Buff lists apply on friendly units, debuff lists on enemies."],
-        nil, {
-            key = ctx.browsePrefix .. "blacklist:" .. tostring(element.id),
-            title = ns.L["Add Blacklisted Spells"],
-            presets = BuildFilterBrowsePresets(element.auraType),
-        })
+        row(ns.L["Sort Order"], GUI:CreateFormDropdown(ctx.detailArea, nil, SORT_OPTIONS, "sortRule", element, onChange, {
+            description = ns.L["Order icons in this strip are displayed in."],
+        }))
+        row(ns.L["Reverse Sort"], GUI:CreateFormCheckbox(ctx.detailArea, nil, "sortReverse", element, onChange, {
+            description = ns.L["Reverse the sort order of icons in this strip."],
+        }))
+
+        -- Right-click-cancel is only honored on cancel-eligible (player-unit) hosts
+        -- for HELPFUL strips, so only offer the toggle there.
+        if caps.cancelEligible and element.auraType == "HELPFUL" then
+            row(ns.L["Right-Click to Cancel"], GUI:CreateFormCheckbox(ctx.detailArea, nil, "rightClickCancel", element, onChange, {
+                description = ns.L["Allow right-clicking an icon in this strip to cancel the aura."],
+            }))
+        end
+
+        row(ns.L["Filter Mode"], GUI:CreateFormDropdown(ctx.detailArea, nil, FILTER_MODE_OPTIONS, "filterMode", element, function()
+            ctx.NotifyChanged()
+            rebuild()
+        end, {
+            description = ns.L["Off shows everything; Flags composes the raw aura filter tokens below; Classification shows only the categories ticked below; Spell Whitelist shows only the spells listed below."],
+            keywords = { "filter", "include", "flags" },
+        }))
+        row(ns.L["Only My Auras"], GUI:CreateFormCheckbox(ctx.detailArea, nil, "onlyMine", element, onChange, {
+            description = ns.L["Only show auras you applied."],
+            keywords = { "Only Mine", "mine only" },
+        }))
+        row(ns.L["Hide Permanent"], GUI:CreateFormCheckbox(ctx.detailArea, nil, "hidePermanent", element, onChange, {
+            description = ns.L["Hide auras with no remaining duration."],
+        }))
+        row(ns.L["Max Duration (seconds)"], GUI:CreateFormSlider(ctx.detailArea, nil, 0, 600, 5, "maxDurationSec", element, onChange, { deferOnDrag = true }, {
+            description = ns.L["Hide auras whose base duration is longer than this. 0 disables. Any value also hides permanent auras."],
+        }))
+        row(ns.L["Dispel Type Filter"], GUI:CreateFormDropdown(ctx.detailArea, nil, DISPEL_FILTER_MODE_OPTIONS, "dispelFilterMode", element, function()
+            ctx.NotifyChanged()
+            rebuild()
+        end, {
+            description = ns.L["Include or exclude auras by dispel type. Works on every unit."],
+            keywords = { "dispel", "magic", "curse", "disease", "poison", "bleed" },
+        }))
+        if element.dispelFilterMode == "include" or element.dispelFilterMode == "exclude" then
+            local bindTypes = element.dispelTypes
+            local typesOnChange = onChange
+            if bindTypes == "mine" then
+                -- "Dispellable by me" sentinel (ApplyWhatToShow): the schools
+                -- resolve from class/spec at compile time, so the checkboxes
+                -- PREVIEW the resolved set through a transient proxy instead
+                -- of binding (and clobbering) the sentinel. The first manual
+                -- toggle pins a concrete table — the strip then stops
+                -- tracking respecs, which is exactly what a hand edit means.
+                local DR = ns.QUI_DispelRoles
+                local resolved = (DR and type(DR.PlayerDispelSchools) == "function" and DR.PlayerDispelSchools()) or {}
+                local scratch = { _quiTransientOptionsProxy = true }
+                for k, v in pairs(resolved) do scratch[k] = v end
+                bindTypes = scratch
+                typesOnChange = function(...)
+                    local concrete = {}
+                    for _, entry in ipairs(DISPEL_TYPES) do
+                        if scratch[entry.key] then concrete[entry.key] = true end
+                    end
+                    element.dispelTypes = concrete
+                    onChange(...)
+                end
+                local hint = GUI:CreateLabel(ctx.detailArea,
+                    ns.L["Auto: matched to your class and spec dispels. Toggling a school pins a fixed set."],
+                    11, C.textMuted)
+                hint:SetJustifyH("LEFT")
+                hint:SetWordWrap(true)
+                hint:SetNonSpaceWrap(true)
+                add(hint, 24, true)
+            elseif type(bindTypes) ~= "table" then
+                bindTypes = {}
+                element.dispelTypes = bindTypes
+            end
+            for _, entry in ipairs(DISPEL_TYPES) do
+                row(entry.label, GUI:CreateFormCheckbox(ctx.detailArea, nil, entry.key, bindTypes, typesOnChange, {
+                    description = string.format(ns.L["Match auras with the %s dispel type."], entry.label),
+                }))
+            end
+        end
+        if element.auraType == "HELPFUL" then
+            row(ns.L["Stealable (Purge)"], GUI:CreateFormCheckbox(ctx.detailArea, nil, "gateStealable", element, onChange, {
+                description = ns.L["Only show buffs that can be stolen or purged. Combines with the other filters."],
+            }))
+        end
+        if element.auraType == "HARMFUL" then
+            row(ns.L["Priority Debuffs"], GUI:CreateFormCheckbox(ctx.detailArea, nil, "gatePriorityAura", element, onChange, {
+                description = ns.L["Only show debuffs Blizzard flags as priority. Combines with the other filters."],
+            }))
+        end
+        row(ns.L["Boss Auras"], GUI:CreateFormCheckbox(ctx.detailArea, nil, "gateBossAura", element, onChange, {
+            description = ns.L["Only show auras applied by bosses. Combines with the other filters."],
+        }))
+        row(ns.L["Role Auras"], GUI:CreateFormCheckbox(ctx.detailArea, nil, "gateRoleAura", element, onChange, {
+            description = ns.L["Only show role-relevant auras. Combines with the other filters."],
+        }))
+        row(ns.L["Boss or Role Auras"], GUI:CreateFormCheckbox(ctx.detailArea, nil, "gateBossOrRoleAura", element, onChange, {
+            description = ns.L["Only show auras that are boss-applied or role-relevant. Combines with the other filters."],
+        }))
+
+        -- Custom border color: borderColor is OPTIONAL on the element -- absent
+        -- means "theme border" (aura_skin styleButton falls back to
+        -- AuraTheme.BorderColor). The checkbox is the explicit nil/stamped
+        -- switch: the picker widget itself can't express "unset", so checking
+        -- stamps a starting value and unchecking nils the key back to theme.
+        -- Bound to a throwaway state table (never element) so widget
+        -- CONSTRUCTION never writes the DB -- only the onChange callback
+        -- (fired on a real user click) stamps or clears element.borderColor.
+        -- _quiTransientOptionsProxy: framework marker for one-off state tables
+        -- (IsTransientOptionsBinding) -- keeps this row out of the widget-sync
+        -- registry and the search-cache descriptor path, which key on real DB
+        -- tables and would otherwise churn a fresh key every rebuild.
+        row(ns.L["Custom Border Color"], GUI:CreateFormCheckbox(ctx.detailArea, nil, "_customBorder", {
+            _customBorder = element.borderColor ~= nil,
+            _quiTransientOptionsProxy = true,
+        }, function(checked)
+            if checked and element.borderColor == nil then
+                element.borderColor = { 1, 1, 1, 1 }
+            elseif not checked then
+                element.borderColor = nil
+            end
+            ctx.NotifyChanged()
+            rebuild()
+        end, {
+            description = ns.L["Override the theme border color for icons in this strip."],
+        }))
+        if element.borderColor ~= nil then
+            row(ns.L["Border Color"], GUI:CreateFormColorPicker(ctx.detailArea, nil, "borderColor", element, onChange, nil, {
+                description = ns.L["Border color for icons in this strip."],
+            }))
+        end
+
+        AddDispelTooltipWidgets(ctx, element)
+
+        local filterMode = element.filterMode or "off"
+        if filterMode == "classify" then
+            if type(element.classifications) ~= "table" then
+                element.classifications = {}
+            end
+            local list = element.auraType == "HARMFUL" and HARMFUL_CLASSIFICATIONS or HELPFUL_CLASSIFICATIONS
+            for _, entry in ipairs(list) do
+                row(entry.label, GUI:CreateFormCheckbox(ctx.detailArea, nil, entry.key, element.classifications, onChange, {
+                    description = ns.L["Include auras Blizzard flags as "] .. entry.label .. ".",
+                }))
+            end
+        elseif filterMode == "flags" then
+            if type(element.filterFlags) ~= "table" then
+                element.filterFlags = {}
+            end
+            local tokens = element.auraType == "HARMFUL" and HARMFUL_FLAG_TOKENS or HELPFUL_FLAG_TOKENS
+            for _, entry in ipairs(tokens) do
+                -- CreateFormDropdown writes dbTable[dbKey] directly, so bind a
+                -- scratch cell and translate to the stored tri-state on change
+                -- (off = absent so untouched tokens stay invisible to compile).
+                local cur = element.filterFlags[entry.token]
+                local scratch = { value = (cur == true and "require") or (cur == "exclude" and "exclude") or "off" }
+                row(entry.label, GUI:CreateFormDropdown(ctx.detailArea, nil, TRI_STATE_OPTIONS, "value", scratch, function()
+                    local v = scratch.value
+                    if v == "require" then
+                        element.filterFlags[entry.token] = true
+                    elseif v == "exclude" then
+                        element.filterFlags[entry.token] = "exclude"
+                    else
+                        element.filterFlags[entry.token] = nil
+                    end
+                    onChange()
+                end, {
+                    description = string.format(ns.L["Require or exclude the %s aura filter flag."], entry.label),
+                }))
+            end
+        elseif filterMode == "whitelist" then
+            if type(element.whitelist) ~= "table" then element.whitelist = {} end
+            AddSpellMapEditor(ctx, element.whitelist,
+                ns.L["Whitelisted Spells — only these show. Buff lists apply on friendly units, debuff lists on enemies; empty list shows everything."],
+                nil, {
+                    key = ctx.browsePrefix .. "whitelist:" .. tostring(element.id),
+                    title = ns.L["Add Whitelisted Spells"],
+                    presets = BuildFilterBrowsePresets(element.auraType),
+                })
+        end
+    end
 end
 
 -- Tracked element config. displayType picks the LIVE display: icon strip,
@@ -895,14 +1250,28 @@ local function AddTrackedConfig(ctx, element)
         row(ns.L["Length"], GUI:CreateFormSlider(ctx.detailArea, nil, 4, 200, 1, "length", element.bar, onChange, { deferOnDrag = true }, {
             description = ns.L["Pixel length of the bar."],
         }))
+    elseif displayType == "border" then
+        if type(element.color) ~= "table" then element.color = { 0.2, 0.8, 0.2, 1 } end
+        if type(element.border) ~= "table" then element.border = { thickness = 2 } end
+        row(ns.L["Border Color"], GUI:CreateFormColorPicker(ctx.detailArea, nil, "color", element, onChange, nil, {
+            description = ns.L["Outline color drawn around the frame while the aura is active."],
+        }))
+        row(ns.L["Thickness"], GUI:CreateFormSlider(ctx.detailArea, nil, 1, 16, 1, "thickness", element.border, onChange, { deferOnDrag = true }, {
+            description = ns.L["Pixel thickness of the border outline."],
+        }))
     else
         -- icon
         AddPlacementWidgets(ctx, element, true)
         AddSwipeWidgets(ctx, element)
         AddTextRegionWidgets(ctx, element, "duration", ns.L["Duration Text"])
         AddTextRegionWidgets(ctx, element, "stack", ns.L["Stack Text"])
+        -- Tracked-element icons ride the slot path (WireButton), which now
+        -- passes the element profile to buildButtonArt/styleButton — the same
+        -- tooltip + dispel-ring overrides apply.
+        AddDispelTooltipWidgets(ctx, element)
     end
 
+    AddRoleGateRow(ctx, element)
     AddTrackedSpellListEditor(ctx, element)
 end
 
@@ -944,6 +1313,7 @@ local function AddMissingRaidBuffConfig(ctx, element)
     end
 
     AddPlacementWidgets(ctx, element, true)
+    AddRoleGateRow(ctx, element)
 end
 
 ---------------------------------------------------------------------------
@@ -971,6 +1341,12 @@ end
 -- frame) flushes any half-filled row and takes the full width on its own.
 local function RenderDetail(ctx, element)
     ctx.ClearDetailWidgets()
+    ctx.RelayoutDetail = nil
+    ctx.BeginDetailSection = nil
+    ctx.SetDetailSectionExpanded = nil
+    ctx.UpdateDetailWidgetHeight = nil
+    ctx._detailSectionCarets = {}
+    ctx._detailSectionKey = nil
     if not element then
         ctx.detailArea:SetHeight(1)
         return 0
@@ -980,10 +1356,7 @@ local function RenderDetail(ctx, element)
     ctx.detailY = -2
     ctx._pendingWidget = nil
     ctx._pendingHeight = 0
-    -- Parity counter for the alternating row tint. Span rows (headers, the
-    -- spell-list frame) are visually distinct and do not stripe or count, so
-    -- the zebra rhythm stays continuous across the form rows around them.
-    local rowParity = 0
+    local detailRows = {}
 
     -- Emit one detail row: a frame stacked at the running Y holding either a
     -- left/right form pair (with center divider) or a single full-width / lone
@@ -998,17 +1371,20 @@ local function RenderDetail(ctx, element)
         rowFrame:SetPoint("TOPLEFT", detailArea, "TOPLEFT", 0, ctx.detailY)
         rowFrame:SetPoint("TOPRIGHT", detailArea, "TOPRIGHT", 0, ctx.detailY)
         rowFrame:SetHeight(rowH)
+        rowFrame._quiDetailHeight = rowH
+        rowFrame._quiDetailSection = ctx._detailSectionKey
+        rowFrame._quiDetailOwner = detailRows
+        detailRows[#detailRows + 1] = rowFrame
 
         if not span then
-            if (rowParity % 2) == 1 then
-                local bg = rowFrame:CreateTexture(nil, "BACKGROUND")
-                bg:SetAllPoints(rowFrame)
-                bg:SetColorTexture(1, 1, 1, 0.02)
-            end
-            rowParity = rowParity + 1
+            local bg = rowFrame:CreateTexture(nil, "BACKGROUND")
+            bg:SetAllPoints(rowFrame)
+            bg:SetColorTexture(1, 1, 1, 0)
+            rowFrame._quiDetailBackground = bg
         end
 
         left:SetParent(rowFrame)
+        left._quiDetailRow = rowFrame
         left:ClearAllPoints()
         if span then
             left:SetPoint("TOPLEFT", rowFrame, "TOPLEFT", PAD, 0)
@@ -1017,6 +1393,7 @@ local function RenderDetail(ctx, element)
             left:SetPoint("TOPLEFT", rowFrame, "TOPLEFT", PAD, 0)
             left:SetPoint("TOPRIGHT", rowFrame, "TOP", -(COL_GAP / 2), 0)
             right:SetParent(rowFrame)
+            right._quiDetailRow = rowFrame
             right:ClearAllPoints()
             right:SetPoint("TOPLEFT", rowFrame, "TOP", COL_GAP / 2, 0)
             right:SetPoint("TOPRIGHT", rowFrame, "TOPRIGHT", -PAD, 0)
@@ -1040,6 +1417,16 @@ local function RenderDetail(ctx, element)
             ctx._pendingWidget = nil
             ctx._pendingHeight = 0
         end
+    end
+
+    -- Section headers need to flush any half-filled row from the preceding
+    -- section, emit themselves outside every disclosure group, then tag all
+    -- following body rows with their own section key.
+    ctx.BeginDetailSection = function(header, height, sectionKey)
+        FlushPending()
+        ctx._detailSectionKey = nil
+        EmitRow(header, height, nil, nil, true)
+        ctx._detailSectionKey = sectionKey
     end
 
     ctx.AddDetailWidget = function(widget, height, span)
@@ -1070,6 +1457,69 @@ local function RenderDetail(ctx, element)
         ctx.AddDetailWidget(cell, FORM_ROW, span)
     end
 
+    -- Re-anchor the rows already created for this detail view. Hidden section
+    -- bodies consume no height, and visible form rows are re-striped so the
+    -- two-column zebra rhythm remains continuous across disclosure boundaries.
+    local function RelayoutDetail()
+        local disclosure = sectionState(element)
+        local y = -2
+        local rowParity = 0
+        for _, rowFrame in ipairs(detailRows) do
+            local sectionKey = rowFrame._quiDetailSection
+            local visible = not sectionKey or disclosure[sectionKey] == true
+            if visible then
+                rowFrame:ClearAllPoints()
+                rowFrame:SetPoint("TOPLEFT", detailArea, "TOPLEFT", 0, y)
+                rowFrame:SetPoint("TOPRIGHT", detailArea, "TOPRIGHT", 0, y)
+                rowFrame:Show()
+                if rowFrame._quiDetailBackground then
+                    rowFrame._quiDetailBackground:SetColorTexture(
+                        1, 1, 1, (rowParity % 2) == 1 and 0.02 or 0)
+                    rowParity = rowParity + 1
+                end
+                y = y - rowFrame._quiDetailHeight
+            else
+                rowFrame:Hide()
+            end
+        end
+        ctx.detailY = y
+        local used = math.abs(y) + 8
+        detailArea:SetHeight(used)
+        return used
+    end
+    ctx.RelayoutDetail = RelayoutDetail
+    ctx.SetDetailSectionExpanded = function(sectionKey, expanded)
+        local disclosure = sectionState(element)
+        disclosure[sectionKey] = expanded == true
+        local caret = ctx._detailSectionCarets[sectionKey]
+        if caret and ns.UIKit and ns.UIKit.SetChevronCaretExpanded then
+            ns.UIKit.SetChevronCaretExpanded(caret, disclosure[sectionKey])
+        end
+        if not disclosure[sectionKey] and SpellList and SpellList.CloseBrowsePopup then
+            SpellList.CloseBrowsePopup(ctx.browsePrefix)
+        end
+        RelayoutDetail()
+        if ctx.RelayoutList then
+            ctx.RelayoutList()
+        end
+    end
+    ctx.UpdateDetailWidgetHeight = function(widget, newHeight)
+        local rowFrame = widget and widget._quiDetailRow
+        if not rowFrame or rowFrame._quiDetailOwner ~= detailRows or type(newHeight) ~= "number" then
+            return
+        end
+        newHeight = math.max(1, newHeight)
+        if rowFrame._quiDetailHeight == newHeight then
+            return
+        end
+        rowFrame._quiDetailHeight = newHeight
+        rowFrame:SetHeight(newHeight)
+        RelayoutDetail()
+        if ctx.RelayoutList then
+            ctx.RelayoutList()
+        end
+    end
+
     if not ctx.caps.singleStrip then
         ctx.AddFormRow(ns.L["Element Enabled"], ctx.GUI:CreateFormCheckbox(ctx.detailArea, nil, "enabled", element, function()
             ctx.NotifyChanged()
@@ -1088,15 +1538,86 @@ local function RenderDetail(ctx, element)
     end
 
     FlushPending()
+    ctx._detailSectionKey = nil
 
-    local used = math.abs(ctx.detailY) + 8
-    ctx.detailArea:SetHeight(used)
-    return used
+    return RelayoutDetail()
 end
 
 ---------------------------------------------------------------------------
 -- LIST + ADD rendering
 ---------------------------------------------------------------------------
+-- Geometry-only pass used after a subsection disclosure click. The row/widget
+-- tree remains intact; only anchors and aggregate heights move.
+local function RelayoutList(ctx)
+    local contentHeight
+
+    if ctx.caps.singleStrip then
+        ctx.detailArea:ClearAllPoints()
+        ctx.detailArea:SetParent(ctx.listArea)
+        ctx.detailArea:SetPoint("TOPLEFT", ctx.listArea, "TOPLEFT", 0, 0)
+        ctx.detailArea:SetPoint("TOPRIGHT", ctx.listArea, "TOPRIGHT", 0, 0)
+        ctx.detailArea:Show()
+        contentHeight = math.max(1, ctx.detailArea:GetHeight() or 1)
+    else
+        local listY = 0
+        for index, row in ipairs(ctx.activeRows) do
+            row:ClearAllPoints()
+            row:SetPoint("TOPLEFT", ctx.listArea, "TOPLEFT", 0, listY)
+            row:SetPoint("TOPRIGHT", ctx.listArea, "TOPRIGHT", 0, listY)
+            listY = listY - ROW_STEP
+
+            if index == ctx.selectedIndex then
+                listY = listY - 2
+                ctx.detailArea:ClearAllPoints()
+                ctx.detailArea:SetParent(ctx.listArea)
+                ctx.detailArea:SetPoint("TOPLEFT", ctx.listArea, "TOPLEFT", PAD, listY)
+                ctx.detailArea:SetPoint("TOPRIGHT", ctx.listArea, "TOPRIGHT", 0, listY)
+                ctx.detailArea:Show()
+                listY = listY - math.max(1, ctx.detailArea:GetHeight() or 1) - 4
+            end
+        end
+
+        if #ctx.bucket == 0 then
+            ctx.emptyLabel:ClearAllPoints()
+            ctx.emptyLabel:SetPoint("TOPLEFT", ctx.listArea, "TOPLEFT", 0, listY)
+            ctx.emptyLabel:Show()
+            listY = listY - 22
+        else
+            ctx.emptyLabel:Hide()
+        end
+
+        if ctx.selectedIndex == nil then
+            ctx.detailArea:Hide()
+        end
+
+        if ctx.hasAddButtons then
+            ctx.UpdateAddStripState()
+            listY = listY - 8
+            ctx.addRow:ClearAllPoints()
+            ctx.addRow:SetPoint("TOPLEFT", ctx.listArea, "TOPLEFT", 0, listY)
+            ctx.addRow:SetPoint("TOPRIGHT", ctx.listArea, "TOPRIGHT", 0, listY)
+            ctx.addRow:Show()
+            listY = listY - 30
+        else
+            ctx.addRow:Hide()
+        end
+
+        contentHeight = math.max(1, math.abs(listY))
+    end
+
+    ctx.listArea:SetHeight(contentHeight)
+    local hostHeight = contentHeight + 8
+    ctx.host:SetHeight(hostHeight)
+
+    if not ctx.caps.singleStrip and ctx.onSelectionChanged then
+        ctx.onSelectionChanged(ctx.selectedIndex)
+    end
+    if ctx.onLayoutChanged then
+        ctx.onLayoutChanged(hostHeight)
+    end
+    return hostHeight
+end
+
 local function RebuildList(ctx)
     local bucket = ctx.bucket
     ctx.ReleaseRows()
@@ -1138,14 +1659,11 @@ local function RebuildList(ctx)
         ctx.detailArea:SetPoint("TOPLEFT", ctx.listArea, "TOPLEFT", 0, 0)
         ctx.detailArea:SetPoint("TOPRIGHT", ctx.listArea, "TOPRIGHT", 0, 0)
         ctx.detailArea:Show()
-        local used = RenderDetail(ctx, element)
-        local contentHeight = math.max(1, used)
-        ctx.listArea:SetHeight(contentHeight)
-        local hostHeight = contentHeight + 8
-        ctx.host:SetHeight(hostHeight)
-        if ctx.onLayoutChanged then
-            ctx.onLayoutChanged(hostHeight)
+        RenderDetail(ctx, element)
+        if SpellList and SpellList.EndBrowseScope then
+            SpellList.EndBrowseScope(ctx.browsePrefix)
         end
+        RelayoutList(ctx)
         return
     end
 
@@ -1271,20 +1789,9 @@ local function RebuildList(ctx)
         SpellList.EndBrowseScope(ctx.browsePrefix)
     end
 
-    local contentHeight = math.max(1, math.abs(listY))
-    ctx.listArea:SetHeight(contentHeight)
-    local hostHeight = contentHeight + 8
-    ctx.host:SetHeight(hostHeight)
-
-    -- Report selection + height so the host can persist the open row and
-    -- re-anchor the sections below this editor. Both are no-ops when the host
-    -- did not supply hooks (e.g. the headless search-cache harvest).
-    if ctx.onSelectionChanged then
-        ctx.onSelectionChanged(ctx.selectedIndex)
-    end
-    if ctx.onLayoutChanged then
-        ctx.onLayoutChanged(hostHeight)
-    end
+    -- Report selection + height and establish final geometry through the same
+    -- cheap pass subsection disclosure clicks use.
+    RelayoutList(ctx)
 end
 
 -- opts is optional. opts.forceSelectedIndex seeds the initially-expanded element
@@ -1442,6 +1949,9 @@ function AurasEditor.RenderAuras(host, auras, bucketKey, onChange, opts)
         end
     end
     ctx.rebuild = rebuild
+    ctx.RelayoutList = function()
+        return RelayoutList(ctx)
+    end
 
     ctx.ClearDetailWidgets = function()
         for _, widget in ipairs(detailWidgets) do

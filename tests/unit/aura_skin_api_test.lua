@@ -22,8 +22,9 @@ assert(src:find("AuraSkin.Configure", 1, true), "must define AuraSkin.Configure"
 assert(src:find("AuraSkin.Restyle", 1, true), "must define AuraSkin.Restyle")
 assert(src:find("AuraSkin.LayoutAnchor", 1, true), "must define AuraSkin.LayoutAnchor")
 assert(src:find("AddAuraGroup", 1, true), "must register groups via AddAuraGroup")
-assert(src:find("SetAuraLayoutGrowthDirection", 1, true), "must set container-wide flow direction")
-assert(src:find("SetAuraLayoutRowWidth", 1, true), "must derive row wrap from maxPerRow (pixels)")
+assert(src:find("SetFlowLayoutGrowthDirection", 1, true), "must set container-wide flow direction")
+assert(src:find("SetFlowLayoutMaximumLineSize", 1, true), "must derive the line cap from maxPerRow (pixels)")
+assert(src:find("SetFlowLayoutAxis", 1, true), "must pick the flow axis (columns = Vertical) per grow")
 assert(src:find("initializeFrame", 1, true), "must style buttons via the initializeFrame callback")
 
 -- Groups are unremovable + filter-immutable: reconcile, never clear.
@@ -64,6 +65,13 @@ assert(src:find("InCombatLockdown", 1, true), "Configure must refuse new-group c
 -- WireButton: wiring pair for slot buttons (core/aura_slots.lua), outside the
 -- group initializeFrame path.
 assert(src:find("function AuraSkin.WireButton", 1, true), "must define and export AuraSkin.WireButton")
+assert(src:find("function AuraSkin.WirePreviewButton", 1, true),
+    "must expose a plain-frame preview adapter over the same art/style functions")
+assert(src:find("function AuraSkin.ReleasePreviewButton", 1, true),
+    "must release preview-only external-skin ownership when placeholders hide")
+assert(src:find("if button.SetIcon then", 1, true)
+    and src:find("if button.SetDurationCooldown then", 1, true),
+    "buildButtonArt must feature-detect secure inbound setters for plain preview frames")
 
 -- styleButton is sub-table aware: duration{}/stack{} config drives text-region
 -- styling (element model), with the legacy flat fontSize as fallback.

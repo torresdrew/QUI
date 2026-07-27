@@ -1095,6 +1095,15 @@ local SimpleFrameAPI =
 			},
 		},
 		{
+			Name = "ResizeToBoundsRect",
+			Type = "Function",
+			IsProtectedFunction = true,
+
+			Arguments =
+			{
+			},
+		},
+		{
 			Name = "RotateTextures",
 			Type = "Function",
 			SecretArguments = "AllowedWhenUntainted",

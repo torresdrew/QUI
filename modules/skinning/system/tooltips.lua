@@ -90,6 +90,41 @@ local function GetEffectiveBorderThickness()
 end
 
 ---------------------------------------------------------------------------
+-- Aura button tooltips (12.1.0.68914 re-patch)
+-- AuraButtonTooltip itself stays forbidden/hidden from _G; Blizzard now
+-- publishes a narrow push-style bridge (AuraContainerInbound.SetTooltipBackdrop
+-- et al, Blizzard_AuraContainerInbound.lua) that restyles it engine-side.
+-- QUI never touches the tooltip object — it only hands over an options
+-- table mirroring the QUI chrome (flat background + hairline border).
+---------------------------------------------------------------------------
+
+local AURA_TOOLTIP_BG = "Interface\\Buttons\\WHITE8x8"
+
+local function ApplyAuraTooltipStyle()
+    local bridge = _G.AuraContainerInbound
+    if not bridge or type(bridge.SetTooltipBackdrop) ~= "function" then
+        return false -- pre-re-patch client: no bridge, engine default stands
+    end
+    if not IsEnabled() then
+        if type(bridge.ResetTooltipStyle) == "function" then
+            SafeCall("aura-tooltip-reset", bridge.ResetTooltipStyle)
+        end
+        return true
+    end
+    local sr, sg, sb, sa, bgr, bgg, bgb, bga = GetEffectiveColors()
+    SafeCall("aura-tooltip-style", bridge.SetTooltipBackdrop, {
+        backdropInfo = {
+            bgFile = AURA_TOOLTIP_BG,
+            edgeFile = AURA_TOOLTIP_BG,
+            edgeSize = GetEffectiveBorderThickness(),
+        },
+        centerColor = CreateColor(bgr, bgg, bgb, bga),
+        borderColor = CreateColor(sr, sg, sb, sa),
+    })
+    return true
+end
+
+---------------------------------------------------------------------------
 -- Font Sizing
 -- TAINT SAFETY: GameTooltip uses Font-object-level sizing ONLY.
 -- Calling SetFont() directly on GameTooltipTextLeft* FontStrings taints
@@ -1144,11 +1179,12 @@ local function SetupPostProcessor()
         end
         if IsProtectedTooltip(tooltip) then
             -- AuraButtonTooltip is defined in Blizzard_AuraContainer's secure
-            -- environment with forbidden=true and hideFromGlobalEnv=true.
-            -- PrivateAurasTooltipMixin, TooltipDataProcessor, and EventRegistry
-            -- are all environment-local there; AuraContainer publishes no
-            -- outbound tooltip or styling interface. Keep any protected or
-            -- forbidden non-GameTooltip entirely Blizzard-owned.
+            -- environment with forbidden=true and hideFromGlobalEnv=true —
+            -- direct skinning stays impossible. Since the 68914 re-patch its
+            -- LOOK is pushed through AuraContainerInbound.SetTooltipBackdrop
+            -- (see ApplyAuraTooltipStyle); the frame itself remains entirely
+            -- Blizzard-owned, so still skip any protected or forbidden
+            -- non-GameTooltip here.
             TooltipDebugCount("skin.protectedTooltipSkipped")
             return
         end
@@ -1190,10 +1226,13 @@ local function SetupPostProcessor()
 end
 
 ns.QUI_GetAuraTooltipProbeStatus = function()
+    local bridge = _G.AuraContainerInbound
+    local supported = type(bridge) == "table"
+        and type(bridge.SetTooltipBackdrop) == "function"
     return {
         skinningLoaded = true,
-        supported = false,
-        reason = "secure-environment",
+        supported = supported,
+        reason = supported and "inbound-bridge" or "secure-environment",
     }
 end
 
@@ -1231,6 +1270,9 @@ local function RefreshAllColors()
             pcall(EmbeddedItemTooltip.SetBackdrop, EmbeddedItemTooltip, nil)
         end
     end
+    -- Aura button tooltip bridge rides the same refresh (OOC-only via the
+    -- combat gate above; the push is idempotent).
+    ApplyAuraTooltipStyle()
 end
 
 local function RefreshAllFonts()
@@ -1479,6 +1521,16 @@ do
         ns.WhenLoggedIn(EnsureTooltipCJKFallback)
     elseif C_Timer and C_Timer.After then
         C_Timer.After(1, EnsureTooltipCJKFallback)
+    end
+end
+
+do
+    -- One-shot aura-tooltip bridge push at login (same LOD caveat as the CJK
+    -- pass above); settings changes re-push via RefreshAllColors.
+    if ns.WhenLoggedIn then
+        ns.WhenLoggedIn(ApplyAuraTooltipStyle)
+    elseif C_Timer and C_Timer.After then
+        C_Timer.After(1, ApplyAuraTooltipStyle)
     end
 end
 

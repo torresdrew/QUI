@@ -20,6 +20,15 @@ check("configures containers via AuraGlue.RunConfigPass", src:find("AuraGlue.Run
 check("builds group descriptors via AuraGlue.ElementGroups", src:find("AuraGlue.ElementGroups", 1, true) ~= nil)
 check("derives layout profiles via AuraGlue.ElementProfile", src:find("AuraGlue.ElementProfile", 1, true) ~= nil)
 check("reconciles tracked slots via AuraSlots.Sync", src:find("AuraSlots.Sync", 1, true) ~= nil)
+check("live group-aura settings feed one shared profile override",
+    src:find("function QUI_GFA.ProfileOverrides", 1, true) ~= nil
+    and src:find("showDispelBorder", 1, true) ~= nil
+    and src:find("dispelColorCurve", 1, true) ~= nil
+    and src:find("externalSkinning", 1, true) ~= nil
+    and src:find("iconSkin", 1, true) ~= nil)
+check("profile override reaches both strip groups and tracked slots",
+    src:find("AuraGlue.ElementProfile(element, profileOverrides)", 1, true) ~= nil
+    and src:find("AuraSlots.Sync(container, element, allowCreate, profileOverrides)", 1, true) ~= nil)
 check("parks unused slots via AuraSlots.Park", src:find("AuraSlots.Park", 1, true) ~= nil)
 -- Seed bucket must come from the ALWAYS-LOADED model shim, never Options-side:
 -- the seed latches elementsSeeded, so an Options-only bucket would latch an

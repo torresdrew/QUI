@@ -170,6 +170,9 @@ local function loadSubModules()
     -- (pure Lua, headless-safe) into the same ns FIRST so the shim's __index
     -- delegation resolves.
     assert(loadfile("core/aura_elements.lua"))("QUI", ns)
+    -- Real core/safecall.lua: groupframes_aura_render.lua (Task 45a) routes
+    -- its countdown/reseat sink calls through ns.SafeCall("sink-forward", ...).
+    assert(loadfile("core/safecall.lua"))("QUI", ns)
     assert(loadfile("QUI_GroupFrames/groupframes/groupframes_aura_model.lua"))(
         "QUI_GroupFrames", ns)
     assert(loadfile("QUI_GroupFrames/groupframes/groupframes_aura_render.lua"))(
@@ -713,6 +716,12 @@ local function buildFullNs(onCB)
         QUI_GroupFrameClickCast     = nil,
     }
 
+    -- Real core/safecall.lua: groupframes_aura_render.lua (Task 45a) routes
+    -- its countdown/reseat sink calls through ns.SafeCall("sink-forward", ...).
+    -- issecretvalue is absent in this harness, so safecall.lua's own
+    -- documented fallback (treat as never-secret) applies.
+    assert(loadfile("core/safecall.lua"))("QUI", ns)
+
     return ns, onCB
 end
 
@@ -878,6 +887,12 @@ local function loadFullGroupFrames(opts)
     --   local initFrame = CreateFrame("Frame")
     --   initFrame:RegisterEvent("ADDON_LOADED")
     --   initFrame:SetScript("OnEvent", fn)               → capturedHandlers[?]
+    -- Shared frame chrome first (QUI.toc loads it before any sub-addon):
+    -- groupframes.lua reads ns.QUI_GroupFrameChrome at file scope.
+    local chromeLoader = assert(loadfile("core/group_frame_chrome.lua"),
+        "core/group_frame_chrome.lua must exist")
+    chromeLoader("QUI", ns)
+
     local loader = assert(loadfile("QUI_GroupFrames/groupframes/groupframes.lua"),
         "QUI_GroupFrames/groupframes/groupframes.lua must exist")
     loader("QUI_GroupFrames", ns)

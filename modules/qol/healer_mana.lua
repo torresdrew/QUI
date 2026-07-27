@@ -91,7 +91,12 @@ local function SetRowName(row, unit)
     if okName and name and not Helpers.IsSecretValue(name) then
         local classColor
         local okClass, _, class = pcall(UnitClass, unit)
-        if okClass and class and not Helpers.IsSecretValue(class) then
+        if not okClass then class = nil end
+        -- Probe FIRST — a secret class throws on the truth-test and the
+        -- RAID_CLASS_COLORS table index.
+        -- @secret-policy: collapse-only — white name text fallback below
+        if Helpers.IsSecretValue(class) then class = nil end
+        if class then
             classColor = RAID_CLASS_COLORS and RAID_CLASS_COLORS[class]
         end
         row.name:SetText(name)
@@ -137,7 +142,12 @@ local function RebuildRoster()
     local shown = 0
     for _, unit in ipairs(units) do
         if shown >= MAX_HEALERS then break end
-        if UnitExists(unit) and UnitGroupRolesAssigned(unit) == "HEALER" then
+        local role = UnitGroupRolesAssigned(unit)
+        -- PTR7: UnitGroupRolesAssigned can return a secret — probe before
+        -- the == comparison (comparing a secret throws).
+        -- @secret-policy: collapse-only — secret-role units are not tracked
+        if Helpers.IsSecretValue(role) then role = nil end
+        if UnitExists(unit) and role == "HEALER" then
             shown = shown + 1
             tracked[unit] = shown
             local row = rows[shown]

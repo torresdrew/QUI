@@ -47,7 +47,7 @@ end
 _G.InCombatLockdown = function() return false end
 _G.AuraContainerSortMethod = { Default = 1 }
 _G.AuraContainerSortDirection = { Normal = 1 }
-_G.AnchorUtil = { FlowDirection = { Left = -1, Right = 1, Up = 1, Down = -1 } }
+_G.AnchorUtil = { FlowDirection = { Left = -1, Right = 1, Up = 1, Down = -1 }, FlowLayoutAxis = { Horizontal = 0, Vertical = 1 } }
 
 local function Stub()
     local t = {}
@@ -64,6 +64,11 @@ local function Stub()
     function t:SetDrawSwipe() end
     function t:SetReverse() end
     function t:SetText() end
+    function t:SetStatusBarTexture() end
+    function t:SetOrientation() end
+    function t:SetStatusBarColor() end
+    function t:Show() end
+    function t:Hide() end
     function t:CreateTexture() return Stub() end
     function t:CreateFontString() return Stub() end
     return t
@@ -83,8 +88,8 @@ local function MakeButton()
     end
     function b:SetSize() end
     function b:SetIcon() end
-    function b:SetAuraBorder() end
-    function b:SetAuraSymbol() end
+    function b:AddDispelTypeTexture() end
+    function b:SetDispelTypeText() end
     function b:SetDurationCooldown() end
     function b:SetDurationText() end
     function b:SetApplicationCount() end
@@ -107,10 +112,11 @@ local function MakeContainer()
     function c:SetAuraGroupSortMethod() end
     function c:SetAuraGroupCandidateFilters() end
     function c:SetAuraGroupLayout() end
-    function c:SetAuraLayoutAnchorPoint() end
-    function c:SetAuraLayoutGrowthDirection() end
-    function c:SetAuraLayoutPadding() end
-    function c:SetAuraLayoutRowWidth() end
+    function c:SetFlowLayoutAnchorPoint() end
+    function c:SetFlowLayoutGrowthDirection() end
+    function c:SetFlowLayoutPadding() end
+    function c:SetFlowLayoutAxis() end
+    function c:SetFlowLayoutMaximumLineSize() end
     return c
 end
 

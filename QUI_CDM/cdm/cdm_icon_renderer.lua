@@ -3464,6 +3464,10 @@ local function IsCustomBarEntryUsableOnCurrentClass(entry, viewerType)
     if entry.type ~= "spell" then return true end
     if type(entry.id) ~= "number" then return true end
     local spellData = ns.CDMSpellData
+    if spellData and type(spellData.IsEntryApplicableForContainer) == "function"
+        and spellData:IsEntryApplicableForContainer(viewerType, entry) ~= true then
+        return false
+    end
     if spellData and type(spellData.IsEntryDormantForContainer) == "function" then
         return spellData:IsEntryDormantForContainer(viewerType, entry) ~= true
     end
@@ -3734,6 +3738,8 @@ function CDMIcons:BuildIcons(viewerType, container)
     local spellData = ns.CDMSpellData and ns.CDMSpellData:GetSpellList(viewerType) or {}
     local signature = BuildIconListSignature(viewerType, container, spellData)
     local pool = Factory:GetIconPool(viewerType)
+    local clickViewerDB = GetTrackerSettings and GetTrackerSettings(viewerType)
+    local clickable = (clickViewerDB and clickViewerDB.clickableIcons) and true or false
     local reusePool = pool
         and container._lastBuildSignature == signature
         and container._lastBuildPool == pool
@@ -3745,7 +3751,7 @@ function CDMIcons:BuildIcons(viewerType, container)
 
         -- Create icons from harvested spell data
         for _, entry in ipairs(spellData) do
-            local icon = Factory:AcquireIcon(container, entry)
+            local icon = Factory:AcquireIcon(container, entry, clickable)
             pool[#pool + 1] = icon
         end
 
@@ -3771,7 +3777,7 @@ function CDMIcons:BuildIcons(viewerType, container)
                             and IsCustomBarEntryUsableOnCurrentClass(entry, viewerType) then
                             local spellEntry = BuildSpellEntryFromCustom(entry, idx, viewerType)
                             if spellEntry then
-                                local icon = Factory:AcquireIcon(container, spellEntry)
+                                local icon = Factory:AcquireIcon(container, spellEntry, clickable)
                                 pool[#pool + 1] = icon
                             end
                         end
@@ -3812,11 +3818,11 @@ function CDMIcons:BuildIcons(viewerType, container)
                             pool[i + prefixCount] = pool[i]
                         end
                         for i, entry in ipairs(unpositioned) do
-                            pool[i] = Factory:AcquireIcon(container, entry)
+                            pool[i] = Factory:AcquireIcon(container, entry, clickable)
                         end
                     else
                         for _, entry in ipairs(unpositioned) do
-                            local icon = Factory:AcquireIcon(container, entry)
+                            local icon = Factory:AcquireIcon(container, entry, clickable)
                             pool[#pool + 1] = icon
                         end
                     end
@@ -3828,7 +3834,7 @@ function CDMIcons:BuildIcons(viewerType, container)
                     return a.origIndex < b.origIndex
                 end)
                 for _, item in ipairs(positioned) do
-                    local icon = Factory:AcquireIcon(container, item.entry)
+                    local icon = Factory:AcquireIcon(container, item.entry, clickable)
                     local insertAt = math.min(item.position, #pool + 1)
                     table.insert(pool, insertAt, icon)
                 end
@@ -4114,7 +4120,13 @@ local function UpdateCooldownContainerVisibility(icon, entry, containerDB, editM
         end
 
         local shouldShow = visibility.renderVisible
-        if effectiveMode == "active" and not visibility.isOnCooldown and not visibility.rechargeActive then
+        -- Display activity follows the entry, not the compatibility container
+        -- type: mixed custom containers can hold both aura and cooldown entries.
+        -- Aura entries are active while their aura is present; cooldown entries
+        -- are active while their cooldown/recharge is running.
+        local displayActive = entryIsAura and visibility.isActive
+            or (not entryIsAura and (visibility.isOnCooldown or visibility.rechargeActive))
+        if effectiveMode == "active" and not displayActive then
             local keepForGlow = false
             if ns._OwnedGlows and ns._OwnedGlows.ShouldIconGlow then
                 keepForGlow = ns._OwnedGlows.ShouldIconGlow(icon)

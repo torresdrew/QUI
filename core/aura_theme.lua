@@ -12,7 +12,8 @@ _G.QUI.AuraTheme = AuraTheme
 -- reads the live profile.  Falls back to white when the helper is not yet
 -- available (early init).  Per-dispel-type colors are NOT defined here: the secure
 -- engine colors the dispel-border overlay itself from DEBUFF_TYPE_*_COLOR (see
--- QUI.AuraSkin SetAuraBorder), so a QUI-side palette would be dead.
+-- QUI.AuraSkin buildButtonArt AddDispelTypeTexture), so a QUI-side palette would
+-- be dead.
 function AuraTheme.BorderColor()
     if Helpers and Helpers.GetSkinBorderColor then
         return Helpers.GetSkinBorderColor(nil, nil)

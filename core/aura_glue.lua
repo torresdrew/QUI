@@ -29,13 +29,15 @@ local function ResolveAuraSkin()
 end
 
 -- Settings sort keys → AuraContainerSortMethod (plain global, verified
--- Blizzard_AuraContainerShared.lua:46; no Index member exists — INDEX maps to
--- Default). Read lazily so the file loads headless before enum stubs exist.
+-- Blizzard_AuraContainerShared.lua:41; the 68914 re-patch added
+-- AuraInstanceIDOnly = 8 — INDEX finally maps to real insertion-order
+-- semantics, with Default as the pre-re-patch fallback). Read lazily so
+-- the file loads headless before enum stubs exist.
 local function SortMethodFor(rule)
     local M = _G.AuraContainerSortMethod
     if not M then return 0 end
     local map = {
-        INDEX = M.Default, DEFAULT = M.Default,
+        INDEX = M.AuraInstanceIDOnly or M.Default, DEFAULT = M.Default,
         EXPIRY = M.Expiration, EXPIRY_ONLY = M.ExpirationOnly,
         NAME = M.Name, NAME_ONLY = M.NameOnly,
         BIG_DEFENSIVE = M.BigDefensive,
@@ -80,6 +82,23 @@ function G.ElementProfile(element, overrides)
         -- (aura_skin styleButton falls back to AuraTheme.BorderColor). The
         -- seeded GF "defensives" strip ships green through this field.
         borderColor  = element.borderColor,
+        -- Optional per-element dispel-type border palette; absent = engine
+        -- default dispel colors (aura_skin buildButtonArt only sets
+        -- customDispelColorMap when this is a table). No UI exposure yet
+        -- (task 10) -- this is the passthrough pin so a future writer isn't
+        -- silently dropped before it ever reaches the runtime.
+        dispelColors = element.dispelColors,
+        -- PTR7: optional per-dispel texture assets (customDispelAssetMap,
+        -- CustomAsset style). Same passthrough-pin rationale as dispelColors.
+        dispelAssets = element.dispelAssets,
+        -- PTR7 per-button tooltip controls (aura_skin styleButton applies
+        -- them feature-detected). Same passthrough-pin rationale as
+        -- dispelColors: no UI exposure yet, but a future writer must not be
+        -- silently dropped before reaching the runtime.
+        tooltipAnchor       = element.tooltipAnchor,
+        tooltipAnchorX      = element.tooltipAnchorX,
+        tooltipAnchorY      = element.tooltipAnchorY,
+        tooltipHideInCombat = element.tooltipHideInCombat,
     }
     if overrides then
         for k, v in pairs(overrides) do p[k] = v end
@@ -96,13 +115,64 @@ end
 -- components (e.g. "HARMFUL|modifiers") that the container's Lua-side
 -- AuraUtil.IsValidFilterString assert rejects inside AddAuraGroup — check
 -- both.
+-- Probe verdicts are a property of the STRING (the unit only matters for
+-- access), so they're cached for the session. The cache is only written
+-- while aura access is unrestricted: GetUnitAuras carries
+-- RequiresUnitAuraAccess (FailureMode=Error), so under encounter/M+/PvP
+-- restrictions the pcall fails for EVERY string — reading that as "invalid
+-- filter" would retire valid classified groups mid-pull and broaden their
+-- replacements to bare polarity. When restricted with no cached verdict,
+-- fail OPEN: the string already passed IsValidFilterString above, and every
+-- QUI-compiled string is token-validated at compile time.
+local probeVerdict = {}
+
 function G.FilterStringUsable(unit, filterString)
     local AU = _G.AuraUtil
     if AU and AU.IsValidFilterString and not AU.IsValidFilterString(filterString) then
         return false
     end
     if not (C_UnitAuras and C_UnitAuras.GetUnitAuras) then return true end
-    return (pcall(C_UnitAuras.GetUnitAuras, unit, filterString))
+    local cached = probeVerdict[filterString]
+    if C_Secrets and C_Secrets.ShouldAurasBeSecret and C_Secrets.ShouldAurasBeSecret() then
+        -- Restricted: the probe can't run (every call fails), so trust any
+        -- cached verdict — including false: handing a C-rejected string to
+        -- AddAuraGroup would hard-error inside the secure dirty pass and
+        -- poison the group. Uncached fails OPEN (string already passed
+        -- IsValidFilterString above).
+        if cached ~= nil then return cached end
+        return true
+    end
+    -- Unrestricted: acceptance is permanent, but a cached REJECTION is
+    -- re-verified — a rejection should be a deterministic C-parser verdict,
+    -- yet a failure we can't positively attribute must not permanently
+    -- retire a string on the strength of one probe (compiles are OOC-rare,
+    -- so the re-probe is cheap).
+    if cached == true then return true end
+    local ok = (pcall(C_UnitAuras.GetUnitAuras, unit, filterString))
+    if ok then
+        probeVerdict[filterString] = true
+        return true
+    end
+    -- Failure attribution: GetUnitAuras can fail for reasons other than the
+    -- filter string (a restriction racing in after the ShouldAurasBeSecret
+    -- check above, a transient unit problem). Re-probe with the bare
+    -- polarity baseline — always C-valid — as the discriminator: if the
+    -- baseline ALSO fails, the environment is unusable, so fail OPEN
+    -- WITHOUT caching (the string already passed IsValidFilterString, and
+    -- an uncached miss gets a clean re-probe later — caching false here
+    -- would retire a valid group if restrictions begin before the next
+    -- unrestricted probe).
+    local baselineOk = (pcall(C_UnitAuras.GetUnitAuras, unit, "HELPFUL"))
+    if not baselineOk then return true end
+    -- Baseline healthy: retry the candidate ONCE before caching a rejection.
+    -- The environment can recover between the two probes (a restriction
+    -- window closing after the candidate failed but before the baseline
+    -- ran) — a one-shot failure in that gap must not become a cached false
+    -- that the restricted branch later trusts for the whole encounter. A
+    -- deterministic C-parser rejection fails the retry identically.
+    ok = (pcall(C_UnitAuras.GetUnitAuras, unit, filterString))
+    probeVerdict[filterString] = ok
+    return ok
 end
 
 -- One enabled filterStrip element → the group descriptor array for ITS OWN
@@ -166,42 +236,82 @@ function G.RunConfigPass(container, profile, groups, allowCreate)
         AuraSkin.Configure(container, profile, groups)
         return true
     end
-    local ok = pcall(AuraSkin.Configure, container, profile, groups)
+    local ok = ns.SafeCall("chain-next", AuraSkin.Configure, container, profile, groups)
     if not ok then
         AuraSkin.Restyle(container, profile)
     end
     return ok
 end
 
--- Shared combat-regen replay queue. Owners (frames/hosts) register a
+-- Shared combat/restriction replay queue. Owners (frames/hosts) register a
 -- replay closure; each owner holds at most ONE pending closure (last write
 -- wins — the closure re-derives everything from settings at fire time).
--- Fires once at PLAYER_REGEN_ENABLED; immediate execution when OOC.
+-- Fires only when BOTH blockers are clear: combat lockdown
+-- (PLAYER_REGEN_ENABLED) AND the 12.1 aura restriction. 68675 AuraButton
+-- children carry DenyTaintedAccessWhenAurasAreSecret (the provider applies
+-- it immediately after initializeFrame), so a replay that styles children
+-- while ShouldAurasBeSecret() hard-errors — regen alone is NOT a
+-- sufficient fire signal: restrictions have no end event and are not
+-- combat-lockdown-coupled. While work is pending and the restriction is
+-- up, a short C_Timer poll re-checks until it clears (poll runs ONLY while
+-- something is queued).
 local _pending = {}
 local _regenFrame
+local _pollArmed = false
+
+local function AurasAreSecret()
+    return C_Secrets and C_Secrets.ShouldAurasBeSecret and C_Secrets.ShouldAurasBeSecret()
+end
+
+local FlushPending
+
+local function ArmRestrictionPoll()
+    if _pollArmed then return end
+    local After = C_Timer and C_Timer.After
+    if not After then return end
+    _pollArmed = true
+    After(0.5, function()
+        _pollArmed = false
+        FlushPending()
+    end)
+end
+
+FlushPending = function()
+    if next(_pending) == nil then return end
+    if (InCombatLockdown and InCombatLockdown()) or AurasAreSecret() then
+        ArmRestrictionPoll()
+        return
+    end
+    local run = _pending
+    _pending = {}
+    for owner, fn in pairs(run) do
+        -- ns.SafeCall's bulkhead policy probes err for secrecy BEFORE any
+        -- tostring/format and already reports+dedups via the classified
+        -- error handler; the manual tostring(err) forward this replaced
+        -- skipped that probe (err here can carry aura/secret payload).
+        ns.SafeCall("bulkhead", fn, owner)
+    end
+end
+
 local function EnsureRegenFrame()
     if _regenFrame or not CreateFrame then return end
     _regenFrame = CreateFrame("Frame")
     _regenFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
-    _regenFrame:SetScript("OnEvent", function()
-        local run = _pending
-        _pending = {}
-        for owner, fn in pairs(run) do
-            local ok, err = pcall(fn, owner)
-            if not ok then
-                (ns.DebugPrint or print)("QUI AuraGlue regen replay error: " .. tostring(err))
-            end
-        end
-    end)
+    _regenFrame:SetScript("OnEvent", FlushPending)
 end
 
 function G.QueueRegenWork(owner, fn)
-    if not InCombatLockdown or not InCombatLockdown() then
+    if (not InCombatLockdown or not InCombatLockdown()) and not AurasAreSecret() then
         fn(owner)
         return
     end
     EnsureRegenFrame()
     _pending[owner] = fn
+    -- Combat end fires the regen event; a restriction active WITHOUT combat
+    -- lockdown (or outliving it) has no event — poll until it clears.
+    if not (InCombatLockdown and InCombatLockdown()) then
+        ArmRestrictionPoll()
+    end
 end
 
 return G

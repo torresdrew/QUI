@@ -134,6 +134,20 @@ CDMSpellData.SyncCooldownViewerCVar = SyncCooldownViewerCVarToMasterToggle
 -- the allowUnlearned _spellInCDMCooldowns superset can't answer dormancy.
 CDMSpellData._cdmCooldownLearnedPreferred = {}
 
+-- Current-spec aura-family IDs, rebuilt with allowUnlearned=false. The
+-- separate readiness flag distinguishes a legitimately empty learned set
+-- from a cold/partial catalog read; without it, either state would look like
+-- an empty table and could false-positive every saved aura as dormant.
+CDMSpellData._cdmAuraLearnedFamily = {}
+CDMSpellData._cdmAuraLearnedCatalogReady = false
+
+-- Blizzard-owned spell rows that belong to this player's class, including
+-- hidden/future/off-spec spellbook lanes. Foreign-class rows are retained in
+-- saved intent but excluded from Composer and runtime. Readiness is explicit
+-- so a cold/partial spellbook read fails open.
+CDMSpellData._cdmClassApplicableSpellFamily = {}
+CDMSpellData._cdmClassApplicableCatalogReady = false
+
 -- Zone transition flag — set true on PLAYER_ENTERING_WORLD, cleared after
 -- 2s. Defers SPELLS_CHANGED reconciles while WoW APIs (IsSpellKnown,
 -- C_CooldownViewer, spellbook) are returning stale/incomplete data, so the
@@ -214,14 +228,16 @@ local AURA_CAPTURE_LOOKUP_UNITS = { "player", "pet", "target" }
 -- of truth for duration resolution while restricted-scope lookups are
 -- active.
 --
--- addedAuras itself is documented ConditionalSecretContents, so only cleaned
--- spell/name identity is keyed. The instance ID is forwarded to C-side sinks
--- (C_UnitAuras.GetAuraDuration, C_UnitAuras.GetAuraDataByAuraInstanceID);
--- removed/updated instance-ID arrays are the fields documented
--- NeverSecretContents.
+-- No UnitAuraUpdateInfo field carries a secrecy annotation
+-- (UnitConstantsDocumentation) — element-level readability on every path
+-- below is guaranteed by HandleUnitAura's choke-point folds (whole-payload,
+-- per-array, AnyDeltaElementSecret per-element), not by the API contract.
+-- Only cleaned spell/name identity is keyed; the instance ID is forwarded
+-- to C-side sinks (C_UnitAuras.GetAuraDuration,
+-- C_UnitAuras.GetAuraDataByAuraInstanceID).
 --
--- Eviction strategy is event-driven. The `removedAuraInstanceIDs` payload
--- field is documented `NeverSecretContents = true`. Any non-empty
+-- Eviction strategy is event-driven. The `removedAuraInstanceIDs` array is
+-- probed at HandleUnitAura's choke point before this fires. Any non-empty
 -- `removedAuraInstanceIDs` for a unit is treated as a "something on this unit
 -- just died" trigger: walk the unit's cache and validate each entry by
 -- forwarding its stored instID to GetAuraDataByAuraInstanceID — nil response
@@ -240,18 +256,20 @@ local DEFAULT_CAPTURED_AURA_FILTERS = {
 }
 
 local function IsUsableTableKey(key)
-    -- Truthy check (not `==`) is secret-safe: it's a C-level type-tag
-    -- test, no value comparison. Secret values are typically truthy
-    -- (non-nil / non-false), so the explicit IsSecretValue check
-    -- catches them before any caller uses the key.
+    -- Probe BEFORE the truth test: in 12.1 a bare boolean test on a secret
+    -- value throws in-game ("attempt to perform boolean test on ..."), so
+    -- `not key` on a secret key is itself the crash. issecretvalue(nil) is
+    -- false, so probing first is behavior-preserving for nil/false.
+    if issecretvalue and issecretvalue(key) then return false end -- @secret-policy: reject-secret-ids
     if not key then return false end
-    if issecretvalue and issecretvalue(key) then return false end
     return true
 end
 
 local function IsUsableSpellIDKey(spellID)
-    return type(spellID) == "number"
-        and IsUsableTableKey(spellID)
+    -- IsUsableTableKey first: it rejects secrets, so type() below only ever
+    -- sees plain values.
+    return IsUsableTableKey(spellID)
+        and type(spellID) == "number"
 end
 
 local function IsUsableAuraName(name)
@@ -263,11 +281,12 @@ end
 local function GetCleanAuraSpellID(auraData)
     if not auraData then return nil end
     local sid = auraData.spellId
-    -- Truthy fallback (not `==`) — sid may be a secret value here, in
-    -- which case `sid == nil` would error. `not sid` is a C-level
-    -- type-tag test and is secret-safe; if sid is a secret, it's truthy
-    -- so we skip the fallback (the secret value will get filtered by
-    -- IsUsableSpellIDKey → IsUsableTableKey → IsSecretValue check).
+    -- Probe BEFORE the falsy fallback: `not sid` on a secret spellId throws
+    -- in-game (bare truth tests on secrets are not safe — the old comment
+    -- here claiming otherwise was wrong). A secret ID can't key anything;
+    -- return nil, matching the IsUsableSpellIDKey rejection it used to
+    -- rely on.
+    if issecretvalue and issecretvalue(sid) then return nil end -- @secret-policy: reject-secret-ids
     if not sid then
         sid = auraData.spellID
     end
@@ -279,19 +298,27 @@ local function GetCleanAuraName(auraData)
     local name = auraData.name
     -- Secret strings would crash any subsequent `~= ""` or `:lower()`
     -- call. Return nil rather than propagate the secret.
-    if issecretvalue and issecretvalue(name) then return nil end
+    if issecretvalue and issecretvalue(name) then return nil end -- @secret-policy: reject-secret-ids
     return IsUsableAuraName(name) and name or nil
 end
 
 local function GetCleanAuraInstanceID(auraData)
     if not auraData then return nil end
-    return auraData.auraInstanceID
+    local instID = auraData.auraInstanceID
+    -- Every caller truth-tests this return (`if instID then`) — a secret
+    -- instance ID would throw right there, and it can't key or validate
+    -- identity anyway. Opaque C-side forwarding goes through
+    -- GetRawAuraInstanceID instead.
+    if issecretvalue and issecretvalue(instID) then return nil end -- @secret-policy: reject-secret-ids
+    return instID
 end
 
--- Returns the raw auraInstanceID. removed/updated UNIT_AURA instance-ID
--- arrays are documented NeverSecretContents; addedAuras is not, so callers
--- must keep any added-payload identity handling to cleaned fields or C-side
--- forwarding.
+-- Returns the raw auraInstanceID, which MAY be secret — for opaque
+-- forwarding to documented C-side sinks only (GetAuraDuration,
+-- GetAuraApplications, GetAuraDataByAuraInstanceID). No UnitAuraUpdateInfo
+-- field carries a NeverSecretContents annotation (UnitConstantsDocumentation
+-- UnitAuraUpdateInfo), so callers must probe before ANY Lua op on the
+-- return, or use GetCleanAuraInstanceID.
 local function GetRawAuraInstanceID(auraData)
     if not auraData then return nil end
     return auraData.auraInstanceID
@@ -299,7 +326,11 @@ end
 
 local function GetCleanAuraApplications(auraData)
     if not auraData then return nil end
-    return auraData.applications
+    local apps = auraData.applications
+    -- applications can be a secret scalar on an otherwise readable auraData;
+    -- the caller's `apps == nil` / type(apps) would throw on it. Fold to nil.
+    if issecretvalue and issecretvalue(apps) then return nil end -- @secret-policy: reject-secret-value
+    return apps
 end
 
 local function GetDisplayableAuraApplications(auraData)
@@ -377,9 +408,17 @@ local function ResolveCapturedAuraFilter(unit, ad, instID, explicitFilter)
     if filter then return filter end
 
     if ad then
+        -- isHelpful/isHarmful can be secret scalars on an otherwise readable
+        -- AuraData (same shape as `applications`, see
+        -- GetCleanAuraApplications) — the delta gate's AnyDeltaElementSecret
+        -- probes identity fields only, not these flags, and `== true` on a
+        -- secret throws. Probe first; a secret flag falls through to the
+        -- AuraInstancePassesFilter C-sink probes below.
         local isHelpful = ad.isHelpful
+        if issecretvalue and issecretvalue(isHelpful) then isHelpful = nil end -- @secret-policy: reject-secret-value
         if isHelpful == true then return "HELPFUL" end
         local isHarmful = ad.isHarmful
+        if issecretvalue and issecretvalue(isHarmful) then isHarmful = nil end -- @secret-policy: reject-secret-value
         if isHarmful == true then return "HARMFUL" end
     end
 
@@ -490,9 +529,17 @@ end
 
 local function CaptureAuraFromPayload(unit, ad, allowCastCorrelation, explicitFilter)
     if not ad then return end
-    -- addedAuras is ConditionalSecretContents; spell/name identity is keyed
-    -- only after the cleanup helpers below accept it.
+    -- ConditionalSecretContents (on GetUnitAuras' `auras` return,
+    -- UnitAuraDocumentation) proves secret CONTENTS/elements, not per-field
+    -- secrecy; addedAuras carries no annotation at all. The field probes
+    -- below are defense-in-depth against the observed
+    -- readable-struct/secret-scalar shapes (isFullUpdate, applications) —
+    -- spell/name identity is keyed only after the cleanup helpers accept it.
     local instID = GetRawAuraInstanceID(ad)
+    -- instID can be a secret scalar, and `not instID` on a secret throws.
+    -- A secret instID can't be validated or evicted by identity later, so
+    -- skip the capture (matches the Sources "reject secret IDs" contract).
+    if issecretvalue and issecretvalue(instID) then return end
     if not instID then return end
 
     local sid = GetCleanAuraSpellID(ad)
@@ -677,26 +724,56 @@ end
 -- `or {}` doesn't catch — only nil), unpack(secret) errors. Receiving the
 -- packed table directly skips that, and CaptureAuraFromPayload is already
 -- secret-safe on every field it reads.
+-- Probe-first aura iteration. NEVER route these scans through
+-- AuraUtil.ForEachAura: Blizzard's ForEachAuraHelper truth-tests each entry
+-- ITSELF (`if auraInfo then`, Blizzard_FrameXMLUtil/AuraUtil.lua) — with
+-- addon taint a WHOLE-secret (per-spell always-secret) aura throws inside
+-- Blizzard's iterator BEFORE any callback-level probe can run. Iterate
+-- GetAuraDataByIndex here instead and probe each entry first. A secret
+-- entry is NOT end-of-list — skip it and keep scanning. Callback contract
+-- matches ForEachAura's packed form: return true to stop.
+local function ForEachReadableAura(unit, filter, cb)
+    local GetByIndex = C_UnitAuras and C_UnitAuras.GetAuraDataByIndex
+    if not GetByIndex then return end
+    -- UNBOUNDED like the ForEachAura it replaces: nil terminates the walk
+    -- (aura indices are finite and secret entries only occupy REAL indices,
+    -- so nil stays a valid end-of-list signal). No numeric cap — any bound
+    -- is a silent coverage cap on heavy raid aura sets.
+    local index = 0
+    while true do
+        index = index + 1
+        local ok, auraData = pcall(GetByIndex, unit, index, filter)
+        if not ok then return end
+        if issecretvalue and issecretvalue(auraData) then
+            -- @secret-policy: readable-only-scan — skip, keep walking
+            auraData = nil
+        elseif not auraData then
+            return
+        end
+        if auraData ~= nil and cb(auraData) then
+            return
+        end
+    end
+end
+
 local function RescanCapturedAurasForUnit(unit)
-    if not (AuraUtil and AuraUtil.ForEachAura) then return end
     if unit == "target" then
         ReleaseCapturedAurasForUnit(unit)
         return
     end
-    -- ForEachAura is index-based (12.1 RequiresUnitAuraAccess) — it throws
-    -- while auras are secret. Bail BEFORE the release below, or the cache is
-    -- emptied with no way to repopulate it; stale entries reconcile on the
-    -- next non-secret rescan instead.
+    -- Index scans throw while auras are globally secret. Bail BEFORE the
+    -- release below, or the cache is emptied with no way to repopulate it;
+    -- stale entries reconcile on the next non-secret rescan instead.
     if Sources and Sources.AreAurasSecret and Sources.AreAurasSecret() then return end
     ReleaseCapturedAurasForUnit(unit)
-    AuraUtil.ForEachAura(unit, "HELPFUL", nil, function(ad)
+    ForEachReadableAura(unit, "HELPFUL", function(ad)
         CaptureAuraFromPayload(unit, ad, nil, "HELPFUL")
         return false  -- continue iterating
-    end, true)
-    AuraUtil.ForEachAura(unit, "HARMFUL", nil, function(ad)
+    end)
+    ForEachReadableAura(unit, "HARMFUL", function(ad)
         CaptureAuraFromPayload(unit, ad, false, "HARMFUL")
         return false
-    end, true)
+    end)
 end
 
 local function NotifyAuraConsumers(unit, updateInfo)
@@ -716,6 +793,23 @@ end
 -- changed, so every registered unit is invalidated/rescanned instead of
 -- guessing.
 local REGISTERED_UNITS = { "player", "pet", "target" }
+
+-- Runs only behind HandleUnitAura's issecretvalue presence guard, and only
+-- after the array itself probed non-secret (a secret array throws on #arr).
+local function AnyDeltaElementSecret(arr, isAuraData)
+    if not arr then return false end
+    for i = 1, #arr do
+        local v = arr[i]
+        if issecretvalue(v) then return true end -- @secret-policy: report-secret-detected
+        if isAuraData and v ~= nil
+            and (issecretvalue(v.auraInstanceID)
+                or issecretvalue(v.spellId)
+                or issecretvalue(v.spellID)) then
+            return true
+        end
+    end
+    return false
+end
 
 -- Shared UNIT_AURA body. Factored out of AuraCaptureFrameOnEvent so the
 -- secret-unit fallback there can drive it once per registered unit without
@@ -748,6 +842,20 @@ local function HandleUnitAura(unit, updateInfo)
         and (issecretvalue(updateInfo.addedAuras)
             or issecretvalue(updateInfo.updatedAuraInstanceIDs)
             or issecretvalue(updateInfo.removedAuraInstanceIDs)) then
+        updateInfo = nil
+    end
+    -- Element level: a READABLE delta array can still carry SECRET elements,
+    -- and a readable AuraData element can carry secret identity fields — the
+    -- UnitAuraUpdateInfo schema carries no non-secret contents guarantee.
+    -- Downstream (ApplyAuraInstances) ==-compares and table-keys exactly
+    -- these (instanceID sets, spellId lookups), so fold any element-level
+    -- secrecy to the same full-rescan path. Arrays are readable here (folded
+    -- above), so #/index reads are safe; every element/field is probed
+    -- before any Lua op touches it.
+    if updateInfo and issecretvalue
+        and (AnyDeltaElementSecret(updateInfo.addedAuras, true)
+            or AnyDeltaElementSecret(updateInfo.updatedAuraInstanceIDs)
+            or AnyDeltaElementSecret(updateInfo.removedAuraInstanceIDs)) then
         updateInfo = nil
     end
     -- Drop the changed aura-memo entries synchronously, before the capture below
@@ -844,9 +952,10 @@ local function AuraCaptureFrameOnEvent(self, event, ...)
     end
     -- The payload can independently arrive whole-secret even when `unit` is
     -- readable (e.g. .isFullUpdate / .addedAuras / .removedAuraInstanceIDs
-    -- would all throw on field access). Probe once and fold to the same
-    -- nil / full-rescan path HandleUnitAura already takes for isFullUpdate.
-    if updateInfo and issecretvalue and issecretvalue(updateInfo) then
+    -- would all throw on field access — as would a bare truth-test, so the
+    -- probe must NOT hide behind `updateInfo and ...`). Probe once and fold
+    -- to the same nil / full-rescan path HandleUnitAura takes for isFullUpdate.
+    if issecretvalue and issecretvalue(updateInfo) then
         updateInfo = nil
     end
     HandleUnitAura(unit, updateInfo)
@@ -958,7 +1067,7 @@ end
 
 
 local function DecodePotentialSecretBoolean(value)
-    if issecretvalue and issecretvalue(value) then return nil end
+    if issecretvalue and issecretvalue(value) then return nil end -- @secret-policy: reject-secret-value
     if value == nil then return nil end
     if type(value) == "boolean" then
         return value
@@ -976,7 +1085,7 @@ local function GetReadableAuraDurationState(auraData)
     if not auraData then return nil end
     local duration = auraData.duration
     if issecretvalue and issecretvalue(duration) then
-        return nil
+        return nil -- @secret-policy: reject-secret-value
     end
     if duration == nil then
         return false
@@ -1191,6 +1300,12 @@ local function ScanOwnedTargetAuraBySpellID(spellID, filter)
         if auras then
             for i = 1, #auras do
                 local auraData = auras[i]
+                -- Per-spell always-secret auras pass the AreAurasSecret()
+                -- gate as WHOLE-secret elements (array readable ≠ elements
+                -- readable) — probe before the truth-test.
+                if issecretvalue and issecretvalue(auraData) then
+                    auraData = nil -- @secret-policy: readable-only-scan
+                end
                 if auraData
                    and GetCleanAuraSpellID(auraData) == spellID
                    and IsUsableTargetAuraData(auraData, scanFilter) then
@@ -1200,17 +1315,19 @@ local function ScanOwnedTargetAuraBySpellID(spellID, filter)
         end
     end
 
-    if AuraUtil and AuraUtil.ForEachAura then
+    do
+        -- Probe-first index fallback — never AuraUtil.ForEachAura (its
+        -- internal `if auraInfo` truth-test throws on whole-secret entries
+        -- before the callback runs).
         local found
-        AuraUtil.ForEachAura("target", scanFilter, nil, function(auraData)
-            if auraData
-               and GetCleanAuraSpellID(auraData) == spellID
+        ForEachReadableAura("target", scanFilter, function(auraData)
+            if GetCleanAuraSpellID(auraData) == spellID
                and IsUsableTargetAuraData(auraData, scanFilter) then
                 found = auraData
                 return true
             end
             return false
-        end, true)
+        end)
         if found then return found end
     end
 
@@ -1230,8 +1347,9 @@ local function ScanOwnedTargetAuraByName(spellName, filter)
     -- secret-safe GetAuraDataBySpellName API path before falling here.
     local function NameMatches(auraData)
         local rawName = auraData.name
+        -- Probe first: `rawName == nil` on a secret name throws in-game.
+        if issecretvalue and issecretvalue(rawName) then return false end -- @secret-policy: readable-only-scan
         if rawName == nil then return false end
-        if issecretvalue and issecretvalue(rawName) then return false end
         if type(rawName) ~= "string" then return false end
         return rawName == spellName
     end
@@ -1240,6 +1358,11 @@ local function ScanOwnedTargetAuraByName(spellName, filter)
         if auras then
             for i = 1, #auras do
                 local auraData = auras[i]
+                -- Probe before the truth-test: whole-secret elements pass
+                -- the global gate (per-spell always-secret).
+                if issecretvalue and issecretvalue(auraData) then
+                    auraData = nil -- @secret-policy: readable-only-scan
+                end
                 if auraData
                    and NameMatches(auraData)
                    and IsUsableTargetAuraData(auraData, scanFilter) then
@@ -1249,17 +1372,17 @@ local function ScanOwnedTargetAuraByName(spellName, filter)
         end
     end
 
-    if AuraUtil and AuraUtil.ForEachAura then
+    do
+        -- Probe-first index fallback (see ScanOwnedTargetAuraBySpellID).
         local found
-        AuraUtil.ForEachAura("target", scanFilter, nil, function(auraData)
-            if auraData
-               and NameMatches(auraData)
+        ForEachReadableAura("target", scanFilter, function(auraData)
+            if NameMatches(auraData)
                and IsUsableTargetAuraData(auraData, scanFilter) then
                 found = auraData
                 return true
             end
             return false
-        end, true)
+        end)
         if found then return found end
     end
 
@@ -1365,7 +1488,8 @@ local function IsSecretCountValue(value)
 end
 
 local function SafeCountNumber(value)
-    if value == nil or IsSecretCountValue(value) then
+    -- Probe first: `value == nil` on a secret stack value throws in-game.
+    if IsSecretCountValue(value) or value == nil then
         return nil
     end
     local valueType = type(value)
@@ -1387,7 +1511,13 @@ local function SetAuraCount(result, value, source, shown)
     count.shown = false
     count.source = nil
 
-    if shown == false or value == nil then
+    if shown == false then
+        return
+    end
+    -- value may be a secret stack string (GetAuraApplications forwards the
+    -- C-side display count verbatim for the sinkText path) — probe before
+    -- the nil compare. A secret value stays shown: sinkText accepts it.
+    if not IsSecretCountValue(value) and value == nil then
         return
     end
 
@@ -1430,7 +1560,9 @@ local function SetResolvedAuraSpellID(result, auraData, fallbackID)
     -- not clobbered by a later nil-auraData fallback call; WipeAuraResult
     -- clears it at resolve entry.
     local pts = auraData and auraData.points
-    if pts ~= nil and not (issecretvalue and issecretvalue(pts)) then
+    -- Probe BEFORE the nil compare: a fully-secret points field throws on
+    -- `pts ~= nil` itself.
+    if not (issecretvalue and issecretvalue(pts)) and pts ~= nil then
         result.absorbPoints = pts
     end
     local sid = GetCleanAuraSpellID(auraData)
@@ -2113,7 +2245,11 @@ local function ResolveAuraRuntimeStateImpl(params)
                 end
             end
         end
-        SetAuraCount(r, apps, stackSource, appsResolved and apps ~= nil)
+        -- apps from the GetAuraApplications path can be a secret string —
+        -- probe before the nil compare (a secret count is still shown).
+        local appsShown = appsResolved
+            and (IsSecretCountValue(apps) or apps ~= nil)
+        SetAuraCount(r, apps, stackSource, appsShown)
         if debugAura then
             local appsLog = IsSecretCountValue(apps) and "<secret>" or apps
             AuraStateDebug(debugAura, "count",
@@ -2653,17 +2789,43 @@ local function IsSpellInCDMCategoryInternal(spellID, family)
     return _spellToCooldownID[id] ~= nil
 end
 
+function CDMSpellData:IsEntryApplicableForContainer(_containerKey, entry)
+    local normalized = NormalizeOwnedEntry(entry)
+    if not normalized or normalized.type ~= "spell" or type(normalized.id) ~= "number" then
+        return true
+    end
+    if normalized.source ~= BLIZZARD_CDM_ENTRY_SOURCE then
+        return true
+    end
+    if CDMSpellData._cdmClassApplicableCatalogReady ~= true then
+        return true
+    end
+    local family = CDMSpellData._cdmClassApplicableSpellFamily
+    return type(family) == "table" and family[normalized.id] == true
+end
+
 local function IsEntryDormantForContainerInternal(containerKey, entry)
     local normalized = NormalizeOwnedEntry(entry)
     if not normalized or normalized.type ~= "spell" or type(normalized.id) ~= "number" then
+        return false
+    end
+    if not CDMSpellData:IsEntryApplicableForContainer(containerKey, normalized) then
         return false
     end
     if IsAuraEntry(normalized, containerKey) then
         if normalized.source ~= BLIZZARD_CDM_ENTRY_SOURCE then
             return false
         end
-        return CDMCatalogReady("aura")
-            and not IsSpellInCDMCategoryInternal(normalized.id, "aura")
+        if not CDMCatalogReady("aura") then return false end
+        if not IsSpellInCDMCategoryInternal(normalized.id, "aura") then
+            return true
+        end
+        -- The family map above is the intentional allowUnlearned superset
+        -- used by the picker. Once the current-spec learned catalog is ready,
+        -- require this Blizzard-owned entry to exist there too. This keeps
+        -- valid same-class loadout/talent rows Dormant until learned.
+        if not CDMSpellData:_AuraLearnedCatalogReady() then return false end
+        return not CDMSpellData:_IsAuraLearnedFamilyID(normalized.id)
     end
     -- Cooldown family. Unknown spell -> dormant (unchanged). Additionally, a
     -- blizzardCDM-sourced cooldown that is no longer a LEARNED/active cooldown
@@ -2704,6 +2866,17 @@ function CDMSpellData:_IsCooldownLearnedPreferred(spellID)
     local id = tonumber(spellID)
     if not id then return false end
     local set = self._cdmCooldownLearnedPreferred
+    return type(set) == "table" and set[id] == true
+end
+
+function CDMSpellData:_AuraLearnedCatalogReady()
+    return self._cdmAuraLearnedCatalogReady == true
+end
+
+function CDMSpellData:_IsAuraLearnedFamilyID(spellID)
+    local id = tonumber(spellID)
+    if not id then return false end
+    local set = self._cdmAuraLearnedFamily
     return type(set) == "table" and set[id] == true
 end
 
@@ -2769,7 +2942,7 @@ function CDMSpellData:BuildSpellListFromOwned(containerKey)
             if entry.type == "spell" and self:_IsSpellRemovedForCurrentBuild(db, entry.id) then
                 isRemoved = true
             end
-            -- Display-time dormancy. Owned lists are pure user intent and
+            -- Display-time applicability and dormancy. Owned lists are pure user intent and
             -- are never mutated by known-state probes (IsSpellKnown races
             -- at cold login / loadout swaps used to delete tracked talent
             -- spells). An entry whose spell this character can't currently
@@ -2779,10 +2952,14 @@ function CDMSpellData:BuildSpellListFromOwned(containerKey)
             -- there). Only entries proven to come from Blizzard CDM are
             -- judged by the per-character CDM aura catalog; manual aura
             -- spell IDs remain user-managed even if absent from /cdm.
+            -- Blizzard-owned foreign-class rows remain saved but are omitted
+            -- from both runtime and Composer.
             local isDormant = not isRemoved
                 and IsEntryDormantForContainerInternal(containerKey, entry)
+            local isApplicable = not isRemoved
+                and self:IsEntryApplicableForContainer(containerKey, entry)
 
-            if not isRemoved and not isDormant then
+            if not isRemoved and isApplicable and not isDormant then
                 local resolved = ResolveOwnedEntry(entry, containerKey, i)
                 if resolved then
                     resolved._assignedRow = entry.row  -- carry row assignment
@@ -2881,6 +3058,34 @@ RebuildSpellToCooldownID = function()
     if composer and composer.RebuildCooldownLearnedPreferredIDs then
         composer.RebuildCooldownLearnedPreferredIDs(learnedSet)
     end
+
+    -- Aura dormancy needs the same learned-vs-unlearned distinction, but
+    -- retains every identity in a learned aura family so legacy/base-ID
+    -- snapshots remain valid. RebuildAuraLearnedFamilyIDs returns false for a
+    -- cold or partial read; keep dormancy conservative until it reports ready.
+    local learnedAuraSet = CDMSpellData._cdmAuraLearnedFamily
+    if type(learnedAuraSet) ~= "table" then
+        learnedAuraSet = {}
+        CDMSpellData._cdmAuraLearnedFamily = learnedAuraSet
+    end
+    wipe(learnedAuraSet)
+    CDMSpellData._cdmAuraLearnedCatalogReady = false
+    if composer and composer.RebuildAuraLearnedFamilyIDs then
+        CDMSpellData._cdmAuraLearnedCatalogReady =
+            composer.RebuildAuraLearnedFamilyIDs(learnedAuraSet) == true
+    end
+
+    local applicableSet = CDMSpellData._cdmClassApplicableSpellFamily
+    if type(applicableSet) ~= "table" then
+        applicableSet = {}
+        CDMSpellData._cdmClassApplicableSpellFamily = applicableSet
+    end
+    wipe(applicableSet)
+    CDMSpellData._cdmClassApplicableCatalogReady = false
+    if composer and composer.RebuildClassApplicableSpellIDs then
+        CDMSpellData._cdmClassApplicableCatalogReady =
+            composer.RebuildClassApplicableSpellIDs(applicableSet) == true
+    end
 end
 
 ---------------------------------------------------------------------------
@@ -2895,17 +3100,26 @@ end
 -- maps, and FireChangeCallback refreshes display — which re-evaluates the
 -- render-time known filters against fresh spell data. Callers must invoke
 -- this inside their own combat-lockdown guard.
--- Order-independent signature of the persistent learned-cooldown set
--- (_cdmCooldownLearnedPreferred, rebuilt inside ReconcileAllContainers). Its
--- keys are SelectPersistentSpellID values, which prefer the still-known BASE
--- spell over a live override -- so a transient proc override (e.g. Hammer of
--- Light 427453 replacing Wake of Ashes 255937) does NOT move the set, while a
--- talent/spec change that adds, drops, or converts a learned cooldown does.
-local function LearnedCooldownSignature()
-    local set = CDMSpellData._cdmCooldownLearnedPreferred
-    if type(set) ~= "table" then return "" end
+-- Order-independent signature of the learned cooldown and aura-family sets
+-- rebuilt inside ReconcileAllContainers. Cooldown keys prefer the still-known
+-- BASE spell over a live proc override, so transient procs do not move the
+-- signature. Real talent/spec changes to either family do.
+local function LearnedCatalogSignature()
     local ids = {}
-    for id in pairs(set) do ids[#ids + 1] = id end
+    local cooldowns = CDMSpellData._cdmCooldownLearnedPreferred
+    if type(cooldowns) == "table" then
+        for id in pairs(cooldowns) do ids[#ids + 1] = "c:" .. tostring(id) end
+    end
+    local auras = CDMSpellData._cdmAuraLearnedFamily
+    if type(auras) == "table" then
+        for id in pairs(auras) do ids[#ids + 1] = "a:" .. tostring(id) end
+    end
+    local applicable = CDMSpellData._cdmClassApplicableSpellFamily
+    if type(applicable) == "table" then
+        for id in pairs(applicable) do ids[#ids + 1] = "p:" .. tostring(id) end
+    end
+    ids[#ids + 1] = CDMSpellData._cdmAuraLearnedCatalogReady and "ar:1" or "ar:0"
+    ids[#ids + 1] = CDMSpellData._cdmClassApplicableCatalogReady and "pr:1" or "pr:0"
     table.sort(ids)
     return table.concat(ids, ",")
 end
@@ -2921,9 +3135,9 @@ end
 -- known-state live every tick, so a skipped refresh never leaves stale display.
 local function RunReconcileSequence(guardUnchanged)
     local restored = CDMSpellData:CheckAllDormantSpells()
-    local before = guardUnchanged and LearnedCooldownSignature() or nil
+    local before = guardUnchanged and LearnedCatalogSignature() or nil
     CDMSpellData:ReconcileAllContainers()
-    if guardUnchanged and not restored and before == LearnedCooldownSignature() then
+    if guardUnchanged and not restored and before == LearnedCatalogSignature() then
         return
     end
     if FireChangeCallback then
@@ -3066,6 +3280,10 @@ local function GetSpecKeyForSpecID(specID)
         local _
         _, class = UnitClass("player")
     end
+    -- @secret-policy: collapse-only — UnitClass can return SECRET on 12.1 PTR7
+    -- (SecretWhenUnitIdentityRestricted); collapse so the "UNKNOWN" fallback applies.
+    if issecretvalue and issecretvalue(class) then class = nil end
+    if issecretvalue and issecretvalue(specID) then specID = nil end
     if not class or not specID then return class or "UNKNOWN" end
     return class .. "-" .. tostring(specID)
 end
@@ -3078,6 +3296,7 @@ local function GetCurrentSpecKey()
             local _
             _, class = UnitClass("player")
         end
+        if issecretvalue and issecretvalue(class) then class = nil end -- @secret-policy: collapse-only
         return class or "UNKNOWN"
     end
     return GetSpecKeyForSpecID(specID)
@@ -3832,6 +4051,11 @@ local itemInfo = C_SpellBook.GetSpellBookItemInfo(slotIndex, Enum.SpellBookSpell
     do
         local _, raceFile = UnitRace("player")
         local _, classFile = UnitClass("player")
+        -- @secret-policy: collapse-only — UnitRace/UnitClass can return SECRET on
+        -- 12.1 PTR7 (SecretWhenUnitIdentityRestricted); collapse so the racial
+        -- append is skipped / class-filtered racials drop out (fail-safe).
+        if issecretvalue and issecretvalue(raceFile) then raceFile = nil end
+        if issecretvalue and issecretvalue(classFile) then classFile = nil end
         local racials = raceFile and RACE_RACIALS[raceFile]
         if racials then
             for _, racialEntry in ipairs(racials) do
@@ -3877,29 +4101,29 @@ function CDMSpellData:GetActiveAuras(filter)
     local result = {}
     local seen = {}  -- dedupe by spellID: many buffs stack with multiple instances
 
-    if not (AuraUtil and AuraUtil.ForEachAura) then return result end
-
-    -- ForEachAura is index/slot-based (12.1 RequiresUnitAuraAccess) and throws while
-    -- auras are secret. Bail like the sibling scans (RescanCapturedAurasForUnit et al.);
-    -- this path is only reached from the options aura-picker, so an empty list is fine.
+    -- Index scans throw while auras are globally secret. Bail like the
+    -- sibling scans (RescanCapturedAurasForUnit et al.); this path is only
+    -- reached from the options aura-picker, so an empty list is fine.
     if Sources and Sources.AreAurasSecret and Sources.AreAurasSecret() then return result end
 
-    AuraUtil.ForEachAura("player", filter or "HELPFUL", nil, function(auraData)
-        if not auraData then return false end
+    -- Probe-first iteration (ForEachReadableAura) — AuraUtil.ForEachAura
+    -- truth-tests entries inside Blizzard code and throws on whole-secret
+    -- (per-spell always-secret) auras before the callback runs.
+    ForEachReadableAura("player", filter or "HELPFUL", function(auraData)
         local sid = GetCleanAuraSpellID(auraData)
         if sid == nil or seen[sid] then return false end
         seen[sid] = true
         local name = GetCleanAuraName(auraData)
-        local icon = auraData.icon or 0
-        local duration = auraData.duration or 0
+        local icon = SafeCountNumber(auraData.icon) or 0
+        local duration = SafeCountNumber(auraData.duration) or 0
         result[#result + 1] = {
             spellID = sid,
             name = name or "",
-            icon = icon or 0,
-            duration = duration or 0,
+            icon = icon,
+            duration = duration,
         }
         return false
-    end, true)  -- usePackedAura=true: callback receives an auraData table (not individual args)
+    end)
 
     return result
 end
@@ -3958,10 +4182,10 @@ local function GetItemProfessionQualityRank(itemInfo)
     end
 
     local info = Sources.QueryItemProfessionQualityInfo(itemInfo)
-    if issecretvalue and issecretvalue(info) then return 0 end
+    if issecretvalue and issecretvalue(info) then return 0 end -- @secret-policy: reject-secret-value
     if type(info) ~= "table" then return 0 end
     local quality = info.quality
-    if issecretvalue and issecretvalue(quality) then return 0 end
+    if issecretvalue and issecretvalue(quality) then return 0 end -- @secret-policy: reject-secret-value
     if type(quality) == "number" then return quality end
     return 0
 end

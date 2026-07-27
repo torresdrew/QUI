@@ -223,7 +223,10 @@ function GUI:ResolveThemePreset(presetName)
     -- Dynamic presets
     if presetName == "Class Colored" then
         local _, class = UnitClass("player")
-        local color = RAID_CLASS_COLORS and RAID_CLASS_COLORS[class]
+        -- @secret-policy: collapse-only — UnitClass can return SECRET on 12.1 PTR7
+        -- (SecretWhenUnitIdentityRestricted); collapse so the static fallback applies.
+        if issecretvalue and issecretvalue(class) then class = nil end
+        local color = class and RAID_CLASS_COLORS and RAID_CLASS_COLORS[class]
         if color then return color.r, color.g, color.b end
         return 0.376, 0.647, 0.980
     end
@@ -5129,7 +5132,9 @@ function GUI:CreateMainFrame()
             end
             if name == "Class Colored" then
                 local _, class = UnitClass("player")
-                local cc = RAID_CLASS_COLORS[class]
+                -- @secret-policy: collapse-only — secret class ⇒ no swatch (text-only entry).
+                if issecretvalue and issecretvalue(class) then class = nil end
+                local cc = class and RAID_CLASS_COLORS[class]
                 if cc then presetColor = {cc.r, cc.g, cc.b} end
             elseif name == "Faction Auto" then
                 local faction = UnitFactionGroup("player")
@@ -6975,6 +6980,24 @@ function GUI:RenderSubPageTabs(tile, contentArea, subPages, onSelect, headerFram
         container:Hide()
         tile._subPageBodies[i] = container
 
+        -- An optional per-sub-page preview is a sibling of the scroll root,
+        -- so it remains pinned while only the settings body scrolls. This is
+        -- the sub-page equivalent of the tile-level persistent preview built
+        -- in BuildTilePage.
+        local contentRoot = container
+        if sp.preview and type(sp.preview.build) == "function" then
+            local preview = CreateFrame("Frame", nil, container)
+            preview:SetPoint("TOPLEFT", container, "TOPLEFT", 0, 0)
+            preview:SetPoint("TOPRIGHT", container, "TOPRIGHT", 0, 0)
+            preview:SetHeight(sp.preview.height or 90)
+            sp.preview.build(preview)
+            container._preview = preview
+
+            contentRoot = CreateFrame("Frame", nil, container)
+            contentRoot:SetPoint("TOPLEFT", preview, "BOTTOMLEFT", 0, -8)
+            contentRoot:SetPoint("BOTTOMRIGHT", container, "BOTTOMRIGHT", 0, 0)
+        end
+
         local function installRegisterSection(targetBody)
             targetBody._sections = {}
             function targetBody:RegisterSection(id, label, frame)
@@ -7006,19 +7029,20 @@ function GUI:RenderSubPageTabs(tile, contentArea, subPages, onSelect, headerFram
         -- registrations silently if the method is missing.
         local scrollFrame, contentBody
         if sp.noScroll then
-            contentBody = container
+            contentBody = contentRoot
             installRegisterSection(contentBody)
             RunOnSelect(sp, contentBody)
         elseif ns.QUI_Options and ns.QUI_Options.CreateScrollableContent then
-            scrollFrame, contentBody = ns.QUI_Options.CreateScrollableContent(container)
+            scrollFrame, contentBody = ns.QUI_Options.CreateScrollableContent(contentRoot)
             installRegisterSection(contentBody)
             RunOnSelect(sp, contentBody)
         else
-            contentBody = container
+            contentBody = contentRoot
             installRegisterSection(contentBody)
             RunOnSelect(sp, contentBody)
         end
 
+        container._contentRoot = contentRoot
         container._scrollFrame = scrollFrame
         container._contentBody = contentBody
 

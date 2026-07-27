@@ -18,10 +18,13 @@
 std = "lua51"
 max_line_length = false   -- WoW addons commonly run wider than 120 cols
 
--- meta/ holds LuaLS ---@meta definition stubs for the editor only (never loaded
--- in-game). They are generated function stubs, so linting them is meaningless
--- and noisy (unused args, "setting read-only global").
-exclude_files = { "meta" }
+-- Exclude code that is not part of QUI's lint ownership:
+--   meta/  — generated LuaLS definition stubs (never loaded in-game)
+--   tests/ — vendored Blizzard FrameXML/API fixtures and test harnesses
+--   libs/  — vendored third-party libraries maintained upstream
+-- This keeps `luacheck .` aligned with the warning-clean addon scope enforced
+-- by CI without hiding findings in QUI-owned addon directories.
+exclude_files = { "meta", "tests", "libs" }
 
 -- Suppress noise from common WoW idioms:
 --   212/self   — frames pass `self` to OnEvent/OnUpdate scripts; often unused

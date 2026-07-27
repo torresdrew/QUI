@@ -70,6 +70,7 @@ local UIParent = UIParent
 local ipairs = ipairs
 local pcall = pcall
 local InCombatLockdown = InCombatLockdown
+local UnitClass = UnitClass
 local C_Timer = C_Timer
 local math_floor = math.floor
 local string_format = string.format
@@ -128,7 +129,12 @@ end
 -- TOTEM SLOT PRIORITIES
 ---------------------------------------------------------------------------
 local function GetSlotPriorities()
-    if SHAMAN_TOTEM_PRIORITIES then
+    local _, class = UnitClass("player")
+    -- @secret-policy: collapse-only — a restricted class token falls back to
+    -- STANDARD_TOTEM_PRIORITIES; only a proven readable SHAMAN token may use
+    -- the class-specific earth/fire ordering.
+    if Helpers.IsSecretValue(class) then class = nil end
+    if class == "SHAMAN" and SHAMAN_TOTEM_PRIORITIES then
         return SHAMAN_TOTEM_PRIORITIES
     elseif STANDARD_TOTEM_PRIORITIES then
         return STANDARD_TOTEM_PRIORITIES
@@ -201,6 +207,12 @@ TotemBar.enabled = false
 for i = 1, MAX_SLOTS do
     local btn = CreateFrame("Button", "QUI_TotemBarButton" .. i, container, "SecureActionButtonTemplate")
     btn:SetSize(36, 36)
+    -- Active buttons pack toward the growth edge while inactive secure
+    -- placeholders retain their original offsets for combat-safe activation.
+    -- A later active button can therefore overlap an earlier invisible one.
+    -- Stable increasing levels ensure the active packed button owns the hit
+    -- region instead of the earlier alpha-zero placeholder.
+    btn:SetFrameLevel(container:GetFrameLevel() + i)
     btn:SetAlpha(0)
     -- Mouse is enabled permanently OOC; left/middle clicks fall through to
     -- the world frame, while right-click is intercepted for destroytotem.

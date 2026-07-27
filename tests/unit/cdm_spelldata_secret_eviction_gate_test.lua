@@ -59,19 +59,21 @@ check("eviction gate must come BEFORE the probe loop",
 ---------------------------------------------------------------------------
 local rescanStart = assert(string.find(src, "local function RescanCapturedAurasForUnit(unit)", 1, true),
     "RescanCapturedAurasForUnit definition should exist")
--- The target fast-path releases and returns before the ForEachAura walk; the
+-- The target fast-path releases and returns before the aura walk; the
 -- gate protects the non-target branch. Find the SECOND release call (the one
--- followed by the ForEachAura repopulate).
+-- followed by the repopulate walk). The walk is the probe-first
+-- ForEachReadableAura iterator — AuraUtil.ForEachAura is banned (its
+-- internal `if auraInfo` truth-test throws on whole-secret auras).
 local firstRelease = assert(string.find(src, "ReleaseCapturedAurasForUnit(unit)", rescanStart, true),
     "target-branch release should exist")
 local secondRelease = string.find(src, "ReleaseCapturedAurasForUnit(unit)", firstRelease + 1, true)
 local rescanBail = string.find(src, "Sources.AreAurasSecret and Sources.AreAurasSecret()", rescanStart, true)
-local forEach = assert(string.find(src, "AuraUtil.ForEachAura(unit,", rescanStart, true),
-    "ForEachAura repopulate should exist")
+local forEach = assert(string.find(src, "ForEachReadableAura(unit,", rescanStart, true),
+    "ForEachReadableAura repopulate should exist")
 
 check("RescanCapturedAurasForUnit must gate on AreAurasSecret",
     rescanBail ~= nil and rescanBail < forEach,
-    "no AreAurasSecret bail found before the ForEachAura walk")
+    "no AreAurasSecret bail found before the repopulate walk")
 
 check("rescan gate must come BEFORE the non-target release",
     rescanBail ~= nil and secondRelease ~= nil and rescanBail < secondRelease,

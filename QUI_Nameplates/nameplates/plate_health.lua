@@ -269,7 +269,7 @@ function NPHealth.UpdateAbsorbs(plate)
     -- Zero-latch for the common no-shield case: only a verifiably clean zero
     -- hides the bar; secret amounts always render (the engine draws 0-width
     -- for a secret zero anyway — hiding is just the cheaper steady state).
-    if not IsSecretValue(amount) and amount == 0 then
+    if not IsSecretValue(amount) and amount == 0 then -- @secret-safe: probe leads this compound; short-circuit keeps the compare off secrets
         if not plate.npAbsorbHidden then
             plate.npAbsorbHidden = true
             absorbBar:Hide()

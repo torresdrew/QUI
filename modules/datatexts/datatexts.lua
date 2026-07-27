@@ -5,6 +5,7 @@ local ADDON_NAME, ns = ...
 local QUICore = ns.Addon
 local Helpers = ns.Helpers
 local LSM = ns.LSM
+local issecretvalue = issecretvalue -- bare self-cache: analyzer-credited guard name
 
 -- Cache frequently used globals
 local format = string.format
@@ -101,6 +102,9 @@ local function GetValueColor()
 
     if dt.useClassColor then
         local _, class = UnitClass("player")
+        -- @secret-policy: collapse-only — UnitClass can return SECRET on 12.1 PTR7
+        -- (SecretWhenUnitIdentityRestricted); collapse so the valueColor fallback applies.
+        if issecretvalue and issecretvalue(class) then class = nil end
         if class then
             local color = RAID_CLASS_COLORS[class]
             if color then
@@ -1691,9 +1695,23 @@ local function IsPlayerInGroup(name, realmName)
         fullName = name .. "-" .. realmName
     end
 
-    -- Try both formats for consistency
-    return UnitInParty(fullName) or UnitInRaid(fullName) or
-           UnitInParty(shortName) or UnitInRaid(shortName)
+    -- Try both formats for consistency. Group-membership probes for an
+    -- arbitrary name can be SECRET on 12.1 PTR7 (UnitInRaid is
+    -- SecretWhenUnitIdentityRestricted) — collapse each result before the
+    -- truth-test; unknown membership counts as "not in group".
+    -- @secret-policy: collapse-only
+    local inParty = UnitInParty(fullName)
+    if issecretvalue and issecretvalue(inParty) then inParty = nil end
+    if inParty then return true end
+    local inRaid = UnitInRaid(fullName)
+    if issecretvalue and issecretvalue(inRaid) then inRaid = nil end
+    if inRaid then return true end
+    local inPartyShort = UnitInParty(shortName)
+    if issecretvalue and issecretvalue(inPartyShort) then inPartyShort = nil end
+    if inPartyShort then return true end
+    local inRaidShort = UnitInRaid(shortName)
+    if issecretvalue and issecretvalue(inRaidShort) then inRaidShort = nil end
+    return inRaidShort and true or false
 end
 
 -- Send whisper to player (regular or BNet)

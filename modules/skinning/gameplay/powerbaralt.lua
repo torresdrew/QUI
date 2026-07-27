@@ -100,30 +100,40 @@ local function UpdateBar(self)
         local power = UnitPower("player", ALTERNATE_POWER_INDEX)
         local maxPower = UnitPowerMax("player", ALTERNATE_POWER_INDEX)
 
-        -- Calculate percentage safely (handles secret values from Midnight API)
-        -- BUG-004: UnitPower can return secret values that pass nil checks but fail arithmetic
-        local perc = 0
-        local calcOk, calcResult = pcall(function()
-            if power and maxPower and maxPower > 0 then
-                return floor(power / maxPower * 100)
-            end
-            return 0
-        end)
-        if calcOk and calcResult then
-            perc = calcResult
-        end
-
+        -- UnitPower/UnitPowerMax are SecretWhenUnitPower(Max)Restricted and
+        -- non-nilable (UnitDocumentation) — probe BEFORE any truth-test.
+        -- The old `power or 0`/`maxPower or 0` fallbacks truth-tested the
+        -- raw values in Lua and threw exactly when restricted; non-nilable
+        -- means the fallback was dead code anyway.
         self.powerName = powerName
         self.powerTooltip = powerTooltip
+
+        if Helpers.IsSecretValue(power) or Helpers.IsSecretValue(maxPower) then
+            -- @secret-policy: sink-passthrough — StatusBar SetMinMaxValues/
+            -- SetValue accept secrets natively (SecretAspect.BarValue); pass
+            -- raw, no Lua-side fallback. Percentage/text are Lua-derived —
+            -- hold last render (defer), never manufacture "0%" from secrecy.
+            -- The powerValue/powerMaxValue/powerPercent mirror fields hold
+            -- their last readable values for the same reason (write-only
+            -- state; nothing reads them mid-combat).
+            self:SetMinMaxValues(barInfo.minPower or 0, maxPower)
+            self:SetValue(power)
+            self:Show()
+            return
+        end
+
+        local perc = 0
+        if maxPower > 0 then
+            perc = floor(power / maxPower * 100)
+        end
+
         self.powerValue = power
         self.powerMaxValue = maxPower
         self.powerPercent = perc
 
-        -- StatusBar handles secret values natively in SetMinMaxValues/SetValue
-        self:SetMinMaxValues(barInfo.minPower or 0, maxPower or 0)
-        self:SetValue(power or 0)
+        self:SetMinMaxValues(barInfo.minPower or 0, maxPower)
+        self:SetValue(power)
 
-        -- Update text (perc is guaranteed safe from pcall)
         if powerName then
             self.text:SetText(string.format("%s: %d%%", powerName, perc))
         else

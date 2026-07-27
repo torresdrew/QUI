@@ -6,7 +6,7 @@
 ## AddonCompartmentFuncOnLeave: QUI_CompartmentOnLeave
 ## Notes: Comprehensive UI customization addon
 ## Author: Zol
-## Version: 5.0.0-alpha17
+## Version: 5.0.0-alpha28
 ## Category: User Interface
 ## SavedVariables: QUIDB, QUI_StorageDB
 ## LoadSavedVariablesFirst: 1
@@ -75,6 +75,7 @@ core\locale\locale.lua
 # == core/core.xml ==
 core\debug_gate.lua
 core\utils.lua
+core\safecall.lua
 core\theme.lua
 core\ns_export_guard.lua
 core\infobar_shared.lua
@@ -134,9 +135,14 @@ core\rangeutils.lua
 core\aura_theme.lua
 core\aura_skin.lua
 core\aura_elements.lua
+core\dispel_roles.lua
 core\aura_glue.lua
 core\aura_slots.lua
 core\aura_preview.lua
+# Shared group-frame chrome: the ONE builder for a group frame's skeleton +
+# settings styling. Lives in core because BOTH QUI_GroupFrames (runtime) and
+# QUI_Options (settings preview) consume it.
+core\group_frame_chrome.lua
 
 
 

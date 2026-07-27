@@ -164,12 +164,9 @@ local function SuppressPlayerCastingBarFrame()
         frame:SetAlpha(0)
         frame:SetScale(0.0001)
         frame:SetPoint("BOTTOMLEFT", UIParent, "TOPLEFT", -10000, 10000)
+        frame:SetUnit(nil)
         frame:UnregisterAllEvents()
         frame:Hide()
-    end)
-
-    pcall(function()
-        frame:SetUnit(nil)
     end)
 
     if frame.Icon then

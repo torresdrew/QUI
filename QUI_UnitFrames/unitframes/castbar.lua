@@ -460,7 +460,9 @@ end
 local function GetBarColor(unitKey, castSettings)
     if unitKey == "player" and castSettings.useClassColor then
         local _, class = UnitClass("player")
-        if not IsSecretValue(class) and class and RAID_CLASS_COLORS[class] then
+        -- @secret-policy: collapse-only — secret class falls back to the configured color
+        if IsSecretValue(class) then class = nil end
+        if class and RAID_CLASS_COLORS[class] then
             local c = RAID_CLASS_COLORS[class]
             return {c.r, c.g, c.b, 1}
         end

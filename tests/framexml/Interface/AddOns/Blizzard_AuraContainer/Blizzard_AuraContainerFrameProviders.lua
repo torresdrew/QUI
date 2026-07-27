@@ -34,6 +34,7 @@ function AuraContainerCustomFrameProviderMixin:Init(parent, description)
 	self.templateString = string.join(", ", "CustomAuraButtonTemplate", unpack(description.templateNames or {}));
 	self.initializeFrame = description.initializeFrame;
 	self.batchSize = description.batchSize;
+	self.accessRestrictions = description.accessRestrictions;
 
 	self.ownedFrames = {};
 	self.activeFrames = {};
@@ -56,6 +57,10 @@ function AuraContainerCustomFrameProviderMixin:GetOwnedFrameCount()
 	return #self.ownedFrames;
 end
 
+function AuraContainerCustomFrameProviderMixin:GetOwnedFrame(index)
+	return self.ownedFrames[index];
+end
+
 function AuraContainerCustomFrameProviderMixin:GetAvailableFrameCount()
 	return #self.availableFrames;
 end
@@ -69,6 +74,12 @@ function AuraContainerCustomFrameProviderMixin:CreateFrame()
 
 	if self.initializeFrame ~= nil then
 		securecallfunction(self.initializeFrame, auraFrame:GetObjectTable());
+	end
+
+	-- Access restrictions should be applied after (potentially tainted)
+	-- post-creation callbacks.
+	if self.accessRestrictions then
+		AuraContainerUtil.ApplyAccessRestrictions(auraFrame, self.accessRestrictions);
 	end
 
 	-- Force an immediate display update to apply initial secrets and suitable
@@ -105,8 +116,9 @@ function AuraContainerCustomFrameProviderMixin:ReleaseFrame(auraFrame)
 
 	self.activeFrames[auraFrame] = nil;
 
+	-- Avoid clearing anchor points for now as this can leak some information
+	-- about whether a button is actively in use.
 	auraFrame:ClearAuraInstance();
-	auraFrame:ClearAllPoints();
 	auraFrame:Hide();
 
 	table.insert(self.availableFrames, auraFrame);
@@ -117,11 +129,7 @@ function AuraContainerCustomFrameProviderMixin:ReleaseAllFrames()
 	self.activeFrames = {};
 
 	for _index, auraFrame in ipairs(self.ownedFrames) do
-		auraFrame:ClearAuraInstance();
-		auraFrame:ClearAllPoints();
-		auraFrame:Hide();
-
-		table.insert(self.availableFrames, auraFrame);
+		self:ReleaseFrame(auraFrame);
 	end
 end
 

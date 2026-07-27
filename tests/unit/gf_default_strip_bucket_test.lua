@@ -20,10 +20,11 @@ end
 
 for _, frameType in ipairs({ "party", "raid" }) do
     local bucket = Model.DefaultStripBucket(frameType)
-    check(frameType .. ": bucket has 3 strips", #bucket == 3, tostring(#bucket))
-    check(frameType .. ": strip ids stable", bucket[1].id == "debuffs"
+    check(frameType .. ": bucket has 3 elements", #bucket == 3, tostring(#bucket))
+    check(frameType .. ": strip/element ids stable", bucket[1].id == "debuffs"
         and bucket[2].id == "buffs" and bucket[3].id == "defensives",
-        table.concat({ tostring(bucket[1].id), tostring(bucket[2].id), tostring(bucket[3].id) }, ","))
+        table.concat({ tostring(bucket[1].id), tostring(bucket[2].id),
+            tostring(bucket[3].id) }, ","))
     local d = bucket[3]
     check(frameType .. ": defensives enabled parity",
         d.enabled == (frameType == "party"), tostring(d.enabled))
@@ -52,11 +53,12 @@ end
 -- defaults DISABLED when the surface is unknown (conservative).
 local anon = Model.DefaultStripBucket()
 check("nil frameType: defensives disabled", anon[3].enabled == false, tostring(anon[3].enabled))
+check("nil frameType: bucket still 3 elements", #anon == 3, tostring(#anon))
 
 -- Shim: string second arg seeds via the surface-aware bucket.
 local auras = {}
 Model.EnsureSeeded(auras, "party")
-check("EnsureSeeded('party') seeds 3 strips", #auras.elements["*"] == 3,
+check("EnsureSeeded('party') seeds 3 elements", #auras.elements["*"] == 3,
     tostring(auras.elements and #auras.elements["*"]))
 check("EnsureSeeded('party') defensives enabled",
     auras.elements["*"][3].enabled == true, "disabled")

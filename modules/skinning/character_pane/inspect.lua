@@ -1274,9 +1274,11 @@ local function UpdateInspectILvlDisplay()
     local className = ""
     local _, classToken, classIndex
     ok, _, classToken, classIndex = pcall(UnitClass, unit)
-    if not ok or Helpers.IsSecretValue(classToken) then
-        classToken = nil
-    end
+    -- PTR7: probe must be the sole if-condition (mirrors the name probe above);
+    -- the compound `not ok or IsSecretValue(...)` shape defeats the collapse.
+    -- @secret-policy: collapse-only
+    if Helpers.IsSecretValue(classToken) then classToken = nil end
+    if not ok then classToken = nil end
     classIndex = ok and ReadableNumber(classIndex) or nil
     classIndex = classIndex or 0
     if classToken and classIndex > 0 and C_CreatureInfo and C_CreatureInfo.GetClassInfo then

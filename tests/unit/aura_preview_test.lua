@@ -34,6 +34,8 @@ local src = readAll("core/aura_preview.lua")
 check("published as ns.AuraPreview", src:find("ns.AuraPreview = P", 1, true) ~= nil)
 check("exports P.Show", src:find("function P.Show", 1, true) ~= nil)
 check("exports P.Hide", src:find("function P.Hide", 1, true) ~= nil)
+check("icon placeholders reuse AuraSkin preview wiring",
+    src:find("Skin.WirePreviewButton", 1, true) ~= nil)
 -- WYSIWYG: layout comes from AuraGlue.ElementProfile, NOT re-derived constants.
 check("consumes AuraGlue.ElementProfile (shared layout math)",
     src:find("ns.AuraGlue", 1, true) ~= nil and src:find("G.ElementProfile(element)", 1, true) ~= nil)
@@ -53,7 +55,7 @@ check("reuses a per-host pool (_quiAuraPreview)",
     src:find("hostFrame._quiAuraPreview", 1, true) ~= nil
     and src:find("hostFrame._quiAuraPreview = pool", 1, true) ~= nil)
 check("hides pool surplus rather than destroying frames",
-    src:find("for i = cursor + 1, #pool do pool[i]:Hide() end", 1, true) ~= nil)
+    src:find("for i = cursor + 1, #pool do HidePreviewFrame(pool[i]) end", 1, true) ~= nil)
 -- Placeholder icon only — the preview never reads real aura data.
 check("draws placeholders, never reads aura data",
     src:find("PLACEHOLDER_ICON", 1, true) ~= nil
@@ -89,6 +91,29 @@ check("UF threads its corner flip through opts.resolve (live helpers, no dup)",
 check("UF old fake-icon renderer gone (PREVIEW_AURAS table removed)",
     uf:find("PREVIEW_AURAS", 1, true) == nil and uf:find("previewBuffIcons", 1, true) == nil)
 
+-- Group frames split by what the LIVE module says the renderer draws: only
+-- missingRaidBuff + healthTint/border feeders go through the real renderer;
+-- filter strips and tracked icon/square/bar are drawn live by a secure
+-- CustomAuraContainer the ENGINE fills, which a preview cannot feed -- those
+-- get placeholders here.
+local gfp = readAll("QUI_GroupFrames/groupframes/settings/group_frames_preview_driver.lua")
+check("GF asks the live module which elements the renderer draws",
+    gfp:find("GFA.EngineRendersElement(element)", 1, true) ~= nil
+    and gfp:find("ns.QUI_GroupFrameAuras", 1, true) ~= nil)
+check("GF drives ns.AuraPreview for the engine-container elements",
+    gfp:find("Preview.Show(auraHost, previewElements", 1, true) ~= nil
+    and gfp:find("Preview.Hide(auraHost)", 1, true) ~= nil)
+check("GF threads the live RenderIcon pin + real spell art through opts",
+    gfp:find("resolve = MakeAuraPin(f, profileOverrides)", 1, true) ~= nil
+    and gfp:find("icon = MakePlaceholderIcon", 1, true) ~= nil
+    and gfp:find("dispelColor = MakePreviewDispelColor", 1, true) ~= nil
+    and gfp:find("IL.GetIconAnchorForGrow(anchor, p.grow)", 1, true) ~= nil)
+check("GF hosts placeholders at the live container level",
+    gfp:find("f._auraHost:SetFrameLevel(Driver._AuraHostLevel", 1, true) ~= nil)
+check("GF does NOT resurrect the pre-cutover renderer path for strips",
+    gfp:find("BuildFilterStripMatches", 1, true) == nil
+    and gfp:find("BuildTrackedMatches", 1, true) == nil)
+
 local bb = readAll("QUI_ActionBars/actionbars/buffborders.lua")
 check("BB drives ns.AuraPreview on the mover hosts (Show + Hide)",
     bb:find("ns.AuraPreview", 1, true) ~= nil
@@ -101,8 +126,6 @@ check("BB bespoke preview-grid code removed (CreatePreviewGrid / overlay gone)",
     and bb:find("PREVIEW_BUFF_TEXTURES", 1, true) == nil)
 
 local gf = readAll("QUI_GroupFrames/groupframes/settings/group_frames_preview_driver.lua")
-check("GF drives ns.AuraPreview for filterStrip + tracked previews",
-    gf:find("ns.AuraPreview", 1, true) ~= nil and gf:find("Preview.Show(f, previewElements)", 1, true) ~= nil)
 -- The two fake-match fabricators are deleted (only the removal-note comment may
 -- still name them). Pin that no FUNCTION definition survives.
 check("GF fabricators deleted (_BuildFilterStripMatches / _BuildTrackedMatches)",
@@ -198,6 +221,34 @@ check("UF flip: border compensation offset applied (+1px)",
     ufPool[1].point.x == 1)
 check("UF flip: wrap row extends DOWN, away from the frame (dy negative)",
     ufPool[3].point.y == -22)
+
+-- (c2) POSITION FIDELITY: a resolve may override the pin CORNER outright. The
+-- GF unit-frame path takes the corner's horizontal side from the FRAME anchor
+-- (IconLayout.GetIconAnchorForGrow) -- information the flow derivation, which
+-- reads only grow/wrap, cannot reconstruct.
+local cornerHost = {}
+P.Show(cornerHost, { filterStrip({ anchor = "BOTTOMRIGHT", growDirection = "UP", maxIcons = 2 }) }, {
+    resolve = function(e)
+        return ns.AuraGlue.ElementProfile(e), "BOTTOMRIGHT", 0, 0, "BOTTOMRIGHT"
+    end,
+})
+local cornerPool = cornerHost._quiAuraPreview
+check("resolve's 5th return overrides the flow-derived pin corner",
+    cornerPool[1].point.p == "BOTTOMRIGHT" and cornerPool[1].point.rp == "BOTTOMRIGHT")
+check("corner override leaves flow DIRECTION alone (grow UP still marches +y)",
+    cornerPool[2].point.y > 0)
+
+-- (c3) opts.icon supplies real spell art per slot; nil falls back to the
+-- placeholder question mark.
+local iconHost = {}
+P.Show(iconHost, { filterStrip({ maxIcons = 2 }) }, {
+    icon = function(_, index) return index == 1 and 12345 or nil end,
+})
+local iconPool = iconHost._quiAuraPreview
+check("opts.icon paints the caller's texture on the slot it names",
+    iconPool[1]._tex.tex == 12345)
+check("slots the caller cannot name keep the placeholder icon",
+    iconPool[2]._tex.tex == 134400)
 
 -- (d) POSITION FIDELITY: 10 icons, perRow 4, grow LEFT, wrap UP (BOTTOMRIGHT
 -- anchor) — flow origin BOTTOMRIGHT, dx marches negative, row 2 dy positive.
@@ -297,7 +348,70 @@ P.Show(onlyHost, {
 check("opts.only renders only the matching polarity (4 debuff icons)",
     #onlyHost._quiAuraPreview == 4)
 
--- (l) Hide hides the whole pool.
+-- (l) Shared AuraSkin preview seam: the generic placeholder owns only fake
+-- data, while runtime AuraSkin owns icon chrome, text positioning and swipe
+-- styling. This stub captures the exact resolved profile handed across that
+-- seam and provides the regions AuraPreview fills with representative data.
+do
+    local styledNS = { AuraGlue = ns.AuraGlue }
+    styledNS.Addon = {
+        AuraSkin = {
+            WirePreviewButton = function(frame, profile)
+                frame.wiredProfile = profile
+                frame._tex = frame._tex or StubTexture()
+                frame.Icon = frame._tex
+                frame._quiDispel = frame._quiDispel or StubTexture()
+                function frame._quiDispel:Show() self.shown = true end
+                function frame._quiDispel:Hide() self.shown = false end
+                function frame._quiDispel:SetVertexColor(...) self.vertex = { ... } end
+                frame._quiDuration = frame._quiDuration or {
+                    SetText = function(self, text) self.text = text end,
+                }
+                frame._quiCount = frame._quiCount or {
+                    SetText = function(self, text) self.text = text end,
+                }
+                frame._quiCooldown = frame._quiCooldown or {
+                    SetCooldown = function(self, start, duration)
+                        self.start, self.duration = start, duration
+                    end,
+                }
+            end,
+            ReleasePreviewButton = function(frame) frame.releasedPreviewSkin = true end,
+        },
+    }
+    assert(loadfile("core/aura_preview.lua"))("QUI", styledNS)
+    local styledHost = {}
+    local harmful = filterStrip({
+        auraType = "HARMFUL",
+        maxIcons = 1,
+        duration = { show = true },
+        stack = { show = true },
+    })
+    styledNS.AuraPreview.Show(styledHost, { harmful }, {
+        resolve = function(element)
+            return styledNS.AuraGlue.ElementProfile(element, {
+                showDispelBorder = true,
+                iconSkin = "Gloss",
+            }), "TOPLEFT", 0, 0
+        end,
+        dispelColor = function() return 0.2, 0.6, 1, 1 end,
+    })
+    local styled = styledHost._quiAuraPreview[1]
+    check("AuraSkin receives the resolved profile including surface overrides",
+        styled.wiredProfile.iconSkin == "Gloss"
+        and styled.wiredProfile.showDispelBorder == true)
+    check("placeholder supplies representative duration and stack text",
+        styled._quiDuration.text ~= nil and styled._quiCount.text == "2")
+    check("placeholder starts a representative cooldown on the shared region",
+        styled._quiCooldown.duration ~= nil and styled._quiCooldown.duration > 0)
+    check("harmful placeholder applies the caller's dispel-ring sample color",
+        styled._quiDispel.shown == true and styled._quiDispel.vertex[2] == 0.6)
+    styledNS.AuraPreview.Hide(styledHost)
+    check("Hide releases external preview-skin ownership",
+        styled.releasedPreviewSkin == true)
+end
+
+-- (m) Hide hides the whole pool.
 P.Hide(host)
 check("Hide hides every pooled placeholder",
     pool[1].shown == false and pool[2].shown == false and pool[3].shown == false)

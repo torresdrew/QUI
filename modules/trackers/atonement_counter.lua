@@ -69,17 +69,19 @@ local refreshQueued = false
 local refreshFrame = CreateFrame("Frame")
 refreshFrame:Hide()
 
+-- Probe order: IsSecretValue FIRST — `value == nil` on a secret value is
+-- itself the throw (comparisons on secrets error before the probe would run).
 local function SafeBoolean(value)
-    if value == nil or IsSecretValue(value) then
+    if IsSecretValue(value) or value == nil then
         return nil
     end
     return value and true or false
 end
 
 local function SafeAuraField(auraData, key)
-    if not auraData then return nil end
+    if IsSecretValue(auraData) or not auraData then return nil end
     local value = auraData[key]
-    if value == nil or IsSecretValue(value) then
+    if IsSecretValue(value) or value == nil then
         return nil
     end
     return value
@@ -91,14 +93,14 @@ local function GetAtonementSpellName()
     end
 
     if C_Spell and C_Spell.GetSpellName then
-        local ok, spellName = pcall(C_Spell.GetSpellName, ATONEMENT_SPELL_ID)
+        local ok, spellName = ns.SafeCall("chain-next", C_Spell.GetSpellName, ATONEMENT_SPELL_ID)
         if ok and type(spellName) == "string" and spellName ~= "" then
             cachedAtonementSpellName = spellName
             return cachedAtonementSpellName
         end
     end
     if GetSpellInfo then
-        local ok, spellName = pcall(GetSpellInfo, ATONEMENT_SPELL_ID)
+        local ok, spellName = ns.SafeCall("chain-next", GetSpellInfo, ATONEMENT_SPELL_ID)
         if ok and type(spellName) == "string" and spellName ~= "" then
             cachedAtonementSpellName = spellName
             return cachedAtonementSpellName
@@ -114,14 +116,14 @@ local function GetAtonementTexture()
     end
 
     if C_Spell and C_Spell.GetSpellTexture then
-        local ok, texture = pcall(C_Spell.GetSpellTexture, ATONEMENT_SPELL_ID)
+        local ok, texture = ns.SafeCall("chain-next", C_Spell.GetSpellTexture, ATONEMENT_SPELL_ID)
         if ok and texture then
             cachedAtonementTexture = texture
             return cachedAtonementTexture
         end
     end
     if GetSpellTexture then
-        local ok, texture = pcall(GetSpellTexture, ATONEMENT_SPELL_ID)
+        local ok, texture = ns.SafeCall("chain-next", GetSpellTexture, ATONEMENT_SPELL_ID)
         if ok and texture then
             cachedAtonementTexture = texture
             return cachedAtonementTexture
@@ -138,7 +140,7 @@ local function GetPlayerSpecID()
     end
     local specID = GetSpecializationInfo and GetSpecializationInfo(specIndex)
     if IsSecretValue(specID) then
-        return nil
+        return nil -- @secret-policy: reject-secret-ids
     end
     return specID
 end
@@ -161,7 +163,7 @@ local function UnitAvailable(unit)
 end
 
 local function AuraMatchesAtonement(auraData)
-    if not auraData then return false end
+    if IsSecretValue(auraData) or not auraData then return false end
     local auraSpellID = SafeAuraField(auraData, "spellId")
     if auraSpellID and auraSpellID == ATONEMENT_SPELL_ID then
         return true
@@ -171,7 +173,7 @@ local function AuraMatchesAtonement(auraData)
 end
 
 local function AuraBelongsToPlayer(auraData, unit)
-    if not auraData then return false end
+    if IsSecretValue(auraData) or not auraData then return false end
     if unit == "player" then
         return true
     end
@@ -197,9 +199,11 @@ local function AuraBelongsToPlayer(auraData, unit)
 end
 
 local function ScanAuraListForAtonement(unit, auraList, filteredToPlayer)
-    if not auraList then return false end
+    if IsSecretValue(auraList) or not auraList then return false end
     for _, auraData in ipairs(auraList) do
-        if AuraMatchesAtonement(auraData) then
+        -- List elements carry no readability guarantee — probe before the
+        -- matcher truth-tests them.
+        if not IsSecretValue(auraData) and AuraMatchesAtonement(auraData) then
             if filteredToPlayer or AuraBelongsToPlayer(auraData, unit) then
                 return true
             end
@@ -220,7 +224,7 @@ local function UnitHasPlayerAtonement(unit)
     -- before reading its fields.
     if C_UnitAuras and C_UnitAuras.GetUnitAuraBySpellID then
         local ok, auraData = pcall(C_UnitAuras.GetUnitAuraBySpellID, unit, ATONEMENT_SPELL_ID)
-        if ok and not (issecretvalue and issecretvalue(auraData)) and auraData
+        if ok and not IsSecretValue(auraData) and auraData
             and AuraMatchesAtonement(auraData) and AuraBelongsToPlayer(auraData, unit) then
             return true
         end
@@ -229,14 +233,19 @@ local function UnitHasPlayerAtonement(unit)
     local spellName = GetAtonementSpellName()
     if spellName and C_UnitAuras and C_UnitAuras.GetAuraDataBySpellName then
         local ok, auraData = pcall(C_UnitAuras.GetAuraDataBySpellName, unit, spellName, PLAYER_HELPFUL_FILTER)
-        if ok and auraData and AuraMatchesAtonement(auraData) then
+        -- Probe before the truth-test: the getter is SecretWhenUnitAuraRestricted,
+        -- and `auraData and` on a secret result is itself the throw.
+        if ok and not IsSecretValue(auraData) and auraData and AuraMatchesAtonement(auraData) then
             return true
         end
     end
 
     if C_UnitAuras and C_UnitAuras.GetUnitAuras then
-        local ok, helpfulAuras = pcall(C_UnitAuras.GetUnitAuras, unit, PLAYER_HELPFUL_FILTER, 40)
-        if ok and helpfulAuras and ScanAuraListForAtonement(unit, helpfulAuras, true) then
+        -- maxCount omitted (nilable, UnitAuraDocumentation): a literal 40 cap
+        -- silently dropped aura 41+ on heavy raid aura sets.
+        local ok, helpfulAuras = pcall(C_UnitAuras.GetUnitAuras, unit, PLAYER_HELPFUL_FILTER)
+        if ok and not IsSecretValue(helpfulAuras) and helpfulAuras
+            and ScanAuraListForAtonement(unit, helpfulAuras, true) then
             return true
         end
     end
@@ -261,46 +270,68 @@ local function UnitHasPlayerAtonement(unit)
     -- Last resort: some builds may not support PLAYER filtering on point queries,
     -- so scan all helpful auras and verify the source manually.
     if C_UnitAuras and C_UnitAuras.GetUnitAuras then
-        local ok, helpfulAuras = pcall(C_UnitAuras.GetUnitAuras, unit, HELPFUL_FILTER, 40)
-        if ok and helpfulAuras and ScanAuraListForAtonement(unit, helpfulAuras, false) then
+        -- maxCount omitted (nilable): same 40-cap truncation class as above.
+        local ok, helpfulAuras = pcall(C_UnitAuras.GetUnitAuras, unit, HELPFUL_FILTER)
+        if ok and not IsSecretValue(helpfulAuras) and helpfulAuras
+            and ScanAuraListForAtonement(unit, helpfulAuras, false) then
             return true
         end
+    end
+
+    -- Nothing found. Under aura restriction every query above degrades to
+    -- nil/false, so "not found" is ambiguous — return nil (unknown) instead
+    -- of a definitive false; the caller then retains its last count rather
+    -- than overwriting the display with zero. Unrestricted, absence is real.
+    if C_Secrets and C_Secrets.ShouldAurasBeSecret and C_Secrets.ShouldAurasBeSecret() then
+        return nil
     end
 
     return false
 end
 
+-- Returns count plus an `unknown` flag: true when at least one unit scan
+-- was ambiguous (aura restriction degraded the queries), so the count is a
+-- floor, not a definitive total.
 local function CountActiveAtonements()
     if not IsDisciplinePriest() then
-        return 0
+        return 0, false
     end
 
-    local count = 0
-    if UnitHasPlayerAtonement("player") then
+    local count, unknown = 0, false
+    local has = UnitHasPlayerAtonement("player")
+    if has then
         count = count + 1
+    elseif has == nil then
+        unknown = true
     end
 
     if IsInRaid() then
         for i = 1, GetNumGroupMembers() do
             local unit = "raid" .. i
             local ok, isPlayer = pcall(UnitIsUnit, unit, "player")
-            if not ok or IsSecretValue(isPlayer) then
-                isPlayer = false
-            end
-            if not isPlayer and UnitHasPlayerAtonement(unit) then
-                count = count + 1
+            if IsSecretValue(isPlayer) then isPlayer = false end
+            if not ok then isPlayer = false end
+            if not isPlayer then
+                has = UnitHasPlayerAtonement(unit)
+                if has then
+                    count = count + 1
+                elseif has == nil then
+                    unknown = true
+                end
             end
         end
     elseif IsInGroup() then
         for i = 1, GetNumGroupMembers() - 1 do
-            local unit = "party" .. i
-            if UnitHasPlayerAtonement(unit) then
+            has = UnitHasPlayerAtonement("party" .. i)
+            if has then
                 count = count + 1
+            elseif has == nil then
+                unknown = true
             end
         end
     end
 
-    return count
+    return count, unknown
 end
 
 local function CreateCounterFrame()
@@ -483,7 +514,18 @@ local function UpdateCounterDisplay()
         return
     end
 
-    CounterState.count = CounterState.isPreviewMode and PREVIEW_COUNT or CountActiveAtonements()
+    if CounterState.isPreviewMode then
+        CounterState.count = PREVIEW_COUNT
+    else
+        local count, unknown = CountActiveAtonements()
+        if unknown and count == 0 and (CounterState.count or 0) > 0 then
+            -- Restricted scan saw nothing readable: retain the last known
+            -- count instead of flashing zero. The PLAYER_REGEN_ENABLED
+            -- refresh recounts definitively once restriction lifts.
+        else
+            CounterState.count = count
+        end
+    end
 
     local textColor = GetTextColor(settings, CounterState.count)
     CounterState.frame.countText:SetText(CounterState.count)

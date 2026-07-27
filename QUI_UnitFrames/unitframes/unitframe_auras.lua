@@ -65,12 +65,12 @@ end
 -- Containers pool on the frame by ORDINAL (frame._quiAuraContainers[i]); a
 -- changing element list re-purposes them (group retire inside AuraSkin.Configure,
 -- slot park via AuraSlots.Park) because engine containers can't be destroyed.
--- CREATION (CreateFrame + AddAuraGroup/AddAuraSlot button pooling) is combat-
--- restricted (crashes the 12.1 client) and stays queued for PLAYER_REGEN_ENABLED
--- via AuraGlue.QueueRegenWork. MUTATION of a pre-created container (anchor /
--- filters / SetUnit / enable) is combat-legal, so the update path applies that
--- subset live in combat and STILL queues the full pass so a wrong assumption
--- self-heals.
+-- CREATION (CreateFrame + AddAuraGroup/AddAuraSlot button pooling) and container
+-- anchoring are combat-legal since PTR7 68914 (the earlier 12.1 builds crashed
+-- the client; proven in-game 2026-07-24), so the full pass runs live in combat.
+-- Still queued via the restriction-aware AuraGlue.QueueRegenWork: work skipped
+-- under the 12.1 aura SECRECY restriction (post-birth child styling/anchoring,
+-- see aura_slots.lua) — secrecy is a separate mechanism from combat lockdown.
 
 -- Lazily resolve the shared deps (AuraSkin needs the live secure button template
 -- so it may bind slightly later than this file's top-level chunk; AuraGlue /
@@ -223,7 +223,7 @@ local function ApplyElementPass(frame, allowCreate)
         local element = elems[i]
         local container = pool[i]
         if not container then
-            if allowCreate and not InCombatLockdown() and CreateFrame then
+            if allowCreate and CreateFrame then
                 container = CreateFrame("AuraContainer", nil, frame, "CustomAuraContainerTemplate")
                 container:SetSize(1, 1)  -- give the engine a renderable rect from the first dirty mark; it auto-sizes on layout
                 pool[i] = container
@@ -235,9 +235,9 @@ local function ApplyElementPass(frame, allowCreate)
             -- SetUnit BEFORE group configuration so the container's eager group
             -- registration (inside AuraSkin.Configure) has a valid unit.
             container:SetUnit(QUI_UF.GetFrameUnit(frame))
-            if not InCombatLockdown() then
-                AnchorElementContainer(container, frame, element)
-            end
+            -- Container SetPoint is combat-legal (proven pre- and post-group,
+            -- 2026-07-24); only CHILD-frame anchoring stays gated (aura_slots).
+            AnchorElementContainer(container, frame, element)
             local isDebuff = (element.auraType == "HARMFUL")
             local previewSuppressed = (isDebuff and debuffPreviewActive)
                 or ((not isDebuff) and buffPreviewActive)
@@ -277,32 +277,31 @@ local function ApplyElementPass(frame, allowCreate)
     end
 end
 
--- Full OOC pass. Public export name preserved (the combat-mutable test + any
+-- Full pass. Public export name preserved (the combat-mutable test + any
 -- unitframes.lua caller depend on it); also what the regen replay closure runs.
+-- Creation/registration/anchoring are combat-legal since PTR7 68914, so the
+-- pass always runs with allowCreate — skipped work (secrecy-gated child
+-- styling) self-reports via `incomplete` and queues its own replay.
 local function ApplyContainerConfig(frame)
-    -- Defense-in-depth (GF parity): a direct in-combat call must run the
-    -- mutation-only pass, never allowCreate — unguarded Configure would
-    -- silently skip new groups without tripping the regen replay.
-    ApplyElementPass(frame, not InCombatLockdown())
+    ApplyElementPass(frame, true)
 end
 QUI_UF.ApplyContainerConfig = ApplyContainerConfig
 
 -- Public entry (callers in unitframes.lua depend on the name). The live
 -- containers self-drive UNIT_AURA, so this is config-only, not a per-frame render
--- loop. OOC: full pass. In combat: apply the combat-legal mutation subset
--- immediately (pcall-guarded) AND still queue the full pass (creation + reconcile)
--- for PLAYER_REGEN_ENABLED so a wrong assumption self-heals.
+-- loop. The full pass (creation + reconcile + anchoring) is combat-legal since
+-- PTR7 68914; in combat it keeps a SafeCall belt — a surprise restriction must
+-- not error out of the event handler — and a failed pass queues the
+-- restriction-aware replay (the pass itself queues its own partial gaps).
 local function UpdateAuras(frame)
     if not frame or not QUI_UF.GetFrameUnit(frame) then return end
     if InCombatLockdown() then
-        -- Mutation of pre-created containers is 12.1-PTR-legal (SetUnit / filters
-        -- / enable); pcall-guard the whole mutable pass (a surprise combat
-        -- restriction must not error out of the event handler) and STILL queue
-        -- the full pass (creation + reconcile) for regen.
-        pcall(ApplyElementPass, frame, false)
-        AuraGlue = AuraGlue or ns.AuraGlue
-        if AuraGlue then
-            AuraGlue.QueueRegenWork(frame, function(f) ApplyElementPass(f, true) end)
+        local ok = ns.SafeCall("best-effort-style", ApplyElementPass, frame, true)
+        if not ok then
+            AuraGlue = AuraGlue or ns.AuraGlue
+            if AuraGlue then
+                AuraGlue.QueueRegenWork(frame, function(f) ApplyElementPass(f, true) end)
+            end
         end
         return
     end

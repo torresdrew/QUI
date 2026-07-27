@@ -3155,12 +3155,16 @@ local defaults = {
                 },
                 healer = {
                     dispelOverlay = {
-                        enabled = true, opacity = 0.8, fillOpacity = 0.18, borderSize = 3,
+                        enabled = true, scope = "PLAYER_DISPELLABLE",
+                        opacity = 0.8, fillOpacity = 0.18, borderSize = 3,
+                        showIcon = false, iconSize = 20, iconOpacity = 1,
+                        iconAnchor = "TOPRIGHT", iconOffsetX = 0, iconOffsetY = 0,
                         colors = {
                             Magic   = { 0.2, 0.6, 1.0, 1 },
                             Curse   = { 0.6, 0.0, 1.0, 1 },
                             Disease = { 0.6, 0.4, 0.0, 1 },
                             Poison  = { 0.0, 0.6, 0.0, 1 },
+                            Bleed   = { 0.8, 0.0, 0.0, 1 },
                         },
                     },
                     targetHighlight = { enabled = true, color = { 1, 1, 1, 0.6 }, fillOpacity = 0.12 },
@@ -3318,12 +3322,16 @@ local defaults = {
                 },
                 healer = {
                     dispelOverlay = {
-                        enabled = true, opacity = 0.8, fillOpacity = 0.18, borderSize = 3,
+                        enabled = true, scope = "PLAYER_DISPELLABLE",
+                        opacity = 0.8, fillOpacity = 0.18, borderSize = 3,
+                        showIcon = false, iconSize = 20, iconOpacity = 1,
+                        iconAnchor = "TOPRIGHT", iconOffsetX = 0, iconOffsetY = 0,
                         colors = {
                             Magic   = { 0.2, 0.6, 1.0, 1 },
                             Curse   = { 0.6, 0.0, 1.0, 1 },
                             Disease = { 0.6, 0.4, 0.0, 1 },
                             Poison  = { 0.0, 0.6, 0.0, 1 },
+                            Bleed   = { 0.8, 0.0, 0.0, 1 },
                         },
                     },
                     targetHighlight = { enabled = true, color = { 1, 1, 1, 0.6 }, fillOpacity = 0.12 },

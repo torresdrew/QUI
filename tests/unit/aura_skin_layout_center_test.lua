@@ -1,5 +1,5 @@
 -- tests/unit/aura_skin_layout_center_test.lua
--- CENTER grow (Task 5): the PTR4 flow layout (SetAuraLayoutAnchorPoint) only
+-- CENTER grow (Task 5): the PTR4 flow layout (SetFlowLayoutAnchorPoint) only
 -- accepts corner anchors internally, but CustomAuraContainer AUTO-SIZES to
 -- content — so visual centering falls out of pinning the container's CENTER
 -- to the host instead of teaching the engine a center flow. FlowFor keeps

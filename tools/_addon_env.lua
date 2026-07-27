@@ -230,10 +230,15 @@ local function LoadCore()
     LoadAddonFile("core/locale/locale.lua",  "QUI", SHARED_NS)
 
     -- Load order matches QUI.toc: utils first, then defaults, then
-    -- migration / compat / io machinery.
+    -- migration / compat / io machinery. safecall.lua defines ns.SafeCall
+    -- used (in function bodies, evaluated lazily) by utils.lua/migrations.lua
+    -- /profile_io.lua below — load it first so LoadCore()'s harness ns has
+    -- SafeCall available before anything in this list could invoke it.
+    LoadAddonFile("core/safecall.lua",       "QUI", SHARED_NS)
     LoadAddonFile("core/utils.lua",          "QUI", SHARED_NS)
     LoadAddonFile("core/ns_export_guard.lua", "QUI", SHARED_NS)
     LoadAddonFile("core/aura_elements.lua",  "QUI", SHARED_NS)
+    LoadAddonFile("core/dispel_roles.lua",   "QUI", SHARED_NS)
     LoadAddonFile("core/aura_glue.lua",      "QUI", SHARED_NS)
     LoadAddonFile("importstrings/starter_profile.lua", "QUI", SHARED_NS)
     LoadAddonFile("core/new_profile_defaults.lua", "QUI", SHARED_NS)

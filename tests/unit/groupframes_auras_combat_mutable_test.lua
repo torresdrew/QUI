@@ -1,14 +1,14 @@
 -- tests/unit/groupframes_auras_combat_mutable_test.lua
 -- Run: lua tests/unit/groupframes_auras_combat_mutable_test.lua
 --
--- Combat-mutation split for the per-element group-frame aura containers.
--- Creation of a forbidden CustomAuraContainer (+ its AddAuraGroup/AddAuraSlot
--- button pooling) is combat-restricted; mutation of pre-created ones (SetUnit /
--- filters / enable) is combat-legal. With pre-allocation, a member joining
--- mid-combat lands on a child whose containers exist — the mutable pass points
--- them at the unit LIVE instead of showing nothing until regen; any forbidden
--- work skipped in combat sets `incomplete` and queues a regen replay.
--- DisableStripContainers likewise hides a cleared unit's containers live.
+-- Combat contract for the per-element group-frame aura containers (PTR7
+-- 68914): container creation, AddAuraGroup/AddAuraSlot registration and
+-- container anchoring are COMBAT-LEGAL (proven in-game 2026-07-24), so the
+-- full pass runs live in combat behind a SafeCall belt — a member joining
+-- mid-combat builds its containers on the spot. Work skipped under the aura
+-- SECRECY restriction (or a SafeCall-caught failure) still queues the
+-- restriction-aware regen replay. DisableStripContainers hides a cleared
+-- unit's containers live.
 
 local function readAll(path)
     local file = assert(io.open(path, "rb"))
@@ -30,17 +30,20 @@ end
 -- ApplyElementPass: the single per-element pass, allowCreate-gated.
 local pass = slice("local function ApplyElementPass(frame, allowCreate)")
 
--- Forbidden CREATION (container frame) is allowCreate AND OOC only.
-assert(pass:find("if allowCreate and not InCombatLockdown() and CreateFrame then", 1, true),
-    "container creation must be gated on allowCreate + not InCombatLockdown()")
+-- CREATION is allowCreate-gated only — no combat condition (PTR7 68914).
+assert(pass:find("if allowCreate and CreateFrame then", 1, true),
+    "container creation must be gated on allowCreate only (combat-legal)")
+assert(not pass:find("allowCreate and not InCombatLockdown()", 1, true),
+    "no stale combat condition may remain on container creation")
 assert(pass:find('CreateFrame("AuraContainer", nil, frame, "CustomAuraContainerTemplate")', 1, true),
     "creation uses the CustomAuraContainerTemplate")
 
--- Forbidden-frame SetPoint (anchor) is OOC only; mutation of SetUnit is not.
-local anchorGate = pass:find("if not InCombatLockdown() then", 1, true)
-local anchorCall = pass:find("AnchorElementContainer(container, frame, element)", 1, true)
-assert(anchorGate and anchorCall and anchorGate < anchorCall,
-    "AnchorElementContainer (forbidden SetPoint) must be gated on not InCombatLockdown()")
+-- Container anchoring (SetPoint) runs unconditionally — proven combat-legal
+-- pre- and post-group registration; SetUnit likewise.
+assert(pass:find("AnchorElementContainer(container, frame, element)", 1, true),
+    "AnchorElementContainer runs on the pass")
+assert(not pass:find("InCombatLockdown() then\n                AnchorElementContainer", 1, true),
+    "container anchoring must not be combat-gated")
 assert(pass:find("container:SetUnit(unit)", 1, true),
     "SetUnit is combat-legal mutation and runs unconditionally")
 
@@ -51,29 +54,29 @@ assert(pass:find("AuraGlue.RunConfigPass(container, profile, groups, allowCreate
     "filter strips reconcile groups via AuraGlue.RunConfigPass(..., allowCreate)")
 assert(pass:find("AuraGlue.ElementGroups(unit, element, profile, false)", 1, true),
     "filter strips build descriptors via AuraGlue.ElementGroups")
-assert(pass:find("AuraSlots.Sync(container, element, allowCreate)", 1, true),
-    "tracked elements reconcile slots via AuraSlots.Sync(..., allowCreate)")
+assert(pass:find("AuraSlots.Sync(container, element, allowCreate, profileOverrides)", 1, true),
+    "tracked elements reconcile slots with the shared group-aura visual profile")
 assert(not pass:find("pcall(AuraSkin", 1, true),
     "the combat Configure guard lives in core (AuraGlue.RunConfigPass), not here")
 assert(not pass:find("AuraSkin.Reflow", 1, true),
     "AuraSkin.Reflow no longer exists")
 
--- Skipped forbidden work queues a regen replay.
+-- Skipped restricted work (secrecy-gated child access) queues a regen replay.
 assert(pass:find("QueueContainerCombatWork(frame)", 1, true),
-    "incomplete (forbidden work skipped in combat) must queue a regen replay")
+    "incomplete (restricted work skipped) must queue a regen replay")
 
--- The public full-pass name survives (forward-declared).
+-- The public full-pass name survives (forward-declared) and always creates.
 assert(src:find("function ApplyStripContainers(frame)", 1, true),
     "ApplyStripContainers must keep its (forward-declared) name")
-assert(src:find("ApplyElementPass(frame, not InCombatLockdown())", 1, true),
-    "ApplyStripContainers replays the full pass (OOC at regen)")
+assert(not src:find("ApplyElementPass(frame, not InCombatLockdown())", 1, true),
+    "no entry may downgrade allowCreate on combat (full pass is combat-legal)")
 
--- UpdateStripContainers: combat = pcall'd mutable pass now + STILL queue.
+-- UpdateStripContainers: combat = SafeCall'd FULL pass; queue only on failure.
 local update = slice("local function UpdateStripContainers(frame)")
-assert(update:find("pcall(ApplyElementPass, frame, false)", 1, true),
-    "UpdateStripContainers must pcall the mutation-only pass immediately in combat")
-assert(update:find("QueueContainerCombatWork(frame)", 1, true),
-    "UpdateStripContainers must STILL queue the full pass for regen (self-heal)")
+assert(update:find('local ok = ns.SafeCall("best-effort-style", ApplyElementPass, frame, true)', 1, true),
+    "UpdateStripContainers must SafeCall-guard the full creating pass in combat")
+assert(update:find("if not ok then\n            QueueContainerCombatWork(frame)\n        end", 1, true),
+    "a SafeCall-caught failure must queue the regen replay")
 assert(update:find("ApplyElementPass(frame, true)", 1, true),
     "UpdateStripContainers runs the full creating pass OOC")
 
@@ -84,13 +87,13 @@ assert(retire:find("AuraGlue.RunConfigPass", 1, true) and retire:find("AuraSlots
 assert(retire:find("SetEnabled(false)", 1, true) and retire:find(":Hide()", 1, true),
     "retire disables + hides the container")
 
--- DisableStripContainers: retire every pooled container; combat pcall-guards
+-- DisableStripContainers: retire every pooled container; combat SafeCall-guards
 -- the live retire and still queues a regen replay.
 local disable = slice("local function DisableStripContainers(frame)")
 assert(disable:find("frame._quiAuraContainers", 1, true),
     "DisableStripContainers iterates the per-element pool")
-assert(disable:find("pcall(RetireContainer, container, false)", 1, true),
-    "DisableStripContainers must pcall the live retire in combat")
+assert(disable:find('ns.SafeCall("best-effort-style", RetireContainer, container, false)', 1, true),
+    "DisableStripContainers must SafeCall-guard the live retire in combat")
 assert(disable:find("RetireContainer(container, true)", 1, true),
     "DisableStripContainers retires directly OOC")
 assert(disable:find("QueueContainerCombatWork(frame)", 1, true),

@@ -490,6 +490,113 @@ local function ApplyBorder(mock, size)
     ApplyHairlineBorder(mock._border, mock, size)
 end
 
+-- Fold the preview pane down to the vertical bounds of what is actually
+-- visible. The unit-frame body owns most regions/children, while portrait and
+-- castbar are host-level siblings, so include all three roots explicitly.
+local function IncludePreviewBounds(object, bounds)
+    if not object or (object.IsShown and not object:IsShown()) then return end
+
+    local top = object.GetTop and object:GetTop()
+    local bottom = object.GetBottom and object:GetBottom()
+    if top and bottom then
+        bounds.top = bounds.top and math.max(bounds.top, top) or top
+        bounds.bottom = bounds.bottom and math.min(bounds.bottom, bottom) or bottom
+    end
+end
+
+local function IncludeFrameTreeBounds(frame, bounds)
+    if not frame or (frame.IsShown and not frame:IsShown()) then return end
+
+    IncludePreviewBounds(frame, bounds)
+
+    if frame.GetRegions then
+        local regions = { frame:GetRegions() }
+        for i = 1, #regions do
+            IncludePreviewBounds(regions[i], bounds)
+        end
+    end
+
+    if frame.GetChildren then
+        local children = { frame:GetChildren() }
+        for i = 1, #children do
+            IncludeFrameTreeBounds(children[i], bounds)
+        end
+    end
+end
+
+local function MeasurePreviewContentHeight(mock)
+    local bounds = {}
+    IncludeFrameTreeBounds(mock, bounds)
+    IncludeFrameTreeBounds(mock and mock._portrait, bounds)
+    if mock and not mock._previewBodyOnly then
+        IncludeFrameTreeBounds(mock._castbarMock, bounds)
+    end
+    if not bounds.top or not bounds.bottom then return nil, nil end
+    return math.max(0, bounds.top - bounds.bottom), bounds
+end
+
+local function ResizePreviewToContent(mock)
+    local outer = mock and mock._previewOuter
+    local host = mock and mock:GetParent()
+    if not outer or not host then return end
+
+    local contentHeight, bounds = MeasurePreviewContentHeight(mock)
+    if not contentHeight or contentHeight <= 0 then return end
+
+    -- Recenter the combined body/portrait/aura/castbar bounds, not only the
+    -- base unit-frame rectangle. This removes the old empty castbar allowance
+    -- when the castbar is disabled and keeps outside auras balanced.
+    local hostTop = host.GetTop and host:GetTop()
+    local hostBottom = host.GetBottom and host:GetBottom()
+    if hostTop and hostBottom then
+        local hostCenter = (hostTop + hostBottom) * 0.5
+        local contentCenter = (bounds.top + bounds.bottom) * 0.5
+        local centerDelta = hostCenter - contentCenter
+        if math.abs(centerDelta) >= 0.5 then
+            mock._previewYOffset = (mock._previewYOffset or 0) + centerDelta
+            mock:ClearAllPoints()
+            mock:SetPoint(
+                "CENTER",
+                host,
+                "CENTER",
+                mock._previewXOffset or 0,
+                mock._previewYOffset
+            )
+        end
+    end
+
+    local desiredHeight = math.floor(contentHeight + (mock._previewChromeHeight or 20) + 0.5)
+    desiredHeight = math.max(mock._previewMinHeight or 60, desiredHeight)
+    if mock._previewMaxHeight then
+        desiredHeight = math.min(mock._previewMaxHeight, desiredHeight)
+    end
+
+    local currentHeight = outer.GetHeight and outer:GetHeight() or 0
+    if math.abs(currentHeight - desiredHeight) >= 1 then
+        mock._previewAutoHeightApplying = true
+        outer:SetHeight(desiredHeight)
+        mock._previewAutoHeightApplying = nil
+    end
+end
+
+local function RequestPreviewAutoHeight(mock)
+    if not mock or not mock._previewAutoHeight or mock._previewAutoHeightPending then return end
+    mock._previewAutoHeightPending = true
+
+    local function Apply()
+        mock._previewAutoHeightPending = nil
+        if State.previewMock ~= mock then return end
+        ResizePreviewToContent(mock)
+    end
+
+    -- Bounds settle after the current settings/layout callback completes.
+    if C_Timer and C_Timer.After then
+        C_Timer.After(0, Apply)
+    else
+        Apply()
+    end
+end
+
 local function RefreshMock()
     if not State.previewMock or not State.previewHost then return end
     local mock, host = State.previewMock, State.previewHost
@@ -503,9 +610,9 @@ local function RefreshMock()
 
     local borderSize = math.max(0, unitDB.borderSize or 1)
 
-    -- Scale to fit inside preview host (~20px horizontal margin; ~60px reserved
-    -- at the bottom for the castbar mock). Portrait, when shown, adds to the
-    -- effective width so the combined frame+portrait fits.
+    -- Scale against the preview's stable initial budget, not its current
+    -- auto-fitted height. Otherwise every height reduction would shrink the
+    -- mock again and recursively collapse the pane.
     local dbW, dbH = unitDB.width or 200, unitDB.height or 40
     local portraitOn = unitDB.showPortrait
         and (State.selectedUnit == "player" or State.selectedUnit == "target" or State.selectedUnit == "focus")
@@ -516,10 +623,10 @@ local function RefreshMock()
     local effectiveW = dbW + portraitSize + portraitGap
     local effectiveH = math.max(dbH, portraitSize)
     local hostW = math.max(host:GetWidth() - 40, 80)
-    -- Cap effective height at host:GetHeight() - 100; that leaves the
-    -- bottom region of the host (~60px on a 220px pane) reserved for
-    -- the castbar mock.
-    local hostH = math.max(host:GetHeight() - 100, 40)
+    local bodyOnly = mock._previewBodyOnly == true
+    local scaleBudgetHeight = mock._previewScaleBudgetHeight or (bodyOnly and 140 or 180)
+    local chromeHeight = mock._previewChromeHeight or (bodyOnly and 20 or 56)
+    local hostH = math.max(scaleBudgetHeight - chromeHeight, 40)
     local scale = math.min(1, math.min(hostW / effectiveW, hostH / effectiveH))
     local w = math.floor(dbW * scale + 0.5)
     local h = math.floor(dbH * scale + 0.5)
@@ -532,7 +639,11 @@ local function RefreshMock()
         shift = (unitDB.portraitSide == "LEFT") and pEdge or -pEdge
     end
     mock:ClearAllPoints()
-    mock:SetPoint("CENTER", host, "CENTER", shift, 30)
+    mock._previewXOffset = shift
+    if mock._previewYOffset == nil then
+        mock._previewYOffset = bodyOnly and 0 or 22
+    end
+    mock:SetPoint("CENTER", host, "CENTER", shift, mock._previewYOffset)
 
     -- Background + border
     local bgR, bgG, bgB, bgA = ResolveBgColor(general)
@@ -1000,7 +1111,10 @@ local function RefreshMock()
     end
 
     -- Castbar mock — re-applies all castbar settings to the bottom-region mock.
-    if mock._castbarMock and ns.QUI_UnitFramesCastbarPreview and ns.QUI_UnitFramesCastbarPreview.Refresh then
+    -- The Auras tile requests a body-only preview and intentionally omits it.
+    if bodyOnly and mock._castbarMock then
+        mock._castbarMock:Hide()
+    elseif mock._castbarMock and ns.QUI_UnitFramesCastbarPreview and ns.QUI_UnitFramesCastbarPreview.Refresh then
         ns.QUI_UnitFramesCastbarPreview.Refresh(mock._castbarMock, State.selectedUnit, unitDB, general)
 
         -- Anchor the castbar mock below the body mock at the same width, so
@@ -1021,6 +1135,7 @@ local function RefreshMock()
     if ns.QUI_UnitFramesBodyPreview and ns.QUI_UnitFramesBodyPreview.Refresh then
         ns.QUI_UnitFramesBodyPreview.Refresh(unitDB, general)
     end
+    RequestPreviewAutoHeight(mock)
 end
 
 -- Expose globally so settings widget callbacks in options/tabs/frames/
@@ -1032,6 +1147,10 @@ end
 local function BuildPreviewBlock(pv)
     local model = ResolveModel()
     local getUnitOptions = model and model.GetUnitOptions
+    local bodyOnly = opts and opts.bodyOnly == true
+    local showDropdown = not opts or opts.showDropdown ~= false
+    local previewHostForBlock
+    local previewMockForBlock
 
     State.selectedUnit = NormalizeUnitKey(State.selectedUnit)
     FullSurface.BuildDropdownPreviewBlock(pv, {
@@ -1044,18 +1163,46 @@ local function BuildPreviewBlock(pv)
         dropdownMeta = {
             description = ns.L["Select which unit frame to configure. Settings in the tabs below apply to the chosen unit."],
         },
+        showDropdown = showDropdown,
         onDropdownChanged = function(value)
             SetSelectedUnit(value)
         end,
         onBuildPreviewHost = function(previewHost)
+            previewHostForBlock = previewHost
             State.previewHost = previewHost
             State.previewMock = BuildMockFrame(previewHost)
+            previewMockForBlock = State.previewMock
+            State.previewMock._previewOuter = pv
+            State.previewMock._previewBodyOnly = bodyOnly
+            State.previewMock._previewAutoHeight = not opts or opts.autoHeight ~= false
+            State.previewMock._previewScaleBudgetHeight =
+                (opts and opts.scaleBudgetHeight) or (bodyOnly and 140 or 180)
+            State.previewMock._previewChromeHeight = showDropdown and 56 or 20
+            State.previewMock._previewMinHeight =
+                (opts and opts.minHeight) or (bodyOnly and 60 or 96)
+            State.previewMock._previewMaxHeight = opts and opts.maxHeight
 
             -- Re-render when the host changes size (panel resize) so the scale math re-runs.
-            previewHost:SetScript("OnSizeChanged", function() RefreshMock() end)
+            previewHost:SetScript("OnSizeChanged", function()
+                if State.previewMock == previewMockForBlock
+                    and not previewMockForBlock._previewAutoHeightApplying then
+                    RefreshMock()
+                end
+            end)
             RefreshMock()
         end,
     })
+
+    -- Both tiles cache their bodies. Whichever preview becomes visible owns
+    -- the singleton refresh target so settings changes resize the right pane.
+    if pv.HookScript then
+        pv:HookScript("OnShow", function()
+            if not previewHostForBlock or not previewMockForBlock then return end
+            State.previewHost = previewHostForBlock
+            State.previewMock = previewMockForBlock
+            RefreshMock()
+        end)
+    end
 end
 
 ---------------------------------------------------------------------------
@@ -1109,7 +1256,7 @@ end
 
 ns.QUI_UnitFramesSettingsSurface = {
     preview = {
-        height = 220,
+        height = 180,
         build = BuildPreviewBlock,
     },
     GetSearchRoot = GetSearchRoot,

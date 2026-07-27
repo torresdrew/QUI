@@ -1,8 +1,7 @@
--- tests/unit/migration_v52_defensives_fold_test.lua
--- Run: lua5.1 tests/unit/migration_v52_defensives_fold_test.lua
+-- tests/unit/migration_schema59_defensives_fold_test.lua
+-- Run: lua5.1 tests/unit/migration_schema59_defensives_fold_test.lua
 --
--- Migrations.FoldDefensiveIndicatorIntoElements (v51 squash step (e),
--- briefly v52 in dev builds): the legacy GF
+-- Migrations.FoldDefensiveIndicatorIntoElements (schema-59 step d): the legacy GF
 -- defensive indicator (healer.defensiveIndicator) becomes a seeded
 -- "defensives" element. Injection only into LATCHED "*" buckets (unlatched
 -- stores get the strip from the surface-aware runtime seed); enabled carries
@@ -46,7 +45,7 @@ end
 ----------------------------------------------------------------------------
 do
     local profile = {
-        _schemaVersion = 50,
+        _schemaVersion = 47,
         quiGroupFrames = {
             party = gfSurface({ enabled = true, iconSize = 20 }),
             raid  = gfSurface(nil),
@@ -69,7 +68,7 @@ do
     check("party: dedupeDefensives stripped",
         profile.quiGroupFrames.party.auras.elements["*"][1].dedupeDefensives == nil
         and profile.quiGroupFrames.party.auras.elements["*"][2].dedupeDefensives == nil)
-    check("stamped to current (51)", profile._schemaVersion == 51, tostring(profile._schemaVersion))
+    check("stamped to current (59)", profile._schemaVersion == 59, tostring(profile._schemaVersion))
 end
 
 ----------------------------------------------------------------------------
@@ -78,7 +77,7 @@ end
 ----------------------------------------------------------------------------
 do
     local profile = {
-        _schemaVersion = 50,
+        _schemaVersion = 47,
         quiGroupFrames = { party = gfSurface({ enabled = false }) },
     }
     table.insert(profile.quiGroupFrames.party.auras.elements["*"],
@@ -97,7 +96,7 @@ end
 ----------------------------------------------------------------------------
 do
     local profile = {
-        _schemaVersion = 50,
+        _schemaVersion = 47,
         quiGroupFrames = { party = {
             auras = {},
             healer = { defensiveIndicator = { enabled = true } },
@@ -117,7 +116,7 @@ end
 ----------------------------------------------------------------------------
 do
     local profile = {
-        _schemaVersion = 50,
+        _schemaVersion = 47,
         quiGroupFrames = { party = {
             auras = { elementsSeeded = true, elements = {
                 ["*"] = { { id = "buffs", mode = "filterStrip", dedupeDefensives = true } },
@@ -149,13 +148,14 @@ end
 ----------------------------------------------------------------------------
 do
     local profile = {
-        _schemaVersion = 50,
+        _schemaVersion = 47,
         quiGroupFrames = { party = gfSurface({ enabled = true }) },
     }
     M.RunOnProfile(profile)
     local before = findById(profile.quiGroupFrames.party.auras.elements["*"], "defensives")
     M.RunOnProfile(profile)
     local after = findById(profile.quiGroupFrames.party.auras.elements["*"], "defensives")
+    -- debuffs + buffs + defensives.
     check("idempotent", before == after and #profile.quiGroupFrames.party.auras.elements["*"] == 3)
 end
 
@@ -167,7 +167,7 @@ end
 ----------------------------------------------------------------------------
 do
     local profile = {
-        _schemaVersion = 50,
+        _schemaVersion = 47,
         quiGroupFrames = { party = gfSurface({ enabled = true }) },
     }
     M.RunOnProfile(profile)
@@ -188,4 +188,4 @@ do
 end
 
 if failures > 0 then os.exit(1) end
-print("migration_v52_defensives_fold_test: all checks passed")
+print("migration_schema59_defensives_fold_test: all checks passed")

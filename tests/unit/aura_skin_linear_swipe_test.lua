@@ -35,7 +35,7 @@ end
 _G.InCombatLockdown = function() return false end
 _G.AuraContainerSortMethod = { Default = 1 }
 _G.AuraContainerSortDirection = { Normal = 1 }
-_G.AnchorUtil = { FlowDirection = { Left = -1, Right = 1, Up = 1, Down = -1 } }
+_G.AnchorUtil = { FlowDirection = { Left = -1, Right = 1, Up = 1, Down = -1 }, FlowLayoutAxis = { Horizontal = 0, Vertical = 1 } }
 _G.Enum = {
     StatusBarTimerDirection = { RemainingTime = 1, ElapsedTime = 2 },
     StatusBarInterpolation = { Immediate = 1, Linear = 2 },
@@ -105,8 +105,8 @@ local function MakeButton()
     end
     function b:SetSize() end
     function b:SetIcon() end
-    function b:SetAuraBorder() end
-    function b:SetAuraSymbol() end
+    function b:AddDispelTypeTexture() end
+    function b:SetDispelTypeText() end
     function b:SetDurationCooldown() end
     function b:SetDurationText() end
     function b:SetApplicationCount() end
@@ -140,10 +140,11 @@ local function MakeContainer()
     function c:SetAuraGroupSortMethod() end
     function c:SetAuraGroupCandidateFilters() end
     function c:SetAuraGroupLayout() end
-    function c:SetAuraLayoutAnchorPoint() end
-    function c:SetAuraLayoutGrowthDirection() end
-    function c:SetAuraLayoutPadding() end
-    function c:SetAuraLayoutRowWidth() end
+    function c:SetFlowLayoutAnchorPoint() end
+    function c:SetFlowLayoutGrowthDirection() end
+    function c:SetFlowLayoutPadding() end
+    function c:SetFlowLayoutAxis() end
+    function c:SetFlowLayoutMaximumLineSize() end
     return c
 end
 

@@ -21,6 +21,7 @@
 --   {} is the pre-first-scan placeholder.
 ---------------------------------------------------------------------------
 local ADDON_NAME, ns = ...
+local issecretvalue = issecretvalue -- bare self-cache: analyzer-credited guard name
 local Storage = ns.Storage or {}; ns.Storage = Storage
 
 local Store = {}
@@ -139,9 +140,14 @@ function Store.EnsureCurrentCharacter()
     local d = rec.details
     -- UnitClass/UnitRace: MayReturnNothing (guard; for "player" this fires at
     -- login when the unit is ready, so nil is unlikely but possible mid-session).
+    -- Both are SecretWhenUnitIdentityRestricted on 12.1 PTR7 — collapse before
+    -- the truth-test; a secret pass keeps the previously stored details.
+    -- @secret-policy: collapse-only
     local _, classFilename = UnitClass("player")
+    if issecretvalue and issecretvalue(classFilename) then classFilename = nil end
     if classFilename then d.class = classFilename end
     local _, englishRace = UnitRace("player")
+    if issecretvalue and issecretvalue(englishRace) then englishRace = nil end -- @secret-policy: collapse-only
     if englishRace then d.race = englishRace end
     local faction = UnitFactionGroup("player")
     if faction then d.faction = faction end

@@ -114,6 +114,7 @@ local snapshotBuffIDs = {}
 local activePredicates = {}
 local _groupUnitsScratch = {}  -- reused table; callers must not hold a ref across calls
 local snapshotEventFrame
+local rangeListenerFrames
 local refreshQueued = false
 
 local function RegisterSnapshotIDs(spellIDOrTable)
@@ -150,12 +151,39 @@ local function BuildCDMGroupBuffEntries(out)
     local okItems, items = pcall(CV.GetGroupBuffItems)
     if not okItems or type(items) ~= "table" then return end
 
+    -- Hidden-set precedence mirrors Blizzard's GroupBuffFilter.lua
+    -- (GetCurrentHiddenGroupBuffSpellIDs): the saved layout's hidden list is
+    -- AUTHORITATIVE when readable — a user can un-hide a HideByDefault buff,
+    -- the flag is only the initial seed — and the static flags apply solely
+    -- when no layout list could be read. C_UnitAuras.GetHiddenGroupBuffs is
+    -- the C-side sync TARGET of that same list (SyncHiddenGroupBuffs writes
+    -- it; Blizzard never reads it back) — it is consulted ONLY as a fallback
+    -- when the layout list is unreadable: merging it on top of a read layout
+    -- list would let a stale not-yet-resynced copy re-hide a buff the user
+    -- just un-hid.
     local hidden = {}
-    local UA = _G.C_UnitAuras
-    if UA and UA.GetHiddenGroupBuffs then
-        local okHidden, hiddenIDs = pcall(UA.GetHiddenGroupBuffs)
-        if okHidden and type(hiddenIDs) == "table" then
-            for _, sid in ipairs(hiddenIDs) do hidden[sid] = true end
+    local layoutListRead = false
+    local CVS = _G.CooldownViewerSettings
+    local layoutGetter = _G.CooldownManagerLayout_GetHiddenGroupBuffs
+    local layoutMode = _G.Enum and _G.Enum.CDMLayoutMode and _G.Enum.CDMLayoutMode.AccessOnly
+    if CVS and type(layoutGetter) == "function" and layoutMode ~= nil then
+        local okLayout, list = pcall(function()
+            local lm = CVS:GetLayoutManager()
+            local layout = lm and lm:GetActiveLayout(layoutMode)
+            return layout and layoutGetter(layout) or nil
+        end)
+        if okLayout and type(list) == "table" then
+            layoutListRead = true
+            for _, sid in ipairs(list) do hidden[sid] = true end
+        end
+    end
+    if not layoutListRead then
+        local UA = _G.C_UnitAuras
+        if UA and UA.GetHiddenGroupBuffs then
+            local okHidden, hiddenIDs = pcall(UA.GetHiddenGroupBuffs)
+            if okHidden and type(hiddenIDs) == "table" then
+                for _, sid in ipairs(hiddenIDs) do hidden[sid] = true end
+            end
         end
     end
 
@@ -168,10 +196,25 @@ local function BuildCDMGroupBuffEntries(out)
         end
     end
 
+    -- GroupBuffItemFlags.HideByDefault: Blizzard's own viewer doesn't show
+    -- these unless the user opts in; without honoring it (plus isKnown) every
+    -- curated entry generates missing-buff icons for buffs the player can't
+    -- even provide (GroupBuffItem carries isKnown per player,
+    -- CooldownViewerDocumentation.lua). FALLBACK ONLY: when the layout list
+    -- was read, it already reflects the user's final shown/hidden choices.
+    local hideByDefault = _G.Enum and _G.Enum.GroupBuffItemFlags
+        and _G.Enum.GroupBuffItemFlags.HideByDefault or 1
+    local band = bit and bit.band
+
     local seen = {}
     for _, item in ipairs(items) do
         local sid = item.spellID
+        local flaggedHidden = not layoutListRead
+            and type(item.flags) == "number" and band
+            and band(item.flags, hideByDefault) ~= 0
         if type(sid) == "number" and not IsSecretValue(sid)
+            and item.isKnown ~= false
+            and not flaggedHidden
             and not hidden[sid] and not builtinIDs[sid] and not seen[sid] then
             seen[sid] = true
             out[#out + 1] = {
@@ -217,8 +260,10 @@ end
 function MRB._isPlayerUnitProbe(unit)
     if unit == "player" then return true end
     if not UnitIsUnit then return false end
+    -- Statement-split guards (analyzer-provable): probe before the ==.
     local ok, result = pcall(UnitIsUnit, unit, "player")
-    if not ok or IsSecretValue(result) then return false end
+    if not ok then return false end
+    if IsSecretValue(result) then return false end -- @secret-policy: reject-secret-ids
     return result == true
 end
 
@@ -227,8 +272,11 @@ local function ContextHasMissingRaidBuffElement(contextDB)
     if not auras or auras.enabled == false or type(auras.elements) ~= "table" then
         return false
     end
-    for _, bucket in pairs(auras.elements) do
-        if type(bucket) == "table" then
+    -- Reachable buckets only ("*" + numeric spec): a dormant legacy "i"/"e"
+    -- context bucket (removed Encounters cascade) must not keep the MRB
+    -- machinery alive for an element the resolver can never activate.
+    for key, bucket in pairs(auras.elements) do
+        if (key == "*" or type(key) == "number") and type(bucket) == "table" then
             for _, element in ipairs(bucket) do
                 if type(element) == "table"
                     and element.mode == "missingRaidBuff"
@@ -250,7 +298,7 @@ function MRB:HasActiveElements()
         return true
     end
     for i = 1, #activePredicates do
-        local ok, active = pcall(activePredicates[i])
+        local ok, active = ns.SafeCall("bulkhead", activePredicates[i])
         if ok and active then
             return true
         end
@@ -325,6 +373,9 @@ local function GetSyntheticAura(buff)
 end
 
 local function SafeAuraField(auraData, field)
+    -- Probe BEFORE the truth-test: per-spell always-secret auras arrive as
+    -- WHOLE-secret AuraData and `not auraData` on one throws.
+    if IsSecretValue(auraData) then return nil end -- @secret-policy: reject-secret-value
     if not auraData then return nil end
     local ok, value = pcall(function() return auraData[field] end)
     if not ok or IsSecretValue(value) then return nil end
@@ -351,6 +402,9 @@ local function DirectAuraLookup(unit, spellID)
     return nil
 end
 
+-- Returns true (present), false (definitely absent), or nil (UNKNOWN — aura
+-- data secret or unreadable). Callers must treat nil as "do not flag":
+-- flagging missing on unknown false-positives every secret-aura combat frame.
 function MRB:UnitHasBuff(unit, spellIDOrTable, spellName)
     if not unit or not UnitExists(unit) then return false end
 
@@ -389,44 +443,75 @@ function MRB:UnitHasBuff(unit, spellIDOrTable, spellName)
         end
     end
 
+    -- Past this point every remaining strategy is a best-effort read that can
+    -- legitimately fail closed (pcall error) or hand back a secret we can't
+    -- inspect. `unknown` tracks whether that happened so a clean "nothing
+    -- found" scan (false) stays distinguishable from "couldn't tell" (nil).
+    local unknown = false
+
     if spellName and AuraUtil and AuraUtil.FindAuraByName then
         local ok, aura = pcall(AuraUtil.FindAuraByName, spellName, unit, "HELPFUL")
-        if ok and aura then
-            return true
+        -- Probe before the truth-test: the returned name can be secret for a
+        -- per-spell always-secret aura.
+        if ok then
+            if IsSecretValue(aura) then
+                -- @secret-policy: readable-only-scan — unidentifiable; fall
+                -- through to the other scan strategies, but this unit's
+                -- status can no longer be called a definite absence.
+                aura = nil
+                unknown = true
+            end
+            if aura then
+                return true
+            end
+        else
+            -- The guarded call itself failed (secret-tainted throw inside
+            -- Blizzard's lookup) — can't determine, fall through.
+            unknown = true
         end
     end
 
-    if AuraUtil and AuraUtil.ForEachAura and not AurasAreSecret() then
-        local found = false
-        AuraUtil.ForEachAura(unit, "HELPFUL", nil, function(auraData)
-            local auraSpellID = SafeAuraField(auraData, "spellId")
-            if auraSpellID then
-                for i = 1, #spellIDs do
-                    if auraSpellID == spellIDs[i] then
-                        found = true
-                        return true
-                    end
-                end
-            end
-        end, true)
-        if found then return true end
-    end
+    -- No AuraUtil.ForEachAura here: Blizzard's ForEachAuraHelper truth-tests
+    -- each entry itself (`if auraInfo then`) — with addon taint a
+    -- whole-secret (per-spell always-secret) aura throws inside Blizzard's
+    -- iterator before any callback probe runs. The probe-first
+    -- GetAuraDataByIndex scan below covers the same auras safely.
 
     if GetAuraDataByIndex and not AurasAreSecret() then
-        for index = 1, 40 do
+        -- UNBOUNDED walk until the nil terminator (this scan is the SOLE
+        -- index path — the unbounded ForEachAura block it was redundant with
+        -- is banned; any numeric cap silently truncates heavy raid aura
+        -- sets). Per-spell always-secret auras pass the global gate and
+        -- return WHOLE-secret AuraData — `not auraData` on one throws, and a
+        -- secret entry is NOT end-of-list: skip it and keep scanning.
+        local index = 0
+        while true do
+            index = index + 1
             local ok, auraData = pcall(GetAuraDataByIndex, unit, index, "HELPFUL")
-            if not ok or not auraData then break end
-            local auraSpellID = SafeAuraField(auraData, "spellId")
-            if auraSpellID then
-                for i = 1, #spellIDs do
-                    if auraSpellID == spellIDs[i] then
-                        return true
+            if not ok then unknown = true; break end
+            if IsSecretValue(auraData) then
+                -- @secret-policy: readable-only-scan
+                unknown = true
+            elseif not auraData then
+                break
+            else
+                local auraSpellID = SafeAuraField(auraData, "spellId")
+                if auraSpellID then
+                    for i = 1, #spellIDs do
+                        if auraSpellID == spellIDs[i] then
+                            return true
+                        end
                     end
                 end
             end
         end
+    elseif GetAuraDataByIndex and AurasAreSecret() then
+        -- Auras are globally secret and the index-scan fallback couldn't run
+        -- at all: zero coverage for these spellIDs this pass.
+        unknown = true
     end
 
+    if unknown then return nil end
     return false
 end
 
@@ -439,6 +524,10 @@ end
 -- True iff `unit` carries one of `ids` cast by the player. For whitelisted IDs
 -- the aura is non-secret, so isFromPlayerOrPlayerPet is readable; otherwise fall
 -- back to the player-cast aura filter (C-side caster check, no secret read).
+-- Returns true (present, cast by the player), false (definitely absent), or
+-- nil (UNKNOWN — aura data secret or unreadable). Callers must treat nil as
+-- "do not flag": flagging missing on unknown false-positives every
+-- secret-aura combat frame.
 function MRB:UnitHasMyBuff(unit, ids)
     if not unit or not SafeBoolean(UnitExists, unit, false) then return false end
     for i = 1, #ids do
@@ -450,18 +539,40 @@ function MRB:UnitHasMyBuff(unit, ids)
             end
         end
     end
-    if AuraUtil and AuraUtil.ForEachAura and not AurasAreSecret() then
-        local found = false
-        AuraUtil.ForEachAura(unit, "HELPFUL|PLAYER", nil, function(auraData)
-            local sid = SafeAuraField(auraData, "spellId")
-            if sid then
-                for i = 1, #ids do
-                    if sid == ids[i] then found = true; return true end
+    -- Probe-first index scan — never AuraUtil.ForEachAura (its internal
+    -- `if auraInfo` truth-test throws on whole-secret entries before the
+    -- callback runs). A secret entry is NOT end-of-list: skip and continue.
+    -- `unknown` mirrors MRB:UnitHasBuff's contract: a pcall failure, a secret
+    -- entry the probe already caught, or the scan being globally gated off
+    -- all mean "couldn't tell", never a silent false.
+    local unknown = false
+    if GetAuraDataByIndex and not AurasAreSecret() then
+        -- Unbounded until the nil terminator (see the index scan above).
+        local index = 0
+        while true do
+            index = index + 1
+            local ok, auraData = pcall(GetAuraDataByIndex, unit, index, "HELPFUL|PLAYER")
+            if not ok then unknown = true; break end
+            if IsSecretValue(auraData) then
+                -- @secret-policy: readable-only-scan
+                unknown = true
+            elseif not auraData then
+                break
+            else
+                local sid = SafeAuraField(auraData, "spellId")
+                if sid then
+                    for i = 1, #ids do
+                        if sid == ids[i] then return true end
+                    end
                 end
             end
-        end, true)
-        if found then return true end
+        end
+    elseif GetAuraDataByIndex and AurasAreSecret() then
+        -- Auras are globally secret and the index-scan fallback couldn't run
+        -- at all: zero coverage for these ids this pass.
+        unknown = true
     end
+    if unknown then return nil end
     return false
 end
 
@@ -469,8 +580,14 @@ local function UnitInKnownRange(unit)
     if unit == "player" then return true end
     if UnitInRange then
         local ok, inRange, checked = pcall(UnitInRange, unit)
-        if ok and not IsSecretValue(inRange) and not IsSecretValue(checked) and checked and inRange == false then
-            return false
+        if ok then
+            if IsSecretValue(inRange) or IsSecretValue(checked) then
+                -- ACTION POLICY, not range truth: a secret range is
+                -- INDETERMINATE — keep the unit eligible (a possibly
+                -- in-range unit is never dropped on unverifiable range).
+            elseif checked and inRange == false then -- @secret-safe: IsSecretValue branch above proves checked/inRange plain here
+                return false
+            end
         end
     end
     return true
@@ -556,15 +673,27 @@ function MRB:PlayerIsProviderSpec(buff)
     return cur ~= nil and specs[cur] == true
 end
 
--- True iff at least one eligible group member carries one of `ids` cast by ME.
+-- Aggregate tristate over the eligible group: true if any eligible ally
+-- definitely carries one of `ids` cast by ME; false only if every eligible
+-- ally's status was definitely determined and none carried it; nil
+-- (UNKNOWN) if at least one eligible ally's status could not be read and no
+-- ally confirmed true — mirrors MRB:UnitHasBuff's contract (nil = "do not
+-- flag").
 function MRB:AnyEligibleAllyHasMyBuff(ids)
     local units = MRB._groupUnitsProbe()
+    local sawUnknown = false
     for i = 1, #units do
         local unit = units[i]
-        if MRB._eligibleProbe(unit) and MRB:UnitHasMyBuff(unit, ids) then
-            return true
+        if MRB._eligibleProbe(unit) then
+            local has = MRB:UnitHasMyBuff(unit, ids)
+            if has == true then
+                return true
+            elseif has == nil then
+                sawUnknown = true
+            end
         end
     end
+    if sawUnknown then return nil end
     return false
 end
 
@@ -600,9 +729,11 @@ function MRB:BuildMatches(unit, element, out)
         if ally then
             for i = 1, #ally do
                 local buff = ally[i]
+                -- Tristate consumer: only a definite false reminds the
+                -- player; nil (unknown ally aura data) shows nothing.
                 if MRB:PlayerIsProviderSpec(buff)
                     and MRB._spellKnownProbe(buff)
-                    and not MRB:AnyEligibleAllyHasMyBuff(buff.ids)
+                    and MRB:AnyEligibleAllyHasMyBuff(buff.ids) == false
                 then
                     out[#out + 1] = GetSyntheticAura(buff)
                 end
@@ -615,7 +746,9 @@ function MRB:BuildMatches(unit, element, out)
         local buff = RAID_BUFFS[i]
         if ElementShouldCheckBuff(element or {}, buff) then
             local name = GetBuffName(buff)
-            if not self:UnitHasBuff(unit, buff.ids, name) then
+            -- Tristate: only a definite false is a missing-buff flag; nil
+            -- (unknown/secret aura data) renders nothing this pass.
+            if self:UnitHasBuff(unit, buff.ids, name) == false then
                 out[#out + 1] = GetSyntheticAura(buff)
             end
         end
@@ -741,8 +874,12 @@ local function AllyDeltaIsRelevant(unit, updateInfo)
         end
     end
 
-    -- Removed/updated carry only instanceIDs (NeverSecretContents per API).
-    -- Only the ones we flagged as tracked matter.
+    -- Removed/updated carry only instanceIDs. Element-level readability is
+    -- guaranteed by the aura router (core/aura_events.lua PayloadIsSecret
+    -- promotes any secret element to the full-update sentinel before this
+    -- "roster" subscriber runs) — UnitAuraUpdateInfo itself carries NO
+    -- NeverSecretContents annotation, so never key raw payloads outside the
+    -- router path. Only the ones we flagged as tracked matter.
     if set then
         local removed = updateInfo.removedAuraInstanceIDs
         if removed then
@@ -775,13 +912,36 @@ local function EnsureEventFrame()
     snapshotEventFrame:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
     snapshotEventFrame:RegisterEvent("UNIT_CONNECTION")
     snapshotEventFrame:RegisterEvent("UNIT_FLAGS")
-    snapshotEventFrame:RegisterEvent("UNIT_IN_RANGE_UPDATE")
+    -- UNIT_IN_RANGE_UPDATE is SecretPayloads = true: the payload unit is
+    -- ALWAYS secret, and using it as the unitFrameMap key in RefreshUnit
+    -- threw. Per-token listeners instead: the closure's LEXICAL registration
+    -- token drives the refresh; the payload is never touched. The token set
+    -- is static (RegisterUnitEvent for an absent unit simply never fires),
+    -- so no roster maintenance is needed.
+    do
+        local tokens = { "player" }
+        for i = 1, 4 do tokens[#tokens + 1] = "party" .. i end
+        for i = 1, 40 do tokens[#tokens + 1] = "raid" .. i end
+        rangeListenerFrames = {}
+        for i = 1, #tokens do
+            local token = tokens[i]
+            local listener = CreateFrame("Frame")
+            listener:RegisterUnitEvent("UNIT_IN_RANGE_UPDATE", token)
+            listener:SetScript("OnEvent", function()
+                RefreshUnit(token)
+            end)
+            rangeListenerFrames[i] = listener
+        end
+    end
     snapshotEventFrame:RegisterEvent("ENCOUNTER_START")
     snapshotEventFrame:RegisterEvent("CHALLENGE_MODE_START")
     -- CDM Group Buff list changes (12.x). pcall-guarded: RegisterEvent errors on
     -- an unknown event name on clients that predate these.
     pcall(function() snapshotEventFrame:RegisterEvent("COOLDOWN_VIEWER_DATA_LOADED") end)
     pcall(function() snapshotEventFrame:RegisterEvent("HIDDEN_GROUP_BUFFS_CHANGED") end)
+    -- 12.1: server-side hotfixes to the CDM tables re-shape GetGroupBuffItems;
+    -- without a rebuild the missing-buff catalog stays stale until /reload.
+    pcall(function() snapshotEventFrame:RegisterEvent("COOLDOWN_VIEWER_TABLE_HOTFIXED") end)
     snapshotEventFrame:SetScript("OnEvent", function(_, event, unit)
         if event == "PLAYER_REGEN_DISABLED" then
             MRB:SnapshotRaidBuffAuras()
@@ -789,11 +949,13 @@ local function EnsureEventFrame()
         elseif event == "PLAYER_REGEN_ENABLED" then
             MRB:ClearPreCombatSnapshot()
             RefreshAll()
-        elseif event == "UNIT_CONNECTION" or event == "UNIT_FLAGS" or event == "UNIT_IN_RANGE_UPDATE" then
+        elseif event == "UNIT_CONNECTION" or event == "UNIT_FLAGS" then
             RefreshUnit(unit)
         elseif event == "GROUP_ROSTER_UPDATE" then
             C_Timer.After(0.25, RefreshAll)
-        elseif event == "COOLDOWN_VIEWER_DATA_LOADED" or event == "HIDDEN_GROUP_BUFFS_CHANGED" then
+        elseif event == "COOLDOWN_VIEWER_DATA_LOADED"
+            or event == "HIDDEN_GROUP_BUFFS_CHANGED"
+            or event == "COOLDOWN_VIEWER_TABLE_HOTFIXED" then
             MRB:RebuildRaidBuffs()
             RefreshAll()
         else

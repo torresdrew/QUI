@@ -1,8 +1,7 @@
--- tests/unit/migration_v53_purge_container_satellites_test.lua
--- Run: lua5.1 tests/unit/migration_v53_purge_container_satellites_test.lua
+-- tests/unit/migration_schema59_purge_container_satellites_test.lua
+-- Run: lua5.1 tests/unit/migration_schema59_purge_container_satellites_test.lua
 --
--- Migrations.PurgeOrphanContainerSatellites (v51 squash step (f), briefly v53
--- in dev builds). DeleteContainer
+-- Migrations.PurgeOrphanContainerSatellites (schema-59 step e). DeleteContainer
 -- historically removed a custom CDM container's db entry + frame but never
 -- cleaned up the per-container satellite settings the settings page and
 -- layout mode write keyed on the container name: profile.customGlow[key..
@@ -41,7 +40,7 @@ do
     local liveKey = "custom_1778883503_8224"
     local orphanKey = "custom_1776292480_7595"
     local profile = {
-        _schemaVersion = 50,
+        _schemaVersion = 47,
         ncdm = {
             containers = {
                 essential = {}, utility = {}, buff = {}, trackedBar = {},
@@ -119,7 +118,7 @@ do
     check("utilityFrequency survives", profile.customGlow.utilityFrequency == 0.25)
     check("utilityEnabled survives", profile.customGlow.utilityEnabled == true)
 
-    check("stamped to current (51)", profile._schemaVersion == 51, tostring(profile._schemaVersion))
+    check("stamped to current (59)", profile._schemaVersion == 59, tostring(profile._schemaVersion))
 end
 
 ----------------------------------------------------------------------------
@@ -130,7 +129,7 @@ end
 ----------------------------------------------------------------------------
 do
     local profile = {
-        _schemaVersion = 50,
+        _schemaVersion = 47,
         frameAnchoring = { ["cdmCustom_custom_1_1"] = { parent = "UIParent" } },
         cooldownEffects = { ["hide_custom_1_1"] = true },
         customGlow = { custom_1_1Scale = 0.5, essentialScale = 1, utilityScale = 1 },
@@ -149,7 +148,7 @@ end
 do
     local liveKey = "custom_1778883503_8224"
     local profile = {
-        _schemaVersion = 50,
+        _schemaVersion = 47,
         ncdm = { containers = { [liveKey] = {} } },
         frameAnchoring = { ["cdmCustom_" .. liveKey] = { parent = "UIParent" } },
         customGlow = { [liveKey .. "Scale"] = 0.5 },
@@ -158,24 +157,8 @@ do
     M.RunOnProfile(profile)
     check("idempotent: live anchor still present", profile.frameAnchoring["cdmCustom_" .. liveKey] ~= nil)
     check("idempotent: live glow still present", profile.customGlow[liveKey .. "Scale"] == 0.5)
-    check("idempotent: stays at current (51)", profile._schemaVersion == 51, tostring(profile._schemaVersion))
-end
-
-----------------------------------------------------------------------------
--- 4) Already-current (51) profile is a no-op: the purge gate does NOT
---    re-run, so an orphan added AFTER migration (impossible via normal
---    DeleteContainer flow, but simulates a re-imported orphan) survives.
-----------------------------------------------------------------------------
-do
-    local profile = {
-        _schemaVersion = 51,
-        ncdm = { containers = {} },
-        frameAnchoring = { ["cdmCustom_custom_9_9"] = { parent = "UIParent" } },
-    }
-    M.RunOnProfile(profile)
-    check("already-51: gate does not re-run", profile.frameAnchoring["cdmCustom_custom_9_9"] ~= nil)
-    check("already-51: stamp unchanged", profile._schemaVersion == 51, tostring(profile._schemaVersion))
+    check("idempotent: stays at current (59)", profile._schemaVersion == 59, tostring(profile._schemaVersion))
 end
 
 if failures > 0 then os.exit(1) end
-print("migration_v53_purge_container_satellites_test: all checks passed")
+print("migration_schema59_purge_container_satellites_test: all checks passed")

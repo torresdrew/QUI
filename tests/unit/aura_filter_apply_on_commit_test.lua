@@ -27,9 +27,9 @@
 -- OnEnterPressed only (:494); it has no OnTextChanged handler, so there is
 -- no live-typing write path here either. The Browse popup's onToggle
 -- (:505-513) is scoped the same way — `map`/element.whitelist/blacklist
--- only, never a filter-affecting field — so "batch behind Apply/close" (the
--- conditional ask in the task brief) does not apply: there is nothing to
--- batch, this control never reaches a group-key-affecting write.
+-- only, never a filter-affecting field. It may therefore update the inline
+-- selected-spell list immediately: this control never reaches a
+-- group-key-affecting write.
 --
 -- This file has two parts:
 --   1. Source-text pins locking the above path map in place (so a FUTURE
@@ -95,9 +95,9 @@ if editor then
     -- The Browse popup's onToggle (whitelist/blacklist) never touches a
     -- filter-affecting field — grep the onToggle closure body for the
     -- filter-affecting field names; none should appear between the
-    -- "onToggle = browseCfg.onToggle or function(spellID)" open and its
+    -- "local toggleSpell = browseCfg.onToggle or function(spellID)" open and its
     -- closing "end," (a few lines below it).
-    local onToggleStart = editor:find("onToggle = browseCfg.onToggle or function(spellID)", 1, true)
+    local onToggleStart = editor:find("local toggleSpell = browseCfg.onToggle or function(spellID)", 1, true)
     check("Browse popup onToggle located", onToggleStart ~= nil)
     if onToggleStart then
         local onToggleBody = editor:sub(onToggleStart, onToggleStart + 400)

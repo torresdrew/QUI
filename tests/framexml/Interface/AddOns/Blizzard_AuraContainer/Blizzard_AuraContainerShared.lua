@@ -53,6 +53,7 @@ AuraContainerSortMethod =
 	ExpirationOnly = 5,
 	Name = 6,
 	NameOnly = 7,
+	AuraInstanceIDOnly = 8,
 };
 
 AuraContainerSortDirection =
@@ -109,17 +110,15 @@ CustomAuraContainerConstants =
 -- applied around all dynamic aura filter groups.
 CustomAuraContainerLayoutDefaults =
 {
+	axis = AnchorUtil.FlowLayoutAxis.Horizontal,
 	anchorPoint = "TOPLEFT",
-
 	horizontalGrowthDirection = AnchorUtil.FlowDirection.Right,
 	verticalGrowthDirection = AnchorUtil.FlowDirection.Down,
-
 	paddingLeft = 0,
 	paddingRight = 0,
 	paddingTop = 0,
 	paddingBottom = 0,
-
-	rowWidth = math.huge,
+	maximumLineSize = math.huge,
 };
 
 CustomAuraContainerGroupDefaultOptions =
@@ -152,11 +151,11 @@ CustomAuraContainerGroupDefaultOptions =
 -- size overrides for that filter's visible frames.
 CustomAuraContainerGroupLayoutDefaultOptions =
 {
-	elementSpacingX = 0;
-	elementSpacingY = 0;
-	gapX = 0;
-	gapY = 0;
-	forceNewRow = false;
+	elementSpacing = 0;
+	lineSpacing = 0;
+	groupSpacing = 0;
+	groupLineSpacing = 0;
+	forceNewLine = false;
 	elementWidth = nil;
 	elementHeight = nil;
 };
@@ -222,11 +221,11 @@ CustomAuraContainerItemEnchantmentLayoutDefaultOptions =
 	-- Where item enchantment frames are inserted relative to aura groups.
 	placement = CustomAuraContainerItemEnchantmentPlacement.BeforeAuraGroups;
 
-	elementSpacingX = 0;
-	elementSpacingY = 0;
-	gapX = 0;
-	gapY = 0;
-	forceNewRow = false;
+	elementSpacing = 0;
+	lineSpacing = 0;
+	groupSpacing = 0;
+	groupLineSpacing = 0;
+	forceNewLine = false;
 	elementWidth = nil;
 	elementHeight = nil;
 };

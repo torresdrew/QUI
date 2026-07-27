@@ -204,8 +204,12 @@ function NPExtras.UpdateExecute(plate)
         return
     end
     -- The (possibly secret) curve result flows straight into SetAlpha.
+    -- Probe BEFORE the nil compare — UnitHealthPercent is secret-capable
+    -- (68914 corpus) and `alpha ~= nil` on a secret throws.
     local ok, alpha = pcall(UnitHealthPercent, unit, nil, curve)
-    if ok and alpha ~= nil then
+    if ok and issecretvalue and issecretvalue(alpha) then
+        pcall(overlay.SetAlpha, overlay, alpha) -- @secret-safe: secret alpha rides the C-side SetAlpha sink
+    elseif ok and alpha ~= nil then -- @secret-safe: issecretvalue branch above proves alpha plain here
         pcall(overlay.SetAlpha, overlay, alpha)
     else
         overlay:SetAlpha(0)

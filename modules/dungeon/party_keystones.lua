@@ -395,7 +395,10 @@ local function UpdateButton(button, keystoneInfo, unitName, unit, isLeader)
     if InCombatLockdown() then return end
 
     local _, class = UnitClass(unit)
-    local classColor = RAID_CLASS_COLORS[class] and RAID_CLASS_COLORS[class].colorStr or "FFFFFFFF"
+    -- Probe FIRST — a secret class throws on the RAID_CLASS_COLORS table index.
+    -- @secret-policy: collapse-only — white player-name fallback
+    if Helpers.IsSecretValue(class) then class = nil end
+    local classColor = class and RAID_CLASS_COLORS[class] and RAID_CLASS_COLORS[class].colorStr or "FFFFFFFF"
     local displayName = unitName:match("([^%-]+)") or unitName
 
     if keystoneInfo and keystoneInfo.level and keystoneInfo.level > 0 then

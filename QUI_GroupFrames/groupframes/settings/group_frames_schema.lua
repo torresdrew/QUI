@@ -65,6 +65,10 @@ local HEALTH_FILL_OPTIONS = {
     { value = "VERTICAL", text = ns.L["Vertical (Bottom to Top)"] },
 }
 local NINE_POINT_OPTIONS = ns.QUI_SettingsLayoutShared.BuildNinePointAnchorOptions()
+local DISPEL_SCOPE_OPTIONS = {
+    { value = "PLAYER_DISPELLABLE", text = ns.L["Dispellable by Me"] },
+    { value = "ALL_TYPED", text = ns.L["All Typed Debuffs"] },
+}
 local TEXT_JUSTIFY_OPTIONS = {
     { value = "LEFT", text = ns.L["Left"] },
     { value = "CENTER", text = ns.L["Center"] },
@@ -2041,14 +2045,22 @@ local function RenderDispelOverlaySection(sectionHost, ctx)
     end
 
     builder.Header(ns.L["Dispel Overlay"])
-    builder.Description(string.format(ns.L["Dispel overlays, including Blizzard private-dispel markers when available, for %1$s group frames."], groupFrames.sourceLabel))
+    builder.Description(string.format(ns.L["Dispel border and type-icon alerts for %1$s group frames."], groupFrames.sourceLabel))
 
     local dispelCard = builder.Card()
-    local dispelRows = {}
+    local borderRows, iconRows = {}, {}
+    local scopeRow
     local function UpdateDispelRows()
-        local alpha = dispel.enabled and 1.0 or 0.4
-        for _, row in ipairs(dispelRows) do
-            row:SetAlpha(alpha)
+        local borderAlpha = dispel.enabled ~= false and 1.0 or 0.4
+        local iconAlpha = dispel.showIcon == true and 1.0 or 0.4
+        for _, row in ipairs(borderRows) do
+            row:SetAlpha(borderAlpha)
+        end
+        for _, row in ipairs(iconRows) do
+            row:SetAlpha(iconAlpha)
+        end
+        if scopeRow then
+            scopeRow:SetAlpha((dispel.enabled ~= false or dispel.showIcon == true) and 1.0 or 0.4)
         end
     end
 
@@ -2058,51 +2070,104 @@ local function RenderDispelOverlaySection(sectionHost, ctx)
     end, {
         description = ns.L["Outline the frame border in the dispel type's color when a dispellable debuff or private-dispel marker is active on the unit."],
     })
+    local iconEnableCheckbox = gui:CreateFormCheckbox(dispelCard.frame, nil, "showIcon", dispel, function()
+        refresh()
+        UpdateDispelRows()
+    end, {
+        description = ns.L["Show the Blizzard Magic, Curse, Disease, Poison, or Bleed type icon. Independent of the colored border."],
+    })
+    dispelCard.AddRow(
+        optionsAPI.BuildSettingRow(dispelCard.frame, ns.L["Enable Dispel Overlay"], dispelEnableCheckbox),
+        optionsAPI.BuildSettingRow(dispelCard.frame, ns.L["Show Dispel Type Icon"], iconEnableCheckbox)
+    )
+
+    local scopeDropdown = gui:CreateFormDropdown(dispelCard.frame, nil, DISPEL_SCOPE_OPTIONS, "scope", dispel, refresh, {
+        description = ns.L["Dispellable by Me shows actionable dispels. All Typed Debuffs also shows awareness-only types such as Bleed and Enrage. Cleanse-Ready Glow always remains actionable-only."],
+    })
+    scopeRow = optionsAPI.BuildSettingRow(dispelCard.frame, ns.L["Show For"], scopeDropdown)
+    local iconSizeSlider = gui:CreateFormSlider(dispelCard.frame, nil, 8, 64, 1, "iconSize", dispel, refresh, { deferOnDrag = true }, {
+        description = ns.L["Width and height of the dispel type icon in pixels."],
+    })
+    local iconSizeRow = optionsAPI.BuildSettingRow(dispelCard.frame, ns.L["Icon Size"], iconSizeSlider)
+    iconRows[#iconRows + 1] = iconSizeRow
+    dispelCard.AddRow(scopeRow, iconSizeRow)
+
     local borderSizeSlider = gui:CreateFormSlider(dispelCard.frame, nil, 1, 16, 1, "borderSize", dispel, refresh, { deferOnDrag = true }, {
         description = ns.L["Pixel thickness of the dispel border."],
     })
     local borderSizeRow = optionsAPI.BuildSettingRow(dispelCard.frame, ns.L["Border Size"], borderSizeSlider)
-    dispelRows[#dispelRows + 1] = borderSizeRow
+    borderRows[#borderRows + 1] = borderSizeRow
+    local iconOpacitySlider = gui:CreateFormSlider(dispelCard.frame, nil, 0.1, 1, 0.05, "iconOpacity", dispel, refresh, { deferOnDrag = true }, {
+        description = ns.L["Opacity of the dispel type icon."],
+    })
+    local iconOpacityRow = optionsAPI.BuildSettingRow(dispelCard.frame, ns.L["Icon Opacity"], iconOpacitySlider)
+    iconRows[#iconRows + 1] = iconOpacityRow
     dispelCard.AddRow(
-        optionsAPI.BuildSettingRow(dispelCard.frame, ns.L["Enable Dispel Overlay"], dispelEnableCheckbox),
-        borderSizeRow
+        borderSizeRow,
+        iconOpacityRow
     )
 
     local borderOpacitySlider = gui:CreateFormSlider(dispelCard.frame, nil, 0.1, 1, 0.05, "opacity", dispel, refresh, { deferOnDrag = true }, {
         description = ns.L["Opacity of the dispel-type colored border."],
     })
     local borderOpacityRow = optionsAPI.BuildSettingRow(dispelCard.frame, ns.L["Border Opacity"], borderOpacitySlider)
-    dispelRows[#dispelRows + 1] = borderOpacityRow
+    borderRows[#borderRows + 1] = borderOpacityRow
     local fillOpacitySlider = gui:CreateFormSlider(dispelCard.frame, nil, 0, 0.5, 0.05, "fillOpacity", dispel, refresh, { deferOnDrag = true }, {
         description = ns.L["Opacity of a color tint applied across the health bar when a dispellable debuff is active."],
     })
     local fillOpacityRow = optionsAPI.BuildSettingRow(dispelCard.frame, ns.L["Fill Opacity"], fillOpacitySlider)
-    dispelRows[#dispelRows + 1] = fillOpacityRow
+    borderRows[#borderRows + 1] = fillOpacityRow
     dispelCard.AddRow(borderOpacityRow, fillOpacityRow)
+
+    local iconAnchorDropdown = gui:CreateFormDropdown(dispelCard.frame, nil, NINE_POINT_OPTIONS, "iconAnchor", dispel, refresh, {
+        description = ns.L["Where the dispel type icon anchors on the unit frame."],
+    })
+    local iconAnchorRow = optionsAPI.BuildSettingRow(dispelCard.frame, ns.L["Icon Anchor"], iconAnchorDropdown)
+    iconRows[#iconRows + 1] = iconAnchorRow
+    local iconXSlider = gui:CreateFormSlider(dispelCard.frame, nil, -100, 100, 1, "iconOffsetX", dispel, refresh, { deferOnDrag = true }, {
+        description = ns.L["Horizontal pixel offset of the dispel type icon."],
+    })
+    local iconXRow = optionsAPI.BuildSettingRow(dispelCard.frame, ns.L["Icon X Offset"], iconXSlider)
+    iconRows[#iconRows + 1] = iconXRow
+    dispelCard.AddRow(iconAnchorRow, iconXRow)
+
+    local iconYSlider = gui:CreateFormSlider(dispelCard.frame, nil, -100, 100, 1, "iconOffsetY", dispel, refresh, { deferOnDrag = true }, {
+        description = ns.L["Vertical pixel offset of the dispel type icon."],
+    })
+    local iconYRow = optionsAPI.BuildSettingRow(dispelCard.frame, ns.L["Icon Y Offset"], iconYSlider)
+    iconRows[#iconRows + 1] = iconYRow
+    dispelCard.AddRow(iconYRow)
 
     local magicColorPicker = gui:CreateFormColorPicker(dispelCard.frame, nil, "Magic", dispel.colors, refresh, nil, {
         description = ns.L["Color used when the active dispellable debuff is of Magic type."],
     })
     local magicColorRow = optionsAPI.BuildSettingRow(dispelCard.frame, ns.L["Magic Color"], magicColorPicker)
-    dispelRows[#dispelRows + 1] = magicColorRow
+    borderRows[#borderRows + 1] = magicColorRow
     local curseColorPicker = gui:CreateFormColorPicker(dispelCard.frame, nil, "Curse", dispel.colors, refresh, nil, {
         description = ns.L["Color used when the active dispellable debuff is of Curse type."],
     })
     local curseColorRow = optionsAPI.BuildSettingRow(dispelCard.frame, ns.L["Curse Color"], curseColorPicker)
-    dispelRows[#dispelRows + 1] = curseColorRow
+    borderRows[#borderRows + 1] = curseColorRow
     dispelCard.AddRow(magicColorRow, curseColorRow)
 
     local diseaseColorPicker = gui:CreateFormColorPicker(dispelCard.frame, nil, "Disease", dispel.colors, refresh, nil, {
         description = ns.L["Color used when the active dispellable debuff is of Disease type."],
     })
     local diseaseColorRow = optionsAPI.BuildSettingRow(dispelCard.frame, ns.L["Disease Color"], diseaseColorPicker)
-    dispelRows[#dispelRows + 1] = diseaseColorRow
+    borderRows[#borderRows + 1] = diseaseColorRow
     local poisonColorPicker = gui:CreateFormColorPicker(dispelCard.frame, nil, "Poison", dispel.colors, refresh, nil, {
         description = ns.L["Color used when the active dispellable debuff is of Poison type."],
     })
     local poisonColorRow = optionsAPI.BuildSettingRow(dispelCard.frame, ns.L["Poison Color"], poisonColorPicker)
-    dispelRows[#dispelRows + 1] = poisonColorRow
+    borderRows[#borderRows + 1] = poisonColorRow
     dispelCard.AddRow(diseaseColorRow, poisonColorRow)
+
+    local bleedColorPicker = gui:CreateFormColorPicker(dispelCard.frame, nil, "Bleed", dispel.colors, refresh, nil, {
+        description = ns.L["Bleed effects can't be dispelled — this color is for awareness only."],
+    })
+    local bleedColorRow = optionsAPI.BuildSettingRow(dispelCard.frame, ns.L["Bleed"], bleedColorPicker)
+    borderRows[#borderRows + 1] = bleedColorRow
+    dispelCard.AddRow(bleedColorRow)
 
     UpdateDispelRows()
     builder.CloseCard(dispelCard)
@@ -2748,6 +2813,8 @@ local function RenderAurasSection(sectionHost, ctx)
     end
 
     local forcedIndex = GetSelectedElementIndex(ctx, groupFrames.contextMode, selectedBucket)
+    local editorMounted = false
+    local editorHeight
 
     RenderEmbeddedEditorSection(sectionHost, builder, function(editorHost)
         return AurasEditor.RenderAuras(editorHost, auras, selectedBucket, function()
@@ -2774,27 +2841,24 @@ local function RenderAurasSection(sectionHost, ctx)
                 SetSelectedElementIndex(ctx, groupFrames.contextMode, selectedBucket, index)
             end,
             onLayoutChanged = function(height)
-                -- Re-anchor the sections below the editor only when its height
-                -- actually changes. The first observation just seeds the store
-                -- (the synchronous render already laid everything out), so we
-                -- avoid a redundant repaint on open; later changes (add/remove/
-                -- expand) trigger one re-render that converges, because the
-                -- width-stable height is a fixed point.
                 if type(height) ~= "number" then
                     return
                 end
-                local store = ctx.state and ctx.state._aurasEditorHeight
-                if type(store) ~= "table" then
-                    store = {}
-                    if ctx.state then
-                        ctx.state._aurasEditorHeight = store
-                    end
+                local previousHeight = editorHeight
+                editorHeight = height
+                -- The synchronous first render already returns the correct
+                -- section height. Later disclosure/list changes resize this
+                -- section in place, which re-anchors Targeted Spells without
+                -- destroying and painting the whole Auras tab a second time.
+                if not editorMounted or previousHeight == nil or previousHeight == height then
+                    return
                 end
-                local key = ElementIndexKey(groupFrames.contextMode, selectedBucket)
-                if store[key] == nil then
-                    store[key] = height
-                elseif store[key] ~= height then
-                    store[key] = height
+                local sectionHeight = ctx.runtime
+                    and ctx.runtime.sectionHeights
+                    and ctx.runtime.sectionHeights.auras
+                if type(ctx.ResizeSection) == "function" and type(sectionHeight) == "number" then
+                    ctx:ResizeSection("auras", sectionHeight + (height - previousHeight))
+                else
                     ScheduleTabRepaint(ctx)
                 end
             end,
@@ -2802,6 +2866,7 @@ local function RenderAurasSection(sectionHost, ctx)
     end, {
         minHeight = 1,
     })
+    editorMounted = true
 
     return builder.Height()
 end
