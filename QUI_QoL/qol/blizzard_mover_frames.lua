@@ -485,6 +485,9 @@ M._FrameRegistryData = {
 			useRootHandle = true,
 			handles = { "SendMailFrame", "MailFrameInset" },
 			secureFrame = true,
+			-- UIParentPanelManager re-stamps the left-area slot on every
+			-- UpdateUIPanelPositions pass while the mailbox is open.
+			reassertOnDrift = true,
 			defaultEnabled = true,
 		},
 		{
@@ -496,6 +499,7 @@ M._FrameRegistryData = {
 			useRootHandle = true,
 			handles = { "OpenMailSender", "OpenMailFrameInset" },
 			secureFrame = true,
+			reassertOnDrift = true,
 			defaultEnabled = true,
 		},
 		{

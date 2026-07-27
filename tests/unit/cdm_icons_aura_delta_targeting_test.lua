@@ -49,6 +49,14 @@ local mirroredBuffReverse
 local runtimeBatches = 0
 local buffAuraResolutionUnit = "player"
 local buffAuraResolutionInstanceID = 621
+local customContainerSettings = {
+    containerType = "customBar",
+    iconDisplayMode = "active",
+    showOnlyWhenActive = false,
+    showOnlyInCombat = false,
+    hideNonUsable = false,
+    dynamicLayout = false,
+}
 
 local function makeIcon(name, cooldownID)
     local icon = {
@@ -64,6 +72,10 @@ local function makeIcon(name, cooldownID)
         _blizzMirrorCategory = "essential",
         Cooldown = {
             Clear = noop,
+            SetDrawSwipe = noop,
+            SetDrawEdge = noop,
+            SetSwipeTexture = noop,
+            SetSwipeColor = noop,
             SetReverse = noop,
         },
         Icon = {
@@ -115,6 +127,17 @@ end
 mirroredBuffAuraIcon.Cooldown.SetReverse = function(_, reverse)
     mirroredBuffReverse = reverse
 end
+local customAuraIcon = makeIcon("customAura", 455397)
+customAuraIcon._spellEntry = {
+    id = 455397,
+    spellID = 455397,
+    name = "customAura",
+    kind = "aura",
+    viewerType = "custom",
+    type = "spell",
+}
+customAuraIcon._blizzMirrorCooldownID = nil
+customAuraIcon._shown = false
 local itemAuraIcon = makeIcon("itemAura", 241288)
 itemAuraIcon._spellEntry = {
     id = 241288,
@@ -175,6 +198,7 @@ local ns = {
                         rangeIndicator = false,
                         usabilityIndicator = false,
                     },
+                    custom = customContainerSettings,
                 }
             end
         end,
@@ -191,7 +215,10 @@ local ns = {
                 ncdm = {
                     essential = { iconDisplayMode = "always" },
                     buff = { iconDisplayMode = "active" },
-                    containers = {},
+                    custom = customContainerSettings,
+                    containers = {
+                        custom = customContainerSettings,
+                    },
                 },
             },
             char = { ncdm = {} },
@@ -278,6 +305,20 @@ local ns = {
                     hasRenderableCooldown = true,
                 }
             end
+            if name == "customAura" then
+                return {
+                    mode = "aura",
+                    active = true,
+                    isActive = true,
+                    sourceID = "aura:direct:455397",
+                    spellID = 455397,
+                    auraResolved = true,
+                    auraInstanceID = 731,
+                    auraUnit = "player",
+                    resolvedAuraSpellID = 455397,
+                    isOnCooldown = false,
+                }
+            end
             if name == "itemAura" then
                 if not itemAuraActive then
                     return {
@@ -321,6 +362,7 @@ local ns = {
         _iconPools = {
             essential = { matchingIcon, unrelatedIcon, nonMirrorIcon, itemAuraIcon },
             buff = { buffAuraIcon, mirroredBuffAuraIcon },
+            custom = { customAuraIcon },
         },
         _recyclePool = {},
         _FinalizeImports = noop,
@@ -369,6 +411,7 @@ end
 assert(loadfile("QUI_CDM/cdm/cdm_icon_renderer.lua"))("QUI", ns)
 ns.CDMIconFactory._iconPools.essential = { matchingIcon, unrelatedIcon, nonMirrorIcon, itemAuraIcon }
 ns.CDMIconFactory._iconPools.buff = { buffAuraIcon, mirroredBuffAuraIcon }
+ns.CDMIconFactory._iconPools.custom = { customAuraIcon }
 
 local icons = assert(ns.CDMIcons, "CDMIcons should be exported")
 runtimeBatches = 0
@@ -411,6 +454,27 @@ assert(resolveCounts.buffAura == 1, "added player aura should re-resolve matchin
 assert(buffAuraIcon._shown == true, "active buff aura icon should be shown by the aura-delta visibility path")
 assert(layoutRequests > 0, "buff aura visibility flips should request buff icon layout")
 assert(buffContainerShows > 0, "buff aura visibility flips should wake the owning buff container")
+
+local customRefreshesBefore = resolveCounts.customAura or 0
+customAuraIcon._shown = false
+icons:UpdateRuntimeForType("custom")
+
+assert(resolveCounts.customAura == customRefreshesBefore + 1,
+    "custom-container runtime refresh should resolve aura-kind entries")
+assert(customAuraIcon._auraActive == true,
+    "custom-container aura refresh should stamp the entry active")
+assert(customAuraIcon._shown == true and customAuraIcon._alpha == 1,
+    "active display mode should visibly render an active aura-kind custom-container entry out of combat")
+
+customAuraIcon._shown = false
+inCombat = true
+icons:UpdateRuntimeForType("custom")
+inCombat = false
+
+assert(resolveCounts.customAura == customRefreshesBefore + 2,
+    "combat aura updates should re-resolve matching custom-container aura entries")
+assert(customAuraIcon._shown == true and customAuraIcon._alpha == 1,
+    "active display mode should visibly render an active aura-kind custom-container entry in combat")
 
 buffAuraIcon._shown = false
 buffAuraIcon._auraActive = false

@@ -722,6 +722,7 @@ local function NewCooldownActivityState(entry)
         -- charge predicates.
         hasCharges = entry and entry.hasCharges or false,
         gcdOnly = false,
+        overrideChildReady = false,
     }
 end
 
@@ -732,6 +733,7 @@ local function ApplyStoredCooldownActivityState(state, storedState)
 
     local mode = storedState.mode
     state.gcdOnly = storedState.gcdOnly == true or mode == "gcd-only"
+    state.overrideChildReady = storedState.overrideChildReady == true
     if storedState.hasCharges ~= nil then
         state.hasCharges = storedState.hasCharges == true
     end
@@ -797,6 +799,7 @@ local function ApplyResolvedCooldownActivityState(state, resolvedState)
 
     local mode = resolvedState.mode
     state.gcdOnly = resolvedState.gcdOnly == true or mode == "gcd-only"
+    state.overrideChildReady = resolvedState.overrideChildReady == true
     state.hasCharges = resolvedState.hasCharges == true
         or state.hasCharges == true
         or mode == "charge"
@@ -1795,6 +1798,7 @@ local _mirrorPayloadScratch = {
     auraData = nil,
     totemSlot = nil, totemName = nil, totemIcon = nil, isTotemInstance = false,
     count = nil, hasExpirationTime = nil, hideDurationText = nil,
+    overrideChildReady = false,
 }
 local _mirrorCountScratch = {
     value = nil, sinkText = nil, shown = false, source = nil,
@@ -1811,6 +1815,7 @@ local function WipeMirrorPayloadScratch()
     p.isTotemInstance = false
     p.count = nil
     p.hasExpirationTime = nil; p.hideDurationText = nil
+    p.overrideChildReady = false
 end
 
 local function BuildMirrorCountPayload(m, renderMode)
@@ -2088,27 +2093,40 @@ local function DeriveMirrorPayloadMode(m, sid, suppressAura)
     -- curve in cdm_icon_renderer.lua, so a cosmetic isOnGCD wobble here only
     -- affects which swipe shows, never the dark/bright state the user sees.
     local baseOnGCD = cdInfo and cdInfo.isOnGCD
+    -- An active override child whose OWN spell has a rolling cooldown lane
+    -- (Shadow Priest Void Volley during Voidform) follows that lane no matter
+    -- what the base reports -- Blizzard's CooldownViewer queries the override
+    -- spell, so the base's major-cooldown swipe must not paint over it. Only
+    -- an actively rolling lane ("cooldown"/"gcd-only") may return here: an
+    -- "inactive" verdict (proc ready, or no lane of its own) falls through --
+    -- ready-classification, the overrideChildReady visibility flag, and the
+    -- charge/gcd/casting fallbacks below own that shape (Brewmaster Empty
+    -- Barrel brew procs are the reference case).
+    local overrideMode, overrideAura, overrideCooldownSid =
+        ResolveActiveOverrideChildCooldownLane(m, sid)
+    if overrideMode and overrideMode ~= "inactive" then
+        return overrideMode, overrideAura, overrideCooldownSid
+    end
     -- A real (non-GCD) cooldown on the base always wins -- EXCEPT when this is a
     -- transient proc override that is available while its base recharges, where
     -- the "cooldown" we just read is the base's shared slot and Blizzard shows
     -- the proc ready. Show ready (inactive) so the proc surfaces + glows.
     if cdActive and baseOnGCD ~= true then
-        -- An active override child whose OWN spell owns a cooldown lane (Shadow
-        -- Priest Void Volley over Voidform) must follow that lane, not the base's
-        -- major cooldown. Resolve it HERE -- gated on the base carrying a real
-        -- (non-GCD) cooldown, the only state where the base would otherwise paint
-        -- over the override. Override children WITHOUT a real base cooldown
-        -- (Brewmaster Empty Barrel brew procs: free-cast override, base idle or
-        -- on a charge recharge) must fall through to the override / charge-
-        -- recharge / gcd / casting chain below that surfaced them before 4.0.4 --
-        -- NOT collapse to inactive and drop off the bar.
-        local overrideMode, overrideAura, overrideCooldownSid =
-            ResolveActiveOverrideChildCooldownLane(m, sid)
+        -- The override-child lane was resolved above; a rolling own lane has
+        -- already returned. An "inactive" verdict landing here means the live
+        -- override child is READY while the base rolls a real cooldown (Empty
+        -- Barrel brew proc). Correct mode -- the proc IS ready -- but
+        -- containers with iconDisplayMode="active" hide inactive icons, so
+        -- flag the shape (4th return) and let the visibility layer keep the
+        -- icon shown. A persistent form override that is merely ready with
+        -- its base idle never reaches this branch (no real base cooldown),
+        -- so it stays hideable.
         if overrideMode then
-            return overrideMode, overrideAura, overrideCooldownSid
+            return overrideMode, overrideAura, overrideCooldownSid,
+                overrideMode == "inactive"
         end
         if IsTransientProcOverrideReady(m, sid) then
-            return "inactive", nil, nil
+            return "inactive", nil, nil, true
         end
         return "cooldown", nil, sid
     end
@@ -2144,6 +2162,32 @@ local function DeriveMirrorPayloadMode(m, sid, suppressAura)
             if overrideOnGCD ~= true then
                 return "cooldown", nil, overrideSid
             end
+        end
+    end
+    -- A LIVE override-child proc outranks every remaining base lane. The
+    -- override's own cooldown was just ruled out above (shared-slot form
+    -- overrides report the base's slot there and take the cooldown branch),
+    -- so a still-active child here means the proc spell is castable NOW —
+    -- Blizzard's CooldownViewer queries the override spell and shows it
+    -- READY, not the base's charge-recharge or GCD swipe (Brewmaster Empty
+    -- Barrel brew procs are the reference case). Classify inactive (ready)
+    -- and flag overrideChildReady so iconDisplayMode="active" keeps the icon
+    -- shown. Two proofs of "live proc" gate the branch, because a fully-idle
+    -- base under a PERSISTENT form/spec override (Druid Stampeding Roar in
+    -- form, child active for hours) is indistinguishable from a proc by
+    -- cooldown queries alone and must stay hideable:
+    --   * the base is rolling a charge recharge (something the proc frees
+    --     the player from waiting on), or
+    --   * the proc-overlay event cache flags the override spellID — the
+    --     authoritative proc edge (SPELL_ACTIVATION_OVERLAY_GLOW_SHOW).
+    if SafeBoolean(m.childIsActive) == true
+        and overrideSid and overrideSid ~= sid
+        and not (overrideCdInfo and overrideCdInfo.isActive == true)
+        and Sources and Sources.QueryIsSpellKnownOrPlayerSpell
+        and Sources.QueryIsSpellKnownOrPlayerSpell(sid) == true then
+        if HasActiveChargeRecharge(sid, SafeBoolean(m.charges) == true)
+            or (procOverlayProbe and procOverlayProbe(overrideSid)) then
+            return "inactive", nil, nil, true
         end
     end
     -- An active multi-charge recharge outranks the GCD. While a charge is
@@ -2228,11 +2272,12 @@ local function BuildMirrorRenderPayload(
 
     local sourceCooldownID = m.cooldownID or fallbackCooldownID or fallbackSpellID
     local sourceSpellID = m.spellID or m.overrideSpellID or fallbackSpellID
-    local mode, derivedAuraData, cooldownSpellID
+    local mode, derivedAuraData, cooldownSpellID, overrideChildReady
     if overrideMode then
         mode = overrideMode
     else
-        mode, derivedAuraData, cooldownSpellID = DeriveMirrorPayloadMode(m, sourceSpellID, suppressAura)
+        mode, derivedAuraData, cooldownSpellID, overrideChildReady =
+            DeriveMirrorPayloadMode(m, sourceSpellID, suppressAura)
     end
     local active = mode ~= "inactive"
     -- DeriveMirrorPayloadMode returns the spellID where the active cooldown
@@ -2371,6 +2416,7 @@ local function BuildMirrorRenderPayload(
     payload.totemIcon = m.totemIcon
     payload.cooldownDurObj = m.cooldownDurObj
     payload.isTotemInstance = m.totemSlot and true or false
+    payload.overrideChildReady = overrideChildReady == true
     payload.count = BuildMirrorCountPayload(m, mode)
 
     if active and mode == "aura" and not payloadDurObj then
@@ -2750,6 +2796,7 @@ local _cooldownStateScratch = {
     cooldownInfo = nil,
     cooldownInfoActive = nil,
     cooldownInfoOnGCD = nil,
+    overrideChildReady = false,
 }
 
 local function WipeCooldownState()
@@ -2803,6 +2850,7 @@ local function WipeCooldownState()
     s.cooldownInfo = nil
     s.cooldownInfoActive = nil
     s.cooldownInfoOnGCD = nil
+    s.overrideChildReady = false
 
     local c = _cooldownStateCountScratch
     c.value = nil
@@ -3040,6 +3088,7 @@ local function ApplyMirrorPayloadToCooldownState(state, payload)
     state.totemName = payload.totemName
     state.totemIcon = payload.totemIcon
     state.isTotemInstance = payload.isTotemInstance and true or false
+    state.overrideChildReady = payload.overrideChildReady == true
     CopyCountFactsToState(state, payload.count, true)
     if state.active and state.mode == "aura" and state.hasExpirationTime == nil and not state.durObj then
         state.hasExpirationTime = false
