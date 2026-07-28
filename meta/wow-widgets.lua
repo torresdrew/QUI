@@ -653,6 +653,9 @@ function __WowWidget:GetFormattedText(...) end
 ---@return any color
 function __WowWidget:GetFormattedTextColor(...) end
 ---@param ... any
+---@return number normalizedAlpha
+function __WowWidget:GetFromAlpha(...) end
+---@param ... any
 ---@return number percent
 function __WowWidget:GetFromPercent(...) end
 --- Returns the configured heal absorb clamping mode.
@@ -1039,6 +1042,9 @@ function __WowWidget:GetTimeModifier(...) end
 ---@return number timeVisibleSeconds
 function __WowWidget:GetTimeVisible(...) end
 ---@param ... any
+---@return number normalizedAlpha
+function __WowWidget:GetToAlpha(...) end
+---@param ... any
 ---@return number percent
 function __WowWidget:GetToPercent(...) end
 ---@param index? number
@@ -1113,6 +1119,10 @@ function __WowWidget:GetViewTranslation(...) end
 function __WowWidget:GetWorldScale(...) end
 --- Returns the text shown when the duration is not configured, or represents a zero-duration time span.
 ---@param ... any
+---@return number yaw
+function __WowWidget:GetYaw(...) end
+--- Returns the text shown when the duration is not configured, or represents a zero-duration time span.
+---@param ... any
 ---@return string text
 function __WowWidget:GetZeroDurationText(...) end
 ---@param ... any
@@ -1152,6 +1162,9 @@ function __WowWidget:HasSVG(...) end
 function __WowWidget:HasSecretValues(...) end
 --- Returns true once the duration has reached its start time.
 ---@param modifier? any
+---@param ... any
+---@return boolean hasStarted
+function __WowWidget:HasStarted(modifier, ...) end
 ---@param ... any
 ---@return boolean hasStarted
 function __WowWidget:HasStarted(modifier, ...) end
@@ -1216,6 +1229,9 @@ function __WowWidget:IsOccupiedDoor(...) end
 ---@param ... any
 ---@return boolean isPartOfDraggingRoom
 function __WowWidget:IsPartOfDraggingRoom(...) end
+---@param ... any
+---@return boolean preferringCollisionBounds
+function __WowWidget:IsPreferringModelCollisionBounds(...) end
 ---@param ... any
 ---@return boolean isSearchInProgress
 function __WowWidget:IsSearchInProgress(...) end
@@ -1713,6 +1729,9 @@ function __WowWidget:SetFontString(fontString, ...) end
 ---@param formatter? any
 ---@param ... any
 function __WowWidget:SetFormatter(formatter, ...) end
+---@param normalizedAlpha? number
+---@param ... any
+function __WowWidget:SetFromAlpha(normalizedAlpha, ...) end
 ---@param percent? number
 ---@param ... any
 function __WowWidget:SetFromPercent(percent, ...) end
@@ -2001,6 +2020,10 @@ function __WowWidget:SetRotation(radians, animate, ...) end
 ---@param ... any
 ---@return boolean success
 function __WowWidget:SetSVG(svgAsset, ...) end
+---@param scale? number
+---@param ... any
+---@return boolean success
+function __WowWidget:SetSVG(svgAsset, ...) end
 ---@param scaleX? number
 ---@param scaleY? number
 ---@param ... any
@@ -2155,6 +2178,9 @@ function __WowWidget:SetTimeSpan(startTime, endTime, ...) end
 ---@param timeVisibleSeconds? number
 ---@param ... any
 function __WowWidget:SetTimeVisible(timeVisibleSeconds, ...) end
+---@param normalizedAlpha? number
+---@param ... any
+function __WowWidget:SetToAlpha(normalizedAlpha, ...) end
 --- Resets this duration text binding to its default state, clearing the configured font string, duration, format, formatter, and fallback text.
 ---@param ... any
 function __WowWidget:SetToDefaults(...) end
@@ -2197,6 +2223,11 @@ function __WowWidget:SetUpdateCallback(cb, ...) end
 ---@param updateInterval? number
 ---@param ... any
 function __WowWidget:SetUpdateInterval(updateInterval, ...) end
+---@param x? boolean
+---@param y? boolean
+---@param z? boolean
+---@param ... any
+function __WowWidget:SetUpdateInterval(updateInterval, ...) end
 ---@param useGBuffer? boolean
 ---@param ... any
 function __WowWidget:SetUseGBuffer(useGBuffer, ...) end
@@ -2223,6 +2254,10 @@ function __WowWidget:SetViewTranslation(translationX, translationY, ...) end
 ---@param width? number
 ---@param ... any
 function __WowWidget:SetWidth(width, ...) end
+--- Configures the text shown when the duration is not configured, or represents a zero-duration time span.
+---@param text? string
+---@param ... any
+function __WowWidget:SetYaw(yaw, ...) end
 --- Configures the text shown when the duration is not configured, or represents a zero-duration time span.
 ---@param text? string
 ---@param ... any

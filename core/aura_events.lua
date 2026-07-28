@@ -38,6 +38,7 @@ local subscribers = {
     player = {},   -- only unit == "player"
     group  = {},   -- party/raid units (not player)
     roster = {},   -- player + party1..4 + raid1..40 only (skips target/focus/boss/nameplate/arena)
+    nameplate = {},-- nameplate1..40 (lazy per-unit frames, created on first Subscribe)
     all    = {},   -- every UNIT_AURA event
 }
 
@@ -50,10 +51,20 @@ local rosterUnits = { player = true }
 for i = 1, 4 do rosterUnits["party" .. i] = true end
 for i = 1, 40 do rosterUnits["raid" .. i] = true end
 
+-- Static nameplate unit set (nameplate1..40). Registration frames are
+-- created lazily on first "nameplate" Subscribe — see EnsureNameplateFrames.
+local nameplateUnits = {}
+for i = 1, 40 do nameplateUnits["nameplate" .. i] = true end
+
+local EnsureNameplateFrames -- forward decl (defined after QueueAuraEvent)
+
 function AuraEvents:Subscribe(filter, callback)
     local list = subscribers[filter]
     if not list then
-        error("AuraEvents:Subscribe invalid filter '" .. tostring(filter) .. "', use 'player', 'group', 'roster', or 'all'")
+        error("AuraEvents:Subscribe invalid filter '" .. tostring(filter) .. "', use 'player', 'group', 'roster', 'nameplate', or 'all'")
+    end
+    if filter == "nameplate" then
+        EnsureNameplateFrames()
     end
     -- Avoid duplicate subscriptions
     for _, cb in ipairs(list) do
@@ -85,8 +96,14 @@ coalesceFrame:Hide()
 
 -- Cache subscriber list lengths in hot-path locals to avoid the ipairs
 -- iterator cost on every pending unit. Updated inside Subscribe/Unsubscribe.
-local nAll, nRoster, nPlayer, nGroup = 0, 0, 0, 0
-local subAll, subRoster, subPlayer, subGroup = subscribers.all, subscribers.roster, subscribers.player, subscribers.group
+local nAll, nRoster, nPlayer, nGroup, nNameplate = 0, 0, 0, 0, 0
+local subAll, subRoster, subPlayer, subGroup, subNameplate =
+    subscribers.all, subscribers.roster, subscribers.player, subscribers.group, subscribers.nameplate
+
+-- Nameplate units eligible for the "all" tier this frame: the dedicated
+-- nameplate frames queue every event for "nameplate" subscribers, but the
+-- "all" tier keeps its narrow pre-tier contract (target + tooltip unit).
+local pendingAllEligible = {}
 
 -- One subscriber tier pass for a single unit. Named function so the
 -- protected call below is pcall(DispatchUnit, ...) — no closure allocation
@@ -105,9 +122,20 @@ local function ProtectedFanout(list, n, unit, info)
 end
 
 local function DispatchUnit(unit, info, isRoster)
+    local isNameplate = nameplateUnits[unit]
+
     -- Dispatch to "all" subscribers (every UNIT_AURA, including
-    -- nameplates/target/focus/boss/arena — use sparingly).
-    ProtectedFanout(subAll, nAll, unit, info)
+    -- target/focus/boss/arena — use sparingly). Nameplate units only reach
+    -- "all" when they passed the non-roster interest predicate.
+    if not isNameplate or pendingAllEligible[unit] then
+        ProtectedFanout(subAll, nAll, unit, info)
+    end
+
+    if isNameplate then
+        -- Nameplate tier: nameplate1..40 via dedicated unit frames.
+        ProtectedFanout(subNameplate, nNameplate, unit, info)
+        return
+    end
 
     if isRoster then
         -- Roster tier: player + party1..4 + raid1..40.
@@ -148,6 +176,7 @@ coalesceFrame:SetScript("OnUpdate", function(self)
         end
     end
     wipe(pendingUnits)
+    wipe(pendingAllEligible)
 end)
 
 local function RecountSubscribers()
@@ -155,6 +184,7 @@ local function RecountSubscribers()
     nRoster = #subRoster
     nPlayer = #subPlayer
     nGroup = #subGroup
+    nNameplate = #subNameplate
 end
 AuraEvents._RecountSubscribers = RecountSubscribers
 
@@ -367,6 +397,31 @@ for unit in pairs(rosterUnits) do
 end
 
 ---------------------------------------------------------------------------
+-- NAMEPLATE UNIT REGISTRATION (lazy)
+--
+-- 40 per-unit frames mirroring the roster pattern, created on the first
+-- "nameplate" Subscribe so the tier is free until a consumer exists.
+-- Deliberately NOT folded into IsNonRosterEventInteresting: extending the
+-- predicate would put a Lua call on the global UNIT_AURA hot path and fan
+-- nameplate events out to every "all" subscriber.
+---------------------------------------------------------------------------
+local nameplateFrames = nil
+EnsureNameplateFrames = function()
+    if nameplateFrames then return end
+    nameplateFrames = {}
+    for unit in pairs(nameplateUnits) do
+        local f = CreateFrame("Frame")
+        f:RegisterUnitEvent("UNIT_AURA", unit)
+        -- Same trusted-token contract as the roster frames: only the
+        -- registered token identifies the unit; payload args are not read.
+        f:SetScript("OnEvent", function(_, _, _, updateInfo)
+            QueueAuraEvent(unit, updateInfo)
+        end)
+        nameplateFrames[unit] = f
+    end
+end
+
+---------------------------------------------------------------------------
 -- NON-ROSTER REGISTRATION
 ---------------------------------------------------------------------------
 local eventFrame = CreateFrame("Frame")
@@ -381,6 +436,20 @@ eventFrame:SetScript("OnEvent", function(self, event, unit, updateInfo)
         return
     end
     if rosterUnits[unit] then
+        return
+    end
+    if nameplateUnits[unit] then
+        -- The "all" tier keeps its narrow contract for nameplate units.
+        if IsNonRosterEventInteresting(unit) then
+            pendingAllEligible[unit] = true
+            if nameplateFrames then
+                -- Dedicated frame queues this same event — queueing here too
+                -- would double the merged deltas.
+                coalesceFrame:Show()
+            else
+                QueueAuraEvent(unit, updateInfo)
+            end
+        end
         return
     end
     if not IsNonRosterEventInteresting(unit) then

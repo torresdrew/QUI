@@ -317,11 +317,11 @@ local function GetPreviewCountText(slot, sourceButton)
     if IsPreviewSecretValue(count) then
         return count
     else
-        if count == nil or count == "" or count == 0 or count == "0" then
+        if count == nil or count == "" or count == 0 or count == "0" then -- @secret-safe: IsPreviewSecretValue branch above proves count plain here
             return nil
         end
 
-        return tostring(count)
+        return tostring(count) -- @secret-safe: IsPreviewSecretValue branch above proves count plain here
     end
 end
 

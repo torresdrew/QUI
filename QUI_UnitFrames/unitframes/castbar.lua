@@ -254,10 +254,10 @@ local CHANNEL_TICK_SUBEVENTS = {
 }
 
 local function NormalizeChannelTickSpellID(spellID)
-    if not spellID then return nil end
     if IsSecretValue(spellID) then
         return nil -- @secret-policy: reject-secret-ids
     end
+    if not spellID then return nil end
     local safeSpellID = SafeToNumber(spellID)
     if not safeSpellID then
         return nil
@@ -266,10 +266,10 @@ local function NormalizeChannelTickSpellID(spellID)
 end
 
 local function NormalizeChannelTickGUID(guid)
-    if not guid then return nil end
     if IsSecretValue(guid) then
         return nil -- @secret-policy: reject-secret-ids
     end
+    if not guid then return nil end
     if type(guid) ~= "string" or guid == "" then
         return nil
     end
@@ -2492,6 +2492,12 @@ local function GetGCDCooldownInfo()
     -- secretize, the container never does — round-10b), so no nil/truth
     -- test on `info` itself.
     local info = C_Spell.GetSpellCooldown(GCD_SPELL_ID)
+    if IsSecretValue(info) then
+        return nil, nil -- @secret-policy: reject-secret-value — the GCD sweep needs readable timing
+    end
+    if not info then
+        return nil, nil
+    end
 
     local startTime = SafeToNumber(info.startTime)
     local duration = SafeToNumber(info.duration)

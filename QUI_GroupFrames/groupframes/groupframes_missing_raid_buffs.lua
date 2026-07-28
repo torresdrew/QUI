@@ -585,7 +585,7 @@ local function UnitInKnownRange(unit)
                 -- ACTION POLICY, not range truth: a secret range is
                 -- INDETERMINATE — keep the unit eligible (a possibly
                 -- in-range unit is never dropped on unverifiable range).
-            elseif checked and inRange == false then
+            elseif checked and inRange == false then -- @secret-safe: IsSecretValue branch above proves checked/inRange plain here
                 return false
             end
         end

@@ -166,6 +166,9 @@ local function should_load_script(path)
         if path:match("^QUI_UnitFrames/unitframes/settings/") then
             return true
         end
+        if path:match("^QUI_Nameplates/nameplates/settings/") then
+            return true
+        end
         if path:match("^QUI_Chat/chat/settings/") then
             return true
         end
@@ -2157,6 +2160,57 @@ local function capture_unit_frames_settings_tabs()
     return #capture_errors == 0
 end
 
+local NAMEPLATES_SEARCH_CAPTURE_TABS = {
+    { key = "display", label = "Display", method = "RenderDisplayTab", subTabIndex = 1 },
+    { key = "auras", label = "Auras", method = "RenderAurasTab", subTabIndex = 2 },
+    { key = "castbars", label = "Castbars", method = "RenderCastbarsTab", subTabIndex = 3 },
+    { key = "colors", label = "Colors", method = "RenderColorsTab", subTabIndex = 4 },
+    { key = "behavior", label = "Behavior", method = "RenderBehaviorTab", subTabIndex = 5 },
+}
+
+local function capture_nameplates_settings_tabs()
+    local schema = ns.QUI_NameplatesSettingsSchema
+    if type(schema) ~= "table" then
+        return true
+    end
+
+    for _, tab in ipairs(NAMEPLATES_SEARCH_CAPTURE_TABS) do
+        local render = schema[tab.method]
+        if type(render) == "function" then
+            local host = create_stub_node("Frame", nil, false)
+            host:SetSize(760, 1)
+
+            GUI:ClearSearchContext()
+            local ok, err = xpcall(function()
+                GUI:SetSearchContext({
+                    tabIndex = 21,
+                    tabName = "Nameplates",
+                    subTabIndex = tab.subTabIndex,
+                    subTabName = tab.label,
+                    tileId = "nameplates",
+                    subPageIndex = 1,
+                    featureId = "nameplatesPage",
+                    category = "frames",
+                    surfaceTabKey = tab.key,
+                })
+                render(host)
+                GUI:ClearSearchContext()
+            end, debug.traceback)
+            GUI:ClearSearchContext()
+
+            if not ok then
+                capture_errors[#capture_errors + 1] = {
+                    featureId = "nameplatesPage",
+                    providerKey = tab.key,
+                    error = err,
+                }
+            end
+        end
+    end
+
+    return #capture_errors == 0
+end
+
 local ACTION_BAR_ANCHOR_OPTIONS = {
     { value = "TOPLEFT", text = "Top Left" },
     { value = "TOP", text = "Top" },
@@ -2542,6 +2596,7 @@ capture_cdm_settings_tabs()
 capture_group_frames_settings_tabs()
 capture_group_frames_auras_elements()
 capture_unit_frames_settings_tabs()
+capture_nameplates_settings_tabs()
 capture_action_bar_per_bar_settings()
 capture_minimap_datatext_settings()
 

@@ -436,6 +436,16 @@ local function ApplyHideSettings()
         local hidePlayers = settings.hideFriendlyPlayerNameplates
         local hideNPCs = settings.hideFriendlyNPCNameplates
         C_Timer.After(0, function()
+            -- QUI_Nameplates owns ALL nameplate CVars while its friendly
+            -- module is active (combat-deferred writes, mode-aware). Writing
+            -- the friendly-visibility group here too would fight it — hand
+            -- these two toggles over instead. Delegation stays inside the
+            -- deferred closure so the taint break holds for both paths.
+            local npCVars = ns.QUI_NameplatesCVars
+            if npCVars and npCVars.IsActive and npCVars:IsActive() then
+                npCVars:RequestFriendlyVisibility(not hidePlayers, not hideNPCs)
+                return
+            end
             SetCVar("nameplateShowFriendlyPlayers", hidePlayers and "0" or "1")
             SetCVar("nameplateShowFriendlyNPCs", hideNPCs and "0" or "1")
         end)

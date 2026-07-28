@@ -1201,7 +1201,7 @@ local function UpdateAbsorbs(frame, _unit, _maxHP)
     -- UnitGetTotalAbsorbs return is secret in restricted combat and
     -- `not <secret>` throws, which killed the sink route below.
     if not IsSecretValue(absorbAmount)
-        and (not absorbAmount or SafeToNumber(absorbAmount, 0) <= 0) then
+        and (not absorbAmount or SafeToNumber(absorbAmount, 0) <= 0) then -- @secret-safe: IsSecretValue probe leads this compound; short-circuit keeps the truth-test off secrets
         frame.absorbBar:SetValue(0)
         frame.absorbBar:Hide()
         return
@@ -1269,7 +1269,7 @@ local function UpdateHealAbsorb(frame, _unit, _maxHP)
     -- restricted combat and `not <secret>` throws; a secret amount rides the
     -- C-side SetMinMaxValues/SetValue sinks below.
     if not IsSecretValue(healAbsorbAmount)
-        and (not healAbsorbAmount or SafeToNumber(healAbsorbAmount, 0) <= 0) then
+        and (not healAbsorbAmount or SafeToNumber(healAbsorbAmount, 0) <= 0) then -- @secret-safe: IsSecretValue probe leads this compound; short-circuit keeps the truth-test off secrets
         frame.healAbsorbBar:SetValue(0)
         frame.healAbsorbBar:Hide()
         return
@@ -1339,7 +1339,7 @@ local function UpdateHealPrediction(frame, _unit, _maxHP)
     -- secret; a secret amount just flows to the C-side bar below.
     if IsSecretValue(incomingHeals) then
         -- secret: render path absorbs it
-    elseif not incomingHeals then
+    elseif not incomingHeals then -- @secret-safe: IsSecretValue branch above proves incomingHeals plain here
         frame.healPredictionBar:Hide()
         return
     end
@@ -1658,7 +1658,7 @@ local function UpdateTargetMarker(frame)
         frame.targetMarker:Hide()
         return
     end
-    if index then
+    if index then -- @secret-safe: IsSecretValue early-return above proves index plain here
         frame.targetMarker:SetTexture("Interface\\TargetingFrame\\UI-RaidTargetingIcons")
         SetRaidTargetIconTexture(frame.targetMarker, index)
         frame.targetMarker:Show()
@@ -4537,7 +4537,7 @@ local function CheckUnitRange(unit)
         if issecretvalue and issecretvalue(inRange) then
             return inRange
         end
-        if inRange ~= nil then return inRange end
+        if inRange ~= nil then return inRange end -- @secret-safe: issecretvalue early-return above proves inRange plain here
     end
 
     if _range.spell and friendlyReturnedNil and connected and not isDead then

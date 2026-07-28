@@ -239,9 +239,19 @@ function MPlusProgress:UpdateNameplatePosition(unit)
     end
 
     local settings = Settings()
+    -- Prefer QUI_Nameplates' visual anchor when the custom plates are active:
+    -- the Blizzard base frame's edges don't line up with QUI's plate art, so
+    -- "RIGHT of plate" would float in space. Parent stays the Blizzard base
+    -- (its lifecycle drives visibility); only the anchor region changes.
+    local anchorRegion = nameplate
+    local customPlates = ns.QUI_Nameplates
+    if customPlates and customPlates.GetPlateAnchor then
+        local plateAnchor = customPlates:GetPlateAnchor(unit)
+        if plateAnchor then anchorRegion = plateAnchor end
+    end
     frame:SetParent(nameplate)
     frame:ClearAllPoints()
-    frame:SetPoint("LEFT", nameplate, "RIGHT", settings.nameplateOffsetX or 0, settings.nameplateOffsetY or 0)
+    frame:SetPoint("LEFT", anchorRegion, "RIGHT", settings.nameplateOffsetX or 0, settings.nameplateOffsetY or 0)
     frame:SetSize(120, 22)
     ApplyNameplateStyle(frame)
     return true

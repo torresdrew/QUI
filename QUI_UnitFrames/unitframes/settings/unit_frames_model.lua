@@ -105,6 +105,7 @@ local TAB_DEFINITIONS = {
     { key = "bars", label = ns.L["Bars"], render = RenderBars },
     { key = "castbar", label = ns.L["Castbar"], render = RenderCastbar },
     { key = "text", label = ns.L["Text"], render = RenderText },
+    { key = "icons", label = ns.L["Auras"], render = RenderIcons },
     { key = "indicators", label = ns.L["Indicators"], render = RenderIndicators },
     { key = "portrait", label = ns.L["Portrait"], render = RenderPortrait },
 }
