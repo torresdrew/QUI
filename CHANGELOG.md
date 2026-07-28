@@ -9,6 +9,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v5.0.0-alpha29 - 2026-07-27
+
+> ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will
+> not load on the 12.0.x live client. Stay on the v4.x beta line for live realms.
+
+### Added
+- Nameplates are now a QUI module. Health bars, cast bars, and colors follow
+  the same styling you already set elsewhere, friendly plates can be handled
+  separately from enemies, and the aura row on each plate has its own filtering
+  — including different choices for dungeons, raids, and the open world, so a
+  plate can stay quiet in the world and show what matters in a key. Presets are
+  included as starting points, and the CVars nameplates depend on are managed
+  for you rather than left to be set by hand.
+- The raid markers bar gains two more rows. World markers (flares) place and
+  re-place on the ground with left-click, with a clear-all button alongside
+  them, and a leader strip adds ready check, role poll, and a pull countdown.
+  Both rows are leader-gated by default, so they appear only while you are the
+  group leader or a raid assist, and can be turned on independently.
+
 ## v5.0.0-alpha28 - 2026-07-25
 
 > ⚠️ **WoW 12.1 PTR ONLY.** QUI5 targets patch 12.1 (interface 120100) and will
