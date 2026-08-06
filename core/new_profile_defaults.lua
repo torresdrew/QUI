@@ -60,7 +60,7 @@ local function DecodeSeed()
     -- Same chain as profile_io's DeserializeProfileImportPayload:
     -- strip prefix -> DecodeForPrint -> DecompressDeflate -> Deserialize.
     str = str:gsub("%s+", "")
-    local prefix = str:match("^([A-Z][A-Z0-9]*%d):")
+    local prefix = str:match("^([A-Za-z][A-Za-z0-9]*%d):")
     if prefix then
         str = str:sub(#prefix + 2)
     end

@@ -1,7 +1,7 @@
--- tests/unit/migration_schema59_defensives_fold_test.lua
--- Run: lua5.1 tests/unit/migration_schema59_defensives_fold_test.lua
+-- tests/unit/migration_schema60_defensives_fold_test.lua
+-- Run: lua5.1 tests/unit/migration_schema60_defensives_fold_test.lua
 --
--- Migrations.FoldDefensiveIndicatorIntoElements (schema-59 step d): the legacy GF
+-- Migrations.FoldDefensiveIndicatorIntoElements (schema-60 step d): the legacy GF
 -- defensive indicator (healer.defensiveIndicator) becomes a seeded
 -- "defensives" element. Injection only into LATCHED "*" buckets (unlatched
 -- stores get the strip from the surface-aware runtime seed); enabled carries
@@ -68,7 +68,7 @@ do
     check("party: dedupeDefensives stripped",
         profile.quiGroupFrames.party.auras.elements["*"][1].dedupeDefensives == nil
         and profile.quiGroupFrames.party.auras.elements["*"][2].dedupeDefensives == nil)
-    check("stamped to current (59)", profile._schemaVersion == 59, tostring(profile._schemaVersion))
+    check("stamped to current (60)", profile._schemaVersion == 60, tostring(profile._schemaVersion))
 end
 
 ----------------------------------------------------------------------------
@@ -188,4 +188,4 @@ do
 end
 
 if failures > 0 then os.exit(1) end
-print("migration_schema59_defensives_fold_test: all checks passed")
+print("migration_schema60_defensives_fold_test: all checks passed")

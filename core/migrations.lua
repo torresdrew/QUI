@@ -17,52 +17,9 @@ ns.Migrations = Migrations
 -- reach the snapshot/restore helpers for the `/qui migration` slash command.
 if _G.QUI then _G.QUI.Migrations = Migrations end
 
--- Module-level upvalues set by Migrations.Run before iterating profiles and
--- cleared on exit. Declared here (file scope) so migration functions defined
--- anywhere in the file can reference them without forward-declaration issues.
-local _currentGlobalDB     = nil  -- db.global; for cross-profile reads (v32+)
+local _currentGlobalDB     = nil
 
----------------------------------------------------------------------------
--- Schema version history
----------------------------------------------------------------------------
--- v0–v47 = pre-5.0 history. Every step-by-step migration through v47 was
---       REMOVED in 5.0. NOTE: 4.x's header history stopped at v46, but its
---       chain carried one more (undocumented) gate — v47 =
---       ScrubRemovedImportantAuraFilter, dropping the Blizzard-removed
---       "IMPORTANT" AuraFilters flag (12.0.7) from stored unit-frame filter
---       state. The last stable release therefore shipped schema 47, which is
---       the migration floor (MIN_SUPPORTED_SCHEMA). Profiles below the floor
---       are backed up and reset; fresh profiles (stored==0) take normal init.
---
--- v48–v58 = BURNED alpha/dev numbers. None shipped in a stable release and
---       none represents an upgrade boundary that 5.0 users must traverse.
---       Never reuse them.
---
--- v59 = THE 5.0 SQUASH. Every profile at the stable v47 floor (and any
---       intermediate alpha stamp below 59) runs one direct migration to the
---       final 5.0 data model:
---         (a) RestoreBuffDebuffSplit — restore missing debuff geometry and its
---             frame anchor before the flat aura settings are consumed.
---         (b) PrunePrivateAuras — remove the retired private-aura settings.
---         (c) SeedAuraElements — convert legacy buff-border and unit-frame
---             aura settings directly into valid unified element stores, and
---             normalize existing group-frame elements in place.
---         (d) FoldDefensiveIndicatorIntoElements — replace the legacy group-
---             frame indicator with the shipped "defensives" element and fan
---             it into every non-empty override bucket in the same pass.
---         (e) PurgeOrphanContainerSatellites — remove settings left behind by
---             deleted CDM containers.
---
---       Alpha-only intermediate behavior is intentionally absent from this
---       migration. In particular, 5.0 never seeds then removes healer HoTs,
---       never emits invalid nested filter-container names as tokens, and never
---       needs repair passes for alpha-only boss-strip or HoT fan-out bugs.
---
--- When adding a new migration: bump CURRENT_SCHEMA_VERSION (next free number
--- is 60 — see the burned-numbers rule above), add a single linear gate in
--- RunOnProfile, and document the version above.
----------------------------------------------------------------------------
-local CURRENT_SCHEMA_VERSION = 59
+local CURRENT_SCHEMA_VERSION = 60
 
 -- The oldest schema we still carry forward. The last 4.x stable release and
 -- 5.0 alpha4 both shipped schema 47, and every step-by-step migration through
@@ -1874,28 +1831,64 @@ local function WipeProfileData(profile)
     end
 end
 
----------------------------------------------------------------------------
--- Entry point: Run all profile migrations
----------------------------------------------------------------------------
---
--- Run the full migration pipeline against a single raw profile table.
--- Accepts either db.profile (AceDB proxy) or a raw db.sv.profiles[name]
--- entry. Operates only on explicit user data — never relies on AceDB
--- default-merging, so it's safe to call against raw tables that have
--- never been touched by AceDB.
---
--- A profile's `_schemaVersion` records the last version it was migrated
--- through. The stable v47 floor upgrades through one direct v59 transform;
--- helper functions retain data-shape guards so a retry after an unavailable
--- dependency is safe.
---
--- Historical note: prior to the rewrite, CURRENT_SCHEMA_VERSION was a
--- constant `1` that never matched the actual number of migrations added
--- over time. Profiles from the 3.0 – 3.1.4 era all have `_schemaVersion=1`
--- stamped regardless of which migrations had actually run; they are
--- treated as v1 here and all post-v1 gates re-run against them, relying
--- on each migration's internal shape guards to no-op on already-migrated
--- data.
+-- Upstream (DrewUI) rebrands legacy QUI profile keys/tokens onto its own
+-- names here. QUI's keys ARE the legacy names, so both maps are empty and
+-- ApplyRebrand is a structural no-op — kept so RunOnProfile/RunOnGlobal keep
+-- the same shape as upstream and future key renames have a ready seam.
+local REBRANDED_PROFILE_KEYS = {}
+
+local REBRANDED_TOKENS = {}
+
+local PINNED_KEY_PATTERN = "^%d+:%d+:"
+
+function Migrations.ApplyRebrand(root)
+    if type(root) ~= "table" then return end
+
+    for oldKey, newKey in pairs(REBRANDED_PROFILE_KEYS) do
+        local legacy = root[oldKey]
+        if legacy ~= nil then
+            if root[newKey] == nil then
+                root[newKey] = legacy
+            end
+            root[oldKey] = nil
+        end
+    end
+
+    local seen = {}
+    local function walk(tbl)
+        if seen[tbl] then return end
+        seen[tbl] = true
+
+        local renames
+        for k, v in pairs(tbl) do
+            local newValue = type(v) == "string" and REBRANDED_TOKENS[v] or nil
+            if newValue then tbl[k] = newValue end
+
+            if type(k) == "string" then
+                local newKey = REBRANDED_TOKENS[k]
+                if not newKey and k:find(PINNED_KEY_PATTERN) and k:find("QUI", 1, true) then
+                    newKey = k:gsub("QUI(%A)", "QUI%1"):gsub("QUI$", "QUI")
+                end
+                if newKey and newKey ~= k then
+                    renames = renames or {}
+                    renames[#renames + 1] = { k, newKey }
+                end
+            end
+
+            if type(v) == "table" then walk(v) end
+        end
+
+        if renames then
+            for _, pair in ipairs(renames) do
+                local oldKey, newKey = pair[1], pair[2]
+                if tbl[newKey] == nil then tbl[newKey] = tbl[oldKey] end
+                tbl[oldKey] = nil
+            end
+        end
+    end
+    walk(root)
+end
+
 function Migrations.RunOnProfile(profile)
     if type(profile) ~= "table" then return false end
 
@@ -1981,8 +1974,8 @@ function Migrations.RunOnProfile(profile)
     -- seed/remove or repair chain. Burned intermediate stamps also enter this
     -- gate and are handled by the helpers' existing data-shape guards.
     if stored < CURRENT_SCHEMA_VERSION then
-        -- (a) restore missing debuff geometry before the flat aura settings
-        -- are consumed by the element migration.
+        Migrations.ApplyRebrand(profile)
+
         Migrations.RestoreBuffDebuffSplit(profile)
 
         -- (b) private-aura feature removed; strip stored privateAuras.
@@ -2023,6 +2016,10 @@ function Migrations.Run(db)
     -- individual RunOnProfile calls from other entry points (profile
     -- import, profile switch) get nil and handle its absence gracefully.
     _currentGlobalDB = db.global
+
+    if type(db.global) == "table" then
+        Migrations.ApplyRebrand(db.global)
+    end
 
     local sv = db.sv
 

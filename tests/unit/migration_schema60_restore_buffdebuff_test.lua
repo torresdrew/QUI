@@ -1,6 +1,6 @@
--- tests/unit/migration_schema59_restore_buffdebuff_test.lua
--- Run: lua5.1 tests/unit/migration_schema59_restore_buffdebuff_test.lua
--- Verifies the schema-59 migration restores the separate debuff grid keys +
+-- tests/unit/migration_schema60_restore_buffdebuff_test.lua
+-- Run: lua5.1 tests/unit/migration_schema60_restore_buffdebuff_test.lua
+-- Verifies the schema-60 migration restores the separate debuff grid keys +
 -- debuffFrame anchor after unified model.
 local ns = dofile("tools/_addon_env.lua").LoadCore()
 local M = ns.Migrations
@@ -18,7 +18,7 @@ local profile = {
 -- (M.RunOnProfile) also calls SeedAuraElements, which
 -- CONSUMES these flat buff*/debuff* grid keys into element stores and prunes
 -- them — so this step is asserted against the function directly. The full
--- schema-47→59 path (flat keys reshaped into element stores) is covered
+-- schema-47→60 path (flat keys reshaped into element stores) is covered
 -- by migration_floor_collapse_test.lua's at-floor(47) case.
 M.RestoreBuffDebuffSplit(profile)
 
@@ -31,4 +31,4 @@ assert(profile.buffBorders.debuffGrowUp == false, "missing debuffGrowUp must def
 assert(profile.frameAnchoring.debuffFrame ~= nil, "debuffFrame anchor must be restored")
 assert(profile.frameAnchoring.debuffFrame.parent == "buffFrame", "debuffFrame should default below/relative to buffFrame")
 assert(profile.frameAnchoring.someChild.parent == "buffFrame", "existing dependents must be preserved")
-print("migration_schema59_restore_buffdebuff_test: OK")
+print("migration_schema60_restore_buffdebuff_test: OK")

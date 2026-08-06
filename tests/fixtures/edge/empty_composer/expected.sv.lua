@@ -963,6 +963,7 @@ return {
           yOffset = -150
         },
         configPanelAlpha = 0.96999999999999997,
+        configPanelHeight = 850,
         configPanelScale = 1,
         configPanelWidth = 750,
         cooldownEffects = {
@@ -1392,2934 +1393,6 @@ return {
             showIcon = false,
             volumeStep = 5
           }
-        },
-        frameAnchoring = {
-          actionTracker = {
-            autoHeight = false,
-            autoWidth = false,
-            heightAdjust = 0,
-            hideWithParent = false,
-            keepInPlace = true,
-            offsetX = -20,
-            offsetY = 0,
-            parent = "screen",
-            point = "RIGHT",
-            relative = "RIGHT",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          alertAnchor = {
-            autoHeight = false,
-            autoWidth = false,
-            heightAdjust = 0,
-            hideWithParent = false,
-            keepInPlace = true,
-            offsetX = 0,
-            offsetY = -20,
-            parent = "screen",
-            point = "TOP",
-            relative = "TOP",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          atonementCounter = {
-            autoHeight = false,
-            autoWidth = false,
-            heightAdjust = 0,
-            hideWithParent = false,
-            keepInPlace = true,
-            offsetX = 0,
-            offsetY = 0,
-            parent = "brezCounter",
-            point = "BOTTOM",
-            relative = "TOP",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          bagBar = {
-            autoHeight = false,
-            autoWidth = false,
-            heightAdjust = 0,
-            hideWithParent = false,
-            keepInPlace = true,
-            offsetX = 0,
-            offsetY = 0,
-            parent = "microMenu",
-            point = "TOPLEFT",
-            relative = "BOTTOMLEFT",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          bar1 = {
-            autoHeight = false,
-            autoWidth = false,
-            heightAdjust = 0,
-            hideWithParent = false,
-            keepInPlace = true,
-            offsetX = 0,
-            offsetY = 0,
-            parent = "bar3",
-            point = "BOTTOM",
-            relative = "TOP",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          bar2 = {
-            autoHeight = false,
-            autoWidth = false,
-            heightAdjust = 0,
-            hideWithParent = false,
-            keepInPlace = true,
-            offsetX = 0,
-            offsetY = 0,
-            parent = "bar1",
-            point = "BOTTOM",
-            relative = "TOP",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          bar3 = {
-            autoHeight = false,
-            autoWidth = false,
-            heightAdjust = 0,
-            hideWithParent = false,
-            keepInPlace = true,
-            offsetX = 0,
-            offsetY = 0,
-            parent = "screen",
-            point = "BOTTOMRIGHT",
-            relative = "BOTTOM",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          bar4 = {
-            autoHeight = false,
-            autoWidth = false,
-            heightAdjust = 0,
-            hideWithParent = false,
-            keepInPlace = true,
-            offsetX = 0,
-            offsetY = 0,
-            parent = "bar5",
-            point = "BOTTOMLEFT",
-            relative = "TOPLEFT",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          bar5 = {
-            autoHeight = false,
-            autoWidth = false,
-            heightAdjust = 0,
-            hideWithParent = false,
-            offsetX = 0,
-            offsetY = 0,
-            parent = "bar6",
-            point = "BOTTOMLEFT",
-            relative = "TOPLEFT",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          bar6 = {
-            autoHeight = false,
-            autoWidth = false,
-            heightAdjust = 0,
-            hideWithParent = false,
-            offsetX = 0,
-            offsetY = 0,
-            parent = "bar3",
-            point = "BOTTOMLEFT",
-            relative = "BOTTOMRIGHT",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          bar7 = {
-            autoHeight = false,
-            autoWidth = false,
-            heightAdjust = 0,
-            hideWithParent = false,
-            offsetX = -500,
-            offsetY = 144,
-            parent = "screen",
-            point = "CENTER",
-            relative = "CENTER",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          bar8 = {
-            autoHeight = false,
-            autoWidth = false,
-            heightAdjust = 0,
-            hideWithParent = false,
-            offsetX = -500,
-            offsetY = 49,
-            parent = "screen",
-            point = "CENTER",
-            relative = "CENTER",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          belowMinimapWidgets = {
-            autoHeight = false,
-            autoWidth = false,
-            heightAdjust = 0,
-            hideWithParent = false,
-            keepInPlace = true,
-            offsetX = 0,
-            offsetY = 0,
-            parent = "datatextPanel",
-            point = "TOP",
-            relative = "BOTTOM",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          bnetToastAnchor = {
-            autoHeight = false,
-            autoWidth = false,
-            heightAdjust = 0,
-            hideWithParent = false,
-            keepInPlace = true,
-            offsetX = 0,
-            offsetY = -125,
-            parent = "screen",
-            point = "CENTER",
-            relative = "TOP",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          bossFrames = {
-            autoHeight = false,
-            autoWidth = false,
-            heightAdjust = 0,
-            hideWithParent = false,
-            keepInPlace = true,
-            offsetX = 0,
-            offsetY = 0,
-            parent = "datatextPanel",
-            point = "TOPLEFT",
-            relative = "BOTTOMLEFT",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          brezCounter = {
-            autoHeight = false,
-            autoWidth = false,
-            heightAdjust = 0,
-            hideWithParent = false,
-            keepInPlace = true,
-            offsetX = 0,
-            offsetY = 0,
-            parent = "combatTimer",
-            point = "BOTTOM",
-            relative = "TOP",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          buffFrame = {
-            autoHeight = false,
-            autoWidth = false,
-            growAnchor = "TOPRIGHT",
-            heightAdjust = 0,
-            hideWithParent = false,
-            keepInPlace = true,
-            offsetX = 0,
-            offsetY = 0,
-            parent = "minimap",
-            point = "TOPRIGHT",
-            relative = "TOPLEFT",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          combatTimer = {
-            autoHeight = false,
-            autoWidth = false,
-            heightAdjust = 0,
-            hideWithParent = false,
-            offsetX = 0,
-            offsetY = 0,
-            parent = "bar3",
-            point = "BOTTOMRIGHT",
-            relative = "BOTTOMLEFT",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          consumables = {
-            autoHeight = false,
-            autoWidth = false,
-            heightAdjust = 0,
-            hideWithParent = false,
-            keepInPlace = true,
-            offsetX = 0,
-            offsetY = 50,
-            parent = "readyCheck",
-            point = "BOTTOM",
-            relative = "TOP",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          crosshair = {
-            autoHeight = false,
-            autoWidth = false,
-            heightAdjust = 0,
-            hideWithParent = false,
-            offsetX = 0,
-            offsetY = 0,
-            parent = "screen",
-            point = "CENTER",
-            relative = "CENTER",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          ["customTracker:default_tracker_1"] = {
-            autoHeight = false,
-            autoWidth = false,
-            heightAdjust = 0,
-            hideWithParent = false,
-            keepInPlace = true,
-            offsetX = 0,
-            offsetY = 0,
-            parent = "playerFrame",
-            point = "BOTTOMRIGHT",
-            relative = "TOPRIGHT",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          datatextPanel = {
-            autoHeight = false,
-            autoWidth = false,
-            heightAdjust = 0,
-            hideWithParent = false,
-            keepInPlace = true,
-            offsetX = 0,
-            offsetY = 0,
-            parent = "minimap",
-            point = "TOP",
-            relative = "BOTTOM",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          debuffFrame = {
-            autoHeight = false,
-            autoWidth = false,
-            growAnchor = "TOPRIGHT",
-            heightAdjust = 0,
-            hideWithParent = false,
-            keepInPlace = true,
-            offsetX = 0,
-            offsetY = -5,
-            parent = "buffFrame",
-            point = "TOPRIGHT",
-            relative = "BOTTOMRIGHT",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          extraActionButton = {
-            autoHeight = false,
-            autoWidth = false,
-            heightAdjust = 0,
-            hideWithParent = false,
-            keepInPlace = true,
-            offsetX = 0,
-            offsetY = 200,
-            parent = "screen",
-            point = "CENTER",
-            relative = "BOTTOM",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          focusCastAlert = {
-            autoHeight = false,
-            autoWidth = false,
-            heightAdjust = 0,
-            hideWithParent = false,
-            keepInPlace = true,
-            offsetX = 0,
-            offsetY = -40,
-            parent = "screen",
-            point = "CENTER",
-            relative = "CENTER",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          focusCastbar = {
-            autoHeight = false,
-            autoWidth = true,
-            heightAdjust = 0,
-            hideWithParent = false,
-            offsetX = 0,
-            offsetY = 0,
-            parent = "focusFrame",
-            point = "TOP",
-            relative = "BOTTOM",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          focusFrame = {
-            autoHeight = false,
-            autoWidth = false,
-            heightAdjust = 0,
-            hideWithParent = false,
-            offsetX = 0,
-            offsetY = 200,
-            parent = "playerFrame",
-            point = "BOTTOMLEFT",
-            relative = "TOPLEFT",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          keyTracker = {
-            autoHeight = false,
-            autoWidth = false,
-            heightAdjust = 0,
-            hideWithParent = false,
-            keepInPlace = true,
-            offsetX = 0,
-            offsetY = 0,
-            parent = "minimap",
-            point = "TOPRIGHT",
-            relative = "BOTTOMLEFT",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          lootFrame = {
-            autoHeight = false,
-            autoWidth = false,
-            heightAdjust = 0,
-            hideWithParent = false,
-            keepInPlace = true,
-            offsetX = 300,
-            offsetY = 0,
-            parent = "screen",
-            point = "CENTER",
-            relative = "CENTER",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          lootRollAnchor = {
-            autoHeight = false,
-            autoWidth = false,
-            heightAdjust = 0,
-            hideWithParent = false,
-            keepInPlace = true,
-            offsetX = 0,
-            offsetY = 0,
-            parent = "readyCheck",
-            point = "TOP",
-            relative = "BOTTOM",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          microMenu = {
-            autoHeight = false,
-            autoWidth = false,
-            heightAdjust = 0,
-            hideWithParent = false,
-            keepInPlace = true,
-            offsetX = 0,
-            offsetY = -30,
-            parent = "screen",
-            point = "TOPLEFT",
-            relative = "TOPLEFT",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          minimap = {
-            autoHeight = false,
-            autoWidth = false,
-            heightAdjust = 0,
-            hideWithParent = false,
-            keepInPlace = true,
-            offsetX = 0,
-            offsetY = -30,
-            parent = "screen",
-            point = "TOPRIGHT",
-            relative = "TOPRIGHT",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          missingRaidBuffs = {
-            autoHeight = false,
-            autoWidth = false,
-            heightAdjust = 0,
-            hideWithParent = false,
-            keepInPlace = true,
-            offsetX = 0,
-            offsetY = -100,
-            parent = "screen",
-            point = "TOP",
-            relative = "TOP",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          mplusTimer = {
-            autoHeight = false,
-            autoWidth = false,
-            heightAdjust = 0,
-            hideWithParent = false,
-            keepInPlace = true,
-            offsetX = 0,
-            offsetY = 0,
-            parent = "partyFrames",
-            point = "BOTTOMLEFT",
-            relative = "BOTTOMRIGHT",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          objectiveTracker = {
-            autoHeight = false,
-            autoWidth = false,
-            heightAdjust = 0,
-            hideWithParent = false,
-            keepInPlace = true,
-            offsetX = 0,
-            offsetY = 0,
-            parent = "datatextPanel",
-            point = "TOPRIGHT",
-            relative = "BOTTOMRIGHT",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          partyFrames = {
-            autoHeight = false,
-            autoWidth = false,
-            heightAdjust = 0,
-            hideWithParent = false,
-            keepInPlace = true,
-            offsetX = 0,
-            offsetY = -25,
-            parent = "cdmUtility",
-            point = "TOP",
-            relative = "BOTTOM",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          petBar = {
-            autoHeight = false,
-            autoWidth = false,
-            heightAdjust = 0,
-            hideWithParent = false,
-            keepInPlace = true,
-            offsetX = 0,
-            offsetY = 0,
-            parent = "bar6",
-            point = "BOTTOMLEFT",
-            relative = "BOTTOMRIGHT",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          petCastbar = {
-            autoHeight = false,
-            autoWidth = false,
-            heightAdjust = 0,
-            hideWithParent = false,
-            offsetX = 0,
-            offsetY = 0,
-            parent = "petFrame",
-            point = "TOP",
-            relative = "BOTTOM",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          petFrame = {
-            autoHeight = false,
-            autoWidth = false,
-            heightAdjust = 0,
-            hideWithParent = false,
-            keepInPlace = true,
-            offsetX = 0,
-            offsetY = 0,
-            parent = "playerFrame",
-            point = "BOTTOMRIGHT",
-            relative = "BOTTOMLEFT",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          petWarning = {
-            autoHeight = false,
-            autoWidth = false,
-            heightAdjust = 0,
-            hideWithParent = false,
-            keepInPlace = true,
-            offsetX = 0,
-            offsetY = -30,
-            parent = "playerFrame",
-            point = "TOP",
-            relative = "BOTTOM",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          playerCastbar = {
-            autoHeight = false,
-            autoWidth = true,
-            heightAdjust = 0,
-            hideWithParent = false,
-            offsetX = 0,
-            offsetY = 0,
-            parent = "playerFrame",
-            point = "TOP",
-            relative = "BOTTOM",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          playerFrame = {
-            autoHeight = false,
-            autoWidth = false,
-            heightAdjust = 0,
-            hideWithParent = false,
-            keepInPlace = true,
-            offsetX = 0,
-            offsetY = 0,
-            parent = "cdmEssential",
-            point = "BOTTOMRIGHT",
-            relative = "BOTTOMLEFT",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          powerBarAlt = {
-            autoHeight = false,
-            autoWidth = false,
-            heightAdjust = 0,
-            hideWithParent = false,
-            keepInPlace = true,
-            offsetX = 0,
-            offsetY = -75,
-            parent = "screen",
-            point = "CENTER",
-            relative = "TOP",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          preyTracker = {
-            autoHeight = false,
-            autoWidth = false,
-            heightAdjust = 0,
-            hideWithParent = false,
-            keepInPlace = true,
-            offsetX = 0,
-            offsetY = -250,
-            parent = "screen",
-            point = "CENTER",
-            relative = "TOP",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          primaryPower = {
-            autoHeight = false,
-            autoWidth = true,
-            heightAdjust = 0,
-            hideWithParent = false,
-            keepInPlace = true,
-            offsetX = 0,
-            offsetY = 0,
-            parent = "cdmEssential",
-            point = "TOP",
-            relative = "BOTTOM",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          raidFrames = {
-            autoHeight = false,
-            autoWidth = false,
-            heightAdjust = 0,
-            hideWithParent = false,
-            keepInPlace = true,
-            offsetX = 0,
-            offsetY = -25,
-            parent = "cdmUtility",
-            point = "TOP",
-            relative = "BOTTOM",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          raidMarkersBar = {
-            autoHeight = false,
-            autoWidth = false,
-            heightAdjust = 0,
-            hideWithParent = false,
-            keepInPlace = true,
-            offsetX = 0,
-            offsetY = 240,
-            parent = "screen",
-            point = "CENTER",
-            relative = "BOTTOM",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          rangeCheck = {
-            autoHeight = false,
-            autoWidth = false,
-            heightAdjust = 0,
-            hideWithParent = false,
-            offsetX = 0,
-            offsetY = 0,
-            parent = "screen",
-            point = "CENTER",
-            relative = "CENTER",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          readyCheck = {
-            autoHeight = false,
-            autoWidth = false,
-            heightAdjust = 0,
-            hideWithParent = false,
-            keepInPlace = true,
-            offsetX = 0,
-            offsetY = 0,
-            parent = "screen",
-            point = "CENTER",
-            relative = "CENTER",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          rotationAssistIcon = {
-            autoHeight = false,
-            autoWidth = false,
-            heightAdjust = 0,
-            hideWithParent = false,
-            keepInPlace = true,
-            offsetX = 0,
-            offsetY = 40,
-            parent = "cdmEssential",
-            point = "BOTTOM",
-            relative = "TOP",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          secondaryPower = {
-            autoHeight = false,
-            autoWidth = true,
-            heightAdjust = 0,
-            hideWithParent = false,
-            keepInPlace = true,
-            offsetX = 0,
-            offsetY = 0,
-            parent = "primaryPower",
-            point = "TOP",
-            relative = "BOTTOM",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          skyriding = {
-            autoHeight = false,
-            autoWidth = false,
-            heightAdjust = 0,
-            hideWithParent = false,
-            keepInPlace = true,
-            offsetX = 0,
-            offsetY = -40,
-            parent = "screen",
-            point = "CENTER",
-            relative = "TOP",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          stanceBar = {
-            autoHeight = false,
-            autoWidth = false,
-            heightAdjust = 0,
-            hideWithParent = false,
-            keepInPlace = true,
-            offsetX = 0,
-            offsetY = 0,
-            parent = "petBar",
-            point = "BOTTOMLEFT",
-            relative = "TOPLEFT",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          targetCastbar = {
-            autoHeight = false,
-            autoWidth = true,
-            heightAdjust = 0,
-            hideWithParent = false,
-            offsetX = 0,
-            offsetY = 0,
-            parent = "targetFrame",
-            point = "TOP",
-            relative = "BOTTOM",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          targetFrame = {
-            autoHeight = false,
-            autoWidth = false,
-            heightAdjust = 0,
-            hideWithParent = false,
-            keepInPlace = true,
-            offsetX = 0,
-            offsetY = 0,
-            parent = "cdmEssential",
-            point = "BOTTOMLEFT",
-            relative = "BOTTOMRIGHT",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          toastAnchor = {
-            autoHeight = false,
-            autoWidth = false,
-            heightAdjust = 0,
-            hideWithParent = false,
-            keepInPlace = true,
-            offsetX = 0,
-            offsetY = -150,
-            parent = "screen",
-            point = "TOP",
-            relative = "TOP",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          tooltipAnchor = {
-            autoHeight = false,
-            autoWidth = false,
-            heightAdjust = 0,
-            hideWithParent = false,
-            keepInPlace = true,
-            offsetX = -200,
-            offsetY = 100,
-            parent = "screen",
-            point = "BOTTOMRIGHT",
-            relative = "BOTTOMRIGHT",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          topCenterWidgets = {
-            autoHeight = false,
-            autoWidth = false,
-            heightAdjust = 0,
-            hideWithParent = false,
-            keepInPlace = true,
-            offsetX = 0,
-            offsetY = -100,
-            parent = "screen",
-            point = "TOP",
-            relative = "TOP",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          totCastbar = {
-            autoHeight = false,
-            autoWidth = false,
-            heightAdjust = 0,
-            hideWithParent = false,
-            offsetX = 0,
-            offsetY = 0,
-            parent = "totFrame",
-            point = "TOP",
-            relative = "BOTTOM",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          totFrame = {
-            autoHeight = false,
-            autoWidth = false,
-            heightAdjust = 0,
-            hideWithParent = false,
-            offsetX = 0,
-            offsetY = 0,
-            parent = "targetFrame",
-            point = "BOTTOMLEFT",
-            relative = "BOTTOMRIGHT",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          totemBar = {
-            autoHeight = false,
-            autoWidth = false,
-            heightAdjust = 0,
-            hideWithParent = false,
-            keepInPlace = true,
-            offsetX = 0,
-            offsetY = 200,
-            parent = "screen",
-            point = "CENTER",
-            relative = "BOTTOM",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          xpTracker = {
-            autoHeight = false,
-            autoWidth = false,
-            heightAdjust = 0,
-            hideWithParent = false,
-            keepInPlace = true,
-            offsetX = 0,
-            offsetY = 4,
-            parent = "screen",
-            point = "BOTTOM",
-            relative = "BOTTOM",
-            sizeStable = true,
-            widthAdjust = 0
-          },
-          zoneAbility = {
-            autoHeight = false,
-            autoWidth = false,
-            heightAdjust = 0,
-            hideWithParent = false,
-            keepInPlace = true,
-            offsetX = 0,
-            offsetY = 0,
-            parent = "extraActionButton",
-            point = "CENTER",
-            relative = "CENTER",
-            sizeStable = true,
-            widthAdjust = 0
-          }
-        },
-        general = {
-          actionTracker = {
-            backdropColor = {
-              [1] = 0,
-              [2] = 0,
-              [3] = 0,
-              [4] = 0.59999999999999998
-            },
-            blocklistText = "",
-            borderColor = {
-              [1] = 0,
-              [2] = 0,
-              [3] = 0,
-              [4] = 1
-            },
-            borderColorSource = "inherit",
-            borderSize = 1,
-            clearOnCombatEnd = true,
-            clearOnInactivity = false,
-            enabled = false,
-            hideBorder = false,
-            iconBorderColor = {
-              [1] = 0,
-              [2] = 0,
-              [3] = 0,
-              [4] = 0.84999999999999998
-            },
-            iconBorderColorSource = "inherit",
-            iconHideBorder = false,
-            iconSize = 28,
-            iconSpacing = 4,
-            inactivityFadeEnabled = false,
-            inactivityFadeSeconds = 20,
-            invertScrollDirection = false,
-            maxEntries = 6,
-            onlyInCombat = true,
-            orientation = "VERTICAL",
-            showBackdrop = true,
-            showFailedCasts = true,
-            xOffset = 0,
-            yOffset = -210
-          },
-          addEditModeButton = true,
-          addQUIButton = true,
-          alertsBorderColor = {
-            [1] = 0,
-            [2] = 0,
-            [3] = 0,
-            [4] = 1
-          },
-          alertsBorderColorSource = "inherit",
-          allowReloadInCombat = false,
-          applyGlobalFontToBlizzard = true,
-          auctionHouseExpansionFilter = true,
-          audioOutputDevice = "",
-          autoAcceptInvites = "all",
-          autoAcceptQuest = true,
-          autoCombatLog = false,
-          autoCombatLogRaid = false,
-          autoConfirmHighCost = false,
-          autoConfirmSocketReplace = false,
-          autoConfirmTokenPurchase = false,
-          autoDeclineDuel = false,
-          autoDeclinePetBattle = false,
-          autoDeleteConfirm = true,
-          autoInsertKey = true,
-          autoRelease = "off",
-          autoRepair = "personal",
-          autoRoleAccept = true,
-          autoSelectGossip = true,
-          autoTurnInQuest = true,
-          autoUnwrapCollections = false,
-          closeBagsOnKeystoneInsert = false,
-          communitiesPrivacy = false,
-          consumableAnchorMode = true,
-          consumableCheckEnabled = true,
-          consumableExpirationThreshold = 300,
-          consumableExpirationWarning = true,
-          consumableFlask = true,
-          consumableFood = true,
-          consumableHealthstone = true,
-          consumableIconOffset = 5,
-          consumableIconSize = 40,
-          consumableMacros = {
-            chatNotifications = true,
-            enabled = false,
-            selectedAugment = "none",
-            selectedFlask = "none",
-            selectedHealth = "none",
-            selectedHealthstone = "none",
-            selectedPotion = "none",
-            selectedVantus = "none",
-            selectedWeapon = "none"
-          },
-          consumableOilMH = true,
-          consumableOilOH = true,
-          consumableOnDungeon = false,
-          consumableOnRaid = false,
-          consumableOnReadyCheck = true,
-          consumableOnResurrect = false,
-          consumablePersistent = false,
-          consumableRune = true,
-          consumableScale = 1,
-          controlAlertAnchors = false,
-          craftingOrderExpansionFilter = true,
-          cursorTrail = {
-            combatOnly = true,
-            customColor = {
-              [1] = 1,
-              [2] = 1,
-              [3] = 1,
-              [4] = 1
-            },
-            density = "medium",
-            duration = 0.40000000000000002,
-            enabled = false,
-            size = 16,
-            useClassColor = true
-          },
-          darkMode = false,
-          darkModeBgColor = {
-            [1] = 0.59199999999999997,
-            [2] = 0.59199999999999997,
-            [3] = 0.59199999999999997,
-            [4] = 1
-          },
-          darkModeBgOpacity = 0.69999999999999996,
-          darkModeHealthColor = {
-            [1] = 0,
-            [2] = 0,
-            [3] = 0,
-            [4] = 1
-          },
-          darkModeHealthOpacity = 0.69999999999999996,
-          darkModeOpacity = 0.69999999999999996,
-          deathAlert = {
-            enabled = false,
-            fontSize = 24,
-            offsetX = 0,
-            offsetY = 220,
-            sound = "None"
-          },
-          defaultBgColor = {
-            [1] = 0,
-            [2] = 0,
-            [3] = 0,
-            [4] = 1
-          },
-          defaultBgOpacity = 1,
-          defaultHealthColor = {
-            [1] = 0.20000000000000001,
-            [2] = 0.20000000000000001,
-            [3] = 0.20000000000000001,
-            [4] = 1
-          },
-          defaultHealthOpacity = 1,
-          defaultOpacity = 1,
-          defaultUseClassColor = true,
-          disableScrollingCombatText = false,
-          ejLootSpecIcons = false,
-          eventSounds = {
-            enabled = false,
-            lfgProposal = "None",
-            lootRollWon = "None",
-            lootUpgrade = "None",
-            mail = "None",
-            readyCheck = "None",
-            resurrect = "None",
-            whisper = "None"
-          },
-          extendedIgnore = {
-            autoDecline = true,
-            enabled = false,
-            names = "",
-            suppressChat = true
-          },
-          fastAutoLoot = true,
-          focusCastAlert = {
-            anchorTo = "screen",
-            enabled = true,
-            font = "",
-            fontOutline = "OUTLINE",
-            fontSize = 26,
-            offsetX = 0,
-            offsetY = -120,
-            sound = "None",
-            soundEnabled = false,
-            text = "Focus is casting. Kick!",
-            textColor = {
-              [1] = 1,
-              [2] = 0.20000000000000001,
-              [3] = 0.20000000000000001,
-              [4] = 1
-            },
-            useClassColor = false
-          },
-          focusMarker = {
-            enabled = false,
-            marker = 8,
-            useMouseover = true,
-            writeMacro = true
-          },
-          font = "Quazii",
-          fontOutline = "OUTLINE",
-          friendsClassColor = true,
-          gameMenuDim = true,
-          gameMenuFontSize = 12,
-          gemSocketPicker = false,
-          healerMana = {
-            enabled = false,
-            instanceOnly = true,
-            offsetX = 0,
-            offsetY = -260
-          },
-          hideObjectiveTrackerBorder = true,
-          hostilityColorFriendly = {
-            [1] = 0.20000000000000001,
-            [2] = 0.80000000000000004,
-            [3] = 0.20000000000000001,
-            [4] = 1
-          },
-          hostilityColorHostile = {
-            [1] = 0.80000000000000004,
-            [2] = 0.20000000000000001,
-            [3] = 0.20000000000000001,
-            [4] = 1
-          },
-          hostilityColorNeutral = {
-            [1] = 1,
-            [2] = 1,
-            [3] = 0.20000000000000001,
-            [4] = 1
-          },
-          keyTrackerEnabled = true,
-          keyTrackerFontSize = 9,
-          keyTrackerOffsetX = 0,
-          keyTrackerOffsetY = 0,
-          keyTrackerPoint = "TOPRIGHT",
-          keyTrackerRelPoint = "BOTTOMRIGHT",
-          keyTrackerTextColor = {
-            [1] = 1,
-            [2] = 1,
-            [3] = 1,
-            [4] = 1
-          },
-          keyTrackerWidth = 170,
-          lootToastFilter = {
-            enabled = false,
-            keepMounts = true,
-            keepPets = true,
-            keepUpgrades = true,
-            minKeepIlvl = 0,
-            minQuality = 0
-          },
-          mailContactsPanel = false,
-          mailRememberRecipient = false,
-          masterColorCastbarText = false,
-          masterColorHealthText = false,
-          masterColorNameText = false,
-          masterColorPowerText = false,
-          masterColorToTText = false,
-          merchantKnownPetMark = false,
-          mplusTeleportEnabled = true,
-          noTargetWarning = {
-            enabled = false,
-            fontSize = 20,
-            offsetX = 0,
-            offsetY = -160
-          },
-          objectiveTrackerClickThrough = false,
-          objectiveTrackerHeight = 600,
-          objectiveTrackerModuleColor = {
-            [1] = 1,
-            [2] = 0.81999999999999995,
-            [3] = 0,
-            [4] = 1
-          },
-          objectiveTrackerModuleFontSize = 12,
-          objectiveTrackerTextColor = {
-            [1] = 0.80000000000000004,
-            [2] = 0.80000000000000004,
-            [3] = 0.80000000000000004,
-            [4] = 1
-          },
-          objectiveTrackerTextFontSize = 10,
-          objectiveTrackerTitleColor = {
-            [1] = 1,
-            [2] = 1,
-            [3] = 1,
-            [4] = 1
-          },
-          objectiveTrackerTitleFontSize = 10,
-          overrideSCTFont = false,
-          petCombatWarning = true,
-          petWarningOffsetX = 0,
-          petWarningOffsetY = -200,
-          popupBlocker = {
-            blockCosmeticAlerts = false,
-            blockEntitlementAlerts = false,
-            blockEventToasts = false,
-            blockHelpTips = false,
-            blockMicroButtonGlows = false,
-            blockMountAlerts = false,
-            blockPetAlerts = false,
-            blockStaticHousingPopups = false,
-            blockStaticTalentPopups = false,
-            blockTalentMicroButtonAlerts = false,
-            blockToyAlerts = false,
-            blockWarbandSceneAlerts = false,
-            enabled = false
-          },
-          questHoldShift = true,
-          quickSalvage = {
-            enabled = false,
-            modifier = "ALT"
-          },
-          readyCheckBorderColor = {
-            [1] = 0,
-            [2] = 0,
-            [3] = 0,
-            [4] = 1
-          },
-          readyCheckBorderColorSource = "inherit",
-          sellJunk = true,
-          showAuctionHouseGold = true,
-          showOptionTooltips = true,
-          skinAlerts = true,
-          skinAuctionHouse = true,
-          skinBgColor = {
-            [1] = 0.0080000000000000002,
-            [2] = 0.0080000000000000002,
-            [3] = 0.0080000000000000002,
-            [4] = 1
-          },
-          skinBorderColor = {
-            [1] = 0,
-            [2] = 0,
-            [3] = 0,
-            [4] = 1
-          },
-          skinBorderColorSource = "theme",
-          skinCharacterFrame = true,
-          skinContextMenus = true,
-          skinCraftingOrders = true,
-          skinDamageMeter = true,
-          skinGameMenu = true,
-          skinInspectFrame = true,
-          skinInstanceFrames = false,
-          skinKeystoneFrame = true,
-          skinObjectiveTracker = true,
-          skinOverrideActionBar = true,
-          skinPowerBarAlt = true,
-          skinProfessions = true,
-          skinReadyCheck = true,
-          skinStaticPopups = true,
-          skinStatusTrackingBars = true,
-          skinUseClassColor = true,
-          soundMute = {
-            enabled = false
-          },
-          statusTrackingBarsBarColor = {
-            [1] = 0.20000000000000001,
-            [2] = 0.5,
-            [3] = 1,
-            [4] = 1
-          },
-          statusTrackingBarsBarColorMode = "accent",
-          statusTrackingBarsBarHeight = 0,
-          statusTrackingBarsBarTextAlways = false,
-          statusTrackingBarsBarTextAnchor = "CENTER",
-          statusTrackingBarsBarTextColor = {
-            [1] = 0.94999999999999996,
-            [2] = 0.94999999999999996,
-            [3] = 0.94999999999999996,
-            [4] = 1
-          },
-          statusTrackingBarsBarTextFont = "__QUI_GLOBAL__",
-          statusTrackingBarsBarTextFontSize = 11,
-          statusTrackingBarsBarTextOffsetX = 0,
-          statusTrackingBarsBarTextOffsetY = 0,
-          statusTrackingBarsBarTextOutline = "_inherit",
-          statusTrackingBarsBarWidthPercent = 100,
-          statusTrackingBarsBorderThickness = 0,
-          statusTrackingBarsShowBarText = true,
-          statusTrackingBarsShowBorder = true,
-          texture = "Quazii v5",
-          tradeMailLog = {
-            enabled = false,
-            logReceivedMail = true,
-            logSentMail = true,
-            logTrades = true
-          },
-          uiScale = 0.64000000000000001,
-          vendorRules = {
-            enabled = false,
-            forceSell = "",
-            maxIlvl = 0,
-            maxQuality = 1,
-            neverSell = "",
-            previewOnly = true
-          },
-          worldMapTeleports = false
-        },
-        hudLayering = {
-          bossFrames = 4,
-          buffBar = 5,
-          buffIcon = 5,
-          customBars = 5,
-          essential = 5,
-          focusFrame = 4,
-          groupFrames = 4,
-          groupPetFrames = 3,
-          petFrame = 3,
-          playerCastbar = 5,
-          playerFrame = 4,
-          playerIndicators = 6,
-          primaryPowerBar = 7,
-          raidMarkersBar = 5,
-          secondaryPowerBar = 6,
-          targetCastbar = 5,
-          targetFrame = 4,
-          totFrame = 3,
-          totemBar = 5,
-          utility = 5
-        },
-        infobar = {
-          bgOpacity = 85,
-          borderColor = {
-            [1] = 0,
-            [2] = 0,
-            [3] = 0,
-            [4] = 1
-          },
-          borderColorSource = "inherit",
-          borderSize = 1,
-          enabled = true,
-          fadeRestOpacity = 0,
-          fontSize = 12,
-          height = 22,
-          hideInCombat = false,
-          micromenu = {
-            buttons = {
-              achievements = true,
-              adventureguide = true,
-              character = true,
-              collections = true,
-              help = false,
-              housing = true,
-              lfg = true,
-              professions = true,
-              questlog = true,
-              shop = false,
-              spellbook = true,
-              talents = true
-            }
-          },
-          mouseoverFade = false,
-          position = "TOP",
-          travel = {
-            useRandomHearth = false
-          },
-          widgetSettings = {},
-          widgetSpacing = 12,
-          zonePadding = 8,
-          zones = {
-            center = {},
-            left = {},
-            right = {}
-          },
-          zonesSeeded = false
-        },
-        keybindOverridesEnabledCDM = true,
-        keybindOverridesEnabledTrackers = true,
-        loot = {
-          enabled = true,
-          lootUnderMouse = false,
-          lootUnderMouseOffsetX = 0,
-          lootUnderMouseOffsetY = 0,
-          position = {
-            point = "TOP",
-            relPoint = "TOP",
-            x = 289.166,
-            y = -165.667
-          },
-          showTransmogMarker = true
-        },
-        lootResults = {
-          enabled = true
-        },
-        lootRoll = {
-          enabled = true,
-          growDirection = "DOWN",
-          position = {
-            point = "TOP",
-            relPoint = "TOP",
-            x = -11.667,
-            y = -166
-          },
-          spacing = 4
-        },
-        lustTimer = {
-          backdropColor = {
-            [1] = 0,
-            [2] = 0,
-            [3] = 0,
-            [4] = 0.59999999999999998
-          },
-          barColor = {
-            [1] = 0.59999999999999998,
-            [2] = 0.20000000000000001,
-            [3] = 0.20000000000000001,
-            [4] = 1
-          },
-          barTexture = "Solid",
-          borderColor = {
-            [1] = 0,
-            [2] = 0,
-            [3] = 0,
-            [4] = 1
-          },
-          borderColorSource = "inherit",
-          borderSize = 1,
-          borderTexture = "None",
-          enabled = false,
-          font = "Quazii",
-          fontSize = 13,
-          height = 22,
-          hideBorder = false,
-          showBackdrop = true,
-          showLabel = true,
-          textColor = {
-            [1] = 1,
-            [2] = 1,
-            [3] = 1,
-            [4] = 1
-          },
-          useCustomFont = false,
-          width = 160,
-          xOffset = 0,
-          yOffset = -120
-        },
-        merchantGrid = {
-          columns = 2,
-          enabled = false,
-          rows = 5
-        },
-        minimap = {
-          autoZoom = false,
-          borderColor = {
-            [1] = 0,
-            [2] = 0,
-            [3] = 0,
-            [4] = 1
-          },
-          borderColorSource = "inherit",
-          borderSize = 1,
-          buttonDrawer = {
-            anchor = "RIGHT",
-            autoHideDelay = 1.5,
-            autoHideToggle = false,
-            bgColor = {
-              [1] = 0.029999999999999999,
-              [2] = 0.029999999999999999,
-              [3] = 0.029999999999999999,
-              [4] = 1
-            },
-            bgOpacity = 98,
-            borderColor = {
-              [1] = 0.20000000000000001,
-              [2] = 0.80000000000000004,
-              [3] = 0.59999999999999998,
-              [4] = 1
-            },
-            borderColorSource = "inherit",
-            borderSize = 1,
-            buttonSize = 28,
-            buttonSpacing = 2,
-            centerGrowth = false,
-            columns = 1,
-            enabled = false,
-            growthDirection = "RIGHT",
-            hiddenButtons = {},
-            offsetX = 0,
-            offsetY = 0,
-            openOnMouseover = true,
-            padding = 6,
-            showTooltip = true,
-            toggleOffsetX = 0,
-            toggleOffsetY = 0
-          },
-          buttonRadius = 2,
-          clockConfig = {
-            align = "LEFT",
-            color = {
-              [1] = 1,
-              [2] = 1,
-              [3] = 1,
-              [4] = 1
-            },
-            font = "Quazii",
-            fontSize = 12,
-            monochrome = false,
-            offsetX = 0,
-            offsetY = 0,
-            outline = "OUTLINE",
-            timeFormat = "local",
-            useClassColor = false
-          },
-          coordPrecision = "%d,%d",
-          coordUpdateInterval = 1,
-          coordsConfig = {
-            align = "RIGHT",
-            color = {
-              [1] = 1,
-              [2] = 1,
-              [3] = 1,
-              [4] = 1
-            },
-            font = "Quazii",
-            fontSize = 12,
-            monochrome = false,
-            offsetX = 0,
-            offsetY = 0,
-            outline = "OUTLINE",
-            useClassColor = false
-          },
-          dungeonEye = {
-            corner = "BOTTOMLEFT",
-            enabled = true,
-            offsetX = 0,
-            offsetY = 0,
-            scale = 0.59999999999999998
-          },
-          enabled = true,
-          greatVault = {
-            anchor = "TOPLEFT",
-            enabled = false,
-            fadeOpacity = 0,
-            fadeWhenMouseOut = false,
-            offsetX = 1,
-            offsetY = -1,
-            scale = 1
-          },
-          hideAddonButtons = true,
-          hideBagBar = false,
-          hideMicroMenu = false,
-          lock = false,
-          middleClickMenuEnabled = true,
-          missionsInDrawer = false,
-          position = {
-            point = "TOPLEFT",
-            relPoint = "BOTTOMLEFT",
-            x = 790,
-            y = 285
-          },
-          scale = 1,
-          shape = "SQUARE",
-          showAddonCompartment = false,
-          showCalendar = true,
-          showClock = false,
-          showCoords = false,
-          showCraftingOrder = true,
-          showDifficulty = true,
-          showMail = true,
-          showMissions = true,
-          showTracking = true,
-          showZoneText = true,
-          showZoomButtons = true,
-          size = 226,
-          trackingConfig = {
-            anchor = "TOPLEFT",
-            offsetX = 0,
-            offsetY = 0
-          },
-          zoneTextConfig = {
-            align = "CENTER",
-            allCaps = false,
-            colorArena = {
-              [1] = 1,
-              [2] = 0.10000000000000001,
-              [3] = 0.10000000000000001,
-              [4] = 1
-            },
-            colorContested = {
-              [1] = 1,
-              [2] = 0.69999999999999996,
-              [3] = 0,
-              [4] = 1
-            },
-            colorFriendly = {
-              [1] = 0.10000000000000001,
-              [2] = 1,
-              [3] = 0.10000000000000001,
-              [4] = 1
-            },
-            colorHostile = {
-              [1] = 1,
-              [2] = 0.10000000000000001,
-              [3] = 0.10000000000000001,
-              [4] = 1
-            },
-            colorNormal = {
-              [1] = 1,
-              [2] = 0.81999999999999995,
-              [3] = 0,
-              [4] = 1
-            },
-            colorSanctuary = {
-              [1] = 0.40999999999999998,
-              [2] = 0.80000000000000004,
-              [3] = 0.93999999999999995,
-              [4] = 1
-            },
-            font = "Quazii",
-            fontSize = 12,
-            monochrome = false,
-            offsetX = 0,
-            offsetY = 0,
-            outline = "OUTLINE",
-            useClassColor = false
-          },
-          zoomLevel = 0
-        },
-        minimapButton = {
-          hide = false,
-          minimapPos = 180
-        },
-        mplusProgress = {
-          enabled = true,
-          nameplateEnabled = true,
-          nameplateFont = "",
-          nameplateFontSize = 12,
-          nameplateOffsetX = 0,
-          nameplateOffsetY = 0,
-          nameplateTextColor = {
-            [1] = 1,
-            [2] = 1,
-            [3] = 1,
-            [4] = 1
-          },
-          nameplateTextFormat = "+$percent$%",
-          nameplateTextScale = 1,
-          tooltipEnabled = true,
-          tooltipIncludeCount = true,
-          tooltipShowNoProgress = false
-        },
-        mplusTimer = {
-          borderColor = {
-            [1] = 0,
-            [2] = 0,
-            [3] = 0,
-            [4] = 1
-          },
-          borderColorSource = "inherit",
-          enabled = false,
-          forcesBarEnabled = true,
-          forcesBarHeight = 0,
-          forcesDisplayMode = "bar",
-          forcesFont = "Poppins",
-          forcesFontSize = 11,
-          forcesLabel = "Forces",
-          forcesPosition = "after_timer",
-          forcesTextAlign = "LEFT",
-          forcesTextFormat = "both",
-          frameBackgroundOpacity = 1,
-          layoutMode = "sleek",
-          maxDungeonNameLength = 18,
-          objectiveTextAlign = "LEFT",
-          position = {
-            x = -11.667,
-            y = -204.99799999999999
-          },
-          showAffixes = true,
-          showBorder = true,
-          showDeaths = true,
-          showObjectives = true,
-          showTimer = true
-        },
-        nameplates = {
-          absorbs = {
-            color = {
-              [1] = 1,
-              [2] = 1,
-              [3] = 1
-            },
-            enabled = true,
-            opacity = 0.29999999999999999
-          },
-          auras = {
-            buffs = {
-              allowList = {},
-              blockList = {},
-              enabled = true,
-              growth = "RIGHT",
-              limit = 4,
-              offsetX = 0,
-              offsetY = 50,
-              point = "BOTTOM",
-              relativePoint = "TOP",
-              size = 24,
-              spacing = 2,
-              textSize = 12
-            },
-            cc = {
-              allowList = {},
-              blockList = {},
-              enabled = true,
-              growth = "LEFT",
-              limit = 3,
-              offsetX = -4,
-              offsetY = 0,
-              point = "RIGHT",
-              relativePoint = "LEFT",
-              size = 24,
-              spacing = 2,
-              textSize = 12
-            },
-            debuffs = {
-              allowList = {},
-              blockList = {},
-              enabled = true,
-              growth = "RIGHT",
-              limit = 5,
-              offsetX = 0,
-              offsetY = 20,
-              point = "BOTTOM",
-              relativePoint = "TOP",
-              size = 26,
-              spacing = 2,
-              textSize = 11
-            },
-            dispelBorders = true,
-            duration = {
-              decimals = false,
-              enabled = true,
-              offsetX = 0,
-              offsetY = 0,
-              point = "CENTER",
-              size = 12
-            },
-            enableDungeon = true,
-            enableRaid = true,
-            enableWorld = true,
-            enabled = true,
-            importantList = {},
-            importantScale = 1.3,
-            mineOnly = true,
-            pandemicGlow = true
-          },
-          castbar = {
-            enabled = true,
-            gap = 0,
-            height = 17,
-            interruptedHoldTime = 1,
-            kickTick = true,
-            liftOverlay = false,
-            nameSize = 10,
-            showIcon = true,
-            showSpellName = true,
-            showTimer = true,
-            timerSize = 10
-          },
-          colors = {
-            castInterrupted = {
-              [1] = 0.80000000000000004,
-              [2] = 0,
-              [3] = 0
-            },
-            castInterruptible = {
-              [1] = 0.69999999999999996,
-              [2] = 0.40000000000000002,
-              [3] = 0.90000000000000002
-            },
-            castUninterruptible = {
-              [1] = 0.45000000000000001,
-              [2] = 0.45000000000000001,
-              [3] = 0.45000000000000001
-            },
-            classColorEnemyPlayers = true,
-            dpsHasAggro = {
-              [1] = 1,
-              [2] = 0.5,
-              [3] = 0
-            },
-            dpsNearAggro = {
-              [1] = 0.81000000000000005,
-              [2] = 0.71999999999999997,
-              [3] = 0.19
-            },
-            execute = {
-              [1] = 1,
-              [2] = 0.10000000000000001,
-              [3] = 0.10000000000000001
-            },
-            executeEnabled = false,
-            executeThreshold = 35,
-            focus = {
-              [1] = 0.050999999999999997,
-              [2] = 0.81999999999999995,
-              [3] = 0.62
-            },
-            focusEnabled = true,
-            friendly = {
-              [1] = 0.314,
-              [2] = 0.80000000000000004,
-              [3] = 0.40799999999999997
-            },
-            hostile = {
-              [1] = 0.39000000000000001,
-              [2] = 0.11,
-              [3] = 0.089999999999999997
-            },
-            neutral = {
-              [1] = 0.81000000000000005,
-              [2] = 0.71999999999999997,
-              [3] = 0.19
-            },
-            offTankAggro = {
-              [1] = 0.188,
-              [2] = 0.76100000000000001,
-              [3] = 0.81200000000000006
-            },
-            oocDarken = true,
-            oocDarkenFactor = 0.75,
-            quest = {
-              [1] = 1,
-              [2] = 0.81999999999999995,
-              [3] = 0
-            },
-            questEnabled = true,
-            tankHasAggro = {
-              [1] = 0.050000000000000003,
-              [2] = 0.81999999999999995,
-              [3] = 0.62
-            },
-            tankNoAggro = {
-              [1] = 1,
-              [2] = 0.22,
-              [3] = 0.17000000000000001
-            },
-            tapped = {
-              [1] = 0.5,
-              [2] = 0.5,
-              [3] = 0.5
-            },
-            target = {
-              [1] = 1,
-              [2] = 1,
-              [3] = 1
-            },
-            targetEnabled = false,
-            threatEnabled = true
-          },
-          cvars = {
-            hitboxScaleX = 100,
-            hitboxScaleY = 100,
-            hitboxVisualizer = false,
-            maxDistance = 60,
-            stackingEnemy = true,
-            stackingFriendly = false,
-            stackingSpacing = 1
-          },
-          enabled = false,
-          friendly = {
-            barHeight = 12,
-            barWidth = 150,
-            classColorNames = true,
-            mode = "nameonly",
-            nameSize = 12,
-            showInInstances = false,
-            showInWorld = true
-          },
-          health = {
-            bgAlpha = 1,
-            bgColor = {
-              [1] = 0.12,
-              [2] = 0.12,
-              [3] = 0.12
-            },
-            borderSize = 1,
-            height = 24,
-            texture = "Quazii",
-            width = 210
-          },
-          healthText = {
-            enabled = true,
-            hidePercentSymbol = false,
-            justify = "RIGHT",
-            offsetX = -2,
-            offsetY = 0,
-            point = "RIGHT",
-            relativePoint = "RIGHT",
-            size = 10,
-            style = "percent"
-          },
-          highlight = {
-            mouseover = true,
-            mouseoverAlpha = 0.29999999999999999,
-            targetGlow = true,
-            targetGlowAlpha = 1,
-            targetGlowColor = {
-              [1] = 0.41199999999999998,
-              [2] = 0.66700000000000004,
-              [3] = 1
-            }
-          },
-          name = {
-            classColorPlayers = true,
-            enabled = true,
-            justify = "CENTER",
-            offsetX = 0,
-            offsetY = 4,
-            point = "BOTTOM",
-            relativePoint = "TOP",
-            size = 11
-          },
-          raidMarker = {
-            enabled = true,
-            position = "TOPRIGHT",
-            size = 24
-          },
-          specAutoSwitch = false,
-          specPresets = {}
-        },
-        ncdm = {
-          _snapshotVersion = 0,
-          buff = {
-            anchorOffsetX = 0,
-            anchorOffsetY = 0,
-            anchorPlacement = "center",
-            anchorSourcePoint = "CENTER",
-            anchorSpacing = 0,
-            anchorTargetPoint = "CENTER",
-            anchorTo = "disabled",
-            aspectRatioCrop = 1,
-            borderColor = {
-              [1] = 0,
-              [2] = 0,
-              [3] = 0,
-              [4] = 1
-            },
-            borderColorSource = "inherit",
-            borderSize = 0,
-            containerType = "aura",
-            dormantSpells = {},
-            durationAnchor = "CENTER",
-            durationOffsetX = 0,
-            durationOffsetY = 0,
-            durationSize = 12,
-            enabled = true,
-            growOnApply = false,
-            growthDirection = "CENTERED_HORIZONTAL",
-            hideDurationText = false,
-            iconDisplayMode = "active",
-            iconSize = 30,
-            padding = 0,
-            removedSpells = {},
-            shape = "square",
-            showAbsorbAmount = false,
-            spellOverrides = {},
-            stackAnchor = "BOTTOM",
-            stackOffsetX = 0,
-            stackOffsetY = 0,
-            stackSize = 12,
-            zoom = 0
-          },
-          containers = {
-            buff = {
-              anchorOffsetX = 0,
-              anchorOffsetY = 0,
-              anchorPlacement = "center",
-              anchorSourcePoint = "CENTER",
-              anchorSpacing = 0,
-              anchorTargetPoint = "CENTER",
-              anchorTo = "disabled",
-              aspectRatioCrop = 1,
-              borderColor = {
-                [1] = 0,
-                [2] = 0,
-                [3] = 0,
-                [4] = 1
-              },
-              borderColorSource = "inherit",
-              borderSize = 0,
-              builtIn = true,
-              containerType = "aura",
-              dormantSpells = {},
-              durationAnchor = "CENTER",
-              durationOffsetX = 0,
-              durationOffsetY = 0,
-              durationSize = 12,
-              enabled = true,
-              growOnApply = false,
-              growthDirection = "CENTERED_HORIZONTAL",
-              hideDurationText = false,
-              iconDisplayMode = "active",
-              iconSize = 30,
-              name = "Buff Icons",
-              padding = 0,
-              removedSpells = {},
-              shape = "square",
-              showAbsorbAmount = false,
-              spellOverrides = {},
-              stackAnchor = "BOTTOM",
-              stackOffsetX = 0,
-              stackOffsetY = 0,
-              stackSize = 12,
-              zoom = 0
-            },
-            essential = {
-              builtIn = true,
-              clickableIcons = false,
-              containerType = "cooldown",
-              desaturateOnCooldown = true,
-              dormantSpells = {},
-              enabled = true,
-              iconDisplayMode = "always",
-              layoutDirection = "HORIZONTAL",
-              name = "Essential",
-              rangeColor = {
-                [1] = 0.80000000000000004,
-                [2] = 0.10000000000000001,
-                [3] = 0.10000000000000001
-              },
-              rangeIndicator = true,
-              removedSpells = {},
-              row1 = {
-                aspectRatioCrop = 1,
-                borderColor = {
-                  [1] = 0,
-                  [2] = 0,
-                  [3] = 0,
-                  [4] = 1
-                },
-                borderColorSource = "inherit",
-                borderSize = 1,
-                durationAnchor = "CENTER",
-                durationOffsetX = 0,
-                durationOffsetY = 0,
-                durationSize = 16,
-                durationTextColor = {
-                  [1] = 1,
-                  [2] = 1,
-                  [3] = 1,
-                  [4] = 1
-                },
-                hideDurationText = false,
-                iconCount = 12,
-                iconSize = 39,
-                padding = 0,
-                stackAnchor = "BOTTOMRIGHT",
-                stackOffsetX = 0,
-                stackOffsetY = 0,
-                stackSize = 12,
-                stackTextColor = {
-                  [1] = 1,
-                  [2] = 1,
-                  [3] = 1,
-                  [4] = 1
-                },
-                xOffset = 0,
-                yOffset = 0,
-                zoom = 0
-              },
-              row2 = {
-                aspectRatioCrop = 1,
-                borderColor = {
-                  [1] = 0,
-                  [2] = 0,
-                  [3] = 0,
-                  [4] = 1
-                },
-                borderColorSource = "inherit",
-                borderSize = 1,
-                durationAnchor = "CENTER",
-                durationOffsetX = 0,
-                durationOffsetY = 0,
-                durationSize = 16,
-                durationTextColor = {
-                  [1] = 1,
-                  [2] = 1,
-                  [3] = 1,
-                  [4] = 1
-                },
-                iconCount = 10,
-                iconSize = 39,
-                padding = 1,
-                stackAnchor = "BOTTOMRIGHT",
-                stackOffsetX = 0,
-                stackOffsetY = 0,
-                stackSize = 12,
-                stackTextColor = {
-                  [1] = 1,
-                  [2] = 1,
-                  [3] = 1,
-                  [4] = 1
-                },
-                xOffset = 0,
-                yOffset = 0,
-                zoom = 0
-              },
-              row3 = {
-                aspectRatioCrop = 1,
-                borderColor = {
-                  [1] = 0,
-                  [2] = 0,
-                  [3] = 0,
-                  [4] = 1
-                },
-                borderColorSource = "inherit",
-                borderSize = 1,
-                durationAnchor = "CENTER",
-                durationOffsetX = 0,
-                durationOffsetY = 0,
-                durationSize = 16,
-                durationTextColor = {
-                  [1] = 1,
-                  [2] = 1,
-                  [3] = 1,
-                  [4] = 1
-                },
-                iconCount = 10,
-                iconSize = 39,
-                padding = 0,
-                stackAnchor = "BOTTOMRIGHT",
-                stackOffsetX = 0,
-                stackOffsetY = 0,
-                stackSize = 12,
-                stackTextColor = {
-                  [1] = 1,
-                  [2] = 1,
-                  [3] = 1,
-                  [4] = 1
-                },
-                xOffset = 0,
-                yOffset = 0,
-                zoom = 0
-              },
-              spellOverrides = {},
-              usabilityIndicator = true
-            },
-            trackedBar = {
-              anchorOffsetX = 0,
-              anchorOffsetY = 0,
-              anchorPlacement = "center",
-              anchorSourcePoint = "CENTER",
-              anchorSpacing = 0,
-              anchorTargetPoint = "CENTER",
-              anchorTo = "disabled",
-              autoWidth = false,
-              autoWidthOffset = 0,
-              barColor = {
-                [1] = 0.376,
-                [2] = 0.64700000000000002,
-                [3] = 0.97999999999999998,
-                [4] = 1
-              },
-              barHeight = 25,
-              barOpacity = 1,
-              barWidth = 215,
-              bgColor = {
-                [1] = 0,
-                [2] = 0,
-                [3] = 0,
-                [4] = 1
-              },
-              bgOpacity = 0.5,
-              borderColor = {
-                [1] = 0,
-                [2] = 0,
-                [3] = 0,
-                [4] = 1
-              },
-              borderColorSource = "inherit",
-              borderSize = 2,
-              builtIn = true,
-              colorOverrides = {},
-              containerType = "auraBar",
-              desaturateInactive = false,
-              dormantSpells = {},
-              enabled = true,
-              fillDirection = "up",
-              growUp = true,
-              hideIcon = false,
-              iconDisplayMode = "active",
-              iconPosition = "top",
-              inactiveAlpha = 0.29999999999999999,
-              inactiveMode = "hide",
-              name = "Buff Bars",
-              orientation = "horizontal",
-              removedSpells = {},
-              reserveSlotWhenInactive = false,
-              showTextOnVertical = false,
-              spacing = 2,
-              spellOverrides = {},
-              textSize = 14,
-              texture = "Quazii v5",
-              useClassColor = true
-            },
-            utility = {
-              anchorBelowEssential = false,
-              anchorGap = 0,
-              builtIn = true,
-              clickableIcons = false,
-              containerType = "cooldown",
-              desaturateOnCooldown = true,
-              dormantSpells = {},
-              enabled = true,
-              iconDisplayMode = "always",
-              layoutDirection = "HORIZONTAL",
-              name = "Utility",
-              rangeColor = {
-                [1] = 0.80000000000000004,
-                [2] = 0.10000000000000001,
-                [3] = 0.10000000000000001
-              },
-              rangeIndicator = true,
-              removedSpells = {},
-              row1 = {
-                aspectRatioCrop = 1,
-                borderColor = {
-                  [1] = 0,
-                  [2] = 0,
-                  [3] = 0,
-                  [4] = 1
-                },
-                borderColorSource = "inherit",
-                borderSize = 1,
-                durationAnchor = "CENTER",
-                durationOffsetX = 0,
-                durationOffsetY = 0,
-                durationSize = 14,
-                durationTextColor = {
-                  [1] = 1,
-                  [2] = 1,
-                  [3] = 1,
-                  [4] = 1
-                },
-                iconCount = 7,
-                iconSize = 30,
-                padding = 0,
-                stackAnchor = "BOTTOMRIGHT",
-                stackOffsetX = 0,
-                stackOffsetY = -1,
-                stackSize = 14,
-                stackTextColor = {
-                  [1] = 1,
-                  [2] = 1,
-                  [3] = 1,
-                  [4] = 1
-                },
-                xOffset = 0,
-                yOffset = 0,
-                zoom = 0
-              },
-              row2 = {
-                aspectRatioCrop = 1,
-                borderColor = {
-                  [1] = 0,
-                  [2] = 0,
-                  [3] = 0,
-                  [4] = 1
-                },
-                borderColorSource = "inherit",
-                borderSize = 1,
-                durationAnchor = "CENTER",
-                durationOffsetX = 0,
-                durationOffsetY = 0,
-                durationSize = 14,
-                durationTextColor = {
-                  [1] = 1,
-                  [2] = 1,
-                  [3] = 1,
-                  [4] = 1
-                },
-                iconCount = 6,
-                iconSize = 30,
-                padding = 0,
-                stackAnchor = "BOTTOMRIGHT",
-                stackOffsetX = 0,
-                stackOffsetY = -1,
-                stackSize = 14,
-                stackTextColor = {
-                  [1] = 1,
-                  [2] = 1,
-                  [3] = 1,
-                  [4] = 1
-                },
-                xOffset = 0,
-                yOffset = 0,
-                zoom = 0
-              },
-              row3 = {
-                aspectRatioCrop = 1,
-                borderColor = {
-                  [1] = 0,
-                  [2] = 0,
-                  [3] = 0,
-                  [4] = 1
-                },
-                borderColorSource = "inherit",
-                borderSize = 1,
-                durationAnchor = "CENTER",
-                durationOffsetX = 0,
-                durationOffsetY = 0,
-                durationSize = 14,
-                durationTextColor = {
-                  [1] = 1,
-                  [2] = 1,
-                  [3] = 1,
-                  [4] = 1
-                },
-                iconCount = 6,
-                iconSize = 30,
-                padding = 0,
-                stackAnchor = "BOTTOMRIGHT",
-                stackOffsetX = 0,
-                stackOffsetY = -1,
-                stackSize = 14,
-                stackTextColor = {
-                  [1] = 1,
-                  [2] = 1,
-                  [3] = 1,
-                  [4] = 1
-                },
-                xOffset = 0,
-                yOffset = 0,
-                zoom = 0
-              },
-              spellOverrides = {},
-              usabilityIndicator = true
-            }
-          },
-          enabled = true,
-          essential = {
-            clickableIcons = false,
-            containerType = "cooldown",
-            desaturateOnCooldown = true,
-            dormantSpells = {},
-            enabled = true,
-            greyOutInactive = false,
-            greyOutInactiveBuffs = false,
-            iconDisplayMode = "always",
-            layoutDirection = "HORIZONTAL",
-            rangeColor = {
-              [1] = 0.80000000000000004,
-              [2] = 0.10000000000000001,
-              [3] = 0.10000000000000001
-            },
-            rangeIndicator = true,
-            removedSpells = {},
-            row1 = {
-              aspectRatioCrop = 1,
-              borderColor = {
-                [1] = 0,
-                [2] = 0,
-                [3] = 0,
-                [4] = 1
-              },
-              borderColorSource = "inherit",
-              borderSize = 1,
-              durationAnchor = "CENTER",
-              durationOffsetX = 0,
-              durationOffsetY = 0,
-              durationSize = 16,
-              durationTextColor = {
-                [1] = 1,
-                [2] = 1,
-                [3] = 1,
-                [4] = 1
-              },
-              hideDurationText = false,
-              iconCount = 12,
-              iconSize = 39,
-              padding = 0,
-              stackAnchor = "BOTTOMRIGHT",
-              stackOffsetX = 0,
-              stackOffsetY = 0,
-              stackSize = 12,
-              stackTextColor = {
-                [1] = 1,
-                [2] = 1,
-                [3] = 1,
-                [4] = 1
-              },
-              xOffset = 0,
-              yOffset = 0,
-              zoom = 0
-            },
-            row2 = {
-              aspectRatioCrop = 1,
-              borderColor = {
-                [1] = 0,
-                [2] = 0,
-                [3] = 0,
-                [4] = 1
-              },
-              borderColorSource = "inherit",
-              borderSize = 1,
-              durationAnchor = "CENTER",
-              durationOffsetX = 0,
-              durationOffsetY = 0,
-              durationSize = 16,
-              durationTextColor = {
-                [1] = 1,
-                [2] = 1,
-                [3] = 1,
-                [4] = 1
-              },
-              iconCount = 10,
-              iconSize = 39,
-              padding = 1,
-              stackAnchor = "BOTTOMRIGHT",
-              stackOffsetX = 0,
-              stackOffsetY = 0,
-              stackSize = 12,
-              stackTextColor = {
-                [1] = 1,
-                [2] = 1,
-                [3] = 1,
-                [4] = 1
-              },
-              xOffset = 0,
-              yOffset = 0,
-              zoom = 0
-            },
-            row3 = {
-              aspectRatioCrop = 1,
-              borderColor = {
-                [1] = 0,
-                [2] = 0,
-                [3] = 0,
-                [4] = 1
-              },
-              borderColorSource = "inherit",
-              borderSize = 1,
-              durationAnchor = "CENTER",
-              durationOffsetX = 0,
-              durationOffsetY = 0,
-              durationSize = 16,
-              durationTextColor = {
-                [1] = 1,
-                [2] = 1,
-                [3] = 1,
-                [4] = 1
-              },
-              iconCount = 10,
-              iconSize = 39,
-              padding = 0,
-              stackAnchor = "BOTTOMRIGHT",
-              stackOffsetX = 0,
-              stackOffsetY = 0,
-              stackSize = 12,
-              stackTextColor = {
-                [1] = 1,
-                [2] = 1,
-                [3] = 1,
-                [4] = 1
-              },
-              xOffset = 0,
-              yOffset = 0,
-              zoom = 0
-            },
-            spellOverrides = {},
-            usabilityIndicator = true
-          },
-          externalSkinning = false,
-          glowSource = "QUI",
-          iconSkin = "Default",
-          perLoadoutSpec = false,
-          trackedBar = {
-            anchorOffsetX = 0,
-            anchorOffsetY = 0,
-            anchorPlacement = "center",
-            anchorSourcePoint = "CENTER",
-            anchorSpacing = 0,
-            anchorTargetPoint = "CENTER",
-            anchorTo = "disabled",
-            autoWidth = false,
-            autoWidthOffset = 0,
-            barColor = {
-              [1] = 0.376,
-              [2] = 0.64700000000000002,
-              [3] = 0.97999999999999998,
-              [4] = 1
-            },
-            barHeight = 25,
-            barOpacity = 1,
-            barWidth = 215,
-            bgColor = {
-              [1] = 0,
-              [2] = 0,
-              [3] = 0,
-              [4] = 1
-            },
-            bgOpacity = 0.5,
-            borderColor = {
-              [1] = 0,
-              [2] = 0,
-              [3] = 0,
-              [4] = 1
-            },
-            borderColorSource = "inherit",
-            borderSize = 2,
-            colorOverrides = {},
-            containerType = "auraBar",
-            desaturateInactive = false,
-            dormantSpells = {},
-            enabled = true,
-            fillDirection = "up",
-            growUp = true,
-            hideIcon = false,
-            iconDisplayMode = "active",
-            iconPosition = "top",
-            inactiveAlpha = 0.29999999999999999,
-            inactiveMode = "hide",
-            orientation = "horizontal",
-            removedSpells = {},
-            reserveSlotWhenInactive = false,
-            showTextOnVertical = false,
-            spacing = 2,
-            spellOverrides = {},
-            textSize = 14,
-            texture = "Quazii v5",
-            useClassColor = true
-          },
-          utility = {
-            anchorBelowEssential = false,
-            anchorGap = 0,
-            clickableIcons = false,
-            containerType = "cooldown",
-            desaturateOnCooldown = true,
-            dormantSpells = {},
-            enabled = true,
-            greyOutInactive = false,
-            greyOutInactiveBuffs = false,
-            iconDisplayMode = "always",
-            layoutDirection = "HORIZONTAL",
-            rangeColor = {
-              [1] = 0.80000000000000004,
-              [2] = 0.10000000000000001,
-              [3] = 0.10000000000000001
-            },
-            rangeIndicator = true,
-            removedSpells = {},
-            row1 = {
-              aspectRatioCrop = 1,
-              borderColor = {
-                [1] = 0,
-                [2] = 0,
-                [3] = 0,
-                [4] = 1
-              },
-              borderColorSource = "inherit",
-              borderSize = 1,
-              durationAnchor = "CENTER",
-              durationOffsetX = 0,
-              durationOffsetY = 0,
-              durationSize = 14,
-              durationTextColor = {
-                [1] = 1,
-                [2] = 1,
-                [3] = 1,
-                [4] = 1
-              },
-              iconCount = 7,
-              iconSize = 30,
-              padding = 0,
-              stackAnchor = "BOTTOMRIGHT",
-              stackOffsetX = 0,
-              stackOffsetY = -1,
-              stackSize = 14,
-              stackTextColor = {
-                [1] = 1,
-                [2] = 1,
-                [3] = 1,
-                [4] = 1
-              },
-              xOffset = 0,
-              yOffset = 0,
-              zoom = 0
-            },
-            row2 = {
-              aspectRatioCrop = 1,
-              borderColor = {
-                [1] = 0,
-                [2] = 0,
-                [3] = 0,
-                [4] = 1
-              },
-              borderColorSource = "inherit",
-              borderSize = 1,
-              durationAnchor = "CENTER",
-              durationOffsetX = 0,
-              durationOffsetY = 0,
-              durationSize = 14,
-              durationTextColor = {
-                [1] = 1,
-                [2] = 1,
-                [3] = 1,
-                [4] = 1
-              },
-              iconCount = 6,
-              iconSize = 30,
-              padding = 0,
-              stackAnchor = "BOTTOMRIGHT",
-              stackOffsetX = 0,
-              stackOffsetY = -1,
-              stackSize = 14,
-              stackTextColor = {
-                [1] = 1,
-                [2] = 1,
-                [3] = 1,
-                [4] = 1
-              },
-              xOffset = 0,
-              yOffset = 0,
-              zoom = 0
-            },
-            row3 = {
-              aspectRatioCrop = 1,
-              borderColor = {
-                [1] = 0,
-                [2] = 0,
-                [3] = 0,
-                [4] = 1
-              },
-              borderColorSource = "inherit",
-              borderSize = 1,
-              durationAnchor = "CENTER",
-              durationOffsetX = 0,
-              durationOffsetY = 0,
-              durationSize = 14,
-              durationTextColor = {
-                [1] = 1,
-                [2] = 1,
-                [3] = 1,
-                [4] = 1
-              },
-              iconCount = 6,
-              iconSize = 30,
-              padding = 0,
-              stackAnchor = "BOTTOMRIGHT",
-              stackOffsetX = 0,
-              stackOffsetY = -1,
-              stackSize = 14,
-              stackTextColor = {
-                [1] = 1,
-                [2] = 1,
-                [3] = 1,
-                [4] = 1
-              },
-              xOffset = 0,
-              yOffset = 0,
-              zoom = 0
-            },
-            spellOverrides = {},
-            usabilityIndicator = true
-          }
-        },
-        powerBar = {
-          attachTo = "EssentialCooldownViewer",
-          autoAttach = false,
-          bgColor = {
-            [1] = 0.078,
-            [2] = 0.078,
-            [3] = 0.078,
-            [4] = 1
-          },
-          borderColor = {
-            [1] = 0,
-            [2] = 0,
-            [3] = 0,
-            [4] = 1
-          },
-          borderColorSource = "inherit",
-          borderSize = 0,
-          colorMode = "power",
-          customColor = {
-            [1] = 0.20000000000000001,
-            [2] = 0.59999999999999998,
-            [3] = 1,
-            [4] = 1
-          },
-          enabled = true,
-          height = 8,
-          hidePercentSymbol = false,
-          indicators = {
-            color = {
-              [1] = 1,
-              [2] = 1,
-              [3] = 1,
-              [4] = 0.90000000000000002
-            },
-            enabled = false,
-            perSpec = {},
-            thickness = 2
-          },
-          lockedToEssential = true,
-          lockedToUtility = false,
-          offsetX = 0,
-          offsetY = -204,
-          orientation = "HORIZONTAL",
-          showPercent = true,
-          showText = true,
-          showTicks = false,
-          snapGap = 5,
-          standaloneMode = false,
-          textAlign = "CENTER",
-          textCustomColor = {
-            [1] = 1,
-            [2] = 1,
-            [3] = 1,
-            [4] = 1
-          },
-          textSize = 10,
-          textUseClassColor = false,
-          textX = 0,
-          textY = 0,
-          texture = "Quazii v5",
-          tickColor = {
-            [1] = 0,
-            [2] = 0,
-            [3] = 0,
-            [4] = 1
-          },
-          tickThickness = 1,
-          useClassColor = false,
-          usePowerColor = true,
-          useRawPixels = true,
-          visibility = "always",
-          width = 236
-        },
-        powerColors = {
-          arcaneCharges = {
-            [1] = 0.10000000000000001,
-            [2] = 0.10000000000000001,
-            [3] = 0.97999999999999998,
-            [4] = 1
-          },
-          bloodRunes = {
-            [1] = 0.77000000000000002,
-            [2] = 0.12,
-            [3] = 0.23000000000000001,
-            [4] = 1
-          },
-          chi = {
-            [1] = 0,
-            [2] = 1,
-            [3] = 0.58999999999999997,
-            [4] = 1
-          },
-          comboPoints = {
-            [1] = 1,
-            [2] = 0.95999999999999996,
-            [3] = 0.40999999999999998,
-            [4] = 1
-          },
-          energy = {
-            [1] = 1,
-            [2] = 1,
-            [3] = 0,
-            [4] = 1
-          },
-          essence = {
-            [1] = 0.20000000000000001,
-            [2] = 0.57999999999999996,
-            [3] = 0.5,
-            [4] = 1
-          },
-          focus = {
-            [1] = 1,
-            [2] = 0.5,
-            [3] = 0.25,
-            [4] = 1
-          },
-          frostRunes = {
-            [1] = 0,
-            [2] = 0.81999999999999995,
-            [3] = 1,
-            [4] = 1
-          },
-          fury = {
-            [1] = 0.79000000000000004,
-            [2] = 0.26000000000000001,
-            [3] = 0.98999999999999999,
-            [4] = 1
-          },
-          holyPower = {
-            [1] = 0.94999999999999996,
-            [2] = 0.90000000000000002,
-            [3] = 0.59999999999999998,
-            [4] = 1
-          },
-          insanity = {
-            [1] = 0.40000000000000002,
-            [2] = 0,
-            [3] = 0.80000000000000004,
-            [4] = 1
-          },
-          lunarPower = {
-            [1] = 0.29999999999999999,
-            [2] = 0.52000000000000002,
-            [3] = 0.90000000000000002,
-            [4] = 1
-          },
-          maelstrom = {
-            [1] = 0,
-            [2] = 0.5,
-            [3] = 1,
-            [4] = 1
-          },
-          maelstromWeapon = {
-            [1] = 0,
-            [2] = 0.68999999999999995,
-            [3] = 1,
-            [4] = 1
-          },
-          mana = {
-            [1] = 0,
-            [2] = 0,
-            [3] = 1,
-            [4] = 1
-          },
-          rage = {
-            [1] = 1,
-            [2] = 0,
-            [3] = 0,
-            [4] = 1
-          },
-          renewingMistCharges = {
-            [1] = 0.29999999999999999,
-            [2] = 1,
-            [3] = 0.71999999999999997,
-            [4] = 1
-          },
-          runes = {
-            [1] = 0.77000000000000002,
-            [2] = 0.12,
-            [3] = 0.23000000000000001,
-            [4] = 1
-          },
-          runicPower = {
-            [1] = 0,
-            [2] = 0.81999999999999995,
-            [3] = 1,
-            [4] = 1
-          },
-          soulFragments = {
-            [1] = 0.64000000000000001,
-            [2] = 0.19,
-            [3] = 0.79000000000000004,
-            [4] = 1
-          },
-          soulShards = {
-            [1] = 0.57999999999999996,
-            [2] = 0.51000000000000001,
-            [3] = 0.79000000000000004,
-            [4] = 1
-          },
-          stagger = {
-            [1] = 0,
-            [2] = 1,
-            [3] = 0.58999999999999997,
-            [4] = 1
-          },
-          staggerHeavy = {
-            [1] = 1,
-            [2] = 0.41999999999999998,
-            [3] = 0.41999999999999998,
-            [4] = 1
-          },
-          staggerLight = {
-            [1] = 0.52000000000000002,
-            [2] = 1,
-            [3] = 0.52000000000000002,
-            [4] = 1
-          },
-          staggerModerate = {
-            [1] = 1,
-            [2] = 0.97999999999999998,
-            [3] = 0.71999999999999997,
-            [4] = 1
-          },
-          tipOfTheSpear = {
-            [1] = 0,
-            [2] = 0.80000000000000004,
-            [3] = 0.29999999999999999,
-            [4] = 1
-          },
-          unholyRunes = {
-            [1] = 0,
-            [2] = 0.80000000000000004,
-            [3] = 0,
-            [4] = 1
-          },
-          useStaggerLevelColors = true,
-          whirlwind = {
-            [1] = 0.90000000000000002,
-            [2] = 0.20000000000000001,
-            [3] = 0.20000000000000001,
-            [4] = 1
-          }
-        },
-        preyTracker = {
-          ambushAlertEnabled = true,
-          ambushDuration = 6,
-          ambushGlowEnabled = true,
-          ambushSoundEnabled = true,
-          autoHide = true,
-          barBackgroundColor = {
-            [1] = 0.10000000000000001,
-            [2] = 0.10000000000000001,
-            [3] = 0.10000000000000001,
-            [4] = 0.80000000000000004
-          },
-          barBgOverride = false,
-          barColor = {
-            [1] = 0.20000000000000001,
-            [2] = 0.80000000000000004,
-            [3] = 0.20000000000000001,
-            [4] = 1
-          },
-          barUseAccentColor = true,
-          barUseClassColor = false,
-          borderColor = {
-            [1] = 0,
-            [2] = 0,
-            [3] = 0,
-            [4] = 1
-          },
-          borderColorSource = "inherit",
-          borderSize = 1,
-          completionSound = true,
-          currencyEnabled = true,
-          currencyShowSession = true,
-          currencyShowWeekly = true,
-          enabled = true,
-          height = 20,
-          hideInInstances = true,
-          hideOutsidePreyZone = false,
-          huntScannerEnabled = true,
-          replaceDefaultIndicator = true,
-          showSpark = true,
-          showText = true,
-          showTickMarks = true,
-          soundEnabled = true,
-          soundStage2 = true,
-          soundStage3 = true,
-          soundStage4 = true,
-          textFormat = "stage_pct",
-          textSize = 11,
-          texture = "Quazii v5",
-          tickStyle = "thirds",
-          width = 250
         },
         quiDatatexts = {
           enabled = true,
@@ -6154,6 +3227,4444 @@ return {
             width = 160
           }
         },
+        frameAnchoring = {
+          actionTracker = {
+            autoHeight = false,
+            autoWidth = false,
+            heightAdjust = 0,
+            hideWithParent = false,
+            keepInPlace = true,
+            offsetX = -20,
+            offsetY = 0,
+            parent = "screen",
+            point = "RIGHT",
+            relative = "RIGHT",
+            sizeStable = true,
+            widthAdjust = 0
+          },
+          alertAnchor = {
+            autoHeight = false,
+            autoWidth = false,
+            heightAdjust = 0,
+            hideWithParent = false,
+            keepInPlace = true,
+            offsetX = 0,
+            offsetY = -20,
+            parent = "screen",
+            point = "TOP",
+            relative = "TOP",
+            sizeStable = true,
+            widthAdjust = 0
+          },
+          atonementCounter = {
+            autoHeight = false,
+            autoWidth = false,
+            heightAdjust = 0,
+            hideWithParent = false,
+            keepInPlace = true,
+            offsetX = 0,
+            offsetY = 0,
+            parent = "brezCounter",
+            point = "BOTTOM",
+            relative = "TOP",
+            sizeStable = true,
+            widthAdjust = 0
+          },
+          bagBar = {
+            autoHeight = false,
+            autoWidth = false,
+            heightAdjust = 0,
+            hideWithParent = false,
+            keepInPlace = true,
+            offsetX = 0,
+            offsetY = 0,
+            parent = "microMenu",
+            point = "TOPLEFT",
+            relative = "BOTTOMLEFT",
+            sizeStable = true,
+            widthAdjust = 0
+          },
+          bar1 = {
+            autoHeight = false,
+            autoWidth = false,
+            heightAdjust = 0,
+            hideWithParent = false,
+            keepInPlace = true,
+            offsetX = 0,
+            offsetY = 0,
+            parent = "bar3",
+            point = "BOTTOM",
+            relative = "TOP",
+            sizeStable = true,
+            widthAdjust = 0
+          },
+          bar2 = {
+            autoHeight = false,
+            autoWidth = false,
+            heightAdjust = 0,
+            hideWithParent = false,
+            keepInPlace = true,
+            offsetX = 0,
+            offsetY = 0,
+            parent = "bar1",
+            point = "BOTTOM",
+            relative = "TOP",
+            sizeStable = true,
+            widthAdjust = 0
+          },
+          bar3 = {
+            autoHeight = false,
+            autoWidth = false,
+            heightAdjust = 0,
+            hideWithParent = false,
+            keepInPlace = true,
+            offsetX = 0,
+            offsetY = 0,
+            parent = "screen",
+            point = "BOTTOMRIGHT",
+            relative = "BOTTOM",
+            sizeStable = true,
+            widthAdjust = 0
+          },
+          bar4 = {
+            autoHeight = false,
+            autoWidth = false,
+            heightAdjust = 0,
+            hideWithParent = false,
+            keepInPlace = true,
+            offsetX = 0,
+            offsetY = 0,
+            parent = "bar5",
+            point = "BOTTOMLEFT",
+            relative = "TOPLEFT",
+            sizeStable = true,
+            widthAdjust = 0
+          },
+          bar5 = {
+            autoHeight = false,
+            autoWidth = false,
+            heightAdjust = 0,
+            hideWithParent = false,
+            offsetX = 0,
+            offsetY = 0,
+            parent = "bar6",
+            point = "BOTTOMLEFT",
+            relative = "TOPLEFT",
+            sizeStable = true,
+            widthAdjust = 0
+          },
+          bar6 = {
+            autoHeight = false,
+            autoWidth = false,
+            heightAdjust = 0,
+            hideWithParent = false,
+            offsetX = 0,
+            offsetY = 0,
+            parent = "bar3",
+            point = "BOTTOMLEFT",
+            relative = "BOTTOMRIGHT",
+            sizeStable = true,
+            widthAdjust = 0
+          },
+          bar7 = {
+            autoHeight = false,
+            autoWidth = false,
+            heightAdjust = 0,
+            hideWithParent = false,
+            offsetX = -500,
+            offsetY = 144,
+            parent = "screen",
+            point = "CENTER",
+            relative = "CENTER",
+            sizeStable = true,
+            widthAdjust = 0
+          },
+          bar8 = {
+            autoHeight = false,
+            autoWidth = false,
+            heightAdjust = 0,
+            hideWithParent = false,
+            offsetX = -500,
+            offsetY = 49,
+            parent = "screen",
+            point = "CENTER",
+            relative = "CENTER",
+            sizeStable = true,
+            widthAdjust = 0
+          },
+          belowMinimapWidgets = {
+            autoHeight = false,
+            autoWidth = false,
+            heightAdjust = 0,
+            hideWithParent = false,
+            keepInPlace = true,
+            offsetX = 0,
+            offsetY = 0,
+            parent = "datatextPanel",
+            point = "TOP",
+            relative = "BOTTOM",
+            sizeStable = true,
+            widthAdjust = 0
+          },
+          bnetToastAnchor = {
+            autoHeight = false,
+            autoWidth = false,
+            heightAdjust = 0,
+            hideWithParent = false,
+            keepInPlace = true,
+            offsetX = 0,
+            offsetY = -125,
+            parent = "screen",
+            point = "CENTER",
+            relative = "TOP",
+            sizeStable = true,
+            widthAdjust = 0
+          },
+          bossFrames = {
+            autoHeight = false,
+            autoWidth = false,
+            heightAdjust = 0,
+            hideWithParent = false,
+            keepInPlace = true,
+            offsetX = 0,
+            offsetY = 0,
+            parent = "datatextPanel",
+            point = "TOPLEFT",
+            relative = "BOTTOMLEFT",
+            sizeStable = true,
+            widthAdjust = 0
+          },
+          brezCounter = {
+            autoHeight = false,
+            autoWidth = false,
+            heightAdjust = 0,
+            hideWithParent = false,
+            keepInPlace = true,
+            offsetX = 0,
+            offsetY = 0,
+            parent = "combatTimer",
+            point = "BOTTOM",
+            relative = "TOP",
+            sizeStable = true,
+            widthAdjust = 0
+          },
+          buffFrame = {
+            autoHeight = false,
+            autoWidth = false,
+            growAnchor = "TOPRIGHT",
+            heightAdjust = 0,
+            hideWithParent = false,
+            keepInPlace = true,
+            offsetX = 0,
+            offsetY = 0,
+            parent = "minimap",
+            point = "TOPRIGHT",
+            relative = "TOPLEFT",
+            sizeStable = true,
+            widthAdjust = 0
+          },
+          combatTimer = {
+            autoHeight = false,
+            autoWidth = false,
+            heightAdjust = 0,
+            hideWithParent = false,
+            offsetX = 0,
+            offsetY = 0,
+            parent = "bar3",
+            point = "BOTTOMRIGHT",
+            relative = "BOTTOMLEFT",
+            sizeStable = true,
+            widthAdjust = 0
+          },
+          consumables = {
+            autoHeight = false,
+            autoWidth = false,
+            heightAdjust = 0,
+            hideWithParent = false,
+            keepInPlace = true,
+            offsetX = 0,
+            offsetY = 50,
+            parent = "readyCheck",
+            point = "BOTTOM",
+            relative = "TOP",
+            sizeStable = true,
+            widthAdjust = 0
+          },
+          crosshair = {
+            autoHeight = false,
+            autoWidth = false,
+            heightAdjust = 0,
+            hideWithParent = false,
+            offsetX = 0,
+            offsetY = 0,
+            parent = "screen",
+            point = "CENTER",
+            relative = "CENTER",
+            sizeStable = true,
+            widthAdjust = 0
+          },
+          ["customTracker:default_tracker_1"] = {
+            autoHeight = false,
+            autoWidth = false,
+            heightAdjust = 0,
+            hideWithParent = false,
+            keepInPlace = true,
+            offsetX = 0,
+            offsetY = 0,
+            parent = "playerFrame",
+            point = "BOTTOMRIGHT",
+            relative = "TOPRIGHT",
+            sizeStable = true,
+            widthAdjust = 0
+          },
+          datatextPanel = {
+            autoHeight = false,
+            autoWidth = false,
+            heightAdjust = 0,
+            hideWithParent = false,
+            keepInPlace = true,
+            offsetX = 0,
+            offsetY = 0,
+            parent = "minimap",
+            point = "TOP",
+            relative = "BOTTOM",
+            sizeStable = true,
+            widthAdjust = 0
+          },
+          debuffFrame = {
+            autoHeight = false,
+            autoWidth = false,
+            growAnchor = "TOPRIGHT",
+            heightAdjust = 0,
+            hideWithParent = false,
+            keepInPlace = true,
+            offsetX = 0,
+            offsetY = -5,
+            parent = "buffFrame",
+            point = "TOPRIGHT",
+            relative = "BOTTOMRIGHT",
+            sizeStable = true,
+            widthAdjust = 0
+          },
+          extraActionButton = {
+            autoHeight = false,
+            autoWidth = false,
+            heightAdjust = 0,
+            hideWithParent = false,
+            keepInPlace = true,
+            offsetX = 0,
+            offsetY = 200,
+            parent = "screen",
+            point = "CENTER",
+            relative = "BOTTOM",
+            sizeStable = true,
+            widthAdjust = 0
+          },
+          focusCastAlert = {
+            autoHeight = false,
+            autoWidth = false,
+            heightAdjust = 0,
+            hideWithParent = false,
+            keepInPlace = true,
+            offsetX = 0,
+            offsetY = -40,
+            parent = "screen",
+            point = "CENTER",
+            relative = "CENTER",
+            sizeStable = true,
+            widthAdjust = 0
+          },
+          focusCastbar = {
+            autoHeight = false,
+            autoWidth = true,
+            heightAdjust = 0,
+            hideWithParent = false,
+            offsetX = 0,
+            offsetY = 0,
+            parent = "focusFrame",
+            point = "TOP",
+            relative = "BOTTOM",
+            sizeStable = true,
+            widthAdjust = 0
+          },
+          focusFrame = {
+            autoHeight = false,
+            autoWidth = false,
+            heightAdjust = 0,
+            hideWithParent = false,
+            offsetX = 0,
+            offsetY = 200,
+            parent = "playerFrame",
+            point = "BOTTOMLEFT",
+            relative = "TOPLEFT",
+            sizeStable = true,
+            widthAdjust = 0
+          },
+          keyTracker = {
+            autoHeight = false,
+            autoWidth = false,
+            heightAdjust = 0,
+            hideWithParent = false,
+            keepInPlace = true,
+            offsetX = 0,
+            offsetY = 0,
+            parent = "minimap",
+            point = "TOPRIGHT",
+            relative = "BOTTOMLEFT",
+            sizeStable = true,
+            widthAdjust = 0
+          },
+          lootFrame = {
+            autoHeight = false,
+            autoWidth = false,
+            heightAdjust = 0,
+            hideWithParent = false,
+            keepInPlace = true,
+            offsetX = 300,
+            offsetY = 0,
+            parent = "screen",
+            point = "CENTER",
+            relative = "CENTER",
+            sizeStable = true,
+            widthAdjust = 0
+          },
+          lootRollAnchor = {
+            autoHeight = false,
+            autoWidth = false,
+            heightAdjust = 0,
+            hideWithParent = false,
+            keepInPlace = true,
+            offsetX = 0,
+            offsetY = 0,
+            parent = "readyCheck",
+            point = "TOP",
+            relative = "BOTTOM",
+            sizeStable = true,
+            widthAdjust = 0
+          },
+          microMenu = {
+            autoHeight = false,
+            autoWidth = false,
+            heightAdjust = 0,
+            hideWithParent = false,
+            keepInPlace = true,
+            offsetX = 0,
+            offsetY = -30,
+            parent = "screen",
+            point = "TOPLEFT",
+            relative = "TOPLEFT",
+            sizeStable = true,
+            widthAdjust = 0
+          },
+          minimap = {
+            autoHeight = false,
+            autoWidth = false,
+            heightAdjust = 0,
+            hideWithParent = false,
+            keepInPlace = true,
+            offsetX = 0,
+            offsetY = -30,
+            parent = "screen",
+            point = "TOPRIGHT",
+            relative = "TOPRIGHT",
+            sizeStable = true,
+            widthAdjust = 0
+          },
+          missingRaidBuffs = {
+            autoHeight = false,
+            autoWidth = false,
+            heightAdjust = 0,
+            hideWithParent = false,
+            keepInPlace = true,
+            offsetX = 0,
+            offsetY = -100,
+            parent = "screen",
+            point = "TOP",
+            relative = "TOP",
+            sizeStable = true,
+            widthAdjust = 0
+          },
+          mplusTimer = {
+            autoHeight = false,
+            autoWidth = false,
+            heightAdjust = 0,
+            hideWithParent = false,
+            keepInPlace = true,
+            offsetX = 0,
+            offsetY = 0,
+            parent = "partyFrames",
+            point = "BOTTOMLEFT",
+            relative = "BOTTOMRIGHT",
+            sizeStable = true,
+            widthAdjust = 0
+          },
+          objectiveTracker = {
+            autoHeight = false,
+            autoWidth = false,
+            heightAdjust = 0,
+            hideWithParent = false,
+            keepInPlace = true,
+            offsetX = 0,
+            offsetY = 0,
+            parent = "datatextPanel",
+            point = "TOPRIGHT",
+            relative = "BOTTOMRIGHT",
+            sizeStable = true,
+            widthAdjust = 0
+          },
+          partyFrames = {
+            autoHeight = false,
+            autoWidth = false,
+            heightAdjust = 0,
+            hideWithParent = false,
+            keepInPlace = true,
+            offsetX = 0,
+            offsetY = -25,
+            parent = "cdmUtility",
+            point = "TOP",
+            relative = "BOTTOM",
+            sizeStable = true,
+            widthAdjust = 0
+          },
+          petBar = {
+            autoHeight = false,
+            autoWidth = false,
+            heightAdjust = 0,
+            hideWithParent = false,
+            keepInPlace = true,
+            offsetX = 0,
+            offsetY = 0,
+            parent = "bar6",
+            point = "BOTTOMLEFT",
+            relative = "BOTTOMRIGHT",
+            sizeStable = true,
+            widthAdjust = 0
+          },
+          petCastbar = {
+            autoHeight = false,
+            autoWidth = false,
+            heightAdjust = 0,
+            hideWithParent = false,
+            offsetX = 0,
+            offsetY = 0,
+            parent = "petFrame",
+            point = "TOP",
+            relative = "BOTTOM",
+            sizeStable = true,
+            widthAdjust = 0
+          },
+          petFrame = {
+            autoHeight = false,
+            autoWidth = false,
+            heightAdjust = 0,
+            hideWithParent = false,
+            keepInPlace = true,
+            offsetX = 0,
+            offsetY = 0,
+            parent = "playerFrame",
+            point = "BOTTOMRIGHT",
+            relative = "BOTTOMLEFT",
+            sizeStable = true,
+            widthAdjust = 0
+          },
+          petWarning = {
+            autoHeight = false,
+            autoWidth = false,
+            heightAdjust = 0,
+            hideWithParent = false,
+            keepInPlace = true,
+            offsetX = 0,
+            offsetY = -30,
+            parent = "playerFrame",
+            point = "TOP",
+            relative = "BOTTOM",
+            sizeStable = true,
+            widthAdjust = 0
+          },
+          playerCastbar = {
+            autoHeight = false,
+            autoWidth = true,
+            heightAdjust = 0,
+            hideWithParent = false,
+            offsetX = 0,
+            offsetY = 0,
+            parent = "playerFrame",
+            point = "TOP",
+            relative = "BOTTOM",
+            sizeStable = true,
+            widthAdjust = 0
+          },
+          playerFrame = {
+            autoHeight = false,
+            autoWidth = false,
+            heightAdjust = 0,
+            hideWithParent = false,
+            keepInPlace = true,
+            offsetX = 0,
+            offsetY = 0,
+            parent = "cdmEssential",
+            point = "BOTTOMRIGHT",
+            relative = "BOTTOMLEFT",
+            sizeStable = true,
+            widthAdjust = 0
+          },
+          powerBarAlt = {
+            autoHeight = false,
+            autoWidth = false,
+            heightAdjust = 0,
+            hideWithParent = false,
+            keepInPlace = true,
+            offsetX = 0,
+            offsetY = -75,
+            parent = "screen",
+            point = "CENTER",
+            relative = "TOP",
+            sizeStable = true,
+            widthAdjust = 0
+          },
+          preyTracker = {
+            autoHeight = false,
+            autoWidth = false,
+            heightAdjust = 0,
+            hideWithParent = false,
+            keepInPlace = true,
+            offsetX = 0,
+            offsetY = -250,
+            parent = "screen",
+            point = "CENTER",
+            relative = "TOP",
+            sizeStable = true,
+            widthAdjust = 0
+          },
+          primaryPower = {
+            autoHeight = false,
+            autoWidth = true,
+            heightAdjust = 0,
+            hideWithParent = false,
+            keepInPlace = true,
+            offsetX = 0,
+            offsetY = 0,
+            parent = "cdmEssential",
+            point = "TOP",
+            relative = "BOTTOM",
+            sizeStable = true,
+            widthAdjust = 0
+          },
+          raidFrames = {
+            autoHeight = false,
+            autoWidth = false,
+            heightAdjust = 0,
+            hideWithParent = false,
+            keepInPlace = true,
+            offsetX = 0,
+            offsetY = -25,
+            parent = "cdmUtility",
+            point = "TOP",
+            relative = "BOTTOM",
+            sizeStable = true,
+            widthAdjust = 0
+          },
+          raidMarkersBar = {
+            autoHeight = false,
+            autoWidth = false,
+            heightAdjust = 0,
+            hideWithParent = false,
+            keepInPlace = true,
+            offsetX = 0,
+            offsetY = 240,
+            parent = "screen",
+            point = "CENTER",
+            relative = "BOTTOM",
+            sizeStable = true,
+            widthAdjust = 0
+          },
+          rangeCheck = {
+            autoHeight = false,
+            autoWidth = false,
+            heightAdjust = 0,
+            hideWithParent = false,
+            offsetX = 0,
+            offsetY = 0,
+            parent = "screen",
+            point = "CENTER",
+            relative = "CENTER",
+            sizeStable = true,
+            widthAdjust = 0
+          },
+          readyCheck = {
+            autoHeight = false,
+            autoWidth = false,
+            heightAdjust = 0,
+            hideWithParent = false,
+            keepInPlace = true,
+            offsetX = 0,
+            offsetY = 0,
+            parent = "screen",
+            point = "CENTER",
+            relative = "CENTER",
+            sizeStable = true,
+            widthAdjust = 0
+          },
+          rotationAssistIcon = {
+            autoHeight = false,
+            autoWidth = false,
+            heightAdjust = 0,
+            hideWithParent = false,
+            keepInPlace = true,
+            offsetX = 0,
+            offsetY = 40,
+            parent = "cdmEssential",
+            point = "BOTTOM",
+            relative = "TOP",
+            sizeStable = true,
+            widthAdjust = 0
+          },
+          secondaryPower = {
+            autoHeight = false,
+            autoWidth = true,
+            heightAdjust = 0,
+            hideWithParent = false,
+            keepInPlace = true,
+            offsetX = 0,
+            offsetY = 0,
+            parent = "primaryPower",
+            point = "TOP",
+            relative = "BOTTOM",
+            sizeStable = true,
+            widthAdjust = 0
+          },
+          skyriding = {
+            autoHeight = false,
+            autoWidth = false,
+            heightAdjust = 0,
+            hideWithParent = false,
+            keepInPlace = true,
+            offsetX = 0,
+            offsetY = -40,
+            parent = "screen",
+            point = "CENTER",
+            relative = "TOP",
+            sizeStable = true,
+            widthAdjust = 0
+          },
+          stanceBar = {
+            autoHeight = false,
+            autoWidth = false,
+            heightAdjust = 0,
+            hideWithParent = false,
+            keepInPlace = true,
+            offsetX = 0,
+            offsetY = 0,
+            parent = "petBar",
+            point = "BOTTOMLEFT",
+            relative = "TOPLEFT",
+            sizeStable = true,
+            widthAdjust = 0
+          },
+          targetCastbar = {
+            autoHeight = false,
+            autoWidth = true,
+            heightAdjust = 0,
+            hideWithParent = false,
+            offsetX = 0,
+            offsetY = 0,
+            parent = "targetFrame",
+            point = "TOP",
+            relative = "BOTTOM",
+            sizeStable = true,
+            widthAdjust = 0
+          },
+          targetFrame = {
+            autoHeight = false,
+            autoWidth = false,
+            heightAdjust = 0,
+            hideWithParent = false,
+            keepInPlace = true,
+            offsetX = 0,
+            offsetY = 0,
+            parent = "cdmEssential",
+            point = "BOTTOMLEFT",
+            relative = "BOTTOMRIGHT",
+            sizeStable = true,
+            widthAdjust = 0
+          },
+          toastAnchor = {
+            autoHeight = false,
+            autoWidth = false,
+            heightAdjust = 0,
+            hideWithParent = false,
+            keepInPlace = true,
+            offsetX = 0,
+            offsetY = -150,
+            parent = "screen",
+            point = "TOP",
+            relative = "TOP",
+            sizeStable = true,
+            widthAdjust = 0
+          },
+          tooltipAnchor = {
+            autoHeight = false,
+            autoWidth = false,
+            heightAdjust = 0,
+            hideWithParent = false,
+            keepInPlace = true,
+            offsetX = -200,
+            offsetY = 100,
+            parent = "screen",
+            point = "BOTTOMRIGHT",
+            relative = "BOTTOMRIGHT",
+            sizeStable = true,
+            widthAdjust = 0
+          },
+          topCenterWidgets = {
+            autoHeight = false,
+            autoWidth = false,
+            heightAdjust = 0,
+            hideWithParent = false,
+            keepInPlace = true,
+            offsetX = 0,
+            offsetY = -100,
+            parent = "screen",
+            point = "TOP",
+            relative = "TOP",
+            sizeStable = true,
+            widthAdjust = 0
+          },
+          totCastbar = {
+            autoHeight = false,
+            autoWidth = false,
+            heightAdjust = 0,
+            hideWithParent = false,
+            offsetX = 0,
+            offsetY = 0,
+            parent = "totFrame",
+            point = "TOP",
+            relative = "BOTTOM",
+            sizeStable = true,
+            widthAdjust = 0
+          },
+          totFrame = {
+            autoHeight = false,
+            autoWidth = false,
+            heightAdjust = 0,
+            hideWithParent = false,
+            offsetX = 0,
+            offsetY = 0,
+            parent = "targetFrame",
+            point = "BOTTOMLEFT",
+            relative = "BOTTOMRIGHT",
+            sizeStable = true,
+            widthAdjust = 0
+          },
+          totemBar = {
+            autoHeight = false,
+            autoWidth = false,
+            heightAdjust = 0,
+            hideWithParent = false,
+            keepInPlace = true,
+            offsetX = 0,
+            offsetY = 200,
+            parent = "screen",
+            point = "CENTER",
+            relative = "BOTTOM",
+            sizeStable = true,
+            widthAdjust = 0
+          },
+          xpTracker = {
+            autoHeight = false,
+            autoWidth = false,
+            heightAdjust = 0,
+            hideWithParent = false,
+            keepInPlace = true,
+            offsetX = 0,
+            offsetY = 4,
+            parent = "screen",
+            point = "BOTTOM",
+            relative = "BOTTOM",
+            sizeStable = true,
+            widthAdjust = 0
+          },
+          zoneAbility = {
+            autoHeight = false,
+            autoWidth = false,
+            heightAdjust = 0,
+            hideWithParent = false,
+            keepInPlace = true,
+            offsetX = 150,
+            offsetY = -27.5,
+            parent = "screen",
+            point = "CENTER",
+            relative = "CENTER",
+            sizeStable = true,
+            widthAdjust = 0
+          }
+        },
+        general = {
+          actionTracker = {
+            backdropColor = {
+              [1] = 0,
+              [2] = 0,
+              [3] = 0,
+              [4] = 0.59999999999999998
+            },
+            blocklistText = "",
+            borderColor = {
+              [1] = 0,
+              [2] = 0,
+              [3] = 0,
+              [4] = 1
+            },
+            borderColorSource = "inherit",
+            borderSize = 1,
+            clearOnCombatEnd = true,
+            clearOnInactivity = false,
+            enabled = false,
+            hideBorder = false,
+            iconBorderColor = {
+              [1] = 0,
+              [2] = 0,
+              [3] = 0,
+              [4] = 0.84999999999999998
+            },
+            iconBorderColorSource = "inherit",
+            iconHideBorder = false,
+            iconSize = 28,
+            iconSpacing = 4,
+            inactivityFadeEnabled = false,
+            inactivityFadeSeconds = 20,
+            invertScrollDirection = false,
+            maxEntries = 6,
+            onlyInCombat = true,
+            orientation = "VERTICAL",
+            showBackdrop = true,
+            showFailedCasts = true,
+            xOffset = 0,
+            yOffset = -210
+          },
+          addQUIButton = true,
+          addEditModeButton = true,
+          alertsBorderColor = {
+            [1] = 0,
+            [2] = 0,
+            [3] = 0,
+            [4] = 1
+          },
+          alertsBorderColorSource = "inherit",
+          allowReloadInCombat = false,
+          applyGlobalFontToBlizzard = true,
+          auctionHouseExpansionFilter = true,
+          audioOutputDevice = "",
+          autoAcceptInvites = "all",
+          autoAcceptQuest = true,
+          autoCombatLog = false,
+          autoCombatLogRaid = false,
+          autoConfirmHighCost = false,
+          autoConfirmSocketReplace = false,
+          autoConfirmTokenPurchase = false,
+          autoDeclineDuel = false,
+          autoDeclinePetBattle = false,
+          autoDeleteConfirm = true,
+          autoInsertKey = true,
+          autoRelease = "off",
+          autoRepair = "personal",
+          autoRoleAccept = true,
+          autoSelectGossip = true,
+          autoTurnInQuest = true,
+          autoUnwrapCollections = false,
+          closeBagsOnKeystoneInsert = false,
+          communitiesPrivacy = false,
+          consumableAnchorMode = true,
+          consumableCheckEnabled = true,
+          consumableExpirationThreshold = 300,
+          consumableExpirationWarning = true,
+          consumableFlask = true,
+          consumableFood = true,
+          consumableHealthstone = true,
+          consumableIconOffset = 5,
+          consumableIconSize = 40,
+          consumableMacros = {
+            chatNotifications = true,
+            enabled = false,
+            selectedAugment = "none",
+            selectedFlask = "none",
+            selectedHealth = "none",
+            selectedHealthstone = "none",
+            selectedPotion = "none",
+            selectedVantus = "none",
+            selectedWeapon = "none"
+          },
+          consumableOilMH = true,
+          consumableOilOH = true,
+          consumableOnDungeon = false,
+          consumableOnRaid = false,
+          consumableOnReadyCheck = true,
+          consumableOnResurrect = false,
+          consumablePersistent = false,
+          consumableRune = true,
+          consumableScale = 1,
+          controlAlertAnchors = false,
+          craftingOrderExpansionFilter = true,
+          cursorTrail = {
+            combatOnly = true,
+            customColor = {
+              [1] = 1,
+              [2] = 1,
+              [3] = 1,
+              [4] = 1
+            },
+            density = "medium",
+            duration = 0.40000000000000002,
+            enabled = false,
+            size = 16,
+            useClassColor = true
+          },
+          darkMode = false,
+          darkModeBgColor = {
+            [1] = 0.59199999999999997,
+            [2] = 0.59199999999999997,
+            [3] = 0.59199999999999997,
+            [4] = 1
+          },
+          darkModeBgOpacity = 0.69999999999999996,
+          darkModeHealthColor = {
+            [1] = 0,
+            [2] = 0,
+            [3] = 0,
+            [4] = 1
+          },
+          darkModeHealthOpacity = 0.69999999999999996,
+          darkModeOpacity = 0.69999999999999996,
+          deathAlert = {
+            enabled = false,
+            fontSize = 24,
+            offsetX = 0,
+            offsetY = 220,
+            sound = "None"
+          },
+          defaultBgColor = {
+            [1] = 0,
+            [2] = 0,
+            [3] = 0,
+            [4] = 1
+          },
+          defaultBgOpacity = 1,
+          defaultHealthColor = {
+            [1] = 0.20000000000000001,
+            [2] = 0.20000000000000001,
+            [3] = 0.20000000000000001,
+            [4] = 1
+          },
+          defaultHealthOpacity = 1,
+          defaultOpacity = 1,
+          defaultUseClassColor = true,
+          disableScrollingCombatText = false,
+          ejLootSpecIcons = false,
+          eventSounds = {
+            enabled = false,
+            lfgProposal = "None",
+            lootRollWon = "None",
+            lootUpgrade = "None",
+            mail = "None",
+            readyCheck = "None",
+            resurrect = "None",
+            whisper = "None"
+          },
+          extendedIgnore = {
+            autoDecline = true,
+            enabled = false,
+            names = "",
+            suppressChat = true
+          },
+          fastAutoLoot = true,
+          focusCastAlert = {
+            anchorTo = "screen",
+            enabled = true,
+            font = "",
+            fontOutline = "OUTLINE",
+            fontSize = 26,
+            offsetX = 0,
+            offsetY = -120,
+            sound = "None",
+            soundEnabled = false,
+            text = "Focus is casting. Kick!",
+            textColor = {
+              [1] = 1,
+              [2] = 0.20000000000000001,
+              [3] = 0.20000000000000001,
+              [4] = 1
+            },
+            useClassColor = false
+          },
+          focusMarker = {
+            enabled = false,
+            marker = 8,
+            useMouseover = true,
+            writeMacro = true
+          },
+          font = "Quazii",
+          fontOutline = "OUTLINE",
+          friendsClassColor = true,
+          gameMenuDim = true,
+          gameMenuFontSize = 12,
+          gemSocketPicker = false,
+          healerMana = {
+            enabled = false,
+            instanceOnly = true,
+            offsetX = 0,
+            offsetY = -260
+          },
+          hideObjectiveTrackerBorder = true,
+          hostilityColorFriendly = {
+            [1] = 0.20000000000000001,
+            [2] = 0.80000000000000004,
+            [3] = 0.20000000000000001,
+            [4] = 1
+          },
+          hostilityColorHostile = {
+            [1] = 0.80000000000000004,
+            [2] = 0.20000000000000001,
+            [3] = 0.20000000000000001,
+            [4] = 1
+          },
+          hostilityColorNeutral = {
+            [1] = 1,
+            [2] = 1,
+            [3] = 0.20000000000000001,
+            [4] = 1
+          },
+          keyTrackerEnabled = true,
+          keyTrackerFontSize = 9,
+          keyTrackerOffsetX = 0,
+          keyTrackerOffsetY = 0,
+          keyTrackerPoint = "TOPRIGHT",
+          keyTrackerRelPoint = "BOTTOMRIGHT",
+          keyTrackerTextColor = {
+            [1] = 1,
+            [2] = 1,
+            [3] = 1,
+            [4] = 1
+          },
+          keyTrackerWidth = 170,
+          lootToastFilter = {
+            enabled = false,
+            keepMounts = true,
+            keepPets = true,
+            keepUpgrades = true,
+            minKeepIlvl = 0,
+            minQuality = 0
+          },
+          mailContactsPanel = false,
+          mailRememberRecipient = false,
+          masterColorCastbarText = false,
+          masterColorHealthText = false,
+          masterColorNameText = false,
+          masterColorPowerText = false,
+          masterColorToTText = false,
+          merchantKnownPetMark = false,
+          mplusTeleportEnabled = true,
+          noTargetWarning = {
+            enabled = false,
+            fontSize = 20,
+            offsetX = 0,
+            offsetY = -160
+          },
+          objectiveTrackerClickThrough = false,
+          objectiveTrackerHeight = 600,
+          objectiveTrackerModuleColor = {
+            [1] = 1,
+            [2] = 0.81999999999999995,
+            [3] = 0,
+            [4] = 1
+          },
+          objectiveTrackerModuleFontSize = 12,
+          objectiveTrackerTextColor = {
+            [1] = 0.80000000000000004,
+            [2] = 0.80000000000000004,
+            [3] = 0.80000000000000004,
+            [4] = 1
+          },
+          objectiveTrackerTextFontSize = 10,
+          objectiveTrackerTitleColor = {
+            [1] = 1,
+            [2] = 1,
+            [3] = 1,
+            [4] = 1
+          },
+          objectiveTrackerTitleFontSize = 10,
+          overrideSCTFont = false,
+          petCombatWarning = true,
+          petWarningOffsetX = 0,
+          petWarningOffsetY = -200,
+          popupBlocker = {
+            blockCosmeticAlerts = false,
+            blockEntitlementAlerts = false,
+            blockEventToasts = false,
+            blockHelpTips = false,
+            blockMicroButtonGlows = false,
+            blockMountAlerts = false,
+            blockPetAlerts = false,
+            blockStaticHousingPopups = false,
+            blockStaticTalentPopups = false,
+            blockTalentMicroButtonAlerts = false,
+            blockToyAlerts = false,
+            blockWarbandSceneAlerts = false,
+            enabled = false
+          },
+          questHoldShift = true,
+          quickSalvage = {
+            enabled = false,
+            modifier = "ALT"
+          },
+          readyCheckBorderColor = {
+            [1] = 0,
+            [2] = 0,
+            [3] = 0,
+            [4] = 1
+          },
+          readyCheckBorderColorSource = "inherit",
+          sellJunk = true,
+          showAuctionHouseGold = true,
+          showOptionTooltips = true,
+          skinAlerts = true,
+          skinAuctionHouse = true,
+          skinBgColor = {
+            [1] = 0.0080000000000000002,
+            [2] = 0.0080000000000000002,
+            [3] = 0.0080000000000000002,
+            [4] = 1
+          },
+          skinBorderColor = {
+            [1] = 0,
+            [2] = 0,
+            [3] = 0,
+            [4] = 1
+          },
+          skinBorderColorSource = "theme",
+          skinCharacterFrame = true,
+          skinContextMenus = true,
+          skinCraftingOrders = true,
+          skinDamageMeter = true,
+          skinGameMenu = true,
+          skinInspectFrame = true,
+          skinInstanceFrames = false,
+          skinKeystoneFrame = true,
+          skinObjectiveTracker = true,
+          skinOverrideActionBar = true,
+          skinPowerBarAlt = true,
+          skinProfessions = true,
+          skinReadyCheck = true,
+          skinStaticPopups = true,
+          skinStatusTrackingBars = true,
+          skinUseClassColor = true,
+          soundMute = {
+            enabled = false
+          },
+          statusTrackingBarsBarColor = {
+            [1] = 0.20000000000000001,
+            [2] = 0.5,
+            [3] = 1,
+            [4] = 1
+          },
+          statusTrackingBarsBarColorMode = "accent",
+          statusTrackingBarsBarHeight = 0,
+          statusTrackingBarsBarTextAlways = false,
+          statusTrackingBarsBarTextAnchor = "CENTER",
+          statusTrackingBarsBarTextColor = {
+            [1] = 0.94999999999999996,
+            [2] = 0.94999999999999996,
+            [3] = 0.94999999999999996,
+            [4] = 1
+          },
+          statusTrackingBarsBarTextFont = "__QUI_GLOBAL__",
+          statusTrackingBarsBarTextFontSize = 11,
+          statusTrackingBarsBarTextOffsetX = 0,
+          statusTrackingBarsBarTextOffsetY = 0,
+          statusTrackingBarsBarTextOutline = "_inherit",
+          statusTrackingBarsBarWidthPercent = 100,
+          statusTrackingBarsBorderThickness = 0,
+          statusTrackingBarsShowBarText = true,
+          statusTrackingBarsShowBorder = true,
+          texture = "Quazii v5",
+          tradeMailLog = {
+            enabled = false,
+            logReceivedMail = true,
+            logSentMail = true,
+            logTrades = true
+          },
+          uiScale = 0.64000000000000001,
+          vendorRules = {
+            enabled = false,
+            forceSell = "",
+            maxIlvl = 0,
+            maxQuality = 1,
+            neverSell = "",
+            previewOnly = true
+          },
+          worldMapTeleports = false
+        },
+        hudLayering = {
+          bossFrames = 4,
+          buffBar = 5,
+          buffIcon = 5,
+          customBars = 5,
+          essential = 5,
+          focusFrame = 4,
+          groupFrames = 4,
+          groupPetFrames = 3,
+          petFrame = 3,
+          playerCastbar = 5,
+          playerFrame = 4,
+          playerIndicators = 6,
+          primaryPowerBar = 7,
+          raidMarkersBar = 5,
+          secondaryPowerBar = 6,
+          targetCastbar = 5,
+          targetFrame = 4,
+          totFrame = 3,
+          totemBar = 5,
+          utility = 5
+        },
+        infobar = {
+          bgOpacity = 85,
+          borderColor = {
+            [1] = 0,
+            [2] = 0,
+            [3] = 0,
+            [4] = 1
+          },
+          borderColorSource = "inherit",
+          borderSize = 1,
+          enabled = true,
+          fadeRestOpacity = 0,
+          fontSize = 12,
+          height = 22,
+          hideInCombat = false,
+          micromenu = {
+            buttons = {
+              achievements = true,
+              adventureguide = true,
+              character = true,
+              collections = true,
+              help = false,
+              housing = true,
+              lfg = true,
+              professions = true,
+              questlog = true,
+              shop = false,
+              spellbook = true,
+              talents = true
+            }
+          },
+          mouseoverFade = false,
+          position = "TOP",
+          travel = {
+            useRandomHearth = false
+          },
+          widgetSettings = {},
+          widgetSpacing = 12,
+          zonePadding = 8,
+          zones = {
+            center = {},
+            left = {},
+            right = {}
+          },
+          zonesSeeded = false
+        },
+        keybindOverridesEnabledCDM = true,
+        keybindOverridesEnabledTrackers = true,
+        loot = {
+          enabled = true,
+          lootUnderMouse = false,
+          lootUnderMouseOffsetX = 0,
+          lootUnderMouseOffsetY = 0,
+          position = {
+            point = "TOP",
+            relPoint = "TOP",
+            x = 289.166,
+            y = -165.667
+          },
+          showTransmogMarker = true
+        },
+        lootResults = {
+          enabled = true
+        },
+        lootRoll = {
+          enabled = true,
+          growDirection = "DOWN",
+          position = {
+            point = "TOP",
+            relPoint = "TOP",
+            x = -11.667,
+            y = -166
+          },
+          spacing = 4
+        },
+        lustTimer = {
+          backdropColor = {
+            [1] = 0,
+            [2] = 0,
+            [3] = 0,
+            [4] = 0.59999999999999998
+          },
+          barColor = {
+            [1] = 0.59999999999999998,
+            [2] = 0.20000000000000001,
+            [3] = 0.20000000000000001,
+            [4] = 1
+          },
+          barTexture = "Solid",
+          borderColor = {
+            [1] = 0,
+            [2] = 0,
+            [3] = 0,
+            [4] = 1
+          },
+          borderColorSource = "inherit",
+          borderSize = 1,
+          borderTexture = "None",
+          enabled = false,
+          font = "Quazii",
+          fontSize = 13,
+          height = 22,
+          hideBorder = false,
+          showBackdrop = true,
+          showLabel = true,
+          textColor = {
+            [1] = 1,
+            [2] = 1,
+            [3] = 1,
+            [4] = 1
+          },
+          useCustomFont = false,
+          width = 160,
+          xOffset = 0,
+          yOffset = -120
+        },
+        merchantGrid = {
+          columns = 2,
+          enabled = false,
+          rows = 5
+        },
+        minimap = {
+          autoZoom = false,
+          borderColor = {
+            [1] = 0,
+            [2] = 0,
+            [3] = 0,
+            [4] = 1
+          },
+          borderColorSource = "inherit",
+          borderSize = 1,
+          buttonDrawer = {
+            anchor = "RIGHT",
+            autoHideDelay = 1.5,
+            autoHideToggle = false,
+            bgColor = {
+              [1] = 0.029999999999999999,
+              [2] = 0.029999999999999999,
+              [3] = 0.029999999999999999,
+              [4] = 1
+            },
+            bgOpacity = 98,
+            borderColor = {
+              [1] = 0.20000000000000001,
+              [2] = 0.80000000000000004,
+              [3] = 0.59999999999999998,
+              [4] = 1
+            },
+            borderColorSource = "inherit",
+            borderSize = 1,
+            buttonSize = 28,
+            buttonSpacing = 2,
+            centerGrowth = false,
+            columns = 1,
+            enabled = false,
+            growthDirection = "RIGHT",
+            hiddenButtons = {},
+            offsetX = 0,
+            offsetY = 0,
+            openOnMouseover = true,
+            padding = 6,
+            showTooltip = true,
+            toggleIcon = "qui",
+            toggleOffsetX = 0,
+            toggleOffsetY = 0
+          },
+          buttonRadius = 2,
+          clockConfig = {
+            align = "LEFT",
+            color = {
+              [1] = 1,
+              [2] = 1,
+              [3] = 1,
+              [4] = 1
+            },
+            font = "Quazii",
+            fontSize = 12,
+            monochrome = false,
+            offsetX = 0,
+            offsetY = 0,
+            outline = "OUTLINE",
+            timeFormat = "local",
+            useClassColor = false
+          },
+          coordPrecision = "%d,%d",
+          coordUpdateInterval = 1,
+          coordsConfig = {
+            align = "RIGHT",
+            color = {
+              [1] = 1,
+              [2] = 1,
+              [3] = 1,
+              [4] = 1
+            },
+            font = "Quazii",
+            fontSize = 12,
+            monochrome = false,
+            offsetX = 0,
+            offsetY = 0,
+            outline = "OUTLINE",
+            useClassColor = false
+          },
+          dungeonEye = {
+            corner = "BOTTOMLEFT",
+            enabled = true,
+            offsetX = 0,
+            offsetY = 0,
+            scale = 0.59999999999999998
+          },
+          enabled = true,
+          greatVault = {
+            anchor = "TOPLEFT",
+            enabled = false,
+            fadeOpacity = 0,
+            fadeWhenMouseOut = false,
+            offsetX = 1,
+            offsetY = -1,
+            scale = 1
+          },
+          hideAddonButtons = true,
+          hideBagBar = false,
+          hideMicroMenu = false,
+          lock = false,
+          middleClickMenuEnabled = true,
+          missionsInDrawer = false,
+          position = {
+            point = "TOPLEFT",
+            relPoint = "BOTTOMLEFT",
+            x = 790,
+            y = 285
+          },
+          scale = 1,
+          shape = "SQUARE",
+          showAddonCompartment = false,
+          showCalendar = true,
+          showClock = false,
+          showCoords = false,
+          showCraftingOrder = true,
+          showDifficulty = true,
+          showMail = true,
+          showMissions = true,
+          showTracking = true,
+          showZoneText = true,
+          showZoomButtons = true,
+          size = 226,
+          trackingConfig = {
+            anchor = "TOPLEFT",
+            offsetX = 0,
+            offsetY = 0
+          },
+          zoneTextConfig = {
+            align = "CENTER",
+            allCaps = false,
+            colorArena = {
+              [1] = 1,
+              [2] = 0.10000000000000001,
+              [3] = 0.10000000000000001,
+              [4] = 1
+            },
+            colorContested = {
+              [1] = 1,
+              [2] = 0.69999999999999996,
+              [3] = 0,
+              [4] = 1
+            },
+            colorFriendly = {
+              [1] = 0.10000000000000001,
+              [2] = 1,
+              [3] = 0.10000000000000001,
+              [4] = 1
+            },
+            colorHostile = {
+              [1] = 1,
+              [2] = 0.10000000000000001,
+              [3] = 0.10000000000000001,
+              [4] = 1
+            },
+            colorNormal = {
+              [1] = 1,
+              [2] = 0.81999999999999995,
+              [3] = 0,
+              [4] = 1
+            },
+            colorSanctuary = {
+              [1] = 0.40999999999999998,
+              [2] = 0.80000000000000004,
+              [3] = 0.93999999999999995,
+              [4] = 1
+            },
+            font = "Quazii",
+            fontSize = 12,
+            monochrome = false,
+            offsetX = 0,
+            offsetY = 0,
+            outline = "OUTLINE",
+            useClassColor = false
+          },
+          zoomLevel = 0
+        },
+        minimapButton = {
+          hide = false,
+          minimapPos = 180
+        },
+        mplusProgress = {
+          enabled = true,
+          nameplateEnabled = true,
+          nameplateFont = "",
+          nameplateFontSize = 12,
+          nameplateOffsetX = 0,
+          nameplateOffsetY = 0,
+          nameplateTextColor = {
+            [1] = 1,
+            [2] = 1,
+            [3] = 1,
+            [4] = 1
+          },
+          nameplateTextFormat = "+$percent$%",
+          nameplateTextScale = 1,
+          tooltipEnabled = true,
+          tooltipIncludeCount = true,
+          tooltipShowNoProgress = false
+        },
+        mplusTimer = {
+          borderColor = {
+            [1] = 0,
+            [2] = 0,
+            [3] = 0,
+            [4] = 1
+          },
+          borderColorSource = "inherit",
+          enabled = false,
+          forcesBarEnabled = true,
+          forcesBarHeight = 0,
+          forcesDisplayMode = "bar",
+          forcesFont = "Poppins",
+          forcesFontSize = 11,
+          forcesLabel = "Forces",
+          forcesPosition = "after_timer",
+          forcesTextAlign = "LEFT",
+          forcesTextFormat = "both",
+          frameBackgroundOpacity = 1,
+          layoutMode = "sleek",
+          maxDungeonNameLength = 18,
+          objectiveTextAlign = "LEFT",
+          position = {
+            x = -11.667,
+            y = -204.99799999999999
+          },
+          showAffixes = true,
+          showBorder = true,
+          showDeaths = true,
+          showObjectives = true,
+          showTimer = true
+        },
+        nameplates = {
+          cvars = {
+            clickthroughEnemy = false,
+            clickthroughFriendly = false,
+            hitboxScaleX = 100,
+            hitboxScaleY = 100,
+            hitboxVisualizer = false,
+            maxDistance = 60,
+            showEnemies = true,
+            showEnemyGuardians = true,
+            showEnemyMinions = true,
+            showEnemyMinus = true,
+            showEnemyPets = true,
+            showEnemyTotems = true,
+            showFriendlyGuardians = true,
+            showFriendlyMinions = true,
+            showFriendlyPets = true,
+            showFriendlyTotems = true,
+            stackingEnemy = true,
+            stackingFriendly = false,
+            stackingSpacing = 1
+          },
+          enabled = false,
+          fading = {
+            nonTargetAlpha = 1,
+            occludedAlphaMult = 0.40000000000000002
+          },
+          friendly = {
+            enabled = true,
+            showInInstances = "never",
+            showInWorld = true,
+            showNPCs = true
+          },
+          layout = {
+            targetScale = 1,
+            verticalOffset = 0
+          },
+          simplified = {
+            scale = 1
+          },
+          specAutoSwitch = false,
+          specPresets = {},
+          types = {
+            bossElite = {
+              absorbs = {
+                color = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                enabled = true,
+                opacity = 0.29999999999999999,
+                showText = false,
+                textSize = 9
+              },
+              auras = {
+                elements = {},
+                enableDungeon = true,
+                enableRaid = true,
+                enableWorld = true,
+                enabled = true
+              },
+              castbar = {
+                castTargetSize = 9,
+                enabled = true,
+                gap = 0,
+                height = 17,
+                interruptReadyTint = false,
+                interruptedHoldTime = 1,
+                kickTick = true,
+                liftOverlay = false,
+                nameSize = 10,
+                showCastTarget = false,
+                showIcon = true,
+                showSpellName = true,
+                showTimer = true,
+                texture = "",
+                timerSize = 10
+              },
+              colors = {
+                castChannel = {
+                  [1] = 0.34999999999999998,
+                  [2] = 0.59999999999999998,
+                  [3] = 0.90000000000000002
+                },
+                castEmpowered = {
+                  [1] = 0.90000000000000002,
+                  [2] = 0.55000000000000004,
+                  [3] = 0.14999999999999999
+                },
+                castImportant = {
+                  [1] = 1,
+                  [2] = 0.25,
+                  [3] = 0.25
+                },
+                castImportantEnabled = false,
+                castInterruptReady = {
+                  [1] = 0.29999999999999999,
+                  [2] = 0.84999999999999998,
+                  [3] = 0.40000000000000002
+                },
+                castInterrupted = {
+                  [1] = 0.80000000000000004,
+                  [2] = 0,
+                  [3] = 0
+                },
+                castInterruptible = {
+                  [1] = 0.69999999999999996,
+                  [2] = 0.40000000000000002,
+                  [3] = 0.90000000000000002
+                },
+                castUninterruptible = {
+                  [1] = 0.45000000000000001,
+                  [2] = 0.45000000000000001,
+                  [3] = 0.45000000000000001
+                },
+                classColorEnemyPlayers = true,
+                dpsHasAggro = {
+                  [1] = 1,
+                  [2] = 0.5,
+                  [3] = 0
+                },
+                dpsNearAggro = {
+                  [1] = 0.81000000000000005,
+                  [2] = 0.71999999999999997,
+                  [3] = 0.19
+                },
+                execute = {
+                  [1] = 1,
+                  [2] = 0.10000000000000001,
+                  [3] = 0.10000000000000001
+                },
+                executeAuto = true,
+                executeEnabled = false,
+                executeThreshold = 35,
+                focus = {
+                  [1] = 0.050999999999999997,
+                  [2] = 0.81999999999999995,
+                  [3] = 0.62
+                },
+                focusEnabled = true,
+                friendly = {
+                  [1] = 0.314,
+                  [2] = 0.80000000000000004,
+                  [3] = 0.40799999999999997
+                },
+                hostile = {
+                  [1] = 0.39000000000000001,
+                  [2] = 0.11,
+                  [3] = 0.089999999999999997
+                },
+                neutral = {
+                  [1] = 0.81000000000000005,
+                  [2] = 0.71999999999999997,
+                  [3] = 0.19
+                },
+                offTankAggro = {
+                  [1] = 0.188,
+                  [2] = 0.76100000000000001,
+                  [3] = 0.81200000000000006
+                },
+                oocDarken = true,
+                oocDarkenFactor = 0.75,
+                quest = {
+                  [1] = 1,
+                  [2] = 0.81999999999999995,
+                  [3] = 0
+                },
+                questEnabled = true,
+                tankHasAggro = {
+                  [1] = 0.050000000000000003,
+                  [2] = 0.81999999999999995,
+                  [3] = 0.62
+                },
+                tankNoAggro = {
+                  [1] = 1,
+                  [2] = 0.22,
+                  [3] = 0.17000000000000001
+                },
+                tapped = {
+                  [1] = 0.5,
+                  [2] = 0.5,
+                  [3] = 0.5
+                },
+                target = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                targetEnabled = false,
+                threatEnabled = true,
+                threatInstancesOnly = true
+              },
+              font = {
+                face = "",
+                outline = "OUTLINE"
+              },
+              healPrediction = {
+                color = {
+                  [1] = 0.25,
+                  [2] = 0.80000000000000004,
+                  [3] = 0.25
+                },
+                enabled = false,
+                opacity = 0.40000000000000002
+              },
+              health = {
+                bgAlpha = 1,
+                bgColor = {
+                  [1] = 0.12,
+                  [2] = 0.12,
+                  [3] = 0.12
+                },
+                borderColor = {
+                  [1] = 0,
+                  [2] = 0,
+                  [3] = 0
+                },
+                borderSize = 1,
+                height = 24,
+                smooth = false,
+                texture = "Quazii",
+                width = 210
+              },
+              healthText = {
+                bothFormat = "bar",
+                color = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                enabled = true,
+                hidePercentSymbol = false,
+                justify = "RIGHT",
+                offsetX = -2,
+                offsetY = 0,
+                point = "RIGHT",
+                precision = 0,
+                relativePoint = "RIGHT",
+                size = 10,
+                style = "percent"
+              },
+              highlight = {
+                focusGlow = false,
+                focusGlowAlpha = 1,
+                focusGlowColor = {
+                  [1] = 0.050999999999999997,
+                  [2] = 0.81999999999999995,
+                  [3] = 0.62
+                },
+                mouseover = true,
+                mouseoverAlpha = 0.29999999999999999,
+                mouseoverColor = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                targetGlow = true,
+                targetGlowAlpha = 1,
+                targetGlowColor = {
+                  [1] = 0.41199999999999998,
+                  [2] = 0.66700000000000004,
+                  [3] = 1
+                },
+                targetStyle = "wash"
+              },
+              level = {
+                classificationSize = 14,
+                enabled = false,
+                offsetX = 2,
+                offsetY = 0,
+                point = "LEFT",
+                relativePoint = "RIGHT",
+                showClassification = false,
+                size = 9
+              },
+              name = {
+                classColorPlayers = true,
+                color = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                enabled = true,
+                justify = "CENTER",
+                offsetX = 0,
+                offsetY = 4,
+                point = "BOTTOM",
+                relativePoint = "TOP",
+                size = 11,
+                truncateLength = 28
+              },
+              npcTitle = {
+                color = {
+                  [1] = 0.69999999999999996,
+                  [2] = 0.69999999999999996,
+                  [3] = 0.69999999999999996
+                },
+                enabled = false,
+                size = 9
+              },
+              power = {
+                enabled = false,
+                offsetY = -2,
+                size = 10,
+                spacing = 3
+              },
+              powerBar = {
+                enabled = false,
+                height = 6,
+                manaOnly = true
+              },
+              pvpIcon = {
+                enabled = true,
+                size = 20
+              },
+              questIcon = {
+                enabled = false,
+                position = "LEFT",
+                size = 18
+              },
+              raidMarker = {
+                enabled = true,
+                position = "TOPRIGHT",
+                size = 24
+              },
+              renderMode = "bars"
+            },
+            enemyNPC = {
+              absorbs = {
+                color = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                enabled = true,
+                opacity = 0.29999999999999999,
+                showText = false,
+                textSize = 9
+              },
+              auras = {
+                elements = {},
+                enableDungeon = true,
+                enableRaid = true,
+                enableWorld = true,
+                enabled = true
+              },
+              castbar = {
+                castTargetSize = 9,
+                enabled = true,
+                gap = 0,
+                height = 17,
+                interruptReadyTint = false,
+                interruptedHoldTime = 1,
+                kickTick = true,
+                liftOverlay = false,
+                nameSize = 10,
+                showCastTarget = false,
+                showIcon = true,
+                showSpellName = true,
+                showTimer = true,
+                texture = "",
+                timerSize = 10
+              },
+              colors = {
+                castChannel = {
+                  [1] = 0.34999999999999998,
+                  [2] = 0.59999999999999998,
+                  [3] = 0.90000000000000002
+                },
+                castEmpowered = {
+                  [1] = 0.90000000000000002,
+                  [2] = 0.55000000000000004,
+                  [3] = 0.14999999999999999
+                },
+                castImportant = {
+                  [1] = 1,
+                  [2] = 0.25,
+                  [3] = 0.25
+                },
+                castImportantEnabled = false,
+                castInterruptReady = {
+                  [1] = 0.29999999999999999,
+                  [2] = 0.84999999999999998,
+                  [3] = 0.40000000000000002
+                },
+                castInterrupted = {
+                  [1] = 0.80000000000000004,
+                  [2] = 0,
+                  [3] = 0
+                },
+                castInterruptible = {
+                  [1] = 0.69999999999999996,
+                  [2] = 0.40000000000000002,
+                  [3] = 0.90000000000000002
+                },
+                castUninterruptible = {
+                  [1] = 0.45000000000000001,
+                  [2] = 0.45000000000000001,
+                  [3] = 0.45000000000000001
+                },
+                classColorEnemyPlayers = true,
+                dpsHasAggro = {
+                  [1] = 1,
+                  [2] = 0.5,
+                  [3] = 0
+                },
+                dpsNearAggro = {
+                  [1] = 0.81000000000000005,
+                  [2] = 0.71999999999999997,
+                  [3] = 0.19
+                },
+                execute = {
+                  [1] = 1,
+                  [2] = 0.10000000000000001,
+                  [3] = 0.10000000000000001
+                },
+                executeAuto = true,
+                executeEnabled = false,
+                executeThreshold = 35,
+                focus = {
+                  [1] = 0.050999999999999997,
+                  [2] = 0.81999999999999995,
+                  [3] = 0.62
+                },
+                focusEnabled = true,
+                friendly = {
+                  [1] = 0.314,
+                  [2] = 0.80000000000000004,
+                  [3] = 0.40799999999999997
+                },
+                hostile = {
+                  [1] = 0.39000000000000001,
+                  [2] = 0.11,
+                  [3] = 0.089999999999999997
+                },
+                neutral = {
+                  [1] = 0.81000000000000005,
+                  [2] = 0.71999999999999997,
+                  [3] = 0.19
+                },
+                offTankAggro = {
+                  [1] = 0.188,
+                  [2] = 0.76100000000000001,
+                  [3] = 0.81200000000000006
+                },
+                oocDarken = true,
+                oocDarkenFactor = 0.75,
+                quest = {
+                  [1] = 1,
+                  [2] = 0.81999999999999995,
+                  [3] = 0
+                },
+                questEnabled = true,
+                tankHasAggro = {
+                  [1] = 0.050000000000000003,
+                  [2] = 0.81999999999999995,
+                  [3] = 0.62
+                },
+                tankNoAggro = {
+                  [1] = 1,
+                  [2] = 0.22,
+                  [3] = 0.17000000000000001
+                },
+                tapped = {
+                  [1] = 0.5,
+                  [2] = 0.5,
+                  [3] = 0.5
+                },
+                target = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                targetEnabled = false,
+                threatEnabled = true,
+                threatInstancesOnly = true
+              },
+              font = {
+                face = "",
+                outline = "OUTLINE"
+              },
+              healPrediction = {
+                color = {
+                  [1] = 0.25,
+                  [2] = 0.80000000000000004,
+                  [3] = 0.25
+                },
+                enabled = false,
+                opacity = 0.40000000000000002
+              },
+              health = {
+                bgAlpha = 1,
+                bgColor = {
+                  [1] = 0.12,
+                  [2] = 0.12,
+                  [3] = 0.12
+                },
+                borderColor = {
+                  [1] = 0,
+                  [2] = 0,
+                  [3] = 0
+                },
+                borderSize = 1,
+                height = 24,
+                smooth = false,
+                texture = "Quazii",
+                width = 210
+              },
+              healthText = {
+                bothFormat = "bar",
+                color = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                enabled = true,
+                hidePercentSymbol = false,
+                justify = "RIGHT",
+                offsetX = -2,
+                offsetY = 0,
+                point = "RIGHT",
+                precision = 0,
+                relativePoint = "RIGHT",
+                size = 10,
+                style = "percent"
+              },
+              highlight = {
+                focusGlow = false,
+                focusGlowAlpha = 1,
+                focusGlowColor = {
+                  [1] = 0.050999999999999997,
+                  [2] = 0.81999999999999995,
+                  [3] = 0.62
+                },
+                mouseover = true,
+                mouseoverAlpha = 0.29999999999999999,
+                mouseoverColor = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                targetGlow = true,
+                targetGlowAlpha = 1,
+                targetGlowColor = {
+                  [1] = 0.41199999999999998,
+                  [2] = 0.66700000000000004,
+                  [3] = 1
+                },
+                targetStyle = "wash"
+              },
+              level = {
+                classificationSize = 14,
+                enabled = false,
+                offsetX = 2,
+                offsetY = 0,
+                point = "LEFT",
+                relativePoint = "RIGHT",
+                showClassification = false,
+                size = 9
+              },
+              name = {
+                classColorPlayers = true,
+                color = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                enabled = true,
+                justify = "CENTER",
+                offsetX = 0,
+                offsetY = 4,
+                point = "BOTTOM",
+                relativePoint = "TOP",
+                size = 11,
+                truncateLength = 28
+              },
+              npcTitle = {
+                color = {
+                  [1] = 0.69999999999999996,
+                  [2] = 0.69999999999999996,
+                  [3] = 0.69999999999999996
+                },
+                enabled = false,
+                size = 9
+              },
+              power = {
+                enabled = false,
+                offsetY = -2,
+                size = 10,
+                spacing = 3
+              },
+              powerBar = {
+                enabled = false,
+                height = 6,
+                manaOnly = true
+              },
+              pvpIcon = {
+                enabled = true,
+                size = 20
+              },
+              questIcon = {
+                enabled = false,
+                position = "LEFT",
+                size = 18
+              },
+              raidMarker = {
+                enabled = true,
+                position = "TOPRIGHT",
+                size = 24
+              },
+              renderMode = "bars"
+            },
+            enemyPlayer = {
+              absorbs = {
+                color = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                enabled = true,
+                opacity = 0.29999999999999999,
+                showText = false,
+                textSize = 9
+              },
+              auras = {
+                elements = {},
+                enableDungeon = true,
+                enableRaid = true,
+                enableWorld = true,
+                enabled = true
+              },
+              castbar = {
+                castTargetSize = 9,
+                enabled = true,
+                gap = 0,
+                height = 17,
+                interruptReadyTint = false,
+                interruptedHoldTime = 1,
+                kickTick = true,
+                liftOverlay = false,
+                nameSize = 10,
+                showCastTarget = false,
+                showIcon = true,
+                showSpellName = true,
+                showTimer = true,
+                texture = "",
+                timerSize = 10
+              },
+              colors = {
+                castChannel = {
+                  [1] = 0.34999999999999998,
+                  [2] = 0.59999999999999998,
+                  [3] = 0.90000000000000002
+                },
+                castEmpowered = {
+                  [1] = 0.90000000000000002,
+                  [2] = 0.55000000000000004,
+                  [3] = 0.14999999999999999
+                },
+                castImportant = {
+                  [1] = 1,
+                  [2] = 0.25,
+                  [3] = 0.25
+                },
+                castImportantEnabled = false,
+                castInterruptReady = {
+                  [1] = 0.29999999999999999,
+                  [2] = 0.84999999999999998,
+                  [3] = 0.40000000000000002
+                },
+                castInterrupted = {
+                  [1] = 0.80000000000000004,
+                  [2] = 0,
+                  [3] = 0
+                },
+                castInterruptible = {
+                  [1] = 0.69999999999999996,
+                  [2] = 0.40000000000000002,
+                  [3] = 0.90000000000000002
+                },
+                castUninterruptible = {
+                  [1] = 0.45000000000000001,
+                  [2] = 0.45000000000000001,
+                  [3] = 0.45000000000000001
+                },
+                classColorEnemyPlayers = true,
+                dpsHasAggro = {
+                  [1] = 1,
+                  [2] = 0.5,
+                  [3] = 0
+                },
+                dpsNearAggro = {
+                  [1] = 0.81000000000000005,
+                  [2] = 0.71999999999999997,
+                  [3] = 0.19
+                },
+                execute = {
+                  [1] = 1,
+                  [2] = 0.10000000000000001,
+                  [3] = 0.10000000000000001
+                },
+                executeAuto = true,
+                executeEnabled = false,
+                executeThreshold = 35,
+                focus = {
+                  [1] = 0.050999999999999997,
+                  [2] = 0.81999999999999995,
+                  [3] = 0.62
+                },
+                focusEnabled = true,
+                friendly = {
+                  [1] = 0.314,
+                  [2] = 0.80000000000000004,
+                  [3] = 0.40799999999999997
+                },
+                hostile = {
+                  [1] = 0.39000000000000001,
+                  [2] = 0.11,
+                  [3] = 0.089999999999999997
+                },
+                neutral = {
+                  [1] = 0.81000000000000005,
+                  [2] = 0.71999999999999997,
+                  [3] = 0.19
+                },
+                offTankAggro = {
+                  [1] = 0.188,
+                  [2] = 0.76100000000000001,
+                  [3] = 0.81200000000000006
+                },
+                oocDarken = true,
+                oocDarkenFactor = 0.75,
+                quest = {
+                  [1] = 1,
+                  [2] = 0.81999999999999995,
+                  [3] = 0
+                },
+                questEnabled = true,
+                tankHasAggro = {
+                  [1] = 0.050000000000000003,
+                  [2] = 0.81999999999999995,
+                  [3] = 0.62
+                },
+                tankNoAggro = {
+                  [1] = 1,
+                  [2] = 0.22,
+                  [3] = 0.17000000000000001
+                },
+                tapped = {
+                  [1] = 0.5,
+                  [2] = 0.5,
+                  [3] = 0.5
+                },
+                target = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                targetEnabled = false,
+                threatEnabled = true,
+                threatInstancesOnly = true
+              },
+              font = {
+                face = "",
+                outline = "OUTLINE"
+              },
+              healPrediction = {
+                color = {
+                  [1] = 0.25,
+                  [2] = 0.80000000000000004,
+                  [3] = 0.25
+                },
+                enabled = false,
+                opacity = 0.40000000000000002
+              },
+              health = {
+                bgAlpha = 1,
+                bgColor = {
+                  [1] = 0.12,
+                  [2] = 0.12,
+                  [3] = 0.12
+                },
+                borderColor = {
+                  [1] = 0,
+                  [2] = 0,
+                  [3] = 0
+                },
+                borderSize = 1,
+                height = 24,
+                smooth = false,
+                texture = "Quazii",
+                width = 210
+              },
+              healthText = {
+                bothFormat = "bar",
+                color = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                enabled = true,
+                hidePercentSymbol = false,
+                justify = "RIGHT",
+                offsetX = -2,
+                offsetY = 0,
+                point = "RIGHT",
+                precision = 0,
+                relativePoint = "RIGHT",
+                size = 10,
+                style = "percent"
+              },
+              highlight = {
+                focusGlow = false,
+                focusGlowAlpha = 1,
+                focusGlowColor = {
+                  [1] = 0.050999999999999997,
+                  [2] = 0.81999999999999995,
+                  [3] = 0.62
+                },
+                mouseover = true,
+                mouseoverAlpha = 0.29999999999999999,
+                mouseoverColor = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                targetGlow = true,
+                targetGlowAlpha = 1,
+                targetGlowColor = {
+                  [1] = 0.41199999999999998,
+                  [2] = 0.66700000000000004,
+                  [3] = 1
+                },
+                targetStyle = "wash"
+              },
+              level = {
+                classificationSize = 14,
+                enabled = false,
+                offsetX = 2,
+                offsetY = 0,
+                point = "LEFT",
+                relativePoint = "RIGHT",
+                showClassification = false,
+                size = 9
+              },
+              name = {
+                classColorPlayers = true,
+                color = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                enabled = true,
+                justify = "CENTER",
+                offsetX = 0,
+                offsetY = 4,
+                point = "BOTTOM",
+                relativePoint = "TOP",
+                size = 11,
+                truncateLength = 28
+              },
+              npcTitle = {
+                color = {
+                  [1] = 0.69999999999999996,
+                  [2] = 0.69999999999999996,
+                  [3] = 0.69999999999999996
+                },
+                enabled = false,
+                size = 9
+              },
+              power = {
+                enabled = false,
+                offsetY = -2,
+                size = 10,
+                spacing = 3
+              },
+              powerBar = {
+                enabled = false,
+                height = 6,
+                manaOnly = true
+              },
+              pvpIcon = {
+                enabled = true,
+                size = 20
+              },
+              questIcon = {
+                enabled = false,
+                position = "LEFT",
+                size = 18
+              },
+              raidMarker = {
+                enabled = true,
+                position = "TOPRIGHT",
+                size = 24
+              },
+              renderMode = "bars"
+            },
+            friendly = {
+              absorbs = {
+                color = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                enabled = true,
+                opacity = 0.29999999999999999,
+                showText = false,
+                textSize = 9
+              },
+              auras = {
+                elements = {},
+                enableDungeon = true,
+                enableRaid = true,
+                enableWorld = true,
+                enabled = true
+              },
+              castbar = {
+                castTargetSize = 9,
+                enabled = true,
+                gap = 0,
+                height = 17,
+                interruptReadyTint = false,
+                interruptedHoldTime = 1,
+                kickTick = true,
+                liftOverlay = false,
+                nameSize = 10,
+                showCastTarget = false,
+                showIcon = true,
+                showSpellName = true,
+                showTimer = true,
+                texture = "",
+                timerSize = 10
+              },
+              colors = {
+                castChannel = {
+                  [1] = 0.34999999999999998,
+                  [2] = 0.59999999999999998,
+                  [3] = 0.90000000000000002
+                },
+                castEmpowered = {
+                  [1] = 0.90000000000000002,
+                  [2] = 0.55000000000000004,
+                  [3] = 0.14999999999999999
+                },
+                castImportant = {
+                  [1] = 1,
+                  [2] = 0.25,
+                  [3] = 0.25
+                },
+                castImportantEnabled = false,
+                castInterruptReady = {
+                  [1] = 0.29999999999999999,
+                  [2] = 0.84999999999999998,
+                  [3] = 0.40000000000000002
+                },
+                castInterrupted = {
+                  [1] = 0.80000000000000004,
+                  [2] = 0,
+                  [3] = 0
+                },
+                castInterruptible = {
+                  [1] = 0.69999999999999996,
+                  [2] = 0.40000000000000002,
+                  [3] = 0.90000000000000002
+                },
+                castUninterruptible = {
+                  [1] = 0.45000000000000001,
+                  [2] = 0.45000000000000001,
+                  [3] = 0.45000000000000001
+                },
+                classColorEnemyPlayers = true,
+                dpsHasAggro = {
+                  [1] = 1,
+                  [2] = 0.5,
+                  [3] = 0
+                },
+                dpsNearAggro = {
+                  [1] = 0.81000000000000005,
+                  [2] = 0.71999999999999997,
+                  [3] = 0.19
+                },
+                execute = {
+                  [1] = 1,
+                  [2] = 0.10000000000000001,
+                  [3] = 0.10000000000000001
+                },
+                executeAuto = true,
+                executeEnabled = false,
+                executeThreshold = 35,
+                focus = {
+                  [1] = 0.050999999999999997,
+                  [2] = 0.81999999999999995,
+                  [3] = 0.62
+                },
+                focusEnabled = true,
+                friendly = {
+                  [1] = 0.314,
+                  [2] = 0.80000000000000004,
+                  [3] = 0.40799999999999997
+                },
+                hostile = {
+                  [1] = 0.39000000000000001,
+                  [2] = 0.11,
+                  [3] = 0.089999999999999997
+                },
+                neutral = {
+                  [1] = 0.81000000000000005,
+                  [2] = 0.71999999999999997,
+                  [3] = 0.19
+                },
+                offTankAggro = {
+                  [1] = 0.188,
+                  [2] = 0.76100000000000001,
+                  [3] = 0.81200000000000006
+                },
+                oocDarken = true,
+                oocDarkenFactor = 0.75,
+                quest = {
+                  [1] = 1,
+                  [2] = 0.81999999999999995,
+                  [3] = 0
+                },
+                questEnabled = true,
+                tankHasAggro = {
+                  [1] = 0.050000000000000003,
+                  [2] = 0.81999999999999995,
+                  [3] = 0.62
+                },
+                tankNoAggro = {
+                  [1] = 1,
+                  [2] = 0.22,
+                  [3] = 0.17000000000000001
+                },
+                tapped = {
+                  [1] = 0.5,
+                  [2] = 0.5,
+                  [3] = 0.5
+                },
+                target = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                targetEnabled = false,
+                threatEnabled = true,
+                threatInstancesOnly = true
+              },
+              font = {
+                face = "",
+                outline = "OUTLINE"
+              },
+              healPrediction = {
+                color = {
+                  [1] = 0.25,
+                  [2] = 0.80000000000000004,
+                  [3] = 0.25
+                },
+                enabled = false,
+                opacity = 0.40000000000000002
+              },
+              health = {
+                bgAlpha = 1,
+                bgColor = {
+                  [1] = 0.12,
+                  [2] = 0.12,
+                  [3] = 0.12
+                },
+                borderColor = {
+                  [1] = 0,
+                  [2] = 0,
+                  [3] = 0
+                },
+                borderSize = 1,
+                height = 24,
+                smooth = false,
+                texture = "Quazii",
+                width = 210
+              },
+              healthText = {
+                bothFormat = "bar",
+                color = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                enabled = true,
+                hidePercentSymbol = false,
+                justify = "RIGHT",
+                offsetX = -2,
+                offsetY = 0,
+                point = "RIGHT",
+                precision = 0,
+                relativePoint = "RIGHT",
+                size = 10,
+                style = "percent"
+              },
+              highlight = {
+                focusGlow = false,
+                focusGlowAlpha = 1,
+                focusGlowColor = {
+                  [1] = 0.050999999999999997,
+                  [2] = 0.81999999999999995,
+                  [3] = 0.62
+                },
+                mouseover = true,
+                mouseoverAlpha = 0.29999999999999999,
+                mouseoverColor = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                targetGlow = true,
+                targetGlowAlpha = 1,
+                targetGlowColor = {
+                  [1] = 0.41199999999999998,
+                  [2] = 0.66700000000000004,
+                  [3] = 1
+                },
+                targetStyle = "wash"
+              },
+              level = {
+                classificationSize = 14,
+                enabled = false,
+                offsetX = 2,
+                offsetY = 0,
+                point = "LEFT",
+                relativePoint = "RIGHT",
+                showClassification = false,
+                size = 9
+              },
+              name = {
+                classColorPlayers = true,
+                color = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                enabled = true,
+                justify = "CENTER",
+                offsetX = 0,
+                offsetY = 4,
+                point = "BOTTOM",
+                relativePoint = "TOP",
+                size = 11,
+                truncateLength = 28
+              },
+              npcTitle = {
+                color = {
+                  [1] = 0.69999999999999996,
+                  [2] = 0.69999999999999996,
+                  [3] = 0.69999999999999996
+                },
+                enabled = false,
+                size = 9
+              },
+              power = {
+                enabled = false,
+                offsetY = -2,
+                size = 10,
+                spacing = 3
+              },
+              powerBar = {
+                enabled = false,
+                height = 6,
+                manaOnly = true
+              },
+              pvpIcon = {
+                enabled = true,
+                size = 20
+              },
+              questIcon = {
+                enabled = false,
+                position = "LEFT",
+                size = 18
+              },
+              raidMarker = {
+                enabled = true,
+                position = "TOPRIGHT",
+                size = 24
+              },
+              renderMode = "nameonly"
+            },
+            minorTrivial = {
+              absorbs = {
+                color = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                enabled = true,
+                opacity = 0.29999999999999999,
+                showText = false,
+                textSize = 9
+              },
+              auras = {
+                elements = {},
+                enableDungeon = true,
+                enableRaid = true,
+                enableWorld = true,
+                enabled = true
+              },
+              castbar = {
+                castTargetSize = 9,
+                enabled = true,
+                gap = 0,
+                height = 17,
+                interruptReadyTint = false,
+                interruptedHoldTime = 1,
+                kickTick = true,
+                liftOverlay = false,
+                nameSize = 10,
+                showCastTarget = false,
+                showIcon = true,
+                showSpellName = true,
+                showTimer = true,
+                texture = "",
+                timerSize = 10
+              },
+              colors = {
+                castChannel = {
+                  [1] = 0.34999999999999998,
+                  [2] = 0.59999999999999998,
+                  [3] = 0.90000000000000002
+                },
+                castEmpowered = {
+                  [1] = 0.90000000000000002,
+                  [2] = 0.55000000000000004,
+                  [3] = 0.14999999999999999
+                },
+                castImportant = {
+                  [1] = 1,
+                  [2] = 0.25,
+                  [3] = 0.25
+                },
+                castImportantEnabled = false,
+                castInterruptReady = {
+                  [1] = 0.29999999999999999,
+                  [2] = 0.84999999999999998,
+                  [3] = 0.40000000000000002
+                },
+                castInterrupted = {
+                  [1] = 0.80000000000000004,
+                  [2] = 0,
+                  [3] = 0
+                },
+                castInterruptible = {
+                  [1] = 0.69999999999999996,
+                  [2] = 0.40000000000000002,
+                  [3] = 0.90000000000000002
+                },
+                castUninterruptible = {
+                  [1] = 0.45000000000000001,
+                  [2] = 0.45000000000000001,
+                  [3] = 0.45000000000000001
+                },
+                classColorEnemyPlayers = true,
+                dpsHasAggro = {
+                  [1] = 1,
+                  [2] = 0.5,
+                  [3] = 0
+                },
+                dpsNearAggro = {
+                  [1] = 0.81000000000000005,
+                  [2] = 0.71999999999999997,
+                  [3] = 0.19
+                },
+                execute = {
+                  [1] = 1,
+                  [2] = 0.10000000000000001,
+                  [3] = 0.10000000000000001
+                },
+                executeAuto = true,
+                executeEnabled = false,
+                executeThreshold = 35,
+                focus = {
+                  [1] = 0.050999999999999997,
+                  [2] = 0.81999999999999995,
+                  [3] = 0.62
+                },
+                focusEnabled = true,
+                friendly = {
+                  [1] = 0.314,
+                  [2] = 0.80000000000000004,
+                  [3] = 0.40799999999999997
+                },
+                hostile = {
+                  [1] = 0.39000000000000001,
+                  [2] = 0.11,
+                  [3] = 0.089999999999999997
+                },
+                neutral = {
+                  [1] = 0.81000000000000005,
+                  [2] = 0.71999999999999997,
+                  [3] = 0.19
+                },
+                offTankAggro = {
+                  [1] = 0.188,
+                  [2] = 0.76100000000000001,
+                  [3] = 0.81200000000000006
+                },
+                oocDarken = true,
+                oocDarkenFactor = 0.75,
+                quest = {
+                  [1] = 1,
+                  [2] = 0.81999999999999995,
+                  [3] = 0
+                },
+                questEnabled = true,
+                tankHasAggro = {
+                  [1] = 0.050000000000000003,
+                  [2] = 0.81999999999999995,
+                  [3] = 0.62
+                },
+                tankNoAggro = {
+                  [1] = 1,
+                  [2] = 0.22,
+                  [3] = 0.17000000000000001
+                },
+                tapped = {
+                  [1] = 0.5,
+                  [2] = 0.5,
+                  [3] = 0.5
+                },
+                target = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                targetEnabled = false,
+                threatEnabled = true,
+                threatInstancesOnly = true
+              },
+              font = {
+                face = "",
+                outline = "OUTLINE"
+              },
+              healPrediction = {
+                color = {
+                  [1] = 0.25,
+                  [2] = 0.80000000000000004,
+                  [3] = 0.25
+                },
+                enabled = false,
+                opacity = 0.40000000000000002
+              },
+              health = {
+                bgAlpha = 1,
+                bgColor = {
+                  [1] = 0.12,
+                  [2] = 0.12,
+                  [3] = 0.12
+                },
+                borderColor = {
+                  [1] = 0,
+                  [2] = 0,
+                  [3] = 0
+                },
+                borderSize = 1,
+                height = 24,
+                smooth = false,
+                texture = "Quazii",
+                width = 210
+              },
+              healthText = {
+                bothFormat = "bar",
+                color = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                enabled = true,
+                hidePercentSymbol = false,
+                justify = "RIGHT",
+                offsetX = -2,
+                offsetY = 0,
+                point = "RIGHT",
+                precision = 0,
+                relativePoint = "RIGHT",
+                size = 10,
+                style = "percent"
+              },
+              highlight = {
+                focusGlow = false,
+                focusGlowAlpha = 1,
+                focusGlowColor = {
+                  [1] = 0.050999999999999997,
+                  [2] = 0.81999999999999995,
+                  [3] = 0.62
+                },
+                mouseover = true,
+                mouseoverAlpha = 0.29999999999999999,
+                mouseoverColor = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                targetGlow = true,
+                targetGlowAlpha = 1,
+                targetGlowColor = {
+                  [1] = 0.41199999999999998,
+                  [2] = 0.66700000000000004,
+                  [3] = 1
+                },
+                targetStyle = "wash"
+              },
+              level = {
+                classificationSize = 14,
+                enabled = false,
+                offsetX = 2,
+                offsetY = 0,
+                point = "LEFT",
+                relativePoint = "RIGHT",
+                showClassification = false,
+                size = 9
+              },
+              name = {
+                classColorPlayers = true,
+                color = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                enabled = true,
+                justify = "CENTER",
+                offsetX = 0,
+                offsetY = 4,
+                point = "BOTTOM",
+                relativePoint = "TOP",
+                size = 11,
+                truncateLength = 28
+              },
+              npcTitle = {
+                color = {
+                  [1] = 0.69999999999999996,
+                  [2] = 0.69999999999999996,
+                  [3] = 0.69999999999999996
+                },
+                enabled = false,
+                size = 9
+              },
+              power = {
+                enabled = false,
+                offsetY = -2,
+                size = 10,
+                spacing = 3
+              },
+              powerBar = {
+                enabled = false,
+                height = 6,
+                manaOnly = true
+              },
+              pvpIcon = {
+                enabled = true,
+                size = 20
+              },
+              questIcon = {
+                enabled = false,
+                position = "LEFT",
+                size = 18
+              },
+              raidMarker = {
+                enabled = true,
+                position = "TOPRIGHT",
+                size = 24
+              },
+              renderMode = "bars"
+            },
+            petMinion = {
+              absorbs = {
+                color = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                enabled = true,
+                opacity = 0.29999999999999999,
+                showText = false,
+                textSize = 9
+              },
+              auras = {
+                elements = {},
+                enableDungeon = true,
+                enableRaid = true,
+                enableWorld = true,
+                enabled = true
+              },
+              castbar = {
+                castTargetSize = 9,
+                enabled = true,
+                gap = 0,
+                height = 17,
+                interruptReadyTint = false,
+                interruptedHoldTime = 1,
+                kickTick = true,
+                liftOverlay = false,
+                nameSize = 10,
+                showCastTarget = false,
+                showIcon = true,
+                showSpellName = true,
+                showTimer = true,
+                texture = "",
+                timerSize = 10
+              },
+              colors = {
+                castChannel = {
+                  [1] = 0.34999999999999998,
+                  [2] = 0.59999999999999998,
+                  [3] = 0.90000000000000002
+                },
+                castEmpowered = {
+                  [1] = 0.90000000000000002,
+                  [2] = 0.55000000000000004,
+                  [3] = 0.14999999999999999
+                },
+                castImportant = {
+                  [1] = 1,
+                  [2] = 0.25,
+                  [3] = 0.25
+                },
+                castImportantEnabled = false,
+                castInterruptReady = {
+                  [1] = 0.29999999999999999,
+                  [2] = 0.84999999999999998,
+                  [3] = 0.40000000000000002
+                },
+                castInterrupted = {
+                  [1] = 0.80000000000000004,
+                  [2] = 0,
+                  [3] = 0
+                },
+                castInterruptible = {
+                  [1] = 0.69999999999999996,
+                  [2] = 0.40000000000000002,
+                  [3] = 0.90000000000000002
+                },
+                castUninterruptible = {
+                  [1] = 0.45000000000000001,
+                  [2] = 0.45000000000000001,
+                  [3] = 0.45000000000000001
+                },
+                classColorEnemyPlayers = true,
+                dpsHasAggro = {
+                  [1] = 1,
+                  [2] = 0.5,
+                  [3] = 0
+                },
+                dpsNearAggro = {
+                  [1] = 0.81000000000000005,
+                  [2] = 0.71999999999999997,
+                  [3] = 0.19
+                },
+                execute = {
+                  [1] = 1,
+                  [2] = 0.10000000000000001,
+                  [3] = 0.10000000000000001
+                },
+                executeAuto = true,
+                executeEnabled = false,
+                executeThreshold = 35,
+                focus = {
+                  [1] = 0.050999999999999997,
+                  [2] = 0.81999999999999995,
+                  [3] = 0.62
+                },
+                focusEnabled = true,
+                friendly = {
+                  [1] = 0.314,
+                  [2] = 0.80000000000000004,
+                  [3] = 0.40799999999999997
+                },
+                hostile = {
+                  [1] = 0.39000000000000001,
+                  [2] = 0.11,
+                  [3] = 0.089999999999999997
+                },
+                neutral = {
+                  [1] = 0.81000000000000005,
+                  [2] = 0.71999999999999997,
+                  [3] = 0.19
+                },
+                offTankAggro = {
+                  [1] = 0.188,
+                  [2] = 0.76100000000000001,
+                  [3] = 0.81200000000000006
+                },
+                oocDarken = true,
+                oocDarkenFactor = 0.75,
+                quest = {
+                  [1] = 1,
+                  [2] = 0.81999999999999995,
+                  [3] = 0
+                },
+                questEnabled = true,
+                tankHasAggro = {
+                  [1] = 0.050000000000000003,
+                  [2] = 0.81999999999999995,
+                  [3] = 0.62
+                },
+                tankNoAggro = {
+                  [1] = 1,
+                  [2] = 0.22,
+                  [3] = 0.17000000000000001
+                },
+                tapped = {
+                  [1] = 0.5,
+                  [2] = 0.5,
+                  [3] = 0.5
+                },
+                target = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                targetEnabled = false,
+                threatEnabled = true,
+                threatInstancesOnly = true
+              },
+              font = {
+                face = "",
+                outline = "OUTLINE"
+              },
+              healPrediction = {
+                color = {
+                  [1] = 0.25,
+                  [2] = 0.80000000000000004,
+                  [3] = 0.25
+                },
+                enabled = false,
+                opacity = 0.40000000000000002
+              },
+              health = {
+                bgAlpha = 1,
+                bgColor = {
+                  [1] = 0.12,
+                  [2] = 0.12,
+                  [3] = 0.12
+                },
+                borderColor = {
+                  [1] = 0,
+                  [2] = 0,
+                  [3] = 0
+                },
+                borderSize = 1,
+                height = 24,
+                smooth = false,
+                texture = "Quazii",
+                width = 210
+              },
+              healthText = {
+                bothFormat = "bar",
+                color = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                enabled = true,
+                hidePercentSymbol = false,
+                justify = "RIGHT",
+                offsetX = -2,
+                offsetY = 0,
+                point = "RIGHT",
+                precision = 0,
+                relativePoint = "RIGHT",
+                size = 10,
+                style = "percent"
+              },
+              highlight = {
+                focusGlow = false,
+                focusGlowAlpha = 1,
+                focusGlowColor = {
+                  [1] = 0.050999999999999997,
+                  [2] = 0.81999999999999995,
+                  [3] = 0.62
+                },
+                mouseover = true,
+                mouseoverAlpha = 0.29999999999999999,
+                mouseoverColor = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                targetGlow = true,
+                targetGlowAlpha = 1,
+                targetGlowColor = {
+                  [1] = 0.41199999999999998,
+                  [2] = 0.66700000000000004,
+                  [3] = 1
+                },
+                targetStyle = "wash"
+              },
+              level = {
+                classificationSize = 14,
+                enabled = false,
+                offsetX = 2,
+                offsetY = 0,
+                point = "LEFT",
+                relativePoint = "RIGHT",
+                showClassification = false,
+                size = 9
+              },
+              name = {
+                classColorPlayers = true,
+                color = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1
+                },
+                enabled = true,
+                justify = "CENTER",
+                offsetX = 0,
+                offsetY = 4,
+                point = "BOTTOM",
+                relativePoint = "TOP",
+                size = 11,
+                truncateLength = 28
+              },
+              npcTitle = {
+                color = {
+                  [1] = 0.69999999999999996,
+                  [2] = 0.69999999999999996,
+                  [3] = 0.69999999999999996
+                },
+                enabled = false,
+                size = 9
+              },
+              power = {
+                enabled = false,
+                offsetY = -2,
+                size = 10,
+                spacing = 3
+              },
+              powerBar = {
+                enabled = false,
+                height = 6,
+                manaOnly = true
+              },
+              pvpIcon = {
+                enabled = true,
+                size = 20
+              },
+              questIcon = {
+                enabled = false,
+                position = "LEFT",
+                size = 18
+              },
+              raidMarker = {
+                enabled = true,
+                position = "TOPRIGHT",
+                size = 24
+              },
+              renderMode = "bars"
+            }
+          }
+        },
+        ncdm = {
+          _snapshotVersion = 0,
+          buff = {
+            anchorOffsetX = 0,
+            anchorOffsetY = 0,
+            anchorPlacement = "center",
+            anchorSourcePoint = "CENTER",
+            anchorSpacing = 0,
+            anchorTargetPoint = "CENTER",
+            anchorTo = "disabled",
+            aspectRatioCrop = 1,
+            borderColor = {
+              [1] = 0,
+              [2] = 0,
+              [3] = 0,
+              [4] = 1
+            },
+            borderColorSource = "inherit",
+            borderSize = 0,
+            containerType = "aura",
+            dormantSpells = {},
+            durationAnchor = "CENTER",
+            durationOffsetX = 0,
+            durationOffsetY = 0,
+            durationSize = 12,
+            enabled = true,
+            growOnApply = false,
+            growthDirection = "CENTERED_HORIZONTAL",
+            hideDurationText = false,
+            iconDisplayMode = "active",
+            iconSize = 30,
+            padding = 0,
+            removedSpells = {},
+            shape = "square",
+            showAbsorbAmount = false,
+            spellOverrides = {},
+            stackAnchor = "BOTTOM",
+            stackOffsetX = 0,
+            stackOffsetY = 0,
+            stackSize = 12,
+            zoom = 0
+          },
+          containers = {
+            buff = {
+              anchorOffsetX = 0,
+              anchorOffsetY = 0,
+              anchorPlacement = "center",
+              anchorSourcePoint = "CENTER",
+              anchorSpacing = 0,
+              anchorTargetPoint = "CENTER",
+              anchorTo = "disabled",
+              aspectRatioCrop = 1,
+              borderColor = {
+                [1] = 0,
+                [2] = 0,
+                [3] = 0,
+                [4] = 1
+              },
+              borderColorSource = "inherit",
+              borderSize = 0,
+              builtIn = true,
+              containerType = "aura",
+              dormantSpells = {},
+              durationAnchor = "CENTER",
+              durationOffsetX = 0,
+              durationOffsetY = 0,
+              durationSize = 12,
+              enabled = true,
+              growOnApply = false,
+              growthDirection = "CENTERED_HORIZONTAL",
+              hideDurationText = false,
+              iconDisplayMode = "active",
+              iconSize = 30,
+              name = "Buff Icons",
+              padding = 0,
+              removedSpells = {},
+              shape = "square",
+              showAbsorbAmount = false,
+              spellOverrides = {},
+              stackAnchor = "BOTTOM",
+              stackOffsetX = 0,
+              stackOffsetY = 0,
+              stackSize = 12,
+              zoom = 0
+            },
+            essential = {
+              builtIn = true,
+              clickableIcons = false,
+              containerType = "cooldown",
+              desaturateOnCooldown = true,
+              dormantSpells = {},
+              enabled = true,
+              iconDisplayMode = "always",
+              layoutDirection = "HORIZONTAL",
+              name = "Essential",
+              rangeColor = {
+                [1] = 0.80000000000000004,
+                [2] = 0.10000000000000001,
+                [3] = 0.10000000000000001
+              },
+              rangeIndicator = true,
+              removedSpells = {},
+              row1 = {
+                aspectRatioCrop = 1,
+                borderColor = {
+                  [1] = 0,
+                  [2] = 0,
+                  [3] = 0,
+                  [4] = 1
+                },
+                borderColorSource = "inherit",
+                borderSize = 1,
+                durationAnchor = "CENTER",
+                durationOffsetX = 0,
+                durationOffsetY = 0,
+                durationSize = 16,
+                durationTextColor = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1,
+                  [4] = 1
+                },
+                hideDurationText = false,
+                iconCount = 12,
+                iconSize = 39,
+                padding = 0,
+                stackAnchor = "BOTTOMRIGHT",
+                stackOffsetX = 0,
+                stackOffsetY = 0,
+                stackSize = 12,
+                stackTextColor = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1,
+                  [4] = 1
+                },
+                xOffset = 0,
+                yOffset = 0,
+                zoom = 0
+              },
+              row2 = {
+                aspectRatioCrop = 1,
+                borderColor = {
+                  [1] = 0,
+                  [2] = 0,
+                  [3] = 0,
+                  [4] = 1
+                },
+                borderColorSource = "inherit",
+                borderSize = 1,
+                durationAnchor = "CENTER",
+                durationOffsetX = 0,
+                durationOffsetY = 0,
+                durationSize = 16,
+                durationTextColor = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1,
+                  [4] = 1
+                },
+                iconCount = 10,
+                iconSize = 39,
+                padding = 1,
+                stackAnchor = "BOTTOMRIGHT",
+                stackOffsetX = 0,
+                stackOffsetY = 0,
+                stackSize = 12,
+                stackTextColor = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1,
+                  [4] = 1
+                },
+                xOffset = 0,
+                yOffset = 0,
+                zoom = 0
+              },
+              row3 = {
+                aspectRatioCrop = 1,
+                borderColor = {
+                  [1] = 0,
+                  [2] = 0,
+                  [3] = 0,
+                  [4] = 1
+                },
+                borderColorSource = "inherit",
+                borderSize = 1,
+                durationAnchor = "CENTER",
+                durationOffsetX = 0,
+                durationOffsetY = 0,
+                durationSize = 16,
+                durationTextColor = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1,
+                  [4] = 1
+                },
+                iconCount = 10,
+                iconSize = 39,
+                padding = 0,
+                stackAnchor = "BOTTOMRIGHT",
+                stackOffsetX = 0,
+                stackOffsetY = 0,
+                stackSize = 12,
+                stackTextColor = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1,
+                  [4] = 1
+                },
+                xOffset = 0,
+                yOffset = 0,
+                zoom = 0
+              },
+              spellOverrides = {},
+              usabilityIndicator = true
+            },
+            trackedBar = {
+              anchorOffsetX = 0,
+              anchorOffsetY = 0,
+              anchorPlacement = "center",
+              anchorSourcePoint = "CENTER",
+              anchorSpacing = 0,
+              anchorTargetPoint = "CENTER",
+              anchorTo = "disabled",
+              autoWidth = false,
+              autoWidthOffset = 0,
+              barColor = {
+                [1] = 0.376,
+                [2] = 0.64700000000000002,
+                [3] = 0.97999999999999998,
+                [4] = 1
+              },
+              barHeight = 25,
+              barOpacity = 1,
+              barWidth = 215,
+              bgColor = {
+                [1] = 0,
+                [2] = 0,
+                [3] = 0,
+                [4] = 1
+              },
+              bgOpacity = 0.5,
+              borderColor = {
+                [1] = 0,
+                [2] = 0,
+                [3] = 0,
+                [4] = 1
+              },
+              borderColorSource = "inherit",
+              borderSize = 2,
+              builtIn = true,
+              colorOverrides = {},
+              containerType = "auraBar",
+              desaturateInactive = false,
+              dormantSpells = {},
+              enabled = true,
+              fillDirection = "up",
+              growUp = true,
+              hideIcon = false,
+              iconDisplayMode = "active",
+              iconPosition = "top",
+              inactiveAlpha = 0.29999999999999999,
+              inactiveMode = "hide",
+              name = "Buff Bars",
+              orientation = "horizontal",
+              removedSpells = {},
+              reserveSlotWhenInactive = false,
+              showTextOnVertical = false,
+              spacing = 2,
+              spellOverrides = {},
+              textSize = 14,
+              texture = "Quazii v5",
+              useClassColor = true
+            },
+            utility = {
+              anchorBelowEssential = false,
+              anchorGap = 0,
+              builtIn = true,
+              clickableIcons = false,
+              containerType = "cooldown",
+              desaturateOnCooldown = true,
+              dormantSpells = {},
+              enabled = true,
+              iconDisplayMode = "always",
+              layoutDirection = "HORIZONTAL",
+              name = "Utility",
+              rangeColor = {
+                [1] = 0.80000000000000004,
+                [2] = 0.10000000000000001,
+                [3] = 0.10000000000000001
+              },
+              rangeIndicator = true,
+              removedSpells = {},
+              row1 = {
+                aspectRatioCrop = 1,
+                borderColor = {
+                  [1] = 0,
+                  [2] = 0,
+                  [3] = 0,
+                  [4] = 1
+                },
+                borderColorSource = "inherit",
+                borderSize = 1,
+                durationAnchor = "CENTER",
+                durationOffsetX = 0,
+                durationOffsetY = 0,
+                durationSize = 14,
+                durationTextColor = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1,
+                  [4] = 1
+                },
+                iconCount = 7,
+                iconSize = 30,
+                padding = 0,
+                stackAnchor = "BOTTOMRIGHT",
+                stackOffsetX = 0,
+                stackOffsetY = -1,
+                stackSize = 14,
+                stackTextColor = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1,
+                  [4] = 1
+                },
+                xOffset = 0,
+                yOffset = 0,
+                zoom = 0
+              },
+              row2 = {
+                aspectRatioCrop = 1,
+                borderColor = {
+                  [1] = 0,
+                  [2] = 0,
+                  [3] = 0,
+                  [4] = 1
+                },
+                borderColorSource = "inherit",
+                borderSize = 1,
+                durationAnchor = "CENTER",
+                durationOffsetX = 0,
+                durationOffsetY = 0,
+                durationSize = 14,
+                durationTextColor = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1,
+                  [4] = 1
+                },
+                iconCount = 6,
+                iconSize = 30,
+                padding = 0,
+                stackAnchor = "BOTTOMRIGHT",
+                stackOffsetX = 0,
+                stackOffsetY = -1,
+                stackSize = 14,
+                stackTextColor = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1,
+                  [4] = 1
+                },
+                xOffset = 0,
+                yOffset = 0,
+                zoom = 0
+              },
+              row3 = {
+                aspectRatioCrop = 1,
+                borderColor = {
+                  [1] = 0,
+                  [2] = 0,
+                  [3] = 0,
+                  [4] = 1
+                },
+                borderColorSource = "inherit",
+                borderSize = 1,
+                durationAnchor = "CENTER",
+                durationOffsetX = 0,
+                durationOffsetY = 0,
+                durationSize = 14,
+                durationTextColor = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1,
+                  [4] = 1
+                },
+                iconCount = 6,
+                iconSize = 30,
+                padding = 0,
+                stackAnchor = "BOTTOMRIGHT",
+                stackOffsetX = 0,
+                stackOffsetY = -1,
+                stackSize = 14,
+                stackTextColor = {
+                  [1] = 1,
+                  [2] = 1,
+                  [3] = 1,
+                  [4] = 1
+                },
+                xOffset = 0,
+                yOffset = 0,
+                zoom = 0
+              },
+              spellOverrides = {},
+              usabilityIndicator = true
+            }
+          },
+          enabled = true,
+          essential = {
+            clickableIcons = false,
+            containerType = "cooldown",
+            desaturateOnCooldown = true,
+            dormantSpells = {},
+            enabled = true,
+            greyOutInactive = false,
+            greyOutInactiveBuffs = false,
+            iconDisplayMode = "always",
+            layoutDirection = "HORIZONTAL",
+            rangeColor = {
+              [1] = 0.80000000000000004,
+              [2] = 0.10000000000000001,
+              [3] = 0.10000000000000001
+            },
+            rangeIndicator = true,
+            removedSpells = {},
+            row1 = {
+              aspectRatioCrop = 1,
+              borderColor = {
+                [1] = 0,
+                [2] = 0,
+                [3] = 0,
+                [4] = 1
+              },
+              borderColorSource = "inherit",
+              borderSize = 1,
+              durationAnchor = "CENTER",
+              durationOffsetX = 0,
+              durationOffsetY = 0,
+              durationSize = 16,
+              durationTextColor = {
+                [1] = 1,
+                [2] = 1,
+                [3] = 1,
+                [4] = 1
+              },
+              hideDurationText = false,
+              iconCount = 12,
+              iconSize = 39,
+              padding = 0,
+              stackAnchor = "BOTTOMRIGHT",
+              stackOffsetX = 0,
+              stackOffsetY = 0,
+              stackSize = 12,
+              stackTextColor = {
+                [1] = 1,
+                [2] = 1,
+                [3] = 1,
+                [4] = 1
+              },
+              xOffset = 0,
+              yOffset = 0,
+              zoom = 0
+            },
+            row2 = {
+              aspectRatioCrop = 1,
+              borderColor = {
+                [1] = 0,
+                [2] = 0,
+                [3] = 0,
+                [4] = 1
+              },
+              borderColorSource = "inherit",
+              borderSize = 1,
+              durationAnchor = "CENTER",
+              durationOffsetX = 0,
+              durationOffsetY = 0,
+              durationSize = 16,
+              durationTextColor = {
+                [1] = 1,
+                [2] = 1,
+                [3] = 1,
+                [4] = 1
+              },
+              iconCount = 10,
+              iconSize = 39,
+              padding = 1,
+              stackAnchor = "BOTTOMRIGHT",
+              stackOffsetX = 0,
+              stackOffsetY = 0,
+              stackSize = 12,
+              stackTextColor = {
+                [1] = 1,
+                [2] = 1,
+                [3] = 1,
+                [4] = 1
+              },
+              xOffset = 0,
+              yOffset = 0,
+              zoom = 0
+            },
+            row3 = {
+              aspectRatioCrop = 1,
+              borderColor = {
+                [1] = 0,
+                [2] = 0,
+                [3] = 0,
+                [4] = 1
+              },
+              borderColorSource = "inherit",
+              borderSize = 1,
+              durationAnchor = "CENTER",
+              durationOffsetX = 0,
+              durationOffsetY = 0,
+              durationSize = 16,
+              durationTextColor = {
+                [1] = 1,
+                [2] = 1,
+                [3] = 1,
+                [4] = 1
+              },
+              iconCount = 10,
+              iconSize = 39,
+              padding = 0,
+              stackAnchor = "BOTTOMRIGHT",
+              stackOffsetX = 0,
+              stackOffsetY = 0,
+              stackSize = 12,
+              stackTextColor = {
+                [1] = 1,
+                [2] = 1,
+                [3] = 1,
+                [4] = 1
+              },
+              xOffset = 0,
+              yOffset = 0,
+              zoom = 0
+            },
+            spellOverrides = {},
+            usabilityIndicator = true
+          },
+          externalSkinning = false,
+          glowSource = "QUI",
+          iconSkin = "Default",
+          perLoadoutSpec = false,
+          trackedBar = {
+            anchorOffsetX = 0,
+            anchorOffsetY = 0,
+            anchorPlacement = "center",
+            anchorSourcePoint = "CENTER",
+            anchorSpacing = 0,
+            anchorTargetPoint = "CENTER",
+            anchorTo = "disabled",
+            autoWidth = false,
+            autoWidthOffset = 0,
+            barColor = {
+              [1] = 0.376,
+              [2] = 0.64700000000000002,
+              [3] = 0.97999999999999998,
+              [4] = 1
+            },
+            barHeight = 25,
+            barOpacity = 1,
+            barWidth = 215,
+            bgColor = {
+              [1] = 0,
+              [2] = 0,
+              [3] = 0,
+              [4] = 1
+            },
+            bgOpacity = 0.5,
+            borderColor = {
+              [1] = 0,
+              [2] = 0,
+              [3] = 0,
+              [4] = 1
+            },
+            borderColorSource = "inherit",
+            borderSize = 2,
+            colorOverrides = {},
+            containerType = "auraBar",
+            desaturateInactive = false,
+            dormantSpells = {},
+            enabled = true,
+            fillDirection = "up",
+            growUp = true,
+            hideIcon = false,
+            iconDisplayMode = "active",
+            iconPosition = "top",
+            inactiveAlpha = 0.29999999999999999,
+            inactiveMode = "hide",
+            orientation = "horizontal",
+            removedSpells = {},
+            reserveSlotWhenInactive = false,
+            showTextOnVertical = false,
+            spacing = 2,
+            spellOverrides = {},
+            textSize = 14,
+            texture = "Quazii v5",
+            useClassColor = true
+          },
+          utility = {
+            anchorBelowEssential = false,
+            anchorGap = 0,
+            clickableIcons = false,
+            containerType = "cooldown",
+            desaturateOnCooldown = true,
+            dormantSpells = {},
+            enabled = true,
+            greyOutInactive = false,
+            greyOutInactiveBuffs = false,
+            iconDisplayMode = "always",
+            layoutDirection = "HORIZONTAL",
+            rangeColor = {
+              [1] = 0.80000000000000004,
+              [2] = 0.10000000000000001,
+              [3] = 0.10000000000000001
+            },
+            rangeIndicator = true,
+            removedSpells = {},
+            row1 = {
+              aspectRatioCrop = 1,
+              borderColor = {
+                [1] = 0,
+                [2] = 0,
+                [3] = 0,
+                [4] = 1
+              },
+              borderColorSource = "inherit",
+              borderSize = 1,
+              durationAnchor = "CENTER",
+              durationOffsetX = 0,
+              durationOffsetY = 0,
+              durationSize = 14,
+              durationTextColor = {
+                [1] = 1,
+                [2] = 1,
+                [3] = 1,
+                [4] = 1
+              },
+              iconCount = 7,
+              iconSize = 30,
+              padding = 0,
+              stackAnchor = "BOTTOMRIGHT",
+              stackOffsetX = 0,
+              stackOffsetY = -1,
+              stackSize = 14,
+              stackTextColor = {
+                [1] = 1,
+                [2] = 1,
+                [3] = 1,
+                [4] = 1
+              },
+              xOffset = 0,
+              yOffset = 0,
+              zoom = 0
+            },
+            row2 = {
+              aspectRatioCrop = 1,
+              borderColor = {
+                [1] = 0,
+                [2] = 0,
+                [3] = 0,
+                [4] = 1
+              },
+              borderColorSource = "inherit",
+              borderSize = 1,
+              durationAnchor = "CENTER",
+              durationOffsetX = 0,
+              durationOffsetY = 0,
+              durationSize = 14,
+              durationTextColor = {
+                [1] = 1,
+                [2] = 1,
+                [3] = 1,
+                [4] = 1
+              },
+              iconCount = 6,
+              iconSize = 30,
+              padding = 0,
+              stackAnchor = "BOTTOMRIGHT",
+              stackOffsetX = 0,
+              stackOffsetY = -1,
+              stackSize = 14,
+              stackTextColor = {
+                [1] = 1,
+                [2] = 1,
+                [3] = 1,
+                [4] = 1
+              },
+              xOffset = 0,
+              yOffset = 0,
+              zoom = 0
+            },
+            row3 = {
+              aspectRatioCrop = 1,
+              borderColor = {
+                [1] = 0,
+                [2] = 0,
+                [3] = 0,
+                [4] = 1
+              },
+              borderColorSource = "inherit",
+              borderSize = 1,
+              durationAnchor = "CENTER",
+              durationOffsetX = 0,
+              durationOffsetY = 0,
+              durationSize = 14,
+              durationTextColor = {
+                [1] = 1,
+                [2] = 1,
+                [3] = 1,
+                [4] = 1
+              },
+              iconCount = 6,
+              iconSize = 30,
+              padding = 0,
+              stackAnchor = "BOTTOMRIGHT",
+              stackOffsetX = 0,
+              stackOffsetY = -1,
+              stackSize = 14,
+              stackTextColor = {
+                [1] = 1,
+                [2] = 1,
+                [3] = 1,
+                [4] = 1
+              },
+              xOffset = 0,
+              yOffset = 0,
+              zoom = 0
+            },
+            spellOverrides = {},
+            usabilityIndicator = true
+          }
+        },
+        powerBar = {
+          attachTo = "EssentialCooldownViewer",
+          autoAttach = false,
+          bgColor = {
+            [1] = 0.078,
+            [2] = 0.078,
+            [3] = 0.078,
+            [4] = 1
+          },
+          borderColor = {
+            [1] = 0,
+            [2] = 0,
+            [3] = 0,
+            [4] = 1
+          },
+          borderColorSource = "inherit",
+          borderSize = 0,
+          colorMode = "power",
+          customColor = {
+            [1] = 0.20000000000000001,
+            [2] = 0.59999999999999998,
+            [3] = 1,
+            [4] = 1
+          },
+          enabled = true,
+          height = 8,
+          hidePercentSymbol = false,
+          indicators = {
+            color = {
+              [1] = 1,
+              [2] = 1,
+              [3] = 1,
+              [4] = 0.90000000000000002
+            },
+            enabled = false,
+            perSpec = {},
+            thickness = 2
+          },
+          lockedToEssential = true,
+          lockedToUtility = false,
+          offsetX = 0,
+          offsetY = -204,
+          orientation = "HORIZONTAL",
+          showPercent = true,
+          showText = true,
+          showTicks = false,
+          snapGap = 5,
+          standaloneMode = false,
+          textAlign = "CENTER",
+          textCustomColor = {
+            [1] = 1,
+            [2] = 1,
+            [3] = 1,
+            [4] = 1
+          },
+          textSize = 10,
+          textUseClassColor = false,
+          textX = 0,
+          textY = 0,
+          texture = "Quazii v5",
+          tickColor = {
+            [1] = 0,
+            [2] = 0,
+            [3] = 0,
+            [4] = 1
+          },
+          tickThickness = 1,
+          useClassColor = false,
+          usePowerColor = true,
+          useRawPixels = true,
+          visibility = "always",
+          width = 236
+        },
+        powerColors = {
+          arcaneCharges = {
+            [1] = 0.10000000000000001,
+            [2] = 0.10000000000000001,
+            [3] = 0.97999999999999998,
+            [4] = 1
+          },
+          bloodRunes = {
+            [1] = 0.77000000000000002,
+            [2] = 0.12,
+            [3] = 0.23000000000000001,
+            [4] = 1
+          },
+          chi = {
+            [1] = 0,
+            [2] = 1,
+            [3] = 0.58999999999999997,
+            [4] = 1
+          },
+          comboPoints = {
+            [1] = 1,
+            [2] = 0.95999999999999996,
+            [3] = 0.40999999999999998,
+            [4] = 1
+          },
+          energy = {
+            [1] = 1,
+            [2] = 1,
+            [3] = 0,
+            [4] = 1
+          },
+          essence = {
+            [1] = 0.20000000000000001,
+            [2] = 0.57999999999999996,
+            [3] = 0.5,
+            [4] = 1
+          },
+          focus = {
+            [1] = 1,
+            [2] = 0.5,
+            [3] = 0.25,
+            [4] = 1
+          },
+          frostRunes = {
+            [1] = 0,
+            [2] = 0.81999999999999995,
+            [3] = 1,
+            [4] = 1
+          },
+          fury = {
+            [1] = 0.79000000000000004,
+            [2] = 0.26000000000000001,
+            [3] = 0.98999999999999999,
+            [4] = 1
+          },
+          holyPower = {
+            [1] = 0.94999999999999996,
+            [2] = 0.90000000000000002,
+            [3] = 0.59999999999999998,
+            [4] = 1
+          },
+          insanity = {
+            [1] = 0.40000000000000002,
+            [2] = 0,
+            [3] = 0.80000000000000004,
+            [4] = 1
+          },
+          lunarPower = {
+            [1] = 0.29999999999999999,
+            [2] = 0.52000000000000002,
+            [3] = 0.90000000000000002,
+            [4] = 1
+          },
+          maelstrom = {
+            [1] = 0,
+            [2] = 0.5,
+            [3] = 1,
+            [4] = 1
+          },
+          maelstromWeapon = {
+            [1] = 0,
+            [2] = 0.68999999999999995,
+            [3] = 1,
+            [4] = 1
+          },
+          mana = {
+            [1] = 0,
+            [2] = 0,
+            [3] = 1,
+            [4] = 1
+          },
+          rage = {
+            [1] = 1,
+            [2] = 0,
+            [3] = 0,
+            [4] = 1
+          },
+          renewingMistCharges = {
+            [1] = 0.29999999999999999,
+            [2] = 1,
+            [3] = 0.71999999999999997,
+            [4] = 1
+          },
+          runes = {
+            [1] = 0.77000000000000002,
+            [2] = 0.12,
+            [3] = 0.23000000000000001,
+            [4] = 1
+          },
+          runicPower = {
+            [1] = 0,
+            [2] = 0.81999999999999995,
+            [3] = 1,
+            [4] = 1
+          },
+          soulFragments = {
+            [1] = 0.64000000000000001,
+            [2] = 0.19,
+            [3] = 0.79000000000000004,
+            [4] = 1
+          },
+          soulShards = {
+            [1] = 0.57999999999999996,
+            [2] = 0.51000000000000001,
+            [3] = 0.79000000000000004,
+            [4] = 1
+          },
+          stagger = {
+            [1] = 0,
+            [2] = 1,
+            [3] = 0.58999999999999997,
+            [4] = 1
+          },
+          staggerHeavy = {
+            [1] = 1,
+            [2] = 0.41999999999999998,
+            [3] = 0.41999999999999998,
+            [4] = 1
+          },
+          staggerLight = {
+            [1] = 0.52000000000000002,
+            [2] = 1,
+            [3] = 0.52000000000000002,
+            [4] = 1
+          },
+          staggerModerate = {
+            [1] = 1,
+            [2] = 0.97999999999999998,
+            [3] = 0.71999999999999997,
+            [4] = 1
+          },
+          tipOfTheSpear = {
+            [1] = 0,
+            [2] = 0.80000000000000004,
+            [3] = 0.29999999999999999,
+            [4] = 1
+          },
+          unholyRunes = {
+            [1] = 0,
+            [2] = 0.80000000000000004,
+            [3] = 0,
+            [4] = 1
+          },
+          useStaggerLevelColors = true,
+          whirlwind = {
+            [1] = 0.90000000000000002,
+            [2] = 0.20000000000000001,
+            [3] = 0.20000000000000001,
+            [4] = 1
+          }
+        },
+        preyTracker = {
+          ambushAlertEnabled = true,
+          ambushDuration = 6,
+          ambushGlowEnabled = true,
+          ambushSoundEnabled = true,
+          autoHide = true,
+          barBackgroundColor = {
+            [1] = 0.10000000000000001,
+            [2] = 0.10000000000000001,
+            [3] = 0.10000000000000001,
+            [4] = 0.80000000000000004
+          },
+          barBgOverride = false,
+          barColor = {
+            [1] = 0.20000000000000001,
+            [2] = 0.80000000000000004,
+            [3] = 0.20000000000000001,
+            [4] = 1
+          },
+          barUseAccentColor = true,
+          barUseClassColor = false,
+          borderColor = {
+            [1] = 0,
+            [2] = 0,
+            [3] = 0,
+            [4] = 1
+          },
+          borderColorSource = "inherit",
+          borderSize = 1,
+          completionSound = true,
+          currencyEnabled = true,
+          currencyShowSession = true,
+          currencyShowWeekly = true,
+          enabled = true,
+          height = 20,
+          hideInInstances = true,
+          hideOutsidePreyZone = false,
+          huntScannerEnabled = true,
+          replaceDefaultIndicator = true,
+          showSpark = true,
+          showText = true,
+          showTickMarks = true,
+          soundEnabled = true,
+          soundStage2 = true,
+          soundStage3 = true,
+          soundStage4 = true,
+          textFormat = "stage_pct",
+          textSize = 11,
+          texture = "Quazii v5",
+          tickStyle = "thirds",
+          width = 250
+        },
         raidBuffs = {
           buffCount = {
             color = {
@@ -6761,7 +8272,34 @@ return {
       Default = {
         _defaultsVersion = 3,
         _needsLateAbImport = true,
-        _schemaVersion = 59,
+        _schemaVersion = 60,
+        quiUnitFrames = {
+          focus = {
+            castbar = {
+              previewMode = false
+            }
+          },
+          pet = {
+            castbar = {
+              previewMode = false
+            }
+          },
+          player = {
+            castbar = {
+              previewMode = false
+            }
+          },
+          target = {
+            castbar = {
+              previewMode = false
+            }
+          },
+          targettarget = {
+            castbar = {
+              previewMode = false
+            }
+          }
+        },
         ncdm = {
           buff = {
             ownedSpells = {}
@@ -6790,33 +8328,6 @@ return {
           },
           utility = {
             ownedSpells = {}
-          }
-        },
-        quiUnitFrames = {
-          focus = {
-            castbar = {
-              previewMode = false
-            }
-          },
-          pet = {
-            castbar = {
-              previewMode = false
-            }
-          },
-          player = {
-            castbar = {
-              previewMode = false
-            }
-          },
-          target = {
-            castbar = {
-              previewMode = false
-            }
-          },
-          targettarget = {
-            castbar = {
-              previewMode = false
-            }
           }
         }
       }

@@ -173,7 +173,6 @@ local function NameplateTypeDefaults(renderMode)
     }
 end
 
-
 local defaults = {
     profile = {
         -- General Settings
@@ -3048,8 +3047,12 @@ local defaults = {
             },
         },
 
+        -- Custom nameplates (QUI_Nameplates suite; plans/009-nameplates.md).
+        -- Sizes are physical pixels. Color tables are plain {r,g,b} — the
+        -- color resolver returns profile values only (secret-safety contract:
+        -- every resolved color is verifiably non-secret).
         nameplates = {
-            enabled = false,
+            enabled = false,          -- master switch (Module Addons row / legacyFlag)
 
             types = {
                 enemyPlayer  = NameplateTypeDefaults(),
@@ -3065,6 +3068,8 @@ local defaults = {
                 showInInstances = "never",
                 showNPCs = true,
             },
+            -- Spec-linked presets: [specIndex] = deep snapshot of this tree
+            -- (minus enabled + the preset storage itself).
             specPresets = {},
             specAutoSwitch = false,
             simplified = {
@@ -3081,7 +3086,7 @@ local defaults = {
             },
 
             cvars = {
-                hitboxScaleX = 100,
+                hitboxScaleX = 100,   -- percent of health bar width
                 hitboxScaleY = 100,
                 maxDistance = 60,
                 stackingEnemy = true,
@@ -3466,6 +3471,7 @@ local defaults = {
         -- Config Panel Scale, Width, and Alpha (for the settings UI, not the in-game HUD)
         configPanelScale = 1.0,
         configPanelWidth = 750,
+        configPanelHeight = 850,
         configPanelAlpha = 0.97,
 
         -- Addon Accent Color (drives options panel theme + default fallback for skinned elements)
@@ -3816,15 +3822,16 @@ local defaults = {
             autoZoom = false,  -- Auto zoom out after 10 seconds
             hideAddonButtons = true,  -- Show addon buttons on hover only
             buttonDrawer = {
-                enabled = false,        -- Off by default (opt-in feature)
-                anchor = "RIGHT",       -- Which side of minimap: LEFT, RIGHT, TOPLEFT, TOPRIGHT, BOTTOMLEFT, BOTTOMRIGHT, TOP, BOTTOM
-                offsetX = 0,            -- Horizontal offset from anchor position
-                offsetY = 0,            -- Vertical offset from anchor position
-                toggleOffsetX = 0,      -- Horizontal offset for the toggle button
-                toggleOffsetY = 0,      -- Vertical offset for the toggle button
-                openOnMouseover = true, -- Open drawer when hovering the toggle button
-                autoHideToggle = false, -- Auto-hide the toggle button (show on minimap hover)
-                showTooltip = true,     -- Show the info tooltip when hovering the toggle button
+                enabled = false,
+                anchor = "RIGHT",
+                offsetX = 0,
+                offsetY = 0,
+                toggleOffsetX = 0,
+                toggleOffsetY = 0,
+                openOnMouseover = true,
+                autoHideToggle = false,
+                showTooltip = true,
+                toggleIcon = "qui",
 
                 hiddenButtons = {},     -- Table of button names hidden from the drawer (e.g., { ["LibDBIcon10_Details"] = true })
                 autoHideDelay = 1.5,    -- Seconds after mouse leave before hiding (0 = no auto-hide)
@@ -4777,8 +4784,8 @@ local defaults = {
                 widthAdjust = 0, heightAdjust = 0,
             },
             zoneAbility = {
-                point = "CENTER", parent = "extraActionButton", relative = "CENTER",
-                offsetX = 0, offsetY = 0,
+                point = "CENTER", parent = "screen", relative = "CENTER",
+                offsetX = 150, offsetY = -27.5,
                 sizeStable = true, autoWidth = false, autoHeight = false,
                 hideWithParent = false, keepInPlace = true,
                 widthAdjust = 0, heightAdjust = 0,

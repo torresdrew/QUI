@@ -126,6 +126,13 @@ local function ValidateImportTree(value, label, state, depth)
     return true
 end
 
+local DUAL_TYPE_PATHS = {}
+for _, containerKey in ipairs({ "party", "raid", "pinned1", "pinned2" }) do
+    DUAL_TYPE_PATHS[("profile.dandersFrames.%s.absolutePoint"):format(containerKey)] = {
+        boolean = true, string = true,
+    }
+end
+
 local function ValidateTableTypeShapeDetailed(candidate, schema, path, errors, depth)
     if #errors >= MAX_DETAIL_TYPE_MISMATCHES then return end
     depth = depth or 0
@@ -142,12 +149,15 @@ local function ValidateTableTypeShapeDetailed(candidate, schema, path, errors, d
             local keyPath = ("%s.%s"):format(path or "profile", tostring(key))
 
             if schemaType ~= candidateType then
-                table.insert(errors, {
-                    kind = "type_mismatch",
-                    path = keyPath,
-                    expected = schemaType,
-                    actual = candidateType,
-                })
+                local allowedTypes = DUAL_TYPE_PATHS[keyPath]
+                if not (allowedTypes and allowedTypes[candidateType]) then
+                    table.insert(errors, {
+                        kind = "type_mismatch",
+                        path = keyPath,
+                        expected = schemaType,
+                        actual = candidateType,
+                    })
+                end
             elseif schemaType == "table" then
                 ValidateTableTypeShapeDetailed(candidateValue, schemaValue, keyPath, errors, depth + 1)
             end
@@ -356,53 +366,8 @@ local function SanitizeProfilePayload(core, profileData)
     return false, working, stripped, "Too many incompatible settings; try a fresh export from QUI."
 end
 
-local function ValidateTrackerBarPayload(data, multi)
-    local ok, issue = ValidateImportTree(data, "trackers")
-    if not ok then
-        return false, FormatTreeValidationError(issue, "trackers")
-    end
-
-    if multi then
-        if type(data.bars) ~= "table" then
-            return false, "Import rejected: tracker bars payload is missing a valid bars table."
-        end
-        for i, bar in ipairs(data.bars) do
-            if type(bar) ~= "table" then
-                return false, ("Import rejected: tracker bar #%d is invalid."):format(i)
-            end
-        end
-    else
-        if type(data.bar) ~= "table" then
-            return false, "Import rejected: tracker bar payload is missing a valid bar table."
-        end
-    end
-
-    if data.specEntries ~= nil and type(data.specEntries) ~= "table" then
-        return false, "Import rejected: tracker spec entries must be a table."
-    end
-
-    return true
-end
-
-local function ValidateSpellScannerPayload(data)
-    local ok, issue = ValidateImportTree(data, "spellScanner")
-    if not ok then
-        return false, FormatTreeValidationError(issue, "spellScanner")
-    end
-
-    if type(data) ~= "table" then
-        return false, "Import rejected: spell scanner payload is not a table."
-    end
-    if data.spells ~= nil and type(data.spells) ~= "table" then
-        return false, "Import rejected: spell scanner spells must be a table."
-    end
-    if data.items ~= nil and type(data.items) ~= "table" then
-        return false, "Import rejected: spell scanner items must be a table."
-    end
-    return true
-end
-
 local SUPPORTED_PROFILE_IMPORT_PREFIXES = {
+    QUI1 = true,
     QUI1 = true,
     CDM1 = true,
 }
@@ -712,13 +677,6 @@ local function StampSourceSpecOnImportedSpecBars(targetProfile, importedProfile)
     end
 end
 
-local function RemoveImportedCustomBarContainers(core, profile)
-    local migrations = ns.Migrations
-    if migrations and type(migrations.RemoveLegacyCustomBarContainers) == "function" then
-        migrations.RemoveLegacyCustomBarContainers(profile, core and core.db and core.db.global)
-    end
-end
-
 local function IsCustomBarContainer(container)
     return type(container) == "table" and container.containerType == "customBar"
 end
@@ -943,14 +901,14 @@ local function GetTrackerEntryResolvedName(entry)
 
     if entry.type == "item" then
         if C_Item and C_Item.GetItemNameByID then
-            local ok, itemName = pcall(C_Item.GetItemNameByID, entryID)
+            local ok, itemName = ns.SafeCall("chain-next", C_Item.GetItemNameByID, entryID)
             if ok and type(itemName) == "string" and itemName ~= "" then
                 return itemName
             end
         end
 
         if GetItemInfo then
-            local ok, itemName = pcall(GetItemInfo, entryID)
+            local ok, itemName = ns.SafeCall("chain-next", GetItemInfo, entryID)
             if ok and type(itemName) == "string" and itemName ~= "" then
                 return itemName
             end
@@ -961,14 +919,14 @@ local function GetTrackerEntryResolvedName(entry)
 
     if entry.type == "spell" then
         if C_Spell and C_Spell.GetSpellName then
-            local ok, spellName = pcall(C_Spell.GetSpellName, entryID)
+            local ok, spellName = ns.SafeCall("chain-next", C_Spell.GetSpellName, entryID)
             if ok and type(spellName) == "string" and spellName ~= "" then
                 return spellName
             end
         end
 
         if GetSpellInfo then
-            local ok, spellName = pcall(GetSpellInfo, entryID)
+            local ok, spellName = ns.SafeCall("chain-next", GetSpellInfo, entryID)
             if ok and type(spellName) == "string" and spellName ~= "" then
                 return spellName
             end
@@ -1337,8 +1295,7 @@ local PROFILE_IMPORT_CATEGORIES = {
         label = "QoL / Automation",
         description = "Automation helpers, popup blocker, consumables, and utility toggles.",
         recommended = true,
-        topLevelKeys = { "qol", "uiHider", "configPanelWidth", "configPanelAlpha", "configPanelScale", "optionsPanelCollapsibleStates", "merchantGrid" },
-        topLevelKeys = { "uiHider", "configPanelWidth", "configPanelAlpha", "configPanelScale", "optionsPanelCollapsibleStates", "merchantGrid" },
+        topLevelKeys = { "qol", "uiHider", "configPanelWidth", "configPanelHeight", "configPanelAlpha", "configPanelScale", "optionsPanelCollapsibleStates", "merchantGrid" },
         generalKeys = PROFILE_QOL_GENERAL_KEYS,
     },
     {
@@ -1598,7 +1555,7 @@ local function DetectProfileImportPrefix(str)
     if type(str) ~= "string" then
         return nil
     end
-    return str:match("^([A-Z][A-Z0-9]*%d):")
+    return str:match("^([A-Za-z][A-Za-z0-9]*%d):")
 end
 
 local function DeserializeProfileImportPayload(str)
@@ -1637,6 +1594,10 @@ local function DeserializeProfileImportPayload(str)
     local ok, payload = AceSerializer:Deserialize(serialized)
     if not ok or type(payload) ~= "table" then
         return false, nil, prefix, "Could not deserialize profile."
+    end
+
+    if ns.Migrations and type(ns.Migrations.ApplyRebrand) == "function" then
+        ns.Migrations.ApplyRebrand(payload)
     end
 
     return true, payload, prefix, nil
@@ -2323,10 +2284,6 @@ function QUICore:ExportProfileToString()
     return exportString or exportErr or "Failed to export profile."
 end
 
-function QUICore:GetProfileImportCategories()
-    return BuildProfileImportPreview({}, "QUI1").categories or {}
-end
-
 function QUICore:GetProfileExportCategories()
     local profile = self and self.db and self.db.profile
     return BuildProfileImportPreview(profile or {}, "QUI1", "Current Profile").categories or {}
@@ -2406,7 +2363,7 @@ function QUICore:ImportProfileFromString(str, targetProfileName)
         end
         if stripped and #stripped > 0 then
             local count = #stripped
-            print(ns.L["|cff60A5FAQUI:|r Auto-fixed %d incompatible setting%s during import."]:format(count, count == 1 and "" or "s"))
+            print(ns.L["|cff60A5FAQUI:|r Auto-fixed %d incompatible settings during import."]:format(count))
         end
         payloadOrErr = sanitized
     end
@@ -2493,369 +2450,4 @@ end
 
 GenerateUniqueTrackerID = function()
     return QUICore:GenerateUniqueTrackerID()
-end
-
--- Export a single tracker bar (with its spec-specific entries if enabled)
-function QUICore:ExportSingleTrackerBar(barIndex)
-    if not self.db or not self.db.profile then
-        return nil, "No tracker data loaded."
-    end
-    if not AceSerializer or not LibDeflate then
-        return nil, "Export requires AceSerializer-3.0 and LibDeflate."
-    end
-
-    local records = CollectCustomTrackerExportRecords(self.db.profile)
-    local record = records[barIndex]
-    local bar = record and record.bar
-    if not bar then
-        return nil, "Bar not found."
-    end
-
-    -- Build export data including spec-specific entries if enabled
-    local exportData = {
-        bar = bar,
-        specEntries = nil,
-    }
-
-    -- Include spec-specific entries if the bar uses them
-    if bar.specSpecificSpells and self.db.global then
-        exportData.specEntries = CollectSpecEntriesForExportRecord(record, self.db.global)
-    end
-
-    local serialized = AceSerializer:Serialize(exportData)
-    if not serialized or type(serialized) ~= "string" then
-        return nil, "Failed to serialize bar."
-    end
-
-    local compressed = LibDeflate:CompressDeflate(serialized)
-    if not compressed then
-        return nil, "Failed to compress bar data."
-    end
-
-    local encoded = LibDeflate:EncodeForPrint(compressed)
-    if not encoded then
-        return nil, "Failed to encode bar data."
-    end
-
-    return "QCB1:" .. encoded
-end
-
--- Export all tracker bars
-function QUICore:ExportAllTrackerBars()
-    if not self.db or not self.db.profile then
-        return nil, "No tracker data loaded."
-    end
-    if not AceSerializer or not LibDeflate then
-        return nil, "Export requires AceSerializer-3.0 and LibDeflate."
-    end
-
-    local records = CollectCustomTrackerExportRecords(self.db.profile)
-    local bars = ExtractBarsFromExportRecords(records)
-    if not bars or #bars == 0 then
-        return nil, "No tracker bars to export."
-    end
-
-    local exportData = {
-        bars = bars,
-        specEntries = self.db.global and CollectLegacySpecEntriesForExportRecords(records, self.db.global) or nil,
-    }
-
-    local serialized = AceSerializer:Serialize(exportData)
-    if not serialized or type(serialized) ~= "string" then
-        return nil, "Failed to serialize bars."
-    end
-
-    local compressed = LibDeflate:CompressDeflate(serialized)
-    if not compressed then
-        return nil, "Failed to compress bar data."
-    end
-
-    local encoded = LibDeflate:EncodeForPrint(compressed)
-    if not encoded then
-        return nil, "Failed to encode bar data."
-    end
-
-    return "QCT1:" .. encoded
-end
-
--- Import a single tracker bar (appends to existing bars)
-function QUICore:ImportSingleTrackerBar(str)
-    if not self.db or not self.db.profile then
-        return false, "No profile loaded."
-    end
-    if not AceSerializer or not LibDeflate then
-        return false, "Import requires AceSerializer-3.0 and LibDeflate."
-    end
-    if not str or str == "" then
-        return false, "No data provided."
-    end
-
-    str = str:gsub("%s+", "")
-
-    -- Check for correct prefix
-    if not str:match("^QCB1:") then
-        return false, "This doesn't appear to be a tracker bar export."
-    end
-    str = str:gsub("^QCB1:", "")
-
-    local compressed = LibDeflate:DecodeForPrint(str)
-    if not compressed then
-        return false, "Could not decode string (maybe corrupted)."
-    end
-
-    local serialized = LibDeflate:DecompressDeflate(compressed)
-    if not serialized then
-        return false, "Could not decompress data."
-    end
-
-    local ok, data = AceSerializer:Deserialize(serialized)
-    if not ok or type(data) ~= "table" or not data.bar then
-        return false, "Could not deserialize bar data."
-    end
-
-    local payloadValid, payloadErr = ValidateTrackerBarPayload(data, false)
-    if not payloadValid then
-        return false, payloadErr or "Import failed bar validation."
-    end
-
-    -- Ensure customTrackers structure exists
-    if not self.db.profile.customTrackers then
-        self.db.profile.customTrackers = { bars = {} }
-    end
-    if not self.db.profile.customTrackers.bars then
-        self.db.profile.customTrackers.bars = {}
-    end
-
-    -- Generate collision-safe unique ID for the imported bar
-    local newID = GenerateUniqueTrackerID()
-    local importedBar = CloneValue(data.bar)
-    importedBar.id = newID
-
-    -- Append bar to existing bars
-    table.insert(self.db.profile.customTrackers.bars, importedBar)
-
-    -- Copy spec-specific entries if present (with new ID)
-    if data.specEntries then
-        if not self.db.global then self.db.global = {} end
-        if not self.db.global.specTrackerSpells then self.db.global.specTrackerSpells = {} end
-        self.db.global.specTrackerSpells[newID] = data.specEntries
-    end
-
-    SyncCustomTrackerBarsToCDM(self, self.db.profile)
-
-    return true, "Bar imported successfully."
-end
-
--- Import all tracker bars (replaceExisting: true = replace all, false = merge/append)
-function QUICore:ImportAllTrackerBars(str, replaceExisting)
-    if not self.db or not self.db.profile then
-        return false, "No profile loaded."
-    end
-    if not AceSerializer or not LibDeflate then
-        return false, "Import requires AceSerializer-3.0 and LibDeflate."
-    end
-    if not str or str == "" then
-        return false, "No data provided."
-    end
-
-    str = str:gsub("%s+", "")
-
-    -- Check for correct prefix
-    if not str:match("^QCT1:") then
-        return false, "This doesn't appear to be a tracker bars export."
-    end
-    str = str:gsub("^QCT1:", "")
-
-    local compressed = LibDeflate:DecodeForPrint(str)
-    if not compressed then
-        return false, "Could not decode string (maybe corrupted)."
-    end
-
-    local serialized = LibDeflate:DecompressDeflate(compressed)
-    if not serialized then
-        return false, "Could not decompress data."
-    end
-
-    local ok, data = AceSerializer:Deserialize(serialized)
-    if not ok or type(data) ~= "table" or not data.bars then
-        return false, "Could not deserialize bars data."
-    end
-
-    local payloadValid, payloadErr = ValidateTrackerBarPayload(data, true)
-    if not payloadValid then
-        return false, payloadErr or "Import failed bars validation."
-    end
-
-    -- Ensure customTrackers structure exists
-    if not self.db.profile.customTrackers then
-        self.db.profile.customTrackers = { bars = {} }
-    end
-
-    if replaceExisting then
-        RemoveImportedCustomBarContainers(self, self.db.profile)
-
-        -- Replace all bars
-        self.db.profile.customTrackers.bars = CloneValue(data.bars)
-
-        -- Replace spec entries (or clear if none provided)
-        if not self.db.global then self.db.global = {} end
-        self.db.global.specTrackerSpells = CloneValue(data.specEntries or {})
-    else
-        -- Merge: append bars with new IDs
-        if not self.db.profile.customTrackers.bars then
-            self.db.profile.customTrackers.bars = {}
-        end
-
-        local idMapping = {}  -- old ID -> new ID
-
-        for _, bar in ipairs(data.bars) do
-            local oldID = bar.id
-            local newID = GenerateUniqueTrackerID()
-            local clonedBar = CloneValue(bar)
-            clonedBar.id = newID
-            if oldID ~= nil then
-                idMapping[oldID] = newID
-            end
-            table.insert(self.db.profile.customTrackers.bars, clonedBar)
-        end
-
-        -- Copy spec entries with new IDs
-        if data.specEntries then
-            if not self.db.global then self.db.global = {} end
-            if not self.db.global.specTrackerSpells then self.db.global.specTrackerSpells = {} end
-
-            for oldID, specData in pairs(data.specEntries) do
-                local newID = idMapping[oldID]
-                if newID then
-                    self.db.global.specTrackerSpells[newID] = specData
-                end
-            end
-        end
-    end
-
-    SyncCustomTrackerBarsToCDM(self, self.db.profile)
-
-    return true, "CDM bars imported successfully."
-end
-
----=================================================================================
---- SPELL SCANNER IMPORT/EXPORT
----=================================================================================
-
--- Export spell scanner learned data
-function QUICore:ExportSpellScanner()
-    if not self.db or not self.db.global or not self.db.global.spellScanner then
-        return nil, "No spell scanner data to export."
-    end
-    if not AceSerializer or not LibDeflate then
-        return nil, "Export requires AceSerializer-3.0 and LibDeflate."
-    end
-
-    local scannerData = self.db.global.spellScanner
-    local spellCount = 0
-    local itemCount = 0
-
-    if scannerData.spells then
-        for _ in pairs(scannerData.spells) do spellCount = spellCount + 1 end
-    end
-    if scannerData.items then
-        for _ in pairs(scannerData.items) do itemCount = itemCount + 1 end
-    end
-
-    if spellCount == 0 and itemCount == 0 then
-        return nil, "No learned spells or items to export."
-    end
-
-    local exportData = {
-        spells = scannerData.spells,
-        items = scannerData.items,
-    }
-
-    local serialized = AceSerializer:Serialize(exportData)
-    if not serialized or type(serialized) ~= "string" then
-        return nil, "Failed to serialize spell scanner data."
-    end
-
-    local compressed = LibDeflate:CompressDeflate(serialized)
-    if not compressed then
-        return nil, "Failed to compress spell scanner data."
-    end
-
-    local encoded = LibDeflate:EncodeForPrint(compressed)
-    if not encoded then
-        return nil, "Failed to encode spell scanner data."
-    end
-
-    return "QSS1:" .. encoded
-end
-
--- Import spell scanner data (replaceExisting: true = replace all, false = merge)
-function QUICore:ImportSpellScanner(str, replaceExisting)
-    if not self.db then
-        return false, "No database loaded."
-    end
-    if not AceSerializer or not LibDeflate then
-        return false, "Import requires AceSerializer-3.0 and LibDeflate."
-    end
-    if not str or str == "" then
-        return false, "No data provided."
-    end
-
-    str = str:gsub("%s+", "")
-
-    -- Check for correct prefix
-    if not str:match("^QSS1:") then
-        return false, "This doesn't appear to be spell scanner data."
-    end
-    str = str:gsub("^QSS1:", "")
-
-    local compressed = LibDeflate:DecodeForPrint(str)
-    if not compressed then
-        return false, "Could not decode string (maybe corrupted)."
-    end
-
-    local serialized = LibDeflate:DecompressDeflate(compressed)
-    if not serialized then
-        return false, "Could not decompress data."
-    end
-
-    local ok, data = AceSerializer:Deserialize(serialized)
-    if not ok or type(data) ~= "table" then
-        return false, "Could not deserialize spell scanner data."
-    end
-
-    local payloadValid, payloadErr = ValidateSpellScannerPayload(data)
-    if not payloadValid then
-        return false, payloadErr or "Import failed spell scanner validation."
-    end
-
-    -- Ensure global structure exists
-    if not self.db.global then self.db.global = {} end
-    if not self.db.global.spellScanner then
-        self.db.global.spellScanner = { spells = {}, items = {}, autoScan = false }
-    end
-
-    if replaceExisting then
-        -- Replace all learned data
-        self.db.global.spellScanner.spells = data.spells or {}
-        self.db.global.spellScanner.items = data.items or {}
-    else
-        -- Merge: add new entries without overwriting existing
-        if data.spells then
-            for spellID, spellData in pairs(data.spells) do
-                if not self.db.global.spellScanner.spells[spellID] then
-                    self.db.global.spellScanner.spells[spellID] = spellData
-                end
-            end
-        end
-        if data.items then
-            for itemID, itemData in pairs(data.items) do
-                if not self.db.global.spellScanner.items[itemID] then
-                    self.db.global.spellScanner.items[itemID] = itemData
-                end
-            end
-        end
-    end
-
-    return true, "Spell scanner data imported successfully."
 end

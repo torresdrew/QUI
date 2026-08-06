@@ -1,6 +1,6 @@
--- tests/unit/migration_schema59_defensives_fanout_test.lua
--- Run: lua5.1 tests/unit/migration_schema59_defensives_fanout_test.lua
--- Schema 59 folds the shipped defensives strip and its override fan-out into
+-- tests/unit/migration_schema60_defensives_fanout_test.lua
+-- Run: lua5.1 tests/unit/migration_schema60_defensives_fanout_test.lua
+-- Schema 60 folds the shipped defensives strip and its override fan-out into
 -- one pass. Numeric spec buckets REPLACE "*", so every existing non-empty
 -- bucket receives a clone while deliberately empty buckets stay empty.
 --   - a hand-built classify-equivalent strip blocks injection (no duplicate)
@@ -76,7 +76,7 @@ do -- numeric buckets are handled in the same pass as the fold
     end
     check("empty numeric override remains empty", #elements[106] == 0, tostring(#elements[106]))
     check("'*' still has exactly one", countDefensives(elements["*"]) == 1)
-    check("stamped 59", p._schemaVersion == 59, tostring(p._schemaVersion))
+    check("stamped 60", p._schemaVersion == 60, tostring(p._schemaVersion))
 end
 
 do -- disabled "*" defensives mirrors as disabled
@@ -112,5 +112,5 @@ do -- one-shot: post-migration deletion sticks on the next run
     check("post-migration deletion sticks", countDefensives(spec) == 0, tostring(countDefensives(spec)))
 end
 
-print("migration_schema59_defensives_fanout_test " .. (failures == 0 and "OK" or "FAILED"))
+print("migration_schema60_defensives_fanout_test " .. (failures == 0 and "OK" or "FAILED"))
 os.exit(failures == 0 and 0 or 1)

@@ -1,7 +1,7 @@
--- tests/unit/migration_schema59_purge_container_satellites_test.lua
--- Run: lua5.1 tests/unit/migration_schema59_purge_container_satellites_test.lua
+-- tests/unit/migration_schema60_purge_container_satellites_test.lua
+-- Run: lua5.1 tests/unit/migration_schema60_purge_container_satellites_test.lua
 --
--- Migrations.PurgeOrphanContainerSatellites (schema-59 step e). DeleteContainer
+-- Migrations.PurgeOrphanContainerSatellites (schema-60 step e). DeleteContainer
 -- historically removed a custom CDM container's db entry + frame but never
 -- cleaned up the per-container satellite settings the settings page and
 -- layout mode write keyed on the container name: profile.customGlow[key..
@@ -118,7 +118,7 @@ do
     check("utilityFrequency survives", profile.customGlow.utilityFrequency == 0.25)
     check("utilityEnabled survives", profile.customGlow.utilityEnabled == true)
 
-    check("stamped to current (59)", profile._schemaVersion == 59, tostring(profile._schemaVersion))
+    check("stamped to current (60)", profile._schemaVersion == 60, tostring(profile._schemaVersion))
 end
 
 ----------------------------------------------------------------------------
@@ -157,8 +157,8 @@ do
     M.RunOnProfile(profile)
     check("idempotent: live anchor still present", profile.frameAnchoring["cdmCustom_" .. liveKey] ~= nil)
     check("idempotent: live glow still present", profile.customGlow[liveKey .. "Scale"] == 0.5)
-    check("idempotent: stays at current (59)", profile._schemaVersion == 59, tostring(profile._schemaVersion))
+    check("idempotent: stays at current (60)", profile._schemaVersion == 60, tostring(profile._schemaVersion))
 end
 
 if failures > 0 then os.exit(1) end
-print("migration_schema59_purge_container_satellites_test: all checks passed")
+print("migration_schema60_purge_container_satellites_test: all checks passed")
