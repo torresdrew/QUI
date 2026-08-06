@@ -151,9 +151,9 @@ check("pairing must re-scan viewer children on mismatch",
 -- 4c. The no-rebuild reuse path must refresh the pairing from the freshly
 --     scanned entries (build-time-only pairing goes stale mid-combat).
 ---------------------------------------------------------------------------
-local reuseStart = assert(string.find(src, "-- No rebuild needed", 1, true),
+local reuseStart = assert(string.find(src, "if not needsRebuild then", 1, true),
     "reuse path should exist")
-local reuseEnd = assert(string.find(src, "Clear existing pool", reuseStart, true),
+local reuseEnd = assert(string.find(src, "self:ClearPool()", reuseStart, true),
     "reuse path should precede the rebuild")
 local reuseBlock = string.sub(src, reuseStart, reuseEnd)
 check("reuse path must refresh _blzChild from the scanned entry",
@@ -176,7 +176,11 @@ check("ReleaseBar must clear _blzCooldownID",
     "_blzCooldownID not cleared on release")
 
 ---------------------------------------------------------------------------
--- 6. Active state: IsActive-first, fail open on secret.
+-- 6. Active state: IsActive-first; secret = keep-visible ACTION POLICY.
+-- What this pins is a display policy, NOT a truth conversion: a secret
+-- IsActive is INDETERMINATE and must never be read as "active" — the
+-- keep-visible return simply ensures a possibly-active bar is never hidden
+-- (reference-mirror directive). See ReadPairedBarActive's contract comment.
 ---------------------------------------------------------------------------
 local actStart = assert(string.find(src, "local function ReadPairedBarActive(blz)", 1, true),
     "ReadPairedBarActive should exist")

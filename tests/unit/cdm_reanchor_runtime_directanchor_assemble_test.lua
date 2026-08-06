@@ -114,6 +114,82 @@ do
     assert(minted == 1, "edit-mode active-only buff frameless entry mints once")
 end
 
+-- Layout-mode preview: a MATCHED BuffIcon entry whose native frame reports
+-- inactive renders nothing through the native claim (Blizzard keeps the frame
+-- hidden via Hide-When-Inactive; OverlayRect positions but never Show()s it).
+-- Editing must mint the owned placeholder instead and unclaim the hidden frame.
+-- Essential keeps the native claim: its viewer shows frames regardless of
+-- active state, so the preview never goes dark there.
+do
+    local eBuff = { name = "hidden buff", source = "blizzardCDM", _assignedRow = 2 }
+    local fHidden = { f = "blizz-hidden" }
+    local minted
+    local function makeRuntime(editing, active)
+        minted = {}
+        return R.New({
+            bridge = {},
+            wiring = {
+                MatchCuratedToFrames = function()
+                    return { { entry = eBuff, frame = fHidden } }, {}, { [fHidden] = true }
+                end,
+            },
+            getCurated = function() return { eBuff } end,
+            getAdditional = function() return {} end,
+            mintOwned = function(entry, key)
+                minted[#minted + 1] = { entry = entry, key = key }
+                return { f = "owned-placeholder" }
+            end,
+            isEditMode = function() return editing end,
+            frameIsActive = function() return active end,
+        })
+    end
+
+    -- editing + native inactive -> placeholder mint, hidden frame unclaimed
+    local entries, claimed = makeRuntime(true, false):AssembleEntries("buff", {})
+    assert(#entries == 1, "editing hidden-native buff entry still assembles")
+    assert(entries[1].reanchored == false and entries[1].frame.f == "owned-placeholder",
+        "editing hidden-native buff entry renders the owned placeholder, not the hidden native frame")
+    assert(entries[1]._assignedRow == 2, "placeholder carries the row assignment")
+    assert(#minted == 1, "editing hidden-native buff entry mints exactly once")
+    assert(claimed[fHidden] == nil, "hidden native frame is unclaimed so the sink parks it")
+
+    -- editing + native active -> native direct anchor kept, no mint
+    entries, claimed = makeRuntime(true, true):AssembleEntries("buff", {})
+    assert(#entries == 1 and entries[1].directAnchor == true and entries[1].frame == fHidden,
+        "editing active-native buff entry keeps the native direct anchor")
+    assert(#minted == 0, "active native claim must not mint a placeholder")
+    assert(claimed[fHidden] == true, "active native frame stays claimed")
+
+    -- editing + unreadable active state (nil) -> fail open to the native claim
+    entries = makeRuntime(true, nil):AssembleEntries("buff", {})
+    assert(#entries == 1 and entries[1].directAnchor == true and #minted == 0,
+        "unreadable active state keeps the native claim (never double-render)")
+
+    -- not editing -> live path unchanged (always mode claims the native frame)
+    entries = makeRuntime(false, false):AssembleEntries("buff", {})
+    assert(#entries == 1 and entries[1].directAnchor == true and #minted == 0,
+        "live always-mode matched buff entry keeps the native claim")
+
+    -- essential matched + editing + inactive -> native claim (buffIcon-only scope)
+    local eEss = { name = "hidden essential", source = "blizzardCDM" }
+    local essRuntime = R.New({
+        bridge = {},
+        wiring = {
+            MatchCuratedToFrames = function()
+                return { { entry = eEss, frame = fHidden } }, {}, { [fHidden] = true }
+            end,
+        },
+        getCurated = function() return { eEss } end,
+        getAdditional = function() return {} end,
+        mintOwned = function() error("essential editing preview must not mint") end,
+        isEditMode = function() return true end,
+        frameIsActive = function() return false end,
+    })
+    entries = essRuntime:AssembleEntries("essential", {})
+    assert(#entries == 1 and entries[1].directAnchor == true,
+        "essential editing preview keeps the native claim")
+end
+
 -- trackedBar: no re-anchor assembly. The owned CDMBars path renders the surface;
 -- this guard prevents accidental live BuffBar anchoring/decorating.
 do

@@ -60,7 +60,7 @@ check("both creation sites store the unit token via QUI_UF.SetFrameUnit",
 -- ping-sensitive Lua member on the frame.
 -------------------------------------------------------------------------------
 local stateStart = assert(uf:find("function QUI_UF.GetFrameUnit(frame)", 1, true))
-local stateEnd = assert(uf:find("\n-- Frame references", stateStart, true))
+local stateEnd = assert(uf:find("\nQUI_UF.frames = {}", stateStart, true))
 local stateSource = uf:sub(stateStart, stateEnd - 1)
 local stateFactory = assert(loadstring([[
 return function()

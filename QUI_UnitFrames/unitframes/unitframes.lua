@@ -74,7 +74,6 @@ function QUI_UF.SetFrameUnit(frame, unit)
     GetUFUnitState(frame).unit = unit
 end
 
--- Frame references
 QUI_UF.frames = {}
 QUI_UF.castbars = {}
 QUI_UF.previewMode = {}

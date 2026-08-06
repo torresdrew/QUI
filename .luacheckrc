@@ -20,11 +20,29 @@ max_line_length = false   -- WoW addons commonly run wider than 120 cols
 
 -- Exclude code that is not part of QUI's lint ownership:
 --   meta/  — generated LuaLS definition stubs (never loaded in-game)
---   tests/ — vendored Blizzard FrameXML/API fixtures and test harnesses
+--   tests/ — the vendored Blizzard source (framexml), the generated data
+--     tables (api-docs, fixtures, taint fixtures) and the four vendored
+--     LuaMinify parser files. The hand-written test tree — tests/unit,
+--     tests/helpers, tests/replay and the taint analyzer itself — IS linted,
+--     under the files["tests/"] block near the end.
 --   libs/  — vendored third-party libraries maintained upstream
+--   core/locale/<xxYY>.lua — generated locale data (enUS.lua from
+--     tools/i18n/extract_strings.lua, the ten overlays from
+--     tools/i18n/translate_delta.py). ~5.8 MB of key/value pairs with no
+--     hand-written logic, and the overlays wrap their table in a long-bracket
+--     string, so luacheck cannot see inside one anyway — pure cost, zero
+--     signal. The pattern is deliberately the four-letter locale shape so
+--     core/locale/locale.lua, which IS hand-written, keeps being linted.
 -- This keeps `luacheck .` aligned with the warning-clean addon scope enforced
--- by CI without hiding findings in QUI-owned addon directories.
-exclude_files = { "meta", "tests", "libs" }
+-- by CI without hiding findings in DrewUI-owned addon directories.
+exclude_files = {
+    "meta", "libs",
+    "tests/framexml", "tests/api-docs", "tests/fixtures",
+    "tests/taint/fixtures", "tests/taint/cli-fixture",
+    "tests/taint/parser/ParseLua.lua", "tests/taint/parser/Scope.lua",
+    "tests/taint/parser/Util.lua", "tests/taint/parser/strict.lua",
+    "core/locale/[a-z][a-z][A-Z][A-Z].lua",
+}
 
 -- Suppress noise from common WoW idioms:
 --   212/self   — frames pass `self` to OnEvent/OnUpdate scripts; often unused
@@ -92,7 +110,7 @@ read_globals = {
     "UnitExists", "UnitCanAttack", "GetBindingKey",
     "UnitAffectingCombat", "UnitCastingInfo", "UnitChannelInfo",
     "UnitClass", "UnitHealthPercent", "UnitIsDead", "UnitName", "UnitRace",
-    "UnitPowerMax",
+    "UnitPowerMax", "UnitIsMinion", "UnitIsOtherPlayersPet", "UnitTreatAsPlayerForDisplay",
     "IsMouseButtonDown",
 
     -- Spells, actions, macros
@@ -117,7 +135,7 @@ read_globals = {
     "DIFFICULTY_MYTHIC_PLUS",
 
     -- Enum and utility tables
-    "Enum", "AuraUtil", "TextureKitConstants", "AnchorUtil",
+    "Enum", "AuraUtil", "TextureKitConstants", "AnchorUtil", "TimeUtil",
     "AuraContainerSortMethod", "AuraContainerSortDirection",
     "AuraContainerItemEnchantmentSlot", "CustomAuraContainerItemEnchantmentPlacement",
 
@@ -178,7 +196,7 @@ GameTooltipStatusBar GameTooltipText GameTooltipTextSmall GameTooltipTextLeft1 G
 GarrisonFollowerAlertSystem GarrisonMissionAlertSystem GarrisonRandomMissionAlertSystem GarrisonShipFollowerAlertSystem GarrisonShipMissionAlertSystem GarrisonTalentAlertSystem GearManagerPopupFrame GetActionCount
 GetActionText GetActionTexture GetAddOnCPUUsage GetAttackPowerForStat GetAvailableBandwidth GetAverageItemLevel GetAvoidance GetBindingAction
 GetBindingText GetBlockChance GetBuildInfo GetCallPetSpellInfo GetChannelList GetChannelName GetChatWindowInfo GetCombatRating
-GetCombatRatingBonus GetCombatRatingBonusForCombatRatingValue GetCritChanceProvidesParryEffect GetCurrentBindingSet GetCurrentKeyBoardFocus GetCursorInfo GetDisplayedInviteType GetDodgeChance
+GetCombatRatingBonus GetCombatRatingBonusForCombatRatingValue GetCreatureDifficultyColor GetCritChanceProvidesParryEffect GetCurrentBindingSet GetCurrentKeyBoardFocus GetCursorInfo GetDisplayedInviteType GetDodgeChance
 GetDodgeChanceFromAttribute GetDownloadedPercentage GetEffectivePlayerMaxLevel GetFlyoutInfo GetFlyoutSlotInfo GetFramerate GetGameTime GetGuildInfo
 GetGuildRosterInfo GetGuildRosterMOTD GetGuildRosterShowOffline GetInspectSpecialization GetInventoryItemDurability GetInventoryItemQuality GetItemGem GetItemInfo
 GetItemInfoInstant GetItemQualityColor GetLatestThreeSenders GetLifesteal GetLootRollItemInfo GetLootSlotInfo GetLootSlotLink GetLootSpecialization
@@ -201,7 +219,7 @@ InspectFrameBg InspectFrameCloseButton InspectFramePortrait InspectFrameTab1 Ins
 InspectHandsSlot InspectHeadSlot InspectLegsSlot InspectLevelText InspectMainHandSlot InspectModelFrame InspectModelFrameBorderBottom InspectModelFrameBorderBottom2
 InspectModelFrameBorderBottomLeft InspectModelFrameBorderBottomRight InspectModelFrameBorderLeft InspectModelFrameBorderRight InspectModelFrameBorderTop InspectModelFrameBorderTopLeft InspectModelFrameBorderTopRight InspectNeckSlot
 InspectPaperDollItemsFrame InspectSecondaryHandSlot InspectShirtSlot InspectShoulderSlot InspectTabardSlot InspectTrinket0Slot InspectTrinket1Slot InspectWaistSlot
-InspectWristSlot InvasionAlertSystem IsActionInRange IsAltKeyDown IsAttackAction IsAutoRepeatAction IsControlKeyDown IsCurrentAction
+InitiateRolePoll InspectWristSlot InvasionAlertSystem IsActionInRange IsAltKeyDown IsAttackAction IsAutoRepeatAction IsControlKeyDown IsCurrentAction
 IsCurrentSpell IsEquippedAction IsFlying IsFrameHandle IsInGuild IsInInstance IsMounted IsPetAttackAction
 IsPlayerAtEffectiveLevelCap IsResting IsShiftKeyDown IsSpellInRange IsSpellKnownByPlayer IsSpellKnownOrOverridesKnown IsUsableAction IsXPUserDisabled
 Item ItemLocation LE_ITEM_CLASS_CONSUMABLE LFDParentFrame LOCALIZED_CLASS_NAMES_FEMALE LOCALIZED_CLASS_NAMES_MALE LegendaryItemAlertSystem LoggingCombat
@@ -235,7 +253,7 @@ UnitFullName UnitGUID UnitGetDetailedHealPrediction UnitGetIncomingHeals UnitGet
 UnitHasIncomingResurrection UnitHasVehicleUI UnitHealth UnitHealthMax UnitHealthMissing UnitInParty UnitInRaid UnitInRange
 UnitInVehicle UnitIsAFK UnitIsConnected UnitIsDeadOrGhost UnitIsFriend UnitIsGhost UnitIsGroupAssistant UnitIsGroupLeader UnitIsPlayer
 UnitIsTapDenied UnitIsUnit UnitIsVisible UnitLevel UnitPhaseReason UnitPower UnitPowerPercent UnitPowerType UnitReaction UnitSex
-UnitShouldDisplaySpellTargetName UnitSpellHaste UnitStagger UnitStat UnitThreatSituation UnitXP UnitXPMax UnregisterStateDriver UpdateAddOnCPUUsage
+UnitPvpClassification UnitShouldDisplaySpellTargetName UnitSpellHaste UnitSpellTargetName UnitStagger UnitStat UnitThreatSituation UnitXP UnitXPMax UnregisterStateDriver UpdateAddOnCPUUsage
 UpdateMicroButtons UpdateMicroButtonsParent WOW_PROJECT_ID WOW_PROJECT_MAINLINE WardrobeFrame WardrobeTransmogFrame WeeklyRewardsFrame WeeklyRewards_ShowUI WorldMapFrame
 WorldQuestCompleteAlertSystem ZoneAbilityFrame debugprofilestart gsub strupper tremove table.unpack table.wipe
 TradeFrame SendMailFrame BankFrame GuildBankFrame StackSplitFrame ItemRefTooltip BattlePetTooltip BattlePetToolTip_ShowLink
@@ -418,5 +436,18 @@ files["tests/"] = {
         "121", -- setting a read-only global (stubbing a WoW API global)
         "122", -- setting a read-only field of a global
         "131", -- unused implicitly defined global
+    },
+    -- Instrumentation helper globals installed by
+    -- tests/helpers/secret_sentinel.lua InstallSecretStub and called from
+    -- sources rewritten by tests/helpers/secret_instrument.lua.
+    globals = {
+        "__DrewUI_SECRET_TT",
+        "__DrewUI_SECRET_EQ",
+        "__DrewUI_SECRET_NEQ",
+        "__DrewUI_SECRET_LEN",
+    },
+    read_globals = {
+        "MicroMenuPositionEnum",
+        "NamePlateDriverFrame",
     },
 }

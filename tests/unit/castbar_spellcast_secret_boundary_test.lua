@@ -193,8 +193,9 @@ function ns.Addon:ApplyPixelSnapping() end
 function ns.Addon:ApplyFont(fontString, _, size, path, outline) fontString:SetFont(path, size, outline) end
 
 assert(loadfile("core/uikit.lua"))("QUI", ns)
-assert(loadfile("core/cast_engine.lua"))("QUI", ns)
-assert(loadfile("QUI_UnitFrames/unitframes/castbar.lua"))("QUI", ns)
+-- Instrumented load (Task 7): truthiness/==/# on sentinels now THROW
+-- inside the module, matching in-game 12.1 secret semantics.
+assert(SecretSentinel.LoadInstrumented("QUI_UnitFrames/unitframes/castbar.lua"))("QUI", ns)
 
 local settings = {
     player = {

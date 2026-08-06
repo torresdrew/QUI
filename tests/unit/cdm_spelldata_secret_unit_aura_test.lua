@@ -93,7 +93,9 @@ local ns = {
 }
 
 dofile("tests/helpers/load_cdm_spelldata_runtime.lua")(ns)
-assert(loadfile("QUI_CDM/cdm/cdm_spelldata.lua"))("QUI", ns)
+-- Instrumented load (Task 7): truthiness/==/# on sentinels now THROW
+-- inside the module, matching in-game 12.1 secret semantics.
+assert(SecretSentinel.LoadInstrumented("QUI_CDM/cdm/cdm_spelldata.lua"))("QUI", ns)
 
 local auraFrame
 for _, frame in ipairs(frames) do

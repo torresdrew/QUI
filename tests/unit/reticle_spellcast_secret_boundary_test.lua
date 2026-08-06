@@ -168,7 +168,9 @@ local ns = {
     WhenLoggedIn = function(fn) if fn then fn() end end,
 }
 
-assert(loadfile("modules/qol/reticle.lua"))("QUI", ns)
+-- Instrumented load (Task 7): truthiness/==/# on sentinels now THROW
+-- inside the module, matching in-game 12.1 secret semantics.
+assert(SecretSentinel.LoadInstrumented("modules/qol/reticle.lua"))("QUI", ns)
 assert(eventFrame and eventFrame.scripts.OnEvent, "reticle should register an event handler")
 
 ----------------------------------------------------------------------------

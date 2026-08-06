@@ -87,7 +87,9 @@ local ns = {
 }
 
 (dofile("tests/helpers/locale.lua"))(ns)
-assert(loadfile("modules/qol/consumablecheck.lua"))("QUI", ns)
+-- Instrumented load (Task 7): truthiness/==/# on sentinels now THROW
+-- inside the module, matching in-game 12.1 secret semantics.
+assert(SecretSentinel.LoadInstrumented("modules/qol/consumablecheck.lua"))("QUI", ns)
 
 local consumablesFrame = _G.QUI_ConsumablesFrame
 assert(consumablesFrame, "ConsumablesFrame should register itself globally as QUI_ConsumablesFrame")

@@ -127,7 +127,9 @@ local ns = {
     UIKit = {},
 }
 
-assert(loadfile("modules/qol/actiontracker.lua"))("QUI", ns)
+-- Instrumented load (Task 7): truthiness/==/# on sentinels now THROW
+-- inside the module, matching in-game 12.1 secret semantics.
+assert(SecretSentinel.LoadInstrumented("modules/qol/actiontracker.lua"))("QUI", ns)
 
 assert(#createdFrames >= 1, "actiontracker.lua should create at least one top-level event frame at load")
 local eventFrame = createdFrames[1]

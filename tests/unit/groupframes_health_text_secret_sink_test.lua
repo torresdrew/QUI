@@ -22,9 +22,9 @@ end
 local source = readAll("QUI_GroupFrames/groupframes/groupframes.lua")
 local startPos = assert(source:find("local function UpdateHealth%(frame%)"),
     "UpdateHealth should exist")
-local endMarker = "\n---------------------------------------------------------------------------\n-- UPDATE: Power"
+local endMarker = "local function ShouldShowPowerForUnit("
 local endPos = assert(source:find(endMarker, startPos, true),
-    "UpdateHealth should end before UPDATE: Power")
+    "UpdateHealth should end before the power section")
 local updateHealthSource = source:sub(startPos, endPos - 1)
 
 local function newFontString()

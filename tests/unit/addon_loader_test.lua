@@ -75,6 +75,7 @@ do
     local seen, lod, login, coreModule = {}, 0, 0, 0
     local legacyFlagFolders = {}
     local lateLoadFolders = {}
+    local loadPolicyFolders = {}
     local coreModules = {}
     for _, e in ipairs(ns.AddonManifest) do
         if e.folder then
@@ -97,6 +98,15 @@ do
                 assert(e.lateLoad == true, "lateLoad must be boolean true on " .. e.folder)
                 assert(e.class == "lod", "lateLoad only valid on lod entries: " .. e.folder)
                 lateLoadFolders[#lateLoadFolders + 1] = e.folder
+            end
+            if e.loadPolicy ~= nil then
+                assert(e.loadPolicy == "profile",
+                    "loadPolicy must be the string \"profile\" on " .. e.folder)
+                assert(e.class == "lod",
+                    "loadPolicy only valid on lod entries: " .. e.folder)
+                assert(e.legacyFlag ~= nil,
+                    "loadPolicy requires a legacyFlag to consult: " .. e.folder)
+                loadPolicyFolders[#loadPolicyFolders + 1] = e.folder
             end
             if e.class == "lod" then lod = lod + 1 else login = login + 1 end
         else
@@ -133,6 +143,10 @@ do
     -- lateLoad: none today. The mechanism is retained for future use.
     assert(#lateLoadFolders == 0,
         "no lateLoad entries expected, got " .. #lateLoadFolders)
+    -- loadPolicy: exactly QUI_Bags opts into the eager-pass profile gate.
+    assert(#loadPolicyFolders == 1 and loadPolicyFolders[1] == "QUI_Bags",
+        "loadPolicy=\"profile\" expected on exactly QUI_Bags, got \""
+            .. table.concat(loadPolicyFolders, ",") .. "\"")
 end
 
 -- 2) LOD stagger: the automatic passes load the 2 LOD folders (QUI_DamageMeter/
@@ -516,6 +530,82 @@ do
     assert(loader.IsModuleAddonEnabled("QUI_Bags") == true,
         "8: without a GUID the aggregate fallback treats Some as enabled")
     _G.Enum = nil
+end
+
+-- 9) Eager load policy (loadPolicy = "profile" on QUI_Bags): the EAGER pass
+--    skips a policy entry whose legacyFlag profile path is explicitly false;
+--    absent flag = on (same semantics as the Module Addons ReadLegacyFlag).
+--    The staggered pass and the toggle backend never consult the policy —
+--    it gates login eagerness only.
+do
+    -- 9a) bags.enabled == false → eager loads only QUI_DamageMeter.
+    do
+        local ns, calls = newEnv()
+        local loader = loadLoader(ns)
+        loader.GetProfile = function() return { bags = { enabled = false } } end
+        loader:LoadEnabledLODModulesEager()
+        local loads = {}
+        for _, c in ipairs(calls) do if c:match("^load:") then loads[#loads+1] = c end end
+        assert(#loads == 1, "9a: expected 1 eager load, got " .. #loads)
+        assert(loads[1] == "load:QUI_DamageMeter", "9a: only damagemeter eager-loads")
+    end
+
+    -- 9b) Same profile, staggered pass: policy NOT consulted — both load, so
+    --     the post-login catch-up / profile-switch path still brings bags up.
+    do
+        local ns, calls = newEnv()
+        local loader = loadLoader(ns)
+        loader.GetProfile = function() return { bags = { enabled = false } } end
+        loader:LoadEnabledLODModules()
+        local loads = {}
+        for _, c in ipairs(calls) do if c:match("^load:") then loads[#loads+1] = c end end
+        assert(#loads == 2, "9b: staggered pass ignores loadPolicy, got " .. #loads)
+        assert(loads[2] == "load:QUI_Bags", "9b: bags loads via the staggered pass")
+    end
+
+    -- 9c) Absent flag (empty profile) = on → eager loads both (new profiles
+    --     seed the flag true; absent must not gate).
+    do
+        local ns, calls = newEnv()
+        local loader = loadLoader(ns)
+        loader.GetProfile = function() return {} end
+        loader:LoadEnabledLODModulesEager()
+        local loads = {}
+        for _, c in ipairs(calls) do if c:match("^load:") then loads[#loads+1] = c end end
+        assert(#loads == 2, "9c: absent flag must not gate the eager pass, got " .. #loads)
+    end
+
+    -- 9d) Pure predicate, exported for tests.
+    do
+        local ns = newEnv()
+        local loader = loadLoader(ns)
+        local entry = { loadPolicy = "profile", legacyFlag = { "bags", "enabled" } }
+        assert(loader.IsEagerLoadAllowedByPolicy(entry, { bags = { enabled = false } }) == false,
+            "9d: explicit false blocks eager")
+        assert(loader.IsEagerLoadAllowedByPolicy(entry, { bags = { enabled = true } }) == true,
+            "9d: true allows eager")
+        assert(loader.IsEagerLoadAllowedByPolicy(entry, {}) == true,
+            "9d: absent flag allows eager")
+        assert(loader.IsEagerLoadAllowedByPolicy(entry, nil) == true,
+            "9d: nil profile allows eager")
+        assert(loader.IsEagerLoadAllowedByPolicy({ legacyFlag = { "bags", "enabled" } },
+            { bags = { enabled = false } }) == true,
+            "9d: no loadPolicy → profile content irrelevant")
+    end
+
+    -- 9e) Module Addons toggle live-load ignores the policy: flag-false
+    --     profile, enabling the addon still LoadAddOn's it now ("loaded").
+    do
+        local ns, calls, state = newEnv()
+        local loader = loadLoader(ns)
+        loader.GetProfile = function() return { bags = { enabled = false } } end
+        state.enabled.QUI_Bags = false
+        assert(loader.SetModuleAddonEnabled("QUI_Bags", true) == "loaded",
+            "9e: toggle enable must live-load regardless of loadPolicy")
+        local hasLoad = false
+        for _, c in ipairs(calls) do if c == "load:QUI_Bags" then hasLoad = true end end
+        assert(hasLoad, "9e: LoadAddOn called for QUI_Bags")
+    end
 end
 
 print("addon_loader_test OK")

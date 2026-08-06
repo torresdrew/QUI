@@ -74,12 +74,12 @@ check(not optionsXml:find("starter_profile", 1, true),
 
 -- Settings framework split (core/settings/*.lua):
 --
--- These 9 are options-only — every consumer reaches them lazily (inside a
+-- These 8 are options-only — every consumer reaches them lazily (inside a
 -- function) from code that only runs once the settings/layout-mode UI is open;
 -- none is captured at file scope on the login path. They load via QUI_Options.
 for _, f in ipairs({
     "providers", "provider_panels", "model_kit", "fields", "surfaces",
-    "surface_features", "nav", "sync", "renderer",
+    "surface_features", "nav", "renderer",
 }) do
     -- Both manifests need the "core/" prefix so e.g. provider_panels doesn't
     -- collide with the module file modules/qol/settings/provider_panels.lua.

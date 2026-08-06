@@ -8,10 +8,9 @@
     the unit-frame aura editor (aurasUnitPage, core/settings/content/
     auras_unit_page.lua). Fourth sub-page mounts the action-bar buff/debuff
     editor (aurasActionBarPage, core/settings/content/auras_actionbar_page.lua),
-    labelled "Buff/Debuff Frames". Fifth sub-page mounts the group-frame
-    dispel-overlay settings + role-aware dispel hints (aurasDispelPage,
-    core/settings/content/auras_dispel_page.lua).
-    More sub-pages (CDM, ...) land in later tasks.
+    labelled "Buff/Debuff Frames". Dispel-overlay settings + role-aware
+    dispel hints render inside the Group Frames sub-page (no standalone
+    dispel page). More sub-pages (CDM, ...) land in later tasks.
 ]]
 
 local ADDON_NAME, ns = ...

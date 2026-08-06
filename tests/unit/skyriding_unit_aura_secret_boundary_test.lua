@@ -78,7 +78,9 @@ local ns = {
     },
 }
 
-assert(loadfile("modules/qol/skyriding.lua"))("QUI", ns)
+-- Instrumented load (Task 7): truthiness/==/# on sentinels now THROW
+-- inside the module, matching in-game 12.1 secret semantics.
+assert(SecretSentinel.LoadInstrumented("modules/qol/skyriding.lua"))("QUI", ns)
 
 assert(#createdFrames == 1, "skyriding.lua should create exactly one top-level event frame at load")
 local eventFrame = createdFrames[1]

@@ -39,3 +39,8 @@ encode_gse.py
 /.windsurf
 /node_modules
 /.tmp_debug
+
+# graphify knowledge-graph output (AST dump alone is ~17 MB, regenerable)
+# unanchored: also covers tests/framexml/graphify-out/ from a reference extract
+graphify-out/
+

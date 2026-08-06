@@ -2,7 +2,7 @@
 -- PTR7 68914 combat-creation contract (replaces the retired
 -- groupframes_prealloc_headroom_behavior_test: prealloc/headroom existed only
 -- because creation used to be combat-forbidden — crashed earlier 12.1
--- clients — and both were removed once Drew proved container creation,
+-- clients — and both were removed once QUI proved container creation,
 -- AddAuraGroup and AddAuraSlot combat-legal in-game on 2026-07-24).
 --
 -- groupframes_auras.lua needs real WoW frames and cannot run headless, so
