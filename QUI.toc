@@ -135,9 +135,12 @@ core\rangeutils.lua
 core\aura_theme.lua
 core\aura_skin.lua
 core\aura_elements.lua
+core\aura_context.lua
+core\aura_wizard.lua
 core\dispel_roles.lua
 core\aura_glue.lua
 core\aura_slots.lua
+core\aura_surface.lua
 core\aura_preview.lua
 # Shared group-frame chrome: the ONE builder for a group frame's skeleton +
 # settings styling. Lives in core because BOTH QUI_GroupFrames (runtime) and
