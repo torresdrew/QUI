@@ -28,6 +28,11 @@ bootstrap.lua
 # The ~3MB generated search index lives in the QUI_OptionsSearch LoadOnDemand
 # addon and is pulled in on demand the first time the search box is used.
 search_synonyms.lua
+# The generated search index, packed as a long-bracket string (~1.2 MB).
+# Loading this file lexes ONE token; framework.lua compiles it on first search.
+# It used to be the LoadOnDemand QUI_OptionsSearch addon — one folder for
+# one deferral point. Packing gives the same deferral without the folder.
+search_cache.lua
 framework.lua
 reorder_list.lua
 border_control.lua

@@ -1,22 +1,24 @@
 -- tests/unit/locale_lod_overlay_test.lua
 -- Run: lua tests/unit/locale_lod_overlay_test.lua
 --
--- Non-enUS UI-string translations (~4.9 MB) live INSIDE the per-locale
--- QUI_OptionsSearch_<loc> LoadOnDemand sub-addons (combined overlay +
--- settings search index — ONE folder per locale, per Drew: no parallel
--- QUI_Locale_* folder set). Contract:
---   * enUS stays root (base table + the beta enUS regen bot writes
---     core/locale/enUS.lua); the plain QUI_OptionsSearch addon stays a
---     lazy English-index-only addon.
---   * load_overlay.lua sits BETWEEN enUS.lua and locale.lua because
---     locale.lua captures ns.LocaleData.active as an UPVALUE — an overlay
---     loaded any later is invisible.
---   * The combined addons carry NO RequiredDeps: a QUI_Options dep would
---     drag the ~2.9 MB options engine into the login path. The byte-equal
---     namespace bootstrap hard-errors if the core is absent, and routes the
---     chunk's ns.LocaleData / the index's ns.QUI_SearchCache into the core
---     namespace, where GUI:EnsureSearchCacheLoaded consumes the parked
---     index on first search.
+-- Non-enUS UI-string translations are ROOT-TOC files (core/locale/<loc>.lua),
+-- loaded on every client at login. Contract:
+--   * Order is enUS base -> the ten overlays -> locale.lua. locale.lua captures
+--     ns.LocaleData.active as an UPVALUE, so an overlay listed after it — or
+--     moved into any LoadOnDemand addon — never reaches ns.L at all. That is
+--     the whole reason these cannot be deferred: BINDING_NAME_* globals
+--     (QUI_Bags/bags/bags.lua) and everything built during the login
+--     sequence read ns.L before an options addon could possibly load.
+--   * Each overlay self-gates on GetLocale() (honouring the
+--     QUIDB.global.selectedLocale override) and returns immediately unless
+--     it is the active one, so only ONE table is ever built. The other nine
+--     cost compile time only.
+--   * They previously shipped as ten LoadOnDemand per-locale sub-addon folders.
+--     That saved ~51 ms of login compile at a cost of 10 shipped folders; the
+--     folders won. Re-creating that folder set is a regression.
+--   * The generated settings search index is NOT a locale file: it ships once,
+--     in English, packed inside QUI_Options (search_cache.lua), and
+--     QUI_Options localizes it on first search (GUI:PrepareSearchEntry).
 
 local LOCALES = { "deDE", "esES", "esMX", "frFR", "itIT", "koKR", "ptBR", "ruRU", "zhCN", "zhTW" }
 
@@ -29,48 +31,65 @@ end
 
 local toc = readFile("QUI.toc")
 
--- root keeps enUS + the applier, gains the overlay stub in between
 local enusPos = assert(toc:find("core\\locale\\enUS.lua", 1, true), "enUS base must stay root-loaded")
-local stubPos = assert(toc:find("core\\locale\\load_overlay.lua", 1, true), "overlay stub missing from root TOC")
 local applierPos = assert(toc:find("core\\locale\\locale.lua", 1, true), "locale applier missing from root TOC")
-assert(enusPos < stubPos and stubPos < applierPos,
-    "load order must be enUS base -> overlay stub -> locale.lua (upvalue capture)")
+assert(enusPos < applierPos, "enUS base must precede locale.lua")
 
-local bootstrapTemplate = readFile("core/templates/subaddon_bootstrap.lua")
+assert(not toc:find("core\\locale\\load_overlay.lua", 1, true),
+    "load_overlay.lua is retired — the overlays are listed in the TOC directly")
 
 for _, loc in ipairs(LOCALES) do
-    assert(not toc:find("core\\locale\\" .. loc .. ".lua", 1, true),
-        loc .. " must not compile in the root TOC")
+    local entry = "core\\locale\\" .. loc .. ".lua"
+    local pos = assert(toc:find(entry, 1, true), loc .. " overlay missing from the root TOC")
+    assert(enusPos < pos and pos < applierPos,
+        loc .. " must load between enUS.lua and locale.lua (locale.lua captures .active as an upvalue)")
 
-    local folder = "QUI_OptionsSearch_" .. loc
-    local subToc = readFile(folder .. "/" .. folder .. ".toc")
-    assert(subToc:find("## LoadOnDemand: 1", 1, true), folder .. " must be LoadOnDemand")
-    assert(not subToc:find("## RequiredDeps", 1, true) and not subToc:find("## Dependencies", 1, true),
-        folder .. " must carry no hard deps (a QUI_Options dep drags the options engine into login)")
-    assert(subToc:find("## Group: QUI", 1, true), folder .. " must stay grouped with QUI (packaging)")
-
-    assert(readFile(folder .. "/bootstrap.lua") == bootstrapTemplate,
-        folder .. "/bootstrap.lua must stay byte-equal to core/templates/subaddon_bootstrap.lua")
-
-    local chunk = readFile(folder .. "/" .. loc .. ".lua")
+    local chunk = readFile("core/locale/" .. loc .. ".lua")
     assert(chunk:find('if want ~= "' .. loc .. '" then return end', 1, true),
-        folder .. " chunk must keep its locale gate (double-safety if loaded manually)")
+        loc .. " overlay must keep its locale gate — without it every client builds all ten tables")
+    assert(chunk:find('ns.LocaleData.active = assert(loadstring(', 1, true),
+        loc .. " overlay must keep its table as a compiled-on-demand string: as a plain table "
+            .. "constructor the nine inactive locales compile ~5.7k fields each at every login "
+            .. "(~54 ms vs ~36 ms), for a table that is then thrown away")
 end
 
--- no parallel locale-only folder set may reappear
-local p = io.popen('ls -d QUI_Locale_* 2>/dev/null')
+-- Every overlay must actually materialize when it IS the active one. The
+-- wrapper compiles at login but the table inside compiles only when loadstring
+-- runs, so `luac -p` on the file cannot catch a broken table body.
+do
+    local realGetLocale = _G.GetLocale
+    for _, loc in ipairs(LOCALES) do
+        _G.GetLocale = function() return loc end
+        _G.QUIDB = nil
+        local ns = {}
+        assert(loadfile("core/locale/" .. loc .. ".lua"))("QUI", ns)
+        local active = ns.LocaleData and ns.LocaleData.active
+        assert(type(active) == "table", loc .. " overlay did not produce ns.LocaleData.active")
+        local count = 0
+        for _ in pairs(active) do count = count + 1 end
+        assert(count > 1000, loc .. " overlay produced only " .. count .. " strings")
+    end
+    _G.GetLocale = realGetLocale
+end
+
+-- neither the retired per-locale folders nor a parallel locale-only set may reappear
+local p = io.popen('ls -d QUI_OptionsSearch_* QUI_Locale_* 2>/dev/null')
 local stray = p:read("*l")
 p:close()
-assert(stray == nil, "parallel QUI_Locale_* folders are forbidden (combined addons own the strings): " .. tostring(stray))
+assert(stray == nil,
+    "per-locale addon folders are retired (overlays live in core/locale/): " .. tostring(stray))
 
--- the stub must load the combined overlay synchronously and tolerate a missing addon
-local stub = readFile("core/locale/load_overlay.lua")
-assert(stub:find('"QUI_OptionsSearch_" .. want', 1, true), "stub must load the active locale's combined sub-addon")
-assert(stub:find("pcall(loader", 1, true), "missing/disabled overlay must not break login")
-
--- the framework must consume a login-parked index instead of relying on LoadAddOn
+-- the framework must compile the ONE packed English index, never load a
+-- per-locale index addon
 local framework = readFile("QUI_Options/framework.lua")
-assert(framework:find("if ns.QUI_SearchCache then", 1, true),
-    "EnsureSearchCacheLoaded must apply the ns-parked index from login-loaded combined addons")
+assert(framework:find("ns.QUI_SearchCachePacked", 1, true),
+    "EnsureSearchCacheLoaded must compile the single packed English index")
+-- The quote is load-bearing: it matches the string LITERAL an addon name would
+-- have to be written as to reach C_AddOns.LoadAddOn, and not the prose mention
+-- of the retired folder in the comment above EnsureSearchCacheLoaded.
+assert(not framework:find('"QUI_OptionsSearch', 1, true),
+    "EnsureSearchCacheLoaded must not name a search-index addon as a load target (none ship)")
+assert(framework:find("function GUI:PrepareSearchEntry", 1, true),
+    "the apply-time localizer must exist — it is what makes one English index enough")
 
 print("PASS locale_lod_overlay_test")

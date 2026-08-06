@@ -40,8 +40,28 @@ jobs:
 
       - name: Generate search cache
         run: |
-          lua5.1 tools/generate_search_cache.lua
-          lua5.1 tools/audit_search_cache.lua
+          set -euo pipefail
+          # gen_all_caches.sh already runs extract_strings.lua AND
+          # stamp_enus_keyset.py. Re-running the extractor bare here would undo
+          # the stamp — it rewrites the whole file and cannot compute the
+          # `-- keyset:` checksum itself — and the diff below would then report
+          # a stale enUS.lua on every tag.
+          bash tools/i18n/gen_all_caches.sh
+
+          if ! git diff --quiet -- '*/search_cache.lua' core/locale/enUS.lua; then
+            echo "::error::Generated files are stale on this tag. Run 'bash tools/i18n/gen_all_caches.sh' and commit before tagging."
+            git diff --stat -- '*/search_cache.lua' core/locale/enUS.lua
+            exit 1
+          fi
+
+          # Restore only what the generators are allowed to touch — never a bare
+          # `git checkout .`, which would silently discard anything else in the
+          # tree. (No TOC is generated any more: gen_all_caches.sh emitted the
+          # ten per-locale addon TOCs until those addons were retired.)
+          git checkout -- '*/search_cache.lua' core/locale/enUS.lua
+
+      - name: Audit search cache
+        run: lua tools/audit_search_cache.lua
 
       - name: Create addon zip
         run: |
@@ -145,18 +165,23 @@ jobs:
             build/QUI_Options/framework.lua
             build/QUI_Options/shared.lua
             build/QUI_Options/tiles/action_bars.lua
+            # The generated search index. It used to be its own LoadOnDemand
+            # folder (QUI_OptionsSearch); it ships packed inside the options
+            # addon now, so it needs an explicit entry rather than a case below.
+            build/QUI_Options/search_cache.lua
+            build/QUI/core/locale/enUS.lua
+            build/QUI/core/locale/deDE.lua
+            build/QUI/core/locale/zhTW.lua
+            build/QUI/core/locale/locale.lua
           )
 
+          # Every shipped suite folder is a real addon with a bootstrap. The one
+          # exception used to be QUI_OptionsSearch, a folder that existed
+          # solely to hold the generated index; the index is packed inside
+          # QUI_Options now and is asserted above.
           for folder in "${suite_folders[@]}"; do
             required_paths+=("build/$folder/$folder.toc")
-            case "$folder" in
-              QUI_OptionsSearch*)
-                required_paths+=("build/$folder/search_cache.lua")
-                ;;
-              *)
-                required_paths+=("build/$folder/bootstrap.lua")
-                ;;
-            esac
+            required_paths+=("build/$folder/bootstrap.lua")
           done
 
           for required_path in "${required_paths[@]}"; do

@@ -65,9 +65,7 @@ assert(
     not characterContent:find('category = "gameplay"', 1, true),
     "characterPane feature should no longer be categorized as gameplay")
 
-local ns = {}
-assert(loadfile("QUI_OptionsSearch/search_cache.lua"))("QUI", ns)
-local cache = assert(ns.QUI_SearchCache, "search cache should load")
+local cache = dofile("tests/helpers/search_cache.lua")()
 
 local foundCharacterEntry = false
 for _, list in ipairs({ cache.navigation or {}, cache.settings or {} }) do

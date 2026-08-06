@@ -66,10 +66,29 @@ init.lua
 
 # == localization (must precede any string consumer) ==
 core\locale\enUS.lua
-# Non-enUS translations live in QUI_Locale_<locale> LoadOnDemand sub-addons;
-# load_overlay.lua pulls in the active one synchronously, BEFORE locale.lua
-# captures ns.LocaleData and before any string consumer.
-core\locale\load_overlay.lua
+# Non-enUS translations. Each chunk self-gates on GetLocale() (with the
+# QUIDB.global.selectedLocale override) and returns immediately unless it is
+# the active one, so only one table is ever built — the other nine cost compile
+# time only, and their bytecode is collectable as soon as they return.
+#
+# They must be HERE, not in a LoadOnDemand addon: locale.lua (next) captures
+# ns.LocaleData.active as an UPVALUE, so an overlay arriving later never
+# reaches ns.L at all. File-scope consumers (BINDING_NAME_* in
+# QUI_Bags/bags/bags.lua) and everything built during the login sequence
+# read ns.L before any options addon could load.
+#
+# They used to be ten LoadOnDemand QUI_OptionsSearch_<loc> sub-addons, which
+# cost 10 shipped folders to save ~51 ms of login compile.
+core\locale\deDE.lua
+core\locale\esES.lua
+core\locale\esMX.lua
+core\locale\frFR.lua
+core\locale\itIT.lua
+core\locale\koKR.lua
+core\locale\ptBR.lua
+core\locale\ruRU.lua
+core\locale\zhCN.lua
+core\locale\zhTW.lua
 core\locale\locale.lua
 
 # == core/core.xml ==
