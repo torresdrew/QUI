@@ -184,11 +184,11 @@ local function IsInDelveOrScenario()
     local delves = _G.C_DelvesUI
     if delves then
         if delves.HasActiveDelve then
-            local ok, active = pcall(delves.HasActiveDelve)
+            local ok, active = ns.SafeCall("report", delves.HasActiveDelve)
             if ok and active then return true end
         end
         if delves.GetTieredEntranceType then
-            local ok, entranceType = pcall(delves.GetTieredEntranceType)
+            local ok, entranceType = ns.SafeCall("report", delves.GetTieredEntranceType)
             if ok and entranceType == 1 then return true end
         end
     end
@@ -196,7 +196,7 @@ local function IsInDelveOrScenario()
     -- Scenario: GetScenarioInfo() returns a table while in a scenario, nil
     -- otherwise (delves also register here, which is fine — keep either way).
     if C_ScenarioInfo and C_ScenarioInfo.GetScenarioInfo then
-        local ok, info = pcall(C_ScenarioInfo.GetScenarioInfo)
+        local ok, info = ns.SafeCall("report", C_ScenarioInfo.GetScenarioInfo)
         if ok and info then return true end
     end
 

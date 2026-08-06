@@ -43,33 +43,34 @@ local GetScreenWidth, GetScreenHeight = GetScreenWidth, GetScreenHeight
 --- Cached physical screen height (updated on UI_SCALE_CHANGED).
 local cachedPhysicalHeight = select(2, GetPhysicalScreenSize())
 
---------------------------------------------------------------------------------
--- Pixel Math Core
---------------------------------------------------------------------------------
+function QUICore:PushPixelReference(frame)
+    self._pixelRefDepth = (self._pixelRefDepth or 0) + 1
+    self._pixelRef = frame or false
+end
 
---- Get the virtual-coordinate size of 1 physical screen pixel for a given frame.
---- This is the fundamental unit for all pixel-perfect calculations.
----
---- The formula: pixelSize = 768 / (physicalScreenHeight * frame:GetEffectiveScale())
----
---- A frame's effective scale is the product of its own scale and all ancestor scales.
---- Using the correct frame (not just UIParent) matters when frames in the hierarchy
---- have been scaled with SetScale().
----
---- @param frame? Frame The frame context (defaults to UIParent)
---- @return number The size of 1 physical pixel in the frame's coordinate space
+function QUICore:PopPixelReference()
+    local depth = (self._pixelRefDepth or 0) - 1
+    if depth <= 0 then
+        depth = 0
+        self._pixelRef = nil
+    end
+    self._pixelRefDepth = depth
+end
+
 function QUICore:GetPixelSize(frame)
+    local ref = self._pixelRef
+    if ref ~= nil then frame = ref or nil end
+
     local es
     if frame then
         local ok, val = pcall(frame.GetEffectiveScale, frame)
-        es = ok and val or nil
+        if ok and not (issecretvalue and issecretvalue(val)) then es = val end
     end
     if not es then
         local ok2, val2 = pcall(UIParent.GetEffectiveScale, UIParent)
-        es = ok2 and val2 or nil
+        if ok2 and not (issecretvalue and issecretvalue(val2)) then es = val2 end
     end
-    -- Secret values from GetEffectiveScale can't be used in Lua arithmetic
-    if not es or (issecretvalue and issecretvalue(es)) then return 1 end
+    if not es then return 1 end
     if es == 0 then return 1 end
     if cachedPhysicalHeight == 0 then return 1 end
     return 768 / (cachedPhysicalHeight * es)
@@ -221,6 +222,7 @@ function QUICore:SnapFramePosition(frame)
     if not frame then return end
     if InCombatLockdown() then return end
     local point, relativeTo, relativePoint, x, y = frame:GetPoint()
+    if ns.Helpers.HasSecretValue(point, relativeTo, relativePoint, x, y) then return end
     if not point then return end
     x = self:PixelRound(x or 0, frame)
     y = self:PixelRound(y or 0, frame)
@@ -409,7 +411,7 @@ function QUICore:ApplyUIScale()
         end
     end
 
-    local success = pcall(function() UIParent:SetScale(scaleToApply) end)
+    local success = ns.SafeCallMethod("defer-ooc", UIParent, "SetScale", scaleToApply)
     if not success then
         DeferUIScaleToRegen(self)
         return
@@ -448,20 +450,4 @@ function QUICore:InitializePixelPerfect()
     cachedPhysicalHeight = self.physicalHeight
     self:RegisterEvent('UI_SCALE_CHANGED', 'PixelScaleChanged')
     self:RegisterEvent('DISPLAY_SIZE_CHANGED', 'PixelScaleChanged')
-end
-
---------------------------------------------------------------------------------
--- Panel Pixel-Perfect Context
--- Provides pixel math relative to the options panel's effective scale rather
--- than UIParent's. Ensures crisp 1px borders on widgets that live inside a
--- scaled panel frame.
---------------------------------------------------------------------------------
-
-local panelFrame = nil
-
---- Set the options panel frame for panel-context pixel math.
---- Call this from GUI:CreateMainFrame() and on panel scale change.
---- @param frame Frame The options panel main frame
-function QUICore:SetPanelFrame(frame)
-    panelFrame = frame
 end

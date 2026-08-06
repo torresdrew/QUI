@@ -148,6 +148,7 @@ aura_elements_editor.lua
 ..\QUI\core\settings\content\modules_nonvisual_onboarding.lua
 ..\QUI\core\settings\content\module_addons_content.lua
 ..\QUI\core\settings\content\modules_page.lua
+..\QUI\core\settings\content\auras_nameplate_page.lua
 init.lua
 tiles\related.lua
 tiles\minimap.lua

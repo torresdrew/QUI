@@ -75,6 +75,7 @@ core\locale\locale.lua
 # == core/core.xml ==
 core\debug_gate.lua
 core\utils.lua
+core\pack.lua
 core\safecall.lua
 core\theme.lua
 core\ns_export_guard.lua
@@ -122,8 +123,10 @@ core\main.lua
 core\backdrop_deferred.lua
 core\font_system.lua
 core\scaling.lua
+core\classification.lua
 core\uikit.lua
 core\settings\util.lua
+core\settings\search_route.lua
 core\settings_builders.lua
 core\settings\render_adapters.lua
 core\settings\registry.lua

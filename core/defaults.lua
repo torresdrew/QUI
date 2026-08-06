@@ -5,6 +5,175 @@
 ---------------------------------------------------------------------------
 local ADDON_NAME, ns = ...
 
+local function NameplateTypeDefaults(renderMode)
+    return {
+        renderMode = renderMode or "bars",
+        health = {
+            width = 210,
+            height = 24,
+            texture = "Quazii",
+            borderSize = 1,
+            borderColor = { 0, 0, 0 },
+            smooth = false,
+            bgColor = { 0.12, 0.12, 0.12 },
+            bgAlpha = 1.0,
+        },
+        healthText = {
+            enabled = true,
+            style = "percent",
+            size = 10,
+            color = { 1, 1, 1 },
+            precision = 0,
+            bothFormat = "bar",
+            hidePercentSymbol = false,
+            point = "RIGHT",
+            relativePoint = "RIGHT",
+            offsetX = -2,
+            offsetY = 0,
+            justify = "RIGHT",
+        },
+        name = {
+            enabled = true,
+            size = 11,
+            color = { 1, 1, 1 },
+            truncateLength = 28,
+            classColorPlayers = true,
+            point = "BOTTOM",
+            relativePoint = "TOP",
+            offsetX = 0,
+            offsetY = 4,
+            justify = "CENTER",
+        },
+        npcTitle = {
+            enabled = false,
+            size = 9,
+            color = { 0.7, 0.7, 0.7 },
+        },
+        power = {
+            enabled = false,
+            size = 10,
+            spacing = 3,
+            offsetY = -2,
+        },
+        level = {
+            enabled = false,
+            size = 9,
+            showClassification = false,
+            classificationSize = 14,
+            point = "LEFT",
+            relativePoint = "RIGHT",
+            offsetX = 2,
+            offsetY = 0,
+        },
+        questIcon = {
+            enabled = false,
+            size = 18,
+            position = "LEFT",
+        },
+        pvpIcon = {
+            enabled = true,
+            size = 20,
+        },
+        font = {
+            face = "",
+            outline = "OUTLINE",
+        },
+        castbar = {
+            enabled = true,
+            height = 17,
+            gap = 0,
+            texture = "",
+            showIcon = true,
+            showTimer = true,
+            showSpellName = true,
+            showCastTarget = false,
+            castTargetSize = 9,
+            interruptReadyTint = false,
+            nameSize = 10,
+            timerSize = 10,
+            interruptedHoldTime = 1.0,
+            kickTick = true,
+            liftOverlay = false,
+        },
+        absorbs = {
+            enabled = true,
+            color = { 1, 1, 1 },
+            opacity = 0.3,
+            showText = false,
+            textSize = 9,
+        },
+        healPrediction = {
+            enabled = false,
+            color = { 0.25, 0.80, 0.25 },
+            opacity = 0.4,
+        },
+        powerBar = {
+            enabled = false,
+            height = 6,
+            manaOnly = true,
+        },
+        colors = {
+            hostile  = { 0.39, 0.11, 0.09 },
+            neutral  = { 0.81, 0.72, 0.19 },
+            friendly = { 0.314, 0.800, 0.408 },
+            tapped   = { 0.50, 0.50, 0.50 },
+            questEnabled = true,
+            quest    = { 1.00, 0.82, 0.00 },
+            classColorEnemyPlayers = true,
+            castInterruptible   = { 0.70, 0.40, 0.90 },
+            castUninterruptible = { 0.45, 0.45, 0.45 },
+            castInterrupted     = { 0.80, 0.00, 0.00 },
+            castChannel         = { 0.35, 0.60, 0.90 },
+            castEmpowered       = { 0.90, 0.55, 0.15 },
+            castImportantEnabled = false,
+            castImportant       = { 1.00, 0.25, 0.25 },
+            castInterruptReady  = { 0.30, 0.85, 0.40 },
+            targetEnabled = false,
+            target = { 1, 1, 1 },
+            focusEnabled = true,
+            focus = { 0.051, 0.820, 0.620 },
+            threatEnabled = true,
+            threatInstancesOnly = true,
+            tankHasAggro = { 0.05, 0.82, 0.62 },
+            tankNoAggro  = { 1.00, 0.22, 0.17 },
+            offTankAggro = { 0.188, 0.761, 0.812 },
+            dpsHasAggro  = { 1.00, 0.50, 0.00 },
+            dpsNearAggro = { 0.81, 0.72, 0.19 },
+            oocDarken = true,
+            oocDarkenFactor = 0.75,
+            executeEnabled = false,
+            execute = { 1.00, 0.10, 0.10 },
+            executeThreshold = 35,
+            executeAuto = true,
+        },
+        highlight = {
+            targetGlow = true,
+            targetStyle = "wash",
+            targetGlowColor = { 0.412, 0.667, 1.0 },
+            targetGlowAlpha = 1.0,
+            focusGlow = false,
+            focusGlowColor = { 0.051, 0.820, 0.620 },
+            focusGlowAlpha = 1.0,
+            mouseover = true,
+            mouseoverAlpha = 0.3,
+            mouseoverColor = { 1, 1, 1 },
+        },
+        raidMarker = {
+            enabled = true,
+            size = 24,
+            position = "TOPRIGHT",
+        },
+        auras = {
+            enabled = true,
+            enableWorld = true,
+            enableDungeon = true,
+            enableRaid = true,
+            elements = {},
+        },
+    }
+end
+
+
 local defaults = {
     profile = {
         -- General Settings
@@ -2879,151 +3048,58 @@ local defaults = {
             },
         },
 
-        -- Custom nameplates (QUI_Nameplates suite; plans/009-nameplates.md).
-        -- Sizes are physical pixels. Color tables are plain {r,g,b} — the
-        -- color resolver returns profile values only (secret-safety contract:
-        -- every resolved color is verifiably non-secret).
         nameplates = {
-            enabled = false,          -- master switch (Module Addons row / legacyFlag)
+            enabled = false,
 
-            health = {
-                width = 210,          -- health bar width
-                height = 24,          -- health bar height
-                texture = "Quazii",
-                borderSize = 1,
-                bgColor = { 0.12, 0.12, 0.12 },
-                bgAlpha = 1.0,
-            },
-            healthText = {
-                enabled = true,
-                style = "percent",    -- percent | absolute | both | none
-                size = 10,
-                hidePercentSymbol = false,
-                -- Position: text point → health bar point + offsets.
-                point = "RIGHT",
-                relativePoint = "RIGHT",
-                offsetX = -2,
-                offsetY = 0,
-                justify = "RIGHT",
-            },
-            name = {
-                enabled = true,
-                size = 11,
-                classColorPlayers = true,
-                -- Position: text point → health bar point + offsets.
-                point = "BOTTOM",
-                relativePoint = "TOP",
-                offsetX = 0,
-                offsetY = 4,
-                justify = "CENTER",
-            },
-            castbar = {
-                enabled = true,
-                height = 17,
-                gap = 0,              -- castbar-to-health gap
-                showIcon = true,
-                showTimer = true,
-                showSpellName = true,
-                nameSize = 10,
-                timerSize = 10,
-                interruptedHoldTime = 1.0,
-                kickTick = true,      -- interrupt-ready marker on the cast timeline
-                liftOverlay = false,  -- lift the castbar above neighboring plates
-            },
-            absorbs = {
-                enabled = true,
-                color = { 1, 1, 1 },
-                opacity = 0.3,
-            },
-            colors = {
-                hostile  = { 0.39, 0.11, 0.09 },
-                neutral  = { 0.81, 0.72, 0.19 },
-                friendly = { 0.314, 0.800, 0.408 },
-                tapped   = { 0.50, 0.50, 0.50 },
-                questEnabled = true,
-                quest    = { 1.00, 0.82, 0.00 },
-                classColorEnemyPlayers = true,
-                castInterruptible   = { 0.70, 0.40, 0.90 },
-                castUninterruptible = { 0.45, 0.45, 0.45 },
-                castInterrupted     = { 0.80, 0.00, 0.00 },
-                targetEnabled = false,          -- recolor the target's bar
-                target = { 1, 1, 1 },
-                focusEnabled = true,
-                focus = { 0.051, 0.820, 0.620 },
-                threatEnabled = true,           -- instance-gated, role-aware
-                tankHasAggro = { 0.05, 0.82, 0.62 },
-                tankNoAggro  = { 1.00, 0.22, 0.17 },
-                offTankAggro = { 0.188, 0.761, 0.812 },
-                dpsHasAggro  = { 1.00, 0.50, 0.00 },
-                dpsNearAggro = { 0.81, 0.72, 0.19 },
-                oocDarken = true,               -- darken enemies out of combat
-                oocDarkenFactor = 0.75,
-                executeEnabled = false,
-                execute = { 1.00, 0.10, 0.10 },
-                executeThreshold = 35,          -- percent, encoded into a curve
-            },
-            highlight = {
-                targetGlow = true,
-                targetGlowColor = { 0.412, 0.667, 1.0 },
-                targetGlowAlpha = 1.0,
-                mouseover = true,
-                mouseoverAlpha = 0.3,
-            },
-            raidMarker = {
-                enabled = true,
-                size = 24,
-                position = "TOPRIGHT",
-            },
-            auras = {
-                enabled = true,
-                mineOnly = true,
-                enableWorld = true,
-                enableDungeon = true,
-                enableRaid = true,
-                pandemicGlow = true,
-                dispelBorders = true,
-                importantScale = 1.3,
-                -- Countdown numbers on aura icons (the Cooldown widget's
-                -- engine-driven text — styled, never computed in Lua).
-                duration = {
-                    enabled = true,
-                    size = 12,
-                    point = "CENTER",
-                    offsetX = 0,
-                    offsetY = 0,
-                    decimals = false,   -- show tenths under 3s
-                },
-                -- Spell lists are scalar maps [spellID]=true on purpose —
-                -- array defaults resurrect removed entries at login.
-                importantList = {},
-                -- Row anchoring: the row's `point` pins to the health bar's
-                -- `relativePoint` with pixel offsets.
-                debuffs = { enabled = true,  size = 26, limit = 5, growth = "RIGHT", point = "BOTTOM", relativePoint = "TOP", offsetX = 0, offsetY = 20, spacing = 2, textSize = 11, allowList = {}, blockList = {} },
-                buffs   = { enabled = true,  size = 24, limit = 4, growth = "RIGHT", point = "BOTTOM", relativePoint = "TOP", offsetX = 0, offsetY = 50, spacing = 2, textSize = 12, allowList = {}, blockList = {} },
-                cc      = { enabled = true,  size = 24, limit = 3, growth = "LEFT",  point = "RIGHT",  relativePoint = "LEFT", offsetX = -4, offsetY = 0, spacing = 2, textSize = 12, allowList = {}, blockList = {} },
+            types = {
+                enemyPlayer  = NameplateTypeDefaults(),
+                enemyNPC     = NameplateTypeDefaults(),
+                bossElite    = NameplateTypeDefaults(),
+                minorTrivial = NameplateTypeDefaults(),
+                petMinion    = NameplateTypeDefaults(),
+                friendly     = NameplateTypeDefaults("nameonly"),
             },
             friendly = {
-                mode = "nameonly",    -- nameonly | bars | off
-                nameSize = 12,
-                classColorNames = true,
-                barWidth = 150,
-                barHeight = 12,
+                enabled = true,
                 showInWorld = true,
-                showInInstances = false,
+                showInInstances = "never",
+                showNPCs = true,
             },
-            -- Spec-linked presets: [specIndex] = deep snapshot of this tree
-            -- (minus enabled + the preset storage itself).
             specPresets = {},
             specAutoSwitch = false,
+            simplified = {
+                scale = 1.0,
+            },
+
+            fading = {
+                nonTargetAlpha = 1.0,
+                occludedAlphaMult = 0.4,
+            },
+            layout = {
+                targetScale = 1.0,
+                verticalOffset = 0,
+            },
 
             cvars = {
-                hitboxScaleX = 100,   -- percent of health bar width
+                hitboxScaleX = 100,
                 hitboxScaleY = 100,
                 maxDistance = 60,
                 stackingEnemy = true,
                 stackingFriendly = false,
                 stackingSpacing = 1.0,
                 hitboxVisualizer = false,
+                clickthroughEnemy = false,
+                clickthroughFriendly = false,
+                showEnemies = true,
+                showEnemyPets = true,
+                showEnemyTotems = true,
+                showEnemyGuardians = true,
+                showEnemyMinions = true,
+                showEnemyMinus = true,
+                showFriendlyPets = true,
+                showFriendlyTotems = true,
+                showFriendlyGuardians = true,
+                showFriendlyMinions = true,
             },
         },
 
