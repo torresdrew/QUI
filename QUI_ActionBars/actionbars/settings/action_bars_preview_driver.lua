@@ -484,7 +484,7 @@ local function IncludeContentBounds(object, bounds, onlyWhenShown)
     local top = object.GetTop and object:GetTop()
     local bottom = object.GetBottom and object:GetBottom()
     if Helpers.IsSecretValue(top) or Helpers.IsSecretValue(bottom) then
-        bounds.unmeasurable = true
+        bounds.unmeasurable = true -- @secret-policy: defer-until-readable — caller keeps last good height
         return
     end
     if top and bottom then
@@ -526,7 +526,7 @@ local function MeasurePreviewContentHeight()
         local _, cy = previewHost:GetCenter()
         centerY = cy
     end
-    if Helpers.IsSecretValue(centerY) then return nil end
+    if Helpers.IsSecretValue(centerY) then return nil end -- @secret-policy: defer-until-readable — nil keeps last good height
     if centerY then
         local radius = math.max(
             math.abs(bounds.top - centerY),
