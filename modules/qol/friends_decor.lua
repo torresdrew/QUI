@@ -79,6 +79,7 @@ if ns.WhenLoggedIn then
     ns.WhenLoggedIn(function()
         -- FriendsFrame ships with the base UI in retail, but guard for LoD.
         InstallHook()
+        ---@diagnostic disable-next-line: empty-block
         if not hooked and C_AddOns and C_AddOns.IsAddOnLoaded
             and not C_AddOns.IsAddOnLoaded("Blizzard_FriendsFrame") then
             -- Will install via ADDON_LOADED when the social panel first opens.

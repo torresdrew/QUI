@@ -215,14 +215,84 @@ local function normalizeMacroText(text)
     return text
 end
 
+local RENAMED_BUILTIN_IDS = {
+    qui_options = "qui_options",
+    qui_layout  = "qui_layout",
+    qui_keybind = "qui_keybind",
+    qui_cdm     = "qui_cdm",
+}
+
+local function isCustomItem(item)
+    if type(item) ~= "table" then return false end
+    if item.kind == "custom" then return true end
+    if item.kind == "builtin" then return false end
+    return item.id == nil and item.slashCommand ~= nil
+end
+BB.IsCustomItem = isCustomItem
+
+local function normalizeEntry(entry)
+    if type(entry) ~= "table" then return entry end
+    if type(entry.items) ~= "table" then entry.items = {} end
+
+    local legacyBuiltins = entry.buttons
+    if type(legacyBuiltins) == "table" then
+        for i = 1, #legacyBuiltins do
+            local b = legacyBuiltins[i]
+            if type(b) == "table" and type(b.id) == "string" then
+                entry.items[#entry.items + 1] = {
+                    kind = "builtin", id = b.id, visible = b.visible and true or false,
+                }
+            end
+        end
+    end
+    if legacyBuiltins ~= nil then entry.buttons = nil end
+
+    local legacyCustom = entry.customButtons
+    if type(legacyCustom) == "table" then
+        for i = 1, #legacyCustom do
+            local c = legacyCustom[i]
+            if type(c) == "table" then
+                entry.items[#entry.items + 1] = {
+                    kind = "custom",
+                    label       = type(c.label) == "string" and c.label or "",
+                    slashCommand = type(c.slashCommand) == "string" and c.slashCommand or "",
+                    icon        = type(c.icon) == "string" and c.icon or "",
+                    visible     = c.visible ~= false,
+                }
+            end
+        end
+    end
+    if legacyCustom ~= nil then entry.customButtons = nil end
+
+    for i = #entry.items, 1, -1 do
+        local item = entry.items[i]
+        if type(item) ~= "table" then
+            table.remove(entry.items, i)
+        elseif isCustomItem(item) then
+            item.visible = item.visible ~= false
+        else
+            local renamed = RENAMED_BUILTIN_IDS[item.id]
+            if renamed then item.id = renamed end
+            if BUILTINS[item.id] then
+                item.kind = "builtin"
+            else
+                table.remove(entry.items, i)
+            end
+        end
+    end
+
+    return entry
+end
+BB.NormalizeEntry = normalizeEntry
+
 local function hasCustomMacroButtons(config)
-    if type(config) ~= "table" or type(config.customButtons) ~= "table" then
+    if type(config) ~= "table" or type(config.items) ~= "table" then
         return false
     end
 
-    for i = 1, #config.customButtons do
-        local cb = config.customButtons[i]
-        if type(cb) == "table" and normalizeMacroText(cb.slashCommand) then
+    for i = 1, #config.items do
+        local item = config.items[i]
+        if isCustomItem(item) and normalizeMacroText(item.slashCommand) then
             return true
         end
     end
@@ -239,7 +309,7 @@ local function createButton(parent, def, customAction)
     local btn = CreateFrame("Button", nil, parent, template)
 
     if macroText then
-        btn:RegisterForClicks("AnyUp")
+        btn:RegisterForClicks("AnyUp", "AnyDown")
         btn:SetAttribute("type", "macro")
         btn:SetAttribute("macrotext", macroText)
     else
@@ -340,6 +410,7 @@ function BB.Reapply()
 end
 
 local function buildBar(chatFrame, frameID, config)
+    normalizeEntry(config)
     local hasSecureButtons = hasCustomMacroButtons(config)
     if hasSecureButtons and isInCombat() then
         return
@@ -410,27 +481,25 @@ local function buildBar(chatFrame, frameID, config)
     -- { id = "<builtinKey>", visible = bool }. Custom buttons live in
     -- config.customButtons as { label, slashCommand, icon }.
     local widgets = {}
-    if type(config.buttons) == "table" then
-        for i = 1, #config.buttons do
-            local b = config.buttons[i]
-            if b and b.visible and BUILTINS[b.id] then
-                widgets[#widgets + 1] = createButton(bar, BUILTINS[b.id])
-            end
-        end
-    end
-    if type(config.customButtons) == "table" then
-        for i = 1, #config.customButtons do
-            local cb = config.customButtons[i]
-            local hasLabel   = type(cb) == "table" and type(cb.label) == "string" and cb.label ~= ""
-            local hasIcon    = type(cb) == "table" and type(cb.icon) == "string" and cb.icon ~= ""
-            local hasCommand = type(cb) == "table" and type(cb.slashCommand) == "string" and cb.slashCommand ~= ""
-            if hasCommand and (hasLabel or hasIcon) then
-                widgets[#widgets + 1] = createButton(bar, {
-                    label   = cb.label,
-                    tooltip = cb.slashCommand,
-                    icon    = cb.icon,
-                    macroText = cb.slashCommand,
-                })
+    if type(config.items) == "table" then
+        for i = 1, #config.items do
+            local item = config.items[i]
+            if type(item) == "table" then
+                if isCustomItem(item) then
+                    local hasLabel   = type(item.label) == "string" and item.label ~= ""
+                    local hasIcon    = type(item.icon) == "string" and item.icon ~= ""
+                    local hasCommand = type(item.slashCommand) == "string" and item.slashCommand ~= ""
+                    if item.visible ~= false and hasCommand and (hasLabel or hasIcon) then
+                        widgets[#widgets + 1] = createButton(bar, {
+                            label     = item.label,
+                            tooltip   = item.slashCommand,
+                            icon      = item.icon,
+                            macroText = item.slashCommand,
+                        })
+                    end
+                elseif item.visible and BUILTINS[item.id] then
+                    widgets[#widgets + 1] = createButton(bar, BUILTINS[item.id])
+                end
             end
         end
     end
@@ -581,19 +650,37 @@ function BB.InitFrameDefaults(frameID)
     if type(entry.offsetY) ~= "number" then entry.offsetY = 0 end
     if type(entry.buttonSpacing) ~= "number" then entry.buttonSpacing = 2 end
     if type(entry.hideInCombat) ~= "boolean" then entry.hideInCombat = false end
-    if type(entry.buttons) ~= "table" then entry.buttons = {} end
-    if type(entry.customButtons) ~= "table" then entry.customButtons = {} end
-    if #entry.buttons == 0 then
-        for _, id in ipairs(BUILTIN_ORDER) do
-            entry.buttons[#entry.buttons + 1] = { id = id, visible = true }
+    normalizeEntry(entry)
+
+    local fresh = (#entry.items == 0)
+    local seen = {}
+    for i = 1, #entry.items do
+        local item = entry.items[i]
+        if type(item) == "table" and not isCustomItem(item) and type(item.id) == "string" then
+            seen[item.id] = true
+        end
+    end
+    for _, id in ipairs(BUILTIN_ORDER) do
+        if not seen[id] then
+            entry.items[#entry.items + 1] = { kind = "builtin", id = id, visible = fresh }
         end
     end
     return entry
 end
 
--- ---------------------------------------------------------------------------
--- ApplyEnabled
--- ---------------------------------------------------------------------------
+function BB.MoveItem(frameID, index, delta)
+    local settings = I.GetSettings and I.GetSettings()
+    local entry = settings and settings.buttonBars and settings.buttonBars[frameID]
+    if type(entry) ~= "table" or type(entry.items) ~= "table" then return nil end
+
+    local target = index + delta
+    if index < 1 or index > #entry.items then return nil end
+    if target < 1 or target > #entry.items then return nil end
+
+    local item = table.remove(entry.items, index)
+    table.insert(entry.items, target, item)
+    return target
+end
 
 function ApplyEnabled()
     reconcileAll()
@@ -607,6 +694,8 @@ ApplyEnabled()
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("ADDON_LOADED")
 eventFrame:RegisterEvent("PLAYER_LOGIN")
+eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+eventFrame:RegisterEvent("EDIT_MODE_LAYOUTS_UPDATED")
 eventFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
 eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
 eventFrame:SetScript("OnEvent", function(self, event, name)
@@ -614,6 +703,8 @@ eventFrame:SetScript("OnEvent", function(self, event, name)
         ApplyEnabled()
     elseif event == "PLAYER_LOGIN" then
         ApplyEnabled()
+    elseif event == "PLAYER_ENTERING_WORLD" or event == "EDIT_MODE_LAYOUTS_UPDATED" then
+        scheduleReconcileAll()
     elseif event == "PLAYER_REGEN_DISABLED" or event == "PLAYER_REGEN_ENABLED" then
         scheduleReconcileAll()
     end

@@ -189,6 +189,12 @@ local ns = {
     Helpers = { IsSecretValue = function(v) return rawequal(v, secret) or rawequal(v, secretSender)
         or rawequal(v, formattedSecretSenderName) or rawequal(v, formattedSecretSenderLink)
         or rawequal(v, formattedSecretSenderPrefix) end },
+    -- core/safecall.lua stub: silent pcall swallow matches the pre-SafeCall
+    -- shape this test was written against (Task 3: message_store.lua's
+    -- Store.RemoveWhere now routes through ns.SafeCall).
+    SafeCall = function(_policy, fn, ...) return pcall(fn, ...) end,
+    SafeCallMethod = function(_policy, obj, name, ...) return pcall(function(...) return obj[name](obj, ...) end, ...) end,
+    SafeCallMethodIfPresent = function(_policy, obj, name, ...) if obj == nil then return nil end local okP, m = pcall(function() return obj[name] end) if not okP then return false end if m == nil then return nil end return pcall(m, obj, ...) end,
     QUI = { Chat = {
         _internals = {
             GetSettings = function() return settings end,

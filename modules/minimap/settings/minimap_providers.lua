@@ -297,7 +297,7 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         end
         local drawer = mm.buttonDrawer
         if drawer.toggleSize == nil then drawer.toggleSize = 20 end
-        if not drawer.toggleIcon then drawer.toggleIcon = "hammer" end
+        if not drawer.toggleIcon then drawer.toggleIcon = "qui" end
         if drawer.hiddenButtons == nil then drawer.hiddenButtons = {} end
         if drawer.padding == nil then drawer.padding = 6 end
         if not drawer.growthDirection then drawer.growthDirection = "RIGHT" end
@@ -318,7 +318,9 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             { value = "DOWN", text = ns.L["Down"] }, { value = "UP", text = ns.L["Up"] },
         }
         local toggleIconOptions = {
-            { value = "hammer", text = ns.L["Hammer"] }, { value = "grid", text = ns.L["Grid Dots"] },
+            { value = "qui", text = ns.L["QUI UI"] },
+            { value = "hammer", text = ns.L["Hammer"] },
+            { value = "grid", text = ns.L["Grid Dots"] },
         }
 
         layout.headerAt(ns.L["Button Drawer"])

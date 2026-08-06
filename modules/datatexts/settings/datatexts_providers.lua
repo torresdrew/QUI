@@ -96,6 +96,7 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
     local function BuildCurrencyOrderSection(L, content, opts)
         local dtGlobal = opts.dtGlobal
         local refresh = opts.refresh or function() end
+        ---@type fun(...) -- the `or` fallback is narrower than the real opts.notify(region)
         local notify = opts.notify or function() end
 
         local trackedCurrencies = {}

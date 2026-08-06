@@ -809,43 +809,11 @@ function SpellScanner.RegisterItemUseSpell(itemID, useSpellID)
     return true
 end
 
--- Check if a spellID has been scanned
-function SpellScanner.IsSpellScanned(spellID)
-    return GetScannedSpell(spellID) ~= nil
-end
-
--- Get scanned duration for a spell (or nil if not scanned)
-function SpellScanner.GetScannedDuration(spellID)
-    local data = GetScannedSpell(spellID)
-    return data and data.duration or nil
-end
-
--- Toggle scan mode
 function SpellScanner.ToggleScanMode()
     SpellScanner.scanMode = not SpellScanner.scanMode
     return SpellScanner.scanMode
 end
 
--- Toggle auto-scan and persist to DB
-function SpellScanner.ToggleAutoScan()
-    SpellScanner.autoScan = not SpellScanner.autoScan
-    local db = GetDB()
-    if db then
-        db.autoScan = SpellScanner.autoScan
-    end
-    return SpellScanner.autoScan
-end
-
--- Set auto-scan and persist to DB
-function SpellScanner.SetAutoScan(enabled)
-    SpellScanner.autoScan = enabled
-    local db = GetDB()
-    if db then
-        db.autoScan = enabled
-    end
-end
-
--- Manual trigger to scan a spell (for testing)
 function SpellScanner.ScanSpell(spellID, itemID)
     return ScanSpellFromBuffs(spellID, itemID)
 end
@@ -899,27 +867,19 @@ else
     SetupDebugInstrumentation() -- standalone test harness: no gate, run eagerly
 end
 
--- Cleanup ticker starts on-demand when buffs are tracked (see EnsureCleanupTicker)
-
----------------------------------------------------------------------------
--- SLASH COMMANDS
----------------------------------------------------------------------------
-
--- /quiscan - Toggle scan mode
-SLASH_QUISCAN1 = "/quiscan"
+SLASH_QUISCAN1 = "/duiscan"
 SlashCmdList["QUISCAN"] = function()
     local enabled = SpellScanner.ToggleScanMode()
     if enabled then
         print(ns.L["|cff00ff00QUI:|r Scan mode |cff00ff00ENABLED|r"])
         print(ns.L["|cffff8800-|r Cast abilities to scan their durations"])
-        print(ns.L["|cffff8800-|r Type /quiscan again to stop"])
+        print(ns.L["|cffff8800-|r Type /duiscan again to stop"])
     else
         print(ns.L["|cff00ff00QUI:|r Scan mode |cffff0000DISABLED|r"])
     end
 end
 
--- /quiscanned - List scanned spells
-SLASH_QUISCANNED1 = "/quiscanned"
+SLASH_QUISCANNED1 = "/duiscanned"
 SlashCmdList["QUISCANNED"] = function()
     local db = GetDB()
     if not db then
@@ -967,8 +927,7 @@ SlashCmdList["QUISCANNED"] = function()
     print(string_format(ns.L["|cff888888Active buffs tracked: %d|r"], activeCount))
 end
 
--- /quiclearscan <spellID|itemID> | all - Remove a scanned entry, or wipe all
-SLASH_QUICLEARSCAN1 = "/quiclearscan"
+SLASH_QUICLEARSCAN1 = "/duiclearscan"
 SlashCmdList["QUICLEARSCAN"] = function(msg)
     local db = GetDB()
     if not db then
@@ -978,7 +937,7 @@ SlashCmdList["QUICLEARSCAN"] = function(msg)
 
     local arg = strtrim(msg or "")
     if arg == "" then
-        print(ns.L["|cffff0000QUI:|r Usage: /quiclearscan <spellID|itemID> | all"])
+        print(ns.L["|cffff0000QUI:|r Usage: /duiclearscan <spellID|itemID> | all"])
         return
     end
 
@@ -1002,7 +961,7 @@ SlashCmdList["QUICLEARSCAN"] = function(msg)
 
     local id = tonumber(arg)
     if not id then
-        print(ns.L["|cffff0000QUI:|r Usage: /quiclearscan <spellID|itemID> | all"])
+        print(ns.L["|cffff0000QUI:|r Usage: /duiclearscan <spellID|itemID> | all"])
         return
     end
 

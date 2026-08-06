@@ -147,14 +147,14 @@ local BLIZZARD_TIMESTAMP_NONE = "none"
 
 local function GetBlizzardTimestampSetting()
     if Settings and Settings.GetValue then
-        local ok, value = pcall(Settings.GetValue, BLIZZARD_TIMESTAMP_SETTING)
+        local ok, value = ns.SafeCall("chain-next", Settings.GetValue, BLIZZARD_TIMESTAMP_SETTING)
         if ok and value ~= nil then
             return value
         end
     end
 
     if type(GetCVar) == "function" then
-        local ok, value = pcall(GetCVar, BLIZZARD_TIMESTAMP_SETTING)
+        local ok, value = ns.SafeCall("chain-next", GetCVar, BLIZZARD_TIMESTAMP_SETTING)
         if ok then
             return value
         end
@@ -166,21 +166,21 @@ local function SetBlizzardTimestampSetting(value)
     if value == nil then return false end
 
     if Settings and Settings.SetValue then
-        local ok = pcall(Settings.SetValue, BLIZZARD_TIMESTAMP_SETTING, value)
+        local ok = ns.SafeCall("chain-next", Settings.SetValue, BLIZZARD_TIMESTAMP_SETTING, value)
         if ok then
             return true
         end
     end
 
     if C_CVar and C_CVar.SetCVar then
-        local ok = pcall(C_CVar.SetCVar, BLIZZARD_TIMESTAMP_SETTING, tostring(value))
+        local ok = ns.SafeCall("chain-next", C_CVar.SetCVar, BLIZZARD_TIMESTAMP_SETTING, tostring(value))
         if ok then
             return true
         end
     end
 
     if type(SetCVar) == "function" then
-        local ok = pcall(SetCVar, BLIZZARD_TIMESTAMP_SETTING, value)
+        local ok = ns.SafeCall("chain-next", SetCVar, BLIZZARD_TIMESTAMP_SETTING, value)
         if ok then
             return true
         end
@@ -341,7 +341,7 @@ end
 
 local function WrapChatText(text, prefix, suffix)
     if C_StringUtil and C_StringUtil.WrapString then
-        local ok, wrapped = pcall(C_StringUtil.WrapString, text, prefix, suffix)
+        local ok, wrapped = ns.SafeCall("chain-next", C_StringUtil.WrapString, text, prefix, suffix)
         if ok then
             return wrapped, true
         end
@@ -400,11 +400,8 @@ local function MakeURLsClickable(text)
         return text, false
     end
 
-    -- URL detection inspects message text with Lua patterns, so only run it
-    -- after secret payloads have been ruled out.
-    local success, result = pcall(function()
-        -- Get URL color
-        local r, g, b = 0.078, 0.608, 0.992  -- Default blue
+    local success, result = ns.SafeCall("report", function()
+        local r, g, b = 0.078, 0.608, 0.992
         if settings.urls.color then
             r, g, b = settings.urls.color[1] or r, settings.urls.color[2] or g, settings.urls.color[3] or b
         end
@@ -421,7 +418,7 @@ local function MakeURLsClickable(text)
                 label = HL.LookupFriendlyLabel(url)
             end
             return "|cff" .. colorHex
-                .. "|Haddon:quaziiuichat:url:" .. url
+                .. "|Haddon:quichat:url:" .. url
                 .. "|h[" .. (label or url) .. "]|h|r"
         end
 
@@ -469,10 +466,7 @@ local function RefreshAll()
     local hooks = ns.QUI.Chat._afterRefresh
     if hooks then
         for i = 1, #hooks do
-            local ok, err = pcall(hooks[i])
-            if not ok and geterrorhandler then
-                geterrorhandler()(err)
-            end
+            ns.SafeCall("bulkhead", hooks[i])
         end
     end
 

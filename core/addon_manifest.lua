@@ -56,10 +56,7 @@ local MANIFEST = {
     { coreModule = "datatexts", flag = { "quiDatatexts", "enabled" } },
     { coreModule = "skinning",  flag = { "skinning",     "enabled" } },
     { folder = "QUI_DamageMeter",  class = "lod",                                                    sources = { "modules/damage_meter" } },
-    -- Opt-in, default-off (legacyFlag bags.enabled): ships enabled but stays
-    -- dormant until the user turns it on via the Module Addons row. Loads via
-    -- the eager LOD pass like its siblings; bags.lua self-gates on the flag.
-    { folder = "QUI_Bags",         class = "lod", legacyFlag = { "bags", "enabled" },                sources = { "modules/bags" } },
+    { folder = "QUI_Bags",         class = "lod", legacyFlag = { "bags", "enabled" }, loadPolicy = "profile", sources = { "modules/bags" } },
 }
 
 local ADDON_NAME, ns = ...

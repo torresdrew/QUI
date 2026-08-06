@@ -163,20 +163,20 @@ function SecureShowCycle(cf)
         -- rewrites the filter globals clean — so any degradation is bounded
         -- to possibly-unfiltered lines for the remainder of this fight.
         if not (cf.IsShown and cf:IsShown()) and cf.Show then
-            pcall(cf.Show, cf)
+            ns.SafeCallMethod("best-effort-style", cf, "Show")
         end
         QueueRegenCycle()
         return
     end
     if not secureShowDriver and _G.CreateFrame then
-        local ok, drv = pcall(_G.CreateFrame, "Frame", "QUI_CombatLogSecureShow",
+        local ok, drv = ns.SafeCall("best-effort-style", _G.CreateFrame, "Frame", "QUI_CombatLogSecureShow",
             nil, "SecureHandlerBaseTemplate")
         if ok and drv then secureShowDriver = drv end
     end
     if secureShowDriver and secureShowDriver.SetFrameRef and secureShowDriver.Execute then
-        local okRef = pcall(secureShowDriver.SetFrameRef, secureShowDriver, "quiCombatLog", cf)
+        local okRef = ns.SafeCallMethod("best-effort-style", secureShowDriver, "SetFrameRef", "quiCombatLog", cf)
         if okRef then
-            local okRun = pcall(secureShowDriver.Execute, secureShowDriver, [=[
+            local okRun = ns.SafeCallMethod("best-effort-style", secureShowDriver, "Execute", [=[
                 local f = self:GetFrameRef("quiCombatLog")
                 if f then
                     if f:IsShown() then f:Hide() end
@@ -191,7 +191,7 @@ function SecureShowCycle(cf)
     -- wrapper would write Blizzard_CombatLog's filter globals tainted and
     -- poison every later filter apply for the session.
     if not (cf.IsShown and cf:IsShown()) and cf.Show then
-        pcall(cf.Show, cf)
+        ns.SafeCallMethod("best-effort-style", cf, "Show")
     end
 end
 
@@ -234,7 +234,7 @@ function CombatLogTab.EnsureLoaded(cb)
         -- Post-login and still absent: Blizzard's own PLAYER_LOGIN load did
         -- not produce the frame. Last-resort force-load (taint caveat above).
         if _G.C_AddOns and _G.C_AddOns.LoadAddOn then
-            pcall(_G.C_AddOns.LoadAddOn, "Blizzard_CombatLog")
+            ns.SafeCall("best-effort-style", _G.C_AddOns.LoadAddOn, "Blizzard_CombatLog")
         end
         if _G.CombatLogQuickButtonFrame_Custom and _G.ChatFrame2 then
             if cb then cb() end
@@ -321,7 +321,7 @@ end
 -- reason). Re-assert ChatFrame2's pre-QUI justification after every apply.
 local function ReassertJustify(cf)
     if cf.SetJustifyH then
-        pcall(cf.SetJustifyH, cf, stockJustifyH or "LEFT")
+        cf:SetJustifyH(stockJustifyH or "LEFT")
     end
 end
 
@@ -341,7 +341,7 @@ function CombatLogTab.RefreshFont()
         local j = cf:GetJustifyH()
         if type(j) == "string" and j ~= "" then stockJustifyH = j end
     end
-    pcall(cf.SetFontObject, cf, fo)
+    cf:SetFontObject(fo)
     ReassertJustify(cf)
     if not fontHookInstalled and _G.hooksecurefunc then
         fontHookInstalled = true
@@ -351,7 +351,7 @@ function CombatLogTab.RefreshFont()
             -- Re-apply via SetFontObject only: it does not re-enter this
             -- SetFont hook, so there is no recursion.
             if cur and self.SetFontObject then
-                pcall(self.SetFontObject, self, cur)
+                self:SetFontObject(cur)
                 ReassertJustify(self)
             end
         end)
@@ -364,7 +364,7 @@ local function StripChrome(cf)
     if not park then return end
     local name = cf.GetName and cf:GetName()
     local bg = cf.Background or (name and _G[name .. "Background"])
-    if bg and bg.SetParent then pcall(bg.SetParent, bg, park) end
+    if bg and bg.SetParent then bg:SetParent(park) end
 end
 
 -- Reparent + anchor the real combat-log frame into `container`. All geometry
@@ -384,21 +384,19 @@ local function Embed(windowID, container)
     local SB = ns.QUI.Chat.Scrollbar
     if SB and SB.SetShown then SB.SetShown(windowID, false) end
 
-    -- Quick-button bar across the top of the message rect.
-    pcall(qb.SetParent, qb, container)
-    pcall(qb.ClearAllPoints, qb)
-    if smf then
-        pcall(qb.SetPoint, qb, "TOPLEFT", smf, "TOPLEFT", 0, 0)
-        pcall(qb.SetPoint, qb, "TOPRIGHT", smf, "TOPRIGHT", 0, 0)
+    if qb.SetParent then qb:SetParent(container) end
+    if qb.ClearAllPoints then qb:ClearAllPoints() end
+    if smf and qb.SetPoint then
+        qb:SetPoint("TOPLEFT", smf, "TOPLEFT", 0, 0)
+        qb:SetPoint("TOPRIGHT", smf, "TOPRIGHT", 0, 0)
     end
     if qb.Show then qb:Show() end
 
-    -- ChatFrame2 fills the rest of the message rect.
-    pcall(cf.SetParent, cf, container)
-    pcall(cf.ClearAllPoints, cf)
-    pcall(cf.SetPoint, cf, "TOPLEFT", qb, "BOTTOMLEFT", 0, -2)
-    if smf then
-        pcall(cf.SetPoint, cf, "BOTTOMRIGHT", smf, "BOTTOMRIGHT", 0, 0)
+    if cf.SetParent then cf:SetParent(container) end
+    if cf.ClearAllPoints then cf:ClearAllPoints() end
+    if cf.SetPoint then cf:SetPoint("TOPLEFT", qb, "BOTTOMLEFT", 0, -2) end
+    if smf and cf.SetPoint then
+        cf:SetPoint("BOTTOMRIGHT", smf, "BOTTOMRIGHT", 0, 0)
     end
     StripChrome(cf)
     CombatLogTab.RefreshFont()
@@ -444,18 +442,15 @@ function CombatLogTab.Deactivate(windowID)
     -- blizzard_suppress enforces the same parent (GetHostParent == nil), but
     -- park it ourselves too so the move happens even if suppression is off.
     local cfPark = CombatLogTab.GetParkParent()
-    if cf and cfPark and cf.SetParent then pcall(cf.SetParent, cf, cfPark) end
-    if qb and park and qb.SetParent then pcall(qb.SetParent, qb, park) end
-    -- Hand the stock font back via explicit SetFont values (NEVER a captured
-    -- font object — editbox_setfontobject-self-cycle lesson). activeWindow is
-    -- already nil here, so the durability hook lets this through.
+    if cf and cfPark and cf.SetParent then cf:SetParent(cfPark) end
+    if qb and park and qb.SetParent then qb:SetParent(park) end
     if stockFont and cf and cf.SetFont then
-        pcall(cf.SetFont, cf, stockFont.file, stockFont.height, stockFont.flags)
+        cf:SetFont(stockFont.file, stockFont.height, stockFont.flags)
     end
     -- Hand back the pre-QUI justification too (the QUI font object pulled the
     -- text to its own justify; stock combat log is LEFT).
     if cf and cf.SetJustifyH then
-        pcall(cf.SetJustifyH, cf, stockJustifyH or "LEFT")
+        cf:SetJustifyH(stockJustifyH or "LEFT")
     end
 
     local Display = ns.QUI.Chat.DisplayLayer

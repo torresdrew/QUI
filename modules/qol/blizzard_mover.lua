@@ -280,6 +280,7 @@ function M.functions.RegisterFrame(def)
 		userPlaced = def.userPlaced,
 		skipOnHide = def.skipOnHide,
 		secureFrame = def.secureFrame,
+		reassertOnDrift = def.reassertOnDrift,
 		settingKey = def.settingKey or optionKeyForId(def.id),
 	}
 
@@ -327,22 +328,11 @@ function M.functions.GetEntryForFrameName(name)
 	return id and R.panels[id] or nil
 end
 
-function M.functions.IsFrameEnabled(entry)
-	return panelIsActive(resolvePanel(entry))
-end
-
-function M.functions.SetFrameEnabled(entry, on)
-	local row = storageRowForPanel(entry)
-	if row then row.enabled = on and true or false end
-end
-
----------------------------------------------------------------------------
--- Transient runtime (not saved): combat queue, session positions, scale UI
----------------------------------------------------------------------------
-
 M.variables.pendingApply = M.variables.pendingApply or {}
 M.variables.combatQueue = M.variables.combatQueue or {}
 M.variables.sessionPositions = M.variables.sessionPositions or {}
+M.variables.openPositions = M.variables.openPositions or {}
+M.variables.openPanelShown = M.variables.openPanelShown or {}
 M.variables.scalePin = M.variables.scalePin or {}
 M.variables.scaleUnderMouse = M.variables.scaleUnderMouse or {}
 M.variables.moveHandleSet = M.variables.moveHandleSet or {}
@@ -398,13 +388,23 @@ local function readSavedOffset(panel, row)
 		local sp = M.variables.sessionPositions
 		return sp and sp[panel.id] or nil
 	end
+	if mode == "close" then
+		local op = M.variables.openPositions
+		return op and op[panel.id] or nil
+	end
 	if mode == "reset" then return row end
 	return nil
 end
 
 local function writeSavedOffset(panel, row, point, x, y)
 	local mode = db.positionPersistence or "reset"
-	if mode == "close" then return end
+	if mode == "close" then
+		local op = M.variables.openPositions
+		op[panel.id] = op[panel.id] or {}
+		local slot = op[panel.id]
+		slot.point, slot.x, slot.y = point, x, y
+		return
+	end
 	if mode == "lockout" then
 		local sp = M.variables.sessionPositions
 		sp[panel.id] = sp[panel.id] or {}
@@ -419,7 +419,10 @@ end
 
 local function clearSavedOffset(panel, row)
 	local mode = db.positionPersistence or "reset"
-	if mode == "lockout" then
+	if mode == "close" then
+		local op = M.variables.openPositions
+		if op then op[panel.id] = nil end
+	elseif mode == "lockout" then
 		local sp = M.variables.sessionPositions
 		if sp then sp[panel.id] = nil end
 	elseif mode == "reset" and row then
@@ -427,9 +430,53 @@ local function clearSavedOffset(panel, row)
 	end
 end
 
----------------------------------------------------------------------------
--- Remember Blizzard layout before we override; restore on demand
----------------------------------------------------------------------------
+local function panelShownSet(panel)
+	local all = M.variables.openPanelShown
+	local set = all[panel.id]
+	if not set then
+		set = {}
+		all[panel.id] = set
+	end
+	return set
+end
+
+local function sweepPanelShownLog(set, skipFrame)
+	for f in pairs(set) do
+		if f ~= skipFrame and f.IsShown then
+			local ok, shown = pcall(f.IsShown, f)
+			if ok and not (issecretvalue and issecretvalue(shown)) and not shown then
+				set[f] = nil
+			end
+		end
+	end
+end
+
+local function clearOpenPosition(panel, hiddenRoot)
+	if panel.skipOnHide then return end
+	local set = panelShownSet(panel)
+	set[hiddenRoot] = nil
+	sweepPanelShownLog(set, nil)
+	if next(set) then return end
+	local op = M.variables.openPositions
+	if op then op[panel.id] = nil end
+end
+
+local function reconcileOpenPositionOnShow(panel, shownRoot)
+	local set = panelShownSet(panel)
+	set[shownRoot] = true
+	if panel.skipOnHide then return end
+	sweepPanelShownLog(set, shownRoot)
+	local siblingOpen = false
+	for f in pairs(set) do
+		if f ~= shownRoot then
+			siblingOpen = true
+			break
+		end
+	end
+	if siblingOpen then return end
+	local op = M.variables.openPositions
+	if op then op[panel.id] = nil end
+end
 
 local function rememberAnchors(f)
 	local c = ctx(f)
@@ -977,14 +1024,12 @@ function M.functions.createHooks(root, entry)
 		if not anchor then return nil end
 		stripAnchors[anchor] = true
 		local strip
-		local ok = pcall(function()
+		local ok = ns.SafeCall("chain-next", function()
 			strip = CreateFrame("Frame", nil, anchor, "PanelDragBarTemplate")
 		end)
 		if not ok or not strip then strip = CreateFrame("Frame", nil, anchor) end
-		pcall(function()
-			strip.onDragStartCallback = function() return false end
-			strip.onDragStopCallback = function() return false end
-		end)
+		strip.onDragStartCallback = function() return false end
+		strip.onDragStopCallback = function() return false end
 		local function layoutStrip()
 			strip:SetAllPoints(anchor)
 			if strip.SetFrameStrata and anchor.GetFrameStrata then
@@ -1182,17 +1227,40 @@ function M.functions.createHooks(root, entry)
 	-- protected functions after ShowUIPanel returns; root OnShow hooks would
 	-- taint the remaining call chain. Use a watcher frame instead.
 	if panel.secureFrame then
+		local function savedPositionDrifted(f)
+			if c.dragging or c.applyingLayout then return false end
+			if InCombatLockdown() then return false end
+			if panel.proxyParent then return false end
+			if not panelIsActive(panel) then return false end
+			local row = storageRowForPanel(panel)
+			local saved = readSavedOffset(panel, row)
+			if not (saved and saved.point and saved.x ~= nil and saved.y ~= nil) then return false end
+			local ok, pt, rel, relPt, x, y = pcall(f.GetPoint, f, 1)
+			if not ok then return false end
+			if issecretvalue and (issecretvalue(pt) or issecretvalue(rel)
+				or issecretvalue(relPt) or issecretvalue(x) or issecretvalue(y)) then
+				return false
+			end
+			if not pt then return true end
+			if pt ~= saved.point or rel ~= UIParent or relPt ~= saved.point then return true end
+			if type(x) ~= "number" or type(y) ~= "number" then return true end
+			return math.abs(x - saved.x) > 0.5 or math.abs(y - saved.y) > 0.5
+		end
+
 		local wasShown = root:IsShown()
+		if wasShown then panelShownSet(panel)[root] = true end
 		local reassertTicks = 0
 		local watcher = CreateFrame("Frame")
 		watcher:SetScript("OnUpdate", function()
 			local isShown = root:IsShown()
 			if isShown and refreshDynamicHandles then refreshDynamicHandles() end
 			if isShown and not wasShown then
+				reconcileOpenPositionOnShow(panel, root)
 				if not c.blizzardAnchors then rememberAnchors(root) end
 				M.functions.applyFrameSettings(root, panel)
 				reassertTicks = 5
 			elseif not isShown and wasShown then
+				clearOpenPosition(panel, root)
 				if not panel.skipOnHide
 					and (db.positionPersistence or "reset") == "close"
 					and panelIsActive(panel)
@@ -1208,6 +1276,8 @@ function M.functions.createHooks(root, entry)
 			if reassertTicks > 0 then
 				reassertTicks = reassertTicks - 1
 				reassertLayout(root)
+			elseif isShown and panel.reassertOnDrift and savedPositionDrifted(root) then
+				reassertLayout(root)
 			end
 		end)
 	else
@@ -1220,7 +1290,13 @@ function M.functions.createHooks(root, entry)
 		local reassertHook = panel.deferReassert and reassertLayoutSoon or reassertLayout
 		hooksecurefunc(root, "SetPoint", reassertHook)
 
+		local okSeed, seedShown = pcall(root.IsShown, root)
+		if okSeed and not (issecretvalue and issecretvalue(seedShown)) and seedShown then
+			panelShownSet(panel)[root] = true
+		end
+
 		root:HookScript("OnShow", function(self)
+			reconcileOpenPositionOnShow(panel, self)
 			if not ctx(self).blizzardAnchors then rememberAnchors(self) end
 			if panel.proxyParent then
 				-- Do NOT re-anchor synchronously while the dialog is populating
@@ -1235,6 +1311,7 @@ function M.functions.createHooks(root, entry)
 
 		if not panel.skipOnHide then
 			root:HookScript("OnHide", function(self)
+				clearOpenPosition(panel, self)
 				if (db.positionPersistence or "reset") ~= "close" then return end
 				if not panelIsActive(panel) then return end
 				if c.dragging or c.applyingLayout then return end
@@ -1354,6 +1431,8 @@ end
 function M.functions.ClearSessionPositions()
 	local sp = M.variables.sessionPositions
 	if sp then wipe(sp) end
+	local op = M.variables.openPositions
+	if op then wipe(op) end
 end
 
 function M.functions.InitRegistry()

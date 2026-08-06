@@ -61,6 +61,8 @@ local frameOriginals = {}   -- [label] = { frame, scriptType, fn }
 -- Wrapping (Layer 2)
 -- =====================================================================
 
+local securecall = securecallfunction or function(fn, ...) return fn(...) end
+
 local function record(label, ms)
     local row = funcStats[label]
     if not row then
@@ -78,13 +80,13 @@ local function wrapFn(tbl, method, label)
     if type(orig) ~= "function" then return end
     originals[label] = { tbl = tbl, method = method, fn = orig }
     tbl[method] = function(self, ...)
-        if not enabled then return orig(self, ...) end
+        if not enabled then return securecall(orig, self, ...) end
         local t0 = GetTimePreciseSec()
         local function track(...)
             record(label, (GetTimePreciseSec() - t0) * 1000)
             return ...
         end
-        return track(orig(self, ...))
+        return track(securecall(orig, self, ...))
     end
 end
 
@@ -103,23 +105,23 @@ local function wrapFrameHandler(label, frame, scriptType)
     local wrapped_fn
     if scriptType == "OnUpdate" then
         wrapped_fn = function(self, elapsed, ...)
-            if not (enabled and windowOpen) then return orig(self, elapsed, ...) end
+            if not (enabled and windowOpen) then return securecall(orig, self, elapsed, ...) end
             local t0 = GetTimePreciseSec()
             local function track(...)
                 record(label, (GetTimePreciseSec() - t0) * 1000)
                 return ...
             end
-            return track(orig(self, elapsed, ...))
+            return track(securecall(orig, self, elapsed, ...))
         end
     else
         wrapped_fn = function(self, event, ...)
-            if not (enabled and windowOpen) then return orig(self, event, ...) end
+            if not (enabled and windowOpen) then return securecall(orig, self, event, ...) end
             local t0 = GetTimePreciseSec()
             local function track(...)
                 record(label, (GetTimePreciseSec() - t0) * 1000)
                 return ...
             end
-            return track(orig(self, event, ...))
+            return track(securecall(orig, self, event, ...))
         end
     end
     frame:SetScript(scriptType, wrapped_fn)
@@ -340,6 +342,6 @@ _G.QUI_CombatProf = function(arg)
     elseif arg == "reset"  then CmdReset()
     elseif arg == "report" or arg == "" then CmdReport()
     else
-        print("|cff60A5FAQUI combatprof:|r usage — /qui combatprof [on|off|report|reset]")
+        print("|cff60A5FAQUI combatprof:|r usage — /dui combatprof [on|off|report|reset]")
     end
 end

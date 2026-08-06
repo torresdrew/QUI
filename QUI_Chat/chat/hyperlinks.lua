@@ -42,7 +42,7 @@ local COORD_PATTERN_PAREN  = "%((%d+%.?%d*)%s*,%s*(%d+%.?%d*)%)"
 local COORD_PATTERN_SQUARE = "%[(%d+%.?%d*)%s*,%s*(%d+%.?%d*)%]"
 
 local function wrapCoord(x, y, originalText)
-    return string.format("|Haddon:quaziiuichat:waypoint:%s:%s|h[%s]|h",
+    return string.format("|Haddon:quichat:waypoint:%s:%s|h[%s]|h",
         x, y, originalText or string.format("(%s, %s)", x, y))
 end
 
@@ -58,8 +58,7 @@ function HL.TryLinkifyCoordsForCapture(msg)
     local s = (I.IsChatEnabled and I.IsChatEnabled(settings)) and settings.hyperlinks
     if not s or not s.coordinates then return msg end
 
-    -- Skip if msg already contains our addon protocol (don't double-wrap).
-    if msg:find("addon:quaziiuichat:waypoint:", 1, true) then return msg end
+    if msg:find("addon:quichat:waypoint:", 1, true) then return msg end
 
     msg = msg:gsub(COORD_PATTERN_PAREN, function(x, y)
         return wrapCoord(x, y, "(" .. x .. ", " .. y .. ")")
@@ -152,9 +151,9 @@ hooksecurefunc("SetItemRef", function(link, text, button, ...)
     local settings = I.GetSettings and I.GetSettings()
     if not (I.IsChatEnabled and I.IsChatEnabled(settings)) then return end
 
-    if link:find("^addon:quaziiuichat:waypoint:") then
+    if link:find("^addon:quichat:waypoint:") then
         handleWaypoint(link)
-    elseif link:find("^addon:quaziiuichat:player:") then
+    elseif link:find("^addon:quichat:player:") then
         handlePlayer(link)
     end
 end)

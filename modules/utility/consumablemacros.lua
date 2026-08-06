@@ -320,13 +320,13 @@ ConsumableMacros.WEAPON_OPTIONS = {
 ---------------------------------------------------------------------------
 
 local MACRO_SLOTS = {
-    { dbKey = "selectedFlask",   macroName = "QUI_Flask",  defs = FLASK_DEFS,  label = "Flask" },
-    { dbKey = "selectedPotion",  macroName = "QUI_Pot",    defs = POTION_DEFS, label = "Potion" },
-    { dbKey = "selectedHealth",       macroName = "QUI_Health", defs = HEALTH_DEFS,       label = "Health Potion" },
-    { dbKey = "selectedHealthstone", macroName = "QUI_Stone",  defs = HEALTHSTONE_DEFS, label = "Healthstone" },
-    { dbKey = "selectedAugment",     macroName = "QUI_Rune",   defs = AUGMENT_DEFS,     label = "Augment Rune" },
-    { dbKey = "selectedVantus",      macroName = "QUI_Vantus", defs = VANTUS_DEFS,      label = "Vantus Rune" },
-    { dbKey = "selectedWeapon",      macroName = "QUI_Weapon", defs = WEAPON_DEFS,      label = "Weapon" },
+    { dbKey = "selectedFlask",   macroName = "Flask_DUI",  defs = FLASK_DEFS,  label = "Flask" },
+    { dbKey = "selectedPotion",  macroName = "Pot_DUI",    defs = POTION_DEFS, label = "Potion" },
+    { dbKey = "selectedHealth",       macroName = "Health_DUI", defs = HEALTH_DEFS,       label = "Health Potion" },
+    { dbKey = "selectedHealthstone", macroName = "Stone_DUI",  defs = HEALTHSTONE_DEFS, label = "Healthstone" },
+    { dbKey = "selectedAugment",     macroName = "Rune_DUI",   defs = AUGMENT_DEFS,     label = "Augment Rune" },
+    { dbKey = "selectedVantus",      macroName = "Vantus_DUI", defs = VANTUS_DEFS,      label = "Vantus Rune" },
+    { dbKey = "selectedWeapon",      macroName = "Weapon_DUI", defs = WEAPON_DEFS,      label = "Weapon" },
 }
 
 ---------------------------------------------------------------------------
@@ -334,6 +334,15 @@ local MACRO_SLOTS = {
 ---------------------------------------------------------------------------
 
 local MACRO_ICON = 134400  -- INV_Misc_QuestionMark; #showtooltip overrides display
+
+local MAX_CHARACTER_MACROS_FALLBACK = 30
+
+local function GetCharacterMacroCap()
+    local consts = Constants and Constants.MacroConsts
+    local cap = consts and consts.MAX_CHARACTER_MACROS
+    if type(cap) ~= "number" then return MAX_CHARACTER_MACROS_FALLBACK end
+    return cap
+end
 
 local pendingUpdate  = false
 local debounceTimer  = nil
@@ -424,9 +433,11 @@ local function EnsureMacro(macroName, body)
     if index == 0 then
         -- Macro does not exist — create it
         local numGlobal, numChar = GetNumMacros()
-        if numChar >= MAX_CHARACTER_MACROS then
+        local cap = GetCharacterMacroCap()
+        numChar = numChar or 0
+        if numChar >= cap then
             local msg = ns.L["|cffff6666[QUI]|r Could not create macro '"] .. macroName
-                .. ns.L["': per-character macro slots full ("] .. numChar .. "/" .. MAX_CHARACTER_MACROS .. ")."
+                .. ns.L["': per-character macro slots full ("] .. numChar .. "/" .. cap .. ")."
             DEFAULT_CHAT_FRAME:AddMessage(msg)
             return false
         end

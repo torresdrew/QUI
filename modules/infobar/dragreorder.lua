@@ -224,7 +224,7 @@ local function UpdateDropLine()
     if not bar or not line then return end
     local _, _, _, lineX = ComputeDrop()
     if not lineX then line:Hide(); return end
-    local barLeft = Helpers.SafeToNumber(bar:GetLeft(), nil)
+    local barLeft = Helpers.SafeNumberOrNil(bar:GetLeft())
     if not barLeft then line:Hide(); return end
     line:ClearAllPoints()
     line:SetPoint("TOP", bar, "TOPLEFT", lineX - barLeft, 0)

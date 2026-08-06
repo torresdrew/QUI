@@ -1059,9 +1059,7 @@ local function CreateAlertMover()
         C_Timer.After(0, function()
             if not GroupLootContainer then return end
             local mgr = GroupLootContainer.layoutParent
-            if mgr and mgr.RemoveManagedFrame then
-                pcall(mgr.RemoveManagedFrame, mgr, GroupLootContainer)
-            end
+            ns.SafeCallMethodIfPresent("best-effort-style", mgr, "RemoveManagedFrame", GroupLootContainer)
             GroupLootContainer.ignoreFramePositionManager = true
             GroupLootContainer.ignoreInLayout = true
         end)
@@ -1258,35 +1256,6 @@ local function CreateBNetToastMover()
         end)
     end
 end
-
----------------------------------------------------------------------------
--- MOVER TOGGLE (called from options)
----------------------------------------------------------------------------
-
-function Alerts:ShowMovers()
-    if alertMover then alertMover:Show() end
-    if toastMover then toastMover:Show() end
-    if bnetToastMover then bnetToastMover:Show() end
-end
-
-function Alerts:HideMovers()
-    if alertMover then alertMover:Hide() end
-    if toastMover then toastMover:Hide() end
-    if bnetToastMover then bnetToastMover:Hide() end
-end
-
-function Alerts:ToggleMovers()
-    local isShown = (alertMover and alertMover:IsShown()) or (toastMover and toastMover:IsShown()) or (bnetToastMover and bnetToastMover:IsShown())
-    if isShown then
-        self:HideMovers()
-    else
-        self:ShowMovers()
-    end
-end
-
----------------------------------------------------------------------------
--- REFRESH FUNCTION (for live color updates from options panel)
----------------------------------------------------------------------------
 
 local function RefreshAlertColors()
     -- Get current colors

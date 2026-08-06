@@ -3645,13 +3645,7 @@ resetBindBtn:SetAttribute("macrotext",
     "/run if C_DamageMeter and C_DamageMeter.ResetAllCombatSessions then C_DamageMeter.ResetAllCombatSessions() end")
 QUI_DamageMeter._ResetBindButton = resetBindBtn
 
--- Also expose a slash command for users who prefer macro-based binds.
--- NOTE: Only ever write *keys* into SlashCmdList (the normal addon pattern).
--- Do NOT reassign the SlashCmdList global itself (e.g. `_G.SlashCmdList = ...`)
--- — that taints the global binding, and FrameXML re-reads it on every chat
--- parse (ImportAllListsToHash), propagating QUI taint into slash dispatch and
--- breaking zero-taint commands like /tm ("QUI tried to call SetRaidTarget()").
-_G.SLASH_QUI_DM_RESET1 = "/quidmreset"
+_G.SLASH_QUI_DM_RESET1 = "/duidmreset"
 _G.SlashCmdList["QUI_DM_RESET"] = function()
     if C_DamageMeter and C_DamageMeter.ResetAllCombatSessions then
         C_DamageMeter.ResetAllCombatSessions()
@@ -3659,11 +3653,7 @@ _G.SlashCmdList["QUI_DM_RESET"] = function()
     end
 end
 
--- ==== Perf slash command (Follow-up D) ====
--- /quidmperf            — print current summary
--- /quidmperf on / off   — toggle instrumentation
--- /quidmperf reset      — clear the ring buffers
-_G.SLASH_QUI_DM_PERF1 = "/quidmperf"
+_G.SLASH_QUI_DM_PERF1 = "/duidmperf"
 _G.SlashCmdList["QUI_DM_PERF"] = function(msg)
     msg = (msg or ""):lower():gsub("%s+", "")
     if msg == "on" then
@@ -3678,7 +3668,7 @@ _G.SlashCmdList["QUI_DM_PERF"] = function(msg)
         print(ns.L["|cff30D1FF[QUI]|r Damage meter perf buffers reset."])
     else
         if not Perf.enabled then
-            print(ns.L["|cff30D1FF[QUI]|r Perf is OFF. Run |cffffffff/quidmperf on|r to enable, then re-run to see the summary."])
+            print(ns.L["|cff30D1FF[QUI]|r Perf is OFF. Run |cffffffff/duidmperf on|r to enable, then re-run to see the summary."])
             return
         end
         print(ns.L["|cff30D1FF[QUI]|r Damage meter perf summary:"])

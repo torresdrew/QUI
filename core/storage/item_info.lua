@@ -56,13 +56,7 @@ function ItemInfo.OnItemDataLoadResult(itemID, success)
     end
 end
 
---- Drop all in-flight load callbacks (module disable). Coalescing state is
---- reset so a later RequestLoad re-issues the client request.
-function ItemInfo.CancelAll()
-    pendingLoads = {}
-end
-
-local extended = {} -- itemID → { name, ilvl, expacID } (session-only)
+local extended = {}
 
 --- Full-info tier for search: nil until C_Item.GetItemInfo has the item
 --- cached (callers treat nil as pending). link improves effective-ilvl

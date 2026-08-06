@@ -163,9 +163,8 @@ function Junk.SellJunk(onDone)
     queue = Bags.Transfers.RateQueue(SELL_INTERVAL, function(ok, reason)
         queue = nil
         if ok then
-            print(("%s " .. ns.L["Sold %d junk item%s for %s."]):format(
-                PREFIX, count, count == 1 and "" or "s",
-                GetMoneyString(total, true)))
+            print(("%s " .. ns.L["Sold %d junk items for %s."]):format(
+                PREFIX, count, GetMoneyString(total, true)))
         end
         if onDone then onDone(ok, reason) end
     end)

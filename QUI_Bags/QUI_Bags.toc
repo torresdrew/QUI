@@ -23,6 +23,7 @@ bags\ops\junk.lua
 bags\views\details.lua
 bags\views\grid_layout.lua
 bags\views\category_layout.lua
+bags\views\refresh_scope.lua
 bags\views\chassis.lua
 bags\views\corner_widgets.lua
 bags\views\item_buttons.lua

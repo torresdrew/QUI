@@ -240,33 +240,6 @@ function History.ClearAllCharacters()
     return Storage.ClearAllCharacters()
 end
 
-function History.GetMessagesForFrame(frameID, limit)
-    frameID = tonumber(frameID)
-    if not frameID then return {} end
-
-    local Storage = ns.QUI and ns.QUI.Chat and ns.QUI.Chat.HistoryStorage
-    if not Storage then return {} end
-
-    local cap = tonumber(limit)
-    local entries = Storage.GetRecentForFrame and Storage.GetRecentForFrame(frameID, cap) or {}
-    local messages = {}
-    for i = 1, #entries do
-        local e = entries[i]
-        if e and type(e.m) == "string" then
-            messages[#messages + 1] = e.m
-        end
-    end
-    return messages
-end
-
--- ---------------------------------------------------------------------------
--- ApplyEnabled — placeholder for the _afterRefresh dispatch.
--- Capture is decided per-message via the live settings read; there is
--- nothing to install or tear down on toggle. The slot is reserved so that
--- future logic (e.g. dynamic hook attach/detach) can plug in here without
--- disturbing the registration.
--- ---------------------------------------------------------------------------
-
 function ApplyEnabled()
     -- Intentionally no-op for Phase B-T2. See header comment.
 end

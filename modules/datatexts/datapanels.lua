@@ -764,8 +764,7 @@ do
     C_Timer.After(2, RegisterLayoutModeElements)
 end
 
--- Debug slash command
-SLASH_QUIDATAPANELS1 = "/quidp"
+SLASH_QUIDATAPANELS1 = "/duidp"
 SlashCmdList["QUIDATAPANELS"] = function(msg)
     if msg == "show" then
         local count = 0
@@ -786,8 +785,8 @@ SlashCmdList["QUIDATAPANELS"] = function(msg)
         print("|cff00ff00QUI:|r Refreshed all datapanels")
     else
         print("|cff00ff00QUI Datapanels Commands:|r")
-        print("/quidp show - List all panels and their status")
-        print("/quidp refresh - Refresh all panels")
+        print("/duidp show - List all panels and their status")
+        print("/duidp refresh - Refresh all panels")
     end
 end
 

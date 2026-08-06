@@ -20,6 +20,7 @@ local Helpers = ns.Helpers
 local I = assert(ns.QUI.Chat and ns.QUI.Chat._internals,
     "QUI Chat: tab_ui.lua loaded before chat.lua. Check chat.xml — chat.lua must precede tab_ui.lua.")
 
+---@type fun(...) -- the `or` fallback is narrower than Helpers.IsSecretValue(value)
 local IsSecret = ns.Helpers and ns.Helpers.IsSecretValue or function() return false end
 
 ns.QUI.Chat.TabUI = ns.QUI.Chat.TabUI or {}

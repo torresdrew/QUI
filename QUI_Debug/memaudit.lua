@@ -14,7 +14,7 @@ local function SumSuiteMemoryKB()
         if okL and loaded then
             local okN, name = pcall(C_AddOns.GetAddOnInfo, i)
             if okN and (name == TARGET_ADDON_NAME
-                or (type(name) == "string" and name:sub(1, 4) == "QUI_")) then
+                or (type(name) == "string" and name:sub(1, #"QUI_") == "QUI_")) then
                 local okM, mem = pcall(GetAddOnMemoryUsage, name)
                 if okM and mem then
                     total = total + mem
@@ -201,7 +201,7 @@ local function TakeSnapshot()
         end
     end
 
-    pcall(UpdateAddOnMemoryUsage)
+    ns.SafeCall("best-effort-style", UpdateAddOnMemoryUsage)
     snap._totalKB = SumSuiteMemoryKB()
     snap._time = GetTime()
     snap._combat = InCombatLockdown() and true or false
@@ -624,21 +624,6 @@ local function PrintProfilerSummary(prefix, rows, heapDeltaKB)
     print(line)
 end
 
-local function ProbeTotal(snap)
-    local count, deep = 0, 0
-    for name, val in pairs(snap) do
-        if name:sub(1, 1) ~= "_" then
-            if type(val) == "table" and not val.counter then
-                count = count + (val.count or 0)
-                deep = deep + (val.deep or 0)
-            elseif type(val) ~= "table" then
-                count = count + (val or 0)
-            end
-        end
-    end
-    return count, deep
-end
-
 local function PrintSnapshot(snap, prev)
     local P = print
     P("|cff60A5FA--- QUI Memory Audit ---|r")
@@ -757,7 +742,7 @@ local function PrintExperimentsList()
         print(string.format("  %-22s %s  %s",
             e.name, FormatExperimentState(e), e.description or ""))
     end
-    print("  |cffAAAAAA→ flip: /qui memaudit exp <name> [on|off]   reset: exp reset|r")
+    print("  |cffAAAAAA→ flip: /dui memaudit exp <name> [on|off]   reset: exp reset|r")
 end
 
 local function SetExperimentState(exp, on)
@@ -780,7 +765,7 @@ local function HandleExperiment(arg)
     if arg == "reset" then
         local exps = GetExperiments()
         for i = 1, #exps do
-            pcall(exps[i].setEnabled, true)
+            ns.SafeCall("report", exps[i].setEnabled, true)
         end
         print("|cff60A5FA[memaudit exp]|r all experiments restored to production (on)")
         return
@@ -1030,10 +1015,10 @@ end
 
 _G.QUI_MemAudit = function(subcmd, arg)
     if subcmd == "gc" then
-        pcall(UpdateAddOnMemoryUsage)
+        ns.SafeCall("best-effort-style", UpdateAddOnMemoryUsage)
         local before = SumSuiteMemoryKB()
         collectgarbage("collect")
-        pcall(UpdateAddOnMemoryUsage)
+        ns.SafeCall("best-effort-style", UpdateAddOnMemoryUsage)
         local after = SumSuiteMemoryKB()
         print(string.format("|cff60A5FAQUI GC:|r Before: %s  After: %s  Freed: |cff44FF44%s|r",
             FormatKB(before), FormatKB(after), FormatKB(before - after)))
@@ -1060,7 +1045,7 @@ _G.QUI_MemAudit = function(subcmd, arg)
                 profilerRowLimit = math.floor(n)
                 print(string.format("|cff60A5FAQUI memaudit:|r allocation scopes = %d", profilerRowLimit))
             else
-                print("|cff60A5FAQUI memaudit:|r usage: /qui memaudit rows <n|all>")
+                print("|cff60A5FAQUI memaudit:|r usage: /dui memaudit rows <n|all>")
             end
         end
         return

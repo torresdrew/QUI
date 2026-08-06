@@ -1499,7 +1499,7 @@ local function ShowCustomMailTooltip(owner)
     GameTooltip:SetOwner(owner, "ANCHOR_LEFT")
 
     if type(MinimapMailFrameUpdate) == "function" then
-        local ok = pcall(MinimapMailFrameUpdate)
+        local ok = ns.SafeCall("best-effort-style", MinimapMailFrameUpdate)
         if ok then
             return
         end
@@ -1507,7 +1507,7 @@ local function ShowCustomMailTooltip(owner)
 
     local senders = {}
     if type(GetLatestThreeSenders) == "function" then
-        local ok, sender1, sender2, sender3 = pcall(GetLatestThreeSenders)
+        local ok, sender1, sender2, sender3 = ns.SafeCall("best-effort-style", GetLatestThreeSenders)
         if ok then
             if sender1 then senders[#senders + 1] = sender1 end
             if sender2 then senders[#senders + 1] = sender2 end
@@ -2123,6 +2123,7 @@ local function ShowMiddleClickMenu(keepPosition)
     middleClickMenuBlocker:Show()
     middleClickMenuFrame:Show()
 
+    ---@diagnostic disable-next-line: empty-block
     if EasyMenu then
         -- noop: keep variable reference to avoid lint false-positives in mixed client APIs.
     end
@@ -2255,7 +2256,7 @@ local function TryRestoreDungeonEyeViaBlizzard(btn)
     if not (btn and btn.UpdatePosition) then return false end
     if not (MicroMenu and MicroMenuContainer and MicroMenuContainer.GetPosition) then return false end
 
-    local ok, position = pcall(MicroMenuContainer.GetPosition, MicroMenuContainer)
+    local ok, position = ns.SafeCallMethod("report", MicroMenuContainer, "GetPosition")
     local isHorizontal = MicroMenu.isHorizontal
     if not ok or not position or type(isHorizontal) ~= "boolean" then return false end
 
@@ -2416,6 +2417,7 @@ local DRAWER_BLACKLIST = {
     ["QUI_DrawerToggle"] = true,
 }
 
+---@type Frame
 local drawerFrame
 local drawerToggleButton
 local collectedButtons = {}
@@ -2453,9 +2455,9 @@ local function IsMinimapButton(frame)
     -- Accept if it has click handlers and is a child of a minimap container
     local parent = frame:GetParent()
     if parent and (parent == Minimap or parent == MinimapBackdrop or parent == MinimapCluster) then
-        local ok, hasClick = pcall(function() return frame:HasScript("OnClick") and frame:GetScript("OnClick") end)
-        local ok2, hasMouseUp = pcall(function() return frame:HasScript("OnMouseUp") and frame:GetScript("OnMouseUp") end)
-        local ok3, hasMouseDown = pcall(function() return frame:HasScript("OnMouseDown") and frame:GetScript("OnMouseDown") end)
+        local ok, hasClick = ns.SafeCall("best-effort-style", function() return frame:HasScript("OnClick") and frame:GetScript("OnClick") end)
+        local ok2, hasMouseUp = ns.SafeCall("best-effort-style", function() return frame:HasScript("OnMouseUp") and frame:GetScript("OnMouseUp") end)
+        local ok3, hasMouseDown = ns.SafeCall("best-effort-style", function() return frame:HasScript("OnMouseDown") and frame:GetScript("OnMouseDown") end)
         if (ok and hasClick) or (ok2 and hasMouseUp) or (ok3 and hasMouseDown) then
             return true
         end
@@ -2489,7 +2491,7 @@ local function SaveOriginalState(frame, name)
     -- Find the icon texture for square conversion
     local iconTex = frame.icon  -- LibDBIcon buttons always have .icon
     if not iconTex then
-        pcall(function()
+        ns.SafeCall("best-effort-style", function()
             for _, region in ipairs({ frame:GetRegions() }) do
                 if region:IsObjectType("Texture") and region:GetTexture() and region:GetDrawLayer() == "ARTWORK" then
                     iconTex = region
@@ -2499,7 +2501,7 @@ local function SaveOriginalState(frame, name)
         end)
     end
     local origOnDragStart, origOnDragStop
-    pcall(function()
+    ns.SafeCall("best-effort-style", function()
         if frame:HasScript("OnDragStart") then origOnDragStart = frame:GetScript("OnDragStart") end
         if frame:HasScript("OnDragStop") then origOnDragStop = frame:GetScript("OnDragStop") end
     end)
@@ -2719,7 +2721,7 @@ local function MakeButtonSquare(data, bSize)
 
     local iconTex = frame.icon or frame.Icon or data.iconTex
 
-    local ok = pcall(function()
+    local ok = ns.SafeCall("best-effort-style", function()
         local regions = { frame:GetRegions() }
         for _, region in ipairs(regions) do
             if region:IsObjectType("Texture") then
@@ -2731,7 +2733,7 @@ local function MakeButtonSquare(data, bSize)
                     region:SetAllPoints(frame)
                     region:SetTexCoord(0, 1, 0, 1)
                     region:Show()
-                    if region.SetMask then pcall(region.SetMask, region, "") end
+                    ns.SafeCallMethodIfPresent("best-effort-style", region, "SetMask", "")
                 elseif layer == "HIGHLIGHT" then
                     -- skip highlight texture
                 else
@@ -2944,17 +2946,28 @@ end
 
 local DEFAULT_TOGGLE_SIZE = 20
 
-local function UpdateToggleIcon()
-    if not drawerToggleButton then return end
-    local s = GetSettings()
-    local icon = (s and s.buttonDrawer and s.buttonDrawer.toggleIcon) or "hammer"
-    local showHammer = (icon == "hammer")
-    if drawerToggleButton._hammerIcon then
-        drawerToggleButton._hammerIcon:SetShown(showHammer)
-    end
-    if drawerToggleButton._gridDots then
-        for _, dot in ipairs(drawerToggleButton._gridDots) do
-            dot:SetShown(not showHammer)
+local UpdateToggleIcon
+do
+    local TOGGLE_ICON_TEXTURES = {
+        qui = ADDON_ASSET_ROOT .. "QUI.tga",
+        hammer = ADDON_ASSET_ROOT .. "quazii_hammer",
+    }
+
+    function UpdateToggleIcon()
+        if not drawerToggleButton then return end
+        local s = GetSettings()
+        local icon = (s and s.buttonDrawer and s.buttonDrawer.toggleIcon) or "qui"
+        local texturePath = TOGGLE_ICON_TEXTURES[icon]
+        if drawerToggleButton._iconTexture then
+            if texturePath then
+                drawerToggleButton._iconTexture:SetTexture(texturePath)
+            end
+            drawerToggleButton._iconTexture:SetShown(texturePath ~= nil)
+        end
+        if drawerToggleButton._gridDots then
+            for _, dot in ipairs(drawerToggleButton._gridDots) do
+                dot:SetShown(texturePath == nil)
+            end
         end
     end
 end
@@ -2980,12 +2993,10 @@ local function CreateDrawerToggleButton()
         bg:SetColorTexture(bgR or 0.05, bgG or 0.05, bgB or 0.05, 0.9)
     end
 
-    -- Hammer icon texture
-    local hammer = drawerToggleButton:CreateTexture(nil, "ARTWORK")
-    hammer:SetPoint("TOPLEFT", 2, -2)
-    hammer:SetPoint("BOTTOMRIGHT", -2, 2)
-    hammer:SetTexture(ADDON_ASSET_ROOT .. "quazii_hammer")
-    drawerToggleButton._hammerIcon = hammer
+    local iconTexture = drawerToggleButton:CreateTexture(nil, "ARTWORK")
+    iconTexture:SetPoint("TOPLEFT", 2, -2)
+    iconTexture:SetPoint("BOTTOMRIGHT", -2, 2)
+    drawerToggleButton._iconTexture = iconTexture
 
     -- Grid icon: 4 small squares (2x2 grid) — store refs for resizing
     drawerToggleButton._gridDots = {}
@@ -3080,12 +3091,11 @@ local function ResizeDrawerToggle()
         end
     end
 
-    -- Update hammer icon insets proportionally
-    if drawerToggleButton._hammerIcon then
+    if drawerToggleButton._iconTexture then
         local inset = math.max(1, math.floor(2 * scale + 0.5))
-        drawerToggleButton._hammerIcon:ClearAllPoints()
-        drawerToggleButton._hammerIcon:SetPoint("TOPLEFT", inset, -inset)
-        drawerToggleButton._hammerIcon:SetPoint("BOTTOMRIGHT", -inset, inset)
+        drawerToggleButton._iconTexture:ClearAllPoints()
+        drawerToggleButton._iconTexture:SetPoint("TOPLEFT", inset, -inset)
+        drawerToggleButton._iconTexture:SetPoint("BOTTOMRIGHT", -inset, inset)
     end
 
     UpdateToggleIcon()
@@ -3145,6 +3155,8 @@ local function UpdateDrawerAnchor()
     end
 end
 
+---@param frame Frame
+---@param name string
 local function CollectButton(frame, name)
     if collectedButtons[name] then return end
     SaveOriginalState(frame, name)
@@ -3154,8 +3166,7 @@ local function CollectButton(frame, name)
     if LibDBIcon and name:match("^LibDBIcon10_") then
         local buttonName = name:gsub("^LibDBIcon10_", "")
         LibDBIcon:ShowOnEnter(buttonName, false)
-        -- Stop any fadeOut animation group
-        pcall(function()
+        ns.SafeCall("best-effort-style", function()
             if frame.fadeOut then frame.fadeOut:Stop() end
             for _, child in ipairs({ frame:GetChildren() }) do
                 if child.Stop and child:IsObjectType("AnimationGroup") then
@@ -3265,7 +3276,7 @@ ScanAndCollectButtons = function()  -- assigned to forward-declared local
     -- Scan UIParent children for minimap buttons parented outside the
     -- minimap hierarchy (some addons parent their button to UIParent)
     for _, child in ipairs({ UIParent:GetChildren() }) do
-        local ok, name = pcall(child.GetName, child)
+        local ok, name = ns.SafeCallMethod("best-effort-style", child, "GetName")
         if ok and name and not collectedButtons[name] and IsMinimapButton(child) then
             if not ShouldSkipDrawerButton(name) then
                 CollectButton(child, name)
@@ -3290,10 +3301,10 @@ local function ReleaseAllButtons()
             frame.SetFrameStrata = nil
             frame.SetFrameLevel = nil
             if data.origStrata then
-                pcall(frame.SetFrameStrata, frame, data.origStrata)
+                ns.SafeCallMethod("best-effort-style", frame, "SetFrameStrata", data.origStrata)
             end
             if data.origLevel then
-                pcall(frame.SetFrameLevel, frame, data.origLevel)
+                ns.SafeCallMethod("best-effort-style", frame, "SetFrameLevel", data.origLevel)
             end
             -- Restore hidden overlay/border textures for LibDBIcon buttons
             if data.hiddenRegions then
@@ -3309,7 +3320,7 @@ local function ReleaseAllButtons()
             if data.origMovable ~= nil then
                 frame:SetMovable(data.origMovable)
             end
-            pcall(function()
+            ns.SafeCall("best-effort-style", function()
                 if data.origOnDragStart and frame:HasScript("OnDragStart") then
                     frame:SetScript("OnDragStart", data.origOnDragStart)
                 end
@@ -3875,26 +3886,30 @@ local function StartUpdateTickers()
     local settings = GetSettings()
     if not settings then return end
 
-    -- Cancel existing tickers if any
-    if clockTicker then clockTicker:Cancel() end
-    if coordsTicker then coordsTicker:Cancel() end
+    if clockTicker then clockTicker:Cancel(); clockTicker = nil end
+    if coordsTicker then coordsTicker:Cancel(); coordsTicker = nil end
 
-    -- Clock ticker: Updates every 1 second
-    clockTicker = C_Timer.NewTicker(1, function()
-        local s = GetSettings()
-        if s then
-            UpdateClockTime()
+    if settings.showClock then
+        UpdateClockTime()
+        local function scheduleClockTick()
+            local delay = 60.1 - (tonumber(date("%S")) or 0)
+            clockTicker = C_Timer.NewTimer(delay, function()
+                UpdateClockTime()
+                scheduleClockTick()
+            end)
         end
-    end)
+        scheduleClockTick()
+    end
 
-    -- Coords ticker: Updates based on setting (default 1 second)
-    local coordInterval = settings.coordUpdateInterval or 1
-    coordsTicker = C_Timer.NewTicker(coordInterval, function()
-        local s = GetSettings()
-        if s then
-            UpdateCoordsPosition()
-        end
-    end)
+    if settings.showCoords then
+        local coordInterval = settings.coordUpdateInterval or 1
+        coordsTicker = C_Timer.NewTicker(coordInterval, function()
+            local s = GetSettings()
+            if s then
+                UpdateCoordsPosition()
+            end
+        end)
+    end
 
     -- Datatext updates are handled by individual datatext tickers via the registry
 end
@@ -4102,7 +4117,9 @@ function Minimap_Module:Refresh()
     UpdateMinimapSize()
     ApplyZoomLevel(settings.zoomLevel)
     UpdateClock()
+    UpdateClockTime()
     UpdateCoords()
+    UpdateCoordsPosition()
     UpdateZoneText()
     UpdateDatatextPanel()
     UpdateButtonVisibility()

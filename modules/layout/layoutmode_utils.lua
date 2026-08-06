@@ -538,17 +538,17 @@ function Utils.BuildOpenFullSettingsLink(content, providerKey, sections, relayou
     row:SetScript("OnLeave", function() SetLinkColor(accent[1], accent[2], accent[3], 1) end)
     row:SetScript("OnClick", function()
         if feature and type(feature.onNavigate) == "function" then
-            pcall(feature.onNavigate, providerKey, route, {
+            ns.SafeCall("bulkhead", feature.onNavigate, providerKey, route, {
                 source = "layoutmode",
             })
         end
         if _G.QUI_ToggleLayoutMode then
-            pcall(_G.QUI_ToggleLayoutMode)
+            ns.SafeCall("bulkhead", _G.QUI_ToggleLayoutMode)
         end
         if QUI and QUI.SlashCommandOpen then
-            pcall(QUI.SlashCommandOpen, QUI, "")
+            QUI:SlashCommandOpen("")
         elseif GUI and GUI.Toggle then
-            pcall(GUI.Toggle, GUI)
+            GUI:Toggle()
         end
         local frame = GUI and GUI.MainFrame
         if frame and GUI.FindV2TileByID and GUI.SelectFeatureTile then
@@ -641,33 +641,6 @@ function Utils.RefreshActiveSizeSliders()
     if type(fn) ~= "function" then return end
     local ok, err = pcall(fn)
     if not ok and geterrorhandler then geterrorhandler()(err) end
-end
-
----------------------------------------------------------------------------
--- BACKDROP & BORDER SECTION (shared by combatTimer, brezCounter)
----------------------------------------------------------------------------
-
-function Utils.BuildBackdropBorderSection(content, db, sections, relayout, Refresh)
-    local GUI = QUI and QUI.GUI
-    if not GUI then return end
-
-    Utils.CreateCollapsible(content, ns.L["Backdrop & Border"], 7 * Utils.FORM_ROW + 8, function(body)
-        local sy = -4
-        sy = Utils.PlaceRow(GUI:CreateFormCheckbox(body, ns.L["Show Backdrop"], "showBackdrop", db, Refresh,
-            { description = "Draw a semi-transparent backdrop behind this frame so it's easier to see against busy scenes." }), body, sy)
-        sy = Utils.PlaceRow(GUI:CreateFormColorPicker(body, ns.L["Backdrop Color"], "backdropColor", db, Refresh, nil,
-            { description = ns.L["Color and opacity used for the backdrop when Show Backdrop is on."] }), body, sy)
-        sy = Utils.PlaceRow(GUI:CreateFormCheckbox(body, "Hide Border", "hideBorder", db, Refresh,
-            { description = "Hide the border outline entirely. Overrides the Border Size, Class Color, Accent Color, and Border Color controls below." }), body, sy)
-        sy = Utils.PlaceRow(GUI:CreateFormSlider(body, "Border Size", 1, 5, 0.5, "borderSize", db, Refresh, nil,
-            { description = "Border thickness in pixels. Ignored while Hide Border is on." }), body, sy)
-        sy = Utils.PlaceRow(GUI:CreateFormCheckbox(body, "Class Color Border", "useClassColorBorder", db, Refresh,
-            { description = "Tint the border with your class color. Takes precedence over Accent Color Border and the Border Color swatch." }), body, sy)
-        sy = Utils.PlaceRow(GUI:CreateFormCheckbox(body, "Accent Color Border", "useAccentColorBorder", db, Refresh,
-            { description = "Tint the border with the QUI accent color. Ignored if Class Color Border is on." }), body, sy)
-        Utils.PlaceRow(GUI:CreateFormColorPicker(body, ns.L["Border Color"], "borderColor", db, Refresh, nil,
-            { description = "Fallback border color used when neither Class Color nor Accent Color is on." }), body, sy)
-    end, sections, relayout)
 end
 
 do

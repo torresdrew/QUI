@@ -776,15 +776,11 @@ local function RunGlobalActionButtonSweep()
     -- This catches most action bar addons.
     for globalName, frame in pairs(_G) do
         if type(globalName) == "string" and type(frame) == "table" then
-            -- Fast-path: skip forbidden tables without pcall overhead (12.0.x+)
-            if not Helpers.CanAccessTable(frame) then
-                -- Forbidden table, skip
+            if not Helpers.CanAccessTable(frame) or not Helpers.CanAccessValue(frame) then
             elseif type(frame.GetObjectType) ~= "function" then
                 -- Not a WoW widget, skip
             else
-                -- pcall the widget check — some addons expose GetObjectType via
-                -- metatables on non-widget objects, which errors when called
-                local ok, isActionButton = pcall(LooksLikeActionButton, frame)
+                local ok, isActionButton = QUI.SafeCall("best-effort-style", LooksLikeActionButton, frame)
 
                 if ok and isActionButton then
                     table.insert(globalSweepButtons, frame)
@@ -986,7 +982,7 @@ local function RebuildCache()
 
     -- Process cached buttons (fast - no _G iteration)
     for _, button in ipairs(cachedActionButtons) do
-        pcall(ProcessActionButton, button)
+        QUI.SafeCall("best-effort-style", ProcessActionButton, button)
     end
 
     lastCacheUpdate = GetTime()

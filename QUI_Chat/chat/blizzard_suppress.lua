@@ -115,7 +115,7 @@ local function HookRegisterEvent(frame)
             -- The strip is OUR write: guard it so the UnregisterEvent hook
             -- below does not read it as an outside suppression request.
             inOwnRegister = true
-            pcall(self.UnregisterEvent, self, event)
+            ns.SafeCallMethod("best-effort-style", self, "UnregisterEvent", event)
             inOwnRegister = false
         end
     end)
@@ -135,15 +135,15 @@ local function NeuterOne(frame)
     if not frame or neutered[frame] or IsCombatLogFrame(frame) then return end
     if not frame.UnregisterAllEvents then return end
     neutered[frame] = true
-    pcall(frame.UnregisterAllEvents, frame)
+    ns.SafeCallMethod("best-effort-style", frame, "UnregisterAllEvents")
     inOwnRegister = true
     for event in pairs(NEUTER_ALLOWED) do
-        pcall(frame.RegisterEvent, frame, event)
+        ns.SafeCallMethod("best-effort-style", frame, "RegisterEvent", event)
     end
     local valid = _G.C_EventUtils and _G.C_EventUtils.IsEventValid
     if frame == _G.ChatFrame1
         and (not valid or valid("CAUTIONARY_CHAT_MESSAGE")) then
-        pcall(frame.RegisterEvent, frame, "CAUTIONARY_CHAT_MESSAGE")
+        ns.SafeCallMethod("best-effort-style", frame, "RegisterEvent", "CAUTIONARY_CHAT_MESSAGE")
     end
     inOwnRegister = false
     HookRegisterEvent(frame)
@@ -156,27 +156,23 @@ local function RestoreEventsOne(frame)
     if not frame or not neutered[frame] then return end
     neutered[frame] = nil
     inOwnRegister = true
-    -- Mirror Blizzard's UPDATE_CHAT_WINDOWS handler: wipe the message-group
-    -- bookkeeping so RegisterForMessages doesn't leave stale tail entries.
-    if frame.UnregisterAllMessageGroups then
-        pcall(frame.UnregisterAllMessageGroups, frame)
-    end
-    pcall(frame.UnregisterAllEvents, frame)
+    ns.SafeCallMethodIfPresent("best-effort-style", frame, "UnregisterAllMessageGroups")
+    ns.SafeCallMethod("best-effort-style", frame, "UnregisterAllEvents")
     local valid = _G.C_EventUtils and _G.C_EventUtils.IsEventValid
     for i = 1, #BASE_FRAME_EVENTS do
         local event = BASE_FRAME_EVENTS[i]
         if not valid or valid(event) then
-            pcall(frame.RegisterEvent, frame, event)
+            ns.SafeCallMethod("best-effort-style", frame, "RegisterEvent", event)
         end
     end
     -- :GetID has SecretReturnsForAspect=ID — probe before passing to any API.
     local id = frame.GetID and frame:GetID()
     if id and not IsSecret(id) then
         if frame.RegisterForMessages and _G.GetChatWindowMessages then
-            pcall(frame.RegisterForMessages, frame, _G.GetChatWindowMessages(id))
+            ns.SafeCallMethod("best-effort-style", frame, "RegisterForMessages", _G.GetChatWindowMessages(id))
         end
         if frame.RegisterForChannels and _G.GetChatWindowChannels then
-            pcall(frame.RegisterForChannels, frame, _G.GetChatWindowChannels(id))
+            ns.SafeCallMethod("best-effort-style", frame, "RegisterForChannels", _G.GetChatWindowChannels(id))
         end
     end
     inOwnRegister = false
@@ -226,7 +222,7 @@ end
 local function SafeSetParent(region, parent)
     if not (region and region.SetParent and parent) then return end
     inOwnSetParent = true
-    pcall(region.SetParent, region, parent)
+    ns.SafeCallMethod("best-effort-style", region, "SetParent", parent)
     inOwnSetParent = false
 end
 
@@ -255,7 +251,7 @@ local function RefreshSuppressedFrameChannels(frame)
     -- not behave as if the default frame left city channels until /reload.
     frame.channelList = {}
     frame.zoneChannelList = {}
-    pcall(frame.RegisterForChannels, frame, _G.GetChatWindowChannels(id))
+    ns.SafeCallMethod("best-effort-style", frame, "RegisterForChannels", _G.GetChatWindowChannels(id))
 end
 
 local function RefreshSuppressedChannels()
@@ -391,7 +387,7 @@ local function NeuterChatFrameManager()
     local mgr = _G.FloatingChatFrameManager
     if managerNeutered or not (mgr and mgr.UnregisterAllEvents) then return end
     managerNeutered = true
-    pcall(mgr.UnregisterAllEvents, mgr)
+    ns.SafeCallMethod("best-effort-style", mgr, "UnregisterAllEvents")
 end
 
 local function RestoreChatFrameManager()
@@ -399,7 +395,7 @@ local function RestoreChatFrameManager()
     managerNeutered = false
     local mgr = _G.FloatingChatFrameManager
     if mgr and type(_G.FloatingChatFrameManager_OnLoad) == "function" then
-        pcall(_G.FloatingChatFrameManager_OnLoad, mgr)
+        ns.SafeCall("best-effort-style", _G.FloatingChatFrameManager_OnLoad, mgr)
     end
 end
 
@@ -475,13 +471,13 @@ local function StripCombatLogChatMessages()
     inOwnRegister = true
     -- ChatFrameMixin:OnLoad registers these directly, outside ChatTypeGroup.
     for i = 1, #COMBAT_LOG_BASE_CHAT_EVENTS do
-        pcall(cf.UnregisterEvent, cf, COMBAT_LOG_BASE_CHAT_EVENTS[i])
+        ns.SafeCallMethod("best-effort-style", cf, "UnregisterEvent", COMBAT_LOG_BASE_CHAT_EVENTS[i])
     end
     if type(_G.ChatTypeGroup) == "table" then
         for _, events in pairs(_G.ChatTypeGroup) do
             if type(events) == "table" then
                 for i = 1, #events do
-                    pcall(cf.UnregisterEvent, cf, events[i])
+                    ns.SafeCallMethod("best-effort-style", cf, "UnregisterEvent", events[i])
                 end
             end
         end
@@ -493,7 +489,7 @@ local function StripCombatLogChatMessages()
             if inOwnRegister or not cf2Stripped then return end
             if IsChatMessageEvent(event) then
                 inOwnRegister = true
-                pcall(self.UnregisterEvent, self, event)
+                ns.SafeCallMethod("best-effort-style", self, "UnregisterEvent", event)
                 inOwnRegister = false
             end
         end)
@@ -512,13 +508,13 @@ local function RestoreCombatLogChatMessages()
     for i = 1, #COMBAT_LOG_BASE_CHAT_EVENTS do
         local event = COMBAT_LOG_BASE_CHAT_EVENTS[i]
         if not valid or valid(event) then
-            pcall(cf.RegisterEvent, cf, event)
+            ns.SafeCallMethod("best-effort-style", cf, "RegisterEvent", event)
         end
     end
     local id = cf.GetID and cf:GetID()
     if id and not IsSecret(id) then
         if cf.RegisterForMessages and _G.GetChatWindowMessages then
-            pcall(cf.RegisterForMessages, cf, _G.GetChatWindowMessages(id))
+            ns.SafeCallMethod("best-effort-style", cf, "RegisterForMessages", _G.GetChatWindowMessages(id))
         end
     end
     inOwnRegister = false

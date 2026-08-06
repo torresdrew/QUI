@@ -24,9 +24,14 @@ local _, ns = ...
 local pending = {}
 local active = false
 
--- Queue fn until activation; run immediately if already active (modules
--- that load after QUI_Debug, e.g. on-demand loads). No pcall: a broken
--- setup closure should fail loudly at activation, a debug-only context.
+local securecall = securecallfunction
+
+function ns.DebugIsolate(fn)
+    if type(fn) ~= "function" then return nil end
+    if not securecall then return fn end
+    return function(...) return securecall(fn, ...) end
+end
+
 function ns.DebugRegister(fn)
     if active then
         fn()

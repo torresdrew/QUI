@@ -193,15 +193,14 @@ local function Finish(ok, reason)
         Storage.Bus.Unsubscribe(ev, run.busHandler)
     end
     if ok then
-        print(("%s " .. ns.L["Sorted %s: %d move%s in %d pass%s."]):format(
-            PREFIX, run.scope.label, run.moved, run.moved == 1 and "" or "s",
-            run.passes, run.passes == 1 and "" or "es"))
+        print(("%s " .. ns.L["Sorted %s: %d moves in %d passes."]):format(
+            PREFIX, run.scope.label, run.moved, run.passes))
     elseif reason == "combat" then
         print(PREFIX .. " " .. ns.L["Sort aborted: entered combat."])
     elseif reason == "passes" then
-        print(("%s " .. ns.L["Sort stopped before converging after %d move%s (locked or restricted slots?)."]):format(
-            PREFIX, run.moved, run.moved == 1 and "" or "s"))
-    end -- cancel: silent — user-initiated
+        print(("%s " .. ns.L["Sort stopped before converging after %d moves (locked or restricted slots?)."]):format(
+            PREFIX, run.moved))
+    end
     if run.onDone then run.onDone(ok, reason) end
 end
 

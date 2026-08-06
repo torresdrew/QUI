@@ -330,19 +330,19 @@ ns.Bags.BankWindow.OnProfileChanged   = nil
 ns.Bags.GuildWindow.OnProfileChanged  = nil
 ns.Bags.SearchWindow.OnProfileChanged = nil
 
--- Test 10: /quibags slash routing (registered at load; gated on IsActive)
-assert(_G.SLASH_QUIBAGS1 == "/quibags", "SLASH_QUIBAGS1 must be registered")
+-- Test 10: /duibags slash routing (registered at load; gated on IsActive)
+assert(_G.SLASH_QUIBAGS1 == "/duibags", "SLASH_QUIBAGS1 must be registered")
 local slash = SlashCmdList["QUIBAGS"]
 assert(type(slash) == "function", "SlashCmdList.QUIBAGS must be a function")
 local printed = {}
 local realPrint = _G.print
 _G.print = function(...) printed[#printed + 1] = table.concat({ ... }, " ") end
 slash("")                                  -- bare → bag window
-assert(bagToggles == 1, "/quibags must toggle the bag window")
+assert(bagToggles == 1, "/duibags must toggle the bag window")
 slash("search")                            -- search → search-everywhere
-assert(searchToggles == 1, "/quibags search must toggle the search window")
+assert(searchToggles == 1, "/duibags search must toggle the search window")
 slash("  SEARCH  ")                        -- trims + case-folds
-assert(searchToggles == 2, "/quibags must trim and lowercase its argument")
+assert(searchToggles == 2, "/duibags must trim and lowercase its argument")
 slash("bogus")                             -- anything else → usage, no toggles
 assert(bagToggles == 1 and searchToggles == 2, "unknown args must not toggle")
 assert(#printed >= 1, "unknown args must print usage")
@@ -373,17 +373,17 @@ assert(guildShows[#guildShows] == "live", "at the vault the toggle opens the LIV
 guildLive = false
 local bankShowsBefore, guildShowsBefore = #bankShows, #guildShows
 slash("bank")
-assert(#bankShows == bankShowsBefore + 1, "/quibags bank must run the bank toggle")
+assert(#bankShows == bankShowsBefore + 1, "/duibags bank must run the bank toggle")
 slash("guild")
-assert(#guildShows == guildShowsBefore + 1, "/quibags guild must run the guild toggle")
+assert(#guildShows == guildShowsBefore + 1, "/duibags guild must run the guild toggle")
 assert(_G.BINDING_NAME_QUI_BAGS_TOGGLE_BANK ~= nil, "bank keybind label must be registered")
 assert(_G.BINDING_NAME_QUI_BAGS_TOGGLE_GUILD ~= nil, "guild keybind label must be registered")
 
--- Test 12: /quibags clearnew → NewItems.ClearAllNew (existence-guarded)
+-- Test 12: /duibags clearnew → NewItems.ClearAllNew (existence-guarded)
 local clearNews = 0
 ns.Bags.NewItems = { ClearAllNew = function() clearNews = clearNews + 1 end }
 slash("clearnew")
-assert(clearNews == 1, "/quibags clearnew must route to NewItems.ClearAllNew")
+assert(clearNews == 1, "/duibags clearnew must route to NewItems.ClearAllNew")
 ns.Bags.NewItems = nil
 
 -- Test 13: disabling via refresh unregisters the UI events, hides the windows,
@@ -434,8 +434,8 @@ do
     SlashCmdList["QUIBAGS"]("search")
     _G.print = rp
     assert(bagToggles == 1 and searchToggles == 2,
-        "/quibags must not toggle windows while the module is disabled")
-    assert(#p == 2, "disabled /quibags must explain itself")
+        "/duibags must not toggle windows while the module is disabled")
+    assert(#p == 2, "disabled /duibags must explain itself")
 end
 
 print("OK: bags_module_gate_test")

@@ -38,7 +38,7 @@ local function Now()
 end
 
 local function FormatString(fmt, ...)
-    local ok, formatted = pcall(string.format, fmt, ...)
+    local ok, formatted = ns.SafeCall("report", string.format, fmt, ...)
     if not ok then return nil end
     return formatted
 end
@@ -166,11 +166,11 @@ SYSTEM_EVENTS.PLAYER_LEVEL_CHANGED = function(event, oldLevel, newLevel, real)
     local noLink = false
     if _G.C_GameRules and _G.C_GameRules.IsGameRuleActive and _G.Enum
         and _G.Enum.GameRule and _G.Enum.GameRule.ChatLinkLevelToastsDisabled then
-        local ok, active = pcall(_G.C_GameRules.IsGameRuleActive, _G.Enum.GameRule.ChatLinkLevelToastsDisabled)
+        local ok, active = ns.SafeCall("best-effort-style", _G.C_GameRules.IsGameRuleActive, _G.Enum.GameRule.ChatLinkLevelToastsDisabled)
         noLink = ok and active or false
     end
     if not noLink and _G.C_PlayerInfo and _G.C_PlayerInfo.IsPlayerNPERestricted then
-        local ok, restricted = pcall(_G.C_PlayerInfo.IsPlayerNPERestricted)
+        local ok, restricted = ns.SafeCall("best-effort-style", _G.C_PlayerInfo.IsPlayerNPERestricted)
         noLink = ok and restricted or false
     end
     local line
@@ -383,7 +383,7 @@ end
 
 local function RegionalUnavailableLine()
     if _G.GetRegionalChatUnavailableString then
-        local ok, s = pcall(_G.GetRegionalChatUnavailableString)
+        local ok, s = ns.SafeCall("chain-next", _G.GetRegionalChatUnavailableString)
         if ok and type(s) == "string" then return s end
     end
     return nil
@@ -393,7 +393,7 @@ SYSTEM_EVENTS.CHAT_REGIONAL_STATUS_CHANGED = function(event, isServiceAvailable)
     if IsSecret(isServiceAvailable) then return end
     if isServiceAvailable then
         if _G.GetRegionalChatAvailableString then
-            local ok, s = pcall(_G.GetRegionalChatAvailableString)
+            local ok, s = ns.SafeCall("best-effort-style", _G.GetRegionalChatAvailableString)
             if ok and type(s) == "string" then AppendSystemLine(event, s) end
         end
     else
@@ -469,7 +469,7 @@ local function MaybeAutoAddChannel(event, p)
     if type(p.zoneID) ~= "number" or p.zoneID <= 0 then return end
     local CI = _G.C_ChatInfo
     if not (CI and CI.IsChannelRegionalForChannelID) then return end
-    local ok, regional = pcall(CI.IsChannelRegionalForChannelID, p.zoneID)
+    local ok, regional = ns.SafeCall("best-effort-style", CI.IsChannelRegionalForChannelID, p.zoneID)
     if not ok or not regional then return end
     if Registry and Registry.Refresh then Registry.Refresh() end
     local name = p.chName or p.chBase
@@ -485,7 +485,7 @@ local WHISPER_POPOUT_KEYS = I.WHISPER_TYPE_KEYS
 
 local function GetWhisperMode()
     if type(_G.GetCVar) ~= "function" then return nil end
-    local ok, value = pcall(_G.GetCVar, "whisperMode")
+    local ok, value = ns.SafeCall("chain-next", _G.GetCVar, "whisperMode")
     if ok then return value end
     return nil
 end
@@ -582,7 +582,7 @@ local function OnCaptureEvent(_, event, ...)
     if (event == "CHAT_MSG_WHISPER" or event == "CHAT_MSG_BN_WHISPER") and p.sender then
         local CFU = _G.ChatFrameUtil
         if CFU and CFU.SetLastTellTarget then
-            pcall(CFU.SetLastTellTarget, p.sender, typeKey)
+            ns.SafeCall("sink-forward", CFU.SetLastTellTarget, p.sender, typeKey)
         end
     end
 
@@ -615,10 +615,7 @@ local function OnCaptureEvent(_, event, ...)
 
     -- SECRET-FIRST: no operator may touch a1 before this check.
     if secretBody then
-        -- BuildEventLineFromArgs owns the secret-body formatting rules, including
-        -- dropping secret friend-status toast keys and preserving real secret
-        -- message bodies opaquely.
-        if not line then return end
+        if not IsSecret(line) and not line then return end
         local m = line
         -- Timestamp secret lines too: AddTimestamp's secret path wraps via
         -- C_StringUtil.WrapString (secret-safe) and passes through unchanged

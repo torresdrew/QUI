@@ -628,6 +628,7 @@ function Module.Refresh()
     local GetSecondaryResource = Internal.GetSecondaryResource or function() end
     local ShouldSwapBars       = Internal.ShouldSwapBars       or function() return false end
     local ShouldHidePrimaryOnSwap = Internal.ShouldHidePrimaryOnSwap or function() return false end
+    ---@type fun(...): ... -- the `or` fallback is narrower than Internal.GetBarTexture
     local GetBarTexture        = Internal.GetBarTexture        or function() return "" end
 
     local LSM = ns.LSM

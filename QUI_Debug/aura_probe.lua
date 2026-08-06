@@ -68,7 +68,7 @@ local function EnsureOutputFrame()
 
     local title = outputFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     title:SetPoint("TOPLEFT", 8, -6)
-    title:SetText("[QAura/QCLEU] drag to move - mouse wheel scrolls - /qaura copy opens sanitized text")
+    title:SetText("[QAura/QCLEU] drag to move - mouse wheel scrolls - /duiaura copy opens sanitized text")
 
     outputMessages = CreateFrame("ScrollingMessageFrame", nil, outputFrame)
     outputMessages:SetPoint("TOPLEFT", 8, -24)
@@ -582,7 +582,7 @@ local function SetCLEUEnabled(value, mode, registerMode)
         cleuMode = registerMode == "frame" and "frame" or "callback"
         if cleuMode == "frame" then
             if not EnsureCLEUFrameRegistered() then
-                print(CLEU_PREFIX .. " frame registration failed; see /qcleu copy")
+                print(CLEU_PREFIX .. " frame registration failed; see /duicleu copy")
                 return
             end
         else
@@ -606,11 +606,11 @@ local function SetCLEUEnabled(value, mode, registerMode)
     end
 end
 
-SLASH_QUI_AURAPROBE1 = "/qaura"
+SLASH_QUI_AURAPROBE1 = "/duiaura"
 SlashCmdList["QUI_AURAPROBE"] = function(msg)
     local text = msg and strtrim(msg):lower() or ""
     if text == "" or text == "status" then
-        print(PREFIX .. " " .. (enabled and "on" or "off") .. " cleu=" .. (cleuEnabled and "on" or "off") .. " lines=" .. tostring(#copyLines) .. " (/qaura on|off|copy|clear|status)")
+        print(PREFIX .. " " .. (enabled and "on" or "off") .. " cleu=" .. (cleuEnabled and "on" or "off") .. " lines=" .. tostring(#copyLines) .. " (/duiaura on|off|copy|clear|status)")
     elseif text == "on" or text == "1" or text == "true" then
         SetEnabled(true)
     elseif text == "off" or text == "0" or text == "false" then
@@ -621,15 +621,15 @@ SlashCmdList["QUI_AURAPROBE"] = function(msg)
         ClearOutput()
         print(PREFIX .. " cleared")
     else
-        print(PREFIX .. " usage: /qaura on|off|copy|clear|status")
+        print(PREFIX .. " usage: /duiaura on|off|copy|clear|status")
     end
 end
 
-SLASH_QUI_CLEUPROBE1 = "/qcleu"
+SLASH_QUI_CLEUPROBE1 = "/duicleu"
 SlashCmdList["QUI_CLEUPROBE"] = function(msg)
     local text = msg and strtrim(msg):lower() or ""
     if text == "" or text == "status" then
-        print(CLEU_PREFIX .. " " .. (cleuEnabled and "on" or "off") .. " mode=" .. cleuMode .. " filter=" .. (cleuLogAll and "all" or "aura") .. " events=" .. tostring(cleuEventCount) .. " lines=" .. tostring(#cleuCopyLines) .. " (/qcleu on|all|aura|frameall|off|copy|clear|status)")
+        print(CLEU_PREFIX .. " " .. (cleuEnabled and "on" or "off") .. " mode=" .. cleuMode .. " filter=" .. (cleuLogAll and "all" or "aura") .. " events=" .. tostring(cleuEventCount) .. " lines=" .. tostring(#cleuCopyLines) .. " (/duicleu on|all|aura|frameall|off|copy|clear|status)")
     elseif text == "on" or text == "1" or text == "true" then
         SetCLEUEnabled(true, "aura", "callback")
     elseif text == "all" then
@@ -649,7 +649,7 @@ SlashCmdList["QUI_CLEUPROBE"] = function(msg)
         cleuEventCount = 0
         print(CLEU_PREFIX .. " cleared")
     else
-        print(CLEU_PREFIX .. " usage: /qcleu on|all|aura|frame|frameall|off|copy|clear|status")
+        print(CLEU_PREFIX .. " usage: /duicleu on|all|aura|frame|frameall|off|copy|clear|status")
     end
 end
 

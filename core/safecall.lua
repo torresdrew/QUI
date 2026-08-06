@@ -39,6 +39,7 @@ local EXPECTED = {
     "ADDON_ACTION_BLOCKED",
 }
 
+---@type table<string, any> -- counters plus a per-policy sub-table added by bump()
 local stats = { badpolicy = 0, seenOverflow = 0 }
 local seen = {}
 local seenCount = 0

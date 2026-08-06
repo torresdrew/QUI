@@ -1353,8 +1353,11 @@ StyleGameTooltip = function(tooltip)
         return
     end
 
-    -- Reused-chrome fast path: already shown with NineSlice hidden. Chrome is
-    -- SetAllPoints so it already tracks the (re-sized) tooltip — nothing to redo.
+    if HasActiveWidgetContainer(tooltip) then
+        FallbackToNineSlice(tooltip)
+        return
+    end
+
     if IsChromeStable(tooltip) then
         TooltipDebugCount("skin.backdropStableSkip")
         return

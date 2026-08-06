@@ -568,22 +568,6 @@ function UIKit.SetInsetPointsPx(frame, anchor, leftPixels, rightPixels, topPixel
     frame:SetPoint("BOTTOMRIGHT", anchor, "BOTTOMRIGHT", -Round(rightPixels) * px, Round(bottomPixels) * px)
 end
 
-function UIKit.SetOutsidePx(frame, anchor, leftPixels, rightPixels, topPixels, bottomPixels)
-    if rightPixels == nil and topPixels == nil and bottomPixels == nil then
-        UIKit.SetInsetPointsPx(frame, anchor, -(leftPixels or 0), -(leftPixels or 0), -(leftPixels or 0), -(leftPixels or 0))
-        return
-    end
-    UIKit.SetInsetPointsPx(frame, anchor, -(leftPixels or 0), -(rightPixels or 0), -(topPixels or 0), -(bottomPixels or 0))
-end
-
----------------------------------------------------------------------------
--- FONT
----------------------------------------------------------------------------
-
---- Resolve a named font via LibSharedMedia, falling back to the user's
---- general font setting, then to the WoW default.
---- @param fontName string|nil  LSM font name (e.g. "Quazii"). nil = use general setting.
---- @return string Font file path
 function UIKit.ResolveFontPath(fontName)
     if fontName and LSM then
         local path = LSM:Fetch("font", fontName)

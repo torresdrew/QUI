@@ -29,7 +29,7 @@ local function PrintLine(printer, line)
     printer(PREFIX .. tostring(line))
 end
 
-local function SafeCall(object, method, ...)
+local function LocalSafeCall(object, method, ...)
     if not object or type(object[method]) ~= "function" then
         return false
     end
@@ -37,7 +37,7 @@ local function SafeCall(object, method, ...)
 end
 
 local function SafeFrameValue(frame, method)
-    local ok, value = SafeCall(frame, method)
+    local ok, value = LocalSafeCall(frame, method)
     if ok then
         return value
     end
@@ -518,7 +518,7 @@ local function PrintHelp(printer, errorMessage)
     if errorMessage then
         PrintLine(printer, errorMessage)
     end
-    PrintLine(printer, "usage: /qui uitest list | run <suite|all> | last")
+    PrintLine(printer, "usage: /dui uitest list | run <suite|all> | last")
     local last = UISmoke.GetLastResult()
     if last then
         PrintLine(printer, "last: " .. (UISmoke.FormatResult(last)[1] or "unknown"))
@@ -564,7 +564,7 @@ end
 local function SkinField(frame, key)
     local skin = ns.SkinBase
     if skin and type(skin.GetFrameData) == "function" then
-        local ok, value = pcall(skin.GetFrameData, frame, key)
+        local ok, value = ns.SafeCall("report", skin.GetFrameData, frame, key)
         if ok then
             return value
         end
@@ -575,7 +575,7 @@ end
 local function SkinBackdrop(frame)
     local skin = ns.SkinBase
     if skin and type(skin.GetBackdrop) == "function" then
-        local ok, value = pcall(skin.GetBackdrop, frame)
+        local ok, value = ns.SafeCall("report", skin.GetBackdrop, frame)
         if ok then
             return value
         end
@@ -586,7 +586,7 @@ end
 local function IsSkinned(frame)
     local skin = ns.SkinBase
     if skin and type(skin.IsSkinned) == "function" then
-        local ok, value = pcall(skin.IsSkinned, frame)
+        local ok, value = ns.SafeCall("report", skin.IsSkinned, frame)
         if ok then
             return value and true or false
         end
@@ -601,13 +601,13 @@ local function CollectScrollBoxFrames(scrollBox)
     end
 
     if type(scrollBox.ForEachFrame) == "function" then
-        pcall(scrollBox.ForEachFrame, scrollBox, function(frame)
+        ns.SafeCallMethod("report", scrollBox, "ForEachFrame", function(frame)
             frames[#frames + 1] = frame
         end)
     end
 
     if #frames == 0 and type(scrollBox.GetFrames) == "function" then
-        local ok, list = pcall(scrollBox.GetFrames, scrollBox)
+        local ok, list = ns.SafeCallMethod("report", scrollBox, "GetFrames")
         if ok and type(list) == "table" then
             for _, frame in ipairs(list) do
                 frames[#frames + 1] = frame
@@ -676,7 +676,7 @@ local function InspectCategoryRows(ctx, categoriesList)
             AssertHiddenTexture(ctx, "category row selected", row.SelectedTexture)
             AssertHiddenTexture(ctx, "category row highlight", row.HighlightTexture)
             if row.GetHighlightTexture then
-                local ok, highlight = pcall(row.GetHighlightTexture, row)
+                local ok, highlight = ns.SafeCallMethod("report", row, "GetHighlightTexture")
                 if ok then
                     AssertHiddenTexture(ctx, "category row highlight", highlight)
                 end

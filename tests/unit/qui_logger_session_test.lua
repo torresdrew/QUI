@@ -1,5 +1,6 @@
 -- tests/unit/qui_logger_session_test.lua
 -- Run: lua tests/unit/qui_logger_session_test.lua
+-- luacheck: globals QUI_LoggerDB QUI_LOGGER_ENABLE (recorder SavedVariables)
 local ns = {}
 assert(loadfile("QUI_Logger/recorder.lua"))("QUI_Logger", ns)
 
@@ -65,7 +66,7 @@ assert(bounded.db.sessions[1].started == "B" and bounded.db.sessions[2].started 
 ns.ClearDB(store.db)
 assert(#store.db.sessions == 0, "clear empties sessions")
 
--- live wiring defaults to off, then /qlog on captures a bounded stream
+-- live wiring defaults to off, then /duilogger on captures a bounded stream
 local liveNS = {
     loggerLimits = {
         maxSessions = 2,
@@ -119,10 +120,10 @@ assert(#QUI_LoggerDB.sessions == 0, "disabled logger should not start a session"
 frame.scripts.OnEvent(frame, "PLAYER_LOGIN", "ignored")
 assert(#QUI_LoggerDB.sessions == 0, "disabled logger should not record events")
 
-SlashCmdList.QLOG("on")
-assert(QUI_LoggerDB.enabled == true, "/qlog on should persist enabled state")
-assert(frame.allEvents == 1, "/qlog on should register all events")
-assert(#QUI_LoggerDB.sessions == 1, "/qlog on should start one session")
+SlashCmdList.QUILOGGER("on")
+assert(QUI_LoggerDB.enabled == true, "/duilogger on should persist enabled state")
+assert(frame.allEvents == 1, "/duilogger on should register all events")
+assert(#QUI_LoggerDB.sessions == 1, "/duilogger on should start one session")
 
 frame.scripts.OnEvent(frame, "EVENT_ONE", "one")
 frame.scripts.OnEvent(frame, "EVENT_TWO", "two")
@@ -134,13 +135,13 @@ assert(session.events[1].e == "EVENT_TWO" and session.events[2].e == "EVENT_THRE
     "live recording should retain newest events")
 assert(session.dropped == 1, "live recording should track dropped events")
 
-SlashCmdList.QLOG("off")
+SlashCmdList.QUILOGGER("off")
 local count = #session.events
 frame.scripts.OnEvent(frame, "EVENT_FOUR", "four")
-assert(#session.events == count, "/qlog off should stop recording")
+assert(#session.events == count, "/duilogger off should stop recording")
 
-SlashCmdList.QLOG("clear")
-assert(#QUI_LoggerDB.sessions == 0, "/qlog clear should clear sessions while stopped")
+SlashCmdList.QUILOGGER("clear")
+assert(#QUI_LoggerDB.sessions == 0, "/duilogger clear should clear sessions while stopped")
 
 print = realPrint
 CreateFrame = oldCreateFrame

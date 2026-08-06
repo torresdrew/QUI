@@ -102,6 +102,11 @@ local settings = { modifiers = {
 
 local ns = {
     Helpers = { IsSecretValue = function(v) return secrets[v] == true end },
+    -- core/safecall.lua stub: silent pcall swallow matches the pre-SafeCall
+    -- behavior these tests were written against (Task 45b ns-mock precedent).
+    SafeCall = function(_policy, fn, ...) return pcall(fn, ...) end,
+    SafeCallMethod = function(_policy, obj, name, ...) return pcall(function(...) return obj[name](obj, ...) end, ...) end,
+    SafeCallMethodIfPresent = function(_policy, obj, name, ...) if obj == nil then return nil end local okP, m = pcall(function() return obj[name] end) if not okP then return false end if m == nil then return nil end return pcall(m, obj, ...) end,
     QUI = { Chat = {
         _internals = {
             GetSettings = function() return settings end,
@@ -298,7 +303,7 @@ end
 -- Demon Hunter name in party chat, plus cross-realm groupmates.
 do
     local roster = {
-        player = { loc = "Demon Hunter", class = "DEMONHUNTER", full = "Drew",             short = "Drew" },
+        player = { loc = "Demon Hunter", class = "DEMONHUNTER", full = "QUI",             short = "QUI" },
         party1 = { loc = "Mage",         class = "MAGE",        full = "Zin-OtherRealm",   short = "Zin"  },
         party2 = { loc = "Mage",         class = "MAGE",        full = "Kara-Other Realm", short = "Kara", guid = "Player-2-MAGE" },
     }
@@ -330,8 +335,8 @@ do
     -- Player's OWN party line, in combat (secret GUID), never chatted before:
     -- recovered purely from the login seed of UnitClass("player").
     eq("seed player own combat color",
-        F.DecorateSender("CHAT_MSG_PARTY", "hi", "Drew", nil, nil, nil, nil, nil, nil, nil, nil, nil, secretGuid),
-        "|cffa330c9Drew|r")
+        F.DecorateSender("CHAT_MSG_PARTY", "hi", "QUI", nil, nil, nil, nil, nil, nil, nil, nil, nil, secretGuid),
+        "|cffa330c9QUI|r")
     -- Cross-realm groupmate (arg2 keeps "-Realm"), secret GUID: recovered from
     -- the realm-qualified roster seed, again with no GUID resolve.
     eq("seed roster cross-realm color",

@@ -26,13 +26,6 @@ local function IsChatLayoutLockedDown()
         or (I and I.IsChatMessagingLockedDown and I.IsChatMessagingLockedDown())
 end
 
-local function SafeFrameNumber(value, fallback)
-    if Helpers and Helpers.IsSecretValue and Helpers.IsSecretValue(value) then
-        return fallback or 0
-    end
-    return tonumber(value) or fallback or 0
-end
-
 local function GetPixelSize(frame)
     local uikit = ns.UIKit
     if uikit and uikit.GetPixelSize then
@@ -109,6 +102,7 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
     local selectedCustomDisplayTabIndex = 1
     local selectedWindowIndex = 1
     local selectedButtonBarFrame = 1
+    local buttonBarExpanded = {}
 
     local function MarkTransientOptionsBinding(tableRef)
         if type(tableRef) == "table" then
@@ -595,7 +589,7 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
                         return
                     end
                     for i = 1, #refreshList do
-                        pcall(refreshList[i])
+                        ns.SafeCall("bulkhead", refreshList[i])
                     end
                 end, { description = ns.L["Pick which custom tab to edit. Each tab stores its own name, group filter, and channel filter."] })
                 selectorCard.AddRow(row(selectorCard.frame, ns.L["Editing tab"], frameSelector))
@@ -1285,36 +1279,11 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             basicsCard.Finalize()
             sy = sy - basicsCard.frame:GetHeight() - GAP
 
-            -- Built-in buttons subheader + paired card. Each entry in
-            -- entry.buttons is { id, visible }; the proxy maps each builtin
-            -- key to the visible flag, creating a record on first toggle.
-            TrackBarRegion(ns.QUI_Options.CreateAccentDotLabel(body, ns.L["Built-in buttons"], sy))
+            TrackBarRegion(ns.QUI_Options.CreateAccentDotLabel(body, ns.L["Buttons"], sy))
             sy = sy - 30
 
-            local function findOrCreate(id)
-                for i = 1, #entry.buttons do
-                    if entry.buttons[i] and entry.buttons[i].id == id then
-                        return entry.buttons[i]
-                    end
-                end
-                local rec = { id = id, visible = false }
-                entry.buttons[#entry.buttons + 1] = rec
-                return rec
-            end
-
-            local builtinProxy = MarkTransientOptionsBinding(setmetatable({}, {
-                __index = function(_, id)
-                    local rec = findOrCreate(id)
-                    return rec.visible and true or false
-                end,
-                __newindex = function(_, id, v)
-                    local rec = findOrCreate(id)
-                    rec.visible = v and true or false
-                end,
-            }))
-
             local labels = {
-                qui_options = ns.L["QUI options (/qui)"],
+                qui_options = ns.L["QUI options (/dui)"],
                 qui_layout  = ns.L["Layout Mode"],
                 qui_keybind = ns.L["Keybind mode"],
                 qui_cdm     = ns.L["Cooldown Manager"],
@@ -1322,69 +1291,106 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
                 guild       = ns.L["Guild frame"],
                 reload      = ns.L["Reload UI"],
             }
-            local builtinOrder = BB.GetBuiltinOrder()
-            local builtinCard = ns.QUI_Options.CreateSettingsCardGroup(body, sy)
-            local function makeBuiltinCheckbox(id)
-                return TrackBarControl(GUI:CreateFormCheckbox(builtinCard.frame, nil, id, builtinProxy, Refresh,
-                    { description = ns.L["Show the '%s' button on this chat frame's button bar."]:format(labels[id] or id) }))
+
+            local expanded = buttonBarExpanded[selectedButtonBarFrame]
+            if not expanded then
+                expanded = {}
+                buttonBarExpanded[selectedButtonBarFrame] = expanded
             end
-            for i = 1, #builtinOrder, 2 do
-                local id1, id2 = builtinOrder[i], builtinOrder[i + 1]
-                local cellL = row(builtinCard.frame, labels[id1] or id1, makeBuiltinCheckbox(id1))
-                local cellR
-                if id2 then
-                    cellR = row(builtinCard.frame, labels[id2] or id2, makeBuiltinCheckbox(id2))
+
+            local function itemKey(item)
+                if BB.IsCustomItem(item) then
+                    return item
                 end
-                builtinCard.AddRow(cellL, cellR)
+                return item.id
             end
-            builtinCard.Finalize()
-            sy = sy - builtinCard.frame:GetHeight() - GAP
 
-            -- Custom slash-command buttons subheader. Each custom button gets
-            -- its own card with [Label | Slash command] + [Icon path | Remove].
-            -- Add/Remove trigger structural rebuilds so this loop re-runs.
-            TrackBarRegion(ns.QUI_Options.CreateAccentDotLabel(body, ns.L["Custom slash-command buttons"], sy))
-            sy = sy - 30
-
-            for idx = 1, #entry.customButtons do
-                local cb = entry.customButtons[idx]
-                if type(cb) ~= "table" then
-                    cb = { label = "", slashCommand = "", icon = "" }
-                    entry.customButtons[idx] = cb
+            local function itemLabel(item)
+                if BB.IsCustomItem(item) then
+                    local text = (item.label ~= "" and item.label)
+                        or (item.slashCommand ~= "" and item.slashCommand)
+                        or ns.L["Custom button"]
+                    local renders = item.visible ~= false
+                        and item.slashCommand ~= ""
+                        and (item.label ~= "" or item.icon ~= "")
+                    return text, not renders
                 end
-                if cb.icon == nil then cb.icon = "" end
+                return labels[item.id] or tostring(item.id), not item.visible
+            end
 
-                TrackBarRegion(ns.QUI_Options.CreateAccentDotLabel(body, ns.L["Button"] .. " " .. idx, sy))
-                sy = sy - 30
+            local function itemToggleBinding(item)
+                local name = BB.IsCustomItem(item)
+                    and ((item.label ~= "" and item.label)
+                        or (item.slashCommand ~= "" and item.slashCommand)
+                        or ns.L["Custom button"])
+                    or (labels[item.id] or tostring(item.id))
+                return item, "visible",
+                    ns.L["Show the '%s' button on this chat frame's button bar."]:format(name)
+            end
 
-                local btnCard = ns.QUI_Options.CreateSettingsCardGroup(body, sy)
-                local labelEdit = TrackBarControl(GUI:CreateFormEditBox(btnCard.frame, nil, "label", cb, Refresh,
-                    { description = ns.L["Text shown on the button when no icon is set."] }))
-                local slashEdit = TrackBarControl(GUI:CreateFormEditBox(btnCard.frame, nil, "slashCommand", cb, Refresh,
-                    { description = ns.L["Slash command to run on click — e.g. /target Boss, /readycheck. Must include the leading slash."] }))
-                btnCard.AddRow(row(btnCard.frame, ns.L["Label"], labelEdit), row(btnCard.frame, ns.L["Slash command"], slashEdit))
+            local function afterMutation()
+                Refresh()
+                NotifyProviderFor(enabledCheckbox, { structural = true })
+            end
 
-                local iconEdit = TrackBarControl(GUI:CreateFormEditBox(btnCard.frame, nil, "icon", cb, Refresh,
-                    { description = ns.L["Texture path for an icon-style button — e.g. Interface/Icons/Spell_Holy_HolyBolt or any registered AddOn texture path. Leave blank to render as a text button."] }))
-                local removeBtn
-                removeBtn = TrackBarControl(GUI:CreateButton(btnCard.frame, ns.L["Remove button"] .. " " .. idx, 160, 22, function()
-                    table.remove(entry.customButtons, idx)
+            local listFrame, listHeight = ns.QUI_ReorderList.Build(body, sy, {
+                items    = entry.items,
+                identify = itemKey,
+                getLabel = itemLabel,
+                onChange = afterMutation,
+                expanded = expanded,
+                onControl = TrackBarControl,
+                hasDetail = BB.IsCustomItem,
+                GUI = GUI,
+                getToggleBinding = itemToggleBinding,
+                onToggle = function()
                     Refresh()
-                    NotifyProviderFor(removeBtn, { structural = true })
-                end))
-                GUI:AttachTooltip(removeBtn,
-                    ns.L["Remove this custom button from the chat button bar. Its label, slash command, and icon are discarded."],
-                    ns.L["Remove Button"])
-                btnCard.AddRow(row(btnCard.frame, ns.L["Icon path (optional)"], iconEdit), row(btnCard.frame, ns.L["Remove"], removeBtn))
-                btnCard.Finalize()
-                sy = sy - btnCard.frame:GetHeight() - GAP
-            end
+                end,
+                hintText  = ns.L["Drag a row (or use the arrows) to reorder. Click a row to edit it."],
+                emptyText = ns.L["No buttons on this bar yet. Add one below."],
+                moveUpTooltip   = ns.L["Move this button one slot earlier in the bar. The bar draws items in this list's order."],
+                moveDownTooltip = ns.L["Move this button one slot later in the bar. The bar draws items in this list's order."],
+                removeTooltip   = ns.L["Remove this custom button from the chat button bar. Its label, slash command, and icon are discarded."],
+                getTooltip = function(item)
+                    if BB.IsCustomItem(item) then
+                        return (item.slashCommand ~= "" and item.slashCommand) or ns.L["Custom button"],
+                            ns.L["Drag to reorder, or use the arrows."]
+                    end
+                    return labels[item.id] or tostring(item.id), ns.L["Drag to reorder, or use the arrows."]
+                end,
+                canRemove = BB.IsCustomItem,
+                onRemove = function(item, index)
+                    if not BB.IsCustomItem(item) then return end
+                    expanded[item] = nil
+                    table.remove(entry.items, index)
+                    afterMutation()
+                end,
+                buildDetail = function(container, item)
+                    if not BB.IsCustomItem(item) then return 0 end
+                    local card = ns.QUI_Options.CreateSettingsCardGroup(container, 0)
+                    local labelEdit = TrackBarControl(GUI:CreateFormEditBox(card.frame, nil, "label", item, afterMutation,
+                        { description = ns.L["Text shown on the button when no icon is set."] }))
+                    local slashEdit = TrackBarControl(GUI:CreateFormEditBox(card.frame, nil, "slashCommand", item, afterMutation,
+                        { description = ns.L["Slash command to run on click — e.g. /target Boss, /readycheck. Must include the leading slash."] }))
+                    card.AddRow(row(card.frame, ns.L["Label"], labelEdit), row(card.frame, ns.L["Slash command"], slashEdit))
+
+                    local iconEdit = TrackBarControl(GUI:CreateFormEditBox(card.frame, nil, "icon", item, afterMutation,
+                        { description = ns.L["Texture path for an icon-style button — e.g. Interface/Icons/Spell_Holy_HolyBolt or any registered AddOn texture path. Leave blank to render as a text button."] }))
+                    card.AddRow(row(card.frame, ns.L["Icon path (optional)"], iconEdit))
+                    card.Finalize()
+                    return card.frame:GetHeight()
+                end,
+            })
+            TrackBarRegion(listFrame)
+            sy = sy - listHeight - GAP
 
             -- Add button card.
             local addCard = ns.QUI_Options.CreateSettingsCardGroup(body, sy)
             local addBtn
             addBtn = TrackBarControl(GUI:CreateButton(addCard.frame, ns.L["Add custom button"], 200, 24, function()
-                entry.customButtons[#entry.customButtons + 1] = { label = "", slashCommand = "", icon = "" }
+                local fresh = { kind = "custom", label = "", slashCommand = "", icon = "", visible = true }
+                entry.items[#entry.items + 1] = fresh
+                expanded[fresh] = true
                 Refresh()
                 NotifyProviderFor(addBtn, { structural = true })
             end))
@@ -1779,11 +1785,9 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
                             local characters, entries = ns.QUI.Chat.History.ClearAllCharacters()
                             if DEFAULT_CHAT_FRAME then
                                 DEFAULT_CHAT_FRAME:AddMessage(string.format(
-                                    "|cff34D399[QUI]|r " .. ns.L["Cleared this character now (%d character%s, %d entr%s). Other characters will clear on their next login."],
+                                    "|cff34D399[QUI]|r " .. ns.L["Cleared this character now (%d characters, %d entries). Other characters will clear on their next login."],
                                     characters or 0,
-                                    characters == 1 and "" or "s",
-                                    entries or 0,
-                                    entries == 1 and "y" or "ies"
+                                    entries or 0
                                 ), 1, 1, 1)
                             end
                         end

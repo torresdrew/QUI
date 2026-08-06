@@ -42,7 +42,7 @@ local function IsSecret(v)
 end
 
 local function FormatString(fmt, ...)
-    local ok, formatted = pcall(string.format, fmt, ...)
+    local ok, formatted = ns.SafeCall("report", string.format, fmt, ...)
     if not ok then return nil end
     return formatted
 end
@@ -131,7 +131,7 @@ local function StoreNameClassAliases(name, englishClass)
     StoreNameClass(name, englishClass)
     if type(name) ~= "string" or IsSecret(name) then return end
     if _G.Ambiguate then
-        local ok, short = pcall(_G.Ambiguate, name, "short")
+        local ok, short = ns.SafeCall("best-effort-style", _G.Ambiguate, name, "short")
         if ok then StoreNameClass(short, englishClass) end
     end
 end
@@ -162,7 +162,7 @@ local function LookupNameClass(name)
         end
     end
     if _G.Ambiguate then
-        local ok, short = pcall(_G.Ambiguate, key, "short")
+        local ok, short = ns.SafeCall("best-effort-style", _G.Ambiguate, key, "short")
         if ok then return nameClassCache[short] end
     end
     return nil
@@ -192,10 +192,10 @@ end
 -- every GROUP_ROSTER_UPDATE (message_capture owns the event wiring).
 local function SeedUnitClass(unit)
     if not _G.UnitExists then return end
-    local okExists, exists = pcall(_G.UnitExists, unit)
+    local okExists, exists = ns.SafeCall("best-effort-style", _G.UnitExists, unit)
     if not okExists or not exists then return end
     if _G.UnitIsPlayer then
-        local okPlayer, isPlayer = pcall(_G.UnitIsPlayer, unit)
+        local okPlayer, isPlayer = ns.SafeCall("best-effort-style", _G.UnitIsPlayer, unit)
         if not okPlayer or not isPlayer then return end
     end
     if not _G.UnitClass then return end
@@ -205,7 +205,7 @@ local function SeedUnitClass(unit)
     if not ok or IsSecret(englishClass)
         or type(englishClass) ~= "string" or englishClass == "" then return end
     if _G.UnitGUID then
-        local okGuid, guid = pcall(_G.UnitGUID, unit)
+        local okGuid, guid = ns.SafeCall("best-effort-style", _G.UnitGUID, unit)
         if okGuid then StoreGuidClass(guid, englishClass) end
     end
     -- Seed under BOTH the realm-qualified and short name forms. CHAT_MSG_* arg2
@@ -224,9 +224,9 @@ local function SeedUnitClass(unit)
     end
     local getName = _G.GetUnitName
     if getName then
-        local okFull, full = pcall(getName, unit, true)
+        local okFull, full = ns.SafeCall("best-effort-style", getName, unit, true)
         if okFull then StoreNameClassVariants(full, englishClass) end
-        local okShort, short = pcall(getName, unit, false)
+        local okShort, short = ns.SafeCall("best-effort-style", getName, unit, false)
         if okShort then StoreNameClassVariants(short, englishClass) end
     end
 end
@@ -234,7 +234,7 @@ end
 local function InChatMessagingLockdown()
     local CI = _G.C_ChatInfo
     if not (CI and CI.InChatMessagingLockdown) then return false end
-    local ok, restricted = pcall(CI.InChatMessagingLockdown)
+    local ok, restricted = ns.SafeCall("best-effort-style", CI.InChatMessagingLockdown)
     return ok and restricted == true or false
 end
 
@@ -310,7 +310,7 @@ local function ResolveSenderClass(guid, name)
     -- Cache only NON-secret classes: a secret cannot be a table key or value.
     if _G.GetPlayerInfoByGUID then
         local ok, _, englishClass = pcall(_G.GetPlayerInfoByGUID, guid)
-        if ok and englishClass
+        if ok
             and (IsSecret(englishClass) or (type(englishClass) == "string" and englishClass ~= "")) then
             if not IsSecret(englishClass) then
                 if not secret then StoreGuidClass(guid, englishClass) end
@@ -323,7 +323,7 @@ local function ResolveSenderClass(guid, name)
     -- (GUID arg AllowedWhenTainted). Same accept/cache rules as above.
     if _G.UnitClassFromGUID then
         local ok, _, englishClass = pcall(_G.UnitClassFromGUID, guid)
-        if ok and englishClass
+        if ok
             and (IsSecret(englishClass) or (type(englishClass) == "string" and englishClass ~= "")) then
             if not IsSecret(englishClass) then
                 if not secret then StoreGuidClass(guid, englishClass) end
@@ -352,30 +352,20 @@ end
 --     (secret) colored string chat can still display -- stock raid-chat parity.
 -- Returns `text` unchanged when coloring is off or no class resolves.
 local function ColorizeSenderName(guid, name, text)
-    -- TRUTHINESS ONLY -- never compare the guid. It is a real engine secret in
-    -- combat; a bare `==`/`~=` (the old `if guid == nil`) is illegal on it and
-    -- silently dropped class color. `not guid` is Blizzard's own coercion and is
-    -- safe on secrets. (No Lua unit test reproduces this: the harness secret
-    -- sentinel is a plain table, so `== nil` just returns false.)
-    if not guid then return text end
+    local guidSecret = IsSecret(guid)
+    if not guidSecret and not guid then return text end
     local settings = I.GetSettings and I.GetSettings()
     local mods = settings and settings.modifiers
     local classColors = mods and mods.classColors
     if classColors and classColors.enabled == false then return text end
     local englishClass = ResolveSenderClass(guid, name)
-    if not englishClass then return text end
-    -- Resolution order mirrors stock ChatFrameUtil.GetDecoratedSenderName EXACTLY:
-    -- C_ClassColor.GetClassColor FIRST for BOTH secret and non-secret classes
-    -- (SecretArguments="AllowedWhenTainted"), wrapped via the color object's
-    -- ColorMixin:WrapTextInColorCode. This is the only path that keeps raid/party
-    -- names colored in combat -- a secret class can never be a table key -- and it
-    -- also covers the login-burst window where RAID_CLASS_COLORS is not yet
-    -- populated but C_ClassColor already resolves.
+    local clsSecret = IsSecret(englishClass)
+    if not clsSecret and not englishClass then return text end
     if _G.C_ClassColor and _G.C_ClassColor.GetClassColor then
-        local ok, color = pcall(_G.C_ClassColor.GetClassColor, englishClass)
+        local ok, color = ns.SafeCall("best-effort-style", _G.C_ClassColor.GetClassColor, englishClass)
         if ok and type(color) == "table" and color.WrapTextInColorCode then
             local ok2, wrapped = pcall(color.WrapTextInColorCode, color, text)
-            if ok2 and wrapped then return wrapped end
+            if ok2 and (IsSecret(wrapped) or wrapped) then return wrapped end
         end
     end
     -- Fallback when C_ClassColor is unavailable (unit-test harness / older
@@ -459,7 +449,7 @@ function Format.DecorateSender(event, ...)
         local mode = ShowRealmNames()
             and (typeKey == "GUILD" and "guild" or "none")
             or "short"
-        local ok, short = pcall(_G.Ambiguate, sender, mode)
+        local ok, short = ns.SafeCall("best-effort-style", _G.Ambiguate, sender, mode)
         if ok and type(short) == "string" and short ~= "" then decorated = short end
     end
     local guid = select(12, ...)
@@ -510,22 +500,18 @@ function Format.DecorateSender(event, ...)
     if not IsSecret(guid) and type(guid) == "string" and guid ~= ""
         and _G.C_ChatInfo and _G.C_ChatInfo.IsTimerunningPlayer
         and _G.TimerunningUtil and _G.TimerunningUtil.AddSmallIcon then
-        local ok, isTR = pcall(_G.C_ChatInfo.IsTimerunningPlayer, guid)
+        local ok, isTR = ns.SafeCall("best-effort-style", _G.C_ChatInfo.IsTimerunningPlayer, guid)
         if ok and isTR then
-            local ok2, marked = pcall(_G.TimerunningUtil.AddSmallIcon, decorated)
+            local ok2, marked = ns.SafeCall("best-effort-style", _G.TimerunningUtil.AddSmallIcon, decorated)
             if ok2 and type(marked) == "string" and marked ~= "" then decorated = marked end
         end
     end
-    -- Class-color the name. The GUID flows through even when secret
-    -- (AllowedWhenTainted) and yields a (secret) class in combat that still
-    -- colors via the C_ClassColor chain; the non-secret `classLookupName` is
-    -- only the name-cache fallback key for the rare cold-GUID
-    -- (MayReturnNothing) case.
-    decorated = ColorizeSenderName(guid, classLookupName, decorated)
-    -- Cross-addon sender-name filters (same registry Blizzard consults).
+    -- @secret-policy: drop-color-when-secret (readable name preserved; combat
+    local colored = ColorizeSenderName(guid, classLookupName, decorated)
+    if not IsSecret(colored) then decorated = colored end
     local util = _G.ChatFrameUtil
     if util and util.ProcessSenderNameFilters then
-        local ok, filtered = pcall(util.ProcessSenderNameFilters, event, decorated, ...)
+        local ok, filtered = ns.SafeCall("best-effort-style", util.ProcessSenderNameFilters, event, decorated, ...)
         if ok and type(filtered) == "string" and filtered ~= "" then decorated = filtered end
     end
     return decorated
@@ -735,11 +721,11 @@ local defaultLanguage, alternativeDefaultLanguage
 -- it is a pure formatter).
 function Format.RefreshLanguages()
     if _G.GetDefaultLanguage then
-        local ok, lang = pcall(_G.GetDefaultLanguage)
+        local ok, lang = ns.SafeCall("best-effort-style", _G.GetDefaultLanguage)
         if ok and type(lang) == "string" then defaultLanguage = lang end
     end
     if _G.GetAlternativeDefaultLanguage then
-        local ok, lang = pcall(_G.GetAlternativeDefaultLanguage)
+        local ok, lang = ns.SafeCall("best-effort-style", _G.GetAlternativeDefaultLanguage)
         if ok and type(lang) == "string" then alternativeDefaultLanguage = lang end
     end
 end
@@ -765,7 +751,7 @@ local function PFlag(flags, zoneID, chNum)
     if type(flags) ~= "string" or flags == "" then return "" end
     local util = _G.ChatFrameUtil
     if util and util.GetPFlag then
-        local ok, pflag = pcall(util.GetPFlag, flags, zoneID or 0, chNum or 0)
+        local ok, pflag = ns.SafeCall("chain-next", util.GetPFlag, flags, zoneID or 0, chNum or 0)
         if ok and type(pflag) == "string" then return pflag end
     end
     local gs = _G["CHAT_FLAG_" .. flags]
@@ -776,7 +762,7 @@ end
 -- before formatting; skipped for monster types whose GET strings expect raw).
 local function EscapeFormatTokens(msg)
     if _G.C_StringUtil and _G.C_StringUtil.EscapeLuaFormatString then
-        local ok, escaped = pcall(_G.C_StringUtil.EscapeLuaFormatString, msg)
+        local ok, escaped = ns.SafeCall("chain-next", _G.C_StringUtil.EscapeLuaFormatString, msg)
         if ok and type(escaped) == "string" then return escaped end
     end
     return (msg:gsub("%%", "%%%%"))
@@ -787,7 +773,7 @@ end
 local function CanExpandExpressions(chatGroup)
     local util = _G.ChatFrameUtil
     if util and util.CanChatGroupPerformExpressionExpansion then
-        local ok, can = pcall(util.CanChatGroupPerformExpressionExpansion, chatGroup)
+        local ok, can = ns.SafeCall("chain-next", util.CanChatGroupPerformExpressionExpansion, chatGroup)
         if ok then return can and true or false end
     end
     return chatGroup == "RAID"
@@ -795,7 +781,7 @@ end
 
 local function ExpandIconExpressions(msg, suppressIcons, chatGroup)
     if _G.C_ChatInfo and _G.C_ChatInfo.ReplaceIconAndGroupExpressions then
-        local ok, replaced = pcall(_G.C_ChatInfo.ReplaceIconAndGroupExpressions,
+        local ok, replaced = ns.SafeCall("chain-next", _G.C_ChatInfo.ReplaceIconAndGroupExpressions,
             msg, suppressIcons and true or false, not CanExpandExpressions(chatGroup))
         if ok and type(replaced) == "string" then return replaced end
     end
@@ -804,7 +790,7 @@ end
 
 local function CollapseSpaces(msg)
     if _G.C_StringUtil and _G.C_StringUtil.RemoveContiguousSpaces then
-        local ok, trimmed = pcall(_G.C_StringUtil.RemoveContiguousSpaces, msg, 4)
+        local ok, trimmed = ns.SafeCall("chain-next", _G.C_StringUtil.RemoveContiguousSpaces, msg, 4)
         if ok and type(trimmed) == "string" then return trimmed end
     end
     return (msg:gsub("     +", "    "))
@@ -837,7 +823,7 @@ local function DiscordMarkerText(globalStringName, body)
     local label = gs
     local color = _G.YELLOW_FONT_COLOR
     if type(color) == "table" and color.WrapTextInColorCode then
-        local ok, wrapped = pcall(color.WrapTextInColorCode, color, gs)
+        local ok, wrapped = ns.SafeCallMethod("best-effort-style", color, "WrapTextInColorCode", gs)
         if ok and type(wrapped) == "string" and wrapped ~= "" then label = wrapped end
     end
     return ("%s %s"):format(label, body)
@@ -869,7 +855,7 @@ end
 local function ResolvePrefixedChannelName(channelFull)
     local util = _G.ChatFrameUtil
     if util and util.ResolvePrefixedChannelName then
-        local ok, resolved = pcall(util.ResolvePrefixedChannelName, channelFull)
+        local ok, resolved = ns.SafeCall("chain-next", util.ResolvePrefixedChannelName, channelFull)
         if ok and type(resolved) == "string" and resolved ~= "" then return resolved end
     end
     return channelFull
@@ -954,7 +940,7 @@ local function GetOutMessageFormatKey(typeKey)
     end
     local util = _G.ChatFrameUtil and _G.ChatFrameUtil.GetOutMessageFormatKey
     if type(util) == "function" then
-        local ok, fmt = pcall(util, typeKey)
+        local ok, fmt = ns.SafeCall("chain-next", util, typeKey)
         if ok and type(fmt) == "string" and fmt ~= "" then
             return fmt
         end
@@ -1033,7 +1019,7 @@ local function BuildPlayerLink(typeKey, chatGroup, p, linkDisplayText)
         -- (ChatFrameOverrides.lua:564-576). GetInfoFromLastCommunityChatLine
         -- is only valid during the dispatch of this event — pcall + fallback.
         if _G.C_Club and _G.C_Club.GetInfoFromLastCommunityChatLine then
-            local ok, messageInfo, clubId, streamId = pcall(_G.C_Club.GetInfoFromLastCommunityChatLine)
+            local ok, messageInfo, clubId, streamId = ns.SafeCall("chain-next", _G.C_Club.GetInfoFromLastCommunityChatLine)
             if ok and type(messageInfo) == "table" and messageInfo.messageId then
                 local epoch = ("%.f"):format(messageInfo.messageId.epoch or 0)
                 local position = ("%.f"):format(messageInfo.messageId.position or 0)
@@ -1055,9 +1041,12 @@ end
 
 local function BuildSecretSenderLink(p)
     if not IsSecret(p.rawSender) then return nil end
-    if not IsSecret(p.text) and not (p.rawGuid or p.guid) then return nil end
+    local guid = p.rawGuid
+    local guidSecret = IsSecret(guid)
+    if not guidSecret and not guid then guid = p.guid end
+    if not IsSecret(p.text) and not guidSecret and not guid then return nil end
     local shown = string.format("[%s]", p.rawSender)
-    shown = ColorizeSenderName(p.rawGuid or p.guid, p.sender, shown)
+    shown = ColorizeSenderName(guid, p.sender, shown)
     return string.format("|Hplayer:%s|h%s|h", p.rawSender, shown)
 end
 
@@ -1073,14 +1062,14 @@ local function FormatNormalLine(event, typeKey, p)
 
     -- VOICE_TEXT honors the speech-to-text CVar like Blizzard.
     if typeKey == "VOICE_TEXT" and _G.GetCVarBool then
-        local ok, enabled = pcall(_G.GetCVarBool, "speechToText")
+        local ok, enabled = ns.SafeCall("chain-next", _G.GetCVarBool, "speechToText")
         if ok and not enabled then return nil end
     end
 
     -- Censored lines render the censored-link body verbatim (lineID is
     -- NeverSecret; the placeholder text arrives pre-built in arg1).
     if type(p.lineID) == "number" and _G.C_ChatInfo and _G.C_ChatInfo.IsChatLineCensored then
-        local ok, censored = pcall(_G.C_ChatInfo.IsChatLineCensored, p.lineID)
+        local ok, censored = ns.SafeCall("chain-next", _G.C_ChatInfo.IsChatLineCensored, p.lineID)
         if ok and censored then return text end
     end
 
@@ -1108,7 +1097,7 @@ local function FormatNormalLine(event, typeKey, p)
     -- Blizzard's empty-name format below.
     if showLink and sender == "" and typeKey ~= "TEXT_EMOTE" then
         local secretLink = BuildSecretSenderLink(p)
-        if secretLink then
+        if IsSecret(secretLink) or secretLink then
             local linkWithFlag = string.format("%s%s", pflag, secretLink)
             local fmt = OutFormat(typeKey)
             if usingDifferentLanguage then
@@ -1321,7 +1310,7 @@ local function FormatSpecialLine(event, typeKey, kind, p)
         if (text == "FRIEND_ONLINE" or text == "FRIEND_OFFLINE")
             and type(p.bnID) == "number"
             and _G.C_BattleNet and _G.C_BattleNet.GetAccountInfoByID then
-            local okA, info = pcall(_G.C_BattleNet.GetAccountInfoByID, p.bnID)
+            local okA, info = ns.SafeCall("chain-next", _G.C_BattleNet.GetAccountInfoByID, p.bnID)
             local game = okA and type(info) == "table"
                 and type(info.gameAccountInfo) == "table" and info.gameAccountInfo or nil
             local charName = game and game.characterName
@@ -1411,7 +1400,8 @@ function Format.WrapSecretEventLine(event, p)
         elseif IsSecret(p.rawSender) then
             link = BuildSecretSenderLink(p)
         end
-        if link then
+        local linkSecret = IsSecret(link)
+        if linkSecret or link then
             prefix = string.format(OutFormat(typeKey), string.format("%s%s", pflag, link))
         elseif TYPE_PREFIX[typeKey] then
             prefix = TYPE_PREFIX[typeKey]
@@ -1419,12 +1409,16 @@ function Format.WrapSecretEventLine(event, p)
         if HasChannelContext(p, typeKey) then
             local deco = ChannelDecoration(p)
             if deco ~= "" then
-                prefix = prefix and string.format("%s%s", deco, prefix) or deco
+                if IsSecret(prefix) or prefix then
+                    prefix = string.format("%s%s", deco, prefix)
+                else
+                    prefix = deco
+                end
             end
         end
     end
 
-    if not prefix then return text end
+    if not IsSecret(prefix) and not prefix then return text end
     return string.format("%s%s", prefix, text)
 end
 
@@ -1437,5 +1431,8 @@ function Format.BuildEventLineFromArgs(event, ...)
         return Format.WrapSecretEventLine(event, p), p, true
     end
     if type(text) ~= "string" or text == "" then return nil, p, false end
-    return Format.BuildEventLine(event, p), p, false
+    -- @secret-policy: line-secrecy-follows-any-secret-part
+    local line = Format.BuildEventLine(event, p)
+    if IsSecret(line) then return line, p, true end
+    return line, p, false
 end

@@ -899,7 +899,7 @@ local function GetEnchantText(unit, slotId)
     local itemLink = GetReadableInventoryItemLink(unit, slotId)
     if not itemLink then return nil, nil end  -- No item
 
-    local isEnchantable = CanItemUsePermanentEnchant(itemLink, slotId)
+    local isEnchantable = CanItemUsePermanentEnchant(itemLink)
 
     local tooltipData = GetInventoryTooltipData(unit, slotId)
     if tooltipData then

@@ -40,6 +40,12 @@ local function DebugIsSecretValue(value)
     return false
 end
 
+local function SecureFieldInfo(tbl, field)
+    local secure, taint = issecurevariable(tbl, field)
+    if secure then return "|cff34D399secure|r" end
+    return "|cffff5555tainted:" .. tostring(taint or "?") .. "|r"
+end
+
 local function EventTraceCooldownInfoField(info, key)
     if Resolvers and Resolvers.GetCooldownInfoField then
         return Resolvers.GetCooldownInfoField(info, key)
@@ -1730,7 +1736,7 @@ local function CDMGCDPrintWatchSample(elapsed, needle, targetID)
                 local cd = icon.Cooldown
 
                 print(string.format(
-                    "|cff34d399[cdmgcd]|r +%.2f #%d sid=%s active=%s onGCD=%s usable=%s resourceBlocked=%s gcdDur=%s realDur=%s mode=%s showingGCD=%s draw=%s intended=%s shown=%s",
+                    "|cff34d399[cdmgcd]|r +%.2f #%d sid=%s active=%s onGCD=%s usable=%s resourceBlocked=%s gcdDur=%s realDur=%s mode=%s showingGCD=%s draw=%s intended=%s shown=%s cdDur=%s cdShown=%s setErr=%s",
                     elapsed,
                     matches,
                     CDMGCDValue(sid),
@@ -1744,7 +1750,10 @@ local function CDMGCDPrintWatchSample(elapsed, needle, targetID)
                     tostring(icon._showingGCDSwipe),
                     CDMGCDCall(cd, "GetDrawSwipe"),
                     tostring(cd and cd._quiIntendedDrawSwipe),
-                    CDMGCDCall(icon, "IsShown")))
+                    CDMGCDCall(icon, "IsShown"),
+                    CDMGCDCall(cd, "GetCooldownDuration"),
+                    CDMGCDCall(cd, "IsShown"),
+                    tostring(ns.CDMRenderers and ns.CDMRenderers._lastCooldownSetError)))
             end
         end
     end
@@ -1909,6 +1918,18 @@ local function RunCDMDebugGCD(msg)
                     CDMGCDCall(cd, "GetDrawEdge"),
                     tostring(cd and cd._quiIntendedDrawEdge),
                     CDMGCDValue(cd and cd._quiIntendedSwipeColor)))
+                local setErr = ns.CDMRenderers and ns.CDMRenderers._lastCooldownSetError
+                if setErr ~= nil then
+                    print("|cffff5555[cdmgcd]|r SetCooldownFromDurationObject threw: " .. tostring(setErr))
+                end
+                print(string.format(
+                    "|cff34d399[cdmgcd]|r widget dur=%s shown=%s alpha=%s w=%s cdLevel=%s iconLevel=%s",
+                    CDMGCDCall(cd, "GetCooldownDuration"),
+                    CDMGCDCall(cd, "IsShown"),
+                    CDMGCDCall(cd, "GetEffectiveAlpha"),
+                    CDMGCDCall(cd, "GetWidth"),
+                    CDMGCDCall(cd, "GetFrameLevel"),
+                    CDMGCDCall(icon, "GetFrameLevel")))
             end
         end
     end
@@ -2404,11 +2425,7 @@ end
 local function RunCDMDebugMint()
     local P = "|cff34D399[CDM-Mint]|r"
 
-    local function secinfo(tbl, field)
-        local secure, taint = issecurevariable(tbl, field)
-        if secure then return "|cff34D399secure|r" end
-        return "|cffff5555tainted:" .. tostring(taint or "?") .. "|r"
-    end
+    local secinfo = SecureFieldInfo
 
     local settings = _G.CooldownViewerSettings
     local provider = settings and settings.GetDataProvider and settings:GetDataProvider()
@@ -3538,11 +3555,11 @@ local function RunCDMDebugBuff()
         print(string.format("%s lastPass: seq=%s age=%s early=%s mode=%s filterInactive=%s editing=%s auraProbe=%s",
             P, tostring(diag.seq), age, tostring(diag.earlyReturn), tostring(diag.displayMode),
             tostring(diag.filterInactive), tostring(diag.editing), tostring(diag.auraProbe)))
-        print(string.format("%s   curated=%s matched=%s frameless=%s nativeClaimed=%s staleNative=%s fallbackLive=%s minted=%s mintFailed=%s planNil=%s positioned=%s",
+        print(string.format("%s   curated=%s matched=%s frameless=%s nativeClaimed=%s staleNative=%s hiddenPreview=%s fallbackLive=%s minted=%s mintFailed=%s planNil=%s positioned=%s",
             P, tostring(diag.curated), tostring(diag.matched), tostring(diag.frameless),
-            tostring(diag.nativeClaimed), tostring(diag.staleNative), tostring(diag.fallbackLive),
-            tostring(diag.minted), tostring(diag.mintFailed), tostring(diag.planNil),
-            tostring(diag.positioned)))
+            tostring(diag.nativeClaimed), tostring(diag.staleNative), tostring(diag.hiddenPreview),
+            tostring(diag.fallbackLive), tostring(diag.minted), tostring(diag.mintFailed),
+            tostring(diag.planNil), tostring(diag.positioned)))
     end
 
     -- 2) Native BuffIcon viewer + per-item state (the Blizzard-truth leg).
@@ -3596,6 +3613,208 @@ local function RunCDMDebugBuff()
     end
 end
 
+local BORROW_VIEWER_GLOBALS = {
+    essential = "EssentialCooldownViewer",
+    utility   = "UtilityCooldownViewer",
+    buff      = "BuffIconCooldownViewer",
+}
+
+local borrowedNativeItem = nil
+
+local function BorrowReleaseCurrent()
+    local state = borrowedNativeItem
+    borrowedNativeItem = nil
+    if not state then return false end
+    local item, pool = state.item, state.pool
+    if item then
+        ns.SafeCallMethodIfPresent("compat", item, "ClearCooldownID")
+        ns.SafeCallMethodIfPresent("best-effort-style", item, "Hide")
+    end
+    if pool and pool.Release and item then
+        ns.SafeCall("compat", pool.Release, pool, item)
+    end
+    return true
+end
+
+local function BorrowResolveCooldownID(spellID, containerKey)
+    local Index = ns.CDMIndex
+    if not Index then return nil end
+    local rec
+    if Index.GetOrderedForContainer then
+        rec = Index.GetOrderedForContainer(containerKey, spellID)
+    end
+    if not rec and Index.GetOrdered then rec = Index.GetOrdered(spellID) end
+    if not rec and Index.Get then rec = Index.Get(spellID) end
+    return rec and rec.cooldownID or nil
+end
+
+local function BorrowReadable(fn, owner)
+    if type(fn) ~= "function" then return "no-method" end
+    local ok, value = pcall(fn, owner)
+    if not ok then return "ERR" end
+    if DebugIsSecretValue(value) then return "|cff34D399SECRET|r" end
+    return tostring(value)
+end
+
+local function BorrowDescribeItem(P, label, item)
+    if not item then
+        print(string.format("%s %s: |cffffaa00absent|r", P, label))
+        return
+    end
+    local cd = item.Cooldown
+    if not cd and item.GetCooldownFrame then
+        local okFrame, frame = ns.SafeCallMethod("compat", item, "GetCooldownFrame")
+        if okFrame then cd = frame end
+    end
+    print(string.format("%s %s: cooldownID=%s active=%s shown=%s alpha=%s",
+        P, label,
+        BorrowReadable(item.GetCooldownID, item),
+        BorrowReadable(item.IsActive, item),
+        BorrowReadable(item.IsShown, item),
+        BorrowReadable(item.GetAlpha, item)))
+    print(string.format("%s   taint: cooldownID=%s cooldownInfo=%s isActive=%s",
+        P,
+        SecureFieldInfo(item, "cooldownID"),
+        SecureFieldInfo(item, "cooldownInfo"),
+        SecureFieldInfo(item, "isActive")))
+    if cd then
+        print(string.format("%s   cooldown: duration=%s drawSwipe=%s paused=%s",
+            P,
+            BorrowReadable(cd.GetCooldownDuration, cd),
+            BorrowReadable(cd.GetDrawSwipe, cd),
+            BorrowReadable(cd.IsPaused, cd)))
+    else
+        print(string.format("%s   cooldown: |cffffaa00no cooldown frame|r", P))
+    end
+end
+
+local function BorrowFindNativeItem(cooldownID)
+    for _, globalName in pairs(BORROW_VIEWER_GLOBALS) do
+        local viewer = _G[globalName]
+        local pool = viewer and viewer.itemFramePool
+        if pool and pool.EnumerateActive then
+            for item in pool:EnumerateActive() do
+                local ok, id = pcall(item.GetCooldownID, item)
+                if ok and not DebugIsSecretValue(id) and id == cooldownID then
+                    return item
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function BorrowReport(P)
+    local state = borrowedNativeItem
+    if not state then
+        print(P .. " nothing borrowed. /cdmdebug borrow <spellID|name> [essential|utility|buff]")
+        return
+    end
+    print(string.format("%s target spellID=%s cooldownID=%s viewer=%s combat=%s",
+        P, tostring(state.spellID), tostring(state.cooldownID),
+        state.containerKey, tostring(InCombatLockdown())))
+    print(string.format("%s SetCooldownID: secure=%s raw=%s",
+        P, tostring(state.secureResult), tostring(state.rawResult)))
+    if state.setError then
+        print(string.format("%s   last error: |cffff5555%s|r", P, tostring(state.setError)))
+    end
+    BorrowDescribeItem(P, "borrowed", state.item)
+    local native = BorrowFindNativeItem(state.cooldownID)
+    if native ~= state.item then
+        BorrowDescribeItem(P, "native ref", native)
+    end
+    print(P .. " VERDICT: borrowed duration SECRET (or numeric > 0) = Blizzard is driving it.")
+    print(P .. "          duration=0 and no error = SetCooldownID did not take.")
+end
+
+local function RunCDMDebugBorrow(msg)
+    local P = "|cff34D399[CDM-Borrow]|r"
+    local text = TrimText(msg)
+    local sub = text:lower()
+
+    if sub == "off" or sub == "release" then
+        print(P .. (BorrowReleaseCurrent() and " released." or " nothing to release."))
+        return
+    end
+    if sub == "" or sub == "report" then
+        BorrowReport(P)
+        return
+    end
+
+    local target, containerKey = text:match("^(.-)%s+(%a+)$")
+    if not target or not BORROW_VIEWER_GLOBALS[containerKey:lower()] then
+        target, containerKey = text, "utility"
+    end
+    containerKey = containerKey:lower()
+
+    local spellID = FindDebugTargetID(target)
+    if not spellID then
+        print(P .. " no spellID found for '" .. tostring(target) .. "'")
+        return
+    end
+    local cooldownID = BorrowResolveCooldownID(spellID, containerKey)
+    if not cooldownID then
+        print(P .. " no cooldownID in CDMIndex for spellID " .. tostring(spellID))
+        return
+    end
+
+    local viewer = _G[BORROW_VIEWER_GLOBALS[containerKey]]
+    local pool = viewer and viewer.itemFramePool
+    if not (pool and pool.Acquire) then
+        print(P .. " " .. containerKey .. " viewer has no itemFramePool")
+        return
+    end
+
+    BorrowReleaseCurrent()
+
+    local okAcquire, item = pcall(pool.Acquire, pool)
+    if not okAcquire or not item then
+        print(P .. " pool:Acquire failed: " .. tostring(item))
+        return
+    end
+
+    ns.SafeCallMethodIfPresent("compat", viewer, "OnAcquireItemFrame", item)
+    item.layoutIndex = nil
+    ns.SafeCallMethodIfPresent("compat", item, "SetHideWhenInactive", false)
+    ns.SafeCallMethodIfPresent("compat", item, "SetTimerShown", true)
+    ns.SafeCallMethodIfPresent("compat", item, "SetIsEditing", false)
+
+    local secureResult, rawResult, setError = "skipped", "skipped", nil
+    if securecallfunction then
+        local okSecure, err = pcall(securecallfunction, item.SetCooldownID, item, cooldownID, true)
+        secureResult = okSecure and "ok" or "threw"
+        if not okSecure then setError = err end
+    end
+    if secureResult ~= "ok" then
+        local okRaw, err = pcall(item.SetCooldownID, item, cooldownID, true)
+        rawResult = okRaw and "ok" or "threw"
+        if not okRaw then setError = err end
+    end
+
+    ns.SafeCallMethodIfPresent("best-effort-style", item, "SetParent", UIParent)
+    ns.SafeCallMethodIfPresent("best-effort-style", item, "ClearAllPoints")
+    ns.SafeCallMethodIfPresent("best-effort-style", item, "SetPoint",
+        "CENTER", UIParent, "CENTER", 0, -160)
+    ns.SafeCallMethodIfPresent("best-effort-style", item, "SetScale", 2)
+    ns.SafeCallMethodIfPresent("best-effort-style", item, "Show")
+
+    borrowedNativeItem = {
+        item = item,
+        pool = pool,
+        viewer = viewer,
+        containerKey = containerKey,
+        spellID = spellID,
+        cooldownID = cooldownID,
+        secureResult = secureResult,
+        rawResult = rawResult,
+        setError = setError,
+    }
+
+    print(P .. " parked at screen centre, 0,-160. Pull a dummy, then /cdmdebug borrow report")
+    print(P .. " if the CooldownViewer error spam returns, /cdmdebug borrow off then /reload")
+    BorrowReport(P)
+end
+
 local function PrintCDMDebugHelp()
     print("|cff34D399[CDM-Debug]|r commands:")
     print("  /cdmdebug status                         -> command help + flag state")
@@ -3605,6 +3824,7 @@ local function PrintCDMDebugHelp()
     print("  /cdmdebug profile [status|clean]          -> CDM profile tools")
     print("  /cdmdebug probe                           -> resolver parity sweep")
     print("  /cdmdebug mint                            -> native mint/provider taint verdict")
+    print("  /cdmdebug borrow <spell> [container]      -> borrow a spare native item frame; off|report")
     print("  /cdmdebug buff                            -> reanchor BuffIcon pipeline dump")
     print("  direct flag shorthand: /cdmdebug icon on, /cdmdebug taint Sync, /cdmdebug off")
     ListDebugFlags()
@@ -3633,6 +3853,8 @@ local function RunCDMDebugCommand(msg)
         RunCDMDebugProbe()
     elseif lower == "mint" then
         RunCDMDebugMint()
+    elseif lower == "borrow" then
+        RunCDMDebugBorrow(rest)
     elseif lower == "buff" then
         RunCDMDebugBuff()
     else

@@ -16,7 +16,7 @@ local metricTargets = {}
 
 local function IsQUIAddon(name)
     return name == PRIMARY_ADDON_NAME
-        or (type(name) == "string" and name:sub(1, 4) == "QUI_")
+        or (type(name) == "string" and name:sub(1, #"QUI_") == "QUI_")
 end
 
 local function RebuildMetricTargets()
@@ -176,21 +176,12 @@ function QUI_PerfMonitor.GetCPUAPITier()
     return cpuAPITier
 end
 
--- ─── Module Profiler ─────────────────────────────────────────────────────────
---
--- Wraps `SetScript("OnEvent"|"OnUpdate")` handlers on registered module frames
--- with debugprofilestart/debugprofilestop timing. Lets us measure per-module
--- CPU cost within QUI without scriptProfile CVar or external tooling.
---
--- Modules opt in by pushing (name, frame, scriptType) onto `ns.QUI_PerfRegistry`
--- at file-load time. PerfMonitor drains the registry at bootstrap. The overhead
--- is zero when the profiler is disabled — the original handler runs untouched.
--- When enabled, each dispatch adds two debugprofile calls + a table-index add.
+local securecall = securecallfunction or function(fn, ...) return fn(...) end
 
 local function MakeWrappedHandler(name, orig)
     return function(...)
         debugprofilestart_fn()
-        orig(...)
+        securecall(orig, ...)
         local ms = debugprofilestop_fn()
         local s = moduleStats[name]
         if not s then
@@ -321,7 +312,7 @@ local function StartEventSniffer()
     local allow = ns.QUI_EventAllowlist
     if allow and #allow > 0 then
         for i = 1, #allow do
-            pcall(eventSniffer.RegisterEvent, eventSniffer, allow[i])
+            ns.SafeCallMethod("best-effort-style", eventSniffer, "RegisterEvent", allow[i])
         end
     else
         eventSniffer:RegisterAllEvents()
@@ -436,8 +427,7 @@ local function PushHistory(history, value)
 end
 
 local function Sample()
-    -- Memory
-    pcall(UpdateAddOnMemoryUsage)
+    ns.SafeCall("best-effort-style", UpdateAddOnMemoryUsage)
     local mem = SumAddonMemoryUsage()
     if mem then
         currentMem = mem
@@ -457,7 +447,7 @@ local function Sample()
             currentCPUPct = (val / frameTimeMs) * 100
         end
     elseif cpuAPITier == "scriptProfile" then
-        pcall(UpdateAddOnCPUUsage)
+        ns.SafeCall("best-effort-style", UpdateAddOnCPUUsage)
         local val = SumScriptCPUUsage()
         if val then
             local now = GetTime()

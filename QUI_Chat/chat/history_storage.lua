@@ -682,17 +682,6 @@ function Storage.GetCount()
     return refreshCount(getSV())
 end
 
-function Storage.GetEncodedSize()
-    local sv = getSV()
-    local size = 0
-    for _, chunk in ipairs(sv.chunks) do
-        if type(chunk.data) == "string" then
-            size = size + #chunk.data
-        end
-    end
-    return size
-end
-
 function Storage.GetChunkCount()
     local sv = getSV()
     return #sv.chunks

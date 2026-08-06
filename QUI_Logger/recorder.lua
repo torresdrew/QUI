@@ -1,7 +1,4 @@
--- QUI_Logger/recorder.lua
--- Dev-only event recorder. Pure funcs are unit-tested; live wiring runs
--- only when WoW globals exist (guarded), so this file loads under plain lua.
--- luacheck: globals QUI_LoggerDB SLASH_QLOG1
+-- luacheck: globals QUI_LoggerDB SLASH_QUILOGGER1
 local addonName, ns = ...
 
 local DEFAULT_LIMITS = {
@@ -270,8 +267,8 @@ if type(CreateFrame) == "function" then
         record(event, ...)
     end)
 
-    SLASH_QLOG1 = "/qlog"
-    SlashCmdList["QLOG"] = function(msg)
+    SLASH_QUILOGGER1 = "/duilogger"
+    SlashCmdList["QUILOGGER"] = function(msg)
         msg = (msg or ""):lower():gsub("%s+", "")
         if msg == "clear" then
             ns.ClearDB(QUI_LoggerDB)

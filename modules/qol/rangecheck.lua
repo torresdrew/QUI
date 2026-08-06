@@ -116,7 +116,7 @@ end
 
 local function GetTargetRange()
     if RangeLib and RangeLib.GetRange then
-        local ok, minRange, maxRange = pcall(RangeLib.GetRange, RangeLib, "target")
+        local ok, minRange, maxRange = ns.SafeCallMethod("chain-next", RangeLib, "GetRange", "target")
         if ok and (minRange or maxRange) then
             return minRange, maxRange
         end

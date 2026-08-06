@@ -438,10 +438,10 @@ end
 local function ExtractURLFromLink(link)
     if type(link) ~= "string" then return nil end
 
-    local url = link:match("^addon:quaziiuichat:url:(.*)")
+    local url = link:match("^addon:quichat:url:(.*)")
     if url then return url end
 
-    local legacy = link:match("^addon:quaziiuichat:(.*)")
+    local legacy = link:match("^addon:quichat:(.*)")
     if legacy
         and not legacy:find("^waypoint:")
         and not legacy:find("^player:") then

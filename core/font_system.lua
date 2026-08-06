@@ -196,9 +196,9 @@ end
 -- (JustifyHorizontal/Vertical enums), so the getter result feeds the setter.
 local function SetChatFontObject(chatFrame, fontObject, justifyH, justifyV)
     if not (chatFrame and chatFrame.SetFontObject and fontObject) then return false end
-    if not pcall(chatFrame.SetFontObject, chatFrame, fontObject) then return false end
-    if justifyH and chatFrame.SetJustifyH then pcall(chatFrame.SetJustifyH, chatFrame, justifyH) end
-    if justifyV and chatFrame.SetJustifyV then pcall(chatFrame.SetJustifyV, chatFrame, justifyV) end
+    if not ns.SafeCallMethod("best-effort-style", chatFrame, "SetFontObject", fontObject) then return false end
+    if justifyH and chatFrame.SetJustifyH then ns.SafeCallMethod("best-effort-style", chatFrame, "SetJustifyH", justifyH) end
+    if justifyV and chatFrame.SetJustifyV then ns.SafeCallMethod("best-effort-style", chatFrame, "SetJustifyV", justifyV) end
     return true
 end
 
@@ -243,7 +243,7 @@ function QUICore:ApplyGlobalFontToChatFrames(fontPath, shouldApply)
                         -- SetFont leaves justify alone, but a prior SetFontObject
                         -- may have re-based it — restore the captured justification.
                         if original.justifyH and chatFrame.SetJustifyH then
-                            pcall(chatFrame.SetJustifyH, chatFrame, original.justifyH)
+                            ns.SafeCallMethod("best-effort-style", chatFrame, "SetJustifyH", original.justifyH)
                         end
                         originalChatFonts[chatFrame] = nil
                     end

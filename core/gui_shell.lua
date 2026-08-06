@@ -328,6 +328,7 @@ end
 local function ShellShow()
     if QUI and type(QUI.EnsureOptionsLoaded) == "function" then
         local ok = QUI:EnsureOptionsLoaded()
+        ---@type fun(...): ... -- GUI.Show is swapped in by the LoD Options addon
         local show = GUI.Show
         if ok and type(show) == "function" and show ~= ShellShow then
             return show(GUI)

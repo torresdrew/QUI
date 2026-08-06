@@ -33,6 +33,10 @@ local GetSettings = Helpers.CreateDBGetter("bags")
 
 local SEARCH_DIM = 0.3
 
+function ItemButtons.SetSearchDim(button, searchResult)
+    button:SetAlpha(searchResult == false and SEARCH_DIM or 1)
+end
+
 local function GetQualityColor(quality)
     -- 12.0 modern path: ColorManager wraps quality colors (incl. user
     -- accessibility overrides); the ITEM_QUALITY_COLORS global still exists
@@ -283,7 +287,7 @@ function ItemButtons.DressCached(button, entry, searchResult)
         ItemButtons.SetUnusableTint(button, false)
         if Bags.CornerWidgets then Bags.CornerWidgets.Apply(button, nil, appearance) end
     end
-    button:SetAlpha(searchResult == false and SEARCH_DIM or 1)
+    ItemButtons.SetSearchDim(button, searchResult)
 end
 
 ---------------------------------------------------------------------------
@@ -412,7 +416,7 @@ function ItemButtons.DressGuildLive(button, tab, slot, entry, searchResult)
         ItemButtons.SetUnusableTint(button, false)
         if Bags.CornerWidgets then Bags.CornerWidgets.Apply(button, nil, appearance) end
     end
-    button:SetAlpha(searchResult == false and SEARCH_DIM or 1)
+    ItemButtons.SetSearchDim(button, searchResult)
 end
 
 --- True when any of the eight corner-widget slots selects the given widget id
@@ -475,7 +479,7 @@ function ItemButtons.Dress(button, entry, searchResult, newGuid)
         local upgradeTrack
         if WantsCornerWidget(appearance, "upgrade_track")
             and entry.link and C_Item and C_Item.GetItemUpgradeInfo then
-            local okU, u = pcall(C_Item.GetItemUpgradeInfo, entry.link)
+            local okU, u = ns.SafeCall("best-effort-style", C_Item.GetItemUpgradeInfo, entry.link)
             if okU and u and u.trackString and u.trackString ~= ""
                 and u.currentLevel and u.maxLevel then
                 -- first UTF-8 char of the localized track name + progression
@@ -552,11 +556,7 @@ function ItemButtons.Dress(button, entry, searchResult, newGuid)
         end
     end
     if button.UpgradeIcon then button.UpgradeIcon:Hide() end
-    if searchResult == false then
-        button:SetAlpha(SEARCH_DIM)
-    else
-        button:SetAlpha(1)
-    end
+    ItemButtons.SetSearchDim(button, searchResult)
 end
 
 ---------------------------------------------------------------------------

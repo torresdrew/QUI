@@ -485,6 +485,7 @@ M._FrameRegistryData = {
 			useRootHandle = true,
 			handles = { "SendMailFrame", "MailFrameInset" },
 			secureFrame = true,
+			reassertOnDrift = true,
 			defaultEnabled = true,
 		},
 		{
@@ -496,6 +497,7 @@ M._FrameRegistryData = {
 			useRootHandle = true,
 			handles = { "OpenMailSender", "OpenMailFrameInset" },
 			secureFrame = true,
+			reassertOnDrift = true,
 			defaultEnabled = true,
 		},
 		{

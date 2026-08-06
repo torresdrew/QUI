@@ -79,9 +79,8 @@ function IconSkin.ApplySkin(button, regions, skinName)
     end
 end
 
--- Built-in skins (presets only — surfaces decide which regions exist).
-IconSkin.RegisterSkin("Default", { border = true,  borderSize = 1, gloss = true,  glossAlpha = 0.5, backdropAlpha = 1,   pushed = "qui",      zoom = 0.08 })
-IconSkin.RegisterSkin("Flat",    { border = true,  borderSize = 1, gloss = false, glossAlpha = 0,   backdropAlpha = 1,   pushed = "qui",      zoom = 0.08 })
+IconSkin.RegisterSkin("Default", { border = true,  borderSize = 1, gloss = true,  glossAlpha = 0.5, backdropAlpha = 1,   pushed = "qui",   zoom = 0.08 })
+IconSkin.RegisterSkin("Flat",    { border = true,  borderSize = 1, gloss = false, glossAlpha = 0,   backdropAlpha = 1,   pushed = "qui",   zoom = 0.08 })
 IconSkin.RegisterSkin("Minimal", { border = true,  borderSize = 1, gloss = false, glossAlpha = 0,   backdropAlpha = 0,   pushed = "off",      zoom = 0.06 })
 IconSkin.RegisterSkin("Gloss",   { border = true,  borderSize = 1, gloss = true,  glossAlpha = 0.9, backdropAlpha = 1,   pushed = "blizzard", zoom = 0.08 })
 

@@ -22,8 +22,8 @@ local Helpers = ns.Helpers
 
 local GetSettings = Helpers.CreateDBGetter("general")
 
-local MACRO_NAME = "QUI Focus Marker"
-local MACRO_ICON = 132219 -- crossed swords
+local MACRO_NAME = "FocusMarker_DUI"
+local MACRO_ICON = 132219
 
 local button
 local pendingApply = false
@@ -64,7 +64,9 @@ local function FindMacroIndex()
     for i = 1, numAccount or 0 do
         if GetMacroInfo(i) == MACRO_NAME then return i end
     end
-    local base = MAX_ACCOUNT_MACROS or 120
+    local consts = Constants and Constants.MacroConsts
+    local base = consts and consts.MAX_ACCOUNT_MACROS
+    if type(base) ~= "number" then base = 120 end
     for i = base + 1, base + (numCharacter or 0) do
         if GetMacroInfo(i) == MACRO_NAME then return i end
     end

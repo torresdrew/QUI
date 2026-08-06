@@ -819,7 +819,7 @@ end
 local function SetVolume(volumeType, percent)
     local cvar = volumeCVars[volumeType] or volumeCVars.master
     percent = max(0, min(100, percent))
-    C_CVar.SetCVar(cvar, percent / 100)
+    C_CVar.SetCVar(cvar, tostring(percent / 100))
 end
 
 -- Check if sound is muted

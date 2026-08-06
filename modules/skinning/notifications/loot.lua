@@ -202,7 +202,7 @@ local function CreateLootSlot(parent, index)
     slot:SetScript("OnEnter", function(self)
         if self.slotIndex then
             GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-            local ok = pcall(GameTooltip.SetLootItem, GameTooltip, self.slotIndex)
+            local ok = ns.SafeCallMethod("best-effort-style", GameTooltip, "SetLootItem", self.slotIndex)
             if ok then
                 GameTooltip:Show()
             else
@@ -531,8 +531,7 @@ local function CreateRollFrame(index)
     frame:SetScript("OnEnter", function(self)
         if self.rollID then
             GameTooltip:SetOwner(self, "ANCHOR_BOTTOMRIGHT")
-            -- pcall guards against third-party tooltip hooks (e.g. Altoholic) that may error
-            local ok = pcall(GameTooltip.SetLootRollItem, GameTooltip, self.rollID)
+            local ok = ns.SafeCallMethod("best-effort-style", GameTooltip, "SetLootRollItem", self.rollID)
             if ok then
                 GameTooltip:Show()
             else
@@ -1409,12 +1408,6 @@ function Loot:HideLootPreview()
     lootPreviewActive = false
 end
 
--- Check if loot preview is active
-function Loot:IsLootPreviewActive()
-    return lootPreviewActive
-end
-
--- Preview test items (8 total to match MAX_ROLL_FRAMES)
 local PREVIEW_ROLL_ITEMS = {
     { texture = "Interface\\Icons\\INV_Sword_39", name = "Blade of Eternal Night", quality = 4, timer = 0.85 },
     { texture = "Interface\\Icons\\INV_Helmet_25", name = "Crown of the Fallen King", quality = 4, timer = 0.7 },
@@ -1551,15 +1544,7 @@ end
 
 local editModeActive = false
 
--- Toggle movers (edit mode) for repositioning frames
-function Loot:ToggleMovers()
-    if editModeActive then
-        self:DisableEditMode()
-    else
-        self:EnableEditMode()
-    end
-end
-local EDIT_BORDER_COLOR = { 0.2, 0.8, 0.8, 1 }  -- Cyan/teal to match QUI style
+local EDIT_BORDER_COLOR = { 0.2, 0.8, 0.8, 1 }
 local EDIT_BORDER_SIZE = 2
 
 -- Create border highlight around a frame (matching QUI player frame style)

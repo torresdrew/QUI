@@ -415,7 +415,7 @@ local function BuildAutomation(L, generalDB)
         if ns.RefreshFocusMarker then ns.RefreshFocusMarker() end
     end
     local fmEnableW = GUI:CreateFormCheckbox(s.frame, nil, "enabled", fm, RefreshFM,
-        { description = ns.L["One press sets your focus AND puts a raid marker on it (hostile living mouseover first, else your target). Keeps a character macro named 'QUI Focus Marker' in sync — drag it to a bar or keybind it. Updates apply out of combat."] })
+        { description = ns.L["One press sets your focus AND puts a raid marker on it (hostile living mouseover first, else your target). Keeps a character macro named 'FocusMarker_DUI' in sync — drag it to a bar or keybind it. Updates apply out of combat."] })
     local markerOptions = {
         { value = 1, text = ns.L["Star"] },
         { value = 2, text = ns.L["Circle"] },
@@ -433,7 +433,7 @@ local function BuildAutomation(L, generalDB)
     local fmMouseoverW = GUI:CreateFormCheckbox(s.frame, nil, "useMouseover", fm, RefreshFM,
         { description = ns.L["Prefer the hostile living unit under your mouse; fall back to your current target."] })
     local fmMacroW = GUI:CreateFormCheckbox(s.frame, nil, "writeMacro", fm, RefreshFM,
-        { description = ns.L["Create/update the 'QUI Focus Marker' character macro automatically."] })
+        { description = ns.L["Create/update the 'FocusMarker_DUI' character macro automatically."] })
     s.AddRow(row(s.frame, ns.L["Use Mouseover"], fmMouseoverW), row(s.frame, ns.L["Maintain Macro"], fmMacroW))
 
     -- HEALER MANA WATCHER
@@ -520,7 +520,7 @@ local function BuildAutomation(L, generalDB)
     if type(generalDB.tradeMailLog) ~= "table" then generalDB.tradeMailLog = {} end
     local tml = generalDB.tradeMailLog
     local tmlEnableW = GUI:CreateFormCheckbox(s.frame, nil, "enabled", tml, nil,
-        { description = ns.L["Keep an account-wide log of trades and mail (partner, gold, COD, attached items). View it with /quilog — item links stay clickable in chat."] })
+        { description = ns.L["Keep an account-wide log of trades and mail (partner, gold, COD, attached items). View it with /duilog — item links stay clickable in chat."] })
     local tmlTradesW = GUI:CreateFormCheckbox(s.frame, nil, "logTrades", tml, nil,
         { description = ns.L["Log player trades (both sides' items and gold, completed or cancelled)."] })
     s.AddRow(row(s.frame, ns.L["Trade & Mail Log"], tmlEnableW), row(s.frame, ns.L["Log Trades"], tmlTradesW))
@@ -791,29 +791,29 @@ local function BuildConsumableMacros(L, generalDB)
     local weaponOpts = ns.ConsumableMacros and ns.ConsumableMacros.WEAPON_OPTIONS or { { value = "none", text = ns.L["None"] } }
 
     local flaskW = GUI:CreateFormDropdown(s2.frame, nil, flaskOpts, "selectedFlask", cmDB, Refresh,
-        { description = ns.L["Flask family the QUI_Flask macro should prefer. The macro always picks the highest-quality variant in your bags."] })
+        { description = ns.L["Flask family the Flask_DUI macro should prefer. The macro always picks the highest-quality variant in your bags."] })
     local potW = GUI:CreateFormDropdown(s2.frame, nil, potionOpts, "selectedPotion", cmDB, Refresh,
-        { description = ns.L["Combat utility potion (e.g., stat/tempered potions) used by the QUI_Pot macro."] })
+        { description = ns.L["Combat utility potion (e.g., stat/tempered potions) used by the Pot_DUI macro."] })
     s2.AddRow(row(s2.frame, ns.L["Flask Type"], flaskW), row(s2.frame, ns.L["Potion Type"], potW))
 
     local healthW = GUI:CreateFormDropdown(s2.frame, nil, healthOpts, "selectedHealth", cmDB, Refresh,
-        { description = ns.L["Healing potion family used by the QUI_Health macro."] })
+        { description = ns.L["Healing potion family used by the Health_DUI macro."] })
     local hsW = GUI:CreateFormDropdown(s2.frame, nil, hsOpts, "selectedHealthstone", cmDB, Refresh,
-        { description = ns.L["Healthstone variant used by the QUI_Stone macro."] })
+        { description = ns.L["Healthstone variant used by the Stone_DUI macro."] })
     s2.AddRow(row(s2.frame, ns.L["Health Potion"], healthW), row(s2.frame, ns.L["Healthstone"], hsW))
 
     local augW = GUI:CreateFormDropdown(s2.frame, nil, augOpts, "selectedAugment", cmDB, Refresh,
-        { description = ns.L["Augment rune family used by the QUI_Rune macro."] })
+        { description = ns.L["Augment rune family used by the Rune_DUI macro."] })
     local vantusW = GUI:CreateFormDropdown(s2.frame, nil, vantusOpts, "selectedVantus", cmDB, Refresh,
-        { description = ns.L["Vantus rune the QUI_Vantus macro should use — useful for raid boss attempt buffs."] })
+        { description = ns.L["Vantus rune the Vantus_DUI macro should use — useful for raid boss attempt buffs."] })
     s2.AddRow(row(s2.frame, ns.L["Augment Rune"], augW), row(s2.frame, ns.L["Vantus Rune"], vantusW))
 
     local weaponW = GUI:CreateFormDropdown(s2.frame, nil, weaponOpts, "selectedWeapon", cmDB, Refresh,
-        { description = ns.L["Weapon oil, stone, or enchant consumable used by the QUI_Weapon macro."] })
+        { description = ns.L["Weapon oil, stone, or enchant consumable used by the Weapon_DUI macro."] })
     s2.AddRow(row(s2.frame, ns.L["Weapon Consumable"], weaponW))
     L.closeSection(s2)
 
-    L.intro(ns.L["Creates per-character macros: QUI_Flask, QUI_Pot, QUI_Health, QUI_Stone, QUI_Rune, QUI_Vantus, QUI_Weapon. Drag them to your action bars."])
+    L.intro(ns.L["Creates per-character macros: Flask_DUI, Pot_DUI, Health_DUI, Stone_DUI, Rune_DUI, Vantus_DUI, Weapon_DUI. Drag them to your action bars."])
 end
 
 local function BuildTargetDistance(L, db)
@@ -927,7 +927,7 @@ local function BuildQuiPanel(L, db)
                 if dbVal then LibDBIcon:Hide("QUI") else LibDBIcon:Show("QUI") end
             end
             if _G.QUI_RefreshMinimapButtonDrawer then _G.QUI_RefreshMinimapButtonDrawer() end
-        end, { description = ns.L["Hide the QUI minimap button. You can still open the options panel via /qui."] })
+        end, { description = ns.L["Hide the QUI minimap button. You can still open the options panel via /dui."] })
         s.AddRow(row(s.frame, ns.L["Hide QUI Minimap Icon"], hideW), row(s.frame, ns.L["QUI Panel Transparency"], alphaW))
     else
         s.AddRow(row(s.frame, ns.L["QUI Panel Transparency"], alphaW))

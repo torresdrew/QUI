@@ -359,11 +359,6 @@ function ns.QUI_PreyTrackerOptions.BuildPreyTrackerContent(content)
     L.finish()
 end
 
-function ns.QUI_PreyTrackerOptions.CreatePreyTrackerPage(parent)
-    local _, content = Shared.CreateScrollableContent(parent)
-    ns.QUI_PreyTrackerOptions.BuildPreyTrackerContent(content)
-end
-
 if Registry and Schema and RenderAdapters
     and type(Registry.RegisterFeature) == "function"
     and type(Schema.Feature) == "function"
