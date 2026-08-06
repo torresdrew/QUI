@@ -4,9 +4,8 @@ env.ADDON_NAME = ADDON_NAME
 env.ns = ns
 env.SetChunkEnv(1, env)
 
--- Local alias for _abCooldownStats (defined as a GLOBAL by actionbars_cooldowns.lua).
--- Assigned in SetupDebugInstrumentation at the bottom of this file; nil until QUI_Debug
--- activates instrumentation (debug gate).
+---@diagnostic disable: lowercase-global -- SetChunkEnv installs a setfenv
+
 local _abCooldownStats
 
 -- Re-apply empty-slot visibility across every standard bar using each bar's

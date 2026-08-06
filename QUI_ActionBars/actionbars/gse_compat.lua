@@ -1085,7 +1085,7 @@ local function DumpOverrideState()
     if count == 0 then
         out("  (no active overrides on QUI buttons)")
     end
-    out(string.format("  recent events: %d (/qui gse tail to view)", #DBG_RECENT))
+    out(string.format("  recent events: %d (/dui gse tail to view)", #DBG_RECENT))
 end
 
 local function TailDebugLog(n)

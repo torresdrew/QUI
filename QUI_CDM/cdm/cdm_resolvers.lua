@@ -67,6 +67,7 @@ local function publish(eventName, ...)
 
     for i = 1, n do snapshot[i] = list[i] end
     for i = 1, n do
+        ---@diagnostic disable-next-line: redundant-parameter
         xpcall(snapshot[i], geterrorhandler(), eventName, ...)
     end
 
@@ -198,7 +199,11 @@ _runtimeFrame:SetScript("OnEvent", function(_, evt, arg1, arg2, arg3, arg4, arg5
     -- consume; arg3/arg4/arg5 propagate to the trace only.
     local traceHook = ns.CDMRuntimeEventTraceHook
     if traceHook then
-        traceHook("runtime-pre", evt, arg1, arg2, arg3, arg4, arg5)
+        if securecallfunction then
+            securecallfunction(traceHook, "runtime-pre", evt, arg1, arg2, arg3, arg4, arg5)
+        else
+            traceHook("runtime-pre", evt, arg1, arg2, arg3, arg4, arg5)
+        end
     end
 
     if evt == "SPELL_UPDATE_COOLDOWN" then
@@ -414,9 +419,8 @@ local function SetupDebugInstrumentation()
     mp[#mp + 1] = { name = "CDM_auraProbeExpensiveMiss",  counter = true, fn = function() return resolverStats.auraProbeExpensiveMiss end }
     ns.QUI_PerfRegistry = ns.QUI_PerfRegistry or {}
     ns.QUI_PerfRegistry[#ns.QUI_PerfRegistry + 1] = { name = "CDM_RuntimeEvents", frame = _runtimeFrame }
-    markFn = ns.MemAuditProfilerMark
-    -- Expose the setter only while debug is active; call sites guard with
-    -- `if Resolvers.SetResolveCallerTag then` and skip the call entirely when nil.
+    markFn = ns.DebugIsolate and ns.DebugIsolate(ns.MemAuditProfilerMark)
+        or ns.MemAuditProfilerMark
     CDMResolvers.SetResolveCallerTag = function(tag)
         currentResolveCallerTag = tag
     end
@@ -1451,7 +1455,7 @@ local function ResolveItemDurationObjectForIcon(icon, entry)
     if itemSpellID then
         local cdInfo = QueryCooldown(itemSpellID)
         local cdInfoActive = cdInfo and IsCooldownInfoActive(cdInfo)
-        if cdInfoActive == true and GetCurrentIsOnGCD(cdInfo) ~= true then
+        if cdInfoActive ~= false and GetCurrentIsOnGCD(cdInfo) ~= true then
             local durObj = QueryDuration(itemSpellID)
             if durObj then
                 return durObj, "item-cooldown",
@@ -2113,12 +2117,7 @@ local function ResolveCooldownStateCore(context)
     do
         local cdInfo = gcdCdInfo or QueryCooldown(sid)
         local cdInfoActive = cdInfo and IsCooldownInfoActive(cdInfo)
-        if cdInfoActive == true then
-            -- isOnGCD only selects the swipe lane (real-CD vs GCD); the icon's
-            -- saturation is driven lag-free by the real-CD-only DurationObject
-            -- curve in cdm_icon_renderer.lua, so a cosmetic-moment isOnGCD read
-            -- here can at most pick the wrong swipe for a frame, never strand
-            -- the dark/bright state the user sees.
+        if cdInfoActive ~= false then
             local cdInfoOnGCD = GetCurrentIsOnGCD(cdInfo)
             local durObj = QueryDuration(sid)
             local renderLiveGCD = ShouldRenderLiveGCD(cdInfoOnGCD)

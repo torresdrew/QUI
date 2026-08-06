@@ -21,6 +21,11 @@
 -- 3) The runtime claim pass passes the container key to Hook and drives
 --    Reassert on every claimed frame.
 local ns = {}
+-- Task 45f: cdm_reanchor*.lua route discarded-result pcall guards through
+-- ns.SafeCall. Additive stub (T1d/T1e precedent) — bare pcall passthrough.
+ns.SafeCall = function(_policy, fn, ...) return pcall(fn, ...) end
+ns.SafeCallMethod = function(_policy, obj, name, ...) return pcall(function(...) return obj[name](obj, ...) end, ...) end
+ns.SafeCallMethodIfPresent = function(_policy, obj, name, ...) if obj == nil then return nil end local okP, m = pcall(function() return obj[name] end) if not okP then return false end if m == nil then return nil end return pcall(m, obj, ...) end
 local loadChunk = dofile("tests/helpers/load_cdm_consolidated_chunk.lua")
 loadChunk("QUI_CDM/cdm/cdm_reanchor.lua", "cdm_reanchor.lua")("QUI", ns)
 loadChunk("QUI_CDM/cdm/cdm_reanchor_wiring.lua", "cdm_reanchor_wiring.lua")("QUI", ns)
@@ -210,6 +215,11 @@ end
 -- 2) Aura-phase owner: key threading + proactive Reassert (real module).
 ---------------------------------------------------------------------------
 local ns2 = {}
+-- Task 45f: cdm_reanchor_auraphase.lua routes discarded-result pcall guards
+-- through ns.SafeCall. Additive stub (T1d/T1e precedent).
+ns2.SafeCall = function(_policy, fn, ...) return pcall(fn, ...) end
+ns2.SafeCallMethod = function(_policy, obj, name, ...) return pcall(function(...) return obj[name](obj, ...) end, ...) end
+ns2.SafeCallMethodIfPresent = function(_policy, obj, name, ...) if obj == nil then return nil end local okP, m = pcall(function() return obj[name] end) if not okP then return false end if m == nil then return nil end return pcall(m, obj, ...) end
 loadChunk("QUI_CDM/cdm/cdm_reanchor_auraphase.lua", "cdm_reanchor_auraphase.lua")("QUI", ns2)
 local AP = assert(ns2.CDMReanchorAuraPhase)
 

@@ -4,6 +4,8 @@ env.ADDON_NAME = ADDON_NAME
 env.ns = ns
 env.SetChunkEnv(1, env)
 
+---@diagnostic disable: lowercase-global -- SetChunkEnv installs a setfenv
+
 do
 
 local _abUsabilityStats -- debug counters; nil until QUI_Debug activates instrumentation
@@ -632,8 +634,8 @@ ComputeAutoFlyoutDirection = function(btn, isVertical)
     -- never compare a possibly-secret coordinate in Lua. Fall back to the
     -- closed-side default when the position can't be read.
     local rawX, rawY = btn:GetCenter()
-    local cx = Helpers.SafeToNumber(rawX)
-    local cy = Helpers.SafeToNumber(rawY)
+    local cx = Helpers.SafeNumberOrNil(rawX)
+    local cy = Helpers.SafeNumberOrNil(rawY)
     if isVertical then
         if cx then return cx > (GetScreenWidth() / 2) and "LEFT" or "RIGHT" end
         return "RIGHT"
@@ -682,7 +684,7 @@ ApplyFlyoutDirection = function(barKey)
             -- is always given a concrete value now, so the arrow can never get
             -- stuck on a stale direction when toggling AUTO <-> explicit.
             if btn.SetPopupDirection then btn:SetPopupDirection(effectiveDir) end
-            if btn.UpdateFlyout then pcall(btn.UpdateFlyout, btn) end
+            ns.SafeCallMethodIfPresent("best-effort-style", btn, "UpdateFlyout")
         end
     end
 end

@@ -625,9 +625,8 @@ local function TruncateName(name, maxLength)
     return string.sub(name, 1, i - 1)
 end
 
----------------------------------------------------------------------------
--- HELPER: Format health text based on display style
----------------------------------------------------------------------------
+QUI_UF.TruncateName = TruncateName
+
 local function FormatHealthText(hp, hpPct, style, divider, maxHp, hidePercentSymbol)
     style = style or "both"
     divider = divider or " | "
@@ -1583,18 +1582,6 @@ local function UpdateLeaderIcon(frame)
     end
 end
 
----------------------------------------------------------------------------
--- UPDATE: Classification Icon (elite/rare/boss dragon/skull indicator)
----------------------------------------------------------------------------
--- Classification → Blizzard atlas textures
--- Dragon for elite/rareelite, star for rare, skull for worldboss
-local CLASSIFICATION_DATA = {
-    worldboss = { atlas = "worldquest-icon-boss",        color = {1, 0.85, 0} },
-    elite     = { atlas = "nameplates-icon-elite-gold",  color = {1, 0.84, 0} },
-    rare      = { atlas = "nameplates-icon-elite-silver", color = {0.7, 0.7, 0.7} },
-    rareelite = { atlas = "nameplates-icon-elite-gold",  color = {1, 0.5, 0} },
-}
-
 local function UpdateClassificationIcon(frame)
     if not frame or not QUI_UF.GetFrameUnit(frame) or not frame.classificationIcon then return end
     local settings = GetUnitSettings(frame.unitKey)
@@ -1608,19 +1595,18 @@ local function UpdateClassificationIcon(frame)
         return
     end
 
-    local classification = UnitClassification(QUI_UF.GetFrameUnit(frame))
-    -- Boss-level mobs (skull, level -1) may return "normal" from UnitClassification
-    if not CLASSIFICATION_DATA[classification] then
-        local level = UnitLevel(QUI_UF.GetFrameUnit(frame))
-        if level and level == -1 then
-            classification = "worldboss"
-        end
+    local Classification = ns.Classification
+    if not Classification then
+        frame.classificationIcon:Hide()
+        return
     end
-    local data = CLASSIFICATION_DATA[classification]
 
-    if data then
-        frame.classificationIcon:SetAtlas(data.atlas)
-        frame.classificationIcon:SetVertexColor(data.color[1], data.color[2], data.color[3])
+    local unit = QUI_UF.GetFrameUnit(frame)
+    local atlas, r, g, b = Classification.Resolve(UnitClassification(unit), UnitLevel(unit))
+
+    if atlas then
+        frame.classificationIcon:SetAtlas(atlas)
+        frame.classificationIcon:SetVertexColor(r, g, b)
         frame.classificationIcon:Show()
     else
         frame.classificationIcon:Hide()
@@ -3288,7 +3274,7 @@ function QUI_UF:ShowPreview(unitKey)
 
                 -- Show classification icon preview (fake "elite" for boss frames)
                 if frame.classificationIcon and settings.classificationIcon and settings.classificationIcon.enabled then
-                    local data = CLASSIFICATION_DATA["elite"]
+                    local data = ns.Classification and ns.Classification.DATA["elite"]
                     if data then
                         frame.classificationIcon:SetAtlas(data.atlas)
                         frame.classificationIcon:SetVertexColor(data.color[1], data.color[2], data.color[3])
@@ -3479,7 +3465,7 @@ function QUI_UF:ShowPreview(unitKey)
 
     -- Show classification icon preview (fake "elite" for target/focus)
     if frame.classificationIcon and settings and settings.classificationIcon and settings.classificationIcon.enabled then
-        local data = CLASSIFICATION_DATA["elite"]
+        local data = ns.Classification and ns.Classification.DATA["elite"]
         if data then
             frame.classificationIcon:SetAtlas(data.atlas)
             frame.classificationIcon:SetVertexColor(data.color[1], data.color[2], data.color[3])
@@ -3849,7 +3835,7 @@ function QUI_UF:RefreshFrame(unitKey)
                     frame.classificationIcon:SetPoint(anchorInfo.point, frame, anchorInfo.point, ci.xOffset or -8, ci.yOffset or 0)
                     -- In preview mode, show fake "elite" icon; otherwise update from real unit
                     if self.previewMode[bossKey] then
-                        local data = CLASSIFICATION_DATA["elite"]
+                        local data = ns.Classification and ns.Classification.DATA["elite"]
                         if data then
                             frame.classificationIcon:SetAtlas(data.atlas)
                             frame.classificationIcon:SetVertexColor(data.color[1], data.color[2], data.color[3])

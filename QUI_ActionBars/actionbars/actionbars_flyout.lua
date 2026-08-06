@@ -4,7 +4,9 @@ env.ADDON_NAME = ADDON_NAME
 env.ns = ns
 env.SetChunkEnv(1, env)
 
-do -- spell flyout skinning
+---@diagnostic disable: lowercase-global -- SetChunkEnv installs a setfenv
+
+do
 
 spellFlyoutSkinHooked = false
 

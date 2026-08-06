@@ -146,6 +146,7 @@ local function BuildAuraEditorSection(tabContent, PAD, SECTION_GAP, y, settings,
     editorHost:SetPoint("TOPRIGHT", tabContent, "TOPRIGHT", -PAD, y)
     editorHost:SetHeight(1)
 
+    ---@type fun(...): ... -- replaced below by the caller-supplied handler
     local onLayoutChangedHandler = function() end
     local height = AurasEditor.RenderAuras(editorHost, auras, "*", RefreshBuffBorders, {
         capabilities = {
@@ -154,6 +155,7 @@ local function BuildAuraEditorSection(tabContent, PAD, SECTION_GAP, y, settings,
             fixedAuraType     = fixedAuraType,
             cancelEligible    = cancelEligible,
             allowSpecOverride = false,
+            roleGate          = false,
             defaultBucketFn   = defaultBucketFn,
             -- Buff borders always track the PLAYER's own buffs/debuffs —
             -- always assistable (Wave 4 Task 2c polarity hint).
@@ -193,7 +195,7 @@ local function BuildBuffDebuffTab(tabContent)
     local SECTION_GAP = 14
     local y = -10
 
-    GUI:SetSearchContext({
+    local buffDebuffContext = {
         tabIndex = 21,
         tabName = ns.L["Auras"],
         subTabIndex = 4,
@@ -202,7 +204,12 @@ local function BuildBuffDebuffTab(tabContent)
         subPageIndex = BUFF_DEBUFF_SUB_PAGE_INDEX,
         featureId = ACTION_BARS_BUFF_DEBUFF_FEATURE_ID,
         category = "frames",
-    })
+    }
+    local SearchRoute = ns.Settings and ns.Settings.SearchRoute
+    if SearchRoute and type(SearchRoute.Apply) == "function" then
+        SearchRoute.Apply(buffDebuffContext)
+    end
+    GUI:SetSearchContext(buffDebuffContext)
 
     -- Both return the frame they built PLUS the y offset it was built at (the
     -- caller may need that original offset later to recompute an absolute

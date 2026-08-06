@@ -4,6 +4,8 @@ env.ADDON_NAME = ADDON_NAME
 env.ns = ns
 env.SetChunkEnv(1, env)
 
+---@diagnostic disable: lowercase-global -- SetChunkEnv installs a setfenv
+
 local function CJKFont(fs, p, s, f)
     if ns.Helpers and ns.Helpers.ApplyFontWithFallback then
         ns.Helpers.ApplyFontWithFallback(fs, p, s, f)
@@ -426,7 +428,7 @@ SkinButton = function(button, settings)
     -- showFlash: "qui" = QUI texture, "blizzard" = original, "off"/false = hidden
     -- Backwards compat: true → "qui", false → "off"
     local flashMode = settings.showFlash
-    if flashMode == true then flashMode = "qui"
+    if flashMode == true or flashMode == "qui" then flashMode = "qui"
     elseif flashMode == false then flashMode = "off"
     end
 

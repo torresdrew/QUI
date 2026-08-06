@@ -165,7 +165,8 @@ end
 
 local function CreateSearchContext(tabKey, contextMode)
     local context = TAB_SEARCH_CONTEXTS[tabKey] or TAB_SEARCH_CONTEXTS.general
-    return {
+    local SearchRoute = ns.Settings and ns.Settings.SearchRoute
+    local searchContext = {
         tabIndex = 6,
         tabName = "Group Frames",
         subTabIndex = context.subTabIndex,
@@ -177,6 +178,10 @@ local function CreateSearchContext(tabKey, contextMode)
         category = "frames",
         surfaceTabKey = tabKey,
     }
+    if SearchRoute and type(SearchRoute.Apply) == "function" then
+        return SearchRoute.Apply(searchContext)
+    end
+    return searchContext
 end
 
 local DeepCopy = ns.Helpers.DeepCopy
@@ -2014,6 +2019,9 @@ local function EnsureDispelColors(dispel)
             Poison = { 0.0, 0.6, 0.0, 1 },
         }
     end
+    if ns.QUI_GroupFrameIconLayout and ns.QUI_GroupFrameIconLayout.SeedDispelColors then
+        ns.QUI_GroupFrameIconLayout.SeedDispelColors(dispel.colors)
+    end
 end
 
 local function RenderDispelOverlaySection(sectionHost, ctx)
@@ -2068,7 +2076,7 @@ local function RenderDispelOverlaySection(sectionHost, ctx)
         refresh()
         UpdateDispelRows()
     end, {
-        description = ns.L["Outline the frame border in the dispel type's color when a dispellable debuff or private-dispel marker is active on the unit."],
+        description = ns.L["Outline the frame border in the dispel type's color when a debuff you can dispel is active on the unit."],
     })
     local iconEnableCheckbox = gui:CreateFormCheckbox(dispelCard.frame, nil, "showIcon", dispel, function()
         refresh()
@@ -2826,7 +2834,7 @@ local function RenderAurasSection(sectionHost, ctx)
             forceSelectedIndex = forcedIndex,
             capabilities = {
                 elementTypes        = { filterStrip = true, tracked = true, missingRaidBuff = true },
-                trackedDisplayTypes = { icon = true, square = true, bar = true, healthTint = true },
+                trackedDisplayTypes = { icon = true, square = true, bar = true, healthTint = true, border = true },
                 cancelEligible      = false,
                 maxStripElements    = 4,   -- per-frame container cap: 40-man parse cost
                 allowSpecOverride   = true,
@@ -2993,6 +3001,10 @@ local AURAS_TAB_FEATURE = CreateMultiSectionTabFeature("groupFramesAurasTab", {
     { id = "targetedSpells", minHeight = 160, render = RenderTargetedSpellsSection },
 })
 
+local DISPEL_TAB_FEATURE = CreateMultiSectionTabFeature("groupFramesDispelTab", {
+    { id = "dispelOverlay", minHeight = 140, render = RenderDispelOverlaySection },
+})
+
 local function RenderFeatureTab(feature, host, contextMode)
     if not host then
         return false
@@ -3045,4 +3057,8 @@ end
 
 function GroupFramesSchema.RenderAurasTab(host, contextMode)
     return RenderFeatureTab(AURAS_TAB_FEATURE, host, contextMode)
+end
+
+function GroupFramesSchema.RenderDispelTab(host, contextMode)
+    return RenderFeatureTab(DISPEL_TAB_FEATURE, host, contextMode)
 end

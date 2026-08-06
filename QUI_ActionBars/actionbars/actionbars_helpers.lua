@@ -4,9 +4,7 @@ env.ADDON_NAME = ADDON_NAME
 env.ns = ns
 env.SetChunkEnv(1, env)
 
----------------------------------------------------------------------------
--- DB ACCESSORS
----------------------------------------------------------------------------
+---@diagnostic disable: lowercase-global -- SetChunkEnv installs a setfenv
 
 GetDB = Helpers.CreateDBGetter("actionBars")
 

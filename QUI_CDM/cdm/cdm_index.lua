@@ -513,13 +513,6 @@ function CDMIndex.GetOrderedForContainer(containerKey, spellID)
     return byCategory and byCategory[base] or nil
 end
 
--- Cheap "is this cooldown actually being rendered to the user right
--- now?" check used by overlay/binding decisions that should not act on
--- hidden cooldowns.
-function CDMIndex.IsRendered(spellID)
-    return CDMIndex.GetOrdered(spellID) ~= nil
-end
-
 function CDMIndex.GetOrderedByEquipSlot(equipSlot)
     if type(equipSlot) ~= "number" or issecretvalue(equipSlot) then return nil end
     BuildOrderedMaps()

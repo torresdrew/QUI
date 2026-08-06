@@ -414,6 +414,11 @@ function CDMIconFactory:AcquireIcon(parent, spellEntry, clickable)
         icon._isQUICDMIcon = true
         icon._lastStart = nil
         icon._lastDuration = nil
+        icon._lastDurObjKey = nil
+        icon._lastDurObj = nil
+        icon._lastResolvedMode = nil
+        icon._lastResolvedSourceID = nil
+        icon._lastResolvedSpellID = nil
         icon._showingGCDSwipe = nil
         icon._showingRealCooldownSwipe = nil
         icon._wasShowingGCDSwipe = nil
@@ -514,6 +519,11 @@ function CDMIconFactory:ReleaseIcon(icon)
     icon._desaturateIgnoreAura = nil
     icon._lastStart = nil
     icon._lastDuration = nil
+    icon._lastDurObjKey = nil
+    icon._lastDurObj = nil
+    icon._lastResolvedMode = nil
+    icon._lastResolvedSourceID = nil
+    icon._lastResolvedSpellID = nil
     icon._showingGCDSwipe = nil
     icon._showingRealCooldownSwipe = nil
     icon._wasShowingGCDSwipe = nil

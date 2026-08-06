@@ -21,9 +21,9 @@
 -- TEMP WEAPON ENCHANTS render inside the buff container itself (PTR4
 -- AddItemEnchantment, placement=BeforeAuraGroups): the engine owns their
 -- frames, updates and flow position — no addon events, no lead-in offset.
--- Known gap: the engine click-cancel path is auraInstanceID-only and
--- no-ops for enchants, so right-click cancel of a temp enchant is
--- unavailable until Blizzard wires their own enchant-cancel TODO.
+-- 68824 wired native click-to-cancel parity for enchant frames:
+-- AuraSkin.ConfigureEnchantments re-asserts SetCancelAuraButtons on the
+-- registry-tracked enchant frames every pass, so right-click cancel works.
 
 local _, ns = ...
 local Helpers = ns.Helpers
@@ -326,9 +326,7 @@ end
 local function RemoveFromManagedContainer(frame)
     if not frame then return nil end
     local currentParent = frame.GetParent and frame:GetParent() or nil
-    if currentParent and currentParent.RemoveManagedFrame then
-        pcall(currentParent.RemoveManagedFrame, currentParent, frame)
-    end
+    ns.SafeCallMethodIfPresent("best-effort-style", currentParent, "RemoveManagedFrame", frame)
     frame.ignoreFramePositionManager = true
     return currentParent
 end
@@ -348,11 +346,11 @@ local function BanishBlizzardFrame(frame)
     RemoveFromManagedContainer(frame)
 
     local hiddenParent = EnsureBlizzardBanishParent()
-    if frame.SetParent and frame:GetParent() ~= hiddenParent then
-        pcall(frame.SetParent, frame, hiddenParent)
-    end
-    if frame.SetAlpha then pcall(frame.SetAlpha, frame, 0) end
-    if frame.EnableMouse then pcall(frame.EnableMouse, frame, false) end
+    ns.SafeCall("best-effort-style", function()
+        if frame:GetParent() ~= hiddenParent then frame:SetParent(hiddenParent) end
+    end)
+    ns.SafeCallMethodIfPresent("best-effort-style", frame, "SetAlpha", 0)
+    ns.SafeCallMethodIfPresent("best-effort-style", frame, "EnableMouse", false)
     SetDescendantMouse(frame, false)
 
     state.banished = true
@@ -371,18 +369,18 @@ local function RestoreBlizzardFrame(frame)
     end
 
     local parent = state and state.originalParent or UIParent
-    if frame.SetParent and parent then
-        pcall(frame.SetParent, frame, parent)
+    if parent then
+        ns.SafeCallMethodIfPresent("best-effort-style", frame, "SetParent", parent)
     end
 
     local alpha = (state and state.originalAlpha ~= nil) and state.originalAlpha or 1
-    if frame.SetAlpha then pcall(frame.SetAlpha, frame, alpha) end
+    ns.SafeCallMethodIfPresent("best-effort-style", frame, "SetAlpha", alpha)
 
     local mouse = not (state and state.originalMouse == false)
-    if frame.EnableMouse then pcall(frame.EnableMouse, frame, mouse) end
+    ns.SafeCallMethodIfPresent("best-effort-style", frame, "EnableMouse", mouse)
     SetDescendantMouse(frame, mouse)
 
-    if frame.Show then pcall(frame.Show, frame) end
+    ns.SafeCallMethodIfPresent("best-effort-style", frame, "Show")
     if state then state.banished = false end
     return true
 end
@@ -485,15 +483,9 @@ local function ApplyMoverElements(moverFrame, strips, isBuff, allowCreate)
             -- SetUnit BEFORE Configure: group registration parses auras eagerly.
             container:SetUnit("player")
             if not InCombatLockdown() and i > 1 then
-                -- Strip 1 is positioned by the central anchoring system
-                -- (container-first). Later strips hang off strip 1's live
-                -- container so they track its auto-sized growth too.
-                -- pcall: forbidden→forbidden relativeTo acceptance is a PTR4
-                -- in-game unknown — on rejection fall back to the mover and
-                -- queue an OOC replay rather than aborting the whole pass.
-                local okA = pcall(AnchorElementContainer, container, pool[1] or moverFrame, element)
+                local okA = ns.SafeCall("defer-ooc", AnchorElementContainer, container, pool[1] or moverFrame, element)
                 if not okA then
-                    pcall(AnchorElementContainer, container, moverFrame, element)
+                    ns.SafeCall("defer-ooc", AnchorElementContainer, container, moverFrame, element)
                     incomplete = true
                 end
             end
@@ -506,14 +498,14 @@ local function ApplyMoverElements(moverFrame, strips, isBuff, allowCreate)
             -- (PTR4 AddItemEnchantment, placement=BeforeAuraGroups — the
             -- engine-owned version of the old strip + lead-in). First call
             -- creates forbidden frames → OOC only; the layout mutator
-            -- re-applies every pass. Known gap: engine right-click cancel is
-            -- instanceID-only and no-ops for enchants (Blizzard's own
-            -- BuffFrame still cancels via the legacy path) — accepted.
+            -- re-applies every pass. 68824: ConfigureEnchantments also
+            -- re-asserts SetCancelAuraButtons on enchant frames (native
+            -- click-to-cancel parity with aura buttons).
             if isBuff and i == 1 then
                 if InCombatLockdown() and not container._quiEnchantsAdded then
                     incomplete = true
                 else
-                    local okE = pcall(AuraSkin.ConfigureEnchantments, container, profile)
+                    local okE = ns.SafeCall("defer-ooc", AuraSkin.ConfigureEnchantments, container, profile)
                     if not okE or not container._quiEnchantsAdded then
                         incomplete = true
                     end
@@ -554,8 +546,8 @@ local function DisableMoverContainers(moverFrame)
     for i = 1, #pool do
         local c = pool[i]
         if c then
-            pcall(c.SetEnabled, c, false)
-            pcall(c.Hide, c)
+            ns.SafeCallMethod("best-effort-style", c, "SetEnabled", false)
+            ns.SafeCallMethod("best-effort-style", c, "Hide")
         end
     end
 end
@@ -610,8 +602,8 @@ local function ApplyConfigPass(allowCreate)
         -- PLAYER_REGEN_ENABLED. The combat path never creates, so freshN
         -- stays nil/false here.
         local ok1, ok2
-        ok1, inc1, fresh1 = pcall(ApplyMoverElements, buffContainer,   buffActive,   true,  false)
-        ok2, inc2, fresh2 = pcall(ApplyMoverElements, debuffContainer, debuffActive, false, false)
+        ok1, inc1, fresh1 = ns.SafeCall("defer-ooc", ApplyMoverElements, buffContainer,   buffActive,   true,  false)
+        ok2, inc2, fresh2 = ns.SafeCall("defer-ooc", ApplyMoverElements, debuffContainer, debuffActive, false, false)
         if (not ok1) or (not ok2) or inc1 or inc2 then QueueContainerWork() end
     end
 
@@ -967,7 +959,8 @@ QUI.BuffBorders = {
 -- Global function for config panel / layout mode to call
 _G.QUI_RefreshBuffBorders = RefreshBuffBorders
 
--- Layout mode preview hooks
+ns.QUI_RefreshBuffBorderAuras = RefreshBuffBorders
+
 _G.QUI_BuffBordersShowPreview = ShowPreview
 _G.QUI_BuffBordersHidePreview = HidePreview
 

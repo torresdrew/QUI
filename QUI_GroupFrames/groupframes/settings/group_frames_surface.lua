@@ -419,7 +419,6 @@ end
 local SECTION_NAV_TABS = {
     appearance = true,
     indicators = true,
-    auras = true,
     layout = true,
 }
 
@@ -648,8 +647,11 @@ end
 
 ns.QUI_GroupFramesSettingsSurface = {
     SetContextMode = SetContextMode,
+    GetContextMode = GetContextMode,
     SetActiveTab = SetActiveTab,
     NavigateSearchEntry = NavigateSearchEntry,
     GetSearchRoot = GetSearchRoot,
     RenderPage = BuildTileBody,
+    ShowPreviewOn = ShowPreviewOn,
+    HidePreview = HidePreview,
 }

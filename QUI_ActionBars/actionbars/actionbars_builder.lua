@@ -4,12 +4,8 @@ env.ADDON_NAME = ADDON_NAME
 env.ns = ns
 env.SetChunkEnv(1, env)
 
--- Fully silence a Blizzard-managed bar frame before we reparent its buttons:
--- purge Edit Mode's tainted isShownExternal (write enough nil keys to push the
--- entry off the secure-variable tracking list), unregister its events, reparent
--- it under the hidden parent, and hide it via the C-side HideBase to avoid Edit
--- Mode's Lua override propagating taint. Shared by the pet/stance, microbar and
--- bags build branches, which each ran this identical sequence.
+---@diagnostic disable: lowercase-global -- SetChunkEnv installs a setfenv
+
 local function SuppressManagedBarFrame(barFrame)
     if barFrame.system then
         barFrame.isShownExternal = nil
@@ -60,7 +56,7 @@ function EnsureOwnedActionButton(container, barKey, btnName, index)
     local existed = btn ~= nil
     if not btn then
         local ok
-        ok, btn = pcall(CreateFrame, "CheckButton", btnName, container, "ActionBarButtonTemplate")
+        ok, btn = ns.SafeCall("best-effort-style", CreateFrame, "CheckButton", btnName, container, "ActionBarButtonTemplate")
         if not ok then btn = _G[btnName] end
         btn:SetAttribute("type", "action")
         btn:SetAttribute("checkselfcast", true)
@@ -301,7 +297,7 @@ end
 function PrimeStandardOwnedButtonVisuals(buttons)
     for _, btn in ipairs(buttons) do
         if ActionButton_Update then
-            pcall(ActionButton_Update, btn)
+            ns.SafeCall("best-effort-style", ActionButton_Update, btn)
         end
         ActionBarsOwned.UpdateCooldown(btn)
         ActionBarsOwned.UpdateOverlayGlow(btn)
@@ -362,7 +358,7 @@ function BuildBar(barKey)
             local btn = _G[btnName]
             if not btn then
                 local ok
-                ok, btn = pcall(CreateFrame, "CheckButton", btnName, container, template)
+                ok, btn = ns.SafeCall("best-effort-style", CreateFrame, "CheckButton", btnName, container, template)
                 if not ok then btn = _G[btnName] end
                 btn:SetID(i)
             else
@@ -785,7 +781,7 @@ function BuildBar(barKey)
         -- Prevent BagsBar from responding to expand/collapse state changes
         -- which would trigger unnecessary Layout calls.
         if BagsBar and EventRegistry and EventRegistry.UnregisterCallback then
-            pcall(EventRegistry.UnregisterCallback, EventRegistry, "MainMenuBarManager.OnExpandChanged", BagsBar)
+            ns.SafeCallMethod("best-effort-style", EventRegistry, "UnregisterCallback", "MainMenuBarManager.OnExpandChanged", BagsBar)
         end
 
         -- Hook Blizzard's layout to reclaim buttons if it tries to reparent them

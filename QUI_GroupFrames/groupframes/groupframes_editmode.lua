@@ -991,24 +991,6 @@ function QUI_GFEM:IsTestMode()
     return isTestMode
 end
 
-function QUI_GFEM:ToggleTestMode(previewType)
-    -- If edit mode is active, exit it first — preview is a standalone toggle
-    if isEditMode then
-        self:DisableEditMode()
-    end
-
-    if testContainers[previewType] then
-        -- This type is showing — toggle it off
-        self:DisableTestMode(false, previewType)
-    else
-        self:EnableTestMode(previewType or "party")
-    end
-end
-
--- Rebuild test frames with current settings (called when options change).
--- Uses trailing-edge debounce: rapid calls (slider drags) are coalesced
--- into a single rebuild 0.15s after the last call, preventing the
--- destroy/recreate flash that occurs with leading-edge throttles.
 local refreshTimer = nil
 function QUI_GFEM:RefreshTestMode()
     if not isTestMode then return end
@@ -1393,6 +1375,7 @@ local function CreateGroupMover(moverType)
 
     -- Click to select (re-select after clicking another edit mode element)
     mover:SetScript("OnMouseDown", function(self, button)
+        ---@diagnostic disable-next-line: empty-block
         if button == "LeftButton" then
             -- no-op: edit mode element selection removed
         end
@@ -1659,14 +1642,6 @@ function QUI_GFEM:DisableEditMode()
     -- Disable test mode if active
     if isTestMode then
         self:DisableTestMode()
-    end
-end
-
-function QUI_GFEM:ToggleEditMode(previewType)
-    if isEditMode then
-        self:DisableEditMode()
-    else
-        self:EnableEditMode(previewType)
     end
 end
 

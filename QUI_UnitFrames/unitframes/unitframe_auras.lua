@@ -150,7 +150,7 @@ local function ResolveContainerElements(frame)
     for i = 1, #elements do
         local e = elements[i]
         if e.mode == "filterStrip"
-            or (e.mode == "tracked" and e.displayType ~= "healthTint") then
+            or (e.mode == "tracked" and e.displayType ~= "healthTint" and e.displayType ~= "border") then
             _activeElems[#_activeElems + 1] = e
         end
     end
@@ -198,13 +198,11 @@ end
 local function ApplyElementPass(frame, allowCreate)
     if not frame or not QUI_UF.GetFrameUnit(frame) then return end
     if not ResolveAuraDeps() then return end
+    local AuraSurface = ns.AuraSurface
+    if not AuraSurface then return end
+
     local unitKey = frame.unitKey or QUI_UF.GetFrameUnit(frame)
     local elems = ResolveContainerElements(frame)
-    local pool = frame._quiAuraContainers
-    if not pool then
-        pool = {}
-        frame._quiAuraContainers = pool
-    end
 
     -- Boss frames preview as a GROUP — ShowAuraPreview("boss", ...) sets the
     -- "boss_*" key for all five — so map boss1..boss5 to "boss" here.
@@ -214,67 +212,23 @@ local function ApplyElementPass(frame, allowCreate)
     local buffPreviewActive = previewMode and previewMode[previewKey .. "_buff"]
     local debuffPreviewActive = previewMode and previewMode[previewKey .. "_debuff"]
 
-    -- Engine-side right-click cancel is only offered on cancel-eligible hosts
-    -- (the player unit) for HELPFUL strips (AuraGlue.ElementGroups gates it).
-    local cancelEligible = (unitKey == "player")
-
-    local incomplete = false
-    for i = 1, #elems do
-        local element = elems[i]
-        local container = pool[i]
-        if not container then
-            if allowCreate and CreateFrame then
-                container = CreateFrame("AuraContainer", nil, frame, "CustomAuraContainerTemplate")
-                container:SetSize(1, 1)  -- give the engine a renderable rect from the first dirty mark; it auto-sizes on layout
-                pool[i] = container
-            else
-                incomplete = true
-            end
-        end
-        if container then
-            -- SetUnit BEFORE group configuration so the container's eager group
-            -- registration (inside AuraSkin.Configure) has a valid unit.
-            container:SetUnit(QUI_UF.GetFrameUnit(frame))
-            -- Container SetPoint is combat-legal (proven pre- and post-group,
-            -- 2026-07-24); only CHILD-frame anchoring stays gated (aura_slots).
-            AnchorElementContainer(container, frame, element)
+    AuraSurface.ApplyElementPass(frame, elems, {
+        unit = QUI_UF.GetFrameUnit(frame),
+        allowCreate = allowCreate == true,
+        cancelEligible = (unitKey == "player"),
+        profileFor = ElementProfileFor,
+        anchorContainer = function(container, host, element)
+            AnchorElementContainer(container, host, element)
+        end,
+        skip = function(element)
             local isDebuff = (element.auraType == "HARMFUL")
-            local previewSuppressed = (isDebuff and debuffPreviewActive)
-                or ((not isDebuff) and buffPreviewActive)
-            if previewSuppressed then
-                -- Previewed polarity: keep the live container off so the fake
-                -- preview icons own the display (SetEnabled/Hide is combat-legal).
-                container:SetEnabled(false)
-                container:Hide()
-            elseif element.mode == "tracked" then
-                -- Retire any strip groups a re-purposed container carries, then
-                -- reconcile the tracked slots (AddAuraSlot) onto it.
-                if not AuraGlue.RunConfigPass(container, ElementProfileFor(element), {}, allowCreate) then incomplete = true end
-                if not AuraSlots.Sync(container, element, allowCreate) then incomplete = true end
-                container:SetEnabled(true)
-                container:Show()
-            else
-                local profile = ElementProfileFor(element)
-                local groups = AuraGlue.ElementGroups(QUI_UF.GetFrameUnit(frame), element, profile, cancelEligible)
-                if not AuraGlue.RunConfigPass(container, profile, groups, allowCreate) then incomplete = true end
-                AuraSlots.Park(container)
-                container:SetEnabled(true)
-                container:Show()
-            end
-        end
-    end
-    -- Retire pooled containers beyond the active element count: empty groups +
-    -- park slots + disable + hide (all combat-legal on a pre-created container).
-    for i = #elems + 1, #pool do
-        local container = pool[i]
-        if not AuraGlue.RunConfigPass(container, container._quiProfile or {}, {}, allowCreate) then incomplete = true end
-        AuraSlots.Park(container)
-        container:SetEnabled(false)
-        container:Hide()
-    end
-    if incomplete then
-        AuraGlue.QueueRegenWork(frame, function(f) ApplyElementPass(f, true) end)
-    end
+            return (isDebuff and debuffPreviewActive)
+                or ((not isDebuff) and buffPreviewActive) or false
+        end,
+        onIncomplete = function(host)
+            AuraGlue.QueueRegenWork(host, function(f) ApplyElementPass(f, true) end)
+        end,
+    })
 end
 
 -- Full pass. Public export name preserved (the combat-mutable test + any
@@ -309,11 +263,15 @@ local function UpdateAuras(frame)
 end
 QUI_UF.UpdateAuras = UpdateAuras
 
--- Suppress the live containers of the previewed polarity around layout-mode
--- preview. The preview flag for the polarity is already set by the caller, so a
--- full (combat-aware) pass now disables + hides that polarity's element
--- containers (the buffPreviewActive/debuffPreviewActive gate in ApplyElementPass)
--- while leaving the other polarity live. Restored on preview exit via UpdateAuras.
+local function RefreshAllAuraContainers()
+    local frames = QUI_UF and QUI_UF.frames
+    if not frames then return end
+    for _, frame in pairs(frames) do
+        UpdateAuras(frame)
+    end
+end
+ns.QUI_RefreshUnitFrameAuras = RefreshAllAuraContainers
+
 local function SuppressContainerForPreview(frame)
     if not frame then return end
     UpdateAuras(frame)

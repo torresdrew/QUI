@@ -11,8 +11,7 @@
 --                       (AuraSkin.Configure OOC / Restyle in combat) + the
 --                       combat-regen replay queue,
 --   * ns.AuraSlots    — tracked slots (AddAuraSlot) via AuraSlots.Sync / Park.
--- Containers are forbidden, self-driving objects that cannot be exercised
--- headless, so these source-text assertions pin the structural contract:
+-- These source-text assertions pin the structural contract:
 --   * ApplyElementPass walks the active elements into a per-ordinal pool,
 --   * filter strips -> AuraGlue group descriptors, tracked -> AuraSlots.Sync,
 --     SetUnit / SetEnabled self-drive,
@@ -33,48 +32,48 @@ local function readAll(path)
 end
 
 local src = readAll("QUI_UnitFrames/unitframes/unitframe_auras.lua")
+local coreSrc = readAll("core/aura_surface.lua")
 
 -- LIVE PATH: secure CustomAuraContainer + shared core glue --------------------
-assert(src:find('"CustomAuraContainerTemplate"', 1, true),
-    "live path must create CustomAuraContainerTemplate frames")
 assert(src:find("QUI.AuraSkin", 1, true) or src:find("ns.Addon.AuraSkin", 1, true),
     "live path must resolve the QUI.AuraSkin adapter")
 assert(src:find("ns.AuraGlue", 1, true) and src:find("ns.AuraSlots", 1, true)
-    and src:find("ns.AuraElements", 1, true),
-    "live path must consume the shared core modules (AuraGlue / AuraSlots / AuraElements)")
+    and src:find("ns.AuraElements", 1, true) and src:find("ns.AuraSurface", 1, true),
+    "live path must consume the shared core modules (AuraGlue / AuraSlots / AuraElements / AuraSurface)")
 
 -- PER-ELEMENT POOL: one container per active element, pooled by ordinal -------
-assert(src:find("frame._quiAuraContainers", 1, true),
-    "per-element container pool on the frame (frame._quiAuraContainers)")
 assert(src:find("local function ApplyElementPass(frame, allowCreate)", 1, true),
     "ApplyElementPass drives the per-element container pass")
-assert(src:find('CreateFrame("AuraContainer", nil, frame, "CustomAuraContainerTemplate")', 1, true),
-    "containers are created via CreateFrame(\"AuraContainer\", ...)")
 
--- SHARED CORE GLUE: config via AuraGlue.RunConfigPass, slots via AuraSlots -----
-assert(src:find("AuraGlue.RunConfigPass", 1, true),
-    "elements configure via AuraGlue.RunConfigPass (Configure/Restyle live in core)")
-assert(src:find("AuraGlue.ElementGroups", 1, true),
-    "filter strips build group descriptors via AuraGlue.ElementGroups")
-assert(src:find("AuraSlots.Sync", 1, true) and src:find("AuraSlots.Park", 1, true),
-    "tracked elements reconcile slots via AuraSlots.Sync + Park")
-assert(src:find("AuraSkin.LayoutAnchor", 1, true),
-    "container flow anchors via AuraSkin.LayoutAnchor")
+assert(src:find("AuraSurface.ApplyElementPass(frame, elems, {", 1, true),
+    "ApplyElementPass must delegate to AuraSurface.ApplyElementPass")
+assert(src:find("unit = QUI_UF.GetFrameUnit(frame),", 1, true),
+    "opts must forward unit")
+assert(src:find("allowCreate = allowCreate == true,", 1, true),
+    "opts must forward allowCreate")
+assert(src:find('cancelEligible = (unitKey == "player"),', 1, true),
+    "opts must forward cancelEligible")
+assert(src:find("profileFor = ElementProfileFor,", 1, true),
+    "opts must forward profileFor")
+assert(src:find("anchorContainer = function(container, host, element)", 1, true),
+    "opts must forward anchorContainer")
+assert(src:find("skip = function(element)", 1, true),
+    "opts must forward skip")
+assert(src:find("onIncomplete = function(host)", 1, true),
+    "opts must forward onIncomplete")
+
 -- Configure/Restyle now live in core (AuraGlue.RunConfigPass): this file no
 -- longer CALLS them directly (comments may still reference the core plumbing).
 assert(not src:find("AuraSkin.Configure(", 1, true)
     and not src:find("pcall(AuraSkin.Configure", 1, true)
-    and not src:find("AuraSkin.Restyle(", 1, true),
-    "AuraSkin.Configure/Restyle no longer called directly here (moved to core)")
+    and not src:find("AuraSkin.Restyle(", 1, true)
+    and not coreSrc:find("AuraSkin.Configure(", 1, true)
+    and not coreSrc:find("pcall(AuraSkin.Configure", 1, true)
+    and not coreSrc:find("AuraSkin.Restyle(", 1, true),
+    "AuraSkin.Configure/Restyle must not be called directly by either the surface glue or core/aura_surface.lua")
 -- The retired per-button API must be gone.
-assert(not src:find("AddAuraFilter", 1, true),
+assert(not src:find("AddAuraFilter", 1, true) and not coreSrc:find("AddAuraFilter", 1, true),
     "AddAuraFilter replaced by the shared core glue")
-
--- UNIT + ENABLE: container is told its unit and switched on --------------------
-assert(src:find("SetUnit(QUI_UF.GetFrameUnit(frame))", 1, true),
-    "SetUnit must still precede group configuration (unit resolved from weak side state — ping-taint fix)")
-assert(src:find("SetEnabled(true)", 1, true) and src:find("SetEnabled(false)", 1, true),
-    "live path must call container:SetEnabled to self-drive UNIT_AURA")
 
 -- ELEMENT MODEL: seed-once default bucket (file-local) + spec-less resolve -----
 -- The default bucket fn MUST be file-local on the runtime path: E.EnsureSeeded

@@ -196,9 +196,6 @@ local function GetPreviewSlot(barKey, index)
         and ns.ActionBarsOwned.nativeButtons[barKey]
     local button = buttons and buttons[index]
     local liveAction = button and button.action
-    if Helpers.SafeValue then
-        liveAction = Helpers.SafeValue(liveAction, nil)
-    end
     local numericAction = liveAction and tonumber(liveAction)
     if numericAction and numericAction > 0 then
         return numericAction
@@ -217,10 +214,6 @@ end
 
 local function GetPreviewActionSlot(slot, sourceButton)
     local liveAction = sourceButton and sourceButton.action
-    if Helpers.SafeValue then
-        liveAction = Helpers.SafeValue(liveAction, nil)
-    end
-
     local numericAction = liveAction and tonumber(liveAction)
     if numericAction and numericAction > 0 then
         return numericAction
@@ -318,11 +311,11 @@ local function GetPreviewCountText(slot, sourceButton)
     if IsPreviewSecretValue(count) then
         return count
     else
-        if count == nil or count == "" or count == 0 or count == "0" then -- @secret-safe: IsPreviewSecretValue branch above proves count plain here
+        if count == nil or count == "" or count == 0 or count == "0" then
             return nil
         end
 
-        return tostring(count) -- @secret-safe: IsPreviewSecretValue branch above proves count plain here
+        return tostring(count)
     end
 end
 
@@ -514,10 +507,11 @@ local function MeasurePreviewContentHeight()
 
     if not bounds.top or not bounds.bottom then return 0 end
 
-    -- Buttons are anchored around previewHost CENTER. Preserve that center
-    -- when text offsets are asymmetric by reserving the larger radius on
-    -- both sides; merely using top-bottom could still clip one edge.
-    local _, centerY = previewHost.GetCenter and previewHost:GetCenter()
+    local centerY
+    if previewHost.GetCenter then
+        local _, cy = previewHost:GetCenter()
+        centerY = cy
+    end
     if centerY then
         local radius = math.max(
             math.abs(bounds.top - centerY),

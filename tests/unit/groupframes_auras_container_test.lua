@@ -8,8 +8,7 @@
 --   * ns.AuraGlue  — element -> profile + group descriptors, RunConfigPass
 --                    (AuraSkin.Configure OOC / Restyle in combat),
 --   * ns.AuraSlots — tracked slots (AddAuraSlot) via AuraSlots.Sync / Park.
--- Containers are forbidden, self-driving objects that cannot be exercised
--- headless, so these source-text assertions pin the structural contract:
+-- These source-text assertions pin the structural contract:
 --   * ApplyElementPass walks the active elements into a per-ordinal pool,
 --   * filter strips -> AuraGlue group descriptors, tracked -> AuraSlots.Sync,
 --     SetUnit / SetEnabled self-drive,
@@ -30,6 +29,7 @@ end
 
 local src = readAll("QUI_GroupFrames/groupframes/groupframes_auras.lua")
 local callSrc = readAll("QUI_GroupFrames/groupframes/groupframes.lua")
+local coreSrc = readAll("core/aura_surface.lua")
 
 local fails = 0
 local function check(name, ok)
@@ -42,8 +42,8 @@ local function check(name, ok)
 end
 
 -- LIVE CONTAINER PATH: secure CustomAuraContainer + shared core glue ----------
-check("creates CustomAuraContainerTemplate frames",
-    src:find('"CustomAuraContainerTemplate"', 1, true) ~= nil)
+check("core/aura_surface.lua creates CustomAuraContainerTemplate frames",
+    coreSrc:find('"CustomAuraContainerTemplate"', 1, true) ~= nil)
 check("resolves the QUI.AuraSkin adapter",
     src:find("QUI.AuraSkin", 1, true) ~= nil or src:find("ns.Addon.AuraSkin", 1, true) ~= nil)
 
@@ -52,18 +52,18 @@ check("per-element container pool on the frame (frame._quiAuraContainers)",
     src:find("frame._quiAuraContainers", 1, true) ~= nil)
 check("ApplyElementPass drives the per-element container pass",
     src:find("local function ApplyElementPass(frame, allowCreate)", 1, true) ~= nil)
-check("containers are created via CreateFrame(\"AuraContainer\", ...)",
-    src:find('CreateFrame("AuraContainer", nil, frame, "CustomAuraContainerTemplate")', 1, true) ~= nil)
+check("ApplyElementPass delegates the per-element pass to AuraSurface.ApplyElementPass",
+    src:find("AuraSurface.ApplyElementPass(frame, elems, {", 1, true) ~= nil)
 
 -- SHARED CORE GLUE: config via AuraGlue.RunConfigPass, slots via AuraSlots ----
 check("consumes ns.AuraGlue + ns.AuraSlots",
     src:find("ns.AuraGlue", 1, true) ~= nil and src:find("ns.AuraSlots", 1, true) ~= nil)
-check("elements configure via AuraGlue.RunConfigPass (Configure/Restyle live in core)",
-    src:find("AuraGlue.RunConfigPass", 1, true) ~= nil)
-check("tracked elements reconcile slots via AuraSlots.Sync + Park",
-    src:find("AuraSlots.Sync", 1, true) ~= nil and src:find("AuraSlots.Park", 1, true) ~= nil)
-check("filter strips build group descriptors via AuraGlue.ElementGroups",
-    src:find("AuraGlue.ElementGroups", 1, true) ~= nil)
+check("core/aura_surface.lua configures containers via AuraGlue.RunConfigPass",
+    coreSrc:find("AuraGlue.RunConfigPass", 1, true) ~= nil)
+check("core/aura_surface.lua reconciles tracked slots via AuraSlots.Sync + Park",
+    coreSrc:find("AuraSlots.Sync", 1, true) ~= nil and coreSrc:find("AuraSlots.Park", 1, true) ~= nil)
+check("core/aura_surface.lua builds group descriptors via AuraGlue.ElementGroups",
+    coreSrc:find("AuraGlue.ElementGroups", 1, true) ~= nil)
 check("container flow anchors via AuraSkin.LayoutAnchor",
     src:find("AuraSkin.LayoutAnchor", 1, true) ~= nil)
 -- The retired per-button / two-zone APIs must be gone.
@@ -75,14 +75,36 @@ check("AuraSkin.Attach / Reflow gone",
     src:find("AuraSkin.Attach", 1, true) == nil and src:find("AuraSkin.Reflow", 1, true) == nil)
 -- Configure/Restyle now live in core (AuraGlue.RunConfigPass): this file no
 -- longer CALLS them directly (comments may still reference the core plumbing).
-check("AuraSkin.Configure/Restyle no longer called directly here (moved to core)",
+check("AuraSkin.Configure/Restyle no longer called directly by either the surface glue or core",
     src:find("AuraSkin.Configure(", 1, true) == nil
     and src:find("pcall(AuraSkin.Configure", 1, true) == nil
-    and src:find("AuraSkin.Restyle(", 1, true) == nil)
-check("SetUnit still precedes container configuration",
-    src:find("SetUnit(unit)", 1, true) ~= nil)
-check("calls container:SetEnabled to self-drive UNIT_AURA",
-    src:find("SetEnabled(true)", 1, true) ~= nil and src:find("SetEnabled(false)", 1, true) ~= nil)
+    and src:find("AuraSkin.Restyle(", 1, true) == nil
+    and coreSrc:find("AuraSkin.Configure(", 1, true) == nil
+    and coreSrc:find("pcall(AuraSkin.Configure", 1, true) == nil
+    and coreSrc:find("AuraSkin.Restyle(", 1, true) == nil)
+check("core/aura_surface.lua calls SetUnit before configuring the container",
+    coreSrc:find("container:SetUnit(unit)", 1, true) ~= nil)
+check("core/aura_surface.lua calls container:SetEnabled to self-drive UNIT_AURA",
+    coreSrc:find("SetEnabled(true)", 1, true) ~= nil and coreSrc:find("SetEnabled(false)", 1, true) ~= nil)
+
+check("opts forwards unit",
+    src:find("unit = unit,", 1, true) ~= nil)
+check("opts forwards allowCreate",
+    src:find("allowCreate = allowCreate == true,", 1, true) ~= nil)
+check("opts forwards cancelEligible (hardcoded false, no right-click cancel here)",
+    src:find("cancelEligible = false,", 1, true) ~= nil)
+check("opts forwards profileOverrides (also needed directly by AuraSlots.Sync)",
+    src:find("profileOverrides = profileOverrides,", 1, true) ~= nil)
+check("opts forwards profileFor",
+    src:find("profileFor = function(element)", 1, true) ~= nil
+    and src:find("return AuraGlue.ElementProfile(element, profileOverrides)", 1, true) ~= nil)
+check("opts forwards anchorContainer",
+    src:find("anchorContainer = function(container, host, element)", 1, true) ~= nil
+    and src:find("AnchorElementContainer(container, host, element)", 1, true) ~= nil)
+check("opts forwards onContainerReady (the combat-gated frame-level pass)",
+    src:find("onContainerReady = function(container, host)", 1, true) ~= nil)
+check("opts forwards onIncomplete",
+    src:find("onIncomplete = QueueContainerCombatWork,", 1, true) ~= nil)
 
 -- OLD TWO-ZONE STRIP MODEL IS GONE -------------------------------------------
 check("buffContainer / debuffContainer fields removed (per-element pool now)",

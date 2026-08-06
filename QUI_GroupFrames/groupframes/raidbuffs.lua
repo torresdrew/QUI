@@ -1772,8 +1772,7 @@ function QUI_RaidBuffs:Debug()
     error(table.concat(lines, "\n"), 0)
 end
 
--- Slash command for debug
-SLASH_QUIRAIDBUFFS1 = "/quibuffs"
+SLASH_QUIRAIDBUFFS1 = "/duibuffs"
 SlashCmdList["QUIRAIDBUFFS"] = function()
     if ns.RaidBuffs then
         ns.RaidBuffs:Debug()

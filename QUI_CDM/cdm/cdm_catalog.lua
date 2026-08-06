@@ -14,6 +14,7 @@ ns.CDMCatalog = CDMCatalog
 local ipairs = ipairs
 local pairs = pairs
 local type = type
+local tonumber = tonumber
 local tostring = tostring
 local table_sort = table.sort
 
@@ -34,14 +35,7 @@ local CATEGORY_FOR_KIND = {
     trackedBar  = 3,
 }
 
-local KIND_FOR_CATEGORY = {
-    [0] = "essential",
-    [1] = "utility",
-    [2] = "buff",
-    [3] = "trackedBar",
-}
-
-local COOLDOWN_CATEGORIES = { 0, 1 }   -- spell cooldowns (dormancy/identity) — keep narrow
+local COOLDOWN_CATEGORIES = { 0, 1 }
 local BUILTIN_COOLDOWN_PICKER_CATEGORIES = {
     essential = { 0, 1 },
     utility = { 1, 0 },
@@ -67,20 +61,8 @@ local CONSUMABLE_CATEGORY_META = {
 }
 local BLIZZARD_CDM_ENTRY_SOURCE = "blizzardCDM"
 
-function CDMCatalog.GetCategoryForKind(kind)
-    return CATEGORY_FOR_KIND[kind]
-end
-
--- Consumable spell-category display meta (icon + English name) for
--- consumable-typed entries (entry.id = spellCategoryID). Shared by the
--- composer picker cells, entry rows, and the resolvers' entry-texture path so
--- every surface renders the same icon as Blizzard's native frame.
 function CDMCatalog.GetConsumableCategoryMeta(catID)
     return CONSUMABLE_CATEGORY_META[catID]
-end
-
-function CDMCatalog.GetKindForCategory(category)
-    return KIND_FOR_CATEGORY[category]
 end
 
 function CDMCatalog.IsUsableID(id)
@@ -393,6 +375,70 @@ local function ResolveContainerCategories(containerKey, containerType)
     return ALL_RENDERED_CATEGORIES, false
 end
 
+local BUILTIN_CONTAINER_TYPES = {
+    essential   = "cooldown",
+    utility     = "cooldown",
+    buff        = "aura",
+    trackedBar  = "auraBar",
+}
+
+local function ResolveContainerType(containerKey)
+    local Shared = ns.CDMShared
+    if Shared and Shared.GetContainerType then
+        local containerType = Shared.GetContainerType(containerKey)
+        if containerType then
+            return containerType
+        end
+    end
+    if BUILTIN_CONTAINER_TYPES[containerKey] then
+        return BUILTIN_CONTAINER_TYPES[containerKey]
+    end
+    return "cooldown"
+end
+
+local function GetCooldownRowLimits(db)
+    local rows = {}
+    if type(db) ~= "table" then return rows end
+    for r = 1, 3 do
+        local rowData = db["row" .. r]
+        local iconCount = rowData and tonumber(rowData.iconCount)
+        if iconCount and iconCount > 0 then
+            rows[#rows + 1] = { rowNum = r, max = iconCount }
+        end
+    end
+    return rows
+end
+
+function CDMCatalog.AssignCooldownRowsByCapacity(entries, containerKey)
+    if type(entries) ~= "table" or ResolveContainerType(containerKey) ~= "cooldown" then
+        return entries
+    end
+
+    local Shared = ns.CDMShared
+    local db = Shared and Shared.GetContainerDB and Shared.GetContainerDB(containerKey)
+    local rows = GetCooldownRowLimits(db)
+    if #rows == 0 then return entries end
+
+    local rowIdx = 1
+    local rowUsed = 0
+    for _, entry in ipairs(entries) do
+        if type(entry) == "table" then
+            local row = rows[rowIdx]
+            if row and rowUsed < row.max then
+                entry.row = row.rowNum
+                rowUsed = rowUsed + 1
+                if rowUsed >= row.max then
+                    rowIdx = rowIdx + 1
+                    rowUsed = 0
+                end
+            else
+                entry.row = nil
+            end
+        end
+    end
+    return entries
+end
+
 function CDMCatalog.SeedFromBlizzard(containerKind)
     local category = CATEGORY_FOR_KIND[containerKind]
     if not category then return {}, false end
@@ -450,7 +496,12 @@ function CDMCatalog.SeedFromBlizzard(containerKind)
     if missingInfo then
         return {}, false
     end
-    return entries, ready == true
+
+    local isReady = ready == true
+    if isReady then
+        CDMCatalog.AssignCooldownRowsByCapacity(entries, containerKind)
+    end
+    return entries, isReady
 end
 
 local function AppendAuraIDs(map, key, auraIDs)
@@ -638,10 +689,29 @@ function CDMCatalog.RebuildAuraLearnedFamilyIDs(outSet)
     return ready
 end
 
--- Full current-class spell family used to exclude foreign PTR/stale-profile
--- rows entirely. Unlike the learned aura set above, this walks
--- allowUnlearned=true and accepts future/off-spec player-spellbook entries, so
--- valid same-class talent/loadout choices remain eligible for Dormant status.
+function CDMCatalog.RebuildTrackedDisplayFamilyIDs(iconSet, barSet)
+    if type(iconSet) ~= "table" or type(barSet) ~= "table" then return false end
+    if not HasCooldownViewerAPI() then return false end
+
+    local ready = true
+    for category, outSet in pairs({ [2] = iconSet, [3] = barSet }) do
+        local ids = CDMCatalog.GetTrackedCategorySet(category, true)
+        if not ids then
+            ready = false
+        else
+            for _, cdID in ipairs(ids) do
+                local info = CDMCatalog.GetCooldownInfo(cdID)
+                if not info then
+                    ready = false
+                elseif not info.equipSlot and not info.spellCategoryID then
+                    AddCooldownInfoFamilyIDs(outSet, info)
+                end
+            end
+        end
+    end
+    return ready
+end
+
 function CDMCatalog.RebuildClassApplicableSpellIDs(outSet)
     if type(outSet) ~= "table" then return false end
     if not HasCooldownViewerAPI() then return false end
@@ -825,11 +895,4 @@ function CDMCatalog.GetOrderedSpellMap()
         return ns.CDMIndex.GetOrderedSpellMap()
     end
     return {}
-end
-
-function CDMCatalog.GetIndexEntry(spellID)
-    if ns.CDMIndex and ns.CDMIndex.Get then
-        return ns.CDMIndex.Get(spellID)
-    end
-    return nil
 end

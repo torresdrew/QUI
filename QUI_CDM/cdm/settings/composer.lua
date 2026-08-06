@@ -155,7 +155,6 @@ local function GetContainerImpliedKind(containerKey)
 end
 
 local GetContainerDB
-local AssignCooldownRowsByCapacity
 
 ---------------------------------------------------------------------------
 -- CATALOG WRAPPERS
@@ -167,13 +166,17 @@ local AssignCooldownRowsByCapacity
 function ns.CDMComposer.SeedFromBlizzard(containerKind)
     local catalog = ns.CDMCatalog
     if catalog and catalog.SeedFromBlizzard then
-        local entries, ready = catalog.SeedFromBlizzard(containerKind)
-        if ready and AssignCooldownRowsByCapacity then
-            AssignCooldownRowsByCapacity(entries, containerKind)
-        end
-        return entries, ready
+        return catalog.SeedFromBlizzard(containerKind)
     end
     return {}, false
+end
+
+function ns.CDMComposer.AssignCooldownRowsByCapacity(entries, containerKey)
+    local catalog = ns.CDMCatalog
+    if catalog and catalog.AssignCooldownRowsByCapacity then
+        return catalog.AssignCooldownRowsByCapacity(entries, containerKey)
+    end
+    return entries
 end
 
 function ns.CDMComposer.RebuildBlizzardCatalogMaps(spellToCDID, inCooldowns, inAuras, abilityToAura, auraIDsForSpell)
@@ -373,19 +376,6 @@ local function ResolveEntryType(entry)
     return nil
 end
 
-local function GetCooldownRowLimits(db)
-    local rows = {}
-    if type(db) ~= "table" then return rows end
-    for r = 1, 3 do
-        local rowData = db["row" .. r]
-        local iconCount = rowData and tonumber(rowData.iconCount)
-        if iconCount and iconCount > 0 then
-            rows[#rows + 1] = { rowNum = r, max = iconCount }
-        end
-    end
-    return rows
-end
-
 local function FindCooldownRowWithRoom(activeRowNums, rowCounts, rowMax, preferredRow)
     if type(activeRowNums) ~= "table" then return nil end
 
@@ -413,35 +403,6 @@ local function FindCooldownRowWithRoom(activeRowNums, rowCounts, rowMax, preferr
         end
     end
     return nil
-end
-
-AssignCooldownRowsByCapacity = function(entries, containerKey)
-    if type(entries) ~= "table" or ResolveContainerType(containerKey) ~= "cooldown" then
-        return entries
-    end
-
-    local db = GetContainerDB and GetContainerDB(containerKey)
-    local rows = GetCooldownRowLimits(db)
-    if #rows == 0 then return entries end
-
-    local rowIdx = 1
-    local rowUsed = 0
-    for _, entry in ipairs(entries) do
-        if type(entry) == "table" then
-            local row = rows[rowIdx]
-            if row and rowUsed < row.max then
-                entry.row = row.rowNum
-                rowUsed = rowUsed + 1
-                if rowUsed >= row.max then
-                    rowIdx = rowIdx + 1
-                    rowUsed = 0
-                end
-            else
-                entry.row = nil
-            end
-        end
-    end
-    return entries
 end
 
 local function GetEntryIcon(entry)
@@ -2225,8 +2186,7 @@ StopDrag = function()
     if not spellData or not activeContainer then return end
 
     if fromSpecKey ~= targetSpecKey then
-        UIErrorsFrame:AddMessage(ns.L["Can only reorder within the same source spec"], 1.0, 0.3, 0.3, 1.0, 3)
-        UIErrorsFrame:SetFrameStrata("TOOLTIP")
+        if UIErrorsFrame then UIErrorsFrame:AddMessage(ns.L["Can only reorder within the same source spec"], 1.0, 0.3, 0.3, 1.0, 3); UIErrorsFrame:SetFrameStrata("TOOLTIP") end
         return
     end
 
@@ -2257,8 +2217,7 @@ StopDrag = function()
                 end
             end
             if count >= rd.iconCount then
-                UIErrorsFrame:AddMessage(string.format(ns.L["Row %1$d is full (%2$d/%3$d)"], targetRow, rd.iconCount, rd.iconCount), 1.0, 0.3, 0.3, 1.0, 3)
-                UIErrorsFrame:SetFrameStrata("TOOLTIP")
+                if UIErrorsFrame then UIErrorsFrame:AddMessage(string.format(ns.L["Row %1$d is full (%2$d/%3$d)"], targetRow, rd.iconCount, rd.iconCount), 1.0, 0.3, 0.3, 1.0, 3); UIErrorsFrame:SetFrameStrata("TOOLTIP") end
                 return
             end
         end
@@ -2394,10 +2353,7 @@ local function ShowEntryContextMenu(anchorCell, entry, entryIndex)
                     items[#items + 1] = {
                         label = lbl,
                         color = isFull and { 0.4, 0.4, 0.4 } or { ACCENT_R, ACCENT_G, ACCENT_B },
-                        action = isFull and function()
-                            UIErrorsFrame:AddMessage(string.format(ns.L["Row %1$d is full (%2$d/%3$d)"], rn, rowMax[rn], rowMax[rn]), 1.0, 0.3, 0.3, 1.0, 3)
-                            UIErrorsFrame:SetFrameStrata("TOOLTIP")
-                        end or function()
+                        action = isFull and function() if UIErrorsFrame then UIErrorsFrame:AddMessage(string.format(ns.L["Row %1$d is full (%2$d/%3$d)"], rn, rowMax[rn], rowMax[rn]), 1.0, 0.3, 0.3, 1.0, 3); UIErrorsFrame:SetFrameStrata("TOOLTIP") end end or function()
                             if InCombatLockdown() then return end
                             spellData:SetEntryRow(activeContainer, entryIndex, rn)
                             C_Timer.After(0.02, function()
@@ -3537,8 +3493,7 @@ RefreshAddList = function()
                                 end
                             end
                             if not targetRow then
-                                UIErrorsFrame:AddMessage(ns.L["All rows are full — remove a spell or increase row size"], 1.0, 0.3, 0.3, 1.0, 3)
-                                UIErrorsFrame:SetFrameStrata("TOOLTIP")
+                                if UIErrorsFrame then UIErrorsFrame:AddMessage(ns.L["All rows are full — remove a spell or increase row size"], 1.0, 0.3, 0.3, 1.0, 3); UIErrorsFrame:SetFrameStrata("TOOLTIP") end
                                 return
                             end
                         end

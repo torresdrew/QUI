@@ -407,7 +407,8 @@ local function SetSearchContext(searchContext)
 end
 
 local function CreateUnitSearchContext(unitKey, subTabName)
-    return {
+    local SearchRoute = ns.Settings and ns.Settings.SearchRoute
+    local searchContext = {
         tabIndex = 5,
         tabName = "Unit Frames",
         subTabIndex = UNIT_SUBTAB_INDEX[unitKey] or 2,
@@ -418,6 +419,10 @@ local function CreateUnitSearchContext(unitKey, subTabName)
         surfaceTabKey = UNIT_SURFACE_TABS[subTabName],
         surfaceUnitKey = unitKey,
     }
+    if SearchRoute and type(SearchRoute.Apply) == "function" then
+        return SearchRoute.Apply(searchContext)
+    end
+    return searchContext
 end
 
 local function PrepareSectionHost(sectionHost, ctx)
@@ -2633,6 +2638,7 @@ local function RenderAuraElementsSection(sectionHost, ctx)
             trackedDisplayTypes = { icon = true, square = true, bar = true },
             cancelEligible      = (unitKey == "player"),
             allowSpecOverride   = false,
+            roleGate            = false,
             defaultBucketFn     = UnitFrameAuras and UnitFrameAuras.DefaultUnitAuraBucket,
             unitPolarity        = UnitPolarity(unitKey),
         },
@@ -3274,10 +3280,6 @@ local GENERAL_TAB_FEATURE = Schema.Feature({
         }),
     },
 })
-
-function UnitFramesSchema.GetGeneralTabFeature()
-    return GENERAL_TAB_FEATURE
-end
 
 function UnitFramesSchema.RenderGeneralTab(host)
     if not host then

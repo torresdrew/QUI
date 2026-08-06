@@ -1113,43 +1113,6 @@ QUI_GFA.ScanUnitAuras = ScanUnitAuras
 QUI_GFA.ApplyAuraDelta = ApplyAuraDelta
 QUI_GFA.PruneAuraCache = PruneAuraCache
 
--- Spec-change handlers call this before refreshing frames so every cached unit
--- re-scans against the new spec's aura state. Does not re-render frames.
-function QUI_GFA:RescanCachedUnits()
-    for unit in pairs(unitAuraCache) do
-        ScanUnitAuras(unit)
-    end
-end
-
--- Table reuse: unitAuraCache[unit] sub-tables are created once per unit and
--- then mutated in place across full scans and deltas. Blizzard auraData tables
--- are still C-side allocated, but the shared cache avoids rebuilding per-
--- consumer lookup tables on every roster aura change.
-
----------------------------------------------------------------------------
--- CLASSIFICATION FILTER
----------------------------------------------------------------------------
--- The DB-toggle to Blizzard filter-string maps, the per-spell
--- whitelist/blacklist, the inline classification query, and the dispel/boss
--- priority sort all moved to the shared core modules: the element filter
--- compiler now lives in core/aura_elements.lua (E.CompileFilters /
--- E.CompileCandidateFilters) and the container glue in core/aura_glue.lua
--- (AuraGlue.ElementGroups). This file no longer owns any Lua-side strip filter
--- primitive -- the per-element containers filter C-side on secret-safe data.
-
----------------------------------------------------------------------------
--- UNIFIED ELEMENT RENDER (groupframes_aura_render.lua is the sole consumer)
----------------------------------------------------------------------------
--- The v46 aura element model (groupframes_aura_model.lua) drives every group-
--- frame aura visual. For each visible frame we resolve the unit's active spec,
--- build the element work list (tracked matches pre-resolved by the model;
--- filterStrip matches resolved here from the shared cache via the element's own
--- filter config), dispatch each to the renderer, and release any element id
--- whose frames linger from a prior pass (element removed/disabled/spec change).
-
--- Forward declarations: GetFrameAuraSettings (and its GetVisualDB* helpers) are
--- defined just below in the panel-render section; the unified render path runs
--- only at runtime, so the upvalues are bound by the time it is called.
 local GetFrameAuraSettings
 local _renderCurrentIDs = {}
 
@@ -1596,73 +1559,36 @@ local function ApplyElementPass(frame, allowCreate)
     local unit = GetFrameUnit(frame)
     if not unit then return end
     if not ResolveAuraDeps() then return end
+    local AuraSurface = ns.AuraSurface
+    if not AuraSurface then return end
+
     local auras = GetFrameAuraSettings(frame)
     local curve = ns.QUI_GroupFrameAuraBorderCurve
         and ns.QUI_GroupFrameAuraBorderCurve(frame._isRaid) or nil
     local profileOverrides = QUI_GFA.ProfileOverrides(auras, GetDB(), "groupauras", curve)
     local elems = ResolveContainerElements(frame)
-    local pool = frame._quiAuraContainers
-    if not pool then
-        pool = {}
-        frame._quiAuraContainers = pool
-    end
-    local incomplete = false
-    for i = 1, #elems do
-        local element = elems[i]
-        local container = pool[i]
-        if not container then
-            if allowCreate and CreateFrame then
-                container = CreateFrame("AuraContainer", nil, frame, "CustomAuraContainerTemplate")
-                container:SetSize(1, 1)  -- give the engine a renderable rect from the first dirty mark; it auto-sizes on layout
-                pool[i] = container
-            else
-                incomplete = true
-            end
-        end
-        if container then
-            -- Secure aura containers otherwise inherit parent+1, which puts
-            -- their engine-created icons under health overlays and text.
-            -- SetFrameLevel is protected: establish/repair it out of combat and
-            -- queue the existing replay path if a combat-created container has
-            -- not received the level yet.
-            local desiredLevel = frame:GetFrameLevel() + CHROME_LEVELS.AURA_HOST
+
+    AuraSurface.ApplyElementPass(frame, elems, {
+        unit = unit,
+        allowCreate = allowCreate == true,
+        cancelEligible = false,
+        profileOverrides = profileOverrides,
+        profileFor = function(element)
+            return AuraGlue.ElementProfile(element, profileOverrides)
+        end,
+        anchorContainer = function(container, host, element)
+            AnchorElementContainer(container, host, element)
+        end,
+        onContainerReady = function(container, host)
+            local desiredLevel = host:GetFrameLevel() + CHROME_LEVELS.AURA_HOST
             if not InCombatLockdown() then
                 container:SetFrameLevel(desiredLevel)
-            elseif container:GetFrameLevel() ~= desiredLevel then
-                incomplete = true
+                return true
             end
-            -- SetUnit BEFORE group configuration so the container's eager group
-            -- registration (inside AuraSkin.Configure) has a valid unit.
-            container:SetUnit(unit)
-            AnchorElementContainer(container, frame, element)
-            if element.mode == "tracked" then
-                -- Retire any strip groups a re-purposed container carries, then
-                -- reconcile the tracked slots (AddAuraSlot) onto it.
-                local profile = AuraGlue.ElementProfile(element, profileOverrides)
-                if not AuraGlue.RunConfigPass(container, profile, {}, allowCreate) then incomplete = true end
-                if not AuraSlots.Sync(container, element, allowCreate, profileOverrides) then incomplete = true end
-            else
-                local profile = AuraGlue.ElementProfile(element, profileOverrides)
-                local groups = AuraGlue.ElementGroups(unit, element, profile, false)
-                if not AuraGlue.RunConfigPass(container, profile, groups, allowCreate) then incomplete = true end
-                AuraSlots.Park(container)
-            end
-            container:SetEnabled(true)
-            container:Show()
-        end
-    end
-    -- Retire pooled containers beyond the active element count: empty groups +
-    -- park slots + disable + hide (all combat-legal on a pre-created container).
-    for i = #elems + 1, #pool do
-        local container = pool[i]
-        if not AuraGlue.RunConfigPass(container, container._quiProfile or {}, {}, allowCreate) then incomplete = true end
-        AuraSlots.Park(container)
-        container:SetEnabled(false)
-        container:Hide()
-    end
-    if incomplete then
-        QueueContainerCombatWork(frame)
-    end
+            return container:GetFrameLevel() == desiredLevel
+        end,
+        onIncomplete = QueueContainerCombatWork,
+    })
 end
 
 -- Full pass entry (the forward-declared name + the QUI_GFA export; also what
@@ -1830,10 +1756,6 @@ local function AnyVisibleFrameHasActiveAuraConsumers(frames, nFrames)
         end
     end
     return false
-end
-
-function QUI_GFA:HasActiveConsumersForContext(isRaid)
-    return HasActiveAuraConsumers(isRaid)
 end
 
 function QUI_GFA:HasActiveConsumersForFrame(frame)

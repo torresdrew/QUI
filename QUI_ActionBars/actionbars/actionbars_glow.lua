@@ -4,15 +4,9 @@ env.ADDON_NAME = ADDON_NAME
 env.ns = ns
 env.SetChunkEnv(1, env)
 
----------------------------------------------------------------------------
--- SPELL ACTIVATION OVERLAY GLOW
----------------------------------------------------------------------------
--- Self-managed proc glow system.  Replaces the C-side glow that was
--- previously provided by SetActionUIButton registration.  Driven by
--- SPELL_ACTIVATION_OVERLAY_GLOW_SHOW/HIDE events.  Uses LibCustomGlow
--- for the visual effect (same library used by CDM glows).
----------------------------------------------------------------------------
-do -- spell glow / highlight / assisted rotation
+---@diagnostic disable: lowercase-global -- SetChunkEnv installs a setfenv
+
+do
 
 LCG = LibStub and LibStub("LibCustomGlow-1.0", true)
 

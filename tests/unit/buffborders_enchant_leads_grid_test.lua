@@ -47,12 +47,12 @@ assert(not anchor:find("isFirstBuff", 1, true) and not anchor:find("xOff", 1, tr
 -- enchants via AuraSkin.ConfigureEnchantments -- gated to isBuff and i == 1 so
 -- only strip 1 of the BUFF host ever gets enchants (debuff hosts never do).
 local zone = slice("local function ApplyMoverElements(")
-assert(zone:find("pcall(AnchorElementContainer, container, pool[1] or moverFrame, element)", 1, true),
-    "the container anchor call site must drop the old isFirstBuff 4th argument and pcall-dock strips i>1 to strip 1's live container")
+assert(zone:find('ns.SafeCall("defer-ooc", AnchorElementContainer, container, pool[1] or moverFrame, element)', 1, true),
+    "the container anchor call site must drop the old isFirstBuff 4th argument and SafeCall-dock strips i>1 to strip 1's live container")
 assert(zone:find("if isBuff and i == 1 then", 1, true),
     "ApplyMoverElements must gate enchant registration to the buff host's first container")
-assert(zone:find("pcall(AuraSkin.ConfigureEnchantments, container, profile)", 1, true),
-    "ApplyMoverElements must pcall AuraSkin.ConfigureEnchantments (first call creates forbidden frames -> OOC only)")
+assert(zone:find('ns.SafeCall("defer-ooc", AuraSkin.ConfigureEnchantments, container, profile)', 1, true),
+    "ApplyMoverElements must SafeCall-guard AuraSkin.ConfigureEnchantments (first call creates forbidden frames -> OOC only)")
 
 -- First call is combat-unsafe (frame creation): in combat, if enchants were
 -- never registered on this container yet, the pass must mark itself

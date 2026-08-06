@@ -4,13 +4,8 @@ env.ADDON_NAME = ADDON_NAME
 env.ns = ns
 env.SetChunkEnv(1, env)
 
----------------------------------------------------------------------------
--- LAYOUT ENGINE
----------------------------------------------------------------------------
+---@diagnostic disable: lowercase-global -- SetChunkEnv installs a setfenv
 
--- Grid placement: map a zero-based button index to its (col, row) cell.
--- Vertical bars fill column-major (down each column); horizontal bars fill
--- row-major (across each row). Shared by the secure and non-secure paths.
 local function ComputeGridColRow(idx, isVertical, numCols, numRows)
     if isVertical then
         return math.floor(idx / numRows), idx % numRows
@@ -419,7 +414,7 @@ function RestoreContainerPosition(barKey)
             local oy = Helpers.SafeToNumber(y, 0)
             local anchorParent = relativeTo or UIParent
             local anchorRelative = relPoint or point
-            local setOk = pcall(container.SetPoint, container, point, anchorParent, anchorRelative, ox, oy)
+            local setOk = ns.SafeCallMethod("best-effort-style", container, "SetPoint", point, anchorParent, anchorRelative, ox, oy)
             if setOk then
                 return true
             end

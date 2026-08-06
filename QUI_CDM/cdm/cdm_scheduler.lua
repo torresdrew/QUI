@@ -58,6 +58,7 @@ function CDMScheduler.Publish(eventName, ...)
     end
 
     for i = 1, n do
+        ---@diagnostic disable-next-line: redundant-parameter
         xpcall(snapshot[i], geterrorhandler(), eventName, ...)
     end
 
@@ -143,7 +144,8 @@ RuntimeUpdateOnUpdate = function(...)
 end
 
 local function SetupDebugInstrumentation()
-    measureFn = ns.MemAuditProfilerMeasure
+    measureFn = ns.DebugIsolate and ns.DebugIsolate(ns.MemAuditProfilerMeasure)
+        or ns.MemAuditProfilerMeasure
 end
 if ns.DebugRegister then -- gate contract: core/debug_gate.lua
     ns.DebugRegister(SetupDebugInstrumentation)

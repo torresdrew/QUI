@@ -4,9 +4,7 @@ env.ADDON_NAME = ADDON_NAME
 env.ns = ns
 env.SetChunkEnv(1, env)
 
----------------------------------------------------------------------------
--- EDIT MODE INTEGRATION
----------------------------------------------------------------------------
+---@diagnostic disable: lowercase-global -- SetChunkEnv installs a setfenv
 
 function CreateEditOverlay(container, barKey)
     local overlay = CreateFrame("Frame", nil, container, "BackdropTemplate")

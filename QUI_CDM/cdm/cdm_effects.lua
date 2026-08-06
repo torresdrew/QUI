@@ -502,6 +502,7 @@ local function GetViewerSettings(viewerType)
         }
     end
 
+    ---@diagnostic disable-next-line: unreachable-code
     return nil
 end
 

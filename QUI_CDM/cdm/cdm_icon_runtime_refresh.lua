@@ -68,7 +68,8 @@ local function SetupDebugInstrumentation()
     mp[#mp + 1] = { name = "CDM_spellsChangedScoped", counter = true, fn = function() return runtimeRefreshStats.spellsChangedScoped end }
     mp[#mp + 1] = { name = "CDM_unitSpellcastCooldownSkips", counter = true, fn = function() return runtimeRefreshStats.unitSpellcastCooldownSkips end }
     mp[#mp + 1] = { name = "CDM_unitSpellcastCooldownFallbacks", counter = true, fn = function() return runtimeRefreshStats.unitSpellcastCooldownFallbacks end }
-    measureFn = ns.MemAuditProfilerMeasure
+    measureFn = ns.DebugIsolate and ns.DebugIsolate(ns.MemAuditProfilerMeasure)
+        or ns.MemAuditProfilerMeasure
 end
 if ns.DebugRegister then -- gate contract: core/debug_gate.lua
     ns.DebugRegister(SetupDebugInstrumentation)
@@ -861,9 +862,7 @@ function CDMIconRuntimeRefresh.Create(callbacks)
         end
     end
 
-    -- Memaudit instrumentation: drain runs on a dynamic OnUpdate frame outside
-    -- QUI_PerfRegistry. Reassigning (not redeclaring) the local lets the
-    -- spellQueueOnUpdate upvalue pick up the wrapped version.
+    ---@type fun(...): ...
     local _drainSpellQueueImpl = drainSpellQueue
     drainSpellQueue = function(...)
         local measure = measureFn
@@ -901,6 +900,7 @@ function CDMIconRuntimeRefresh.Create(callbacks)
         controller:RunUsabilityRefresh()
     end
 
+    ---@type fun(...): ...
     local _drainUsabilityQueueImpl = drainUsabilityQueue
     drainUsabilityQueue = function(...)
         local measure = measureFn
@@ -936,6 +936,7 @@ function CDMIconRuntimeRefresh.Create(callbacks)
         controller:ApplyItemScope(opts)
     end
 
+    ---@type fun(...): ...
     local _drainItemQueueImpl = drainItemQueue
     drainItemQueue = function(...)
         local measure = measureFn
@@ -975,6 +976,7 @@ function CDMIconRuntimeRefresh.Create(callbacks)
         controller:ApplyCatalogScope(opts)
     end
 
+    ---@type fun(...): ...
     local _drainCatalogQueueImpl = drainCatalogQueue
     drainCatalogQueue = function(...)
         local measure = measureFn

@@ -4,11 +4,8 @@ env.ADDON_NAME = ADDON_NAME
 env.ns = ns
 env.SetChunkEnv(1, env)
 
--- Clear OverrideActionBar.isShownExternal and re-run the untaint dance until
--- the field reads secure again. Edit Mode / Blizzard_ActionBar may have written
--- a tainted show flag; left in place it propagates through ActionBarController
--- on re-show. Shared by Initialize and the ADDON_LOADED handler, which ran this
--- identical loop.
+---@diagnostic disable: lowercase-global -- SetChunkEnv installs a setfenv
+
 local function PurgeOverrideBarShownExternal()
     local overrideBar = _G.OverrideActionBar
     if overrideBar and overrideBar.system then

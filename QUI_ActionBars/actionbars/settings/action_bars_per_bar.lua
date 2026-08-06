@@ -297,7 +297,7 @@ local feature = Schema.Feature({
     category = "frames",
     nav = {
         tileId = "action_bars",
-        subPageIndex = 3,
+        subPageIndex = 2,
     },
     lookupKeys = LOOKUP_KEYS,
     onNavigate = function(lookupKey)

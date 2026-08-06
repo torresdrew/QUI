@@ -4,12 +4,8 @@ env.ADDON_NAME = ADDON_NAME
 env.ns = ns
 env.SetChunkEnv(1, env)
 
----------------------------------------------------------------------------
--- OWNED COOLDOWN UPDATE (12.0.5+ DurationObject path)
----------------------------------------------------------------------------
--- Replaces Blizzard's ActionButton_UpdateCooldown which can no longer call
--- SetCooldown with secret values from tainted code.  Uses the new
--- C_ActionBar structured APIs (isActive boolean, DurationObjects) to drive
+---@diagnostic disable: lowercase-global -- SetChunkEnv installs a setfenv
+
 -- cooldown display via SetCooldownFromDurationObject — the only remaining
 -- secret-safe cooldown setter.
 --

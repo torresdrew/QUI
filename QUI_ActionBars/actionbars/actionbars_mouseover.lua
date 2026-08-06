@@ -4,11 +4,8 @@ env.ADDON_NAME = ADDON_NAME
 env.ns = ns
 env.SetChunkEnv(1, env)
 
----------------------------------------------------------------------------
--- MOUSEOVER FADE SYSTEM
----------------------------------------------------------------------------
+---@diagnostic disable: lowercase-global -- SetChunkEnv installs a setfenv
 
--- During Edit Mode, fade-outs are suspended so all bars remain visible.
 IsInEditMode = ns.Helpers.IsEditModeShown
 
 -- Get or create fade state for a bar
@@ -277,7 +274,11 @@ function FadeLinkedBarDirect(barKey)
     state.delayTimer = C_Timer.NewTimer(delay, TryLinkedFade)
 end
 
--- Handle mouse entering the bar area (event-based, no polling)
+function IsExtraButtonBarFadeActive(barSettings)
+    return (barSettings and barSettings.enabled == true
+        and barSettings.fadeEnabled == true) or false
+end
+
 function OnBarMouseEnter(barKey)
     local state = GetBarFadeState(barKey)
     local fadeSettings = GetFadeSettings()
@@ -303,6 +304,9 @@ function OnBarMouseEnter(barKey)
     local fadeEnabled = barSettings and barSettings.fadeEnabled
     if fadeEnabled == nil then
         fadeEnabled = fadeSettings and fadeSettings.enabled
+    end
+    if barKey == "extraActionButton" or barKey == "zoneAbility" then
+        fadeEnabled = IsExtraButtonBarFadeActive(barSettings)
     end
     if not fadeEnabled then return end
 
@@ -356,6 +360,9 @@ function OnBarMouseLeave(barKey)
     local fadeEnabled = barSettings and barSettings.fadeEnabled
     if fadeEnabled == nil then
         fadeEnabled = fadeSettings and fadeSettings.enabled
+    end
+    if barKey == "extraActionButton" or barKey == "zoneAbility" then
+        fadeEnabled = IsExtraButtonBarFadeActive(barSettings)
     end
     if not fadeEnabled then return end
 
@@ -467,7 +474,11 @@ function SetupBarMouseover(barKey)
     -- Extra button bars (Zone Ability, Extra Action) should never inherit global fade
     -- They only fade if explicitly enabled for that specific bar
     if barKey == "extraActionButton" or barKey == "zoneAbility" then
-        if not barSettings or barSettings.fadeEnabled ~= true then
+        if not IsExtraButtonBarFadeActive(barSettings) then
+            local state = GetBarFadeState(barKey)
+            state.isFading = false
+            CancelBarFadeTimers(state)
+            SetBarAlpha(barKey, 1)
             return
         end
     end

@@ -45,10 +45,31 @@ function QUI_Castbar:SetHelpers(helpers)
     Helpers = helpers or {}
 end
 
--- Timer-driven remaining-duration text update (non-player / engine-animated
--- bars) — shared engine implementation (core/cast_engine.lua).
-local CastEngine = ns.CastEngine
-local UpdateTimerDrivenTimeText = CastEngine.UpdateTimerText
+local function UpdateTimerDrivenTimeText(self)
+    if not self.timeText then return end
+    local obj = self.durationObj
+    if IsSecretValue(obj) then
+        if not self._timeTextClearedForSecretDuration then
+            self.timeText:SetText("")
+            self._timeTextClearedForSecretDuration = true -- @secret-policy: empty-text-degrade
+        end
+        return
+    end
+    self._timeTextClearedForSecretDuration = nil
+    if obj then
+        if self._durationGetterObj ~= obj then
+            self._durationGetter = obj.GetRemainingDuration or obj.GetRemaining
+            self._durationGetterObj = obj
+        end
+        local getter = self._durationGetter
+        if getter then
+            local ok, rem = pcall(getter, obj)
+            if ok then
+                self.timeText:SetFormattedText("%.1f", rem)
+            end
+        end
+    end
+end
 
 -- Helper function wrappers (with fallbacks)
 local function GetUnitSettings(unit)
@@ -93,7 +114,7 @@ local function SafeToNumber(v)
     -- Probe FIRST — `v == nil` on a secret is itself a compare OF the secret
     -- and throws; IsSecretValue(nil) is simply false.
     if IsSecretValue(v) then
-        return nil -- @secret-policy: reject-secret-value — callers branch on nil
+        return nil -- @secret-policy: reject-secret-value
     end
     if v == nil then return nil end
     -- If already a number, return it directly (trust type check)
@@ -104,24 +125,17 @@ local function SafeToNumber(v)
     return nil
 end
 
--- Plain-boolean cast presence probes. 12.1 makes the cast NAME itself
--- secret-capable (SecretWhenUnitSpellCastRestricted): `not name` / `name ~=
--- nil` on the raw return throws. A secret name means a cast IS in progress
--- with restricted identity — it must never degrade to "not casting".
-local function UnitCastActive(unit)
-    local name = UnitCastingInfo(unit)
-    if IsSecretValue(name) then
-        return true -- @secret-policy: opaque-value-present — a secret name means a live cast
+local function ReadCastActivity(unit)
+    local castName = UnitCastingInfo(unit)
+    local channelName = UnitChannelInfo(unit)
+    if IsSecretValue(castName) or IsSecretValue(channelName) then
+        return false, false -- @secret-policy: report-unreadable-defer
     end
-    return name ~= nil
+    return (castName ~= nil or channelName ~= nil), true
 end
 
-local function UnitChannelActive(unit)
-    local name = UnitChannelInfo(unit)
-    if IsSecretValue(name) then
-        return true -- @secret-policy: opaque-value-present — a secret name means a live channel
-    end
-    return name ~= nil
+local function HasDurationForSink(d)
+    return IsSecretValue(d) or d ~= nil
 end
 
 ---------------------------------------------------------------------------
@@ -207,10 +221,10 @@ local CHANNEL_TICK_SUBEVENTS = {
 }
 
 local function NormalizeChannelTickSpellID(spellID)
-    if IsSecretValue(spellID) then
-        return nil -- @secret-policy: reject-secret-ids — tick rules key on plain ids
-    end
     if not spellID then return nil end
+    if IsSecretValue(spellID) then
+        return nil -- @secret-policy: reject-secret-ids
+    end
     local safeSpellID = SafeToNumber(spellID)
     if not safeSpellID then
         return nil
@@ -219,10 +233,10 @@ local function NormalizeChannelTickSpellID(spellID)
 end
 
 local function NormalizeChannelTickGUID(guid)
-    if IsSecretValue(guid) then
-        return nil -- @secret-policy: reject-secret-ids — tick history keys on plain GUIDs
-    end
     if not guid then return nil end
+    if IsSecretValue(guid) then
+        return nil -- @secret-policy: reject-secret-ids
+    end
     if type(guid) ~= "string" or guid == "" then
         return nil
     end
@@ -570,7 +584,11 @@ local function ApplyCastColor(statusBar, notInterruptible, customColor, notInter
     local lockedR, lockedG, lockedB, lockedA = GetSafeColor(notInterruptibleColor, NOT_INTERRUPTIBLE_COLOR)
     overlay:SetVertexColor(lockedR, lockedG, lockedB, lockedA)
 
-    if helper.SetAlphaFromBoolean and notInterruptible ~= nil then
+    if helper.SetAlphaFromBoolean and IsSecretValue(notInterruptible) then
+        pcall(helper.SetAlphaFromBoolean, helper, notInterruptible, 1, 0)
+        overlay:SetAlpha(helper:GetAlpha())
+        overlay:Show()
+    elseif helper.SetAlphaFromBoolean and notInterruptible ~= nil then
         pcall(helper.SetAlphaFromBoolean, helper, notInterruptible, 1, 0)
         overlay:SetAlpha(helper:GetAlpha())
         overlay:Show()
@@ -918,7 +936,32 @@ local function GetChannelTickSourcePolicy(castSettings)
     return CHANNEL_TICK_SOURCE_POLICY_AUTO
 end
 
-local GetDurationSecondsFromDurationObject = CastEngine.GetDurationSeconds
+local function GetDurationSecondsFromDurationObject(durationObj)
+    if IsSecretValue(durationObj) then return nil end -- @secret-policy: reject-secret-value
+    if not durationObj then return nil end
+
+    local getters = {
+        "GetTotalDuration",
+        "GetDuration",
+        "GetMaxDuration",
+        "GetRemainingDuration",
+        "GetRemaining",
+    }
+
+    for _, methodName in ipairs(getters) do
+        local getter = durationObj[methodName]
+        if getter then
+            local ok, value = pcall(getter, durationObj)
+            if ok then
+                value = SafeToNumber(value)
+                if value and value > 0 then
+                    return value
+                end
+            end
+        end
+    end
+    return nil
+end
 
 local function BuildEvenTickPositions(tickCount)
     if not tickCount or tickCount <= 1 then
@@ -976,7 +1019,7 @@ local function UnitHasAuraBySpellID(unit, auraSpellID)
     if not getAura then return false end
     local ok, aura = pcall(getAura, unit, auraSpellID)
     if not ok then return false end
-    if issecretvalue and issecretvalue(aura) then return false end -- @secret-policy: reject-secret-value — unreadable aura never enables the tick rule
+    if issecretvalue and issecretvalue(aura) then return false end -- @secret-policy: reject-secret-value
     return aura ~= nil
 end
 
@@ -1008,16 +1051,13 @@ local function ResolveRuleBasedTickModel(castbar, castContext)
         end
     end
 
-    local sequenceSelf = false
+    local sequenceBonusApplies = false
     if rule.sequenceBonus and castContext and castContext.unit and UnitIsUnit then
-        local rawSelf = UnitIsUnit(castContext.unit, "player")
-        if IsSecretValue(rawSelf) then
-            sequenceSelf = false -- @secret-policy: reject-secret-value — unreadable identity skips the sequence bonus
-        elseif rawSelf then
-            sequenceSelf = true
-        end
+        local isPlayerUnit = UnitIsUnit(castContext.unit, "player")
+        if IsSecretValue(isPlayerUnit) then isPlayerUnit = nil end
+        sequenceBonusApplies = isPlayerUnit and true or false
     end
-    if sequenceSelf then
+    if sequenceBonusApplies then
         local history = castbar.channelTickRuleHistory or {}
         local now = GetTime()
         local last = history[spellID]
@@ -1731,7 +1771,8 @@ local function ClearPreviewSimulation(castbar)
 
     ClearChannelTickState(castbar)
 
-    if not UnitCastActive(castbar.unit) and not UnitChannelActive(castbar.unit) then
+    local active, readable = ReadCastActivity(castbar.unit)
+    if readable and not active then
         SetCastbarFrameVisible(castbar, false)
     end
 end
@@ -2063,15 +2104,104 @@ function QUI_Castbar:CreateCastbar(unitFrame, unit, unitKey)
     return anchorFrame
 end
 
----------------------------------------------------------------------------
--- CAST FUNCTION HELPERS
----------------------------------------------------------------------------
--- Get cast information from UnitCastingInfo or UnitChannelInfo — shared
--- engine implementation (core/cast_engine.lua). Signature kept for call-site
--- stability; the castbar argument is unused.
--- Returns: spellName, text, texture, startTimeMS, endTimeMS, notInterruptible, unitSpellID, isChanneled, channelStages, durationObj, hasSecretTiming
-local function GetCastInfo(castbar, unit)
-    return CastEngine.GetCastInfo(unit)
+local function GetCastInfo(castbar, unit, fromCastStart)
+    local spellName, text, texture, startTimeMS, endTimeMS, _, _, notInterruptible, unitSpellID = UnitCastingInfo(unit)
+    local isChanneled = false
+    local channelStages = 0
+    local channelSpellID = nil
+    local durationObj = nil
+
+    if IsSecretValue(spellName) then
+        local castDur, chanDur
+        if type(UnitCastingDuration) == "function" then
+            local okD, dur = pcall(UnitCastingDuration, unit)
+            if okD then castDur = dur end
+        end
+        if type(UnitChannelDuration) == "function" then
+            local okD, dur = pcall(UnitChannelDuration, unit)
+            if okD then chanDur = dur end
+        end
+        local plainEvidence = false
+        local haveDur = false
+        if IsSecretValue(castDur) then
+            durationObj = castDur
+            haveDur = true
+        elseif castDur ~= nil then
+            durationObj = castDur
+            haveDur = true
+            plainEvidence = true
+        end
+        if not haveDur then
+            if IsSecretValue(chanDur) then
+                durationObj = chanDur
+                isChanneled = true
+            elseif chanDur ~= nil then
+                durationObj = chanDur
+                isChanneled = true
+                plainEvidence = true
+            end
+        end
+        if isChanneled then
+            spellName, text, texture, startTimeMS, endTimeMS, _, notInterruptible, channelSpellID = UnitChannelInfo(unit)
+            unitSpellID = channelSpellID
+        end
+        local castKnown = plainEvidence or fromCastStart == true
+        return spellName, text, texture, startTimeMS, endTimeMS, notInterruptible,
+            unitSpellID, isChanneled, channelStages, durationObj,
+            true, castKnown
+    end
+
+    local castKnown = false
+    if not IsSecretValue(spellName) then
+        castKnown = spellName ~= nil
+    end
+    if not castKnown then
+        spellName, text, texture, startTimeMS, endTimeMS, _, notInterruptible, channelSpellID, _, channelStages = UnitChannelInfo(unit)
+        if IsSecretValue(spellName) then
+            local plainEvidence = false
+            if type(UnitChannelDuration) == "function" then
+                local okD, dur = pcall(UnitChannelDuration, unit)
+                if okD and IsSecretValue(dur) then
+                    durationObj = dur
+                elseif okD and dur ~= nil then
+                    durationObj = dur
+                    plainEvidence = true
+                end
+            end
+            return spellName, text, texture, startTimeMS, endTimeMS, notInterruptible,
+                unitSpellID, true, channelStages, durationObj,
+                true, plainEvidence or fromCastStart == true
+        end
+        if spellName then
+            castKnown = true
+            isChanneled = true
+            if IsSecretValue(channelSpellID) then channelSpellID = nil end
+            if IsSecretValue(unitSpellID) then unitSpellID = nil end
+            if channelSpellID and not unitSpellID then
+                unitSpellID = channelSpellID
+            end
+        end
+    end
+
+    if castKnown then
+        local getDurationFn = isChanneled and UnitChannelDuration or UnitCastingDuration
+        if type(getDurationFn) == "function" then
+            local ok, dur = pcall(getDurationFn, unit)
+            if ok then durationObj = dur end
+        end
+    end
+
+    local hasSecretTiming = false
+    if IsSecretValue(startTimeMS) or IsSecretValue(endTimeMS) then
+        hasSecretTiming = true
+    elseif castKnown and startTimeMS and endTimeMS then
+        local ok = pcall(function() return startTimeMS + 0 end)
+        if not ok then hasSecretTiming = true end
+    end
+
+    return spellName, text, texture, startTimeMS, endTimeMS, notInterruptible,
+        unitSpellID, isChanneled, channelStages, durationObj,
+        hasSecretTiming, castKnown
 end
 
 -- Detect if cast is empowered (player only). UnitChannelInfo already
@@ -2085,7 +2215,8 @@ local function DetectEmpoweredCast(isPlayer, spellID, unitSpellID, isEmpowerEven
     local isEmpowered = isEmpowerEvent or false
     local numStages = 0
 
-    if isChanneled and isEmpowerEvent and channelStages and channelStages > 0 then
+    if isChanneled and isEmpowerEvent and not IsSecretValue(channelStages)
+        and channelStages and channelStages > 0 then
         numStages = channelStages
         isEmpowered = true
     end
@@ -2101,9 +2232,7 @@ local function AdjustEmpoweredEndTime(castbar, isPlayer, isEmpowered, endTime)
 
     local ok, adjustedEndTime = pcall(function()
         local ht = GetUnitEmpowerHoldAtMaxTime(castbar.unit)
-        if IsSecretValue(ht) then
-            return endTime -- @secret-policy: keep-native-when-unknown — unreadable hold time keeps the raw end time
-        end
+        if IsSecretValue(ht) then return endTime end
         if ht and ht > 0 then
             return endTime + (ht / 1000)
         end
@@ -2227,7 +2356,8 @@ local TryApplyDeferredCastbarRefresh
 -- Handle case when no cast is active
 local function HandleNoCast(castbar, castSettings, isPlayer, onUpdateHandler)
     C_Timer.After(0.1, function()
-        if not UnitCastActive(castbar.unit) and not UnitChannelActive(castbar.unit) then
+        local active, readable = ReadCastActivity(castbar.unit)
+        if readable and not active then
             if isPlayer then
                 ClearEmpoweredState(castbar)
             end
@@ -2274,18 +2404,12 @@ local function GetGCDCooldownInfo()
     end
 
     local info = C_Spell.GetSpellCooldown(GCD_SPELL_ID)
-    if IsSecretValue(info) then
-        return nil, nil -- @secret-policy: reject-secret-value — the GCD sweep needs readable timing
-    end
-    if not info then
-        return nil, nil
-    end
 
     local startTime = SafeToNumber(info.startTime)
     local duration = SafeToNumber(info.duration)
     local isEnabled = info.isEnabled
     if IsSecretValue(isEnabled) then
-        return nil, nil -- @secret-policy: reject-secret-value — the GCD sweep needs readable timing
+        return nil, nil -- @secret-policy: reject-secret-value
     end
 
     if not ((isEnabled == nil or isEnabled == true or isEnabled == 1) and startTime and duration and duration > 0) then
@@ -2362,7 +2486,9 @@ function QUI_Castbar:SetupCastbar(castbar, unit, unitKey, castSettings)
 
     local function HideCastbarIfIdle(self)
         if not self then return false end
-        if UnitCastActive(self.unit) or UnitChannelActive(self.unit) then
+        local active, readable = ReadCastActivity(self.unit)
+        if not readable then return false end
+        if active then
             return false
         end
 
@@ -2385,7 +2511,9 @@ function QUI_Castbar:SetupCastbar(castbar, unit, unitKey, castSettings)
 
     local function ShowGCDCast(self, spellID)
         if not isPlayer then return false end
-        if UnitCastActive(self.unit) or UnitChannelActive(self.unit) then return false end
+        local active, readable = ReadCastActivity(self.unit)
+        if not readable then return false end
+        if active then return false end
         if not InCombatLockdown() then return false end
 
         local settings = GetUnitSettings(self.unitKey)
@@ -2449,15 +2577,20 @@ function QUI_Castbar:SetupCastbar(castbar, unit, unitKey, castSettings)
 
     -- Unified OnUpdate handler - handles both real casts and preview
     local function CastBar_OnUpdate(self, elapsed)
-        local spellName = UnitCastActive(self.unit)
-        local channelName = UnitChannelActive(self.unit)
+        local castActive, castReadable = ReadCastActivity(self.unit)
 
         -- Continue showing castbar during empowered hold phase even when API returns nil
         local isInEmpoweredHold = isPlayer and self.isEmpowered and self.startTime and self.endTime
         local isShowingGCD = isPlayer and self.isGCD and self.startTime and self.endTime
 
-        if spellName or channelName or isInEmpoweredHold or isShowingGCD then
-            -- Real cast - use real cast data
+        if not castReadable and not self.isPreviewSimulation then
+            if self.timerDriven and not isPlayer then
+                UpdateTimerDrivenTimeText(self)
+            end
+            return
+        end
+
+        if castActive or isInEmpoweredHold or isShowingGCD then
 
             -- Handle timer-driven mode (non-player units with secret timing)
             if self.timerDriven and not isPlayer then
@@ -2630,11 +2763,12 @@ function QUI_Castbar:SetupCastbar(castbar, unit, unitKey, castSettings)
     -- Store OnUpdate handler reference
     castbar.castbarOnUpdate = CastBar_OnUpdate
 
-    -- Unified Cast function
-    function castbar:Cast(spellID, isEmpowerEvent)
-        -- Get cast information (now includes durationObj and hasSecretTiming)
-        local spellName, text, texture, startTimeMS, endTimeMS, notInterruptible, unitSpellID, isChanneled, channelStages, durationObj, hasSecretTiming = GetCastInfo(self, self.unit)
-        local resolvedSpellID = spellID or unitSpellID
+    function castbar:Cast(spellID, isEmpowerEvent, fromCastStart)
+        local spellName, text, texture, startTimeMS, endTimeMS, notInterruptible, unitSpellID, isChanneled, channelStages, durationObj, hasSecretTiming, castKnown = GetCastInfo(self, self.unit, fromCastStart)
+        local resolvedSpellID = unitSpellID
+        if not IsSecretValue(spellID) and spellID ~= nil then
+            resolvedSpellID = spellID
+        end
 
         -- Detect empowered cast (player only)
         local isEmpowered, numStages = DetectEmpoweredCast(isPlayer, spellID, unitSpellID, isEmpowerEvent, isChanneled, channelStages)
@@ -2646,10 +2780,9 @@ function QUI_Castbar:SetupCastbar(castbar, unit, unitKey, castSettings)
         local useTimerDriven = false
         local startTime, endTime
 
-        if spellName then
+        if castKnown then
             if isPlayer then
-                -- Player castbar: need actual timing values
-                if startTimeMS and endTimeMS then
+                if not hasSecretTiming and startTimeMS and endTimeMS then
                     local success
                     success, startTime, endTime = pcall(function()
                         return startTimeMS / 1000, endTimeMS / 1000
@@ -2657,10 +2790,19 @@ function QUI_Castbar:SetupCastbar(castbar, unit, unitKey, castSettings)
                     canShowCast = success
                 end
             else
-                -- Non-player (target/focus/boss): shared engine decision ladder
-                -- (engine-driven when timing is secret or unavailable)
-                canShowCast, useTimerDriven, startTime, endTime = CastEngine.ResolveNonPlayerTiming(
-                    spellName, startTimeMS, endTimeMS, durationObj, self.statusBar, hasSecretTiming)
+                if hasSecretTiming and HasDurationForSink(durationObj) and self.statusBar and self.statusBar.SetTimerDuration then
+                    useTimerDriven = true
+                    canShowCast = true
+                elseif not hasSecretTiming and startTimeMS and endTimeMS then
+                    local success
+                    success, startTime, endTime = pcall(function()
+                        return startTimeMS / 1000, endTimeMS / 1000
+                    end)
+                    canShowCast = success
+                elseif HasDurationForSink(durationObj) and self.statusBar and self.statusBar.SetTimerDuration then
+                    useTimerDriven = true
+                    canShowCast = true
+                end
             end
         end
 
@@ -2677,16 +2819,20 @@ function QUI_Castbar:SetupCastbar(castbar, unit, unitKey, castSettings)
             self.notInterruptible = notInterruptible
             self.timerDriven = useTimerDriven
             self.durationObj = durationObj
+            self._timeTextClearedForSecretDuration = nil
             self.channelSpellID = resolvedSpellID
             self._assumeCountdown = nil  -- Reset countdown detection for new cast
             self.isGCD = false
 
             if useTimerDriven then
-                -- Engine-driven animation for non-player units with secret timing.
-                -- direction: 0=fill (casts), 1=drain (channels that should drain)
-                local channelFillForward = castSettings and castSettings.channelFillForward
-                local direction = (isChanneled and not channelFillForward) and 1 or 0
-                CastEngine.ApplyTimerDriven(self.statusBar, durationObj, direction)
+                if self.statusBar and self.statusBar.SetTimerDuration then
+                    local channelFillForward = castSettings and castSettings.channelFillForward
+                    local direction = (isChanneled and not channelFillForward) and 1 or 0
+                    local ok = ns.SafeCallMethod("sink-forward", self.statusBar, "SetTimerDuration", durationObj, 0, direction)
+                    if not ok then
+                        ns.SafeCallMethod("sink-forward", self.statusBar, "SetTimerDuration", durationObj)
+                    end
+                end
                 self.castStartTime = nil
                 self.castEndTime = nil
             else
@@ -2752,26 +2898,27 @@ function QUI_Castbar:SetupCastbar(castbar, unit, unitKey, castSettings)
         PLAYER_FOCUS_CHANGED = function(self) CastOnTargetChange(self) end,
         UNIT_TARGET = function(self) CastOnTargetChange(self) end,
 
-        -- Cast start events
-        UNIT_SPELLCAST_START = function(self, spellID) self:Cast(spellID, false) end,
-        UNIT_SPELLCAST_CHANNEL_START = function(self, spellID) self:Cast(spellID, false) end,
+        UNIT_SPELLCAST_START = function(self, spellID) self:Cast(spellID, false, true) end,
+        UNIT_SPELLCAST_CHANNEL_START = function(self, spellID) self:Cast(spellID, false, true) end,
 
         -- Cast end events - hide immediately without re-querying APIs
         UNIT_SPELLCAST_STOP = function(self, spellID)
-            if self.isGCD and not UnitCastActive(self.unit) and not UnitChannelActive(self.unit) then
+            local active, readable = ReadCastActivity(self.unit)
+            if self.isGCD and readable and not active then
                 return
             end
             CastbarTeardown(self, isPlayer)
         end,
         UNIT_SPELLCAST_CHANNEL_STOP = function(self, spellID)
-            if self.isGCD and not UnitCastActive(self.unit) and not UnitChannelActive(self.unit) then
+            local active, readable = ReadCastActivity(self.unit)
+            if self.isGCD and readable and not active then
                 return
             end
             CastbarTeardown(self, isPlayer)
         end,
         UNIT_SPELLCAST_FAILED = function(self, spellID)
-            -- Don't hide if a channel is still active (e.g., pressing spell key again during channel)
-            if UnitChannelActive(self.unit) or UnitCastActive(self.unit) then
+            local active, readable = ReadCastActivity(self.unit)
+            if readable and active then
                 return
             end
             if self.isGCD then
@@ -2780,7 +2927,8 @@ function QUI_Castbar:SetupCastbar(castbar, unit, unitKey, castSettings)
             CastbarTeardown(self, isPlayer)
         end,
         UNIT_SPELLCAST_INTERRUPTED = function(self, spellID)
-            if self.isGCD and not UnitCastActive(self.unit) and not UnitChannelActive(self.unit) then
+            local active, readable = ReadCastActivity(self.unit)
+            if self.isGCD and readable and not active then
                 return
             end
             CastbarTeardown(self, isPlayer)
@@ -2847,16 +2995,16 @@ function QUI_Castbar:SetupCastbar(castbar, unit, unitKey, castSettings)
             end
         end
         eventHandlers.UNIT_SPELLCAST_EMPOWER_START = function(self, spellID)
-            self:Cast(spellID, true)
+            self:Cast(spellID, true, true)
         end
         eventHandlers.UNIT_SPELLCAST_EMPOWER_UPDATE = function(self, spellID)
-            self:Cast(spellID, true)
+            self:Cast(spellID, true, true)
         end
         eventHandlers.UNIT_SPELLCAST_EMPOWER_STOP = function(self, spellID)
-            if UnitCastActive(self.unit) then
-                -- Another cast started, transition to it
+            local active, readable = ReadCastActivity(self.unit)
+            if readable and active then
                 ClearEmpoweredState(self)
-                self:Cast(spellID, false)
+                self:Cast(spellID, false, true)
             else
                 -- Cast ended (cancelled, interrupted, or completed) - hide immediately
                 ClearEmpoweredState(self)
@@ -3001,12 +3149,16 @@ function QUI_Castbar:CreateBossCastbar(unitFrame, unit, bossIndex)
             return
         end
 
-        -- Check if actually casting (real cast takes priority)
-        local spellName = UnitCastActive(self.unit)
-        local channelName = UnitChannelActive(self.unit)
+        local castActive, castReadable = ReadCastActivity(self.unit)
 
-        if spellName or channelName then
-            -- Timer-driven mode: engine animates the bar, we just update time text
+        if not castReadable and not self.isPreviewSimulation then
+            if self.timerDriven then
+                UpdateTimerDrivenTimeText(self)
+            end
+            return
+        end
+
+        if castActive then
             if self.timerDriven then
                 UpdateTimerDrivenTimeText(self)
                 return
@@ -3091,15 +3243,28 @@ function QUI_Castbar:CreateBossCastbar(unitFrame, unit, bossIndex)
     -- Store OnUpdate handler reference
     anchorFrame.bossOnUpdate = BossCastBar_OnUpdate
 
-    -- Cast function
-    function anchorFrame:Cast()
-        -- Use shared GetCastInfo for secret timing detection and duration objects
-        local spellName, text, texture, startTimeMS, endTimeMS, notInterruptible, unitSpellID, isChanneled, _, durationObj, hasSecretTiming = GetCastInfo(self, self.unit)
+    function anchorFrame:Cast(fromCastStart)
+        local spellName, text, texture, startTimeMS, endTimeMS, notInterruptible, unitSpellID, isChanneled, _, durationObj, hasSecretTiming, castKnown = GetCastInfo(self, self.unit, fromCastStart)
 
-        -- Determine if we can show the cast — shared engine decision ladder
-        -- (engine-driven when timing is secret or unavailable)
-        local canShowCast, useTimerDriven, startTime, endTime = CastEngine.ResolveNonPlayerTiming(
-            spellName, startTimeMS, endTimeMS, durationObj, self.statusBar, hasSecretTiming)
+        local canShowCast = false
+        local useTimerDriven = false
+        local startTime, endTime
+
+        if castKnown then
+            if hasSecretTiming and HasDurationForSink(durationObj) and self.statusBar and self.statusBar.SetTimerDuration then
+                useTimerDriven = true
+                canShowCast = true
+            elseif not hasSecretTiming and startTimeMS and endTimeMS then
+                local success
+                success, startTime, endTime = pcall(function()
+                    return startTimeMS / 1000, endTimeMS / 1000
+                end)
+                canShowCast = success
+            elseif HasDurationForSink(durationObj) and self.statusBar and self.statusBar.SetTimerDuration then
+                useTimerDriven = true
+                canShowCast = true
+            end
+        end
 
         if canShowCast then
             -- Clear preview simulation
@@ -3113,12 +3278,16 @@ function QUI_Castbar:CreateBossCastbar(unitFrame, unit, bossIndex)
             self.channelSpellID = unitSpellID
             self.timerDriven = useTimerDriven
             self.durationObj = durationObj
+            self._timeTextClearedForSecretDuration = nil
 
             if useTimerDriven then
                 -- Engine-driven animation for secret timing
                 local channelFillForward = castSettings and castSettings.channelFillForward
                 local direction = (isChanneled and not channelFillForward) and 1 or 0
-                CastEngine.ApplyTimerDriven(self.statusBar, durationObj, direction)
+                local ok = ns.SafeCallMethod("sink-forward", self.statusBar, "SetTimerDuration", durationObj, 0, direction)
+                if not ok then
+                    ns.SafeCallMethod("sink-forward", self.statusBar, "SetTimerDuration", durationObj)
+                end
                 self.startTime = nil
                 self.endTime = nil
             else
@@ -3163,7 +3332,8 @@ function QUI_Castbar:CreateBossCastbar(unitFrame, unit, bossIndex)
             -- No real cast - check if preview mode is enabled AND boss frame preview is active
             ClearChannelTickState(self)
             C_Timer.After(0.1, function()
-                if not UnitCastActive(self.unit) and not UnitChannelActive(self.unit) then
+                local active, readable = ReadCastActivity(self.unit)
+                if readable and not active then
                     local settings = GetUnitSettings(self.unitKey)
                     local QUI_UF = QUI_Castbar.unitFramesModule
                     local bossFramePreviewActive = QUI_UF and QUI_UF.previewMode and QUI_UF.previewMode["boss" .. self.bossIndex]
@@ -3198,7 +3368,7 @@ function QUI_Castbar:CreateBossCastbar(unitFrame, unit, bossIndex)
 
     anchorFrame:SetScript("OnEvent", function(self, event, eventUnit)
         if event == "UNIT_SPELLCAST_START" or event == "UNIT_SPELLCAST_CHANNEL_START" then
-            self:Cast()
+            self:Cast(true)
         elseif event == "UNIT_SPELLCAST_STOP" or event == "UNIT_SPELLCAST_CHANNEL_STOP"
             or event == "UNIT_SPELLCAST_FAILED" or event == "UNIT_SPELLCAST_INTERRUPTED"
             or event == "UNIT_SPELLCAST_SUCCEEDED" then
@@ -3299,7 +3469,9 @@ end
 
 local function IsRealCastActive(unit)
     if not unit then return false end
-    return UnitCastActive(unit) or UnitChannelActive(unit)
+    local active, readable = ReadCastActivity(unit)
+    if not readable then return true end
+    return active
 end
 
 local function IsBossPreviewModeActive(bossKey)

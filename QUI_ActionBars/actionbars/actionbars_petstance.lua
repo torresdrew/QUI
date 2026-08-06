@@ -4,11 +4,8 @@ env.ADDON_NAME = ADDON_NAME
 env.ns = ns
 env.SetChunkEnv(1, env)
 
----------------------------------------------------------------------------
--- PET/STANCE BAR HELPERS
----------------------------------------------------------------------------
+---@diagnostic disable: lowercase-global -- SetChunkEnv installs a setfenv
 
--- Forward declarations (defined here, referenced in event handler and Initialize)
 env.__declared.UpdatePetBarVisibility = true
 env.__declared.UpdateStanceBarLayout = true
 
@@ -83,7 +80,7 @@ function ActionBarsOwned.UpdatePetButton(btn)
     if cooldown and GetPetActionCooldown then
         local start, duration, enable = GetPetActionCooldown(id)
         if CooldownFrame_Set then
-            pcall(CooldownFrame_Set, cooldown, start, duration, enable)
+            ns.SafeCall("sink-forward", CooldownFrame_Set, cooldown, start, duration, enable)
         end
     end
 end
@@ -127,7 +124,7 @@ function ActionBarsOwned.UpdateStanceButton(btn)
     if cooldown and GetShapeshiftFormCooldown then
         local start, duration, enable = GetShapeshiftFormCooldown(id)
         if CooldownFrame_Set then
-            pcall(CooldownFrame_Set, cooldown, start, duration, enable)
+            ns.SafeCall("sink-forward", CooldownFrame_Set, cooldown, start, duration, enable)
         end
     end
 end

@@ -18,6 +18,7 @@ local function readAll(path)
 end
 
 local src = readAll("QUI_UnitFrames/unitframes/unitframe_auras.lua")
+local coreSrc = readAll("core/aura_surface.lua")
 
 local function slice(marker)
     local startPos = src:find(marker, 1, true)
@@ -31,48 +32,38 @@ end
 local pass = slice("local function ApplyElementPass(frame, allowCreate)")
 
 -- CREATION is allowCreate-gated only — no combat condition (PTR7 68914).
-assert(pass:find("if allowCreate and CreateFrame then", 1, true),
-    "container creation must be gated on allowCreate only (combat-legal)")
-assert(not pass:find("allowCreate and not InCombatLockdown()", 1, true),
-    "no stale combat condition may remain on container creation")
-assert(pass:find('CreateFrame("AuraContainer", nil, frame, "CustomAuraContainerTemplate")', 1, true),
-    "creation uses the CustomAuraContainerTemplate")
+assert(not coreSrc:find("allowCreate and not InCombatLockdown()", 1, true)
+    and not coreSrc:find("InCombatLockdown", 1, true),
+    "no stale combat condition may remain on container creation or anchoring in core/aura_surface.lua")
+assert(pass:find("AuraSurface.ApplyElementPass(frame, elems, {", 1, true),
+    "ApplyElementPass must delegate the per-element pass to AuraSurface.ApplyElementPass")
+assert(pass:find("allowCreate = allowCreate == true,", 1, true),
+    "allowCreate must be forwarded through opts (combat-legal creation is core's responsibility now)")
 
 -- Container anchoring (SetPoint) runs unconditionally — proven combat-legal
 -- pre- and post-group registration; SetUnit likewise.
-assert(pass:find("AnchorElementContainer(container, frame, element)", 1, true),
-    "AnchorElementContainer runs on the pass")
-assert(not pass:find("InCombatLockdown() then\n                AnchorElementContainer", 1, true),
-    "container anchoring must not be combat-gated")
-assert(pass:find("container:SetUnit(QUI_UF.GetFrameUnit(frame))", 1, true),
-    "SetUnit is combat-legal mutation and runs before the config/enable branch")
+assert(pass:find("anchorContainer = function(container, host, element)", 1, true)
+    and pass:find("AnchorElementContainer(container, host, element)", 1, true),
+    "AnchorElementContainer runs on the pass via the anchorContainer opts callback")
 
--- Group / slot reconcile flows through the shared core glue; the combat
--- pcall(Configure)/Restyle fallback lives INSIDE AuraGlue.RunConfigPass, so this
--- file just threads allowCreate through — it never pcalls Configure itself.
-assert(pass:find("AuraGlue.RunConfigPass(container, profile, groups, allowCreate)", 1, true),
-    "filter strips reconcile groups via AuraGlue.RunConfigPass(..., allowCreate)")
-assert(pass:find("AuraGlue.ElementGroups(QUI_UF.GetFrameUnit(frame), element, profile, cancelEligible)", 1, true),
-    "filter strips build descriptors via AuraGlue.ElementGroups with the cancel-eligible gate")
-assert(pass:find("AuraSlots.Sync(container, element, allowCreate)", 1, true),
-    "tracked elements reconcile slots via AuraSlots.Sync(..., allowCreate)")
-assert(not pass:find("pcall(AuraSkin", 1, true),
-    "the combat Configure guard lives in core (AuraGlue.RunConfigPass), not here")
+assert(not pass:find("pcall(AuraSkin", 1, true) and not coreSrc:find("pcall(AuraSkin", 1, true),
+    "the combat Configure guard lives in core (AuraGlue.RunConfigPass), not in either surface-glue layer")
 
 -- UNIT-FRAME SPECIFICS ----------------------------------------------------------
 -- cancel is player-unit only (HELPFUL strips) — AuraGlue.ElementGroups honors it.
-assert(pass:find('local cancelEligible = (unitKey == "player")', 1, true),
+assert(pass:find('cancelEligible = (unitKey == "player")', 1, true),
     "right-click cancel is offered only on the player unit (cancelEligible gate)")
 -- A previewed polarity keeps its element containers disabled + hidden so the
 -- fake preview icons own the display (per-polarity suppression, not per-zone).
-assert(pass:find("previewSuppressed", 1, true)
+assert(pass:find("skip = function(element)", 1, true)
     and pass:find("buffPreviewActive", 1, true)
     and pass:find("debuffPreviewActive", 1, true),
-    "a previewed polarity must suppress its matching-polarity element containers")
+    "a previewed polarity must suppress its matching-polarity element containers via the skip opts callback")
 
 -- Skipped restricted work queues a regen replay via the shared core queue.
-assert(pass:find("AuraGlue.QueueRegenWork(frame, function(f) ApplyElementPass(f, true) end)", 1, true),
-    "incomplete (restricted work skipped) must queue a regen replay via AuraGlue.QueueRegenWork")
+assert(pass:find("onIncomplete = function(host)", 1, true)
+    and pass:find("AuraGlue.QueueRegenWork(host, function(f) ApplyElementPass(f, true) end)", 1, true),
+    "incomplete (restricted work skipped) must queue a regen replay via the onIncomplete opts callback")
 
 -- UpdateAuras: combat = SafeCall'd FULL pass; queue only on a caught failure.
 local update = slice("local function UpdateAuras(frame)")

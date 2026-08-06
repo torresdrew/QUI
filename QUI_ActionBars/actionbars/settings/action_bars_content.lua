@@ -111,7 +111,7 @@ local SelectedBarListeners = setmetatable({}, { __mode = "k" })
 local function NotifySelectedBarChanged(origin)
     for owner, callback in pairs(SelectedBarListeners) do
         if owner and callback then
-            local ok = pcall(callback, SelectedBarState.key, origin)
+            local ok = ns.SafeCall("bulkhead", callback, SelectedBarState.key, origin)
             if not ok then
                 SelectedBarListeners[owner] = nil
             end

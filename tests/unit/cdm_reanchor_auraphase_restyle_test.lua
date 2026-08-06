@@ -6,6 +6,11 @@
 -- object (spell CD first, charge recharge fallback), or clear to ready when the
 -- spell has no cooldown behind the buff. Colour honours showCooldownSwipe.
 local ns = {}
+-- Task 45f: cdm_reanchor*.lua route discarded-result pcall guards through
+-- ns.SafeCall. Additive stub (T1d/T1e precedent) — bare pcall passthrough.
+ns.SafeCall = function(_policy, fn, ...) return pcall(fn, ...) end
+ns.SafeCallMethod = function(_policy, obj, name, ...) return pcall(function(...) return obj[name](obj, ...) end, ...) end
+ns.SafeCallMethodIfPresent = function(_policy, obj, name, ...) if obj == nil then return nil end local okP, m = pcall(function() return obj[name] end) if not okP then return false end if m == nil then return nil end return pcall(m, obj, ...) end
 local loadChunk = dofile("tests/helpers/load_cdm_consolidated_chunk.lua")
 loadChunk("QUI_CDM/cdm/cdm_reanchor.lua", "cdm_reanchor.lua")("QUI", ns)
 loadChunk("QUI_CDM/cdm/cdm_reanchor_wiring.lua", "cdm_reanchor_wiring.lua")("QUI", ns)

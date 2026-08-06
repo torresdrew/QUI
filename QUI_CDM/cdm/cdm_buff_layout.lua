@@ -127,7 +127,11 @@ local function GetFrameTopEdge(frame)
     if type(top) == "number" then
         return top
     end
-    local _, rawCenterY = frame.GetCenter and frame:GetCenter()
+    local rawCenterY
+    if frame.GetCenter then
+        local _, cy = frame:GetCenter()
+        rawCenterY = cy
+    end
     local centerY = ReadNumber(rawCenterY, nil)
     local height = ReadNumber(frame.GetHeight and frame:GetHeight(), nil)
     if type(centerY) == "number" and type(height) == "number" then
@@ -356,7 +360,7 @@ local function ApplyTrackedBarAnchor(settings)
         if anchorCacheMatches(vbs.anchorCache, anchorTo, placement, anchorFrame, sourcePoint, targetPoint, px, py) then
             return
         end
-        ok = pcall(function()
+        ok = ns.SafeCall("best-effort-style", function()
             viewer:ClearAllPoints()
             viewer:SetPoint(sourcePoint, anchorFrame, targetPoint, offsetX, offsetY)
         end)
@@ -420,7 +424,7 @@ local function ApplyBuffIconAnchor(settings)
         local hadAnchor = vbs.anchorCache ~= nil
         local originalPoints = vbs.originalPoints
         if hadAnchor and originalPoints and #originalPoints > 0 then
-            pcall(function()
+            ns.SafeCall("best-effort-style", function()
                 viewer:ClearAllPoints()
                 for _, pointData in ipairs(originalPoints) do
                     viewer:SetPoint(
@@ -481,7 +485,7 @@ local function ApplyBuffIconAnchor(settings)
         if anchorCacheMatches(vbs.anchorCache, anchorTo, placement, anchorFrame, sourcePoint, targetPoint, px, py) then
             return
         end
-        ok = pcall(function()
+        ok = ns.SafeCall("best-effort-style", function()
             viewer:ClearAllPoints()
             viewer:SetPoint(sourcePoint, anchorFrame, targetPoint, offsetX, offsetY)
         end)
@@ -668,7 +672,8 @@ local function GetTrackedBarIconTexture(frame, spellData)
         -- The result feeds identity-adjacent consumers and the ~= compares
         -- below throw on secrets — reject and fall back to the spellID icon.
         local okTex, rawTexture = pcall(iconTexture.GetTexture, iconTexture)
-        local texture = okTex and rawTexture or nil
+        local texture
+        if okTex then texture = rawTexture end
         if WoW_IsSecretValue and WoW_IsSecretValue(texture) then texture = nil end
         if texture and texture ~= 0 and texture ~= "" then
             return texture
@@ -689,7 +694,8 @@ end
 local function IsTrackedBarActive(frame)
     if not frame or not frame.IsShown then return false end
     local okShown, shown = pcall(frame.IsShown, frame)
-    return okShown and shown or false
+    if not okShown then return false end
+    return ReadBoolean(shown, false)
 end
 
 local function GetTrackedBarRuntimeEntries()
@@ -848,9 +854,18 @@ local function GetBuffIconFrames()
     local pool = ns.CDMIconFactory and ns.CDMIconFactory:GetIconPool("buff")
     if not pool or #pool == 0 then return {} end
 
+    local inCombat = InCombatLockdown()
     local visible = {}
     for _, icon in ipairs(pool) do
-        if icon:IsShown() and icon:GetAlpha() > 0 then
+        local shown, alpha
+        if inCombat then
+            shown = ReadBoolean(icon:IsShown(), false)
+            alpha = ReadNumber(icon:GetAlpha(), 1)
+        else
+            shown = icon:IsShown()
+            alpha = icon:GetAlpha()
+        end
+        if shown and alpha > 0 then
             visible[#visible + 1] = icon
         end
     end
@@ -1160,14 +1175,7 @@ LayoutBuffBars = function()
     isBarLayoutRunning = false
 end
 
--- CHANGE DETECTION (called from OnUpdate hooks on viewers)
--- Icons: Hash-based detection for count/settings changes
----------------------------------------------------------------------------
-
--- Last-seen icon count + settings, compared field-by-field so the poll
--- doesn't allocate a hash string per tick. count = -1 is the invalidation
--- sentinel: it can never match a real count, forcing the next check to
--- see a change.
+---@type table<string, any> -- count is numeric; the ICON_STATE_FIELDS keys are not
 local lastIconState = { count = -1 }
 
 local ICON_STATE_FIELDS = {

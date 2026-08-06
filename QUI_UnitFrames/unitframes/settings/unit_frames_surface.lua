@@ -22,9 +22,12 @@ local Settings = ns.Settings
 local FullSurface = Settings and Settings.FullSurface
 local ClearFrame = FullSurface and FullSurface.ClearFrame
 
--- Anchor corner → { iconPoint, framePoint, borderOffsetX }. Mirrors the live
--- renderer (unitframe_auras.lua) so the preview anchors aura icons OUTSIDE the
--- frame edge (vertical flip) exactly like the real frames do.
+local function TruncateName(name, maxLength)
+    local UF = ns.QUI_UnitFrames
+    if UF and UF.TruncateName then return UF.TruncateName(name, maxLength) end
+    return name
+end
+
 local AURA_ANCHOR_FRAMEPOINT = {
     TOPLEFT     = { "BOTTOMLEFT",  "TOPLEFT",     1 },
     TOPRIGHT    = { "BOTTOMRIGHT", "TOPRIGHT",   -1 },
@@ -764,8 +767,8 @@ local function RefreshMock()
             rawName = MOCK_NAMES[State.selectedUnit] or State.selectedUnit
         end
         local maxLen = unitDB.maxNameLength or 0
-        if maxLen > 0 and #rawName > maxLen then
-            rawName = rawName:sub(1, maxLen)
+        if maxLen > 0 then
+            rawName = TruncateName(rawName, maxLen)
         end
 
         -- Inline ToT suffix for target + boss frames (mirrors live unitframes.lua:1642;
@@ -776,8 +779,8 @@ local function RefreshMock()
             local sep = unitDB.totSeparator or " >> "
             local totName = ns.L["TargetOfTarget"]
             local totMax = unitDB.totNameCharLimit or 0
-            if totMax > 0 and #totName > totMax then
-                totName = totName:sub(1, totMax)
+            if totMax > 0 then
+                totName = TruncateName(totName, totMax)
             end
             rawName = rawName .. sep .. totName
         end

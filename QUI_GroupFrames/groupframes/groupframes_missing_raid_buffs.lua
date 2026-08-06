@@ -582,10 +582,7 @@ local function UnitInKnownRange(unit)
         local ok, inRange, checked = pcall(UnitInRange, unit)
         if ok then
             if IsSecretValue(inRange) or IsSecretValue(checked) then
-                -- ACTION POLICY, not range truth: a secret range is
-                -- INDETERMINATE — keep the unit eligible (a possibly
-                -- in-range unit is never dropped on unverifiable range).
-            elseif checked and inRange == false then -- @secret-safe: IsSecretValue branch above proves checked/inRange plain here
+            elseif checked and inRange == false then
                 return false
             end
         end

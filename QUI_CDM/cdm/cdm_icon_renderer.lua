@@ -35,6 +35,7 @@ CDMIcons.DebugEntryBuild = function() end
 CDMIcons.DebugLayoutFilter = function() end
 ---@type fun(...)
 CDMIcons.EventTracePrint = function() end
+---@type fun(...): ...
 CDMIcons.EventTraceAuraInfo = function() return nil end
 
 ---------------------------------------------------------------------------
@@ -1863,25 +1864,17 @@ local function ClearClickButtonAttributes(btn)
     btn:SetAttribute("item", nil)
     btn:SetAttribute("macro", nil)
 end
----------------------------------------------------------------------------
--- MACRO RESOLUTION
--- Scan all player macros for one that casts the given spell.
--- If found, clicking the CDM icon will execute through the macro,
--- preserving all conditionals (@mouseover, /cancelaura, modifiers, etc.).
---
--- Scans macro indices directly (1-120 account, 121-138 character) instead
--- of action bar slots, because GetActionInfo returns bogus "macro" entries
--- with spell IDs instead of real macro indices in WoW 12.0+.
---
--- Match priority (highest → lowest):
---   1. GetMacroSpell — WoW resolved the macro's tooltip to our spell
---   2. #showtooltip / #show line names our spell — the macro's declared identity
---   3. /cast or /use line names our spell — broadest fallback
--- Multi-spell macros (e.g. Lichborne + Death Coil) only match via their
--- tooltip identity, not via a /cast line for a secondary spell.
----------------------------------------------------------------------------
-local MAX_ACCOUNT_MACROS = 120
-local MAX_CHARACTER_MACROS = 18
+local MAX_ACCOUNT_MACROS_FALLBACK = 120
+local MAX_CHARACTER_MACROS_FALLBACK = 30
+
+local function GetMacroScanLimit()
+    local consts = Constants and Constants.MacroConsts
+    local account = consts and consts.MAX_ACCOUNT_MACROS
+    local character = consts and consts.MAX_CHARACTER_MACROS
+    if type(account) ~= "number" then account = MAX_ACCOUNT_MACROS_FALLBACK end
+    if type(character) ~= "number" then character = MAX_CHARACTER_MACROS_FALLBACK end
+    return account + character
+end
 
 -- Extract the spell name from #showtooltip or #show lines.
 -- Returns lowercase name or nil.  Handles:
@@ -1934,8 +1927,9 @@ local function FindMacroForSpell(spellID, overrideSpellID)
         return nil
     end
 
-    -- Pass 1: GetMacroSpell (WoW-resolved tooltip spell ID)
-    for i = 1, MAX_ACCOUNT_MACROS + MAX_CHARACTER_MACROS do
+    local scanLimit = GetMacroScanLimit()
+
+    for i = 1, scanLimit do
         local macroName = GetMacroInfo(i)
         if macroName then
             local macroSpell = GetMacroSpell(i)
@@ -1946,8 +1940,7 @@ local function FindMacroForSpell(spellID, overrideSpellID)
         end
     end
 
-    -- Pass 2: #showtooltip / #show declares the macro's identity spell
-    for i = 1, MAX_ACCOUNT_MACROS + MAX_CHARACTER_MACROS do
+    for i = 1, scanLimit do
         local macroName = GetMacroInfo(i)
         if macroName then
             local tooltipSpell = GetMacroTooltipSpell(GetMacroBody(i))
@@ -1958,9 +1951,7 @@ local function FindMacroForSpell(spellID, overrideSpellID)
         end
     end
 
-    -- Pass 3: /cast or /use line mentions our spell (broadest, skips
-    -- multi-spell macros whose tooltip identity is a different spell)
-    for i = 1, MAX_ACCOUNT_MACROS + MAX_CHARACTER_MACROS do
+    for i = 1, scanLimit do
         local macroName = GetMacroInfo(i)
         if macroName then
             local body = GetMacroBody(i)
@@ -2674,23 +2665,6 @@ function _resolverRuntimePolicy.CooldownHasVisualPriority(icon, entry, container
         or false
 end
 
-function _resolverRuntimePolicy.ResolveCustomBarActiveState(entry, icon, now)
-    return customBarPolicy
-        and customBarPolicy:ResolveActiveState(entry, icon, now)
-        or false
-end
-
-function _resolverRuntimePolicy.ResolveCustomBarCooldownState(entry, icon, containerDB, now)
-    return customBarPolicy
-        and customBarPolicy:ResolveCooldownState(entry, icon, containerDB, now)
-        or nil
-end
-
-function _resolverRuntimePolicy.ResolveCustomBarUsability(entry, containerDB, cooldownState)
-    return not customBarPolicy
-        or customBarPolicy:ResolveUsability(entry, containerDB, cooldownState)
-end
-
 function _resolverRuntimePolicy.ComputeCustomBarVisibility(icon, entry, containerDB, now)
     return customBarPolicy
         and customBarPolicy:ComputeVisibility(icon, entry, containerDB, now)
@@ -2705,12 +2679,6 @@ function _resolverRuntimePolicy.ComputeCustomBarVisibility(icon, entry, containe
             hasChargesRemaining = false,
             visibilityMode = "always",
         }
-end
-
-function _resolverRuntimePolicy.StartCustomBarActiveGlow(icon, containerDB)
-    if customBarPolicy then
-        customBarPolicy:StartActiveGlow(icon, containerDB)
-    end
 end
 
 function _resolverRuntimePolicy.StopCustomBarActiveGlow(icon)
@@ -5079,7 +5047,8 @@ local function SetupDebugInstrumentation()
     mp[#mp + 1] = { name = "CDM_fullUpdateScheduleOther", counter = true, fn = function() return fullUpdateScheduleStats.other end }
     ns.QUI_PerfRegistry = ns.QUI_PerfRegistry or {}
     ns.QUI_PerfRegistry[#ns.QUI_PerfRegistry + 1] = { name = "CDM_Icons", frame = cdEventFrame }
-    measureFn = ns.MemAuditProfilerMeasure
+    measureFn = ns.DebugIsolate and ns.DebugIsolate(ns.MemAuditProfilerMeasure)
+        or ns.MemAuditProfilerMeasure
     _resolverRuntimePolicy.eventProfilingActive = true
 end
 if ns.DebugRegister then -- gate contract: core/debug_gate.lua

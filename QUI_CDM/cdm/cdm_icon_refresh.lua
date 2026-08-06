@@ -398,7 +398,8 @@ local ipairs = ipairs
 
 local measureFn -- profiler hook; bound at debug activation (nil otherwise)
 local function SetupDebugInstrumentation()
-    measureFn = ns.MemAuditProfilerMeasure
+    measureFn = ns.DebugIsolate and ns.DebugIsolate(ns.MemAuditProfilerMeasure)
+        or ns.MemAuditProfilerMeasure
 end
 if ns.DebugRegister then -- gate contract: core/debug_gate.lua
     ns.DebugRegister(SetupDebugInstrumentation)

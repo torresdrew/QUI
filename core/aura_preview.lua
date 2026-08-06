@@ -14,13 +14,69 @@ ns.AuraPreview = P
 _G.QUI = _G.QUI or {}
 _G.QUI.AuraPreview = P
 
-local PLACEHOLDER_ICON = 134400 -- INV_Misc_QuestionMark
+local PLACEHOLDER_ICON = 134400
+local SAMPLE_BUFF_ICONS = { 136034, 135940, 136081, 135932, 136063 }
+local SAMPLE_DEBUFF_ICONS = { 136207, 136130, 136067, 135813, 136118 }
 
 -- Acquire (or reuse) the pooled placeholder frame at `index`. The visual (icon
 -- vs colored rectangle) is (re)applied per-Show in LayoutElement, so a pool
 -- frame can flip shape freely across re-renders.
 local function AuraSkin()
     return ns.AuraSkin or (ns.Addon and ns.Addon.AuraSkin)
+end
+
+local function ResolveSpellIcon(spellID)
+    if type(spellID) ~= "number" then return nil end
+    if not (C_Spell and C_Spell.GetSpellTexture) then return nil end
+    local ok, tex = pcall(C_Spell.GetSpellTexture, spellID)
+    if ok then return tex end
+    return nil
+end
+
+local function SampleSpellIDs(element)
+    if element.mode == "tracked" then
+        local spells = element.spells
+        if type(spells) == "table" and #spells > 0 then return spells end
+        return nil
+    end
+    if element.filterMode ~= "whitelist" then return nil end
+    local wl = element.whitelist
+    if type(wl) ~= "table" then return nil end
+    local out = {}
+    for sid, on in pairs(wl) do
+        local n = tonumber(sid)
+        if on and n then out[#out + 1] = n end
+    end
+    if #out == 0 then return nil end
+    table.sort(out)
+    return out
+end
+
+function P.SampleIcon(element, index)
+    if type(element) ~= "table" then return PLACEHOLDER_ICON end
+    local spells = SampleSpellIDs(element)
+    if spells then
+        local tex = ResolveSpellIcon(spells[((index - 1) % #spells) + 1])
+        if tex then return tex end
+    end
+    local list = (element.auraType == "HARMFUL") and SAMPLE_DEBUFF_ICONS or SAMPLE_BUFF_ICONS
+    return list[((index - 1) % #list) + 1]
+end
+
+local function ColorComponents(color)
+    if type(color) ~= "table" then return nil end
+    return color.r or color[1], color.g or color[2], color.b or color[3],
+        color.a or color[4] or 1
+end
+
+local function DefaultDispelColor(_element, index, profile)
+    local G = ns.AuraGlue or (_G.QUI and _G.QUI.AuraGlue)
+    local cycle = G and G.DISPEL_TYPES
+    if not cycle or #cycle == 0 then return nil end
+    local dispelType = cycle[((index - 1) % #cycle) + 1]
+    local custom = profile and type(profile.dispelColors) == "table"
+        and profile.dispelColors[dispelType] or nil
+    return ColorComponents(custom or G.DISPEL_DEFAULT_COLORS[dispelType])
 end
 
 local function SetRegionShown(region, shown)
@@ -79,7 +135,8 @@ local function AcquireIcon(host, pool, index, profile, richIcon)
 end
 
 local function ApplyIconSample(frame, element, profile, index, opts)
-    local tex = (opts and opts.icon and opts.icon(element, index)) or PLACEHOLDER_ICON
+    local tex = (opts and opts.icon and opts.icon(element, index))
+        or P.SampleIcon(element, index)
     frame._tex:SetTexture(tex)
     frame._tex:SetTexCoord(0.08, 0.92, 0.08, 0.92)
 
@@ -107,10 +164,9 @@ local function ApplyIconSample(frame, element, profile, index, opts)
 
     local dispel = frame._quiDispel
     local r, g, b, a
-    if profile.showDispelBorder ~= false
-        and element.auraType == "HARMFUL"
-        and opts and opts.dispelColor then
-        r, g, b, a = opts.dispelColor(element, index, profile)
+    if profile.showDispelBorder ~= false and element.auraType == "HARMFUL" then
+        local resolve = (opts and opts.dispelColor) or DefaultDispelColor
+        r, g, b, a = resolve(element, index, profile)
     end
     if dispel and r ~= nil then
         if dispel.SetVertexColor then dispel:SetVertexColor(r, g or 1, b or 1, a or 1) end
@@ -156,6 +212,7 @@ local function LayoutElement(host, pool, poolCursor, element, resolve, opts)
     -- not from the grow direction). nil keeps the generic derivation below.
     local p, framePoint, offX, offY, pinCorner = resolve(element)
     if not p then return poolCursor end
+    local anchorTo = (opts and opts.anchorTo) or host
 
     local count
     if element.mode == "tracked" then
@@ -230,7 +287,7 @@ local function LayoutElement(host, pool, poolCursor, element, resolve, opts)
         end
         local dy = (row * stepY) * (up and 1 or -1)
         f:ClearAllPoints()
-        f:SetPoint(corner, host, framePoint, offX + dx, offY + dy)
+        f:SetPoint(corner, anchorTo, framePoint, offX + dx, offY + dy)
         f:SetAlpha(element.enabled ~= false and 1 or 0.35)
     end
     return poolCursor
@@ -261,7 +318,7 @@ function P.Show(hostFrame, elements, opts)
     for i = 1, #elements do
         local e = elements[i]
         local render = (e.mode == "filterStrip")
-            or (e.mode == "tracked" and e.displayType ~= "healthTint")
+            or (e.mode == "tracked" and e.displayType ~= "healthTint" and e.displayType ~= "border")
         if render and opts and opts.only then render = opts.only(e) end
         if render then
             cursor = LayoutElement(hostFrame, pool, cursor, e, resolve, opts)

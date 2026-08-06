@@ -4,13 +4,7 @@ env.ADDON_NAME = ADDON_NAME
 env.ns = ns
 env.SetChunkEnv(1, env)
 
---[[
-    QUI Action Bars - Native Engine
-    Creates native ActionButtonTemplate buttons (bar 1) or reparents
-    Blizzard's existing buttons (bars 2-8) into QUI-owned containers.
-    Buttons get native icon, cooldown, count, drag/pickup, and keybind
-    behavior. QUI handles skinning, layout, fade, and empty slot hiding.
-]]
+---@diagnostic disable: lowercase-global -- SetChunkEnv installs a setfenv
 
 ADDON_NAME, ns = ...
 Helpers = ns.Helpers
@@ -342,15 +336,12 @@ function ActionBarsOwned.SafeUpdate(self)
 
         -- Delegated to shadowed methods
         self:UpdateCount()
-        self:UpdateCooldown()
+        ActionBarsOwned.UpdateCooldown(self)
 
         -- Proc glow (spell activation overlay)
         ActionBarsOwned.UpdateOverlayGlow(self)
 
-        -- Flyout arrow
-        if self.UpdateFlyout then
-            pcall(self.UpdateFlyout, self)
-        end
+        ns.SafeCallMethodIfPresent("best-effort-style", self, "UpdateFlyout")
 
         -- Assisted combat rotation arrow (one-button rotation).
         -- Set everActive flag here — SafeUpdate already confirmed
@@ -382,13 +373,13 @@ function ActionBarsOwned.SafeUpdate(self)
         if shouldFlash then
             if not self.flashing then
                 if ActionButton_StartFlash then
-                    pcall(ActionButton_StartFlash, self)
+                    ns.SafeCall("best-effort-style", ActionButton_StartFlash, self)
                 end
             end
         else
             if self.flashing then
                 if ActionButton_StopFlash then
-                    pcall(ActionButton_StopFlash, self)
+                    ns.SafeCall("best-effort-style", ActionButton_StopFlash, self)
                 end
             end
         end
@@ -421,13 +412,10 @@ function ActionBarsOwned.SafeUpdate(self)
         end
         if self.flashing then
             if ActionButton_StopFlash then
-                pcall(ActionButton_StopFlash, self)
+                ns.SafeCall("best-effort-style", ActionButton_StopFlash, self)
             end
         end
-        -- Clean up overlays/elements that belong to the departed action
-        if self.UpdateFlyout then
-            pcall(self.UpdateFlyout, self)
-        end
+        ns.SafeCallMethodIfPresent("best-effort-style", self, "UpdateFlyout")
         UpdateAssistedCombatRotationFrame(self)
         ActionBarsOwned.UpdateOverlayGlow(self)
     end

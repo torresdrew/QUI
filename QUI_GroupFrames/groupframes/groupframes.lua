@@ -282,9 +282,10 @@ local _dispel = {
         [1] = "Magic", [2] = "Curse", [3] = "Disease", [4] = "Poison",
         [9] = "Bleed", [11] = "Bleed",
     },
-    colorCurve = nil,
+    colorCurves = {},
     iconCurves = {},
-    cachedColors = nil,
+    cachedColors = {},
+    auraBorderCurves = {},
     borderKeys = {"borderTop", "borderBottom", "borderLeft", "borderRight"},
 }
 
@@ -294,10 +295,15 @@ local InvalidateDispelColors
 local UpdateSelectiveEvents
 local UpdateDarkModeVisuals
 
-local function GetDispelColorCurve(opacity)
-    if _dispel.colorCurve then return _dispel.colorCurve end
+local function DispelContextKey(isRaid)
+    return isRaid and "raid" or "party"
+end
+
+local function GetDispelColorCurve(isRaid, opacity)
+    local key = DispelContextKey(isRaid)
+    if _dispel.colorCurves[key] then return _dispel.colorCurves[key] end
     if not C_CurveUtil or not C_CurveUtil.CreateColorCurve then return nil end
-    local colors = GetDispelColors()
+    local colors = GetDispelColors(isRaid)
     local curve = C_CurveUtil.CreateColorCurve()
     curve:SetType(Enum.LuaCurveType.Step)
     curve:AddPoint(0, CreateColor(0, 0, 0, 0))  -- None = invisible
@@ -308,7 +314,7 @@ local function GetDispelColorCurve(opacity)
             curve:AddPoint(enumVal, CreateColor(c[1], c[2], c[3], opacity or 0.8))
         end
     end
-    _dispel.colorCurve = curve
+    _dispel.colorCurves[key] = curve
     return curve
 end
 
@@ -495,11 +501,6 @@ local function GetLayoutSettings(isRaid)
     return vdb and vdb.layout
 end
 
-local function GetDimensionSettings(isRaid)
-    local vdb = GetVisualDB(isRaid)
-    return vdb and vdb.dimensions
-end
-
 local function GetHealthSettings(isRaid)
     local vdb = GetVisualDB(isRaid)
     return vdb and vdb.health
@@ -531,26 +532,29 @@ local function GetHealerSettings(isRaid)
     return vdb and vdb.healer
 end
 
-GetDispelColors = function()
-    if _dispel.cachedColors then return _dispel.cachedColors end
-    local hs = GetHealerSettings()
+GetDispelColors = function(isRaid)
+    local key = DispelContextKey(isRaid)
+    if _dispel.cachedColors[key] then return _dispel.cachedColors[key] end
+    local hs = GetHealerSettings(isRaid)
     local dbColors = hs and hs.dispelOverlay and hs.dispelOverlay.colors
     if not dbColors then
-        _dispel.cachedColors = _dispel.defaultColors
+        _dispel.cachedColors[key] = _dispel.defaultColors
         return _dispel.defaultColors
     end
-    _dispel.cachedColors = {
+    _dispel.cachedColors[key] = {
         Magic   = dbColors.Magic   or _dispel.defaultColors.Magic,
         Curse   = dbColors.Curse   or _dispel.defaultColors.Curse,
         Disease = dbColors.Disease or _dispel.defaultColors.Disease,
         Poison  = dbColors.Poison  or _dispel.defaultColors.Poison,
         Bleed   = dbColors.Bleed   or _dispel.defaultColors.Bleed,
     }
-    return _dispel.cachedColors
+    return _dispel.cachedColors[key]
 end
 
 InvalidateDispelColors = function()
-    _dispel.cachedColors = nil
+    _dispel.cachedColors = {}
+    _dispel.colorCurves = {}
+    _dispel.auraBorderCurves = {}
 end
 
 -- >>> QUI_TEST_EXTRACT GetAuraBorderColorCurve (sentinel used by
@@ -568,9 +572,10 @@ ns.QUI_GroupFrameAuraBorderCurve = function(isRaid)
     local vdb = GetVisualDB(isRaid)
     local auras = vdb and vdb.auras
     if not auras or auras.debuffBorderByType ~= true then return nil end
-    if _dispel.auraBorderCurve then return _dispel.auraBorderCurve end
+    local key = isRaid and "raid" or "party"
+    if _dispel.auraBorderCurves[key] then return _dispel.auraBorderCurves[key] end
     if not C_CurveUtil or not C_CurveUtil.CreateColorCurve then return nil end
-    local colors = GetDispelColors()
+    local colors = GetDispelColors(isRaid)
     local sr, sg, sb, sa = 0, 0, 0, 1
     if ns.Helpers and ns.Helpers.GetSkinBorderColor then
         sr, sg, sb, sa = ns.Helpers.GetSkinBorderColor()
@@ -585,7 +590,7 @@ ns.QUI_GroupFrameAuraBorderCurve = function(isRaid)
             curve:AddPoint(enumVal, CreateColor(c[1], c[2], c[3], 1))
         end
     end
-    _dispel.auraBorderCurve = curve
+    _dispel.auraBorderCurves[key] = curve
     return curve
 end
 -- <<< QUI_TEST_EXTRACT GetAuraBorderColorCurve
@@ -1201,7 +1206,7 @@ local function UpdateAbsorbs(frame, _unit, _maxHP)
     -- UnitGetTotalAbsorbs return is secret in restricted combat and
     -- `not <secret>` throws, which killed the sink route below.
     if not IsSecretValue(absorbAmount)
-        and (not absorbAmount or SafeToNumber(absorbAmount, 0) <= 0) then -- @secret-safe: IsSecretValue probe leads this compound; short-circuit keeps the truth-test off secrets
+        and (not absorbAmount or SafeToNumber(absorbAmount, 0) <= 0) then
         frame.absorbBar:SetValue(0)
         frame.absorbBar:Hide()
         return
@@ -1269,7 +1274,7 @@ local function UpdateHealAbsorb(frame, _unit, _maxHP)
     -- restricted combat and `not <secret>` throws; a secret amount rides the
     -- C-side SetMinMaxValues/SetValue sinks below.
     if not IsSecretValue(healAbsorbAmount)
-        and (not healAbsorbAmount or SafeToNumber(healAbsorbAmount, 0) <= 0) then -- @secret-safe: IsSecretValue probe leads this compound; short-circuit keeps the truth-test off secrets
+        and (not healAbsorbAmount or SafeToNumber(healAbsorbAmount, 0) <= 0) then
         frame.healAbsorbBar:SetValue(0)
         frame.healAbsorbBar:Hide()
         return
@@ -1338,8 +1343,7 @@ local function UpdateHealPrediction(frame, _unit, _maxHP)
     -- Probe FIRST: both providers are SecretReturns and `not x` throws on a
     -- secret; a secret amount just flows to the C-side bar below.
     if IsSecretValue(incomingHeals) then
-        -- secret: render path absorbs it
-    elseif not incomingHeals then -- @secret-safe: IsSecretValue branch above proves incomingHeals plain here
+    elseif not incomingHeals then
         frame.healPredictionBar:Hide()
         return
     end
@@ -1658,7 +1662,7 @@ local function UpdateTargetMarker(frame)
         frame.targetMarker:Hide()
         return
     end
-    if index then -- @secret-safe: IsSecretValue early-return above proves index plain here
+    if index then
         frame.targetMarker:SetTexture("Interface\\TargetingFrame\\UI-RaidTargetingIcons")
         SetRaidTargetIconTexture(frame.targetMarker, index)
         frame.targetMarker:Show()
@@ -2013,7 +2017,7 @@ local function UpdateDispelOverlay(frame)
     -- instance and forward any secret components into supported sinks.
     if C_UnitAuras.GetAuraDispelTypeColor then
         local opacity = dispelCfg.opacity or 0.8
-        local curve = GetDispelColorCurve(opacity)
+        local curve = GetDispelColorCurve(frame._isRaid, opacity)
         if curve then
             local cOk, color = pcall(C_UnitAuras.GetAuraDispelTypeColor, unit, visualInstID, curve)
             if cOk then
@@ -2027,7 +2031,7 @@ local function UpdateDispelOverlay(frame)
         end
     end
 
-    local colors = GetDispelColors()
+    local colors = GetDispelColors(frame._isRaid)
     local fallbackOpacity = dispelCfg.opacity or 0.8
     if ShowConfiguredDispelOverlay(overlay, colors, visualType, fallbackOpacity) then
         return
@@ -4537,7 +4541,7 @@ local function CheckUnitRange(unit)
         if issecretvalue and issecretvalue(inRange) then
             return inRange
         end
-        if inRange ~= nil then return inRange end -- @secret-safe: issecretvalue early-return above proves inRange plain here
+        if inRange ~= nil then return inRange end
     end
 
     if _range.spell and friendlyReturnedNil and connected and not isDead then
@@ -5366,13 +5370,6 @@ function QUI_GF:UpdateDispelOverlay(frame)
     UpdateDispelOverlay(frame)
 end
 
-function QUI_GF:RefreshHealth(frame)
-    UpdateHealth(frame)
-end
-
----------------------------------------------------------------------------
--- REFRESH ALL: Update all visible frames
----------------------------------------------------------------------------
 function QUI_GF:RefreshAllFrames(_reason)
     -- Pre-loop setup that each module's RefreshAll does once before iteration.
     -- Inlining per-frame aura work avoids extra full iterations of unitFrameMap.
@@ -5424,8 +5421,6 @@ end
 function QUI_GF:RefreshSettings()
     InvalidateCache()
     RefreshCachedEnabled()
-    _dispel.colorCurve = nil  -- Rebuild with new opacity on next use
-    _dispel.auraBorderCurve = nil  -- Rebuild on dispel-color OR skin-color change
 
     if not self.initialized then
         return

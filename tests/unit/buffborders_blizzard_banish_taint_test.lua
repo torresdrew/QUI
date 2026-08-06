@@ -50,8 +50,8 @@ assertContains(
 
 assertContains(
     source,
-    "currentParent.RemoveManagedFrame",
-    "Managed-container removal must use the Blizzard parent mixin")
+    'ns.SafeCallMethodIfPresent("best-effort-style", currentParent, "RemoveManagedFrame"',
+    "Managed-container removal must use the Blizzard parent mixin (lookup inside pcall)")
 
 assertContains(
     source,

@@ -4,8 +4,8 @@ env.ADDON_NAME = ADDON_NAME
 env.ns = ns
 env.SetChunkEnv(1, env)
 
--- ACTION BARS PER-BAR SETTINGS BUILDERS
----------------------------------------------------------------------------
+---@diagnostic disable: lowercase-global -- SetChunkEnv installs a setfenv
+
 do
     local ActionBarsPerBarBuilders = ns.QUI_ActionBarsPerBarBuilders or {}
     ns.QUI_ActionBarsPerBarBuilders = ActionBarsPerBarBuilders
@@ -38,7 +38,7 @@ do
                             UpdateEmptySlotVisibility(btn, settings)
                         end
                     end
-                    pcall(LayoutNativeButtons, bk)
+                    ns.SafeCall("best-effort-style", LayoutNativeButtons, bk)
                 end
             end
         end
@@ -537,6 +537,7 @@ do
                     {value = "blizzard", text = ns.L["Blizzard Default"]},
                     {value = "qui", text = ns.L["QUI"]},
                 }
+                if barDB.showFlash == "qui" then barDB.showFlash = "qui" end
                 P(GUI:CreateFormDropdown(body, ns.L["Pressed Effect"],
                     pressedOptions, "showFlash", barDB, RefreshActionBars,
                     { description = ns.L["Visual response when a button is pressed. Blizzard Default replays the stock animation; QUI swaps in a subtle overlay; Off disables both."] }), body, sy)
@@ -711,7 +712,14 @@ end
 
 if ns.Registry then
     ns.Registry:Register("actionbars", {
-        refresh = _G.QUI_RefreshActionBars,
+        refresh = function()
+            if type(_G.QUI_RefreshActionBars) == "function" then
+                _G.QUI_RefreshActionBars()
+            end
+            if type(_G.QUI_RefreshExtraButtons) == "function" then
+                _G.QUI_RefreshExtraButtons()
+            end
+        end,
         priority = 20,
         group = "frames",
         importCategories = { "actionBars" },

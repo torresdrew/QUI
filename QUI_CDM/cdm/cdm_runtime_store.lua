@@ -62,12 +62,6 @@ local function CopyStateInto(target, state)
     end
 end
 
-function CDMRuntimeStore.BuildEntryKey(entry, fallbackContainer)
-    local containerKey, entryType, entryID, instanceKey = ResolveEntryKeyParts(entry, fallbackContainer)
-    if not containerKey then return nil end
-    return BuildEntryKeyFromParts(containerKey, entryType, entryID, instanceKey)
-end
-
 function CDMRuntimeStore.Version()
     return _version
 end

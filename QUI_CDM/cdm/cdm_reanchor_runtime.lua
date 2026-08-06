@@ -299,7 +299,7 @@ function CDMReanchorRuntime:AssembleEntries(containerKey, frameMap, settings, pr
         auraProbe = auraLive ~= nil,
         curated = #curated,
         matched = 0, frameless = 0, additional = 0,
-        nativeClaimed = 0, staleNative = 0,
+        nativeClaimed = 0, staleNative = 0, hiddenPreview = 0,
         mirrored = 0, unsupportedMirror = 0,
         fallbackLive = 0, minted = 0, mintFailed = 0,
     })
@@ -372,18 +372,32 @@ function CDMReanchorRuntime:AssembleEntries(containerKey, frameMap, settings, pr
                 end
             end
         elseif m then
-            -- Big-bang native model: matched Blizzard CDM items ARE the visible icons.
-            -- Essential/Utility no longer mint a visual shell; their secure click target
-            -- is a separate QUI-owned slot overlay positioned beside this direct anchor.
-            -- BuffIcon has no secure click target. trackedBar returned above because
-            -- BuffBarCooldownViewer is data-source-only for owned StatusBars.
-            diag.nativeClaimed = diag.nativeClaimed + 1
-            entries[#entries + 1] = {
-                src = e, frame = m.frame, liveFrame = m.frame,
-                reanchored = true, directAnchor = true,
-                placementKey = assignment and assignment.placementKey or nil,
-                _assignedRow = e._assignedRow,
-            }
+            local hiddenPreview = editing and IsBuffIconKey(containerKey)
+                and deps.frameIsActive ~= nil
+                and deps.frameIsActive(m.frame, containerKey, e) == false
+            if hiddenPreview then
+                diag.hiddenPreview = diag.hiddenPreview + 1
+                claimedFrames[m.frame] = nil
+                local icon = deps.mintOwned and deps.mintOwned(e, containerKey) or nil
+                if icon then
+                    diag.minted = diag.minted + 1
+                    self:_TrackMintedOwned(containerKey, icon)
+                    entries[#entries + 1] = {
+                        src = e, frame = icon, reanchored = false,
+                        _assignedRow = e._assignedRow,
+                    }
+                else
+                    diag.mintFailed = diag.mintFailed + 1
+                end
+            else
+                diag.nativeClaimed = diag.nativeClaimed + 1
+                entries[#entries + 1] = {
+                    src = e, frame = m.frame, liveFrame = m.frame,
+                    reanchored = true, directAnchor = true,
+                    placementKey = assignment and assignment.placementKey or nil,
+                    _assignedRow = e._assignedRow,
+                }
+            end
         elseif framelessByEntry[e] and ownedAuraFallback(e) then
             -- QUI-owned entry with no native frame but a LIVE aura: owned icon
             -- even in active mode (ShouldMintFramelessOwned deliberately

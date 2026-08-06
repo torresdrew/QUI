@@ -1420,9 +1420,25 @@ local function SafeMaybeNumber(value)
     return type(value) == "number" and value or tonumber(value)
 end
 
--- Slot-driven totem detection. State is sourced exclusively from
--- GetTotemInfo / GetTotemDuration; no Blizzard viewer children are
--- consulted any more.
+local function FindTotemSlotForSpellIDs(...)
+    if not (GetTotemInfo and GetNumTotemSlots) then return nil end
+    local slotCount = GetNumTotemSlots()
+    if type(slotCount) ~= "number" then return nil end
+    for slot = 1, slotCount do
+        local _, _, _, _, _, _, totemSpellID = GetTotemInfo(slot)
+        if IsUsableTableKey(totemSpellID) then
+            for i = 1, select("#", ...) do
+                local id = select(i, ...)
+                -- @secret-safe: both operands cleared IsUsableTableKey, which probes issecretvalue and rejects secrets; the analyzer is non-interprocedural and cannot see through the helper
+                if IsUsableTableKey(id) and id == totemSpellID then
+                    return slot
+                end
+            end
+        end
+    end
+    return nil
+end
+
 local function ResolveVirtualAuraState(explicitSlot)
     local slot = SafeMaybeNumber(explicitSlot)
     local state = { slot = slot }
@@ -1574,12 +1590,11 @@ local function SetResolvedAuraSpellID(result, auraData, fallbackID)
     end
 end
 
--- Aura-debug helpers (ShouldDebugAuraState, AuraStateDebug) live in the
--- load-on-demand debug addon. The placeholders below are rebound by
--- cdm_debug.lua's BindAll() when loaded.
+---@type fun(...): ... -- hot-swapped by QUI_Debug; the stub is narrower than d.ShouldAura
 local ShouldDebugAuraState = function() return false end
 ---@type fun(...)
 local AuraStateDebug       = function() end
+---@type fun(...): string
 local FormatIDList         = function() return "nil" end
 
 ---------------------------------------------------------------------------
@@ -1607,6 +1622,7 @@ local _resolveAuraScratch = {
 
     -- Phase 3 candidate building
     hasCooldownAuraID = false,
+    hasMappedAuraID = false,
 }
 
 -- Pooled tables. Always allocated; wiped at each call's start.
@@ -1621,6 +1637,7 @@ local function WipeResolveAuraScratch()
     s.entryIsAura = false; s.entryTexture = nil; s.viewerType = nil
     s.debugAura = false; s.isBuiltinAuraViewer = false
     s.hasCooldownAuraID = false
+    s.hasMappedAuraID = false
     wipe(_scratchCandidateIDs)
     wipe(_scratchCandidateSeen)
     wipe(_scratchProbeIDs)
@@ -1659,6 +1676,9 @@ local function ResolveAuraAppendMappedAuraIDs(id)
     end
     if not auraIDs then return end
     for _, aid in ipairs(auraIDs) do
+        if IsUsableTableKey(aid) then
+            _resolveAuraScratch.hasMappedAuraID = true
+        end
         ResolveAuraAppendID(aid)
     end
 end
@@ -1756,6 +1776,12 @@ local function ResolveAuraRuntimeStateImpl(params)
     -- aura via C_UnitAuras.GetUnitAuraBySpellID when available.
     -----------------------------------------------------------------------
     local explicitTotemSlot = params.totemSlot
+    if explicitTotemSlot == nil and not entryIsAura then
+        explicitTotemSlot = FindTotemSlotForSpellIDs(auraSpellID, entrySpellID, entryID)
+        if explicitTotemSlot then
+            AuraStateDebug(debugAura, "cooldown-totem-slot", "slot=", explicitTotemSlot)
+        end
+    end
     local disableLooseVisibilityFallback = params.disableLooseVisibilityFallback
 
     if explicitTotemSlot then
@@ -1822,19 +1848,11 @@ local function ResolveAuraRuntimeStateImpl(params)
         end
     end
 
-    -----------------------------------------------------------------------
-    -- Cooldown-entry short-circuit. The mirror match was attempted in
-    -- Phase 0 (above) using the entry's explicit viewerType; if it didn't
-    -- find an active aura there, continue only when that cooldown has
-    -- explicit linked aura IDs from its Blizzard info. Otherwise skip the
-    -- API fallback chain — those phases match against a candidate ID list
-    -- polluted by GetCooldownAuraBySpellID, which can resolve to unrelated
-    -- spells (Outbreak -> "Skyfury"). Aura-kind entries continue through
-    -- the API fallback chain for legacy aura tracking that lives outside
-    -- any Blizzard CDM viewer.
-    -----------------------------------------------------------------------
-    if not entryIsAura then
-        AuraStateDebug(debugAura, "cooldown-no-mirror", "skip-api-fallbacks")
+    if not entryIsAura and not s.hasCooldownAuraID and not s.hasMappedAuraID then
+        AuraStateDebug(debugAura, "cooldown-no-mirror", "skip-api-fallbacks",
+            "hasCooldownAuraID=", s.hasCooldownAuraID,
+            "hasMappedAuraID=", s.hasMappedAuraID,
+            "candidates=", FormatIDList(_scratchCandidateIDs))
         return r
     end
 
@@ -2727,10 +2745,10 @@ function CDMSpellData:SnapshotBlizzardCDM(containerKey)
     -- Only snapshot if ownedSpells == nil (first time)
     if db.ownedSpells ~= nil then return false, true end
 
-    local composer = ns.CDMComposer
-    if not (composer and composer.SeedFromBlizzard) then return false, false end
+    local catalog = ns.CDMCatalog
+    if not (catalog and catalog.SeedFromBlizzard) then return false, false end
 
-    local seeded, seedReady = composer.SeedFromBlizzard(containerKey)
+    local seeded, seedReady = catalog.SeedFromBlizzard(containerKey)
     if not seedReady then return false, false end
     if not seeded then return false, false end
 
@@ -2825,7 +2843,10 @@ local function IsEntryDormantForContainerInternal(containerKey, entry)
         -- require this Blizzard-owned entry to exist there too. This keeps
         -- valid same-class loadout/talent rows Dormant until learned.
         if not CDMSpellData:_AuraLearnedCatalogReady() then return false end
-        return not CDMSpellData:_IsAuraLearnedFamilyID(normalized.id)
+        if not CDMSpellData:_IsAuraLearnedFamilyID(normalized.id) then
+            return true
+        end
+        return CDMSpellData:_IsTrackedDisplayWrongSide(containerKey, normalized.id)
     end
     -- Cooldown family. Unknown spell -> dormant (unchanged). Additionally, a
     -- blizzardCDM-sourced cooldown that is no longer a LEARNED/active cooldown
@@ -2871,6 +2892,50 @@ end
 
 function CDMSpellData:_AuraLearnedCatalogReady()
     return self._cdmAuraLearnedCatalogReady == true
+end
+
+function CDMSpellData:_EnsureTrackedDisplaySets()
+    local broker = ns.CDMIndex
+    local version = broker and broker.Version and broker.Version() or 0
+    if self._cdmTrackedDisplayReady ~= nil
+        and self._cdmTrackedDisplayVersion == version then
+        return
+    end
+    local iconSet = self._cdmTrackedDisplayIconFamily
+    if type(iconSet) ~= "table" then
+        iconSet = {}
+        self._cdmTrackedDisplayIconFamily = iconSet
+    end
+    local barSet = self._cdmTrackedDisplayBarFamily
+    if type(barSet) ~= "table" then
+        barSet = {}
+        self._cdmTrackedDisplayBarFamily = barSet
+    end
+    wipe(iconSet)
+    wipe(barSet)
+    self._cdmTrackedDisplayVersion = version
+    self._cdmTrackedDisplayReady = false
+    local catalog = ns.CDMCatalog
+    if catalog and catalog.RebuildTrackedDisplayFamilyIDs then
+        self._cdmTrackedDisplayReady =
+            catalog.RebuildTrackedDisplayFamilyIDs(iconSet, barSet) == true
+    end
+end
+
+function CDMSpellData:_IsTrackedDisplayWrongSide(containerKey, spellID)
+    local id = tonumber(spellID)
+    if not id then return false end
+    if containerKey ~= "buff" and containerKey ~= "trackedBar" then
+        return false
+    end
+    self:_EnsureTrackedDisplaySets()
+    if self._cdmTrackedDisplayReady ~= true then return false end
+    local iconSet = self._cdmTrackedDisplayIconFamily
+    local barSet = self._cdmTrackedDisplayBarFamily
+    if containerKey == "buff" then
+        return iconSet[id] ~= true and barSet[id] == true
+    end
+    return barSet[id] ~= true and iconSet[id] == true
 end
 
 function CDMSpellData:_IsAuraLearnedFamilyID(spellID)
@@ -3036,9 +3101,9 @@ RebuildSpellToCooldownID = function()
     wipe(_spellInCDMAuras)
     wipe(_abilityToAuraSpellID)
     wipe(_auraIDsForSpell)
-    local composer = ns.CDMComposer
-    if composer and composer.RebuildBlizzardCatalogMaps then
-        composer.RebuildBlizzardCatalogMaps(
+    local catalog = ns.CDMCatalog
+    if catalog and catalog.RebuildBlizzardCatalogMaps then
+        catalog.RebuildBlizzardCatalogMaps(
             _spellToCooldownID, _spellInCDMCooldowns,
             _spellInCDMAuras, _abilityToAuraSpellID,
             _auraIDsForSpell)
@@ -3055,8 +3120,8 @@ RebuildSpellToCooldownID = function()
         CDMSpellData._cdmCooldownLearnedPreferred = learnedSet
     end
     wipe(learnedSet)
-    if composer and composer.RebuildCooldownLearnedPreferredIDs then
-        composer.RebuildCooldownLearnedPreferredIDs(learnedSet)
+    if catalog and catalog.RebuildCooldownLearnedPreferredIDs then
+        catalog.RebuildCooldownLearnedPreferredIDs(learnedSet)
     end
 
     -- Aura dormancy needs the same learned-vs-unlearned distinction, but
@@ -3070,9 +3135,9 @@ RebuildSpellToCooldownID = function()
     end
     wipe(learnedAuraSet)
     CDMSpellData._cdmAuraLearnedCatalogReady = false
-    if composer and composer.RebuildAuraLearnedFamilyIDs then
+    if catalog and catalog.RebuildAuraLearnedFamilyIDs then
         CDMSpellData._cdmAuraLearnedCatalogReady =
-            composer.RebuildAuraLearnedFamilyIDs(learnedAuraSet) == true
+            catalog.RebuildAuraLearnedFamilyIDs(learnedAuraSet) == true
     end
 
     local applicableSet = CDMSpellData._cdmClassApplicableSpellFamily
@@ -3082,10 +3147,13 @@ RebuildSpellToCooldownID = function()
     end
     wipe(applicableSet)
     CDMSpellData._cdmClassApplicableCatalogReady = false
-    if composer and composer.RebuildClassApplicableSpellIDs then
+    if catalog and catalog.RebuildClassApplicableSpellIDs then
         CDMSpellData._cdmClassApplicableCatalogReady =
-            composer.RebuildClassApplicableSpellIDs(applicableSet) == true
+            catalog.RebuildClassApplicableSpellIDs(applicableSet) == true
     end
+
+    CDMSpellData._cdmTrackedDisplayReady = nil
+    CDMSpellData._cdmTrackedDisplayVersion = nil
 end
 
 ---------------------------------------------------------------------------
@@ -3981,9 +4049,9 @@ function CDMSpellData:GetAvailableSpells(containerKey)
         end
     end
 
-    local composer = ns.CDMComposer
-    if composer and composer.GetAvailableSpellsForContainer then
-        return composer.GetAvailableSpellsForContainer(containerKey, containerType, ownedSet, _cdIDToCorrectSID)
+    local catalog = ns.CDMCatalog
+    if catalog and catalog.GetAvailableSpellsForContainer then
+        return catalog.GetAvailableSpellsForContainer(containerKey, containerType, ownedSet, _cdIDToCorrectSID)
     end
     return {}
 end
