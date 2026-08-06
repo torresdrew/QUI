@@ -1,7 +1,5 @@
 -- tests/unit/aura_skin_api_test.lua
 -- Source-text assertion test for core/aura_skin.lua (12.1 PTR4 contract).
--- AuraSkin cannot be behaviorally unit-tested headless (needs the live secure
--- template); source-text assertions verify the structural contract instead.
 -- Run: lua tests/unit/aura_skin_api_test.lua
 
 local function readAll(path)

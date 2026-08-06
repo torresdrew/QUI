@@ -90,12 +90,15 @@ test("delegated ActiveElementsForSpec: spec bucket OVERRIDES '*'", function()
 end)
 
 test("delegated EnableSpecOverride / DisableSpecOverride", function()
+    -- generated-form id ("e<N>") re-keys on clone; FIXED semantic ids
+    -- ("defensives"/"encounterBoss") are preserved per-bucket — see
+    -- aura_elements_model_test.lua for the fixed-id contract.
     local auras = { elements = { ["*"] = {
-        { id = "debuffs", enabled = true, mode = "filterStrip", auraType = "HARMFUL" },
+        { id = "e3", enabled = true, mode = "filterStrip", auraType = "HARMFUL" },
     } } }
     Model.EnableSpecOverride(auras, 105)
     assert(type(auras.elements[105]) == "table" and #auras.elements[105] == 1)
-    assert(auras.elements[105][1].id ~= "debuffs", "copy gets a fresh id")
+    assert(auras.elements[105][1].id ~= "e3", "generated id re-keyed fresh")
     Model.DisableSpecOverride(auras, 105)
     assert(auras.elements[105] == nil)
 end)

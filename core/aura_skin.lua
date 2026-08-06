@@ -270,10 +270,98 @@ local function ApplyIconSkinOwnership(button, profile)
     end
 end
 
--- Apply STATIC appearance (border color, font, swipe) to one button.  Called
--- from initializeFrame at button birth and from Restyle/Configure so a config
--- change re-styles without a /reload.  All writes are aura-data-INDEPENDENT
--- (no secret branch), so they're safe.
+local pandemicFormatter
+local function DurationFormatter()
+    if pandemicFormatter ~= nil then return pandemicFormatter or nil end
+    if C_StringUtil and C_StringUtil.CreateNumericRuleFormatter then
+        local ok, fmt = pcall(C_StringUtil.CreateNumericRuleFormatter, "%.1f", "%.0f", 3)
+        pandemicFormatter = ok and fmt or false
+    else
+        pandemicFormatter = false
+    end
+    return pandemicFormatter or nil
+end
+
+local function HasCurveSupport()
+    return C_CurveUtil and C_CurveUtil.CreateColorCurve and CreateColor
+        and Enum and Enum.LuaCurveType
+end
+
+local function ResolveBaseColor(color)
+    if type(color) == "table" then
+        return color[1] or 1, color[2] or 1, color[3] or 1, color[4] or 1
+    end
+    return 1, 1, 1, 1
+end
+
+local function PandemicCurve(baseColor, pandemicColor)
+    if not HasCurveSupport() then return nil end
+    local br, bg, bb, ba = ResolveBaseColor(baseColor)
+    local curve = C_CurveUtil.CreateColorCurve()
+    curve:SetType(Enum.LuaCurveType.Step)
+    curve:AddPoint(0.0, CreateColor(pandemicColor[1] or 1, pandemicColor[2] or 0,
+        pandemicColor[3] or 0, pandemicColor[4] or 1))
+    curve:AddPoint(0.3, CreateColor(br, bg, bb, ba))
+    return curve
+end
+
+local function FlatColorCurve(baseColor)
+    if not HasCurveSupport() then return nil end
+    local br, bg, bb, ba = ResolveBaseColor(baseColor)
+    local curve = C_CurveUtil.CreateColorCurve()
+    curve:SetType(Enum.LuaCurveType.Step)
+    curve:AddPoint(0.0, CreateColor(br, bg, bb, ba))
+    return curve
+end
+
+local function DurationOptionsBase(profile)
+    local durS = (profile and profile.duration) or {}
+    local opts = {}
+    if durS.decimals == true then
+        opts.textFormatter = DurationFormatter()
+    end
+    return durS, opts
+end
+
+local function BindDurationTextColor(opts, curve)
+    if curve and Enum and Enum.DurationTextBindingProperty then
+        opts.textColor = {
+            curve = curve,
+            property = Enum.DurationTextBindingProperty.RemainingPercent,
+        }
+    end
+    return opts
+end
+
+function AuraSkin.BuildDurationTextOptions(profile)
+    local durS, opts = DurationOptionsBase(profile)
+    if type(durS.pandemicColor) == "table" then
+        BindDurationTextColor(opts, PandemicCurve(durS.color, durS.pandemicColor))
+    end
+    return opts
+end
+
+function AuraSkin.BuildDurationClearCurveOptions(profile)
+    local durS, opts = DurationOptionsBase(profile)
+    return BindDurationTextColor(opts, FlatColorCurve(durS.color))
+end
+
+function AuraSkin.ResolveDurationTextOptions(button, profile)
+    local durS = (profile and profile.duration) or {}
+    if type(durS.pandemicColor) == "table" then
+        local opts = AuraSkin.BuildDurationTextOptions(profile)
+        if button then
+            button._quiPandemicCurved = (opts.textColor ~= nil) or nil
+        end
+        return opts
+    end
+    if button and button._quiPandemicCurved then
+        button._quiPandemicCurved = nil
+        return AuraSkin.BuildDurationClearCurveOptions(profile)
+    end
+    return AuraSkin.BuildDurationTextOptions(profile)
+end
+
 local Helpers = ns.Helpers
 local function styleButton(button, profile)
     -- The engine's flow layout positions buttons but never sizes them
@@ -391,6 +479,10 @@ local function styleButton(button, profile)
         fs:SetAlpha(cfg and cfg.show == false and 0 or 1)
     end
     styleText(button._quiDuration, profile.duration, profile.fontSize, "CENTER", 0, 0)
+    if button.SetDurationText and button._quiDuration then
+        ns.SafeCall("sink-forward", button.SetDurationText, button, button._quiDuration,
+            AuraSkin.ResolveDurationTextOptions(button, profile))
+    end
     styleText(button._quiCount, profile.stack, profile.fontSize, "BOTTOMRIGHT", -1, 1)
     if fontPath and button._quiSymbol then button._quiSymbol:SetFont(fontPath, (profile.fontSize and profile.fontSize > 0) and profile.fontSize or 11, fontFlags) end
 

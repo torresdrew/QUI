@@ -95,6 +95,7 @@ end
 -- order in the test exercises that lazy-resolve path for real, not just the
 -- happy case where the model happens to already be present.
 local ns = {}
+assert(loadfile("core/safecall.lua"))("QUI", ns)
 assert(loadfile("core/aura_theme.lua"))("QUI", ns)
 assert(loadfile("core/aura_skin.lua"))("QUI", ns)
 assert(loadfile("core/aura_elements.lua"))("QUI", ns)

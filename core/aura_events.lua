@@ -86,11 +86,8 @@ function AuraEvents:Unsubscribe(filter, callback)
     end
 end
 
----------------------------------------------------------------------------
--- COALESCING FRAME: batches all UNIT_AURA events within the same render
--- frame into a single dispatch pass (zero-allocation, automatic).
----------------------------------------------------------------------------
-local pendingUnits = {}  -- [unit] = updateInfo or true
+local pendingUnits = {}
+local pendingAllEligible = {}
 local coalesceFrame = CreateFrame("Frame")
 coalesceFrame:Hide()
 
@@ -100,42 +97,33 @@ local nAll, nRoster, nPlayer, nGroup, nNameplate = 0, 0, 0, 0, 0
 local subAll, subRoster, subPlayer, subGroup, subNameplate =
     subscribers.all, subscribers.roster, subscribers.player, subscribers.group, subscribers.nameplate
 
--- Nameplate units eligible for the "all" tier this frame: the dedicated
--- nameplate frames queue every event for "nameplate" subscribers, but the
--- "all" tier keeps its narrow pre-tier contract (target + tooltip unit).
-local pendingAllEligible = {}
+local function ProtectedFanout(list, n, unit, info)
+    for i = 1, n do
+        local ok, err = pcall(list[i], unit, info)
+        if not ok then
+            geterrorhandler()(err)
+        end
+    end
+end
 
--- One subscriber tier pass for a single unit. Named function so the
--- protected call below is pcall(DispatchUnit, ...) — no closure allocation
--- on the hot path.
-local function DispatchUnit(unit, info, isRoster)
-    local isNameplate = nameplateUnits[unit]
-
-    -- Dispatch to "all" subscribers (every UNIT_AURA, including
-    -- target/focus/boss/arena — use sparingly). Nameplate units only reach
-    -- "all" when they passed the non-roster interest predicate.
-    if not isNameplate or pendingAllEligible[unit] then
-        for i = 1, nAll do subAll[i](unit, info) end
+local function DispatchUnit(unit, info, isRoster, isNameplate, allEligible)
+    if not isNameplate or allEligible then
+        ProtectedFanout(subAll, nAll, unit, info)
     end
 
     if isNameplate then
-        -- Nameplate tier: nameplate1..40 via dedicated unit frames.
-        for i = 1, nNameplate do subNameplate[i](unit, info) end
-        return
-    end
-
-    if isRoster then
-        -- Roster tier: player + party1..4 + raid1..40.
-        for i = 1, nRoster do subRoster[i](unit, info) end
+        ProtectedFanout(subNameplate, nNameplate, unit, info)
+    elseif isRoster then
+        ProtectedFanout(subRoster, nRoster, unit, info)
 
         -- Player/group split is roster-scoped: "group" means
         -- party+raid (not player). Non-roster units like nameplates,
         -- target, focus, boss, arena never reach player/group
         -- subscribers — they go through "all" if they need them.
         if unit == "player" then
-            for i = 1, nPlayer do subPlayer[i](unit, info) end
+            ProtectedFanout(subPlayer, nPlayer, unit, info)
         else
-            for i = 1, nGroup do subGroup[i](unit, info) end
+            ProtectedFanout(subGroup, nGroup, unit, info)
         end
     end
 end
@@ -145,9 +133,8 @@ coalesceFrame:SetScript("OnUpdate", function(self)
     for unit, updateInfo in pairs(pendingUnits) do
         local info = updateInfo ~= true and updateInfo or nil
 
-        -- Protected per unit: a throwing subscriber must not starve the
-        -- remaining units or skip accumulator cleanup. Errors stay loud.
-        local ok, err = pcall(DispatchUnit, unit, info, rosterUnits[unit])
+        local ok, err = pcall(DispatchUnit, unit, info, rosterUnits[unit],
+            nameplateUnits[unit], pendingAllEligible[unit])
         if not ok then
             geterrorhandler()(err)
         end
@@ -215,22 +202,42 @@ local function AccumulateDelta(merged, updateInfo)
     AppendDeltaField(merged, updateInfo, "updatedAuraInstanceIDs")
 end
 
--- 12.1: detect a secret UNIT_AURA payload. While auras are restricted the delta
--- arrays (addedAuras / updated- / removedAuraInstanceIDs) come through as
--- SecretValue and cannot be merged or iterated. QueueAuraEvent promotes such an
--- event to a full-update sentinel; downstream consumers gate their own
--- (now-restricted) rescans on C_Secrets.ShouldAurasBeSecret().
+local function AnyIDElementSecret(arr)
+    if not arr then return false end
+    for i = 1, #arr do
+        if issecretvalue(arr[i]) then return true end -- @secret-policy: report-secret-detected
+    end
+    return false
+end
+
+local function AnyAddedAuraSecret(arr)
+    if not arr then return false end
+    for i = 1, #arr do
+        local data = arr[i]
+        if issecretvalue(data) then return true end -- @secret-policy: report-secret-detected
+        if data ~= nil
+            and (issecretvalue(data.auraInstanceID)
+                or issecretvalue(data.spellId)
+                or issecretvalue(data.spellID)) then
+            return true -- @secret-policy: report-secret-detected
+        end
+    end
+    return false
+end
+
 local function PayloadIsSecret(updateInfo)
-    if not (updateInfo and issecretvalue) then return false end
-    -- isFullUpdate: 12.1 can deliver a READABLE table whose scalar
-    -- isFullUpdate field is itself a secret boolean (live shape:
-    -- { removedAuraInstanceIDs=<secret table>, isFullUpdate=<secret
-    -- boolean> } on raid units). Reading the field is fine; boolean-testing
-    -- it throws. Probe it here alongside the delta arrays.
-    return issecretvalue(updateInfo.isFullUpdate)
+    if not issecretvalue then return false end
+    if issecretvalue(updateInfo) then return true end -- @secret-policy: report-secret-detected
+    if not updateInfo then return false end
+    if issecretvalue(updateInfo.isFullUpdate)
         or issecretvalue(updateInfo.addedAuras)
         or issecretvalue(updateInfo.updatedAuraInstanceIDs)
-        or issecretvalue(updateInfo.removedAuraInstanceIDs)
+        or issecretvalue(updateInfo.removedAuraInstanceIDs) then
+        return true -- @secret-policy: report-secret-detected
+    end
+    return AnyAddedAuraSecret(updateInfo.addedAuras)
+        or AnyIDElementSecret(updateInfo.updatedAuraInstanceIDs)
+        or AnyIDElementSecret(updateInfo.removedAuraInstanceIDs)
 end
 
 ---------------------------------------------------------------------------
@@ -273,20 +280,17 @@ local function IsNonRosterEventInteresting(unit)
     return unit == ttUnit
 end
 
----------------------------------------------------------------------------
--- SHARED QUEUEING
----------------------------------------------------------------------------
+local canaccesstable = canaccesstable
+
 local function QueueAuraEvent(unit, updateInfo)
-    -- Store updateInfo; if any event for this unit is a full update, mark full.
+    if canaccesstable and not (issecretvalue and issecretvalue(updateInfo))
+        and type(updateInfo) == "table" and not canaccesstable(updateInfo) then
+        updateInfo = nil
+    end
     local existing = pendingUnits[unit]
     if existing == true then
-        -- Already marked as full update, nothing to do
-    elseif updateInfo and issecretvalue and issecretvalue(updateInfo) then
-        -- 68569: the whole updateInfo arg is secret while restricted (a plain
-        -- __index into it, e.g. .isFullUpdate below, throws). Opaque
-        -- invalidation; consumers gate their own rescans off
-        -- C_Secrets.ShouldAurasBeSecret() instead of reading this payload.
-        pendingUnits[unit] = true
+    elseif issecretvalue and issecretvalue(updateInfo) then
+        pendingUnits[unit] = true -- @secret-policy: report-secret-detected (full-update sentinel promotion)
     elseif PayloadIsSecret(updateInfo) then
         -- Secret delta (combat, restricted auras): the arrays can't be merged
         -- or iterated, and/or the isFullUpdate flag itself is a secret boolean

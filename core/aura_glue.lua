@@ -28,11 +28,16 @@ local function ResolveAuraSkin()
     return AuraSkin
 end
 
--- Settings sort keys → AuraContainerSortMethod (plain global, verified
--- Blizzard_AuraContainerShared.lua:41; the 68914 re-patch added
--- AuraInstanceIDOnly = 8 — INDEX finally maps to real insertion-order
--- semantics, with Default as the pre-re-patch fallback). Read lazily so
--- the file loads headless before enum stubs exist.
+G.DISPEL_TYPES = { "Magic", "Curse", "Disease", "Poison", "Bleed" }
+
+G.DISPEL_DEFAULT_COLORS = {
+    Magic   = { 0.2, 0.6, 1.0, 1 },
+    Curse   = { 0.6, 0.0, 1.0, 1 },
+    Disease = { 0.6, 0.4, 0.0, 1 },
+    Poison  = { 0.0, 0.6, 0.0, 1 },
+    Bleed   = { 0.8, 0.0, 0.0, 1 },
+}
+
 local function SortMethodFor(rule)
     local M = _G.AuraContainerSortMethod
     if not M then return 0 end
@@ -202,7 +207,11 @@ function G.ElementGroups(unit, element, profile, cancelEligible)
         end
     end
     if #usable == 0 then
-        usable[1] = (E.CanonicalizeFilterString and E.CanonicalizeFilterString(base)) or base
+        local fallback = base
+        if element.nameplateOnly then
+            fallback = fallback .. "|INCLUDE_NAME_PLATE_ONLY"
+        end
+        usable[1] = (E.CanonicalizeFilterString and E.CanonicalizeFilterString(fallback)) or fallback
     end
     local cf = E.CompileCandidateFilters(element)
     local sortMethod = SortMethodFor(element.sortRule)

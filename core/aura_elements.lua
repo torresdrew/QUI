@@ -27,7 +27,7 @@ local function deepCopyTable(v)
     return t
 end
 
-local DISPLAY_TYPES = { icon = true, square = true, bar = true, healthTint = true }
+local DISPLAY_TYPES = { icon = true, square = true, bar = true, healthTint = true, border = true }
 local DEFAULT_MISSING_RAID_BUFF_CHECKS = {
     intellect = true, stamina = true, attackPower = true,
     versatility = true, skyfury = true, bronze = true,
@@ -52,11 +52,13 @@ local BUFF_CLASSIFICATION_MAP = {
     notCancelable     = "HELPFUL|!CANCELABLE",
     bigDefensive      = "HELPFUL|BIG_DEFENSIVE",
     externalDefensive = "HELPFUL|EXTERNAL_DEFENSIVE",
+    important         = "HELPFUL|IMPORTANT",
 }
 local DEBUFF_CLASSIFICATION_MAP = {
     harmful      = { "HARMFUL|RAID" },
     raid         = "HARMFUL|RAID",
-    dispellable  = "HARMFUL|RAID_PLAYER_DISPELLABLE",
+    important    = "HARMFUL|IMPORTANT",
+    dispellable  = "HARMFUL|RAID",
     crowdControl = "HARMFUL|CROWD_CONTROL",
 }
 
@@ -91,9 +93,11 @@ local DEBUFF_CLASSIFICATION_MAP = {
 -- accumulator below doesn't model, and no live data ever exercises it.
 local BUFF_CLASSIFICATION_PRIORITY = {
     "raid", "raidInCombat", "cancelable", "notCancelable", "bigDefensive", "externalDefensive",
+    "important",
 }
 local DEBUFF_CLASSIFICATION_PRIORITY = {
     "raid", "crowdControl",
+    "important",
 }
 
 -- Pull the single non-polarity component out of a ranked classification's
@@ -152,6 +156,7 @@ function E.NewFilterStripElement(auraType)
     return {
         id = nextId(), enabled = true, mode = "filterStrip",
         auraType = auraType or "HELPFUL",
+        applyToRoles = "all",
         anchor = (auraType == "HARMFUL") and "BOTTOMRIGHT" or "TOPLEFT",
         offsetX = 0, offsetY = 0,
         growDirection = (auraType == "HARMFUL") and "LEFT" or "RIGHT",
@@ -188,6 +193,7 @@ function E.NewTrackedElement(spells, displayType)
         auraType = "HELPFUL",
         spells = spells or {}, onlyMine = false, onlyMineSpells = {},
         displayType = displayType or "icon",
+        applyToRoles = "all",
         anchor = "TOPLEFT", offsetX = 0, offsetY = 0,
         growDirection = "RIGHT", spacing = 2, iconSize = 16, iconsPerRow = 0,
         hideSwipe = false, reverseSwipe = false,
@@ -199,6 +205,7 @@ function E.NewTrackedElement(spells, displayType)
         -- Seed a visible bar config up front (a fresh tracked bar is otherwise
         -- near-invisible at renderer defaults).
         bar = { thickness = 12, length = 48 },
+        border = { thickness = 2 },
     }
 end
 
@@ -207,6 +214,7 @@ function E.NewMissingRaidBuffElement()
     for key, value in pairs(DEFAULT_MISSING_RAID_BUFF_CHECKS) do checks[key] = value end
     return {
         id = nextId(), enabled = true, mode = "missingRaidBuff",
+        applyToRoles = "all",
         classDetection = true, buffChecks = checks,
         anchor = "CENTER", offsetX = 0, offsetY = 0,
         growDirection = "RIGHT", spacing = 2, iconSize = 16, maxIcons = 1, iconsPerRow = 0,
@@ -293,8 +301,14 @@ function E.NormalizeElement(e)
             end
             e.filterFlags.NOT_CANCELABLE = nil
         end
+        if e.filterFlags.INCLUDE_NAME_PLATE_ONLY ~= nil then
+            if e.filterFlags.INCLUDE_NAME_PLATE_ONLY == true and e.nameplateOnly == nil then
+                e.nameplateOnly = true
+            end
+            e.filterFlags.INCLUDE_NAME_PLATE_ONLY = nil
+        end
         if e.dispelFilterMode == nil then e.dispelFilterMode = "off" end
-        if type(e.dispelTypes) ~= "table" then e.dispelTypes = {} end
+        if type(e.dispelTypes) ~= "table" and e.dispelTypes ~= "mine" then e.dispelTypes = {} end
         if type(e.maxDurationSec) ~= "number" then e.maxDurationSec = 0 end
         -- Legacy GF editor spelling: "classification" → canonical "classify"
         -- (CompileFilters keys on "classify"; unmapped, a classified strip
@@ -302,7 +316,9 @@ function E.NormalizeElement(e)
         if e.filterMode == "classification" then e.filterMode = "classify" end
     elseif e.mode == "tracked" then
         if e.auraType == nil then e.auraType = "HELPFUL" end
+        if type(e.border) ~= "table" then e.border = { thickness = 2 } end
     end
+    if e.applyToRoles == nil then e.applyToRoles = "all" end
     return e
 end
 
@@ -321,8 +337,8 @@ function E.ElementAppliesToRole(element, frameRole, isSelf)
 end
 
 local WHAT_TO_SHOW_KEYS = {
-    HELPFUL = { "all", "mine", "defensives", "purgeable", "whitelist" },
-    HARMFUL = { "all", "dispellable", "crowdControl", "boss", "roleBoss", "whitelist" },
+    HELPFUL = { "all", "mine", "defensives", "important", "purgeable", "whitelist" },
+    HARMFUL = { "all", "dispellable", "crowdControl", "important", "boss", "roleBoss", "whitelist" },
 }
 
 function E.WhatToShowKeys(auraType)
@@ -350,6 +366,9 @@ function E.ApplyWhatToShow(element, key)
     elseif key == "defensives" then
         element.filterMode = "classify"
         element.classifications = { bigDefensive = true, externalDefensive = true }
+    elseif key == "important" then
+        element.filterMode = "classify"
+        element.classifications = { important = true }
     elseif key == "purgeable" then
         element.gateStealable = true
     elseif key == "dispellable" then
@@ -394,6 +413,7 @@ function E.DeriveWhatToShow(element)
     if mode == "classify" then
         local c = element.classifications or {}
         if onlyClassKeys(c, { "bigDefensive", "externalDefensive" }) then return "defensives" end
+        if onlyClassKeys(c, { "important" }) then return "important" end
         if onlyClassKeys(c, { "crowdControl" }) then return "crowdControl" end
         if onlyClassKeys(c, { "dispellable" }) then return "dispellable" end
         return "custom"
@@ -447,66 +467,12 @@ local VALID_FILTER_TOKENS = {
     PLAYER = true, CANCELABLE = true, MAW = true,
     EXTERNAL_DEFENSIVE = true, CROWD_CONTROL = true, RAID_IN_COMBAT = true,
     RAID_PLAYER_DISPELLABLE = true, BIG_DEFENSIVE = true,
+    IMPORTANT = true, DISPELLABLE = true,
 }
 E.VALID_FILTER_TOKENS = VALID_FILTER_TOKENS
 
--- Filter-string canonicalization (Wave 4 Task 4 — filter-group retention).
--- PTR4 aura groups are addon-unremovable and core/aura_skin.lua Configure
--- keys its registry entry on `gkey.."|"..filter` (see that file's header) —
--- every DISTINCT filter string therefore retains its own orphaned group
--- until reload. CanonicalizeFilterString is the ONE pure function that
--- normalizes a filter string to a stable, deterministic form so
--- semantically-equal strings collapse onto the same registry key, wired at
--- BOTH ends: AuraGlue.ElementGroups (the string's producer / "storage") and
--- AuraSkin.Configure's key derivation (the consumer choke point named
--- above) — see core/aura_glue.lua and core/aura_skin.lua.
---
--- Grammar (Blizzard_FrameXMLUtil/AuraUtil.lua:291-313 IsValidFilterString,
--- vendored tests/framexml/.../AuraUtil.lua): components are delimited by
--- ANY of "|" or space (string.split("| ", filterString)), each optionally
--- "!"-negated, each validated INDEPENDENTLY by exact-case membership in the
--- fixed AuraFilters enum (EnumUtil.IsValid → tContains, case-sensitive).
--- Position never affects validity — confirmed against the vendored source:
--- "RAID|HELPFUL|!CANCELABLE" validates identically to
--- "HELPFUL|RAID|!CANCELABLE". This is the SAME assumption CompileFilters
--- above already relies on (table.sort on its req/exc arrays) — sorting
--- within the two commutative scopes (required tokens, excluded tokens) is
--- therefore safe and mirrors that existing, shipped convention exactly
--- (polarity leads if present, then requires sorted, then !excludes sorted).
--- Dual-polarity edge: a string carrying BOTH polarities keeps the first-seen
--- polarity in the lead slot, so Canon("HELPFUL|HARMFUL") ~= Canon("HARMFUL|
--- HELPFUL"). Unreachable from any QUI producer (auraType is single-valued);
--- idempotence and validity still hold — documented, not defended.
--- Caveat (honest scope of that proof): IsValidFilterString proves SYNTAX
--- order-independence only; the C-side MATCHING behavior of a reordered
--- string is unverifiable headless. It is well-founded — CompileFilters has
--- shipped sorted output since the tri-state expansion, so every live group
--- already runs on engine-sorted strings — but strictly in-game-confirmed
--- only for the orderings CompileFilters itself emits.
---
--- Validity-preserving BY CONSTRUCTION, not by re-deriving IsValidFilterString
--- from scratch: canonicalization only reorders/dedupes/case-folds a string
--- that IsKnownFilterString already accepts as well-formed (every component
--- an exact-case AuraFilters token, no bare "!"); anything it does NOT
--- accept is returned UNCHANGED. So IsValidFilterString(canonical) ==
--- IsValidFilterString(raw) holds in both directions:
---   * raw well-formed -> canonical is a reordered/deduped set of the SAME
---     already-uppercase tokens -> still valid (component validity is
---     position- and duplicate-independent, proven above -> reordering/
---     dedup can't newly invalidate it).
---   * raw NOT well-formed (unknown token, bare "!") -> passthrough,
---     output == input -> validity trivially unchanged.
--- This is deliberately narrower than "case-fold anything typed": a
--- case-only-invalid raw string (e.g. "helpful|raid" — invalid because the
--- engine validator is exact-case) is left untouched rather than repaired,
--- because repairing it would flip invalid -> valid and break the invariant
--- above. In THIS codebase that narrowing costs nothing live: every
--- filter-affecting editor control is a checkbox/dropdown that writes
--- pre-validated uppercase tokens (QUI_Options/aura_elements_editor.lua
--- FILTER_MODE_OPTIONS/TRI_STATE_OPTIONS/classification checkboxes) — there
--- is no free-text filter-string input anywhere in the editor (verified: the
--- only EditBox reachable from a filterStrip element is the whitelist/
--- blacklist manual spell-ID field, which never touches a filter string).
+local NON_NEGATABLE_TOKENS = { INCLUDE_NAME_PLATE_ONLY = true, MAW = true }
+
 local function IsKnownFilterString(filterString)
     if type(filterString) ~= "string" or filterString == "" then return false end
     local any = false
@@ -562,6 +528,19 @@ function E.CanonicalizeFilterString(filterString)
     return table.concat(parts, "|")
 end
 
+local function AppendNameplateOnly(element, out)
+    if not element.nameplateOnly then return out end
+    for i = 1, #out do
+        if not out[i]:find("INCLUDE_NAME_PLATE_ONLY", 1, true) then
+            out[i] = out[i] .. "|INCLUDE_NAME_PLATE_ONLY"
+        end
+    end
+    if #out == 0 then
+        out[1] = (element.auraType or "HELPFUL") .. "|INCLUDE_NAME_PLATE_ONLY"
+    end
+    return out
+end
+
 function E.CompileFilters(element)
     local out = {}
     if element.filterMode == "flags" then
@@ -577,7 +556,7 @@ function E.CompileFilters(element)
             if VALID_FILTER_TOKENS[tok] and not (harmful and HELPFUL_ONLY_TOKENS[tok]) then
                 if v == true then
                     req[#req + 1] = tok
-                elseif v == "exclude" then
+                elseif v == "exclude" and not NON_NEGATABLE_TOKENS[tok] then
                     exc[#exc + 1] = "!" .. tok
                 end
             end
@@ -590,9 +569,9 @@ function E.CompileFilters(element)
             for i = 1, #exc do parts[#parts + 1] = exc[i] end
             out[1] = table.concat(parts, "|")
         end
-        return out
+        return AppendNameplateOnly(element, out)
     end
-    if element.filterMode ~= "classify" then return out end
+    if element.filterMode ~= "classify" then return AppendNameplateOnly(element, out) end
     local harmful = (element.auraType == "HARMFUL")
     local map = harmful and DEBUFF_CLASSIFICATION_MAP or BUFF_CLASSIFICATION_MAP
     local priority = harmful and DEBUFF_CLASSIFICATION_PRIORITY or BUFF_CLASSIFICATION_PRIORITY
@@ -681,7 +660,7 @@ function E.CompileFilters(element)
             end
         end
     end
-    return out
+    return AppendNameplateOnly(element, out)
 end
 
 -- Compile the element's per-spell / ownership restrictions into engine
@@ -728,16 +707,31 @@ function E.CompileCandidateFilters(element)
     -- Dispel-type filters are NOT identity-gated by the engine — they apply
     -- on every unit (Blizzard_AuraContainerUtil.lua:53-63).
     local dmode = element.dispelFilterMode
-    if (dmode == "include" or dmode == "exclude") and type(element.dispelTypes) == "table" then
-        local set = {}
-        for name, on in pairs(element.dispelTypes) do
-            if on then set[name] = true end
+    if dmode == "include" or dmode == "exclude" then
+        local types = element.dispelTypes
+        if types == "mine" then
+            local DR = ns and ns.QUI_DispelRoles
+            local ok, mine = false, nil
+            if DR and type(DR.PlayerDispelSchools) == "function" then
+                ok, mine = pcall(DR.PlayerDispelSchools)
+            end
+            types = (ok and type(mine) == "table" and mine)
+                or { Magic = true, Curse = true, Disease = true, Poison = true }
+            if dmode == "include" and next(types) == nil then
+                types = { ["QUI-none"] = true }
+            end
         end
-        if next(set) then
-            if dmode == "include" then
-                ensure().includeDispelTypes = set
-            else
-                ensure().excludeDispelTypes = set
+        if type(types) == "table" then
+            local set = {}
+            for name, on in pairs(types) do
+                if on then set[name] = true end
+            end
+            if next(set) then
+                if dmode == "include" then
+                    ensure().includeDispelTypes = set
+                else
+                    ensure().excludeDispelTypes = set
+                end
             end
         end
     end
@@ -786,13 +780,13 @@ function E.EnsureSeeded(auras, defaultBucketFn)
 
     if not auras._elementIDsBackfilled and type(auras.elements) == "table" then
         auras._elementIDsBackfilled = true
-        local used = {}
+        local seen = {}
         for _, bucket in pairs(auras.elements) do
             if type(bucket) == "table" then
                 for _, e in ipairs(bucket) do
                     local id = type(e) == "table" and e.id
                     if id ~= nil then
-                        used[id] = (used[id] or 0) + 1
+                        seen[id] = true
                         local n = type(id) == "string" and tonumber(id:match("^e(%d+)$"))
                         if n and n > idCounter then idCounter = n end
                     end
@@ -801,16 +795,16 @@ function E.EnsureSeeded(auras, defaultBucketFn)
         end
         for _, bucket in pairs(auras.elements) do
             if type(bucket) == "table" then
+                local inBucket = {}
                 for _, e in ipairs(bucket) do
                     if type(e) == "table" then
-                        local id = e.id
-                        if id == nil or used[id] > 1 then
-                            if id ~= nil then used[id] = used[id] - 1 end
+                        if e.id == nil or inBucket[e.id] then
                             local newId = nextId()
-                            while used[newId] do newId = nextId() end
+                            while seen[newId] do newId = nextId() end
                             e.id = newId
-                            used[newId] = 1
+                            seen[newId] = true
                         end
+                        inBucket[e.id] = true
                     end
                 end
             end
@@ -896,17 +890,27 @@ function E.ActiveElementsForSpec(auras, specID, out)
     local elements = auras and auras.elements
     if not elements then return out end
     local bucket
-    if specID ~= nil and elements[specID] ~= nil then
-        bucket = elements[specID]
-    else
-        bucket = elements["*"]
-    end
+    if specID ~= nil and elements[specID] ~= nil then bucket = elements[specID]
+    else bucket = elements["*"] end
     if bucket then
         for _, e in ipairs(bucket) do
             if e.enabled ~= false then out[#out + 1] = e end
         end
     end
     return out
+end
+
+function E.MaxBucketElementCount(auras)
+    local elements = auras and auras.elements
+    if type(elements) ~= "table" then return 0 end
+    local max = 0
+    for key, bucket in pairs(elements) do
+        if (key == "*" or type(key) == "number")
+            and type(bucket) == "table" and #bucket > max then
+            max = #bucket
+        end
+    end
+    return max
 end
 
 function E.HasSpecOverride(elements, bucketKey)
@@ -922,7 +926,9 @@ function E.EnableSpecOverride(auras, bucketKey)
     local copy = {}
     for _, e in ipairs(src) do
         local c = deepCopyTable(e)
-        c.id = nextId()
+        if type(c.id) ~= "string" or c.id:match("^e%d+$") then
+            c.id = nextId()
+        end
         copy[#copy + 1] = c
     end
     auras.elements[bucketKey] = copy

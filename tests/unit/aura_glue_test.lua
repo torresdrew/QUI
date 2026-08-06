@@ -108,5 +108,150 @@ do
         groups[1].sortMethod == _G.AuraContainerSortMethod.UnitFrameDebuff)
 end
 
+-- FilterStringUsable: restriction-aware probe (review blocker 1) ------------
+-- GetUnitAuras is RequiresUnitAuraAccess-guarded (FailureMode=Error); under
+-- encounter/M+/PvP restrictions the probe throws for EVERY string. That must
+-- never be read as "invalid filter" (it retired live classified groups and
+-- broadened their fallbacks to bare polarity mid-pull). Contract:
+--   1. AuraUtil.IsValidFilterString rejection always wins.
+--   2. Unrestricted probe verdicts are cached per string.
+--   3. Restricted + cached  -> cached verdict, probe not re-run.
+--   4. Restricted + uncached -> fail OPEN (string already passed Lua check).
+do
+    local restricted = false
+    local calls = 0
+    _G.C_UnitAuras = { GetUnitAuras = function(_, filter)
+        calls = calls + 1
+        if restricted then error("Unit aura access denied") end
+        if filter == "BOGUS_COMBO" then error("invalid filter combo") end
+        return {}
+    end }
+    _G.AuraUtil = { IsValidFilterString = function(s) return s ~= "LUA_REJECT" end }
+    _G.C_Secrets = { ShouldAurasBeSecret = function() return restricted end }
+
+    check("probe: lua-side reject wins", G.FilterStringUsable("player", "LUA_REJECT") == false)
+    check("probe: valid string accepted", G.FilterStringUsable("player", "HELPFUL") == true)
+    local before = calls
+    check("probe: verdict cached (no second C call)",
+        G.FilterStringUsable("player", "HELPFUL") == true and calls == before, tostring(calls - before))
+    check("probe: invalid combo rejected + cached", G.FilterStringUsable("player", "BOGUS_COMBO") == false)
+
+    restricted = true
+    check("probe: restricted + cached true stays true", G.FilterStringUsable("player", "HELPFUL") == true)
+    check("probe: restricted + cached false stays false", G.FilterStringUsable("player", "BOGUS_COMBO") == false)
+    before = calls
+    check("probe: restricted + uncached fails OPEN, no C call",
+        G.FilterStringUsable("player", "HELPFUL|RAID") == true and calls == before, tostring(calls - before))
+    restricted = false
+
+    _G.C_UnitAuras = nil
+    _G.AuraUtil = nil
+    _G.C_Secrets = nil
+end
+
+-- FilterStringUsable failure attribution (2026-07 re-review): a transient
+-- probe failure (e.g. a restriction racing in after the gate check) must not
+-- cache false — the restricted branch trusts cached verdicts, so a poisoned
+-- false would retire a valid group for the whole encounter. The baseline
+-- re-probe discriminates: baseline also fails = environment (fail OPEN,
+-- uncached); baseline passes = deterministic C-parser rejection (cache it).
+do
+    local raceActive = false
+    local restricted = false
+    local calls = 0
+    _G.C_UnitAuras = { GetUnitAuras = function(_, filter)
+        calls = calls + 1
+        if raceActive then error("Unit aura access denied") end
+        if filter == "BOGUS_COMBO_2" then error("invalid filter combo") end
+        return {}
+    end }
+    _G.AuraUtil = { IsValidFilterString = function() return true end }
+    _G.C_Secrets = { ShouldAurasBeSecret = function() return restricted end }
+
+    -- Transient environment failure: string AND baseline both fail.
+    raceActive = true
+    check("attribution: transient failure fails OPEN",
+        G.FilterStringUsable("player", "HELPFUL|RAID2") == true)
+
+    -- The reviewer's exact scenario: restriction begins before the next
+    -- unrestricted probe. Uncached -> restricted branch fails OPEN too.
+    restricted = true
+    local before = calls
+    check("attribution: restricted after transient failure stays OPEN (no poisoned cache)",
+        G.FilterStringUsable("player", "HELPFUL|RAID2") == true and calls == before,
+        tostring(calls - before))
+    restricted = false
+
+    -- Environment recovers: the string re-probes (nothing was cached) and is
+    -- accepted permanently.
+    raceActive = false
+    before = calls
+    check("attribution: clean re-probe after recovery accepts",
+        G.FilterStringUsable("player", "HELPFUL|RAID2") == true and calls > before)
+
+    -- String-specific rejection: baseline passes, string fails on the retry
+    -- too -> cached (deterministic C-parser verdict).
+    check("attribution: string-specific rejection still caches false",
+        G.FilterStringUsable("player", "BOGUS_COMBO_2") == false)
+    restricted = true
+    check("attribution: cached rejection honored under restriction",
+        G.FilterStringUsable("player", "BOGUS_COMBO_2") == false)
+    restricted = false
+
+    -- One-shot candidate failure (restriction window closing between the
+    -- candidate probe and the baseline): baseline passes AND the retry
+    -- passes -> accepted + cached true, NOT poisoned false (2026-07
+    -- re-review round 2).
+    local failOnce = true
+    _G.C_UnitAuras = { GetUnitAuras = function(_, filter)
+        calls = calls + 1
+        if filter == "HELPFUL|RAID3" and failOnce then
+            failOnce = false
+            error("Unit aura access denied")
+        end
+        return {}
+    end }
+    check("attribution: one-shot failure recovered by retry",
+        G.FilterStringUsable("player", "HELPFUL|RAID3") == true)
+    restricted = true
+    check("attribution: recovered verdict cached true under restriction",
+        G.FilterStringUsable("player", "HELPFUL|RAID3") == true)
+    restricted = false
+
+    _G.C_UnitAuras = nil
+    _G.AuraUtil = nil
+    _G.C_Secrets = nil
+end
+
+-- QueueRegenWork restriction boundary (68675): AuraButton children deny
+-- tainted access while auras are secret, so the replay queue must not fire
+-- on regen alone — it re-checks ShouldAurasBeSecret and polls until clear.
+do
+    local ran = 0
+    _G.InCombatLockdown = function() return false end
+    _G.C_Secrets = { ShouldAurasBeSecret = function() return true end }
+    local timers = {}
+    _G.C_Timer = { After = function(_, fn) timers[#timers + 1] = fn end }
+
+    G.QueueRegenWork("owner1", function() ran = ran + 1 end)
+    check("queue: OOC-but-restricted defers instead of running", ran == 0)
+    check("queue: restriction poll armed", #timers == 1, tostring(#timers))
+
+    timers[1]()
+    check("queue: still-restricted poll re-arms without running",
+        ran == 0 and #timers == 2, tostring(ran) .. "/" .. tostring(#timers))
+
+    _G.C_Secrets = { ShouldAurasBeSecret = function() return false end }
+    timers[2]()
+    check("queue: flushes once the restriction clears", ran == 1, tostring(ran))
+
+    G.QueueRegenWork("owner2", function() ran = ran + 1 end)
+    check("queue: immediate when unrestricted and OOC", ran == 2, tostring(ran))
+
+    _G.C_Timer = nil
+    _G.InCombatLockdown = nil
+    _G.C_Secrets = nil
+end
+
 print("aura_glue_test " .. (failures == 0 and "OK" or "FAILED"))
 os.exit(failures == 0 and 0 or 1)

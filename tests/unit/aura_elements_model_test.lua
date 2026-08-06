@@ -64,15 +64,47 @@ do
         "HELPFUL|CANCELABLE|!RAID|!RAID_IN_COMBAT,HELPFUL|RAID,HELPFUL|RAID_IN_COMBAT|!RAID",
         table.concat(fs, ","))
 
+    -- `important` (68675 re-add) is the LAST-ranked HELPFUL category. Two
+    -- things must hold, and they are the reason the rank is pinned here: it
+    -- inherits the negation of every enabled category above it, and adding it
+    -- leaves those categories' own strings byte-identical to what shipped.
+    local imp = E.NewFilterStripElement("HELPFUL")
+    imp.filterMode = "classify"
+    imp.classifications = { bigDefensive = true, important = true }
+    local ifs = E.CompileFilters(imp)
+    table.sort(ifs)
+    check("compile: important ranks last and inherits higher-priority negations",
+        table.concat(ifs, ",") ==
+        "HELPFUL|BIG_DEFENSIVE,HELPFUL|IMPORTANT|!BIG_DEFENSIVE",
+        table.concat(ifs, ","))
+    imp.classifications = { important = true }
+    local ifsSolo = E.CompileFilters(imp)
+    check("compile: important alone → HELPFUL|IMPORTANT",
+        #ifsSolo == 1 and ifsSolo[1] == "HELPFUL|IMPORTANT", table.concat(ifsSolo, ","))
+
+    -- Same category on HARMFUL, also ranked last there.
+    local impH = E.NewFilterStripElement("HARMFUL")
+    impH.filterMode = "classify"
+    impH.classifications = { crowdControl = true, important = true }
+    local ihfs = E.CompileFilters(impH)
+    table.sort(ihfs)
+    check("compile: important on HARMFUL ranks below crowdControl",
+        table.concat(ihfs, ",") ==
+        "HARMFUL|CROWD_CONTROL,HARMFUL|IMPORTANT|!CROWD_CONTROL",
+        table.concat(ihfs, ","))
+
     local d = E.NewFilterStripElement("HARMFUL")
     d.filterMode = "classify"
     d.classifications = { raid = true, dispellable = true, crowdControl = true }
     local dfs = E.CompileFilters(d)
     table.sort(dfs)
+    -- 68675: "dispellable by me" = HARMFUL|RAID (RAID_PLAYER_DISPELLABLE
+    -- widened to anyone-in-raid), so raid + dispellable now compile to the
+    -- SAME string and dedup onto one group.
     check("compile: harmful never emits RAID_IN_COMBAT (C API hard-errors on that combo); "
-        .. "crowdControl (ranked) negates raid, dispellable (legacy/unranked) stays bare",
+        .. "crowdControl (ranked) negates raid; dispellable dedups onto raid (both HARMFUL|RAID)",
         table.concat(dfs, ",") ==
-        "HARMFUL|CROWD_CONTROL|!RAID,HARMFUL|RAID,HARMFUL|RAID_PLAYER_DISPELLABLE",
+        "HARMFUL|CROWD_CONTROL|!RAID,HARMFUL|RAID",
         table.concat(dfs, ","))
 
     local off = E.NewFilterStripElement("HELPFUL")
@@ -102,6 +134,33 @@ do
     flags.filterFlags = { modifiers = true, exclusive = true }
     check("compile: flags mode with ONLY out-of-set tokens → empty (bare polarity fallback)",
         #E.CompileFilters(flags) == 0)
+
+    -- 68675 tokens: IMPORTANT and DISPELLABLE are engine-valid now — they
+    -- must compile, not silently drop.
+    flags.filterFlags = { IMPORTANT = true }
+    local imp = E.CompileFilters(flags)
+    check("compile: 68675 IMPORTANT token accepted",
+        #imp == 1 and imp[1] == "HELPFUL|IMPORTANT", tostring(imp[1]))
+    local harm = E.NewFilterStripElement("HARMFUL")
+    harm.filterMode = "flags"
+    harm.filterFlags = { DISPELLABLE = true }
+    local disp = E.CompileFilters(harm)
+    check("compile: 68675 DISPELLABLE token accepted",
+        #disp == 1 and disp[1] == "HARMFUL|DISPELLABLE", tostring(disp[1]))
+    check("valid tokens: new 68675 entries known to the canonicalizer",
+        E.IsKnownFilterString("HELPFUL|IMPORTANT") and E.IsKnownFilterString("HARMFUL|DISPELLABLE"))
+
+    -- Non-negatable tokens (engine ignores their "!" form; absence already
+    -- excludes the category): an "exclude" tri-state compiles to OMISSION,
+    -- never to a dead "!INCLUDE_NAME_PLATE_ONLY" component.
+    harm.filterFlags = { PLAYER = true, INCLUDE_NAME_PLATE_ONLY = "exclude" }
+    local nneg = E.CompileFilters(harm)
+    check("compile: excluded non-negatable token omitted (not emitted as !TOKEN)",
+        #nneg == 1 and nneg[1] == "HARMFUL|PLAYER", tostring(nneg[1]))
+    harm.filterFlags = { INCLUDE_NAME_PLATE_ONLY = true }
+    local npReq = E.CompileFilters(harm)
+    check("compile: non-negatable token still REQUIRABLE",
+        #npReq == 1 and npReq[1] == "HARMFUL|INCLUDE_NAME_PLATE_ONLY", tostring(npReq[1]))
 
     -- Legacy UF fallback: helpful/harmful master toggles stored as raid/raidInCombat.
     local legacy = E.NewFilterStripElement("HELPFUL")
@@ -204,6 +263,19 @@ do
         seen[e.id or ""] = true
     end
     check("seed: id backfill + dedupe", allUnique)
+
+    -- Fixed-id strips (defensives/encounterBoss) recur across spec buckets
+    -- by DESIGN — uniqueness is per bucket, so the backfill must not rename
+    -- a spec-bucket clone (a rename orphans FindBossStrip-style lookups and
+    -- spawns a duplicate strip on the next write).
+    local cross = { elementsSeeded = true, elements = {
+        ["*"]  = { { id = "encounterBoss", mode = "filterStrip", auraType = "HARMFUL" } },
+        [268]  = { { id = "encounterBoss", mode = "filterStrip", auraType = "HARMFUL" } },
+    } }
+    E.EnsureSeeded(cross, defaultBucket)
+    check("seed: cross-bucket fixed id preserved",
+        cross.elements["*"][1].id == "encounterBoss"
+        and cross.elements[268][1].id == "encounterBoss")
 end
 
 -- ActiveElementsForSpec ----------------------------------------------------
@@ -223,8 +295,10 @@ end
 
 -- Spec-override engine (load-bearing for GF; deep-copy contract) ------------
 do
+    -- generated-form id ("e<N>") — the clone re-keys these; fixed semantic
+    -- ids are covered in the next block.
     local auras = { elements = { ["*"] = {
-        { id = "a", mode = "filterStrip", auraType = "HELPFUL", enabled = true,
+        { id = "e9", mode = "filterStrip", auraType = "HELPFUL", enabled = true,
           classifications = { raid = true }, whitelist = { [7] = true } },
     } } }
     E.EnableSpecOverride(auras, 268)
@@ -232,7 +306,7 @@ do
     check("override: HasSpecOverride true", E.HasSpecOverride(auras.elements, 268) == true)
     check("override: '*' key never overrides", E.HasSpecOverride(auras.elements, "*") == false)
     local src, copy = auras.elements["*"][1], auras.elements[268][1]
-    check("override: fresh element id", copy.id ~= src.id)
+    check("override: generated id re-keyed fresh", copy.id ~= src.id)
     check("override: DEEP copy — no table aliasing",
         copy.classifications ~= src.classifications and copy.whitelist ~= src.whitelist)
     copy.classifications.raid = false
@@ -243,6 +317,28 @@ do
     check("override: disable deletes the bucket (inherits '*')", auras.elements[268] == nil)
     E.DisableSpecOverride(auras, "*")
     check("override: disable('*') is a guarded no-op", auras.elements["*"] ~= nil)
+end
+
+-- Spec-override clone: fixed semantic ids survive (2026-07 re-review). The
+-- encounters page looks strips up by id ("encounterBoss"/"defensives") PER
+-- BUCKET — re-keying the clone orphans it from that lookup (page reports
+-- "Off") and the next write spawns a duplicate strip.
+do
+    local auras = { elements = { ["*"] = {
+        { id = "encounterBoss", mode = "filterStrip", auraType = "HARMFUL", enabled = true },
+        { id = "defensives", mode = "filterStrip", auraType = "HELPFUL", enabled = true },
+        { id = "e7", mode = "tracked", displayType = "icon", spells = { 774 }, enabled = true },
+    } } }
+    E.EnableSpecOverride(auras, 268)
+    local bucket = auras.elements[268]
+    local byId = {}
+    for _, e in ipairs(bucket) do byId[e.id] = e end
+    check("override clone: encounterBoss id preserved", byId.encounterBoss ~= nil)
+    check("override clone: defensives id preserved", byId.defensives ~= nil)
+    check("override clone: generated id re-keyed", byId.e7 == nil)
+    check("override clone: still 3 elements", #bucket == 3, tostring(#bucket))
+    check("override clone: fixed-id element is a deep copy",
+        byId.encounterBoss ~= auras.elements["*"][1])
 end
 
 -- EffectiveOnlyMine: per-spell override beats the element default, including
@@ -373,6 +469,42 @@ do
     cf = E.CompileCandidateFilters(e)
     check("cf: empty enabled dispel set is inert", cf == nil)
 
+    -- "mine" sentinel (legacy "dispellable" preset SVs + the manual
+    -- dispel-type UI): resolves player capability at compile time via
+    -- ns.QUI_DispelRoles. The preset itself now compiles to the engine's
+    -- HARMFUL|RAID classification instead (68675 player-dispellable).
+    local m = E.NewFilterStripElement("HARMFUL")
+    m.dispelFilterMode = "include"
+    m.dispelTypes = "mine"
+    check("model: 'mine' sentinel stored", m.dispelTypes == "mine", tostring(m.dispelTypes))
+
+    local prevDR = ns.QUI_DispelRoles
+    ns.QUI_DispelRoles = { PlayerDispelSchools = function() return { Magic = true, Poison = true } end }
+    cf = E.CompileCandidateFilters(m)
+    check("cf: 'mine' sentinel resolves capability schools",
+        cf ~= nil and cf.includeDispelTypes ~= nil
+        and cf.includeDispelTypes.Magic == true and cf.includeDispelTypes.Poison == true
+        and cf.includeDispelTypes.Curse == nil and cf.includeDispelTypes.Disease == nil)
+
+    -- A dispel-less class (empty capability) must match NOTHING — an empty
+    -- include set would emit no filter at all and broaden to every debuff.
+    ns.QUI_DispelRoles = { PlayerDispelSchools = function() return {} end }
+    cf = E.CompileCandidateFilters(m)
+    local firstKey = cf and cf.includeDispelTypes and next(cf.includeDispelTypes)
+    check("cf: empty capability -> match-nothing include set",
+        firstKey == "QUI-none"
+        and next(cf.includeDispelTypes, firstKey) == nil,
+        tostring(firstKey))
+
+    -- Missing module (or a resolve error): fall back to the 4 base schools.
+    ns.QUI_DispelRoles = nil
+    cf = E.CompileCandidateFilters(m)
+    check("cf: missing module -> 4-school fallback",
+        cf ~= nil and cf.includeDispelTypes ~= nil
+        and cf.includeDispelTypes.Magic and cf.includeDispelTypes.Curse
+        and cf.includeDispelTypes.Disease and cf.includeDispelTypes.Poison)
+    ns.QUI_DispelRoles = prevDR
+
     local d = E.NewFilterStripElement("HELPFUL")
     d.maxDurationSec = 90
     d.hidePermanent = true
@@ -440,6 +572,43 @@ do
     local cfs = E.CompileFilters(classify)
     check("heal: classify notCancelable compiles to HELPFUL|!CANCELABLE",
         #cfs == 1 and cfs[1] == "HELPFUL|!CANCELABLE", table.concat(cfs, ","))
+end
+
+do
+    local legacy = { mode = "filterStrip", auraType = "HARMFUL",
+        filterFlags = { INCLUDE_NAME_PLATE_ONLY = true } }
+    E.NormalizeElement(legacy)
+    check("heal: INCLUDE_NAME_PLATE_ONLY require -> nameplateOnly true",
+        legacy.nameplateOnly == true, tostring(legacy.nameplateOnly))
+    check("heal: INCLUDE_NAME_PLATE_ONLY removed",
+        legacy.filterFlags.INCLUDE_NAME_PLATE_ONLY == nil)
+    check("heal: nameplateOnly no longer forces Custom…",
+        E.DeriveWhatToShow(legacy) == "all", tostring(E.DeriveWhatToShow(legacy)))
+
+    local cfs2 = E.CompileFilters(legacy)
+    local tokenCount = 0
+    for _, fs in ipairs(cfs2) do
+        for component in fs:gmatch("[^| ]+") do
+            if component == "INCLUDE_NAME_PLATE_ONLY" then tokenCount = tokenCount + 1 end
+        end
+    end
+    check("heal: compiled filter carries the token exactly once",
+        tokenCount == 1, tostring(tokenCount))
+
+    local preset = { mode = "filterStrip", auraType = "HARMFUL", nameplateOnly = false,
+        filterFlags = { INCLUDE_NAME_PLATE_ONLY = true } }
+    E.NormalizeElement(preset)
+    check("heal: existing nameplateOnly value not clobbered",
+        preset.nameplateOnly == false, tostring(preset.nameplateOnly))
+    check("heal: INCLUDE_NAME_PLATE_ONLY removed even when nameplateOnly already set",
+        preset.filterFlags.INCLUDE_NAME_PLATE_ONLY == nil)
+
+    local excluded = { mode = "filterStrip", auraType = "HARMFUL",
+        filterFlags = { INCLUDE_NAME_PLATE_ONLY = "exclude" } }
+    E.NormalizeElement(excluded)
+    check("heal: INCLUDE_NAME_PLATE_ONLY exclude drops inert, does not force nameplateOnly",
+        excluded.filterFlags.INCLUDE_NAME_PLATE_ONLY == nil and excluded.nameplateOnly == nil,
+        tostring(excluded.nameplateOnly))
 end
 
 print("aura_elements_model_test " .. (failures == 0 and "OK" or "FAILED"))

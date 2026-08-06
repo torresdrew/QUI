@@ -74,6 +74,7 @@ local WHAT_TO_SHOW_LABELS = {
     all          = ns.L["All"],
     mine         = ns.L["Only my auras"],
     defensives   = ns.L["Defensives"],
+    important    = ns.L["Important"],
     purgeable    = ns.L["Purgeable"],
     dispellable  = ns.L["Dispellable by me"],
     crowdControl = ns.L["Crowd control"],
@@ -191,12 +192,14 @@ local HELPFUL_CLASSIFICATIONS = {
     { key = "notCancelable", label = ns.L["Not Cancelable"] },
     { key = "bigDefensive", label = ns.L["Big Defensive"] },
     { key = "externalDefensive", label = ns.L["External Defensive"] },
+    { key = "important", label = ns.L["Important"] },
 }
 
 local HARMFUL_CLASSIFICATIONS = {
     { key = "raid", label = ns.L["Raid"] },
     -- No raidInCombat: RAID_IN_COMBAT is a HELPFUL-only aura filter.
     { key = "crowdControl", label = ns.L["Crowd Control"] },
+    { key = "important", label = ns.L["Important"] },
 }
 
 -- Raw AuraFilters tokens offered in "flags" mode, per aura type. HELPFUL-only
@@ -217,10 +220,10 @@ local HELPFUL_FLAG_TOKENS = {
 local HARMFUL_FLAG_TOKENS = {
     { token = "PLAYER", label = ns.L["Player"] },
     { token = "RAID", label = ns.L["Dispellable by Me"] },
-    { token = "INCLUDE_NAME_PLATE_ONLY", label = ns.L["Nameplate Auras Only"] },
     { token = "RAID_PLAYER_DISPELLABLE", label = ns.L["Raid-Dispellable (Anyone)"] },
     { token = "DISPELLABLE", label = ns.L["Dispellable (Any Source)"] },
     { token = "CROWD_CONTROL", label = ns.L["Crowd Control"] },
+    { token = "IMPORTANT", label = ns.L["Important"] },
 }
 
 -- Full GF capability set. Used as the default when opts.capabilities is nil so
@@ -627,6 +630,7 @@ local function AddTextRegionWidgets(ctx, element, key, label)
     local row = ctx.AddFormRow
     local add = ctx.AddDetailWidget
     local onChange = ctx.onChange
+    local rebuild = ctx.rebuild
 
     if type(element[key]) ~= "table" then element[key] = {} end
     local region = element[key]
@@ -653,6 +657,36 @@ local function AddTextRegionWidgets(ctx, element, key, label)
     row(ns.L["Text Color"], GUI:CreateFormColorPicker(ctx.detailArea, nil, "color", region, onChange, nil, {
         description = string.format(ns.L["Color of the %s."], label),
     }))
+
+    if key == "duration" then
+        row(ns.L["Pandemic Color"], GUI:CreateFormCheckbox(ctx.detailArea, nil,
+            "_customPandemicColor", {
+                _customPandemicColor = type(region.pandemicColor) == "table",
+                _quiTransientOptionsProxy = true,
+            }, function(checked)
+                if checked and type(region.pandemicColor) ~= "table" then
+                    region.pandemicColor = { 1, 0.3, 0.3 }
+                elseif not checked then
+                    region.pandemicColor = nil
+                end
+                ctx.NotifyChanged()
+                rebuild()
+            end, {
+                description = ns.L["Recolor the duration text during the last 30% of the aura, its pandemic refresh window."],
+            }))
+        if type(region.pandemicColor) == "table" then
+            row(ns.L["Pandemic Text Color"], GUI:CreateFormColorPicker(ctx.detailArea, nil,
+                "pandemicColor", region, onChange, nil, {
+                    description = ns.L["Duration text color inside the pandemic window."],
+                }))
+        end
+    end
+
+    if key == "duration" and ctx.caps and ctx.caps.durationDecimals then
+        row(ns.L["Decimals Under 3s"], GUI:CreateFormCheckbox(ctx.detailArea, nil, "decimals", region, onChange, {
+            description = ns.L["Show tenths of a second below 3 seconds."],
+        }))
+    end
 end
 
 -- Spell-list editor over a MAP ({ [spellID] = true }). Used directly by the
@@ -923,7 +957,12 @@ local function AddFilterStripConfig(ctx, element)
                 rebuild()
             end, {
                 description = ns.L["Pick what this strip shows in plain terms. QUI writes the underlying filters. Choose Custom… (or edit Appearance & Advanced) for full control."],
-                keywords = { "what to show", "intent", "dispellable", "defensives", "boss" },
+                keywords = { "what to show", "intent", "dispellable", "defensives", "boss", "important" },
+            }))
+        row(ns.L["Nameplate Auras Only"], GUI:CreateFormCheckbox(ctx.detailArea, nil,
+            "nameplateOnly", element, onChange, {
+                description = ns.L["Only show auras Blizzard flags for nameplate display. Combines with everything above."],
+                keywords = { "nameplate", "scope" },
             }))
         -- Per-frame role gate: restrict this strip to tank/healer/dps frames (or
         -- your own). Roles resolve out of combat; a mismatch simply omits the
@@ -1690,8 +1729,16 @@ local function RebuildList(ctx)
         row:Show()
 
         local label, icon = GetElementLabel(element)
-        row.icon:SetTexture(icon or FALLBACK_ICON)
-        row.icon:Show()
+        row.name:ClearAllPoints()
+        if icon then
+            row.icon:SetTexture(icon)
+            row.icon:Show()
+            row.name:SetPoint("LEFT", row.icon, "RIGHT", 6, 0)
+        else
+            row.icon:Hide()
+            row.name:SetPoint("LEFT", row.enable, "RIGHT", 6, 0)
+        end
+        row.name:SetPoint("RIGHT", row.badge, "LEFT", -6, 0)
         local nameColor = element.enabled ~= false and "|cFFFFFFFF" or "|cFF808080"
         row.name:SetText(nameColor .. label .. "|r")
 

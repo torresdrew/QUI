@@ -44,5 +44,31 @@ check("mid-combat linear-fill creation deferred (StatusBar child is OOC-only)",
 check("bar track dimmed behind the fill (depletion must read visually)",
     src:find("trackDim", 1, true) ~= nil)
 
+-- Live-assist gate (party/raid HELPFUL quadrant): the engine's identity
+-- filter check is LIVE UnitCanAssist per aura, not token class — a
+-- cross-faction/MC/dead/phased member silently loses includeSpellIDs.
+check("live assist probe exists for the party/raid HELPFUL quadrant",
+    src:find("local function LiveAssistProbe(unit)", 1, true) ~= nil)
+check("live probe requires every positive trust signal",
+    src:find("UnitIsConnected(unit)", 1, true) ~= nil
+    and src:find("UnitIsDeadOrGhost(unit)", 1, true) ~= nil
+    and src:find('UnitCanAssist("player", unit)', 1, true) ~= nil
+    and src:find("UnitIsVisible(unit)", 1, true) ~= nil
+    and src:find("UnitPhaseReason(unit)", 1, true) ~= nil)
+check("probe throw fails CLOSED (pcall, park on error/secret)",
+    src:find("return ok and trusted == true", 1, true) ~= nil)
+check("player/pet exempt by LEXICAL token compare, never a UnitIsUnit call",
+    src:find('unit == "player" or unit == "pet"', 1, true) ~= nil
+    and src:find("UnitIsUnit(", 1, true) == nil)
+check("HELPFUL on assist-class tokens gated by the LIVE probe",
+    src:find("local live = LiveAssistProbe(unit)", 1, true) ~= nil
+    and src:find("return live, true, live", 1, true) ~= nil)
+check("Sync is the WRITER of the applied assist state (never a reader cache)",
+    src:find("container._quiAssistApplied = nil", 1, true) ~= nil
+    and src:find("container._quiAssistApplied = live", 1, true) ~= nil)
+check("Park clears the applied assist record",
+    src:find("function S.Park(container)", 1, true) ~= nil
+    and select(2, src:gsub("container%._quiAssistApplied = nil", "")) >= 2)
+
 if fails > 0 then error(fails .. " failure(s) in aura_slots_api_test") end
 print("OK: aura_slots_api_test (all checks passed)")

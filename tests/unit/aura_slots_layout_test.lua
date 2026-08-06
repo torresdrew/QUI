@@ -28,12 +28,16 @@ end
 
 -- Minimal slot-frame stub: only the methods StyleSlot/AnchorSlot call on a
 -- non-bar, non-square, radial-swipe (default) element ever get invoked.
+-- _setPointCount distinguishes birth-time (initializeFrame) anchoring from
+-- the post-birth pass: restricted creation must anchor exactly once (birth).
 local function MakeFrame()
     return {
+        _setPointCount = 0,
         SetSize = function() end,
         ClearAllPoints = function() end,
         Icon = { SetAlpha = function() end },
         SetPoint = function(self, point, relativeTo, relativePoint, dx, dy)
+            self._setPointCount = self._setPointCount + 1
             self._lastSetPoint = { point = point, relativeTo = relativeTo,
                 relativePoint = relativePoint, dx = dx, dy = dy }
         end,
@@ -42,14 +46,22 @@ end
 
 -- Minimal container stub: records every SetAuraSlotCandidateFilters /
 -- SetAuraSlotFilterString call by slot key so tests can assert park vs.
--- live filters, and AddAuraSlot hands back a fresh frame stub.
+-- live filters, and AddAuraSlot hands back a fresh frame stub. Like the live
+-- 68675 frame provider (Blizzard_AuraContainerFrameProviders), AddAuraSlot
+-- runs opts.initializeFrame(frame) at creation — BEFORE the child-access
+-- restriction would apply — so birth-time styling/anchoring is exercised.
 local function MakeContainer()
-    local c = { _filterCalls = {}, _stringCalls = {}, _createdKeys = {} }
+    local c = { _filterCalls = {}, _stringCalls = {}, _createdKeys = {}, _birthFilters = {} }
     c.SetAuraSlotFilterString = function(self, key, base) c._stringCalls[key] = base end
     c.SetAuraSlotCandidateFilters = function(self, key, filters) c._filterCalls[key] = filters end
     c.AddAuraSlot = function(self, key, base, opts)
         c._createdKeys[#c._createdKeys + 1] = key
-        return MakeFrame()
+        c._birthFilters[key] = opts and opts.candidateFilters
+        local frame = MakeFrame()
+        if opts and type(opts.initializeFrame) == "function" then
+            opts.initializeFrame(frame)
+        end
+        return frame
     end
     return c
 end
@@ -262,6 +274,142 @@ do
         sp5 and sp5.dx == 0, sp5 and tostring(sp5.dx))
     check("CENTER short row: slot 5 dy == -(2 * (h + spacing))",
         sp5 and sp5.dy == -2 * step, sp5 and tostring(sp5.dy))
+end
+
+----------------------------------------------------------------------------
+-- Test G: restricted creation (68675) — auras secret during Sync. AddAuraSlot
+-- still runs (only combat gates creation) and initializeFrame styles/anchors
+-- AT BIRTH (the provider runs it before the child-access restriction
+-- applies). The post-birth child pass is restriction-gated and must be
+-- SKIPPED, so each frame anchors exactly once, and Sync reports incomplete
+-- so the caller's regen replay re-runs it once the restriction clears.
+----------------------------------------------------------------------------
+do
+    _G.C_Secrets = { ShouldAurasBeSecret = function() return true end }
+    local element = {
+        spells = { 501, 502, 503 },
+        enabled = true,
+        auraType = "HELPFUL",
+        anchor = "TOPLEFT",
+        growDirection = "RIGHT",
+    }
+    local container = MakeContainer()
+    local complete = S.Sync(container, element, true)
+    check("restricted create: Sync reports INCOMPLETE (replay at regen)", complete == false)
+
+    local pool = container._quiSlots
+    check("restricted create: all 3 slots created", pool and pool[3] ~= nil)
+    local w, spacing = 22, 2
+    for i = 1, 3 do
+        local f = pool[i] and pool[i].frame
+        check(("restricted create: slot %d anchored exactly once (at birth)"):format(i),
+            f and f._setPointCount == 1, f and tostring(f._setPointCount))
+        local sp = f and f._lastSetPoint
+        check(("restricted create: slot %d birth anchor dx == %d"):format(i, (i - 1) * (w + spacing)),
+            sp and sp.dx == (i - 1) * (w + spacing), sp and tostring(sp.dx))
+    end
+    _G.C_Secrets = nil
+end
+
+----------------------------------------------------------------------------
+-- Test H: restricted REWRITE — pool already populated, auras secret. The
+-- container-level SetAuraSlot* rewrites stay live (only CHILD access is
+-- restricted), no child write happens (no SetPoint at all on the pre-seeded
+-- frames), and Sync reports incomplete.
+----------------------------------------------------------------------------
+do
+    _G.C_Secrets = { ShouldAurasBeSecret = function() return true end }
+    local element = {
+        spells = { 601, 602 },
+        enabled = true,
+        auraType = "HELPFUL",
+        anchor = "TOPLEFT",
+        growDirection = "RIGHT",
+    }
+    local container = MakeContainer()
+    container._quiSlots = {}
+    for i = 1, 2 do
+        container._quiSlots[i] = { key = "t" .. i, frame = MakeFrame(), parked = true }
+    end
+    local complete = S.Sync(container, element, true)
+    check("restricted rewrite: Sync reports INCOMPLETE", complete == false)
+    check("restricted rewrite: slot 1 unparked (container writes stay live)",
+        container._quiSlots[1].parked == false)
+    check("restricted rewrite: slot 1 got a live per-spell filter",
+        container._filterCalls["t1"] and container._filterCalls["t1"].includeSpellIDs ~= nil)
+    check("restricted rewrite: no child writes (SetPoint never called)",
+        container._quiSlots[1].frame._setPointCount == 0
+        and container._quiSlots[2].frame._setPointCount == 0)
+    _G.C_Secrets = nil
+end
+
+----------------------------------------------------------------------------
+-- Test I: parkAll shell transition (live-assist gate, party/raid HELPFUL) —
+-- probe FALSE out of combat builds slot shells PARKED (birth filters = the
+-- never-match park recipe); when the probe flips TRUE mid-combat, the next
+-- Sync unparks them via container-level filter REWRITES alone: no new
+-- AddAuraSlot (creation is combat-forbidden), slots go live, and only the
+-- child anchor pass defers to the regen replay (Sync reports incomplete).
+----------------------------------------------------------------------------
+do
+    local assistable = false
+    _G.UnitIsConnected = function() return assistable end
+    _G.UnitIsDeadOrGhost = function() return false end
+    _G.UnitCanAssist = function() return true end
+    _G.UnitIsVisible = function() return true end
+    _G.UnitPhaseReason = function() return nil end
+
+    local element = {
+        spells = { 701, 702 },
+        enabled = true,
+        auraType = "HELPFUL",
+        anchor = "TOPLEFT",
+        growDirection = "RIGHT",
+    }
+    local container = MakeContainer()
+    container.GetUnit = function() return "party1" end
+
+    -- Phase 1: out of combat, probe FALSE — shells must still be built.
+    local complete = S.Sync(container, element, true)
+    local pool = container._quiSlots
+    check("parkAll: cold false-probe Sync completes (creation + birth anchor OOC)",
+        complete == true)
+    check("parkAll: shells CREATED despite the false probe",
+        #container._createdKeys == 2 and pool[1] ~= nil and pool[2] ~= nil)
+    check("parkAll: both shells born PARKED",
+        pool[1].parked == true and pool[2].parked == true)
+    check("parkAll: birth filters are the park recipe, never a spell filter",
+        container._birthFilters["t1"] and container._birthFilters["t1"].maxDuration == 0
+        and container._birthFilters["t2"] and container._birthFilters["t2"].maxDuration == 0)
+    check("parkAll: applied assist state recorded FALSE (Sync is the writer)",
+        container._quiAssistApplied == false)
+
+    -- Phase 2: probe flips TRUE while IN COMBAT — unpark must ride filter
+    -- rewrites on the existing shells.
+    assistable = true
+    _G.InCombatLockdown = function() return true end
+    complete = S.Sync(container, element, true)
+    check("parkAll->live: NO new slot creation in combat",
+        #container._createdKeys == 2)
+    check("parkAll->live: slots unparked mid-combat via rewrite",
+        pool[1].parked == false and pool[2].parked == false)
+    check("parkAll->live: filter string rewritten to the live base",
+        container._stringCalls["t1"] == "HELPFUL" and container._stringCalls["t2"] == "HELPFUL")
+    check("parkAll->live: candidate filters rewritten to per-spell includes",
+        container._filterCalls["t1"] and container._filterCalls["t1"].includeSpellIDs ~= nil
+        and container._filterCalls["t1"].maxDuration == nil
+        and container._filterCalls["t2"] and container._filterCalls["t2"].includeSpellIDs ~= nil)
+    check("parkAll->live: applied assist state now TRUE",
+        container._quiAssistApplied == true)
+    check("parkAll->live: Sync reports INCOMPLETE (child anchor deferred to regen)",
+        complete == false)
+
+    _G.InCombatLockdown = function() return false end
+    _G.UnitIsConnected = nil
+    _G.UnitIsDeadOrGhost = nil
+    _G.UnitCanAssist = nil
+    _G.UnitIsVisible = nil
+    _G.UnitPhaseReason = nil
 end
 
 if failures > 0 then error(failures .. " failure(s) in aura_slots_layout_test") end
