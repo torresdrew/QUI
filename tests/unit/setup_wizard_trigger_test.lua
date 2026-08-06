@@ -5,7 +5,7 @@
 --   * the old 4-line login lecture is gone from init.lua
 --   * QUI:OnEnable carries the fresh-install auto-open (RunAfterFirstFrame,
 --     re-checking completedAt at fire time) and the one-time legacy notice
---   * /qui install routes through EnsureOptionsLoaded to ns.QUI_SetupWizard
+--   * /dui install routes through EnsureOptionsLoaded to ns.QUI_SetupWizard
 --   * core/main.lua samples rawget(_G, "QUIDB") BEFORE AceDB:New("QUIDB")
 --     materializes the saved variable (order-sensitive fresh-install signal)
 --   * defaults ship global.setupWizard with completedAt/noticeShown
@@ -47,7 +47,7 @@ if onEnable then
 end
 
 -- Slash routing
-check(initSrc:find('input == "install"', 1, true), "/qui install clause must exist")
+check(initSrc:find('input == "install"', 1, true), "/dui install clause must exist")
 check(initSrc:find("EnsureOptionsLoaded", 1, true)
     and initSrc:find("ns.QUI_SetupWizard", 1, true),
     "install clause must load QUI_Options and open ns.QUI_SetupWizard")

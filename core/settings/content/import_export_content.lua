@@ -508,7 +508,7 @@ local function BuildImportExportTab(tabContent)
 
     local analysisNote = CreateWrappedLabel(
         postExportContainer,
-        ns.L["Paste a QUI profile string, analyze it, then choose which categories to import. Unselected categories stay as they are in the target profile."],
+        ns.L["Paste a QUI or QUI profile string, analyze it, then choose which categories to import. Unselected categories stay as they are in the target profile."],
         10,
         C.textMuted
     )

@@ -82,6 +82,9 @@ function GUI:InitializeOptions()
     if ns.QUI_ActionBarsTile then
         ns.QUI_ActionBarsTile.Register(frame)
     end
+    if ns.QUI_AurasTile then
+        ns.QUI_AurasTile.Register(frame)
+    end
     if ns.QUI_CooldownManagerTile then
         ns.QUI_CooldownManagerTile.Register(frame)
     end
@@ -143,7 +146,7 @@ function GUI:InitializeOptions()
                 print("|cff60A5FAQUI:|r Cannot open Layout Mode during combat.")
                 return
             end
-            if GUI and GUI.Hide then pcall(GUI.Hide, GUI) end
+            if GUI and GUI.Hide then GUI:Hide() end
             if _G.QUI_OpenLayoutMode then _G.QUI_OpenLayoutMode() end
         end,
     })

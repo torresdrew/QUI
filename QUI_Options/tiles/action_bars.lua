@@ -40,18 +40,6 @@ function V2.Register(frame)
                 },
             },
             {
-                id = "buffDebuff",
-                name = ns.L["Buff/Debuff"],
-                featureId = "actionBarsBuffDebuff",
-                navRoutes = { { tabIndex = 2, subTabIndex = 4 } },
-                searchContext = {
-                    tabIndex = 2,
-                    tabName = ns.L["Unit Frames"],
-                    subTabIndex = 4,
-                    subTabName = ns.L["Buff & Debuff"],
-                },
-            },
-            {
                 id = "perBar",
                 name = ns.L["Per-Bar"],
                 featureId = "actionBarsPerBar",
@@ -60,6 +48,18 @@ function V2.Register(frame)
                     tabName = ns.L["Action Bars"],
                     subTabIndex = 3,
                     subTabName = ns.L["Per-Bar"],
+                },
+            },
+            {
+                id = "buffDebuff",
+                name = ns.L["Buff/Debuff Frames"],
+                featureId = "actionBarsBuffDebuffPage",
+                navRoutes = { { tabIndex = 8, subTabIndex = 4 } },
+                searchContext = {
+                    tabIndex = 8,
+                    tabName = ns.L["Action Bars"],
+                    subTabIndex = 4,
+                    subTabName = ns.L["Buff/Debuff Frames"],
                 },
             },
         },

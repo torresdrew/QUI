@@ -29,6 +29,7 @@ bootstrap.lua
 # addon and is pulled in on demand the first time the search box is used.
 search_synonyms.lua
 framework.lua
+reorder_list.lua
 border_control.lua
 shared.lua
 wizard.lua
@@ -46,7 +47,6 @@ wizard.lua
 ..\QUI\core\settings\surfaces.lua
 ..\QUI\core\settings\surface_features.lua
 ..\QUI\core\settings\nav.lua
-..\QUI\core\settings\sync.lua
 ..\QUI\core\settings\renderer.lua
 # Options-only profile machinery, deferred out of the main-addon login path.
 # profile_io.lua (import/export engine) + bundled preset import strings:
@@ -57,6 +57,7 @@ wizard.lua
 # decodes it for the new-profile seed; the Profiles-tab preset reads the
 # same memoized QUI.imports entry.
 ..\QUI\core\settings\full_surface.lua
+..\QUI\core\settings\sync.lua
 ..\QUI\core\settings\pins_ui.lua
 ..\QUI\core\settings\content\anchoring_shared_content.lua
 ..\QUI\core\settings\content\welcome_page.lua
@@ -148,6 +149,10 @@ aura_elements_editor.lua
 ..\QUI\core\settings\content\modules_nonvisual_onboarding.lua
 ..\QUI\core\settings\content\module_addons_content.lua
 ..\QUI\core\settings\content\modules_page.lua
+..\QUI\core\settings\content\auras_group_page.lua
+..\QUI\core\settings\content\auras_unit_page.lua
+..\QUI\core\settings\content\auras_actionbar_page.lua
+..\QUI\core\settings\content\auras_wizard_page.lua
 ..\QUI\core\settings\content\auras_nameplate_page.lua
 init.lua
 tiles\related.lua
@@ -158,6 +163,7 @@ tiles\group_frames.lua
 tiles\nameplates.lua
 tiles\action_bars.lua
 tiles\cooldown_manager.lua
+tiles\auras.lua
 tiles\resource_bars.lua
 tiles\appearance.lua
 tiles\chat_tooltips.lua

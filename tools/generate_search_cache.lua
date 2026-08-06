@@ -1093,6 +1093,24 @@ collect_qui_options_scripts(scripts, script_xml_seen)
 local failures = {}
 local loaded_count = 0
 
+-- QUI_Options/shared.lua (GetFontList, CVar helpers) calls ns.SafeCall at
+-- harvest time. That guard lives in QUI.toc (core/safecall.lua), which
+-- should_load_script() does not pull into the main loop, so pre-load it
+-- here or every page whose build() touches those helpers errors out of the
+-- harvest. Pure Lua (issecretvalue/geterrorhandler resolved defensively),
+-- safe to load standalone.
+do
+    local safecall_path = "core/safecall.lua"
+    local probe = io.open(safecall_path, "r")
+    if probe then
+        probe:close()
+        local ok, err = load_script(safecall_path)
+        if not ok then
+            failures[#failures + 1] = { path = safecall_path, error = err }
+        end
+    end
+end
+
 -- groupframes_aura_model.lua is now a compatibility shim: `local E =
 -- ns.AuraElements` captured at file scope, delegating every constructor to the
 -- shared core model (core/aura_elements.lua). That core file is part of
@@ -1109,6 +1127,26 @@ do
         local ok, err = load_script(core_model_path)
         if not ok then
             failures[#failures + 1] = { path = core_model_path, error = err }
+        end
+    end
+end
+
+-- The setup-wizard page (core/settings/content/auras_wizard_page.lua) captures
+-- `local W = ns.QUI_AuraWizard` at file scope, and its build() calls W.WizardSteps
+-- / W.RoleDefaults / W.CommitTrackedHoTs etc. during the harvest. That module
+-- lives in QUI.toc (core/aura_wizard.lua), which should_load_script() does not
+-- pull into the main loop, so pre-load it here -- AFTER core/aura_elements.lua
+-- (loaded above), which it depends on via `local E = ns.AuraElements`. Without
+-- this the page's W upvalue is nil and the wizard page build errors, leaving
+-- only its nav entry (SetSearchContext) searchable and none of its labels.
+do
+    local wizard_path = "core/aura_wizard.lua"
+    local probe = io.open(wizard_path, "r")
+    if probe then
+        probe:close()
+        local ok, err = load_script(wizard_path)
+        if not ok then
+            failures[#failures + 1] = { path = wizard_path, error = err }
         end
     end
 end

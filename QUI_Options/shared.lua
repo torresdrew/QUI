@@ -28,17 +28,17 @@ ns.SCROLL_STEP = SCROLL_STEP
 local function GetSafeVerticalScrollRange(scrollFrame)
     local ok, maxScroll = pcall(scrollFrame.GetVerticalScrollRange, scrollFrame)
     if not ok then return 0 end
-    local ok2, safeMax = pcall(function() return math.max(0, maxScroll or 0) end)
-    return ok2 and safeMax or 0
+    return math.max(0, maxScroll or 0)
 end
 ns.GetSafeVerticalScrollRange = GetSafeVerticalScrollRange
 
 local function GetSafeVerticalScroll(scrollFrame)
     local ok, currentScroll = pcall(scrollFrame.GetVerticalScroll, scrollFrame)
     if not ok then return 0 end
-    local ok2, safeCurrent = pcall(function() return currentScroll + 0 end)
-    return ok2 and safeCurrent or 0
+    currentScroll = currentScroll or 0
+    return currentScroll + 0
 end
+ns.GetSafeVerticalScroll = GetSafeVerticalScroll
 
 function ns.ApplyScrollWheel(scrollFrame)
     scrollFrame:EnableMouseWheel(true)
@@ -66,12 +66,8 @@ function ns.ApplyScrollWheel(scrollFrame)
     scrollFrame:SetScript("OnMouseWheel", function(self, delta)
         local currentScroll = GetSafeVerticalScroll(self)
         local maxScroll = GetSafeVerticalScrollRange(self)
-        local okNewScroll, newScroll = pcall(function()
-            return math.max(0, math.min(currentScroll - (delta * SCROLL_STEP), maxScroll))
-        end)
-        if okNewScroll then
-            pcall(self.SetVerticalScroll, self, newScroll)
-        end
+        local newScroll = math.max(0, math.min(currentScroll - (delta * SCROLL_STEP), maxScroll))
+        self:SetVerticalScroll(newScroll)
     end)
 end
 
@@ -235,9 +231,7 @@ local function GetFontList()
         for _, name in ipairs(LSM:List("font")) do
             local path = LSM:Fetch("font", name) or ""
             if path ~= "" then
-                -- Pre-warm the font by actually applying it (forces WoW to load
-                -- the font file). If SetFont rejects the path, drop the entry.
-                local success = pcall(function()
+                local success = ns.SafeCall("best-effort-style", function()
                     fontPrewarmFrame.text:SetFont(path, 12, "")
                 end)
                 if success then
@@ -342,7 +336,7 @@ local function BackupCurrentFPSSettings()
     if not db then return false end
     local backup = {}
     for cvar, _ in pairs(QUAZII_FPS_CVARS) do
-        local success, current = pcall(C_CVar.GetCVar, cvar)
+        local success, current = ns.SafeCall("best-effort-style", C_CVar.GetCVar, cvar)
         if success and current then
             backup[cvar] = current
         end
@@ -362,7 +356,7 @@ local function RestorePreviousFPSSettings()
     local successCount = 0
     local failCount = 0
     for cvar, value in pairs(db.fpsBackup) do
-        local ok = pcall(C_CVar.SetCVar, cvar, tostring(value))
+        local ok = ns.SafeCall("best-effort-style", C_CVar.SetCVar, cvar, tostring(value))
         if ok then
             successCount = successCount + 1
         else
@@ -388,7 +382,7 @@ local function ApplyQuaziiFPSSettings()
     local failCount = 0
 
     for cvar, value in pairs(QUAZII_FPS_CVARS) do
-        local success = pcall(function()
+        local success = ns.SafeCall("best-effort-style", function()
             C_CVar.SetCVar(cvar, value)
         end)
 

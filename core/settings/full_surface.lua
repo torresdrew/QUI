@@ -350,53 +350,66 @@ function FullSurface.BuildDropdownPreviewBlock(parent, options)
         previewFillAlpha = 0.15
     end
 
-    local headerRow = CreateFrame("Frame", nil, parent)
-    headerRow:SetHeight(headerHeight)
-    headerRow:SetPoint("TOPLEFT", pad, headerTop)
-    headerRow:SetPoint("TOPRIGHT", -pad, headerTop)
-
-    local actions = FullSurface.BuildHeaderActions(headerRow, {
-        gui = gui,
-        state = options.state,
-        actions = options.headerActions,
-        buttonGap = options.headerActionGap,
-        leftGap = options.headerActionLeftGap,
-        rightInset = options.headerActionRightInset,
-    })
-
-    local dropdownStateKey = options.dropdownStateKey or "_selection"
-    local dropdownDB = {
-        [dropdownStateKey] = options.selectedValue,
-    }
-
-    local dropdownRightInset = options.dropdownRightInset or 0
-    if actions.width > 0 then
-        dropdownRightInset = math.max(dropdownRightInset, actions.width + actions.leftGap)
+    local showDropdown = options.showDropdown
+    if showDropdown == nil then
+        showDropdown = true
     end
 
-    local dropdown = gui:CreateFormDropdown(
-        headerRow,
-        options.dropdownLabel or ns.L["Selection"],
-        options.dropdownOptions or {},
-        dropdownStateKey,
-        dropdownDB,
-        function()
-            if type(options.onDropdownChanged) == "function" then
-                options.onDropdownChanged(dropdownDB[dropdownStateKey], dropdownDB)
-            end
-        end,
-        options.dropdownMeta or {},
-        options.dropdownConfig or { searchable = false, collapsible = false }
-    )
-    dropdown:SetPoint("TOPLEFT", headerRow, "TOPLEFT", 0, 0)
-    dropdown:SetPoint("RIGHT", headerRow, "RIGHT", -dropdownRightInset, 0)
+    local headerRow, actions, dropdown, dropdownStateKey, dropdownDB
 
-    if type(options.state) == "table" then
-        options.state[options.dropdownField or "dropdown"] = dropdown
+    if showDropdown then
+        headerRow = CreateFrame("Frame", nil, parent)
+        headerRow:SetHeight(headerHeight)
+        headerRow:SetPoint("TOPLEFT", pad, headerTop)
+        headerRow:SetPoint("TOPRIGHT", -pad, headerTop)
+
+        actions = FullSurface.BuildHeaderActions(headerRow, {
+            gui = gui,
+            state = options.state,
+            actions = options.headerActions,
+            buttonGap = options.headerActionGap,
+            leftGap = options.headerActionLeftGap,
+            rightInset = options.headerActionRightInset,
+        })
+
+        dropdownStateKey = options.dropdownStateKey or "_selection"
+        dropdownDB = {
+            [dropdownStateKey] = options.selectedValue,
+        }
+
+        local dropdownRightInset = options.dropdownRightInset or 0
+        if actions.width > 0 then
+            dropdownRightInset = math.max(dropdownRightInset, actions.width + actions.leftGap)
+        end
+
+        dropdown = gui:CreateFormDropdown(
+            headerRow,
+            options.dropdownLabel or ns.L["Selection"],
+            options.dropdownOptions or {},
+            dropdownStateKey,
+            dropdownDB,
+            function()
+                if type(options.onDropdownChanged) == "function" then
+                    options.onDropdownChanged(dropdownDB[dropdownStateKey], dropdownDB)
+                end
+            end,
+            options.dropdownMeta or {},
+            options.dropdownConfig or { searchable = false, collapsible = false }
+        )
+        dropdown:SetPoint("TOPLEFT", headerRow, "TOPLEFT", 0, 0)
+        dropdown:SetPoint("RIGHT", headerRow, "RIGHT", -dropdownRightInset, 0)
+
+        if type(options.state) == "table" then
+            options.state[options.dropdownField or "dropdown"] = dropdown
+        end
     end
 
     local previewHost = CreateFrame("Frame", nil, parent)
-    previewHost:SetPoint("TOPLEFT", headerRow, "BOTTOMLEFT", 0, previewGap)
+    if showDropdown then
+        previewHost:SetPoint("TOPLEFT", headerRow, "BOTTOMLEFT", 0, previewGap)
+    else
+        previewHost:SetPoint("TOPLEFT", parent, "TOPLEFT", 0, 0)
+    end
     previewHost:SetPoint("BOTTOMRIGHT", parent, "BOTTOMRIGHT", -pad, pad)
 
     if options.clipPreviewChildren and previewHost.SetClipsChildren then
@@ -414,7 +427,7 @@ function FullSurface.BuildDropdownPreviewBlock(parent, options)
             headerRow = headerRow,
             dropdown = dropdown,
             dropdownDB = dropdownDB,
-            actions = actions.buttons,
+            actions = actions and actions.buttons,
         })
     end
 
@@ -423,7 +436,7 @@ function FullSurface.BuildDropdownPreviewBlock(parent, options)
         dropdown = dropdown,
         dropdownDB = dropdownDB,
         previewHost = previewHost,
-        actions = actions.buttons,
+        actions = actions and actions.buttons,
     }
 end
 
@@ -491,15 +504,17 @@ function FullSurface.CreateDockedPreviewPanel(opts)
     local window = opts.window or (gui and gui.MainFrame) or _G.QUI_Options
     if not gui or not window then return nil end
 
-    -- Session-only UI state. The caller owns this table and passes the SAME
-    -- table across theme rebuilds so collapse/scale survive; `detached` is
-    -- deliberately reset every build (a fresh window starts docked).
+    local SCALE_MIN = tonumber(opts.scaleMin) or 0.4
+    local SCALE_MAX = tonumber(opts.scaleMax) or 1.25
+    if SCALE_MAX < SCALE_MIN then SCALE_MAX = SCALE_MIN end
+
     local session = opts.sessionState or {}
-    if session.scale == nil then session.scale = 1 end
+    if session.scale == nil then
+        local seed = tonumber(opts.defaultScale) or 1
+        session.scale = math.max(SCALE_MIN, math.min(SCALE_MAX, seed))
+    end
     if session.collapsed == nil then session.collapsed = false end
     session.detached = false
-
-    local SCALE_MIN, SCALE_MAX = 0.4, 1.25
 
     local UIKit = ns.UIKit
     local C = gui.Colors or {}
@@ -804,7 +819,12 @@ function FullSurface.CreateDockedPreviewPanel(opts)
         panel:SetPoint("TOPRIGHT", window, "TOPLEFT", -GAP, 0)
     end
 
-    panel:HookScript("OnShow", Reflow)
+    panel:HookScript("OnShow", function()
+        if not session.collapsed and (session.contentW or 0) > 0 then
+            ApplySize()
+        end
+        Reflow()
+    end)
     window:HookScript("OnSizeChanged", function() if panel:IsShown() then Reflow() end end)
     if type(window.StopMovingOrSizing) == "function" then
         hooksecurefunc(window, "StopMovingOrSizing", function() if panel:IsShown() then Reflow() end end)
@@ -1008,12 +1028,13 @@ function FullSurface.BuildContextDropdownRow(parent, opts)
 
     local pad = opts.pad or 8
     local height = opts.height or 30
+    local topOffset = opts.topOffset or 0
     local stateKey = opts.stateKey or "_selection"
 
     local row = CreateFrame("Frame", nil, parent)
     row:SetHeight(height)
-    row:SetPoint("TOPLEFT", parent, "TOPLEFT", pad, -4)
-    row:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -pad, -4)
+    row:SetPoint("TOPLEFT", parent, "TOPLEFT", pad, -(4 + topOffset))
+    row:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -pad, -(4 + topOffset))
 
     local db = { [stateKey] = opts.selectedValue }
     local dropdown = gui:CreateFormDropdown(

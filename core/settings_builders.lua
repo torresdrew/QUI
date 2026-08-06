@@ -16,12 +16,6 @@ local function BumpProviderRevision(providerKey)
     providerRevisions[providerKey] = (providerRevisions[providerKey] or 0) + 1
 end
 
-function SettingsBuilders.GetProviderRevision(providerKey)
-    return providerRevisions[providerKey] or 0
-end
-
--- True when a shown surface must be rebuilt because its provider changed since
--- the surface was last built. A never-stamped surface always rebuilds.
 function SettingsBuilders.SurfaceNeedsRebuildOnShow(parent, providerKey)
     if not parent then return true end
     local built = parent._quiBuiltProviderRevision
@@ -248,6 +242,7 @@ local function WithOnlyPosition(fn)
     U.BuildPositionCollapsible = function(...)
         local prev = insidePosition
         insidePosition = true
+        ---@diagnostic disable-next-line: redundant-parameter
         local ok, err = xpcall(originalBuildPosition, ErrorHandler, ...)
         insidePosition = prev
         if not ok then geterrorhandler()(err) end

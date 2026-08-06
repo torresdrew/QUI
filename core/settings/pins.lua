@@ -10,7 +10,6 @@ local abs = math.abs
 local ipairs = ipairs
 local next = next
 local pairs = pairs
-local pcall = pcall
 local rawget = rawget
 local setmetatable = setmetatable
 local table_insert = table.insert
@@ -30,7 +29,7 @@ Pins._autoApplySuppressed = Pins._autoApplySuppressed or 0
 
 local function GetTimeStamp()
     if type(time) == "function" then
-        local ok, value = pcall(time)
+        local ok, value = ns.SafeCall("chain-next", time)
         if ok and type(value) == "number" then
             return value
         end
@@ -490,10 +489,7 @@ local function SafeForEachEntry(store, callback)
     end
 
     for path, entry in pairs(store.entries) do
-        local ok, result = pcall(callback, path, entry)
-        if not ok then
-            DebugLog("Pinned settings callback failed for", tostring(path), tostring(result))
-        end
+        ns.SafeCall("bulkhead", callback, path, entry)
     end
 end
 
@@ -525,38 +521,6 @@ function Pins:BuildPath(featureId, sectionId, field)
     end
 
     return featureId .. "." .. sectionId .. "." .. key
-end
-
-function Pins:IsFieldPinnable(field, ctx)
-    if type(field) ~= "table" then
-        return false
-    end
-
-    if field.kind == "button" then
-        return false
-    end
-
-    if field.kind == "custom" then
-        return field.pinnable == true and type(field.pinGet) == "function" and type(field.pinSet) == "function"
-    end
-
-    if field.pinnable == false then
-        return false
-    end
-
-    local kind = field.kind
-    if kind ~= "checkbox" and kind ~= "slider" and kind ~= "dropdown" and kind ~= "color" then
-        return false
-    end
-
-    local featureId = ctx and ctx.feature and ctx.feature.id or nil
-    local sectionId = ctx and ctx.sectionId or nil
-    local path = self:BuildPath(featureId, sectionId, field)
-    if type(path) ~= "string" or path == "" then
-        return false
-    end
-
-    return self:IsPathPinnable(path, kind)
 end
 
 function Pins:IsPathPinnable(path, kind, value)
@@ -602,7 +566,7 @@ function Pins:GetCurrentProfileName(db)
     if not db or type(db.GetCurrentProfile) ~= "function" then
         return nil
     end
-    local ok, profileName = pcall(db.GetCurrentProfile, db)
+    local ok, profileName = ns.SafeCallMethod("chain-next", db, "GetCurrentProfile")
     if ok and type(profileName) == "string" and profileName ~= "" then
         return profileName
     end
@@ -704,12 +668,6 @@ end
 function Pins:IsPinned(path, db)
     local store = GetStore(db, false)
     return store and store.entries and store.entries[path] ~= nil or false
-end
-
-function Pins:GetPinnedValue(path, db)
-    local store = GetStore(db, false)
-    local entry = store and store.entries and store.entries[path] or nil
-    return entry and CloneValue(entry.value) or nil
 end
 
 function Pins:GetEntry(path, db)
@@ -822,10 +780,7 @@ local function NotifySubscribersForPath(subscribers, path)
         if owner and owner.GetParent and owner:GetParent() == nil then
             table_remove(subscribers, index)
         elseif subscription and type(subscription.callback) == "function" then
-            local ok, err = pcall(subscription.callback, path)
-            if not ok then
-                DebugLog("Pinned settings subscriber failed:", tostring(err))
-            end
+            ns.SafeCall("bulkhead", subscription.callback, path)
         end
     end
 end
@@ -868,33 +823,8 @@ function Pins:Unsubscribe(token)
     end
 end
 
-function Pins:PushAutoApplySuppression()
-    self._autoApplySuppressed = (self._autoApplySuppressed or 0) + 1
-end
-
-function Pins:PopAutoApplySuppression()
-    local current = self._autoApplySuppressed or 0
-    if current > 0 then
-        self._autoApplySuppressed = current - 1
-    end
-end
-
 function Pins:IsAutoApplySuppressed()
     return (self._autoApplySuppressed or 0) > 0
-end
-
-function Pins:WithAutoApplySuppressed(callback)
-    if type(callback) ~= "function" then
-        return nil
-    end
-
-    self:PushAutoApplySuppression()
-    local ok, resultA, resultB, resultC = pcall(callback)
-    self:PopAutoApplySuppression()
-    if not ok then
-        error(resultA)
-    end
-    return resultA, resultB, resultC
 end
 
 function Pins:UpdateEntryMetadata(entry, descriptor, options)
@@ -1262,46 +1192,6 @@ function Pins:UpdatePinnedValue(path, value, descriptor, db)
     entry.missCount = 0
     TouchStore(store)
     self:Broadcast(path)
-    return true
-end
-
-function Pins:RewritePath(oldPath, newPath, db)
-    db = db or GetCurrentDB()
-    local store = GetStore(db, false)
-    if not store or type(oldPath) ~= "string" or oldPath == ""
-        or type(newPath) ~= "string" or newPath == "" or oldPath == newPath then
-        return false
-    end
-
-    local oldEntry = store.entries[oldPath]
-    if type(oldEntry) ~= "table" then
-        return false
-    end
-
-    local newEntry = store.entries[newPath]
-    if type(newEntry) ~= "table" then
-        store.entries[newPath] = oldEntry
-    else
-        newEntry.value = CloneValue(oldEntry.value)
-        newEntry.kind = oldEntry.kind or newEntry.kind
-        newEntry.pinnedAt = oldEntry.pinnedAt or newEntry.pinnedAt
-        newEntry.disabled = oldEntry.disabled == true
-        newEntry.missCount = tonumber(oldEntry.missCount) or 0
-        newEntry.shadowed = type(newEntry.shadowed) == "table" and newEntry.shadowed or {}
-        if type(oldEntry.shadowed) == "table" then
-            for profileName, value in pairs(oldEntry.shadowed) do
-                if newEntry.shadowed[profileName] == nil then
-                    newEntry.shadowed[profileName] = CloneValue(value)
-                end
-            end
-        end
-        self:UpdateEntryMetadata(newEntry, oldEntry)
-    end
-
-    store.entries[oldPath] = nil
-    TouchStore(store)
-    self:Broadcast(oldPath)
-    self:Broadcast(newPath)
     return true
 end
 

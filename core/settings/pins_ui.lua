@@ -1167,7 +1167,7 @@ local function BuildPinnedGlobalsRows(state)
 
     if disabledCount > 0 then
         state.staleBanner:Show()
-        state.staleText:SetText(string_format(ns.L["%d stale pin%s detected."], disabledCount, disabledCount == 1 and "" or "s"))
+        state.staleText:SetText(string_format(ns.L["%d stale pins detected."], disabledCount))
         state.rowsHost:ClearAllPoints()
         state.rowsHost:SetPoint("TOPLEFT", state.staleBanner, "BOTTOMLEFT", 0, -10)
         state.rowsHost:SetPoint("TOPRIGHT", state.staleBanner, "BOTTOMRIGHT", 0, -10)

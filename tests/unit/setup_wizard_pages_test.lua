@@ -194,11 +194,13 @@ assert(_G.QUI.db.profile.nameplates and _G.QUI.db.profile.nameplates.enabled == 
 
 local npFriendly = assert(FindToggle("Friendly health bars (open world)"), "nameplates page offers the friendly style toggle")
 npFriendly.widget.toggle()
-assert(_G.QUI.db.profile.nameplates.friendly.mode == "bars",
-    "friendly toggle on maps to mode 'bars'")
+assert(_G.QUI.db.profile.nameplates.types.friendly.renderMode == "bars",
+    "friendly toggle on writes types.friendly.renderMode 'bars', not the retired friendly.mode key")
 npFriendly.widget.toggle()
-assert(_G.QUI.db.profile.nameplates.friendly.mode == "nameonly",
-    "friendly toggle off maps to mode 'nameonly'")
+assert(_G.QUI.db.profile.nameplates.types.friendly.renderMode == "nameonly",
+    "friendly toggle off writes types.friendly.renderMode 'nameonly'")
+assert(rawget(_G.QUI.db.profile.nameplates.friendly, "mode") == nil,
+    "the wizard must not resurrect the retired friendly.mode key")
 
 -- Page 6: Edit Mode layout apply
 nextBtn.onClick()

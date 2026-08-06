@@ -137,19 +137,6 @@ function Registry:RegisterFeature(spec)
     return spec
 end
 
-function Registry:UnregisterFeature(featureId)
-    local spec = self._featuresById[featureId]
-    if not spec then return nil end
-
-    self._featuresById[featureId] = nil
-    if type(spec.moverKey) == "string" and spec.moverKey ~= "" then
-        self._featuresByMoverKey[spec.moverKey] = nil
-    end
-    ClearLookupKeys(self, spec)
-    RemoveOrderedId(self._orderedIds, featureId)
-    return spec
-end
-
 function Registry:GetFeature(featureId)
     if type(featureId) ~= "string" or featureId == "" then
         return nil
