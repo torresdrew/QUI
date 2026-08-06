@@ -68,7 +68,7 @@ def prompt_for(loc, keys):
     lang = LANG_NAMES.get(loc, loc)
     payload = {str(i): key for i, key in enumerate(keys)}
     return (
-        f"You are localizing DrewUI, a World of Warcraft addon UI, into {lang} "
+        f"You are localizing QUI, a World of Warcraft addon UI, into {lang} "
         f"for locale {loc}.\n\n"
         "Translate every English string in the JSON object below. Return JSON with "
         "a single `translations` object whose keys exactly match the numeric input "
@@ -79,7 +79,7 @@ def prompt_for(loc, keys):
         "Do not add, remove, or change specifiers.\n"
         "- Preserve WoW UI escapes exactly: |cff... color codes, |r, |T...|t, |H...|h.\n"
         "- Preserve slash commands and code/config tokens exactly, such as /dui, /reload, dbKey, CVar, API names, IDs, and enum-like values.\n"
-        "- Keep addon/proper names such as DrewUI and Blizzard unchanged unless the localized WoW client normally translates that term.\n"
+        "- Keep addon/proper names such as QUI and Blizzard unchanged unless the localized WoW client normally translates that term.\n"
         "- Keep the tone terse and natural for in-game settings labels and descriptions.\n"
         "- Translate human-readable English only.\n\n"
         "Input JSON object:\n"

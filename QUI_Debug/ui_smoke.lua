@@ -518,7 +518,7 @@ local function PrintHelp(printer, errorMessage)
     if errorMessage then
         PrintLine(printer, errorMessage)
     end
-    PrintLine(printer, "usage: /dui uitest list | run <suite|all> | last")
+    PrintLine(printer, "usage: /qui uitest list | run <suite|all> | last")
     local last = UISmoke.GetLastResult()
     if last then
         PrintLine(printer, "last: " .. (UISmoke.FormatResult(last)[1] or "unknown"))

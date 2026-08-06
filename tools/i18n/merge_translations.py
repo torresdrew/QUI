@@ -139,13 +139,13 @@ def main():
     subprocess.run(["luac5.1", "-p", f"core/locale/{loc}.lua"], check=True)
     subprocess.run(
         ["lua5.1", "-e",
-         f'GetLocale = function() return "{loc}" end; DrewUIDB = nil;'
+         f'GetLocale = function() return "{loc}" end; QUIDB = nil;'
          f'local ns = {{}};'
-         f'assert(loadfile("core/locale/enUS.lua"))("DrewUI", ns);'
+         f'assert(loadfile("core/locale/enUS.lua"))("QUI", ns);'
          f'local keys = ns.LocaleData and ns.LocaleData.keys;'
          f'assert(type(keys) == "table" and #keys > 0, '
          f'"core/locale/enUS.lua produced no ns.LocaleData.keys array");'
-         f'assert(loadfile("core/locale/{loc}.lua"))("DrewUI", ns);'
+         f'assert(loadfile("core/locale/{loc}.lua"))("QUI", ns);'
          f'local t = ns.LocaleData and ns.LocaleData.active;'
          f'assert(type(t) == "table" and next(t), "{loc}: overlay produced no table");'
          f'for k in pairs(t) do assert(type(k) == "number", '

@@ -278,7 +278,7 @@ local function PrintReport()
         line("  " .. fmt(COLOR_OK,
             "No ADDON_ACTION_BLOCKED events blamed on QUI this session."))
         line("  " .. fmt(COLOR_DIM,
-            "If a problem is reproducible, trigger it once then run /dui diagnose again."))
+            "If a problem is reproducible, trigger it once then run /qui diagnose again."))
         return
     end
 

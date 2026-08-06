@@ -3,7 +3,7 @@
 --
 -- Verifies the spell scanner only accepts an aura whose spellId matches the
 -- cast/use spell (no more "newest recent buff wins" false positives), and the
--- unified /duiclearscan command.
+-- unified /quiclearscan command.
 
 local frames = {}
 local events = {}
@@ -128,11 +128,11 @@ scanner.ScanSpell(6000, nil)
 assert(db.spells[6000] == nil, "a secret (unconfirmable) spellId must not be scanned")
 
 ---------------------------------------------------------------------------
--- /duiclearscan
+-- /quiclearscan
 ---------------------------------------------------------------------------
 
-assert(SlashCmdList["QUICLEARSCAN"], "/duiclearscan command should be registered")
-assert(SlashCmdList["QUICLEARSPELL"] == nil, "deprecated /duiclearspell command should be removed")
+assert(SlashCmdList["QUICLEARSCAN"], "/quiclearscan command should be registered")
+assert(SlashCmdList["QUICLEARSPELL"] == nil, "deprecated /quiclearspell command should be removed")
 
 -- Clearing by itemID removes the item entry and its runtime traces.
 db.items[241305] = { useSpellID = 1234768, buffSpellID = 1234768, duration = 10, name = "Combat Potion" }
@@ -140,24 +140,24 @@ scanner.registeredItemUseSpells[1234768] = 241305
 scanner.activeBuffs[1234768] = { expirationTime = now + 10, duration = 10 }
 
 SlashCmdList["QUICLEARSCAN"]("241305")
-assert(db.items[241305] == nil, "/duiclearscan <itemID> should remove the item entry")
+assert(db.items[241305] == nil, "/quiclearscan <itemID> should remove the item entry")
 assert(scanner.registeredItemUseSpells[1234768] == nil,
-    "/duiclearscan <itemID> should drop the item's registered use spell")
+    "/quiclearscan <itemID> should drop the item's registered use spell")
 assert(scanner.activeBuffs[1234768] == nil,
-    "/duiclearscan <itemID> should drop the item's active buff")
+    "/quiclearscan <itemID> should drop the item's active buff")
 
 -- Clearing by spellID removes the spell entry and its active buff.
 db.spells[7000] = { buffSpellID = 7000, duration = 5, name = "Some Spell" }
 scanner.activeBuffs[7000] = { expirationTime = now + 5, duration = 5 }
 
 SlashCmdList["QUICLEARSCAN"]("7000")
-assert(db.spells[7000] == nil, "/duiclearscan <spellID> should remove the spell entry")
-assert(scanner.activeBuffs[7000] == nil, "/duiclearscan <spellID> should drop the spell active buff")
+assert(db.spells[7000] == nil, "/quiclearscan <spellID> should remove the spell entry")
+assert(scanner.activeBuffs[7000] == nil, "/quiclearscan <spellID> should drop the spell active buff")
 
 -- Clearing a missing id leaves the store untouched (and does not error).
 db.spells[7001] = { buffSpellID = 7001, duration = 5, name = "Keep Me" }
 SlashCmdList["QUICLEARSCAN"]("999999")
-assert(db.spells[7001], "/duiclearscan with an unknown id should not remove unrelated entries")
+assert(db.spells[7001], "/quiclearscan with an unknown id should not remove unrelated entries")
 
 -- `all` wipes both maps and the runtime caches.
 db.spells[8000] = { buffSpellID = 8000, duration = 5 }
@@ -167,11 +167,11 @@ scanner.activeBuffs[8000] = { expirationTime = now + 5 }
 scanner.pendingScanning[8000] = { timestamp = now }
 
 SlashCmdList["QUICLEARSCAN"]("all")
-assert(next(db.spells) == nil, "/duiclearscan all should wipe scanned spells")
-assert(next(db.items) == nil, "/duiclearscan all should wipe scanned items")
-assert(next(scanner.registeredItemUseSpells) == nil, "/duiclearscan all should wipe registered item use spells")
-assert(next(scanner.activeBuffs) == nil, "/duiclearscan all should wipe active buffs")
-assert(next(scanner.pendingScanning) == nil, "/duiclearscan all should wipe pending scanning")
+assert(next(db.spells) == nil, "/quiclearscan all should wipe scanned spells")
+assert(next(db.items) == nil, "/quiclearscan all should wipe scanned items")
+assert(next(scanner.registeredItemUseSpells) == nil, "/quiclearscan all should wipe registered item use spells")
+assert(next(scanner.activeBuffs) == nil, "/quiclearscan all should wipe active buffs")
+assert(next(scanner.pendingScanning) == nil, "/quiclearscan all should wipe pending scanning")
 
 print = realPrint
 print("OK: spellscanner_strict_match_test")

@@ -342,6 +342,6 @@ _G.QUI_CombatProf = function(arg)
     elseif arg == "reset"  then CmdReset()
     elseif arg == "report" or arg == "" then CmdReport()
     else
-        print("|cff60A5FAQUI combatprof:|r usage — /dui combatprof [on|off|report|reset]")
+        print("|cff60A5FAQUI combatprof:|r usage — /qui combatprof [on|off|report|reset]")
     end
 end

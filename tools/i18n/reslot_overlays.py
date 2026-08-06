@@ -62,7 +62,7 @@ is loud (tests/unit/locale_keyset_checksum_test.lua fails) and recoverable:
     git checkout -- core/locale/
 
 A hard kill can also leave `core/locale/*.reslot-tmp` scratch files behind.
-They are inert -- nothing loads them, they are not in DrewUI.toc -- and the
+They are inert -- nothing loads them, they are not in QUI.toc -- and the
 next run overwrites and consumes all ten, so they need no manual cleanup.
 
 Usage:
@@ -179,7 +179,7 @@ def main():
     for loc in LOCALES:
         path = overlay_path(loc)
         if not os.path.exists(path):
-            print(f"{loc}: MISSING {path} — DrewUI.toc lists all ten overlays",
+            print(f"{loc}: MISSING {path} — QUI.toc lists all ten overlays",
                   file=sys.stderr)
             return 1
 

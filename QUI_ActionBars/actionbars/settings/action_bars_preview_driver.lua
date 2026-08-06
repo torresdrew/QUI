@@ -474,8 +474,19 @@ local function IncludeContentBounds(object, bounds, onlyWhenShown)
     if not object then return end
     if onlyWhenShown and object.IsShown and not object:IsShown() then return end
 
+    -- 12.x: rect reads off live-linked regions (the cooldown countdown
+    -- FontString especially) can be SECRET in combat; math.max/min on a
+    -- secret number errors (and comparing a secret to nil errors too, so
+    -- probe with IsSecretValue BEFORE any truth-test). A secret rect marks
+    -- the whole measurement unmeasurable — resizing from a partial
+    -- measurement collapses the fitted pane and flickers the page as
+    -- secret windows come and go. The caller keeps the last good height.
     local top = object.GetTop and object:GetTop()
     local bottom = object.GetBottom and object:GetBottom()
+    if Helpers.IsSecretValue(top) or Helpers.IsSecretValue(bottom) then
+        bounds.unmeasurable = true
+        return
+    end
     if top and bottom then
         bounds.top = bounds.top and math.max(bounds.top, top) or top
         bounds.bottom = bounds.bottom and math.min(bounds.bottom, bottom) or bottom
@@ -505,6 +516,9 @@ local function MeasurePreviewContentHeight()
         end
     end
 
+    -- A secret rect anywhere makes this pass unmeasurable: report nil so
+    -- the resize keeps the last good height instead of collapsing.
+    if bounds.unmeasurable then return nil end
     if not bounds.top or not bounds.bottom then return 0 end
 
     local centerY
@@ -512,6 +526,7 @@ local function MeasurePreviewContentHeight()
         local _, cy = previewHost:GetCenter()
         centerY = cy
     end
+    if Helpers.IsSecretValue(centerY) then return nil end
     if centerY then
         local radius = math.max(
             math.abs(bounds.top - centerY),
@@ -527,6 +542,7 @@ local function ResizePreviewToContent(host)
     if not host or not options or options.autoHeight == false then return end
 
     local contentHeight = MeasurePreviewContentHeight()
+    if not contentHeight then return end
     local desiredHeight = math.floor(
         contentHeight
         + (options.chromeHeight or 0)

@@ -411,7 +411,7 @@ if not TooltipDebug then
             return
         end
         if subcmd == "help" then
-            print("|cff60A5FAQUI tooltipdebug:|r /dui tooltipdebug on [seconds], off, report, reset, slow [ms], bypass qol|skin|all|off, auratip status")
+            print("|cff60A5FAQUI tooltipdebug:|r /qui tooltipdebug on [seconds], off, report, reset, slow [ms], bypass qol|skin|all|off, auratip status")
             return
         end
         self:Report(false)

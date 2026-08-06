@@ -32,7 +32,7 @@ local function Refresh()
 end
 
 -- luacheck: globals SLASH_QUIALTS1 SLASH_QUIALTS2
-SLASH_QUIALTS1 = "/duialts"
+SLASH_QUIALTS1 = "/quialts"
 SLASH_QUIALTS2 = "/alts"
 SlashCmdList["QUIALTS"] = function()
     if not IsEnabled() then

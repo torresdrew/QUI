@@ -46,7 +46,7 @@ def main():
     for loc in LOCALES:
         path = overlay_path(loc)
         if not os.path.exists(path):
-            failures.append(f"{path}: missing — DrewUI.toc lists all ten overlays")
+            failures.append(f"{path}: missing — QUI.toc lists all ten overlays")
             continue
 
         committed = open(path, encoding="utf-8").read()

@@ -2099,7 +2099,7 @@ if ns.WhenLoggedIn then
     end)
 end
 
-SLASH_QUIIMPLUSTIMER1 = "/duimpt"
+SLASH_QUIIMPLUSTIMER1 = "/qmpt"
 SlashCmdList["QUIIMPLUSTIMER"] = function(msg)
     local cmd = msg:lower():trim()
 

@@ -867,19 +867,19 @@ else
     SetupDebugInstrumentation() -- standalone test harness: no gate, run eagerly
 end
 
-SLASH_QUISCAN1 = "/duiscan"
+SLASH_QUISCAN1 = "/quiscan"
 SlashCmdList["QUISCAN"] = function()
     local enabled = SpellScanner.ToggleScanMode()
     if enabled then
         print(ns.L["|cff00ff00QUI:|r Scan mode |cff00ff00ENABLED|r"])
         print(ns.L["|cffff8800-|r Cast abilities to scan their durations"])
-        print(ns.L["|cffff8800-|r Type /duiscan again to stop"])
+        print(ns.L["|cffff8800-|r Type /quiscan again to stop"])
     else
         print(ns.L["|cff00ff00QUI:|r Scan mode |cffff0000DISABLED|r"])
     end
 end
 
-SLASH_QUISCANNED1 = "/duiscanned"
+SLASH_QUISCANNED1 = "/quiscanned"
 SlashCmdList["QUISCANNED"] = function()
     local db = GetDB()
     if not db then
@@ -927,7 +927,7 @@ SlashCmdList["QUISCANNED"] = function()
     print(string_format(ns.L["|cff888888Active buffs tracked: %d|r"], activeCount))
 end
 
-SLASH_QUICLEARSCAN1 = "/duiclearscan"
+SLASH_QUICLEARSCAN1 = "/quiclearscan"
 SlashCmdList["QUICLEARSCAN"] = function(msg)
     local db = GetDB()
     if not db then
@@ -937,7 +937,7 @@ SlashCmdList["QUICLEARSCAN"] = function(msg)
 
     local arg = strtrim(msg or "")
     if arg == "" then
-        print(ns.L["|cffff0000QUI:|r Usage: /duiclearscan <spellID|itemID> | all"])
+        print(ns.L["|cffff0000QUI:|r Usage: /quiclearscan <spellID|itemID> | all"])
         return
     end
 
@@ -961,7 +961,7 @@ SlashCmdList["QUICLEARSCAN"] = function(msg)
 
     local id = tonumber(arg)
     if not id then
-        print(ns.L["|cffff0000QUI:|r Usage: /duiclearscan <spellID|itemID> | all"])
+        print(ns.L["|cffff0000QUI:|r Usage: /quiclearscan <spellID|itemID> | all"])
         return
     end
 

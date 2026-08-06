@@ -88,7 +88,7 @@ def _read_enus_keys_keyed_map():
     """
     proc = subprocess.run(
         [lua_bin(), "-e",
-         f'local ns = {{}}; assert(loadfile("{ENUS}"))("DrewUI", ns);'
+         f'local ns = {{}}; assert(loadfile("{ENUS}"))("QUI", ns);'
          'local t = ns.LocaleData and ns.LocaleData.enUS;'
          f'assert(type(t) == "table" and next(t), '
          f'"{ENUS}: ns.LocaleData.enUS is missing or empty");'

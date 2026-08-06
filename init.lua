@@ -296,10 +296,11 @@ function QUI:OnInitialize()
     ---@type AceDBObject-3.0
     self.db = LibStub("AceDB-3.0"):New("QUI_InitTransientDB", self.defaults, "Default")
 
-    self:RegisterChatCommand("dui", "SlashCommandOpen")
     self:RegisterChatCommand("qui", "SlashCommandOpen")
+    self:RegisterChatCommand("quaziiui", "SlashCommandOpen")
     self:RegisterChatCommand("rl", "SlashCommandReload")
-    self:RegisterChatCommand("duipull", "SlashCommandPull")
+    self:RegisterChatCommand("qpull", "SlashCommandPull")
+    self:RegisterChatCommand("quipull", "SlashCommandPull")
     self:CheckMediaRegistration()
 end
 
@@ -388,7 +389,7 @@ function QUI:SlashCommandOpen(input)
         local key = input:match("^bindkey%s+(%S+)")
         local current = self.db.global.toggleOptionsKey or ""
         if not key then
-            print("|cff60A5FAQUI:|r " .. ns.L["options keybind: %1$s — usage: |cFFFFFF00/dui bindkey CTRL-O|r or |cFFFFFF00/dui bindkey none|r"]:format(current ~= "" and current or "none"))
+            print("|cff60A5FAQUI:|r " .. ns.L["options keybind: %1$s — usage: |cFFFFFF00/qui bindkey CTRL-O|r or |cFFFFFF00/qui bindkey none|r"]:format(current ~= "" and current or "none"))
             return
         end
         if InCombatLockdown() then
@@ -455,7 +456,7 @@ function QUI:SlashCommandOpen(input)
                         tostring(entry.toVersion or "?"),
                         savedAtStr))
                 end
-                print("  run |cFFFFFF00/dui migration restore [N]|r to roll back to slot N (default 1).")
+                print("  run |cFFFFFF00/qui migration restore [N]|r to roll back to slot N (default 1).")
             else
                 print("  no migration backup on file for this profile.")
             end
@@ -732,7 +733,7 @@ function QUI:OnEnable()
                 end, 2)
             elseif not sw.noticeShown then
                 sw.noticeShown = true
-                print("|cFF30D1FFQUI|r " .. ns.L["New: |cFFFFFF00/dui install|r opens the guided setup wizard."])
+                print("|cFF30D1FFQUI|r " .. ns.L["New: |cFFFFFF00/qui install|r opens the guided setup wizard."])
             end
         end
     end

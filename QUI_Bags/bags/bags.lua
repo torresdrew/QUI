@@ -255,7 +255,7 @@ end
 -- back up would contradict the Blizzard handoff, so explain instead.
 ---------------------------------------------------------------------------
 -- luacheck: globals SLASH_QUIBAGS1
-SLASH_QUIBAGS1 = "/duibags"
+SLASH_QUIBAGS1 = "/quibags"
 SlashCmdList["QUIBAGS"] = function(msg)
     msg = (msg or ""):lower():match("^%s*(.-)%s*$")
     if not Bags.IsActive() then
@@ -275,7 +275,7 @@ SlashCmdList["QUIBAGS"] = function(msg)
             Bags.NewItems.ClearAllNew()
         end
     else
-        print("|cff00ff00QUI:|r /duibags — toggle the bag window; /duibags search — search everywhere; /duibags bank|guild — browse the (cached) bank / guild bank anywhere; /duibags clearnew — clear all new-item glows.")
+        print("|cff00ff00QUI:|r /quibags — toggle the bag window; /quibags search — search everywhere; /quibags bank|guild — browse the (cached) bank / guild bank anywhere; /quibags clearnew — clear all new-item glows.")
     end
 end
 

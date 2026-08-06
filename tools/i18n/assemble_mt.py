@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Assemble subagent-produced translations into DrewUI_Locale_<loc>/<loc>.lua.
+"""Assemble subagent-produced translations into QUI_Locale_<loc>/<loc>.lua.
 
 Reads tools/i18n/_mt/out_<loc>_*.json (each a JSON object {english_key: translation}),
 merges them per locale, verifies every enUS key is covered, writes the locale file,

@@ -263,7 +263,7 @@ local function DescribeEntry(entry)
     return table.concat(pieces, " ")
 end
 
-SLASH_QUILOG1 = "/duilog"
+SLASH_QUILOG1 = "/quilog"
 SlashCmdList["QUILOG"] = function(msg)
     local entries = GetLog()
     if not entries or #entries == 0 then

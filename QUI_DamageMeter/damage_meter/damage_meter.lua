@@ -3645,7 +3645,7 @@ resetBindBtn:SetAttribute("macrotext",
     "/run if C_DamageMeter and C_DamageMeter.ResetAllCombatSessions then C_DamageMeter.ResetAllCombatSessions() end")
 QUI_DamageMeter._ResetBindButton = resetBindBtn
 
-_G.SLASH_QUI_DM_RESET1 = "/duidmreset"
+_G.SLASH_QUI_DM_RESET1 = "/quidmreset"
 _G.SlashCmdList["QUI_DM_RESET"] = function()
     if C_DamageMeter and C_DamageMeter.ResetAllCombatSessions then
         C_DamageMeter.ResetAllCombatSessions()
@@ -3653,7 +3653,7 @@ _G.SlashCmdList["QUI_DM_RESET"] = function()
     end
 end
 
-_G.SLASH_QUI_DM_PERF1 = "/duidmperf"
+_G.SLASH_QUI_DM_PERF1 = "/quidmperf"
 _G.SlashCmdList["QUI_DM_PERF"] = function(msg)
     msg = (msg or ""):lower():gsub("%s+", "")
     if msg == "on" then
@@ -3668,7 +3668,7 @@ _G.SlashCmdList["QUI_DM_PERF"] = function(msg)
         print(ns.L["|cff30D1FF[QUI]|r Damage meter perf buffers reset."])
     else
         if not Perf.enabled then
-            print(ns.L["|cff30D1FF[QUI]|r Perf is OFF. Run |cffffffff/duidmperf on|r to enable, then re-run to see the summary."])
+            print(ns.L["|cff30D1FF[QUI]|r Perf is OFF. Run |cffffffff/quidmperf on|r to enable, then re-run to see the summary."])
             return
         end
         print(ns.L["|cff30D1FF[QUI]|r Damage meter perf summary:"])

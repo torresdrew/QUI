@@ -236,12 +236,12 @@ assert(describe(entry.items) == before, "a rejected move must not touch the arra
 settings.buttonBars[2] = {
     enabled = false,
     items = {
-        { kind = "custom", label = "First", slashCommand = "/dui", icon = "" },
+        { kind = "custom", label = "First", slashCommand = "/qui", icon = "" },
         { kind = "builtin", id = "reload", visible = true },
     },
 }
 local seeded = BB.InitFrameDefaults(2)
-assert(seeded.items[1].slashCommand == "/dui" and seeded.items[2].id == "reload",
+assert(seeded.items[1].slashCommand == "/qui" and seeded.items[2].id == "reload",
     "existing rows must keep their position")
 for i = 3, #seeded.items do
     assert(seeded.items[i].visible == false,

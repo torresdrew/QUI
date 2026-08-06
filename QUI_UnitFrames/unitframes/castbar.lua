@@ -1275,15 +1275,21 @@ local function OnChannelTickCombatLogEvent()
     end
 end
 
+-- CLEU-driven tick calibration is DISABLED on 12.x. Every access route to
+-- COMBAT_LOG_EVENT_UNFILTERED is closed for addons (HasRestrictions in the
+-- API docs): Frame:RegisterEvent trips ADDON_ACTION_FORBIDDEN even out of
+-- combat on the addon's own frame; RegisterFrameEventAndCallback is the
+-- same protected call on Blizzard's shared frame; and an insecure
+-- EventRegistry:RegisterCallback subscription inserts tainted execution
+-- into the shared registry's dispatch, spreading QUI taint into unrelated
+-- Blizzard paths (Settings, minimap) — worse than the missing feature.
+-- Channel ticks fall back to the static/runtime spell tables in
+-- ResolveChannelTickModel, which never needed combat-log data.
+-- OnChannelTickCombatLogEvent stays wired below so a sanctioned data
+-- source (e.g. a future C_CombatLog-style API) can re-enable observation
+-- by flipping CHANNEL_TICK_EVENT_REGISTERED in one place.
 local function EnsureChannelTickEventRegistration()
-    if CHANNEL_TICK_EVENT_REGISTERED then return end
-    if not EventRegistry or type(EventRegistry.RegisterFrameEventAndCallback) ~= "function" then return end
-    -- RegisterFrameEventAndCallback binds the game event (RegisterFrameEvent) AND the
-    -- callback; plain RegisterCallback never calls frameEventFrame:RegisterEvent, so CLEU
-    -- was never delivered and channel-tick detection was dead. 12.1: CLEU must be
-    -- registered explicitly (it is excluded from RegisterAllEvents).
-    EventRegistry:RegisterFrameEventAndCallback("COMBAT_LOG_EVENT_UNFILTERED", OnChannelTickCombatLogEvent, CHANNEL_TICK_EVENT_FRAME)
-    CHANNEL_TICK_EVENT_REGISTERED = true
+    -- Intentionally never registers; see the block comment above.
 end
 
 local function StartChannelTickObservation(bar, spellID, spellName, startTime, endTime)
@@ -1509,7 +1515,11 @@ local function UpdateChannelTicksForCurrentCast(bar, castSettings, castContext)
     end
 
     local sourcePolicy = GetChannelTickSourcePolicy(castSettings)
-    if sourcePolicy ~= CHANNEL_TICK_SOURCE_POLICY_STATIC then
+    -- Observation needs the (disabled) CLEU feed — see
+    -- EnsureChannelTickEventRegistration. Without it the static resolution
+    -- below is the whole model.
+    if sourcePolicy ~= CHANNEL_TICK_SOURCE_POLICY_STATIC
+        and CHANNEL_TICK_EVENT_REGISTERED then
         StartChannelTickObservation(
             bar,
             castContext.spellID,

@@ -171,12 +171,12 @@ local function DumpDescription(spellID)
     end
 end
 
-SLASH_QUI_QSPELL1 = "/duispell"
+SLASH_QUI_QSPELL1 = "/qspell"
 SlashCmdList["QUI_QSPELL"] = function(msg)
     local arg = msg and strtrim(msg) or ""
     local spellID = ResolveSpellID(arg)
     if not spellID then
-        p("Usage: /duispell <spellID | spell link | partial name>")
+        p("Usage: /qspell <spellID | spell link | partial name>")
         return
     end
     p(("Dumping spell |cffFFD100%d|r"):format(spellID))

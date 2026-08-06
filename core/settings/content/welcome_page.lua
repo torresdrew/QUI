@@ -79,9 +79,9 @@ local function BuildWelcomeContent(content)
     Shared.CreateAccentDotLabel(content, ns.L["Quick Setup Guide"], y); y = y - 30
 
     local steps = {
-        {num = "1.", text = ns.L["Open |cff60A5FA/dui|r to browse settings, then use the Search tab if you are not sure where a system lives"]},
+        {num = "1.", text = ns.L["Open |cff60A5FA/qui|r to browse settings, then use the Search tab if you are not sure where a system lives"]},
         {num = "2.", text = ns.L["If you want a starting point, install a bundled preset from the |cff60A5FAProfiles|r tab or analyze/import a current QUI profile in |cff60A5FAImport & Export Strings|r"]},
-        {num = "3.", text = ns.L["Use |cff60A5FA/dui layout|r or the |cff60A5FAQUI Edit Mode|r button to move QUI-managed frames, then fine-tune anchors and nudges in |cff60A5FAFrame Positioning|r"]},
+        {num = "3.", text = ns.L["Use |cff60A5FA/qui layout|r or the |cff60A5FAQUI Edit Mode|r button to move QUI-managed frames, then fine-tune anchors and nudges in |cff60A5FAFrame Positioning|r"]},
         {num = "4.", text = ns.L["Use Blizzard Edit Mode only for Blizzard-managed elements that QUI does not replace or anchor for you"]},
         {num = "5.", text = ns.L["Type |cff60A5FA/rl|r after profile imports or larger changes when a module asks for a reload"]},
     }
@@ -107,7 +107,7 @@ local function BuildWelcomeContent(content)
 
     y = CreateQA(content,
         ns.L["How do I move and resize frames?"],
-        ns.L["For QUI-managed elements, use the |cff60A5FAQUI Edit Mode|r button or type |cff60A5FA/dui layout|r to drag frames, then use |cff60A5FAFrame Positioning|r for exact anchors, offsets, and nudging. Use Blizzard Edit Mode only for Blizzard frames that QUI does not replace. You generally do not need to import a separate Edit Mode string to get started anymore."],
+        ns.L["For QUI-managed elements, use the |cff60A5FAQUI Edit Mode|r button or type |cff60A5FA/qui layout|r to drag frames, then use |cff60A5FAFrame Positioning|r for exact anchors, offsets, and nudging. Use Blizzard Edit Mode only for Blizzard frames that QUI does not replace. You generally do not need to import a separate Edit Mode string to get started anymore."],
         y, contentWidth)
 
     y = CreateQA(content,
@@ -117,7 +117,7 @@ local function BuildWelcomeContent(content)
 
     y = CreateQA(content,
         ns.L["What is the Cooldown Manager (CDM)?"],
-        ns.L["The Cooldown Manager powers QUI's essential and utility cooldown viewers, buff trackers, and tracked bars. Use |cff60A5FA/dui cdm|r to open the CDM Spell Composer and control what gets tracked, then use the Cooldown Manager tab for appearance, glows, keybind text, and custom-entry behavior. If you need Blizzard's viewer settings panel itself, use |cff60A5FA/cdm|r."],
+        ns.L["The Cooldown Manager powers QUI's essential and utility cooldown viewers, buff trackers, and tracked bars. Use |cff60A5FA/qui cdm|r to open the CDM Spell Composer and control what gets tracked, then use the Cooldown Manager tab for appearance, glows, keybind text, and custom-entry behavior. If you need Blizzard's viewer settings panel itself, use |cff60A5FA/cdm|r."],
         y, contentWidth)
 
     y = CreateQA(content,

@@ -267,7 +267,7 @@ if type(CreateFrame) == "function" then
         record(event, ...)
     end)
 
-    SLASH_QUILOGGER1 = "/duilogger"
+    SLASH_QUILOGGER1 = "/qlog"
     SlashCmdList["QUILOGGER"] = function(msg)
         msg = (msg or ""):lower():gsub("%s+", "")
         if msg == "clear" then

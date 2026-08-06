@@ -1283,7 +1283,7 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             sy = sy - 30
 
             local labels = {
-                qui_options = ns.L["QUI options (/dui)"],
+                qui_options = ns.L["QUI options (/qui)"],
                 qui_layout  = ns.L["Layout Mode"],
                 qui_keybind = ns.L["Keybind mode"],
                 qui_cdm     = ns.L["Cooldown Manager"],

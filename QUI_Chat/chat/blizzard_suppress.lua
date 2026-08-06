@@ -219,8 +219,43 @@ function Suppress.IsActive()
     return lastActive == true
 end
 
-local function SafeSetParent(region, parent)
+-- 12.1: chat frames are PROTECTED frames — SetParent on them from addon
+-- code is ADDON_ACTION_BLOCKED while in combat (hit when Blizzard spawns a
+-- temporary whisper window mid-fight and the suppression hooks re-enforce).
+-- All reparents funnel through here, so this is the one combat gate:
+-- queue the (region -> parent) intent and flush after PLAYER_REGEN_ENABLED.
+-- Last write per region wins, which is exactly the enforcement semantic.
+-- EXCEPTION: the combat-/reload load grace (see the ApplyNow call in the
+-- watcher setup below) may land protected reparents even while
+-- InCombatLockdown() — graceApply bypasses the gate for that first pass.
+local pendingParents = setmetatable({}, { __mode = "k" })
+local regenFlushFrame
+local graceApply = false
+local SafeSetParent
+
+local function QueueParentForRegen(region, parent)
+    pendingParents[region] = parent
+    if not regenFlushFrame then
+        if not _G.CreateFrame then return end
+        regenFlushFrame = _G.CreateFrame("Frame")
+        regenFlushFrame:SetScript("OnEvent", function(self)
+            self:UnregisterEvent("PLAYER_REGEN_ENABLED")
+            for r, p in pairs(pendingParents) do
+                pendingParents[r] = nil
+                SafeSetParent(r, p)
+            end
+        end)
+    end
+    regenFlushFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+end
+
+SafeSetParent = function(region, parent)
     if not (region and region.SetParent and parent) then return end
+    if not graceApply
+        and type(_G.InCombatLockdown) == "function" and _G.InCombatLockdown() then
+        QueueParentForRegen(region, parent)
+        return
+    end
     inOwnSetParent = true
     ns.SafeCallMethod("best-effort-style", region, "SetParent", parent)
     inOwnSetParent = false
@@ -646,9 +681,14 @@ function Suppress.Apply()
         end)
     end
     if type(_G.InCombatLockdown) == "function" and _G.InCombatLockdown() then
-        -- Combat /reload: land the protected reparents now, in the grace.
+        -- Combat /reload: land the protected reparents now, in the load
+        -- grace, where they are permitted despite InCombatLockdown() —
+        -- graceApply bypasses SafeSetParent's regen deferral for this one
+        -- synchronous pass.
         pendingApply = false
+        graceApply = true
         ApplyNow()
+        graceApply = false
     else
         -- Normal load: defer the first application to PEW as before.
         pendingApply = true

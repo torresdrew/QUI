@@ -742,7 +742,7 @@ local function PrintExperimentsList()
         print(string.format("  %-22s %s  %s",
             e.name, FormatExperimentState(e), e.description or ""))
     end
-    print("  |cffAAAAAA→ flip: /dui memaudit exp <name> [on|off]   reset: exp reset|r")
+    print("  |cffAAAAAA→ flip: /qui memaudit exp <name> [on|off]   reset: exp reset|r")
 end
 
 local function SetExperimentState(exp, on)
@@ -1045,7 +1045,7 @@ _G.QUI_MemAudit = function(subcmd, arg)
                 profilerRowLimit = math.floor(n)
                 print(string.format("|cff60A5FAQUI memaudit:|r allocation scopes = %d", profilerRowLimit))
             else
-                print("|cff60A5FAQUI memaudit:|r usage: /dui memaudit rows <n|all>")
+                print("|cff60A5FAQUI memaudit:|r usage: /qui memaudit rows <n|all>")
             end
         end
         return

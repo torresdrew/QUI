@@ -12,7 +12,7 @@ local function OpenQUI()
         QUI:OpenOptions()
         return true
     end
-    print("|cFF56D1FFQUI:|r Options are not available yet. Try /dui instead.")
+    print("|cFF56D1FFQUI:|r Options are not available yet. Try /qui instead.")
     return false
 end
 

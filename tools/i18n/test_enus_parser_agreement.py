@@ -20,7 +20,7 @@ from translate_delta import read_enus as read_delta, lua_bin   # noqa: E402
 
 LUA_COUNT = r'''
 local ns = {}
-assert(loadfile("core/locale/enUS.lua"))("DrewUI", ns)
+assert(loadfile("core/locale/enUS.lua"))("QUI", ns)
 local d = ns.LocaleData.enUS or ns.LocaleData.keys
 local n = 0
 for _ in pairs(d) do n = n + 1 end

@@ -520,7 +520,7 @@ local function BuildAutomation(L, generalDB)
     if type(generalDB.tradeMailLog) ~= "table" then generalDB.tradeMailLog = {} end
     local tml = generalDB.tradeMailLog
     local tmlEnableW = GUI:CreateFormCheckbox(s.frame, nil, "enabled", tml, nil,
-        { description = ns.L["Keep an account-wide log of trades and mail (partner, gold, COD, attached items). View it with /duilog — item links stay clickable in chat."] })
+        { description = ns.L["Keep an account-wide log of trades and mail (partner, gold, COD, attached items). View it with /quilog — item links stay clickable in chat."] })
     local tmlTradesW = GUI:CreateFormCheckbox(s.frame, nil, "logTrades", tml, nil,
         { description = ns.L["Log player trades (both sides' items and gold, completed or cancelled)."] })
     s.AddRow(row(s.frame, ns.L["Trade & Mail Log"], tmlEnableW), row(s.frame, ns.L["Log Trades"], tmlTradesW))
@@ -927,7 +927,7 @@ local function BuildQuiPanel(L, db)
                 if dbVal then LibDBIcon:Hide("QUI") else LibDBIcon:Show("QUI") end
             end
             if _G.QUI_RefreshMinimapButtonDrawer then _G.QUI_RefreshMinimapButtonDrawer() end
-        end, { description = ns.L["Hide the QUI minimap button. You can still open the options panel via /dui."] })
+        end, { description = ns.L["Hide the QUI minimap button. You can still open the options panel via /qui."] })
         s.AddRow(row(s.frame, ns.L["Hide QUI Minimap Icon"], hideW), row(s.frame, ns.L["QUI Panel Transparency"], alphaW))
     else
         s.AddRow(row(s.frame, ns.L["QUI Panel Transparency"], alphaW))

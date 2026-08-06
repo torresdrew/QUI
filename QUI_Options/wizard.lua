@@ -197,7 +197,7 @@ PAGES = {
             local sy = -4
             sy = AddText(body, L["This short guided setup walks through QUI's recommended UI scale, profile, feature toggles, and frame layout."], sy)
             sy = AddText(body, L["Every step applies immediately and every step is optional — use Next to skip anything."], sy)
-            sy = AddText(body, L["You can re-run this any time with |cFFFFFF00/dui install|r."], sy)
+            sy = AddText(body, L["You can re-run this any time with |cFFFFFF00/qui install|r."], sy)
 
             local notNow = GUI:CreateButton(body, L["Not now"], 120, 26, function()
                 Wizard:Hide()
@@ -320,7 +320,7 @@ PAGES = {
             if not profile then return end
             local sy = -4
 
-            sy = AddText(body, L["Two high-impact features worth deciding now. Everything else lives in |cFFFFFF00/dui|r."], sy)
+            sy = AddText(body, L["Two high-impact features worth deciding now. Everything else lives in |cFFFFFF00/qui|r."], sy)
 
             profile.ncdm = profile.ncdm or {}
             sy = Helpers.PlaceRow(GUI:CreateFormToggle(body, L["Cooldown Manager (CDM)"], "enabled", profile.ncdm, function()
@@ -412,7 +412,7 @@ PAGES = {
             layoutBtn:SetPoint("TOPLEFT", 240, sy - 4)
             sy = sy - 40
 
-            sy = AddText(body, L["Layout Mode (|cFFFFFF00/dui layout|r) repositions every QUI frame by dragging — remember to click Save."], sy, 11)
+            sy = AddText(body, L["Layout Mode (|cFFFFFF00/qui layout|r) repositions every QUI frame by dragging — remember to click Save."], sy, 11)
             status = AddStatusLine(body, sy)
         end,
     },
@@ -425,7 +425,7 @@ PAGES = {
             local sy = -4
 
             if #Wizard.applied == 0 then
-                sy = AddText(body, L["No changes were applied — your setup is untouched. Re-run any time with |cFFFFFF00/dui install|r."], sy)
+                sy = AddText(body, L["No changes were applied — your setup is untouched. Re-run any time with |cFFFFFF00/qui install|r."], sy)
             else
                 sy = AddText(body, L["Applied in this run:"], sy)
                 for _, line in ipairs(Wizard.applied) do
@@ -560,7 +560,7 @@ function Wizard:Finish()
         sw.completedAt = time()
     end
     self:Hide()
-    print("|cFF30D1FFQUI|r " .. L["Setup complete. Re-run any time with |cFFFFFF00/dui install|r."])
+    print("|cFF30D1FFQUI|r " .. L["Setup complete. Re-run any time with |cFFFFFF00/qui install|r."])
 end
 
 -- Test seam: page metadata without building UI.
