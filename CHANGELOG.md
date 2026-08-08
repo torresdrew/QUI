@@ -4,44 +4,26 @@ All notable changes to QUI will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## v1.0.0-alpha4 - 2026-08-07
+## v5.0.0-beta1 - 2026-08-07
 
-> ⚠️ **WoW 12.1 PTR ONLY.** QUI targets patch 12.1 (interface 120100) and will
-> not load on the 12.0.x live client.
+> ⚠️ **WoW 12.1 ONLY.** This build targets patch 12.1 (interface 120100) and
+> will not load on the 12.0.x client.
 
-### Fixed
-
-- **Totem cooldowns show their remaining duration again.** A totem summoned
-  under a linked or override spell ID never matched an active totem slot, so its
-  icon sat there with no timer. Slot matching now follows the linked spell IDs
-  the cooldown catalog records for the spell, and an empty slot can no longer
-  satisfy the match.
-- **Totem icons update when the totem is placed or drops.** Nothing re-scanned
-  the totem slots on summon or expiry; `PLAYER_TOTEM_UPDATE` now schedules a
-  cooldown refresh.
-
-## v1.0.0-alpha3 - 2026-07-31
-
-> ⚠️ **WoW 12.1 PTR ONLY.** QUI targets patch 12.1 (interface 120100) and will
-> not load on the 12.0.x live client.
+First beta of the 5.0.0 line. Everything below has landed since v5.0.0-alpha29.
 
 ### Added
 
-- **Nameplates.** The suite ships as its own addon with a sidebar tile, a setup
-  wizard, and a settings preview that renders the real plate 1:1 and follows
-  whatever you are editing. A control strip on the preview toggles ten plate
-  states plus reaction, each control greyed out when the setting it previews is
-  off.
-- **One config per plate type instead of one config for all plates.** Pets and
-  minions, friendly units, bosses and elites, minor and trivial units, enemy
-  players and enemy NPCs each carry their own settings, picked from a dropdown
-  with a Copy From control. The plate re-resolves its type live on
-  classification, flag and faction changes rather than only when it is first
-  shown.
-- **Target indicators** — arrow, brackets and glow line — plus class power pips
-  on the target plate, execute-threshold health colouring, and threat colour
-  mapping.
-- **A Visibility tab** with a `nameplateShowEnemies` master, friendly NPCs
+- **Nameplates are their own addon**, with a sidebar tile, a setup wizard, and a
+  settings preview that renders a real plate 1:1 and follows whatever you are
+  editing. A control strip toggles ten plate states plus reaction, so you can see
+  each one without going and finding the unit.
+- **Every plate type gets its own config** instead of one config for all plates —
+  pets and minions, friendly units, bosses and elites, minor and trivial units,
+  enemy players and enemy NPCs, picked from a dropdown with a Copy From control.
+  A plate re-resolves its type live on classification, flag and faction changes.
+- **Target indicators** — arrow, brackets and glow line — plus class power pips on
+  the target plate, execute-threshold health colouring and threat colour mapping.
+- **A nameplate Visibility tab**: an enemy-plate master toggle, friendly NPCs
   exposed, and Minions nesting Guardians, Pets and Totems on both sides.
   `Show In Instances` becomes a never / name-only / always choice.
 
@@ -50,183 +32,64 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **Nameplate auras use the same engine as group frames and unit frames.** One
   shared aura surface renders all three, so an element configured on one behaves
   the same on the others. Duration text and mine-only are per channel, and
-  `Nameplate Only` is a per-element field rather than a filter flag. QUI's
-  own "important aura" notion is gone; Blizzard's engine flag remains, as a
-  filter.
+  `Nameplate Only` is a per-element field rather than a filter flag.
 - **Nameplate settings split from five tabs to eight** — General, Visibility,
-  Frame, Text, Indicators, Auras, Castbar, Colors. Absorbs and heal prediction
-  moved to Frame, Render Mode moved to Visibility, and Fading And Scale moved to
-  Frame.
-- **Dispel Colors** moved into Auras > Group Frames and now caches per group
-  context.
-- **Name-only is a real render mode** — QUI draws the name and hides the bar
-  and aura containers, instead of swapping the font on Blizzard's own text.
-- The options panel builds on the first frame after login rather than on first
-  open, so opening it no longer stalls.
+  Frame, Text, Indicators, Auras, Castbar, Colors. Absorbs, heal prediction and
+  Fading And Scale moved to Frame; Render Mode moved to Visibility.
+- **Name-only is a real render mode** — QUI draws the name and hides the bar and
+  aura containers instead of restyling Blizzard's own text.
+- **Settings search is 2.5–3x faster.** One English index ships instead of ten
+  translated copies, labels are localized as the index is applied, and scoring
+  only visits entries that can actually match what you typed. Typing the English
+  term still finds the translated row on non-English clients.
+- **The suite is 11 addon folders instead of 22.** The eleven `QUI_OptionsSearch`
+  folders are gone — the index moved into `QUI_Options` and the translations into
+  `QUI`. Locale files ship packed, so only the language in use is ever compiled,
+  and login memory drops by roughly 2.3 MB.
+- **The options panel opens instantly.** It builds on the first frame after login
+  rather than the first time you open it.
+- **Dispel Colors** moved into Auras > Group Frames.
+- **Chat button bar**: built-in and custom buttons collapse into one ordered list,
+  so custom buttons can sit ahead of built-ins. Existing profiles fold at runtime
+  — nothing to do.
+- **Every non-English locale is actually translated now.** Nine of the ten had
+  been falling back to English for roughly 900 strings each. English plural
+  suffixes are gone from six strings no other language could express, the `KB`
+  keybind column header is translated everywhere (ruRU had been rendering it as a
+  kilobyte unit), and koKR uses one word for "cooldown" across all 25 keys that
+  used it instead of two.
 
 ### Fixed
 
-- **Friendly pet, guardian, totem and minion plates never appeared.** QUI
-  shipped all four friendly toggles off and re-asserted them on every settings
-  change, overriding the game's own Nameplates options. They now ship on, and
-  existing profiles pick the change up once.
+- **Friendly pet, guardian, totem and minion plates never appeared.** All four
+  toggles shipped off and were re-asserted on every settings change, overriding
+  the game's own Nameplates options. They ship on now, and existing profiles pick
+  the change up once.
+- **Macro creation errored on every attempt on 12.1.** The macro limit constants
+  moved on Blizzard's side and were still being read as bare globals. The
+  focus-marker index scan also started from the wrong base.
+- **A fresh install could end up with a permanently empty cooldown catalog.**
+  Seeding ran through a file that lives inside the load-on-demand options addon,
+  so the per-character catalog stayed empty until `/qui` was opened once.
+- **Totem cooldowns show their remaining duration again**, and their icons update
+  when the totem is placed or drops. A totem summoned under a linked or override
+  spell ID never matched an active slot, and nothing re-scanned the slots.
+- **A cooldown manager icon could report a cooldown it never drew.** A recycled
+  icon kept its old duration binding after the widget itself had been cleared, so
+  the swipe was never re-applied.
+- **The unit-frame options preview mangled CJK names.** It truncated on raw bytes
+  while the live frame walks codepoints, so on koKR, zhCN and zhTW any Max Name
+  Length not divisible by three cut a character in half.
 - **Raid frames rendered party dispel colors.**
 - **The chat button bar jumped about a second after login.**
-- **A cooldown manager mirror icon reported a cooldown it never drew.** A
-  recycled icon kept its old duration binding while the widget itself had been
-  cleared, so the swipe was never re-applied. Cooldown writes are now checked
-  and read back, and a failed write retries on the next tick instead of being
-  reported as success.
-- Cooldown entries backed by a totem now resolve their totem slot, matching what
-  the totem bar already did.
+- esES: Windrunner is Brisaveloz. zhTW: Mythic difficulty is 傳奇, not the
+  client's word for Epic item quality.
 
-### Internal
+### Upgrading
 
-- Every addon file was stripped of comments; only machine-read ones (luacheck
-  directives, LSP annotations, taint annotations, generated-file banners, test
-  seams) remain, behind `tools/strip_comments.sh` and a curated anchor list.
-- `pcall` use consolidated behind `ns.SafeCall`, gated by a site ratchet instead
-  of the old migration test family.
-- `.luacheckrc` stops excluding `tests/`: lint scope goes from 14 targets / 516
-  files to 18 / 1325, still 0 warnings / 0 errors.
-- `GetTypeSettings` is memoised — 845 ms over 300,000 folds down to 175 ms.
-- Search-row identity de-duplicated into `tools/lib/search_row_identity.lua`,
-  shared by the generator and its test.
-- `assets/nameplate_brackets.tga` re-exported from 8-bit palette-indexed to
-  uncompressed 32-bit true colour, same dimensions and origin.
-
-## v1.0.0-alpha2 - 2026-07-27
-
-> ⚠️ **WoW 12.1 PTR ONLY.** QUI targets patch 12.1 (interface 120100) and will
-> not load on the 12.0.x live client.
-
-### Changed
-
-- **Settings search is 2.5–3x faster.** One English search index ships instead
-  of ten translated copies; labels are localized at the moment the index is
-  applied, and scoring only visits entries that can actually match the query
-  instead of the whole registry. Typing the English term (e.g. "health") still
-  finds the translated row on non-English clients.
-- **The suite is now 12 addon folders instead of 23.** The
-  `QUI_OptionsSearch` addon and the ten `QUI_OptionsSearch_<loc>` locale
-  addons are gone: the search index moved into `QUI_Options` (1.26 MB, down
-  from 3.18 MB) and the translations into the main `QUI` addon. Locale files
-  ship packed, so only the language in use is ever compiled — login memory
-  drops by about 2.3 MB.
-- **If you installed v1.0.0-alpha1 manually** (not through an addon manager),
-  the old `QUI_OptionsSearch` and `QUI_OptionsSearch_<loc>` folders are
-  left behind after updating. They are inert — nothing loads them — but you can
-  delete all eleven from `Interface/AddOns` to tidy the list.
-
-### Fixed
-
-- **Legacy QUI profiles could migrate in the wrong order.** The migration
-  runner carried two version gates, and a profile could take the rename step
-  without the schema-squash step that must follow it — the squash helpers read
-  the renamed key namespaces, so `quiUnitFrames` / `quiGroupFrames` /
-  `quiDatatexts` data could be read as empty. There is now a single gate with
-  the rename as its first step, and profiles stamped by the affected range
-  re-enter the squash on next login (verified idempotent).
-
-### Internal
-
-- taint-check CI shards are bin-packed by file size instead of round-robin, and
-  the strict and advisory passes merged into one `analyze` job at twelve
-  shards — the workflow's critical path dropped from ~80s to ~33s.
-- The CI lint job shells out to `tools/lint.sh` instead of keeping a duplicated
-  target list in sync by hand.
-- i18n tooling consolidated under `tools/i18n/`; the overlay format has one
-  writer shared by every generator, gated by a byte-equality round-trip test
-  and a key-set checksum shared between the English base and every overlay.
-- Generated files are marked `linguist-generated` so GitHub collapses them in
-  PR diffs; `graphify-out/` (regenerable AST dump) is gitignored.
-
-## v1.0.0-alpha1 - 2026-07-26
-
-> ⚠️ **WoW 12.1 PTR ONLY.** QUI targets patch 12.1 (interface 120100) and will
-> not load on the 12.0.x live client.
-
-QUI restarts its version numbering at **1.0.0**. The 5.x line it carried
-until now was inherited from QUI, the addon this was forked from; continuing it
-implied a shared release history that no longer exists. This is QUI's first
-version under its own numbering, and the repository history was re-founded on a
-single root commit to match. Nothing in the addon changes because of the
-renumber — it is a version-string change plus the work below, which had landed
-after v5.0.0-alpha29 but was never released.
-
-### Added
-
-- **QUI → QUI upgrade path.** `core/legacy_qui_adopt.lua` adopts or merges a
-  QUI profile database out of a transplanted `QUI.lua`. `QUI.toc` declares
-  `QUIDB`/`QUI_StorageDB` so the transplant restores, and `core/main.lua` clears
-  them once consumed so the client stops mirroring the QUI database at every
-  logout. Adoption refuses to run while QUI itself is still loaded, and every
-  outcome is reported in chat — including the two that used to be silent.
-- **`qui` minimap drawer toggle icon**, rendered from `assets/QUI.tga` and
-  now the default for new profiles. `hammer` and `grid` remain available.
-- **Issue triage workflow** (`.github/workflows/claude-issue-triage.yml`). Triages
-  opened issues and, only above an explicit confidence bar, opens a **draft** PR
-  against `alpha`. Nothing merges automatically. `.github/`, `tools/`, `tests/`
-  and `.luacheckrc` are off limits to it, and the gates must pass in-run.
-
-### Changed
-
-- **Chat button bar**: `buttons` and `customButtons` collapse into one ordered
-  `items` list, so custom buttons can sit ahead of built-ins. Existing profiles
-  fold at runtime — no migration, no action needed.
-- **Every non-English locale is now actually translated.** All ten overlays sit at
-  5,722 keys; nine of them had been falling back to English for ~900 strings each
-  because the cache generator read the overlays from a path that never existed.
-  Tab and button names inside translated prose now use each locale's own label.
-- **English plural grammar no longer leaks into other languages.** Six strings
-  (junk items, sort moves/passes, profile import characters/entries, chat history
-  clear, the pinned-globals banner) baked `%d item%s`-style suffixes into the
-  format string, which no other language can express. Reworded to plain plural
-  forms and retranslated everywhere.
-- The keybind column label **`KB`** is now translated in all ten locales — it read
-  as a kilobyte unit before, and ruRU had actively rendered it as one (`КБ`).
-- **koKR** now says 쿨다운 for "cooldown" across all 25 keys that used it. The file
-  previously mixed it with 재사용 대기시간, which made the Cooldown Manager pages
-  read as two different features.
-- The bag right-click tooltip no longer lowercases its send destination, so the
-  tooltip and the button label beside it now agree.
-- `@claude` GitHub automation only responds to an explicit mention from a trusted
-  author; assigning an issue no longer starts it.
-
-### Fixed
-
-- **Macro creation errored on every attempt on 12.1.** `MAX_CHARACTER_MACROS` and
-  `MAX_ACCOUNT_MACROS` are no longer bare globals; they are read off
-  `Constants.MacroConsts`. The focus-marker index scan also searched from the
-  wrong base.
-- **A fresh install could get a permanently empty CDM catalog.** Seed-time cooldown
-  row assignment ran through `composer.lua`, which ships inside the load-on-demand
-  Options addon, so the per-character catalog stayed empty until `/qui` was opened
-  once.
-- **The unit-frame options preview mangled CJK names.** It truncated with a raw
-  byte slice while the live frame walks codepoints, so on koKR, zhCN and zhTW any
-  Max Name Length not divisible by three cut a character in half and drew a
-  replacement glyph — the preview disagreeing with the thing it previews, in the
-  three locales most likely to hit it. The target-of-target suffix had it too.
-- esES: Windrunner is Brisaveloz, not Corrientaveloz.
-- zhTW: Mythic difficulty is 傳奇, not 史詩 (which is the client's word for Epic
-  item quality).
-
-### Internal
-
-- `tools/test.sh` mirrored only six of the nine checks CI runs; the luacheck lint
-  job and both staleness gates were missing, so a stale search cache or i18n base
-  could only fail after a push. All nine now run locally, sharded across cores —
-  2m39s down to 28s. `tools/lint.sh` mirrors the CI lint job standalone.
-
----
-
-Entries below are the **pre-v1 line** and are kept because this is the same
-codebase: `5.0.0-alphaN` under the QUI name and QUI before it, and QUI /
-QUI Community Edition earlier still. Their git commits and tags no longer exist —
-the v5.0.0-alpha29 tag, its GitHub Release and its CurseForge file were all
-withdrawn when the history was re-founded, so these sections are now the only
-record of that work.
+If you installed v5.0.0-alpha29 by hand rather than through an addon manager, the
+eleven `QUI_OptionsSearch` folders are left behind after updating. Nothing loads
+them, but you can delete them from `Interface/AddOns` to tidy the list.
 
 ## v5.0.0-alpha29 - 2026-07-25
 
