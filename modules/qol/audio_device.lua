@@ -1,20 +1,8 @@
 local ADDON_NAME, ns = ...
 local Helpers = ns.Helpers
 
----------------------------------------------------------------------------
--- AUDIO OUTPUT DEVICE LOCK
--- Forces the game's audio output back to a chosen device whenever the OS
--- device list changes (plugging/unplugging headphones, etc.). Stores the
--- device by NAME (indices shift as devices come and go) and re-asserts the
--- Sound_OutputDriverIndex CVar. Mechanism mirrors Blizzard's own audio
--- settings dropdown (Blizzard_SettingsDefinitions_Shared/Audio.lua):
---   Sound_GameSystem_GetNumOutputDrivers() / ...GetOutputDriverNameByIndex(i)
---   drive the CVar "Sound_OutputDriverIndex" (0-based device index).
----------------------------------------------------------------------------
-
 local GetSettings = Helpers.CreateDBGetter("general")
 
--- Returns the 0-based driver index whose name matches, or nil.
 local function FindDriverIndexByName(name)
     if not name or name == "" then return nil end
     if type(Sound_GameSystem_GetNumOutputDrivers) ~= "function"
@@ -36,18 +24,15 @@ local function ApplyPreferredDevice()
     if not preferred or preferred == "" then return end
 
     local index = FindDriverIndexByName(preferred)
-    if not index then return end   -- preferred device not currently connected
+    if not index then return end
 
     local current = tonumber(GetCVar("Sound_OutputDriverIndex"))
     if current == index then return end
 
-    -- Sound_OutputDriverIndex is a normal (non-protected) CVar; Blizzard's own
-    -- audio dropdown sets it directly. pcall guards the KioskProtected case.
     pcall(SetCVar, "Sound_OutputDriverIndex", index)
 end
 ns.ApplyPreferredAudioDevice = ApplyPreferredDevice
 
--- Option list for the settings dropdown: {value=name, text=name}. "" = off.
 local function GetAudioDeviceOptions()
     local options = { { value = "", text = ns.L["Off (don't lock)"] } }
     if type(Sound_GameSystem_GetNumOutputDrivers) == "function"

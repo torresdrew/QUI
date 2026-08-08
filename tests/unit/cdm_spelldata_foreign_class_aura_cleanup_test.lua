@@ -83,7 +83,9 @@ local ns = {
         QueryOverrideSpell = function(spellID) return spellID end,
         QueryBaseSpell = function() return nil end,
     },
-    CDMComposer = {
+    -- Runtime reads ns.CDMCatalog directly; ns.CDMComposer is only the alias
+    -- that ships in the LoadOnDemand options addon.
+    CDMCatalog = {
         RebuildBlizzardCatalogMaps = function(spellToCD, _inCooldowns, inAuras)
             if not catalogLoaded then return end
             spellToCD[HUNTER_AURA] = 9001

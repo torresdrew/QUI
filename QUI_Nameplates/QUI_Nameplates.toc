@@ -1,7 +1,7 @@
-## Interface: 120000, 120001, 120005, 120007, 120100
+## Interface: 120100
 ## Title: |cFF30D1FFQUI|r Nameplates
 ## Notes: QUI module. Requires the QUI core addon.
-## Author: Zol
+## Author: Drew
 ## Version: 5.0.0-alpha29
 ## Category: User Interface
 ## Group: QUI
@@ -11,11 +11,13 @@
 bootstrap.lua
 nameplates\shared.lua
 nameplates\cvars.lua
+nameplates\plate_type.lua
 nameplates\plate_colors.lua
 nameplates\plate_health.lua
 nameplates\plate_castbar.lua
 nameplates\plate_auras.lua
 nameplates\plate_extras.lua
+nameplates\plate_power.lua
 nameplates\friendly.lua
 nameplates\presets.lua
 nameplates\driver.lua

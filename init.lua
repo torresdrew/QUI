@@ -1,8 +1,5 @@
 local ADDON_NAME, ns = ...
 
--- Run a callback once the first frame has rendered (queues until then, then
--- runs immediately afterward). Lets startup work defer past the initial paint.
-
 local firstFrameRendered = false
 local afterFirstFrameQueue = {}
 
@@ -46,9 +43,6 @@ function ns.RunAfterFirstFrame(callback, delay)
     return StartupRunAfterFirstFrame(callback, delay)
 end
 
--- Run a callback once login is complete. Fires immediately when already
--- logged in — LoadOnDemand sub-addons load after PLAYER_LOGIN and must not
--- wait for an event that already fired.
 function ns.WhenLoggedIn(callback)
     if type(callback) ~= "function" then return end
     if IsLoggedIn and IsLoggedIn() then
@@ -63,7 +57,6 @@ function ns.WhenLoggedIn(callback)
     end)
 end
 
--- Flush the after-first-frame queue once the first frame renders.
 if CreateFrame then
     local firstFrameFrame = CreateFrame("Frame")
     firstFrameFrame:RegisterEvent("FIRST_FRAME_RENDERED")
@@ -73,9 +66,6 @@ if CreateFrame then
     end)
 end
 
--- Options-toggle keybind (Lua-managed; Bindings.xml removed). A hidden named
--- button carries a CLICK binding; the key persists in the QUIDB global and is
--- re-applied each login. Bind: /qui bindkey CTRL-O   Clear: /qui bindkey none
 local toggleOptionsButton = CreateFrame("Button", "QUI_ToggleOptionsButton", UIParent)
 toggleOptionsButton:Hide()
 toggleOptionsButton:SetScript("OnClick", function()
@@ -103,7 +93,6 @@ local PULL_COMMAND_OWNERS = {
     ["DBM-Core"] = true,
 }
 
--- Version info
 QUI.versionString = C_AddOns.GetAddOnMetadata("QUI", "Version") or "2.00"
 
 local function IsAddonLoaded(addonName)
@@ -239,9 +228,6 @@ end
 
 ns.RunAfterFirstFrame(CreateBlizzardSettingsPanel, 0.1)
 
--- Deferred importstring loading: importstring files register loaders
--- instead of eagerly constructing large tables at login. Data is built
--- on first access (when the user opens the Import tab).
 QUI._importLoaders = {}
 QUI.imports = setmetatable({}, {
     __index = function(self, key)
@@ -249,18 +235,13 @@ QUI.imports = setmetatable({}, {
         if loader then
             local data = loader()
             rawset(self, key, data)
-            QUI._importLoaders[key] = nil -- free the loader closure
+            QUI._importLoaders[key] = nil
             return data
         end
         return nil
     end,
 })
 
--- Preset profiles: bundled QUI profile strings that users can install as
--- real AceDB profiles from the Profiles tab. Each entry maps an
--- _importLoaders key to a human-friendly profile name and description.
--- To add a new preset, just append an entry here and ship the matching
--- importstring file — the UI picks it up automatically.
 QUI._presetProfiles = {
     { key = "StarterProfile", profileName = "Starter Profile", description = "QUI's shipped starter layout (same as a fresh install)" },
 }
@@ -290,41 +271,29 @@ QUI.defaults = {
 }
 
 function QUI:OnInitialize()
-    -- Transient early DB so QUI.db is non-nil before QUICore:OnInitialize
-    -- reassigns it to the live "QUIDB" store (core/main.lua). Not persisted:
-    -- the legacy "QUI_DB" SavedVariable was retired.
     ---@type AceDBObject-3.0
     self.db = LibStub("AceDB-3.0"):New("QUI_InitTransientDB", self.defaults, "Default")
-
-    -- NOTE: the new-profile seed is registered on the LIVE profile DB in
-    -- core/main.lua (QUICore:OnInitialize / "QUIDB"), not here. This transient
-    -- instance is overwritten by QUI.db = self.db there and is not the
-    -- profile store, so an OnNewProfile seed on it would never fire for users.
 
     self:RegisterChatCommand("qui", "SlashCommandOpen")
     self:RegisterChatCommand("quaziiui", "SlashCommandOpen")
     self:RegisterChatCommand("rl", "SlashCommandReload")
     self:RegisterChatCommand("qpull", "SlashCommandPull")
     self:RegisterChatCommand("quipull", "SlashCommandPull")
-    -- Register our media files with LibSharedMedia
     self:CheckMediaRegistration()
 end
 
--- Quick Keybind Mode shortcut (/kb)
 SLASH_QUIKB1 = "/kb"
 SlashCmdList["QUIKB"] = function()
     local LibKeyBound = LibStub("LibKeyBound-1.0", true)
     if LibKeyBound then
         LibKeyBound:Toggle()
     elseif QuickKeybindFrame then
-        -- Fallback to Blizzard's Quick Keybind Mode (no mousewheel support)
         ShowUIPanel(QuickKeybindFrame)
     else
         print("|cff60A5FAQUI:|r " .. ns.L["Quick Keybind Mode not available."])
     end
 end
 
--- Cooldown Settings shortcut (/cdm)
 SLASH_QUI_CDM1 = "/cdm"
 SlashCmdList["QUI_CDM"] = function()
     if CooldownViewerSettings then
@@ -355,7 +324,6 @@ function QUI:SlashCommandOpen(input)
         self.db.char.debug.reload = true
         QUI:SafeReload()
     elseif input and (input == "layout" or input == "unlock" or input == "editmode") then
-        -- Toggle Layout Mode (with backward compat aliases)
         if _G.QUI_ToggleLayoutMode then
             _G.QUI_ToggleLayoutMode()
         else
@@ -363,7 +331,6 @@ function QUI:SlashCommandOpen(input)
         end
         return
     elseif input and input == "install" then
-        -- Guided setup wizard (re-runnable; lives in QUI_Options)
         local ok, reason = self:EnsureOptionsLoaded()
         if ok and ns.QUI_SetupWizard then
             ns.QUI_SetupWizard:Show()
@@ -389,9 +356,6 @@ function QUI:SlashCommandOpen(input)
         end
         return
     elseif input and input:match("^bindkey") then
-        -- /qui bindkey            → show current key
-        -- /qui bindkey CTRL-O     → bind (session binding, re-applied at login)
-        -- /qui bindkey none       → clear
         local key = input:match("^bindkey%s+(%S+)")
         local current = self.db.global.toggleOptionsKey or ""
         if not key then
@@ -415,9 +379,6 @@ function QUI:SlashCommandOpen(input)
         print("|cff60A5FAQUI:|r " .. ns.L["options keybind set to %1$s."]:format(key))
         return
     elseif input and input:match("^gse") then
-        -- /qui gse          → dump current override state
-        -- /qui gse debug    → toggle click-event logging
-        -- /qui gse tail [N] → print last N events from the log
         local sub, arg = input:match("^gse%s+(%S+)%s*(%S*)")
         if sub == "debug" then
             if _G.QUI_GSEToggleDebug then _G.QUI_GSEToggleDebug() end
@@ -432,10 +393,6 @@ function QUI:SlashCommandOpen(input)
         end
         return
     elseif input and input:match("^migration") then
-        -- /qui migration             → status (current schema version + backup slots)
-        -- /qui migration status      → same
-        -- /qui migration restore     → roll back to most recent snapshot (slot 1)
-        -- /qui migration restore N   → roll back to snapshot in slot N (1 = newest)
         local sub, arg = input:match("^migration%s+(%S+)%s*(%S*)")
         sub = sub or "status"
         local Mig = self.Migrations
@@ -486,12 +443,6 @@ function QUI:SlashCommandOpen(input)
         end
         return
     elseif input and input == "miglog" then
-        -- Dump the buffered migration debug log. Migrations run during
-        -- OnInitialize/OnEnable when the chat frame isn't ready, so they
-        -- buffer messages into _G.QUI_MIGRATION_LOG instead of printing
-        -- directly. To enable buffering on next /reload, run:
-        --   /run QUI_MIGRATION_DEBUG = true
-        -- and then /reload. After login, /qui miglog dumps it.
         local log = _G.QUI_MIGRATION_LOG
         if type(log) ~= "table" or #log == 0 then
             print("|cff60A5FAQUI:|r " .. ns.L["migration log is empty."])
@@ -508,8 +459,6 @@ function QUI:SlashCommandOpen(input)
         print("|cff60A5FAQUI:|r " .. ns.L["migration log cleared."])
         return
     elseif input and input == "anchordump" then
-        -- Live dump of frameAnchoring entries for the active profile.
-        -- Shows both raw SV and proxy-merged values for keys we care about.
         local profile = self.db and self.db.profile
         if not profile then
             print("|cff60A5FAQUI:|r " .. ns.L["no profile loaded."])
@@ -538,7 +487,6 @@ function QUI:SlashCommandOpen(input)
             dump("RAW  ", rawFa, key)
             dump("PROXY", proxyFa, key)
         end
-        -- Also dump live frame positions if frames exist
         local function framePos(name, frameKey)
             local frame = nil
             if frameKey == "debuffFrame" then frame = _G.QUI_DebuffIconContainer end
@@ -562,10 +510,6 @@ function QUI:SlashCommandOpen(input)
         framePos("minimap", "minimap")
         return
     elseif input and input:match("^tooltipdebug") then
-        -- /qui tooltipdebug on [N]  -> print tooltip churn samples every N seconds
-        -- /qui tooltipdebug report  -> print the current sample without resetting
-        -- /qui tooltipdebug slow N  -> log functions slower than N ms in samples
-        -- /qui tooltipdebug bypass qol|skin|all|off -> isolate tooltip processors
         local subcmd, arg = input:match("^tooltipdebug%s+(%S+)%s*(%S*)")
         if _G.QUI_TooltipDebug then
             _G.QUI_TooltipDebug(subcmd, arg)
@@ -580,7 +524,6 @@ function QUI:SlashCommandOpen(input)
         while f do
             local vis = f:IsVisible()
             if not isS(vis) and vis then
-                -- Check for white backdrop color (explicit white via GetBackdropColor)
                 if f.GetBackdropColor then
                     local r, g, b = f:GetBackdropColor()
                     if not isS(r) and r and r > 0.9 and g > 0.9 and b > 0.9 then
@@ -595,9 +538,6 @@ function QUI:SlashCommandOpen(input)
                         end
                     end
                 end
-                -- Check for orphaned overlay: has BackdropTemplate + backdrop with bgFile,
-                -- but backdropColor is nil — CENTER piece renders as default white.
-                -- Border-only backdrops (no bgFile) are excluded — no background to be white.
                 if f.backdropInfo and f.backdropInfo.bgFile and not f.backdropColor and f.GetBackdropColor then
                     local h = f:GetHeight()
                     if not isS(h) and h and h > 10 then
@@ -607,7 +547,6 @@ function QUI:SlashCommandOpen(input)
                         if p then
                             print("  parent:", p:GetName() or tostring(p))
                         end
-                        -- If it has _qui color fields, recover automatically
                         if f._quiBgR then
                             print("  _qui colors present — recovering")
                             ns.SafeCallMethod("best-effort-style", f, "SetBackdropColor", f._quiBgR, f._quiBgG, f._quiBgB, f._quiBgA or 1)
@@ -617,7 +556,6 @@ function QUI:SlashCommandOpen(input)
                         end
                     end
                 end
-                -- Check for NineSlice with alpha > 0
                 if f.NineSlice then
                     local a = f.NineSlice:GetAlpha()
                     if not isS(a) and a and a > 0 then
@@ -636,9 +574,6 @@ function QUI:SlashCommandOpen(input)
         return
     elseif input and input:match("^memaudit") then
         if _G.QUI_MemAudit then
-            -- Greedy capture for trailing args so `memaudit exp <name> on/off`
-            -- reaches the handler intact. Existing one-arg subcommands (auto N,
-            -- gc, diff) still work because the handler treats `arg` as opaque.
             local subcmd, arg = input:match("^memaudit%s+(%S+)%s+(.+)$")
             if not subcmd then
                 subcmd = input:match("^memaudit%s+(%S+)$")
@@ -649,8 +584,6 @@ function QUI:SlashCommandOpen(input)
         end
         return
     elseif input and input:match("^diagnose") then
-        -- /qui diagnose        → report Edit Mode state + recent ADDON_ACTION_BLOCKED events
-        -- /qui diagnose clear  → clear the diagnostic ring buffer
         if _G.QUI_DiagnoseEditMode then
             local subcmd = input:match("^diagnose%s+(%S+)")
             _G.QUI_DiagnoseEditMode(subcmd)
@@ -666,10 +599,6 @@ function QUI:SlashCommandOpen(input)
         end
         return
     elseif input and input:match("^combatprof") then
-        -- /qui combatprof [on|off|report|reset]
-        --   Diagnoses combat-end stutter: wraps named CDM functions, watches
-        --   C_Timer.After scheduling, and detects >50ms frame spikes within
-        --   2s of PLAYER_REGEN_ENABLED. Auto-prints a report after each combat.
         if _G.QUI_CombatProf then
             local sub = input:match("^combatprof%s+(%S+)")
             _G.QUI_CombatProf(sub)
@@ -679,7 +608,6 @@ function QUI:SlashCommandOpen(input)
         return
     end
 
-    -- Default: Open custom GUI
     self:OpenOptions()
 end
 
@@ -711,9 +639,6 @@ function QUI:SlashCommandPull(input)
 end
 
 function QUI:OnEnable()
-    -- Run backward-compatibility migrations now that QUICore:OnInitialize()
-    -- has created the real profile database (QUIDB → QUI.db).
-    -- OnEnable runs after all OnInitialize calls but still during ADDON_LOADED.
     self:BackwardsCompat()
 
     self:RegisterEvent("PLAYER_ENTERING_WORLD")
@@ -721,11 +646,12 @@ function QUI:OnEnable()
     self:RegisterEvent("ADDON_LOADED")
     self:RegisterOptionalPullAlias()
 
-    -- Setup wizard trigger (replaces the old 4-line login lecture, whose
-    -- claims had gone stale). Fresh installs auto-open the guided setup once
-    -- (account-wide completedAt flag; ns._freshInstall is sampled in
-    -- QUICore:OnInitialize BEFORE AceDB materialized QUIDB); existing
-    -- installs get a one-time chat pointer at /qui install instead.
+    ns.RunAfterFirstFrame(function()
+        if QUI:EnsureOptionsLoaded() then
+            QUI.GUI:InitializeOptions()
+        end
+    end, 0)
+
     if self.QUICore then
         local sw = self.db and self.db.global and self.db.global.setupWizard
         if sw and not sw.completedAt then
@@ -780,11 +706,6 @@ function QUI:ADDON_LOADED(_, addonName)
     self:UnregisterOptionalPullAlias()
 end
 
--- Recover QUI frames whose backdrop color/border apply was deferred or errored
--- during combat. Helpers.SetFrameBackdrop{Color,BorderColor} record such frames
--- in ns._backdropColorRecovery and stash the intended color in _quiBg*/_quiBorder*;
--- here we re-apply from that cache and clear the entry. Draining this targeted
--- queue replaces the old whole-UI EnumerateFrames scan that ran every combat end.
 local function RecoverQUIBackdrops()
     local queue = ns._backdropColorRecovery
     if not queue then return end
@@ -800,13 +721,10 @@ local function RecoverQUIBackdrops()
 end
 
 function QUI:PLAYER_REGEN_ENABLED()
-    -- Recover any QUI backdrops that got orphaned during combat
-    -- (SetBackdrop can error on secret values, preventing SetBackdropColor from running)
     RecoverQUIBackdrops()
 end
 
 function QUI:PLAYER_ENTERING_WORLD(_, isInitialLogin, isReloadingUi)
-    -- Ensure debug table exists
     if not self.db.char.debug then
         self.db.char.debug = { reload = false }
     end
@@ -826,10 +744,8 @@ function QUI:PLAYER_ENTERING_WORLD(_, isInitialLogin, isReloadingUi)
         self:DebugPrint("Debug Mode Enabled")
     end
 
-    -- Re-apply the Lua-managed options keybind (session bindings don't persist).
     ApplyToggleOptionsKeybind()
 
-    -- Auto-recover QUI frame backdrops after the first rendered frame.
     ns.RunAfterFirstFrame(RecoverQUIBackdrops, 0.5)
 end
 
@@ -839,7 +755,6 @@ function QUI:DebugPrint(...)
     end
 end
 
--- ADDON COMPARTMENT FUNCTIONS --
 function QUI_CompartmentClick()
     QUI:OpenOptions()
 end

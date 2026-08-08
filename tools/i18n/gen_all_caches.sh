@@ -1,64 +1,44 @@
 #!/usr/bin/env bash
-# Regenerate core/locale/enUS.lua + enUS and all 10 locale search caches and their TOCs.
+# Regenerate core/locale/enUS.lua and the single English search cache.
+#
+# Neither per-locale search caches nor per-locale addon folders exist any more:
+#
+#   * The cached strings are ns.L keys and QUI_Options localizes them at
+#     apply time (GUI:PrepareSearchEntry), so a translated cache would be both
+#     redundant and unlocalizable a second time.
+#   * The translation overlays are plain root-TOC files (core/locale/<loc>.lua)
+#     written by tools/i18n/translate_delta.py. They must load at login —
+#     core/locale/locale.lua captures ns.LocaleData.active as an UPVALUE — so
+#     there is no TOC of their own left to generate here.
+#
+# This script therefore only runs the two generators, in order: the key file
+# first (historically the step everyone forgot — "enUS" used to mean only the
+# enUS SEARCH CACHE, never core/locale/enUS.lua), then the cache.
 set -euo pipefail
 LUA_BIN="${LUA:-lua}"
 LOCALES="deDE esES esMX frFR itIT ptBR ruRU koKR zhCN zhTW"
-VER="$(grep -m1 '^## Version:' QUI_OptionsSearch/QUI_OptionsSearch.toc | sed 's/## Version: //')"
 
-# Human-readable language name for each locale's ## Notes line.
-lang_name() {
-  case "$1" in
-    deDE) echo "German" ;;
-    esES) echo "Spanish (EU)" ;;
-    esMX) echo "Spanish (Latin American)" ;;
-    frFR) echo "French" ;;
-    itIT) echo "Italian" ;;
-    ptBR) echo "Portuguese (Brazil)" ;;
-    ruRU) echo "Russian" ;;
-    koKR) echo "Korean" ;;
-    zhCN) echo "Simplified Chinese" ;;
-    zhTW) echo "Traditional Chinese" ;;
-    *)    echo "$1" ;;
-  esac
-}
-# Locale key file FIRST — the search caches embed localized strings, and this
-# was historically a separate manual step everyone (human and bot) forgot:
-# "enUS" below meant only the enUS SEARCH CACHE, never core/locale/enUS.lua.
 "${LUA_BIN}" tools/i18n/extract_strings.lua                      # core/locale/enUS.lua
-"${LUA_BIN}" tools/generate_search_cache.lua                     # enUS (existing addon)
-for loc in $LOCALES; do
-  dir="QUI_OptionsSearch_${loc}"
-  mkdir -p "$dir"
-  "${LUA_BIN}" tools/generate_search_cache.lua "$loc"
-  # Combined per-locale addon TOC: UI-string overlay (bootstrap.lua + <loc>.lua)
-  # + generated search index. Keep in sync with the committed format — a bare
-  # search-only TOC (no overlay files, RequiredDeps on QUI_Options) drops the
-  # translations at login AND drags the ~2.9 MB options engine into the login
-  # path. See the in-file comment block below for the load-order contract.
-  cat > "${dir}/${dir}.toc" <<EOF
-## Interface: 120100
-## Title: |cFF30D1FFQUI|r Locale + Options Search ${loc}
-## IconTexture: Interface\\AddOns\\QUI\\assets\\QUI
-## Notes: $(lang_name "$loc") translations + settings search index for QUI
-## Author: Zol
-## Version: ${VER}
-## Category: User Interface
-## Group: QUI
-## LoadOnDemand: 1
 
-# Combined per-locale addon: UI-string overlay + generated settings search
-# index — ONE folder per locale instead of two.
-#
-# Loaded SYNCHRONOUSLY mid-QUI-load by core/locale/load_overlay.lua so the
-# overlay's ns.LocaleData.active lands before core/locale/locale.lua captures
-# it. NO RequiredDeps on purpose: a QUI_Options dep would drag the ~2.9 MB
-# options engine into the login path (bootstrap.lua hard-errors if the QUI
-# core is somehow absent). search_cache.lua's tail self-apply no-ops at login
-# (QUI_Options not loaded yet); the index parks on the shared ns and
-# GUI:EnsureSearchCacheLoaded applies it on first search.
-bootstrap.lua
-${loc}.lua
-search_cache.lua
-EOF
+# extract_strings.lua has no SHA-256 available (Lua 5.1 stdlib, nothing
+# vendored) so the `-- keyset: <hex>` checksum line -- the fingerprint every
+# overlay's positional IDs are checked against -- is stamped on the Python
+# side instead, reusing the ONE keyset_checksum() implementation that
+# translate_delta.py's overlay writer also calls.
+python3 tools/i18n/stamp_enus_keyset.py                          # keyset line
+
+"${LUA_BIN}" tools/generate_search_cache.lua                     # the one English cache
+
+# Overlays are not generated here, but a missing one is a packaging bug worth
+# catching early: the TOC lists all ten unconditionally.
+missing=""
+for loc in ${LOCALES}; do
+  [ -f "core/locale/${loc}.lua" ] || missing="${missing} ${loc}"
 done
-echo "generated enUS + ${LOCALES}"
+if [ -n "${missing}" ]; then
+  echo "ERROR: QUI.toc lists locale overlays that do not exist:${missing}" >&2
+  echo "Restore them or run tools/i18n/translate_delta.py for those locales." >&2
+  exit 1
+fi
+
+echo "generated core/locale/enUS.lua + the enUS search cache; ${LOCALES} overlays present"

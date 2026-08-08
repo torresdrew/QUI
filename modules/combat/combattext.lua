@@ -1,7 +1,3 @@
----------------------------------------------------------------------------
--- QUI Combat Text Indicator
--- Displays +Combat or -Combat when entering/leaving combat
----------------------------------------------------------------------------
 local ADDON_NAME, ns = ...
 local QUI = ns.QUI or {}
 ns.QUI = QUI
@@ -9,7 +5,6 @@ local QUICore = ns.Addon
 local Helpers = ns.Helpers
 local UIKit = ns.UIKit
 
--- Performance: cache frequently-called globals as locals
 local CreateFrame = CreateFrame
 local UIParent = UIParent
 local GetTime = GetTime
@@ -17,9 +12,6 @@ local C_Timer = C_Timer
 local SetCVar = SetCVar
 local InCombatLockdown = InCombatLockdown
 
----------------------------------------------------------------------------
--- State tracking for fade animation
----------------------------------------------------------------------------
 local CombatTextState = {
     fadeStart = 0,
     fadeStartAlpha = 1,
@@ -29,14 +21,8 @@ local CombatTextState = {
     displayTimer = nil,
 }
 
----------------------------------------------------------------------------
--- Get settings from database
----------------------------------------------------------------------------
 local GetSettings = Helpers.CreateDBGetter("combatText")
 
----------------------------------------------------------------------------
--- Get global addon font setting
----------------------------------------------------------------------------
 local function GetGlobalFont()
     if QUICore and QUICore.db and QUICore.db.profile and QUICore.db.profile.general and QUICore.db.profile.general.font then
         return QUICore.db.profile.general.font
@@ -44,13 +30,9 @@ local function GetGlobalFont()
     return "Quazii"
 end
 
----------------------------------------------------------------------------
--- Refresh function (called when settings change)
----------------------------------------------------------------------------
 local function RefreshCombatText()
     local settings = GetSettings()
 
-    -- If disabled, hide any visible text
     if not settings or not settings.enabled then
         if CombatTextState.displayTimer then
             CombatTextState.displayTimer:Cancel()
@@ -68,13 +50,11 @@ local function RefreshCombatText()
     local frame = CombatTextState.textFrame
     if not frame then return end
 
-    -- Update position
     local xOffset = settings.xOffset or 0
     local yOffset = settings.yOffset or 100
     frame:ClearAllPoints()
     frame:SetPoint("CENTER", UIParent, "CENTER", xOffset, yOffset)
 
-    -- Update font (using LSM) - check if using custom font or global
     local fontSize = settings.fontSize or 24
     local fontName = settings.useCustomFont and settings.font or GetGlobalFont()
     local fontPath = UIKit.ResolveFontPath(fontName)
@@ -85,9 +65,6 @@ local function RefreshCombatText()
     end
 end
 
----------------------------------------------------------------------------
--- Create the text frame (one-time setup)
----------------------------------------------------------------------------
 local function CreateTextFrame()
     if CombatTextState.textFrame then return end
 
@@ -104,7 +81,7 @@ local function CreateTextFrame()
     else
         text:SetFont(Helpers.GetGeneralFont(), 24, Helpers.GetGeneralFontOutline())
     end
-    text:SetTextColor(0.376, 0.647, 0.980, 1)  -- QUI sky blue accent
+    text:SetTextColor(0.376, 0.647, 0.980, 1)
     text:SetJustifyH("CENTER")
     frame.text = text
 
@@ -114,10 +91,6 @@ local function CreateTextFrame()
     RefreshCombatText()
 end
 
----------------------------------------------------------------------------
--- OnUpdate handler for fade animation
----------------------------------------------------------------------------
--- Performance: cache fade duration at fade start to avoid DB walk every frame
 local _cachedFadeDuration = 0.3
 
 local function OnFadeUpdate(self, elapsed)
@@ -126,7 +99,6 @@ local function OnFadeUpdate(self, elapsed)
     local now = GetTime()
     local progress = math.min((now - CombatTextState.fadeStart) / duration, 1)
 
-    -- Linear interpolation
     local alpha = CombatTextState.fadeStartAlpha +
         (CombatTextState.fadeTargetAlpha - CombatTextState.fadeStartAlpha) * progress
 
@@ -134,7 +106,6 @@ local function OnFadeUpdate(self, elapsed)
         CombatTextState.textFrame:SetAlpha(alpha)
     end
 
-    -- Check if fade complete
     if progress >= 1 then
         if CombatTextState.textFrame then
             CombatTextState.textFrame:Hide()
@@ -143,9 +114,6 @@ local function OnFadeUpdate(self, elapsed)
     end
 end
 
----------------------------------------------------------------------------
--- Start fade animation
----------------------------------------------------------------------------
 local function StartFade()
     if not CombatTextState.textFrame then return end
 
@@ -155,36 +123,27 @@ local function StartFade()
     CombatTextState.fadeStartAlpha = currentAlpha
     CombatTextState.fadeTargetAlpha = 0
 
-    -- Performance: cache fade duration once at fade start (avoids DB walk every frame)
     local settings = GetSettings()
     _cachedFadeDuration = (settings and settings.fadeTime) or 0.3
 
-    -- Create fade frame if needed
     if not CombatTextState.fadeFrame then
         CombatTextState.fadeFrame = CreateFrame("Frame")
     end
     CombatTextState.fadeFrame:SetScript("OnUpdate", OnFadeUpdate)
 end
 
----------------------------------------------------------------------------
--- Show combat text with message
----------------------------------------------------------------------------
--- Shared render: color/show/fade. Assumes frame exists; caller does enabled gating.
 local function RenderCombatText(settings, message)
     message = message or ns.L["+Combat"]
 
-    -- Cancel any pending display timer
     if CombatTextState.displayTimer then
         CombatTextState.displayTimer:Cancel()
         CombatTextState.displayTimer = nil
     end
 
-    -- Stop any ongoing fade
     if CombatTextState.fadeFrame then
         CombatTextState.fadeFrame:SetScript("OnUpdate", nil)
     end
 
-    -- Determine and apply color based on message
     local color
     if message == ns.L["+Combat"] then
         color = settings.enterCombatColor or {0.376, 0.647, 0.980, 1}
@@ -193,12 +152,10 @@ local function RenderCombatText(settings, message)
     end
     CombatTextState.textFrame.text:SetTextColor(color[1], color[2], color[3], color[4] or 1)
 
-    -- Set text and show
     CombatTextState.textFrame.text:SetText(message)
     CombatTextState.textFrame:SetAlpha(1)
     CombatTextState.textFrame:Show()
 
-    -- Schedule fade after display time
     local displayTime = settings.displayTime or 0.8
     CombatTextState.displayTimer = C_Timer.NewTimer(displayTime, function()
         StartFade()
@@ -210,7 +167,6 @@ local function ShowCombatText(message)
     local settings = GetSettings()
     if not settings or not settings.enabled then return end
 
-    -- Create frame if needed
     CreateTextFrame()
 
     if not CombatTextState.textFrame then return end
@@ -218,9 +174,6 @@ local function ShowCombatText(message)
     RenderCombatText(settings, message)
 end
 
----------------------------------------------------------------------------
--- Combat event handlers
----------------------------------------------------------------------------
 local function OnCombatStart()
     ShowCombatText(ns.L["+Combat"])
 end
@@ -229,14 +182,6 @@ local function OnCombatEnd()
     ShowCombatText(ns.L["-Combat"])
 end
 
----------------------------------------------------------------------------
--- Blizzard scrolling (floating) combat text master toggle.
--- Mirrors the `enableFloatingCombatText` CVar, which live-loads/unloads the
--- Blizzard_CombatText addon (no /reload). We own the DISABLE only: at login we
--- assert OFF just when the user opted in, so a default (unchecked) profile never
--- overrides someone who turned floating combat text off through Blizzard's own
--- menu. An explicit options toggle drives both directions.
----------------------------------------------------------------------------
 local _sctApplyPending = false
 local _sctApplyPendingFromOnChange = false
 
@@ -247,7 +192,6 @@ local function WantsScrollingCombatTextDisabled()
 end
 
 local function ApplyScrollingCombatText(fromOnChange)
-    -- Flipping this CVar toggles addon loading; unsafe mid-combat, so defer.
     if InCombatLockdown() then
         _sctApplyPending = true
         _sctApplyPendingFromOnChange = fromOnChange
@@ -258,14 +202,10 @@ local function ApplyScrollingCombatText(fromOnChange)
     if WantsScrollingCombatTextDisabled() then
         SetCVar("enableFloatingCombatText", "0")
     elseif fromOnChange then
-        -- Restore only on an explicit un-check; never write "1" at login.
         SetCVar("enableFloatingCombatText", "1")
     end
 end
 
----------------------------------------------------------------------------
--- Initialize
----------------------------------------------------------------------------
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
 eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
@@ -280,39 +220,23 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
     end
 end)
 
--- Install after login. ns.WhenLoggedIn runs now if already logged in (the
--- post-login LOD case) rather than this addon's own ADDON_LOADED, which is NOT
--- delivered when the core eager-LoadAddOn's the module from OnEnable (see
--- petwarning.lua / tooltip_provider.lua). Nil only in the headless test harness.
 if ns.WhenLoggedIn then
     ns.WhenLoggedIn(CreateTextFrame)
     ns.WhenLoggedIn(function() ApplyScrollingCombatText(false) end)
 end
 
----------------------------------------------------------------------------
--- Global refresh function for GUI
----------------------------------------------------------------------------
 _G.QUI_RefreshCombatText = RefreshCombatText
 
--- Cross-addon refresh hook for the options panel (QUI_Options). We hang it on
--- the shared core object (QUICore == ns.Addon, set in core/main.lua) instead of
--- a new _G.QUI_* global, per the global-assignment ratchet. Mirrors the
--- established QUICore.<Module>:Refresh() pattern used elsewhere in options.
 if QUICore then
     QUICore.RefreshScrollingCombatText = function()
         ApplyScrollingCombatText(true)
     end
 end
 
----------------------------------------------------------------------------
--- Global preview function for options panel
----------------------------------------------------------------------------
 _G.QUI_PreviewCombatText = function(message)
-    -- Temporarily bypass enabled check for preview
     local settings = GetSettings()
     if not settings then return end
 
-    -- Create frame if needed
     CreateTextFrame()
 
     RenderCombatText(settings, message)

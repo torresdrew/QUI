@@ -1,31 +1,3 @@
---[[
-    QUI Resource Bars — settings-tile preview driver
-
-    Drives the dynamic content of the Resource Bars settings tile preview
-    pane. Owns the cycle state, OnUpdate ticker, preview chrome (background,
-    border, "PREVIEW" label), the two mock-bar sections (primary +
-    secondary), the per-tick StatusBar:SetValue + value-text writes, and
-    the migrated preview-only helpers (MakeMockBar, ApplyPreviewTicks,
-    ApplyPreviewSectionLayout, GetPreviewBarColor, GetPreviewBgColor,
-    MockValueText, GetPreviewTextConfig, GetPreviewPowerMax,
-    GetPreviewDisplaySize, MapPreviewMetric).
-
-    Public surface:
-        ns.QUI_ResourceBarsPreview.Build(host)
-        ns.QUI_ResourceBarsPreview.Refresh()
-        ns.QUI_ResourceBarsPreview.Teardown()
-        ns.QUI_ResourceBarsPreview.GetCurrentPcts()
-
-    Invariants:
-        * No game events are registered. Cycle is time-driven via OnUpdate.
-        * Driver never touches real (runtime) resource bars. Mock-only.
-        * Shared runtime helpers (GetBarTexture, ShouldSwapBars, etc.) are
-          imported from ns.QUI_ResourceBars_Internal (exported by
-          resourcebars.lua in T2). Lookups happen lazily (inside Build /
-          Refresh) so load-order between this file and resourcebars.lua
-          doesn't matter.
-]]
-
 local _, ns = ...
 
 local function CJKFont(fs, p, s, f)
@@ -36,49 +8,27 @@ local function CJKFont(fs, p, s, f)
     end
 end
 
--- Lazy lookups for ns.QUI_ResourceBars_Internal (populated in T2).
--- The actual lookup happens inside Build/Refresh, NOT at file-load time,
--- because resourcebars.lua may load before or after this file depending
--- on TOC ordering.
 local function GetInternal()
     return ns.QUI_ResourceBars_Internal
 end
 
--- Local aliases for built-ins used by the migrated helpers.
 local math_abs, math_max, math_min, math_floor = math.abs, math.max, math.min, math.floor
 local string_format = string.format
 
 local Module = {}
 ns.QUI_ResourceBarsPreview = Module
 
----------------------------------------------------------------------------
--- Cycle constants
--- A single 10s loop. Both bars use the same t with a 2s phase offset
--- between primary and secondary so the bars are visibly out of sync.
---
--- Primary:    drain 0–4 (1.0→0.0), refill 4–6 (0.0→1.0), idle 6–10 (1.0)
--- Secondary:  idle 0–2 (1.0), drain 2–6 (1.0→0.0), refill 6–8 (0.0→1.0),
---             idle 8–10 (1.0)
----------------------------------------------------------------------------
 local CYCLE_LENGTH = 10
 
----------------------------------------------------------------------------
--- Driver state
----------------------------------------------------------------------------
 local state = {
     host       = nil,
     ticker     = nil,
     cycle      = { t = 0 },
-    previewRef = nil,   -- { pv, primary, secondary, fpath } after Build
+    previewRef = nil,
     autoHeight = nil,
 }
 
----------------------------------------------------------------------------
--- Cycle math
----------------------------------------------------------------------------
-
 local function ComputePcts(t)
-    -- Primary
     local primaryPct
     if t < 4 then
         primaryPct = 1.0 - t / 4
@@ -88,7 +38,6 @@ local function ComputePcts(t)
         primaryPct = 1.0
     end
 
-    -- Secondary (phase-offset by +2s)
     local secondaryPct
     if t < 2 then
         secondaryPct = 1.0
@@ -107,13 +56,6 @@ local function AdvanceCycle(elapsed)
     state.cycle.t = (state.cycle.t + elapsed) % CYCLE_LENGTH
 end
 
----------------------------------------------------------------------------
--- Preview constants (migrated from resourcebars.lua in T4)
----------------------------------------------------------------------------
-
--- Enum.PowerType is a WoW-runtime global; headless tooling (search-cache
--- generator, profile tests) loads this file without it, so guard every
--- load-time reference.
 local POWER_DISPLAY_NAMES = {
     ["STAGGER"] = ns.L["Stagger"],
     ["SOUL"]    = ns.L["Soul Fragments"],
@@ -166,10 +108,6 @@ local DEFAULT_PREVIEW_OPTIONS       = {
     verticalPadding = 2,
 }
 
----------------------------------------------------------------------------
--- Preview helpers (migrated from resourcebars.lua in T4)
----------------------------------------------------------------------------
-
 local function GetPreviewPowerMax(resource)
     if type(resource) ~= "number" then return 0 end
 
@@ -182,8 +120,6 @@ local function GetPreviewPowerMax(resource)
     if Helpers and Helpers.SafeToNumber then
         return Helpers.SafeToNumber(maxValue, 0)
     end
-    -- Bare fallback (core/utils.lua always loads first in-game; this arm is
-    -- headless-only): probe before tonumber — the read is secret-capable.
     if issecretvalue and issecretvalue(maxValue) then
         return 0 -- @secret-policy: zero-degrade
     end
@@ -260,9 +196,6 @@ local function ApplyPreviewTicks(section, cfg, resource)
     local tickedPowerTypes = Internal and Internal.tickedPowerTypes
     local fragmentedPowerTypes = Internal and Internal.fragmentedPowerTypes
     if type(resource) ~= "number" or not tickedPowerTypes or not tickedPowerTypes[resource] then return end
-    -- Parity with the live bar (resourcebars.lua UpdateSecondaryPowerBarTicks):
-    -- fragmented power types (Runes, Essence) render as separate segments, not
-    -- divider ticks, so the live bar suppresses ticks for them. Match that here.
     if fragmentedPowerTypes and fragmentedPowerTypes[resource] then return end
 
     local max = GetPreviewPowerMax(resource)
@@ -325,7 +258,7 @@ local function MockValueText(cfg, textCfg, pct, resource)
         local v = math_floor(pct * 100)
         return textCfg.hidePercentSymbol and tostring(v) or (v .. "%")
     end
-    return math_floor(pct * 100000)  -- fake raw value
+    return math_floor(pct * 100000)
 end
 
 local function MakeMockBar(parent, fpath)
@@ -401,13 +334,6 @@ local function ApplyPreviewSectionLayout(section, cfg, pv, visibleCount)
     end
 end
 
----------------------------------------------------------------------------
--- Per-tick dynamics application
--- Writes ONLY pct-dependent values (StatusBar value + value-text).
--- Geometry, ticks, colors, fonts, Show/Hide-by-setting are owned by
--- Refresh and are not touched here.
----------------------------------------------------------------------------
-
 local function ApplyDynamics(primaryPct, secondaryPct)
     local pr = state.previewRef
     if not pr then return end
@@ -446,8 +372,6 @@ end
 local function IncludeSectionBounds(section, bounds)
     if not section or (section.IsShown and not section:IsShown()) then return end
 
-    -- The section frame reserves the configured bar geometry. Its label,
-    -- bar border, and visible value text can extend beyond that reservation.
     IncludeContentBounds(section, bounds, false)
     IncludeContentBounds(section.lbl, bounds, true)
     IncludeContentBounds(section.barFrame, bounds, true)
@@ -495,10 +419,6 @@ local function ResizePreviewToContent(host)
         local topLimit = hostTop - contentTop - padding
         local topShift = math_max(0, bounds.top - topLimit)
 
-        -- Resource sections are top-stacked rather than center-anchored. If
-        -- a positive text Y offset rises into the header, move the complete
-        -- stack down before sizing the pane; height alone only moves the
-        -- bottom edge and cannot cure top clipping.
         ApplyPreviewTopShift(topShift)
         desiredHeight = math_floor(hostTop - (bounds.bottom - topShift) + padding + 0.5)
         desiredHeight = math_max(options.minHeight or 0, desiredHeight)
@@ -527,17 +447,12 @@ local function RequestPreviewAutoHeight()
         end
     end
 
-    -- Font-string and frame bounds settle after the current refresh returns.
     if C_Timer and C_Timer.After then
         C_Timer.After(0, Apply)
     else
         Apply()
     end
 end
-
----------------------------------------------------------------------------
--- Public surface
----------------------------------------------------------------------------
 
 function Module.Build(host, options)
     if state.ticker then
@@ -546,8 +461,6 @@ function Module.Build(host, options)
             Module.Refresh()
             return
         end
-        -- Settings pages are cached and can rebuild around a new visible
-        -- preview host. Release the old singleton before rebinding it.
         Module.Teardown()
     end
     state.host = host
@@ -560,18 +473,15 @@ function Module.Build(host, options)
     local fpath  = UIKit and UIKit.ResolveFontPath
                    and UIKit.ResolveFontPath(GUI and GUI:GetFontPath())
 
-    -- Preview background fill
     local fill = host:CreateTexture(nil, "BACKGROUND")
     fill:SetAllPoints(host)
     fill:SetColorTexture(0, 0, 0, 0.2)
 
-    -- Border lines
     if UIKit and UIKit.CreateBorderLines then
         UIKit.CreateBorderLines(host)
         UIKit.UpdateBorderLines(host, 1, border[1] or 1, border[2] or 1, border[3] or 1, 0.15, false)
     end
 
-    -- Keep the persistent preview title consistent with CDM Composer.
     local lbl = host:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     local SkinBase = ns.SkinBase
     if SkinBase and SkinBase.SkinFontString then
@@ -581,7 +491,6 @@ function Module.Build(host, options)
     lbl:SetText(ns.L["Live Preview"])
     lbl:SetTextColor(0.6, 0.6, 0.6, 1)
 
-    -- Primary + secondary mock sections
     local primary = MakeMockBar(host, fpath)
     primary:SetPoint("TOPLEFT",  host, "TOPLEFT",  BAR_PAD_X,  -20)
     primary:SetPoint("TOPRIGHT", host, "TOPRIGHT", -BAR_PAD_X, -20)
@@ -592,21 +501,18 @@ function Module.Build(host, options)
 
     state.previewRef = { pv = host, primary = primary, secondary = secondary, fpath = fpath }
 
-    -- Ticker (60Hz cycle dispatcher)
     state.ticker = CreateFrame("Frame", nil, host)
     state.ticker:SetScript("OnUpdate", function(_, elapsed)
         AdvanceCycle(elapsed)
         ApplyDynamics(ComputePcts(state.cycle.t))
     end)
 
-    -- Re-render on host resize
     host:SetScript("OnSizeChanged", function()
         if not host._previewAutoHeightApplying then
             Module.Refresh()
         end
     end)
 
-    -- First-frame paint
     Module.Refresh()
 end
 
@@ -628,6 +534,7 @@ function Module.Refresh()
     local GetSecondaryResource = Internal.GetSecondaryResource or function() end
     local ShouldSwapBars       = Internal.ShouldSwapBars       or function() return false end
     local ShouldHidePrimaryOnSwap = Internal.ShouldHidePrimaryOnSwap or function() return false end
+    ---@type fun(...): ... -- the `or` fallback is narrower than Internal.GetBarTexture
     local GetBarTexture        = Internal.GetBarTexture        or function() return "" end
 
     local LSM = ns.LSM
@@ -694,7 +601,6 @@ function Module.Refresh()
         local tex = LSM and LSM.Fetch and LSM:Fetch("statusbar", GetBarTexture(cfg))
         if tex then section.bar:SetStatusBarTexture(tex) end
         section.bar:SetStatusBarColor(r, g, b)
-        -- Bar value is set per-tick by ApplyDynamics; do not call SetValue here.
 
         ApplyPreviewTicks(section, cfg, resource)
 
@@ -738,15 +644,11 @@ function Module.Refresh()
             section.val:SetPoint("CENTER", section.textFrame, "CENTER", textX, textY)
         end
 
-        -- Cache per-section settings on the section frame so ApplyDynamics
-        -- doesn't have to re-resolve them every tick.
         section._cfg      = cfg
         section._resource = resource
         section._textCfg  = textCfg
     end
 
-    -- Paint the first frame after refresh with live cycle pcts so the bars
-    -- don't snap to a stale value between Refresh and the next OnUpdate tick.
     local pp, ss = ComputePcts(state.cycle.t)
     ApplyDynamics(pp, ss)
     RequestPreviewAutoHeight()

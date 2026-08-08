@@ -4,11 +4,13 @@ env.ADDON_NAME = ADDON_NAME
 env.ns = ns
 env.SetChunkEnv(1, env)
 
-do -- spell flyout skinning
+---@diagnostic disable: lowercase-global -- SetChunkEnv installs a setfenv
+
+do
 
 spellFlyoutSkinHooked = false
 
-do -- owned spell flyout (retail migration)
+do
 
 USE_OWNED_FLYOUT = (WOW_PROJECT_ID == WOW_PROJECT_MAINLINE)
 ActionBarsOwned.useOwnedFlyout = USE_OWNED_FLYOUT
@@ -50,11 +52,6 @@ function ApplyOwnedFlyoutButtonVisuals(button, spellID)
     if button.Name then button.Name:SetText("") end
     if button.Count then button.Count:SetText("") end
 
-    -- State textures + hit rect are static button-level setup, applied once
-    -- at button creation in EnsureOwnedFlyoutButton. Re-running here would
-    -- call SetHitRectInsets from the tainted secure-CallMethod context that
-    -- triggers this update, and that method is protected on SecureAction
-    -- buttons.
     if InCombatLockdown() then return end
     local sourceButton = ownedFlyout and ownedFlyout:GetParent()
     local settings = GetOwnedFlyoutSettings(sourceButton)
@@ -63,9 +60,6 @@ function ApplyOwnedFlyoutButtonVisuals(button, spellID)
     end
 end
 
--- DurationObject-driven CD swipe for popup buttons (no `action` slot, so the
--- ActionBarsOwned action-cooldown loop can't drive these — we mirror Blizzard
--- spell cooldowns directly via the only remaining secret-safe setter).
 function UpdateOwnedFlyoutButtonCooldown(button)
     if not button then return end
     local cooldown = button.cooldown or button.Cooldown
@@ -81,30 +75,13 @@ function UpdateOwnedFlyoutButtonCooldown(button)
     local cdInfo = C_Spell.GetSpellCooldown and C_Spell.GetSpellCooldown(spellID)
     local chargeInfo = C_Spell.GetSpellCharges and C_Spell.GetSpellCharges(spellID)
 
-    -- This runs via secure CallMethod from the flyout snippet, so any field
-    -- on cdInfo / chargeInfo may be secret. Comparing secret numbers errors;
-    -- coerce through Helpers before gating display. The `cdInfo and` /
-    -- `chargeInfo and` truth-tests read the structure ref itself, which is a
-    -- plain table-or-nil (SpellCooldownInfo/SpellChargeInfo secretize per
-    -- FIELD, several NeverSecret, per SpellSharedDocumentation).
-    -- Policy: probe-charges-when-unknown (mirrors actionbars_cooldowns) — a
-    -- secret currentCharges folds to 0, so showCharge stays true and the
-    -- charge swipe defers to the GetSpellChargeDuration DurationObject sink
-    -- below, which self-corrects (no recharge in flight → no durObj → Clear).
     local cur = Helpers.SafeToNumber(chargeInfo and chargeInfo.currentCharges, 0) -- @secret-safe: SpellChargeInfo container is a plain table-or-nil; the secret-capable field goes to the unwrap
     local max = Helpers.SafeToNumber(chargeInfo and chargeInfo.maxCharges, 0) -- @secret-safe: SpellChargeInfo container is a plain table-or-nil; maxCharges is NeverSecret and goes to the unwrap
     local showCharge = max > 0 and cur < max
 
-    -- Gate on isActive: NeverSecret, and it already folds in isEnabled plus
-    -- startTime/duration (per SpellSharedDocumentation).  Gating on the
-    -- secret-capable duration would fold an unreadable value to 0 during
-    -- restricted cooldowns and skip the secret-safe DurationObject path
-    -- exactly when it is the only legal display route.
     local showNormal = Helpers.SafeValue(cdInfo and cdInfo.isActive, false) -- @secret-safe: SpellCooldownInfo container is a plain table-or-nil; isActive is NeverSecret and goes to the unwrap
 
     if showNormal then
-        -- ignoreGCD=true so the flyout button's swipe tracks the spell's
-        -- real cooldown instead of being masked by the 1.5s GCD sweep.
         local ok, durObj = ns.SafeCall("best-effort-style", C_Spell.GetSpellCooldownDuration, spellID, true)
         if ok and durObj then
             cooldown:SetCooldownFromDurationObject(durObj)
@@ -157,22 +134,11 @@ EnsureOwnedFlyoutFrame = function()
 
     ownedFlyout = CreateFrame("Frame", "QUI_SpellFlyout", UIParent, "SecureHandlerBaseTemplate")
     ownedFlyout:SetFrameStrata("DIALOG")
-    -- Lock the strata. The secure HandleFlyout snippet reparents this frame
-    -- onto the clicked action button (self:SetParent(parent)). A non-fixed
-    -- frame *inherits its new parent's strata* on reparent (see Blizzard's
-    -- PlayerCastingBarFrame: SetFixedFrameStrata(false) is commented "Inherit
-    -- parent strata"), which would drop the flyout from DIALOG down to the
-    -- action bar's strata and let group/raid frames render on top of it.
-    -- Fixing the strata makes DIALOG survive every reparent.
     if ownedFlyout.SetFixedFrameStrata then
         ownedFlyout:SetFixedFrameStrata(true)
     end
     ownedFlyout:SetClampedToScreen(true)
     ownedFlyout:Hide()
-    -- Background tint lives directly on the flyout frame's BACKGROUND layer, not
-    -- on a separate child frame. A sibling child frame shares the popup buttons'
-    -- frame level, so its texture can draw *over* the button icons and dim them;
-    -- a parent's own draw layers always render beneath its child button frames.
     ownedFlyout.BackgroundTex = ownedFlyout:CreateTexture(nil, "BACKGROUND")
     ownedFlyout.BackgroundTex:SetAllPoints()
     ownedFlyout.BackgroundTex:SetColorTexture(0, 0, 0, 0.35)
@@ -401,11 +367,6 @@ function PopulateOwnedFlyoutInfoEntry(info, flyoutID, numSlots, isKnown)
     end
 end
 
--- 12.1: GetFlyoutInfo hard-errors ("No flyout found for ID=%i") for IDs the
--- client has no record of, so the old blind 1..300 ID probe is no longer
--- viable. Mirror Blizzard's IconDataProviderMixin:FillOutExtraIconsMapWithSpells:
--- the player spellbook is the authority for which flyouts the character owns
--- (GetSpellBookItemType's actionID return is the flyoutID for FLYOUT items).
 local ownedFlyoutIDScratch = {}
 local function CollectOwnedFlyoutIDs(out)
     wipe(out)
@@ -528,8 +489,6 @@ SyncOwnedFlyoutInfoToHandler = function()
 end
 
 do
-    -- Mirror SPELL_UPDATE_COOLDOWN/CHARGES into popup-button swipes while the
-    -- flyout is open. No-op when hidden — OnHide path already clears.
     local cdEventFrame = CreateFrame("Frame")
     cdEventFrame:RegisterEvent("SPELL_UPDATE_COOLDOWN")
     cdEventFrame:RegisterEvent("SPELL_UPDATE_CHARGES")
@@ -563,7 +522,7 @@ ShowOwnedFlyoutForButton = function(parentButton)
     return flyout:IsShown()
 end
 
-end -- do (owned spell flyout)
+end
 
 function IsSpellFlyoutButtonFrame(button, flyout)
     if not button then return false end
@@ -719,7 +678,6 @@ SkinSpellFlyoutButtons = function()
         SkinButton(button, settings)
     end
 
-    -- Rebuild flyout background extents after resizing popup buttons.
     if flyout.Layout then
         flyout:Layout()
     end
@@ -739,11 +697,8 @@ end
 
 ActionBarsOwned.HookSpellFlyoutSkinning = HookSpellFlyoutSkinning
 
-end -- do (spell flyout skinning)
+end
 
----------------------------------------------------------------------------
--- PAGE ARROW VISIBILITY
----------------------------------------------------------------------------
 do
 
 function CollectPageArrowFrames()
@@ -806,7 +761,6 @@ ApplyPageArrowVisibility = function(hide)
             frame:Hide()
             if not ebs.pageArrowShowHooked[frame] then
                 ebs.pageArrowShowHooked[frame] = true
-                -- TAINT SAFETY: Defer to break taint chain from secure context.
                 hooksecurefunc(frame, "Show", function(self)
                     C_Timer.After(0, function()
                         local db = GetDB()
@@ -826,4 +780,4 @@ end
 
 _G.QUI_ApplyPageArrowVisibility = ApplyPageArrowVisibility
 
-end -- do (page arrow visibility)
+end

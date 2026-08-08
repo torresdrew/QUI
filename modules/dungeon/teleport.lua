@@ -1,21 +1,9 @@
 local addonName, ns = ...
 
----------------------------------------------------------------------------
--- M+ DUNGEON TELEPORT MODULE
--- Feature: Click-to-teleport on M+ tab dungeon icons
--- Uses shared dungeon data from qui_dungeon_data.lua
----------------------------------------------------------------------------
-
 local Helpers = ns.Helpers
 local GetCore = Helpers.GetCore
 
--- TAINT SAFETY: Store per-icon state in local weak-keyed tables instead of
--- writing custom properties to Blizzard dungeon icon frames.
-local iconOverlays = Helpers.CreateStateTable()  -- dungeonIcon → overlay
-
----------------------------------------------------------------------------
--- SETTINGS ACCESS
----------------------------------------------------------------------------
+local iconOverlays = Helpers.CreateStateTable()
 
 local function IsEnabled()
     local core = GetCore()
@@ -23,15 +11,10 @@ local function IsEnabled()
     return settings and settings.mplusTeleportEnabled ~= false
 end
 
----------------------------------------------------------------------------
--- CLICK-TO-TELEPORT ON M+ TAB ICONS
----------------------------------------------------------------------------
-
 local function CreateSecureOverlay(dungeonIcon)
     if not dungeonIcon or not dungeonIcon.mapID then return end
     if InCombatLockdown() then return end
 
-    -- Get teleport spell from shared dungeon data
     local spellID = _G.QUI_DungeonData and _G.QUI_DungeonData.GetTeleportSpellID(dungeonIcon.mapID)
     local overlay = iconOverlays[dungeonIcon]
 
@@ -56,7 +39,6 @@ local function CreateSecureOverlay(dungeonIcon)
 
     if not spellID then return end
 
-    -- Create secure button overlay
     overlay = CreateFrame("Button", nil, dungeonIcon, "SecureActionButtonTemplate")
     overlay:SetAllPoints(dungeonIcon)
     overlay:SetFrameLevel(dungeonIcon:GetFrameLevel() + 10)
@@ -65,28 +47,23 @@ local function CreateSecureOverlay(dungeonIcon)
     overlay:SetAttribute("spell", spellID)
     overlay:RegisterForClicks("AnyUp", "AnyDown")
 
-    -- Store reference
     overlay.spellID = spellID
     overlay.mapID = dungeonIcon.mapID
     overlay.dungeonIcon = dungeonIcon
 
-    -- Create highlight texture for hover effect
     local highlight = overlay:CreateTexture(nil, "OVERLAY")
     highlight:SetAllPoints()
-    highlight:SetColorTexture(0.3, 1, 0.5, 0.3)  -- Green tint when spell known
+    highlight:SetColorTexture(0.3, 1, 0.5, 0.3)
     highlight:Hide()
     overlay.highlight = highlight
 
-    -- Visual indicator on hover
     overlay:SetScript("OnEnter", function(self)
         local currentSpellID = self.spellID
         local icon = self.dungeonIcon
 
-        -- Show highlight if spell is known
         if currentSpellID and IsSpellKnown(currentSpellID) then
             highlight:Show()
         end
-        -- Trigger original tooltip
         if icon and icon.OnEnter then
             icon:OnEnter()
         end
@@ -116,13 +93,8 @@ end
 
 local function OnChallengesFrameUpdate()
     if not IsEnabled() then return end
-    -- Delay slightly to ensure icons have their mapID set
     C_Timer.After(0.1, HookDungeonIcons)
 end
-
----------------------------------------------------------------------------
--- INITIALIZATION
----------------------------------------------------------------------------
 
 local hooked = false
 
@@ -138,7 +110,6 @@ initFrame:SetScript("OnEvent", function(self, event, arg1)
     end
 end)
 
--- Handle case where Blizzard_ChallengesUI is already loaded
 if C_AddOns.IsAddOnLoaded("Blizzard_ChallengesUI") then
     if not hooked and ChallengesFrame then
         hooksecurefunc(ChallengesFrame, "Update", OnChallengesFrameUpdate)

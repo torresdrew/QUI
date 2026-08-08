@@ -151,9 +151,9 @@ check("pairing must re-scan viewer children on mismatch",
 -- 4c. The no-rebuild reuse path must refresh the pairing from the freshly
 --     scanned entries (build-time-only pairing goes stale mid-combat).
 ---------------------------------------------------------------------------
-local reuseStart = assert(string.find(src, "-- No rebuild needed", 1, true),
+local reuseStart = assert(string.find(src, "if not needsRebuild then", 1, true),
     "reuse path should exist")
-local reuseEnd = assert(string.find(src, "Clear existing pool", reuseStart, true),
+local reuseEnd = assert(string.find(src, "self:ClearPool()", reuseStart, true),
     "reuse path should precede the rebuild")
 local reuseBlock = string.sub(src, reuseStart, reuseEnd)
 check("reuse path must refresh _blzChild from the scanned entry",

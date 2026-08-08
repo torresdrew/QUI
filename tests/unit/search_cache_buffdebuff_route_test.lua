@@ -7,22 +7,29 @@
 -- toggles AND the whole mounted aura-element editor -- navigated searchers to
 -- Action Bars > Per-Bar, a page that contains none of those settings.
 --
+-- Buff/Debuff is now DUAL-HOMED: the same editor also mounts back on the
+-- Action Bars tile (third sub-page, after Task 6), and that module home was
+-- given its OWN featureId, "actionBarsBuffDebuffPage", so the two homes can
+-- carry different routes from one shared editor. The FEATURE_ID checks below
+-- are unchanged and still guard the original regression -- the hub-mounted
+-- editor (featureId actionBarsBuffDebuff) must not carry a stale Action Bars
+-- route. The block at the end of this file adds coverage for the new module
+-- page so a route regression on either home fails this test.
+--
 -- Run: lua tests/unit/search_cache_buffdebuff_route_test.lua
 
-local ns = {}
-assert(loadfile("QUI_OptionsSearch/search_cache.lua"))("QUI", ns)
-local cache = assert(ns.QUI_SearchCache, "search cache should load")
+local cache = dofile("tests/helpers/search_cache.lua")()
 local settings = assert(cache.settings, "cache must have a settings section")
 
 local FEATURE_ID = "actionBarsBuffDebuff"
 
 local failures = 0
-local function check(name, ok)
+local function check(name, ok, detail)
     if ok then
         print("  ok  " .. name)
     else
         failures = failures + 1
-        print("FAIL  " .. name)
+        print("FAIL  " .. name .. (detail and (" -- " .. detail) or ""))
     end
 end
 
@@ -90,6 +97,26 @@ for id in tileSource:gmatch('id = "(auras%a+)"') do
 end
 check("Buff/Debuff Frames is the fourth auras sub-page",
     subPageOrder[4] == "aurasActionBar")
+
+-- Task 6 added the module home as a SEPARATE feature so the two homes can
+-- carry different routes from one shared editor. The assertions above still
+-- guard actionBarsBuffDebuff's own rows; these guard the new module page.
+local modulePageRows = 0
+for _, entry in ipairs(settings) do
+    if entry.featureId == "actionBarsBuffDebuffPage" then
+        modulePageRows = modulePageRows + 1
+        if entry.tileId ~= "action_bars" then
+            check("module page rows must carry the action_bars tileId",
+                false, "got tileId=" .. tostring(entry.tileId))
+        end
+        if entry.subPageIndex ~= 3 then
+            check("module page rows must point at sub-page 3 (Per-Bar owns 2)",
+                false, "got subPageIndex=" .. tostring(entry.subPageIndex))
+        end
+    end
+end
+check("the Action Bars module home is indexed", modulePageRows > 0,
+    "got " .. modulePageRows)
 
 if failures > 0 then
     error(("search_cache_buffdebuff_route_test: %d check(s) failed"):format(failures), 0)

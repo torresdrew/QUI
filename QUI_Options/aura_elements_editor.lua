@@ -7,17 +7,6 @@ local function CJKFont(fs, p, s, f)
     end
 end
 
--- Shared aura element editor: renders the element list for a single spec bucket
--- of auras.elements (the unified core/aura_elements.lua model). Each element is
--- a filterStrip (Buffs/Debuffs), a tracked element (icon/square/bar/tint), or a
--- missing-raid-buff watcher. The surface's capabilities table (opts.capabilities)
--- gates which element types / display types / controls are offered so unit
--- frames, buff borders and group frames can share ONE editor.
---
--- Moved from QUI_GroupFrames/groupframes/settings/group_frames_auras_editor.lua
--- and generalized. The model import is now ns.AuraElements (the shared core
--- model) — never the group-frames model shim.
-
 local E = ns.AuraElements
 local SpellList = ns.QUI_AuraSpellList
 local SkinBase = ns.SkinBase
@@ -33,9 +22,6 @@ local ROW_HEIGHT = 30
 local ROW_STEP = 32
 local FALLBACK_ICON = 134400
 
--- Distinguishes concurrently-mounted editors (e.g. the BB buff + debuff
--- mounts) so Browse-popup scope guards never close a popup another editor
--- instance owns. Bumped once per RenderAuras call.
 local browseInstanceCounter = 0
 
 local NINE_POINT_OPTIONS = ns.QUI_SettingsLayoutShared.BuildNinePointAnchorOptions()
@@ -48,10 +34,6 @@ local AURA_GROW_OPTIONS = {
     { value = "DOWN", text = ns.L["Down"] },
 }
 
--- Filter mode. "off" rides the bare polarity; "flags" AND-composes raw
--- AuraFilters tokens onto one filter string; "classify" (the canonical value —
--- core E.CompileFilters keys on it; legacy "classification" is migrated to it)
--- fans out one filter per ticked classification.
 local FILTER_MODE_OPTIONS = {
     { value = "off", text = ns.L["Off (Show All)"] },
     { value = "flags", text = ns.L["Filter Flags"] },
@@ -64,16 +46,11 @@ local AURA_TYPE_OPTIONS = {
     { value = "HARMFUL", text = ns.L["Debuffs (Harmful)"] },
 }
 
--- "What to Show" leads the Filters section: a plain-language intent that
--- maps onto the raw filter mechanisms in Appearance & Advanced (E.WhatToShowKeys
--- / E.ApplyWhatToShow / E.DeriveWhatToShow — core/aura_elements.lua). Covers
--- every key either polarity can offer; WhatToShowOptions below narrows the
--- list to what E.WhatToShowKeys(auraType) actually offers for the element in
--- front of the user, plus the "custom" escape hatch.
 local WHAT_TO_SHOW_LABELS = {
     all          = ns.L["All"],
     mine         = ns.L["Only my auras"],
     defensives   = ns.L["Defensives"],
+    important    = ns.L["Important"],
     purgeable    = ns.L["Purgeable"],
     dispellable  = ns.L["Dispellable by me"],
     crowdControl = ns.L["Crowd control"],
@@ -100,7 +77,6 @@ local TRACKED_DISPLAY_OPTIONS_ALL = {
     { value = "border", text = ns.L["Colored Border"] },
 }
 
--- applyToRoles gate options (core/aura_elements.lua ElementAppliesToRole).
 local APPLY_TO_ROLES_OPTIONS = {
     { value = "all", text = ns.L["Everyone"] },
     { value = "tank", text = ns.L["Tanks"] },
@@ -109,7 +85,6 @@ local APPLY_TO_ROLES_OPTIONS = {
     { value = "me", text = ns.L["Only Me"] },
 }
 
--- Container sort rules → AuraContainerSortMethod (see core/aura_glue.lua).
 local SORT_OPTIONS = {
     { value = "INDEX", text = ns.L["Default Order"] },
     { value = "EXPIRY", text = ns.L["Expiration"] },
@@ -121,8 +96,6 @@ local SORT_OPTIONS = {
     { value = "UF_DEBUFF", text = ns.L["Debuff Priority"] },
 }
 
--- Tri-state filter-flag row values. Stored form on element.filterFlags:
--- absent = off, true = require, "exclude" = compile as !TOKEN.
 local TRI_STATE_OPTIONS = {
     { value = "off", text = ns.L["Off"] },
     { value = "require", text = ns.L["Require"] },
@@ -135,7 +108,6 @@ local DISPEL_FILTER_MODE_OPTIONS = {
     { value = "exclude", text = ns.L["Hide These Types"] },
 }
 
--- Valid dispel names per the vendored engine (Blizzard_FrameXMLUtil/AuraUtil.lua).
 local DISPEL_TYPES = {
     { key = "Magic", label = ns.L["Magic"] },
     { key = "Curse", label = ns.L["Curse"] },
@@ -144,10 +116,6 @@ local DISPEL_TYPES = {
     { key = "Bleed", label = ns.L["Bleed"] },
 }
 
--- GameTooltip anchor TOKENS — SetTooltipAnchorPoint hard-asserts on anything
--- else (Blizzard_AuraButton.lua:53); frame-point strings are NOT valid here.
--- ANCHOR_NONE (the engine-default reset) is expressed by unchecking the
--- Custom Tooltip Anchor row, not offered as a dropdown value.
 local TOOLTIP_ANCHOR_OPTIONS = {
     { value = "ANCHOR_TOPRIGHT", text = ns.L["Top Right"] },
     { value = "ANCHOR_TOP", text = ns.L["Top"] },
@@ -183,7 +151,6 @@ local MISSING_RAID_BUFF_OPTIONS = {
     { key = "bronze", label = ns.L["Blessing of the Bronze (Evoker)"] },
 }
 
--- Buff/debuff classification options, keyed by aura type.
 local HELPFUL_CLASSIFICATIONS = {
     { key = "raid", label = ns.L["Raid"] },
     { key = "raidInCombat", label = ns.L["Raid (In Combat)"] },
@@ -191,20 +158,15 @@ local HELPFUL_CLASSIFICATIONS = {
     { key = "notCancelable", label = ns.L["Not Cancelable"] },
     { key = "bigDefensive", label = ns.L["Big Defensive"] },
     { key = "externalDefensive", label = ns.L["External Defensive"] },
+    { key = "important", label = ns.L["Important"] },
 }
 
 local HARMFUL_CLASSIFICATIONS = {
     { key = "raid", label = ns.L["Raid"] },
-    -- No raidInCombat: RAID_IN_COMBAT is a HELPFUL-only aura filter.
     { key = "crowdControl", label = ns.L["Crowd Control"] },
+    { key = "important", label = ns.L["Important"] },
 }
 
--- Raw AuraFilters tokens offered in "flags" mode, per aura type. HELPFUL-only
--- tokens are never offered on HARMFUL (a "HARMFUL|RAID_IN_COMBAT"-class combo
--- hard-errors in C_UnitAuras; the model also drops them defensively).
--- Labels follow the 68675 AuraFilters semantics: RAID = the PLAYER can
--- apply (helpful) / dispel (harmful); RAID_PLAYER_DISPELLABLE = ANYONE in
--- the raid can dispel; DISPELLABLE = dispellable by any source at all.
 local HELPFUL_FLAG_TOKENS = {
     { token = "PLAYER", label = ns.L["Player"] },
     { token = "RAID", label = ns.L["Castable by Me"] },
@@ -217,16 +179,12 @@ local HELPFUL_FLAG_TOKENS = {
 local HARMFUL_FLAG_TOKENS = {
     { token = "PLAYER", label = ns.L["Player"] },
     { token = "RAID", label = ns.L["Dispellable by Me"] },
-    { token = "INCLUDE_NAME_PLATE_ONLY", label = ns.L["Nameplate Auras Only"] },
     { token = "RAID_PLAYER_DISPELLABLE", label = ns.L["Raid-Dispellable (Anyone)"] },
     { token = "DISPELLABLE", label = ns.L["Dispellable (Any Source)"] },
     { token = "CROWD_CONTROL", label = ns.L["Crowd Control"] },
+    { token = "IMPORTANT", label = ns.L["Important"] },
 }
 
--- Full GF capability set. Used as the default when opts.capabilities is nil so
--- the GF mount (and anything mid-migration) keeps working. defaultBucketFn
--- resolves lazily from the GF defaults module (always loaded by the time
--- RenderAuras runs), so this file carries no load-order dependency on it.
 local function DefaultCapabilities()
     local AuraDefaults = ns.QUI_GroupFramesAuraDefaults
     return {
@@ -273,8 +231,6 @@ local function GetGUI()
     return QUI and QUI.GUI or nil
 end
 
--- Shared options API (BuildSettingRow lives here). ns is the suite-wide
--- namespace, so this resolves the same object the schema's GetOptionsAPI uses.
 local function GetOptionsAPI()
     return ns.QUI_Options
 end
@@ -305,8 +261,6 @@ local function GetSpellTexture(spellID)
     return FALLBACK_ICON
 end
 
--- Apply the QUI settings font + standard text colors to the spell-ID input
--- pieces. Any of box/label/addText may be nil.
 local function StyleSpellInputText(GUI, C, box, label, addText)
     local fp = (GUI and GUI.FONT_PATH) or [[Interface\AddOns\QUI\assets\Quazii.ttf]]
     local tc = (C and C.text) or { 1, 1, 1, 1 }
@@ -325,8 +279,6 @@ local function StyleSpellInputText(GUI, C, box, label, addText)
     end
 end
 
--- Pretty label/icon for an element. filterStrip => "Buffs"/"Debuffs"; tracked =>
--- the first spell's name (with a "+N" suffix when several spells share a strip).
 local function GetElementLabel(element)
     if element.mode == "filterStrip" then
         if element.auraType == "HARMFUL" then
@@ -358,18 +310,6 @@ local function GetElementLabel(element)
     return name, GetSpellTexture(first)
 end
 
-
----------------------------------------------------------------------------
--- PER-ELEMENT CONFIG WIDGETS
--- Each builder appends form widgets into ctx.detailArea via AddDetailWidget and
--- returns nothing; the caller tracks the running Y. Kept at file scope so the
--- big RenderAuras closure stays under the Lua 5.1 60-upvalue cap.
----------------------------------------------------------------------------
-
--- Derive the plain-language "What to Show" intent for an element, coerced to
--- "custom" when the raw derive yields a key this element's polarity doesn't
--- offer (hand-edited SV, or a stale key surviving an auraType flip). Used by
--- the dropdown so it never receives a value outside its offered option list.
 local function EffectiveWhatToShow(element)
     local derived = E.DeriveWhatToShow(element)
     for _, key in ipairs(E.WhatToShowKeys(element.auraType)) do
@@ -378,7 +318,6 @@ local function EffectiveWhatToShow(element)
     return "custom"
 end
 
--- Per-element collapsible-section view state (NOT persisted to SV).
 local sectionExpand = {}
 local function sectionState(element)
     local s = sectionExpand[element.id]
@@ -390,9 +329,6 @@ local function sectionState(element)
     return s
 end
 
--- Emit a full-width clickable section header with a chevron. Section bodies
--- stay built for the current detail view, so disclosure clicks only hide/show
--- and reflow existing rows instead of allocating another complete widget tree.
 local function MakeSectionHeader(ctx, element, sectionKey, labelText)
     local state = sectionState(element)
     local header = CreateFrame("Button", nil, ctx.detailArea)
@@ -447,13 +383,6 @@ local function AddPlacementWidgets(ctx, element, includeStrip)
     local onChange = ctx.onChange
 
     if includeStrip then
-        -- 2a (classification honesty): in "classify" mode, AuraGlue.ElementGroups
-        -- (core/aura_glue.lua) applies maxIcons to EVERY compiled category group
-        -- independently (G.ElementProfile's maxIcons feeds each group's
-        -- maxFrameCount, once per usable classification string) — so this is NOT
-        -- a total cap on the strip, it is a per-category allowance. "Max Icons"
-        -- alone was silently dishonest about that; relabel + redescribe only for
-        -- the mode where it's actually true.
         if element.filterMode == "classify" then
             row(ns.L["Max Icons Per Category"], GUI:CreateFormSlider(ctx.detailArea, nil, 0, 40, 1, "maxIcons", element, onChange, { deferOnDrag = true }, {
                 description = ns.L["Hard cap on how many icons EACH ticked category shows at once — Classification mode builds one full-size group per category, so this limit applies separately to every one of them. 0 shows all matches in every category."],
@@ -481,15 +410,6 @@ local function AddPlacementWidgets(ctx, element, includeStrip)
             description = ns.L["Wrap icons onto a new row after this many. 0 keeps them on a single row. Extra rows stack away from the anchored frame edge."],
         }))
     end
-    -- Buff Borders single-strip zones (caps.singleStrip, action_bars_buffdebuff_
-    -- content.lua) render exactly one filterStrip element, and the runtime
-    -- always resolves it as strip 1 (buffborders.lua ApplyMoverElements i==1 /
-    -- ResolveStrips) -- the container the central anchoring system positions
-    -- directly (container-first anchoring; the `i > 1` gate at :486 is the ONLY
-    -- path that applies element.offsetX/Y, so strip 1's offsets are dead reads).
-    -- Hide the rows and explain why instead of offering a control that does
-    -- nothing; every other filterStrip/tracked surface (group frames, unit
-    -- frames, additional strips beyond the first) keeps them.
     if ctx.caps.singleStrip then
         local hint = GUI:CreateLabel(ctx.detailArea,
             ns.L["Positioned by its mover — drag the frame in Layout mode. X/Y offsets apply to additional strips only."],
@@ -524,12 +444,6 @@ local function AddSwipeWidgets(ctx, element)
     }))
 end
 
--- Per-button tooltip + dispel-ring overrides (PTR7). Every field is OPTIONAL
--- on the element -- absent = engine default -- so the stamp/nil checkbox
--- pattern from Custom Border Color applies throughout: widget construction
--- never writes the DB, only a real user click stamps or clears the keys.
--- dispelAssets (customDispelAssetMap) stays profile/import-only: a
--- struct-valued texture-asset map has no honest row widget.
 local function AddDispelTooltipWidgets(ctx, element)
     local GUI = ctx.GUI
     local row = ctx.AddFormRow
@@ -559,9 +473,6 @@ local function AddDispelTooltipWidgets(ctx, element)
         description = ns.L["Anchor aura tooltips to each icon instead of the default tooltip position."],
     }))
     if element.tooltipAnchor ~= nil then
-        -- Legacy/imported values that predate the token list (or hand-edited
-        -- frame points) would hard-assert engine-side; normalize before the
-        -- dropdown binds so the control always shows a real state.
         local valid = false
         for _, opt in ipairs(TOOLTIP_ANCHOR_OPTIONS) do
             if opt.value == element.tooltipAnchor then valid = true break end
@@ -580,10 +491,6 @@ local function AddDispelTooltipWidgets(ctx, element)
         }))
     end
 
-    -- Dispel ring colors: optional map keyed by dispel type. The engine's
-    -- colorRGB shape ({r=,g=,b=}) differs from the picker's array shape, so
-    -- each picker binds a transient proxy and its onChange writes the
-    -- canonical shape into element.dispelColors.
     row(ns.L["Custom Dispel Ring Colors"], GUI:CreateFormCheckbox(ctx.detailArea, nil, "_customDispelColors", {
         _customDispelColors = type(element.dispelColors) == "table",
         _quiTransientOptionsProxy = true,
@@ -618,15 +525,13 @@ local function AddDispelTooltipWidgets(ctx, element)
     end
 end
 
--- Shared text-region widget block for the duration{} / stack{} sub-tables. key
--- is "duration" or "stack"; the widgets write element[key].{show,fontSize,
--- anchor,offsetX,offsetY,color}. label is the region's display name.
 local function AddTextRegionWidgets(ctx, element, key, label)
     local GUI = ctx.GUI
     local C = ctx.C
     local row = ctx.AddFormRow
     local add = ctx.AddDetailWidget
     local onChange = ctx.onChange
+    local rebuild = ctx.rebuild
 
     if type(element[key]) ~= "table" then element[key] = {} end
     local region = element[key]
@@ -653,19 +558,38 @@ local function AddTextRegionWidgets(ctx, element, key, label)
     row(ns.L["Text Color"], GUI:CreateFormColorPicker(ctx.detailArea, nil, "color", region, onChange, nil, {
         description = string.format(ns.L["Color of the %s."], label),
     }))
+
+    if key == "duration" then
+        row(ns.L["Pandemic Color"], GUI:CreateFormCheckbox(ctx.detailArea, nil,
+            "_customPandemicColor", {
+                _customPandemicColor = type(region.pandemicColor) == "table",
+                _quiTransientOptionsProxy = true,
+            }, function(checked)
+                if checked and type(region.pandemicColor) ~= "table" then
+                    region.pandemicColor = { 1, 0.3, 0.3 }
+                elseif not checked then
+                    region.pandemicColor = nil
+                end
+                ctx.NotifyChanged()
+                rebuild()
+            end, {
+                description = ns.L["Recolor the duration text during the last 30% of the aura, its pandemic refresh window."],
+            }))
+        if type(region.pandemicColor) == "table" then
+            row(ns.L["Pandemic Text Color"], GUI:CreateFormColorPicker(ctx.detailArea, nil,
+                "pandemicColor", region, onChange, nil, {
+                    description = ns.L["Duration text color inside the pandemic window."],
+                }))
+        end
+    end
+
+    if key == "duration" and ctx.caps and ctx.caps.durationDecimals then
+        row(ns.L["Decimals Under 3s"], GUI:CreateFormCheckbox(ctx.detailArea, nil, "decimals", region, onChange, {
+            description = ns.L["Show tenths of a second below 3 seconds."],
+        }))
+    end
 end
 
--- Spell-list editor over a MAP ({ [spellID] = true }). Used directly by the
--- whitelist/blacklist (the element's map mutates in place) and by
--- AddTrackedSpellListEditor through a map view synced back to its array.
--- onMutate (optional) runs after any map mutation; defaults to ctx.onChange.
---
--- browseCfg (optional) wires the shared Browse popup: { key, title, presets,
--- isSelected(id), onToggle(id) }. isSelected/onToggle default to map-based
--- closures — safe for the whitelist/blacklist whose map is the persistent
--- element table. Array-backed callers (tracked spells) MUST pass their own
--- closures over the persistent element, because their map is a per-render
--- copy the popup would otherwise mutate after it went stale.
 local function AddSpellMapEditor(ctx, map, headerText, onMutate, browseCfg)
     local GUI = ctx.GUI
     local C = ctx.C
@@ -731,8 +655,6 @@ local function AddSpellMapEditor(ctx, map, headerText, onMutate, browseCfg)
     addManualButton:SetScript("OnClick", CommitManual)
     inputBox:SetScript("OnEnterPressed", CommitManual)
 
-    -- Browse popup trigger. Re-binding via RefreshBrowsePopup on every render
-    -- keeps an already-open popup's closures fresh across list rebuilds.
     if browseCfg and browseCfg.key and SpellList.ToggleBrowsePopup then
         local toggleSpell = browseCfg.onToggle or function(spellID)
             if map[spellID] then
@@ -766,7 +688,6 @@ local function AddSpellMapEditor(ctx, map, headerText, onMutate, browseCfg)
     end
     add(manualRow, 26, true)
 
-    -- Current spells only (no preset groups — those live in the Browse popup).
     listFrame = SpellList.CreateListFrame(ctx.detailArea, map, nil, function()
         notify()
     end, function(_, newHeight)
@@ -775,9 +696,6 @@ local function AddSpellMapEditor(ctx, map, headerText, onMutate, browseCfg)
     add(listFrame, math.max(1, listFrame:GetHeight() or 1), true)
 end
 
--- Browse-popup preset groups for a filter strip's whitelist/blacklist, picked
--- by the strip's polarity: buff lists get the spec/CDM suggestions plus the
--- raid-buff preset, debuff lists get the sated/deserter presets.
 local function BuildFilterBrowsePresets(auraType)
     if not SpellList then return {} end
     if auraType == "HARMFUL" then
@@ -793,11 +711,6 @@ local function BuildFilterBrowsePresets(auraType)
     return presets
 end
 
--- Spell-list editor for a tracked element's spells (an ARRAY). Delegates to
--- AddSpellMapEditor over a map view, synced back to the array on every change.
--- The Browse closures deliberately bypass the map view and mutate
--- element.spells directly: the popup outlives detail rebuilds, and the element
--- is the only table that persists across them.
 local function AddTrackedSpellListEditor(ctx, element)
     if type(element.spells) ~= "table" then element.spells = {} end
 
@@ -841,9 +754,6 @@ local function AddTrackedSpellListEditor(ctx, element)
         })
 end
 
--- Per-frame role gate row (applyToRoles). Shown on group-frame surfaces only
--- (caps.roleGate ~= false); a self-only surface like action bars has no roster
--- roles so it opts out. "me" restricts to the player's own frame.
 local function AddRoleGateRow(ctx, element)
     local caps = ctx.caps
     if caps and caps.roleGate == false then return end
@@ -865,16 +775,10 @@ local function AddFilterStripConfig(ctx, element)
     local caps = ctx.caps
     local state = sectionState(element)
 
-    -- The surface owns this strip's polarity (BB buff/debuff zones): hard-
-    -- assert against hand-edited SVs. This must run every render regardless
-    -- of which section is expanded -- element.auraType below gates widgets
-    -- in every section (dispel/gate checkboxes, whitelist/blacklist presets,
-    -- the polarity warning), so it cannot be deferred behind Basics' gate.
     if caps.fixedAuraType then
         element.auraType = caps.fixedAuraType
     end
 
-    -- ===== BASICS =====
     MakeSectionHeader(ctx, element, "basics", ns.L["Basics"])
     do
         if not caps.fixedAuraType then
@@ -889,25 +793,10 @@ local function AddFilterStripConfig(ctx, element)
         AddPlacementWidgets(ctx, element, true)
     end
 
-    -- ===== FILTERS =====
     MakeSectionHeader(ctx, element, "filters", ns.L["Filters"])
     do
-        -- "What to Show" leads Filters: pick a plain-language intent and QUI
-        -- stamps the raw fields for you (E.ApplyWhatToShow); the raw controls
-        -- themselves live under Appearance & Advanced for full control.
-        -- "Custom…" is the escape hatch -- it leaves whatever raw config is
-        -- already there untouched (never zeroed by picking it), latches the
-        -- dropdown in manual mode, and opens the raw controls below.
-        -- EffectiveWhatToShow already coerces a non-offered/hand-edited derive
-        -- to "custom", so the dropdown never renders a value outside its own
-        -- option list.
         local derived = state.manualCustom and "custom" or EffectiveWhatToShow(element)
 
-        -- Bound to a transient proxy (never element) so widget CONSTRUCTION
-        -- never writes the DB -- same pattern as the Custom Border Color
-        -- checkbox in Appearance & Advanced below (_quiTransientOptionsProxy
-        -- keeps it out of the widget-sync registry and the search-cache
-        -- descriptor path, which key on real DB tables).
         local whatToShowProxy = { whatToShow = derived, _quiTransientOptionsProxy = true }
         row(ns.L["What to Show"], GUI:CreateFormDropdown(ctx.detailArea, nil,
             WhatToShowOptions(element.auraType), "whatToShow", whatToShowProxy, function()
@@ -923,45 +812,15 @@ local function AddFilterStripConfig(ctx, element)
                 rebuild()
             end, {
                 description = ns.L["Pick what this strip shows in plain terms. QUI writes the underlying filters. Choose Custom… (or edit Appearance & Advanced) for full control."],
-                keywords = { "what to show", "intent", "dispellable", "defensives", "boss" },
+                keywords = { "what to show", "intent", "dispellable", "defensives", "boss", "important" },
             }))
-        -- Per-frame role gate: restrict this strip to tank/healer/dps frames (or
-        -- your own). Roles resolve out of combat; a mismatch simply omits the
-        -- element from that frame's active list.
+        row(ns.L["Nameplate Auras Only"], GUI:CreateFormCheckbox(ctx.detailArea, nil,
+            "nameplateOnly", element, onChange, {
+                description = ns.L["Only show auras Blizzard flags for nameplate display. Combines with everything above."],
+                keywords = { "nameplate", "scope" },
+            }))
         AddRoleGateRow(ctx, element)
-        -- NOTE(Task 5): the dispel-school checkboxes (DISPEL_TYPES loop
-        -- against element.dispelTypes) live where Task 4 left them, under
-        -- Appearance & Advanced -- not duplicated here. They're gated on
-        -- element.dispelFilterMode ("include"/"exclude"), i.e. the MANUAL
-        -- raw "Dispel Type Filter" dropdown (and legacy pre-engine-token
-        -- "dispellable" SVs). The "dispellable" what-to-show preset itself
-        -- now compiles to the engine's HARMFUL|RAID classification (68675:
-        -- RAID on HARMFUL = player-dispellable; talent-aware, live on
-        -- respec), so it neither sets dispelFilterMode nor surfaces those
-        -- checkboxes.
 
-        -- 2c (classification honesty): Blizzard's engine drops identity-based
-        -- candidateFilters (includeSpellIDs/excludeSpellIDs — whitelist lives
-        -- in Appearance & Advanced, blacklist below) whenever
-        -- CanApplyIdentityCandidateFilters fails. Quote (vendored
-        -- tests/framexml/.../Blizzard_AuraContainerUtil.lua:11-28):
-        --   "if auraData.isHarmful and UnitCanAssist("player", unitToken) then
-        --      return false end
-        --    if auraData.isHelpful and not UnitCanAssist("player", unitToken) then
-        --      return false end"
-        -- i.e. a HARMFUL element's whitelist/blacklist is silently ignored on
-        -- assistable (friendly) units, and a HELPFUL element's on non-assistable
-        -- (hostile) units — runtime already degrades to "show everything" there
-        -- (E.CompileCandidateFilters still emits the candidateFilters; the ENGINE
-        -- is what ignores them — this hint changes nothing about that, it just
-        -- stops the editor from staying silent about it).
-        --
-        -- caps.unitPolarity ("friendly"/"hostile") is only set by callers whose
-        -- surface is STATICALLY one or the other every time (player/pet unit
-        -- frames, group frames, buff borders = always friendly; boss unit frames
-        -- = always hostile). Ambiguous surfaces (target/focus/targettarget, whose
-        -- reaction depends on the live target) leave it nil/absent and get no
-        -- hint — a static warning would be wrong about half the time there.
         local unitPolarity = caps.unitPolarity
         if (unitPolarity == "friendly" and element.auraType == "HARMFUL")
             or (unitPolarity == "hostile" and element.auraType == "HELPFUL") then
@@ -975,8 +834,6 @@ local function AddFilterStripConfig(ctx, element)
             add(warn, 34, true)
         end
 
-        -- Blacklist compiles in EVERY filter mode (excludeSpellIDs composes with
-        -- flags/classify/whitelist alike), so it renders unconditionally.
         if type(element.blacklist) ~= "table" then element.blacklist = {} end
         AddSpellMapEditor(ctx, element.blacklist,
             ns.L["Blacklisted Spells — never show. Buff lists apply on friendly units, debuff lists on enemies."],
@@ -987,7 +844,6 @@ local function AddFilterStripConfig(ctx, element)
             })
     end
 
-    -- ===== APPEARANCE & ADVANCED =====
     MakeSectionHeader(ctx, element, "advanced", ns.L["Appearance & Advanced"])
     do
         AddSwipeWidgets(ctx, element)
@@ -1001,8 +857,6 @@ local function AddFilterStripConfig(ctx, element)
             description = ns.L["Reverse the sort order of icons in this strip."],
         }))
 
-        -- Right-click-cancel is only honored on cancel-eligible (player-unit) hosts
-        -- for HELPFUL strips, so only offer the toggle there.
         if caps.cancelEligible and element.auraType == "HELPFUL" then
             row(ns.L["Right-Click to Cancel"], GUI:CreateFormCheckbox(ctx.detailArea, nil, "rightClickCancel", element, onChange, {
                 description = ns.L["Allow right-clicking an icon in this strip to cancel the aura."],
@@ -1037,12 +891,6 @@ local function AddFilterStripConfig(ctx, element)
             local bindTypes = element.dispelTypes
             local typesOnChange = onChange
             if bindTypes == "mine" then
-                -- "Dispellable by me" sentinel (ApplyWhatToShow): the schools
-                -- resolve from class/spec at compile time, so the checkboxes
-                -- PREVIEW the resolved set through a transient proxy instead
-                -- of binding (and clobbering) the sentinel. The first manual
-                -- toggle pins a concrete table — the strip then stops
-                -- tracking respecs, which is exactly what a hand edit means.
                 local DR = ns.QUI_DispelRoles
                 local resolved = (DR and type(DR.PlayerDispelSchools) == "function" and DR.PlayerDispelSchools()) or {}
                 local scratch = { _quiTransientOptionsProxy = true }
@@ -1093,18 +941,6 @@ local function AddFilterStripConfig(ctx, element)
             description = ns.L["Only show auras that are boss-applied or role-relevant. Combines with the other filters."],
         }))
 
-        -- Custom border color: borderColor is OPTIONAL on the element -- absent
-        -- means "theme border" (aura_skin styleButton falls back to
-        -- AuraTheme.BorderColor). The checkbox is the explicit nil/stamped
-        -- switch: the picker widget itself can't express "unset", so checking
-        -- stamps a starting value and unchecking nils the key back to theme.
-        -- Bound to a throwaway state table (never element) so widget
-        -- CONSTRUCTION never writes the DB -- only the onChange callback
-        -- (fired on a real user click) stamps or clears element.borderColor.
-        -- _quiTransientOptionsProxy: framework marker for one-off state tables
-        -- (IsTransientOptionsBinding) -- keeps this row out of the widget-sync
-        -- registry and the search-cache descriptor path, which key on real DB
-        -- tables and would otherwise churn a fresh key every rebuild.
         row(ns.L["Custom Border Color"], GUI:CreateFormCheckbox(ctx.detailArea, nil, "_customBorder", {
             _customBorder = element.borderColor ~= nil,
             _quiTransientOptionsProxy = true,
@@ -1144,9 +980,6 @@ local function AddFilterStripConfig(ctx, element)
             end
             local tokens = element.auraType == "HARMFUL" and HARMFUL_FLAG_TOKENS or HELPFUL_FLAG_TOKENS
             for _, entry in ipairs(tokens) do
-                -- CreateFormDropdown writes dbTable[dbKey] directly, so bind a
-                -- scratch cell and translate to the stored tri-state on change
-                -- (off = absent so untouched tokens stay invisible to compile).
                 local cur = element.filterFlags[entry.token]
                 local scratch = { value = (cur == true and "require") or (cur == "exclude" and "exclude") or "off" }
                 row(entry.label, GUI:CreateFormDropdown(ctx.detailArea, nil, TRI_STATE_OPTIONS, "value", scratch, function()
@@ -1176,10 +1009,6 @@ local function AddFilterStripConfig(ctx, element)
     end
 end
 
--- Tracked element config. displayType picks the LIVE display: icon strip,
--- colored square, duration bar, or health-bar tint. The available displayTypes
--- are gated by capabilities.trackedDisplayTypes (a surface without a health-bar
--- would omit healthTint, etc.).
 local function AddTrackedConfig(ctx, element)
     local GUI = ctx.GUI
     local row = ctx.AddFormRow
@@ -1260,14 +1089,10 @@ local function AddTrackedConfig(ctx, element)
             description = ns.L["Pixel thickness of the border outline."],
         }))
     else
-        -- icon
         AddPlacementWidgets(ctx, element, true)
         AddSwipeWidgets(ctx, element)
         AddTextRegionWidgets(ctx, element, "duration", ns.L["Duration Text"])
         AddTextRegionWidgets(ctx, element, "stack", ns.L["Stack Text"])
-        -- Tracked-element icons ride the slot path (WireButton), which now
-        -- passes the element profile to buildButtonArt/styleButton — the same
-        -- tooltip + dispel-ring overrides apply.
         AddDispelTooltipWidgets(ctx, element)
     end
 
@@ -1297,9 +1122,6 @@ local function AddMissingRaidBuffConfig(ctx, element)
                 description = ns.L["Show this icon when the unit is missing this raid buff."],
             }))
         end
-        -- CDM "Group Buff" entries merged into MRB.RaidBuffs (source=="cdm") aren't
-        -- in the built-in MISSING_RAID_BUFF_OPTIONS list; surface them so they can be
-        -- toggled in manual mode too.
         local merged = MissingRaidBuffs and MissingRaidBuffs.RaidBuffs
         if type(merged) == "table" then
             for _, entry in ipairs(merged) do
@@ -1316,9 +1138,6 @@ local function AddMissingRaidBuffConfig(ctx, element)
     AddRoleGateRow(ctx, element)
 end
 
----------------------------------------------------------------------------
--- ROW POOL
----------------------------------------------------------------------------
 local function ReleaseRows(activeRows, pool)
     for _, row in ipairs(activeRows) do
         row:Hide()
@@ -1331,14 +1150,6 @@ local function ReleaseRows(activeRows, pool)
     wipe(activeRows)
 end
 
----------------------------------------------------------------------------
--- DETAIL (per-element config) rendering. Builds widgets for the selected
--- element below the list.
----------------------------------------------------------------------------
--- Detail widgets lay out in the QUI two-column standard: consecutive form
--- widgets pair left/right, advancing the running Y by the taller of the two.
--- A widget added with span=true (headers, the manual-add row, the spell-list
--- frame) flushes any half-filled row and takes the full width on its own.
 local function RenderDetail(ctx, element)
     ctx.ClearDetailWidgets()
     ctx.RelayoutDetail = nil
@@ -1358,11 +1169,6 @@ local function RenderDetail(ctx, element)
     ctx._pendingHeight = 0
     local detailRows = {}
 
-    -- Emit one detail row: a frame stacked at the running Y holding either a
-    -- left/right form pair (with center divider) or a single full-width / lone
-    -- widget. Mirrors CreateSettingsCardGroup's row styling (3% white tint on
-    -- odd rows, 5% white center divider) so the auras editor matches the
-    -- standard two-column settings look.
     local function EmitRow(left, leftH, right, rightH, span)
         local rowH = span and leftH or (right and math.max(leftH, rightH) or leftH)
         local rowFrame = CreateFrame("Frame", nil, detailArea)
@@ -1419,9 +1225,6 @@ local function RenderDetail(ctx, element)
         end
     end
 
-    -- Section headers need to flush any half-filled row from the preceding
-    -- section, emit themselves outside every disclosure group, then tag all
-    -- following body rows with their own section key.
     ctx.BeginDetailSection = function(header, height, sectionKey)
         FlushPending()
         ctx._detailSectionKey = nil
@@ -1445,10 +1248,6 @@ local function RenderDetail(ctx, element)
         end
     end
 
-    -- Wrap a bare (label=nil) form widget in the standard BuildSettingRow cell
-    -- so it renders on a single compact line (label left, control right) at the
-    -- uniform FORM_ROW height, instead of the tall label-on-top layout. Pass
-    -- span=true for a full-width row.
     local optionsAPI = GetOptionsAPI()
     ctx.AddFormRow = function(label, widget, span)
         local cell = (optionsAPI and optionsAPI.BuildSettingRow)
@@ -1457,9 +1256,6 @@ local function RenderDetail(ctx, element)
         ctx.AddDetailWidget(cell, FORM_ROW, span)
     end
 
-    -- Re-anchor the rows already created for this detail view. Hidden section
-    -- bodies consume no height, and visible form rows are re-striped so the
-    -- two-column zebra rhythm remains continuous across disclosure boundaries.
     local function RelayoutDetail()
         local disclosure = sectionState(element)
         local y = -2
@@ -1543,11 +1339,6 @@ local function RenderDetail(ctx, element)
     return RelayoutDetail()
 end
 
----------------------------------------------------------------------------
--- LIST + ADD rendering
----------------------------------------------------------------------------
--- Geometry-only pass used after a subsection disclosure click. The row/widget
--- tree remains intact; only anchors and aggregate heights move.
 local function RelayoutList(ctx)
     local contentHeight
 
@@ -1623,17 +1414,10 @@ local function RebuildList(ctx)
     ctx.ReleaseRows()
     ctx.ClearDetailWidgets()
 
-    -- Browse-popup scope: if this pass does not re-render the spell list the
-    -- popup is editing (row collapsed, element deleted, selection moved), the
-    -- matching EndBrowseScope below closes it.
     if SpellList and SpellList.BeginBrowseScope then
         SpellList.BeginBrowseScope(ctx.browsePrefix)
     end
 
-    -- Single-strip surfaces (BB buff/debuff zones): no list chrome — render
-    -- the one strip's config form directly. The bucket is runtime-normalized
-    -- to one filterStrip; materialize a default if a hand-edited SV emptied
-    -- it (EnsureSeeded's latch means it will not re-seed).
     if ctx.caps.singleStrip then
         local element
         for _, e in ipairs(bucket) do
@@ -1667,9 +1451,6 @@ local function RebuildList(ctx)
         return
     end
 
-    -- nil selectedIndex means "all collapsed" -- a valid state the expand/minus
-    -- toggle relies on, so DON'T coerce nil to 1 here (that made the minus button
-    -- never collapse). Only clamp a real index that ran past the list end.
     if #bucket == 0 then
         ctx.selectedIndex = nil
     elseif ctx.selectedIndex and ctx.selectedIndex > #bucket then
@@ -1680,7 +1461,6 @@ local function RebuildList(ctx)
     local accent = C.accent or { 0.204, 0.827, 0.6, 1 }
     local listY = 0
 
-    -- Element rows.
     for index, element in ipairs(bucket) do
         local row = ctx.AcquireRow()
         row:SetParent(ctx.listArea)
@@ -1690,8 +1470,16 @@ local function RebuildList(ctx)
         row:Show()
 
         local label, icon = GetElementLabel(element)
-        row.icon:SetTexture(icon or FALLBACK_ICON)
-        row.icon:Show()
+        row.name:ClearAllPoints()
+        if icon then
+            row.icon:SetTexture(icon)
+            row.icon:Show()
+            row.name:SetPoint("LEFT", row.icon, "RIGHT", 6, 0)
+        else
+            row.icon:Hide()
+            row.name:SetPoint("LEFT", row.enable, "RIGHT", 6, 0)
+        end
+        row.name:SetPoint("RIGHT", row.badge, "LEFT", -6, 0)
         local nameColor = element.enabled ~= false and "|cFFFFFFFF" or "|cFF808080"
         row.name:SetText(nameColor .. label .. "|r")
 
@@ -1715,8 +1503,6 @@ local function RebuildList(ctx)
             ns.UIKit.SetChevronCaretExpanded(row.chevron, expanded)
         end
 
-        -- Alternating zebra (like the standard settings toggle rows); the
-        -- expanded row gets a faint accent tint instead.
         if expanded then
             row.bg:SetColorTexture(accent[1], accent[2], accent[3], 0.10)
         elseif (index % 2) == 0 then
@@ -1725,7 +1511,6 @@ local function RebuildList(ctx)
             row.bg:SetColorTexture(1, 1, 1, 0)
         end
 
-        -- Whole row toggles expand (collapse if already open, else open this one).
         row:SetScript("OnClick", function()
             if ctx.selectedIndex == index then
                 ctx.selectedIndex = nil
@@ -1746,7 +1531,6 @@ local function RebuildList(ctx)
         ctx.activeRows[#ctx.activeRows + 1] = row
         listY = listY - ROW_STEP
 
-        -- Inline config directly under the selected row.
         if expanded then
             listY = listY - 2
             ctx.detailArea:ClearAllPoints()
@@ -1772,7 +1556,6 @@ local function RebuildList(ctx)
         ctx.detailArea:Hide()
     end
 
-    -- Add controls (only when the surface offers addable element types).
     if ctx.hasAddButtons then
         ctx.UpdateAddStripState()
         listY = listY - 8
@@ -1789,16 +1572,9 @@ local function RebuildList(ctx)
         SpellList.EndBrowseScope(ctx.browsePrefix)
     end
 
-    -- Report selection + height and establish final geometry through the same
-    -- cheap pass subsection disclosure clicks use.
     RelayoutList(ctx)
 end
 
--- opts is optional. opts.forceSelectedIndex seeds the initially-expanded element
--- (used by the headless options-search harvest so per-element config labels get
--- rendered and captured). In-game callers omit opts and the list opens collapsed.
--- opts.capabilities gates which element types / display types / controls the
--- surface offers (see DefaultCapabilities for the shape; nil => full GF set).
 function AurasEditor.RenderAuras(host, auras, bucketKey, onChange, opts)
     local GUI = GetGUI()
     if not host or not GUI or type(auras) ~= "table" or not E then
@@ -1810,24 +1586,14 @@ function AurasEditor.RenderAuras(host, auras, bucketKey, onChange, opts)
     if type(auras.elements) ~= "table" then
         auras.elements = {}
     end
-    -- Seed the surface's shipped defaults once, threading its default bucket fn
-    -- (never the one-arg legacy form — core E.EnsureSeeded seeds an EMPTY bucket
-    -- and latches when handed no fn). Idempotent: the runtime host normally seeds
-    -- first, so this short-circuits on auras.elementsSeeded.
     if E.EnsureSeeded then
         E.EnsureSeeded(auras, caps.defaultBucketFn)
     end
 
     bucketKey = bucketKey or "*"
-    -- Surfaces without spec overrides only ever edit the shared "*" bucket; never
-    -- honor a stray spec bucketKey there (their host cannot create one).
     if not caps.allowSpecOverride then
         bucketKey = "*"
     end
-    -- Only the shared "*" bucket is auto-created. Spec buckets must NOT be
-    -- created merely by viewing/editing — their presence is the override flag
-    -- (see AuraElements.EnableSpecOverride), so the schema only calls RenderAuras
-    -- for a spec once override is on (bucket already exists).
     if bucketKey == "*" and type(auras.elements["*"]) ~= "table" then
         auras.elements["*"] = {}
     end
@@ -1841,8 +1607,6 @@ function AurasEditor.RenderAuras(host, auras, bucketKey, onChange, opts)
     listArea:SetPoint("TOPLEFT", host, "TOPLEFT", 0, 0)
     listArea:SetPoint("RIGHT", host, "RIGHT", 0, 0)
     listArea:SetHeight(1)
-    -- Editor going off-screen (tab/page switch) closes a Browse popup this
-    -- instance owns; rebuild-driven closes are handled by the scope guards.
     listArea:SetScript("OnHide", function()
         if SpellList and SpellList.CloseBrowsePopup then
             SpellList.CloseBrowsePopup(browsePrefix)
@@ -1857,10 +1621,6 @@ function AurasEditor.RenderAuras(host, auras, bucketKey, onChange, opts)
     detailArea:SetHeight(1)
     detailArea:Hide()
 
-    -- Add buttons row (Tracked aura / Filter strip / Missing raid buff), gated by
-    -- the surface's element types. Anchored left-to-right in the order created.
-    -- A new tracked element starts empty and opens expanded; its spells are
-    -- picked inside the per-element detail (suggestion toggles + manual ID).
     local addRow = CreateFrame("Frame", nil, listArea)
     addRow:SetHeight(26)
     local elementTypes = caps.elementTypes or {}
@@ -1909,9 +1669,6 @@ function AurasEditor.RenderAuras(host, auras, bucketKey, onChange, opts)
         browsePrefix = browsePrefix,
         selectedIndex = nil,
         hasAddButtons = (addTrackedButton ~= nil) or (addStripButton ~= nil) or (addMissingBuffButton ~= nil),
-        -- Host hooks (optional): onSelectionChanged(index) persists which row is
-        -- expanded so a host-driven reflow can restore it; onLayoutChanged(height)
-        -- lets the host re-anchor the sections below when this editor resizes.
         onSelectionChanged = (type(opts) == "table" and type(opts.onSelectionChanged) == "function")
             and opts.onSelectionChanged or nil,
         onLayoutChanged = (type(opts) == "table" and type(opts.onLayoutChanged) == "function")
@@ -1924,17 +1681,10 @@ function AurasEditor.RenderAuras(host, auras, bucketKey, onChange, opts)
         end
     end
     ctx.NotifyChanged = NotifyChanged
-    -- onChange used by widgets that mutate the model in place (no list rebuild).
     ctx.onChange = function()
         NotifyChanged()
     end
 
-    -- Re-entrancy guard: a child widget that lays itself out synchronously inside
-    -- a RebuildList pass (the spell-list frame's CreateListFrame fires its
-    -- onLayoutChanged) could fire a callback that calls rebuild again, re-entering
-    -- RebuildList -> RenderDetail -> ... -> rebuild without end. The outer pass
-    -- already reads each widget's final height as it returns, so any rebuild
-    -- requested mid-pass is redundant -- drop it.
     local rebuilding = false
     local rebuild
     rebuild = function()
@@ -1964,9 +1714,6 @@ function AurasEditor.RenderAuras(host, auras, bucketKey, onChange, opts)
         return widget
     end
 
-    -- Update the "Add Filter Strip" button's enabled state against the surface's
-    -- maxStripElements cap (counts ENABLED filter strips). At cap the button
-    -- dims and clicks are swallowed with a tooltip.
     ctx.UpdateAddStripState = function()
         local b = ctx.addStripButton
         if not b then return end
@@ -1994,9 +1741,6 @@ function AurasEditor.RenderAuras(host, auras, bucketKey, onChange, opts)
             return row
         end
 
-        -- Whole-row Button toggles expand; child buttons (enable, delete) consume
-        -- their own clicks. The chevron is a Frame, so clicking it falls through
-        -- to the row toggle.
         row = CreateFrame("Button", nil, listArea)
         row:SetHeight(ROW_HEIGHT)
 
@@ -2019,7 +1763,6 @@ function AurasEditor.RenderAuras(host, auras, bucketKey, onChange, opts)
 
         row.enable = SpellList and SpellList.CreateMiniToggle and SpellList.CreateMiniToggle(row) or nil
         if not row.enable then
-            -- Fallback simple button toggle.
             row.enable = CreateFrame("Button", nil, row)
             row.enable:SetSize(26, 14)
             row.enable.SetToggleState = function() end
@@ -2035,7 +1778,6 @@ function AurasEditor.RenderAuras(host, auras, bucketKey, onChange, opts)
         CJKFont(row.name, (GUI.FONT_PATH) or [[Interface\AddOns\QUI\assets\Quazii.ttf]], 12, "")
         row.name:SetJustifyH("LEFT")
 
-        -- Standard QUI ghost button (matches Alts row delete), not a raw red x.
         row.delete = GUI:CreateButton(row, ns.L["Delete"], 56, 18)
         row.delete:SetPoint("RIGHT", row, "RIGHT", -6, 0)
 
@@ -2051,7 +1793,6 @@ function AurasEditor.RenderAuras(host, auras, bucketKey, onChange, opts)
         ReleaseRows(activeRows, rowPool)
     end
 
-    -- New tracked elements default to the surface's preferred display type.
     ctx.AddTracked = function(spellID)
         spellID = tonumber(spellID) or spellID
         local element = E.NewTrackedElement(spellID and { spellID } or {}, DefaultTrackedDisplay(ctx.caps))
@@ -2062,8 +1803,6 @@ function AurasEditor.RenderAuras(host, auras, bucketKey, onChange, opts)
     end
 
     ctx.AddFilterStrip = function()
-        -- Default new strips to debuffs only if a buff strip already exists,
-        -- otherwise buffs; the auraType dropdown lets the user flip it.
         local hasBuff = false
         for _, element in ipairs(ctx.bucket) do
             if element.mode == "filterStrip" and element.auraType == "HELPFUL" then
@@ -2114,8 +1853,6 @@ function AurasEditor.RenderAuras(host, auras, bucketKey, onChange, opts)
         end)
     end
 
-    -- Harvest-only: open with a specific element expanded so its per-element
-    -- config widgets render (and their labels get captured). Clamped by RebuildList.
     if opts and type(opts.forceSelectedIndex) == "number" then
         ctx.selectedIndex = opts.forceSelectedIndex
     end

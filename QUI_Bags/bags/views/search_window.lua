@@ -1,17 +1,4 @@
 -- luacheck: read globals IsModifiedClick HandleModifiedItemClick
----------------------------------------------------------------------------
--- Bags views: the search-everywhere window. One chassis shell whose header
--- search box IS the query input (0.15s debounce → Everywhere.Query →
--- render); the body is a pooled-row list inside a hand-rolled ScrollFrame
--- (house idiom: damage_meter's row viewport / QUI_Options' plain
--- ScrollFrame + wheel-clamp — Blizzard scroll templates stay out of QUI
--- chrome). Rows are informational: icon + quality-colored name + owner
--- breakdown + total, with the full item tooltip on hover
--- (GameTooltip:SetItemByID — the Mainline FrameXML OnEnter idiom;
--- SetHyperlink(entry link) is the fallback when the ID is somehow absent).
--- Results are capped by the query core; the footer shows "+N more" instead
--- of silently truncating.
----------------------------------------------------------------------------
 local ADDON_NAME, ns = ...
 local Bags = ns.Bags or {}; ns.Bags = Bags
 local Storage = ns.Storage
@@ -31,26 +18,19 @@ local SearchWindow = {}
 Bags.SearchWindow = SearchWindow
 
 local CONTENT_W = 460
-local CONTENT_H = 384           -- 16 rows of 24
+local CONTENT_H = 384
 local ROW_H = 24
 local ICON_PAD = 2
-local NAME_W = 170              -- fixed name column; overflow truncates
-local SCROLLBAR_W = 6           -- house convention (framework dropdown scroll)
+local NAME_W = 170
+local SCROLLBAR_W = 6
 local WHEEL_STEP = ROW_H * 3
 local DEBOUNCE = 0.15
 
-local win                       -- chassis window (lazy)
-local rows = {}                 -- pooled row frames (scroll-child children)
+local win
+local rows = {}
 local queryText = ""
 local searchTimer = nil
 
----------------------------------------------------------------------------
--- Pure: row-text assembly (exported for the headless test)
----------------------------------------------------------------------------
-
---- Display label for a summaries-dialect owner key: characters keep their
---- "Name-Realm" key, the warband gets a friendly constant, guild keys drop
---- the registry prefix and gain chat-style brackets.
 function SearchWindow.OwnerLabel(ownerKey)
     if ownerKey == Storage.Summaries.WARBAND_OWNER then return ns.L["Warband"] end
     local prefix = Storage.Summaries.GUILD_PREFIX
@@ -60,10 +40,6 @@ function SearchWindow.OwnerLabel(ownerKey)
     return ownerKey
 end
 
---- One-line owner summary from a result's owners array: per-owner sums
---- (the per-location split would read as duplicate owners on one line),
---- largest first, "Owner: n" comma-joined. The FontString truncates the
---- tail when the line outgrows its column.
 function SearchWindow.BuildOwnersLine(owners)
     local sums, order = {}, {}
     for _, o in ipairs(owners or {}) do
@@ -84,14 +60,9 @@ function SearchWindow.BuildOwnersLine(owners)
     return table.concat(parts, ", ")
 end
 
----------------------------------------------------------------------------
--- Frame construction (lazy)
----------------------------------------------------------------------------
-
 local function CreateRow(parent)
     local row = CreateFrame("Button", nil, parent)
     row:SetHeight(ROW_H)
-    -- Button HIGHLIGHT layer: shown by the widget on hover, no scripts needed
     local hl = row:CreateTexture(nil, "HIGHLIGHT")
     hl:SetAllPoints()
     hl:SetTexture("Interface\\Buttons\\WHITE8x8")
@@ -124,16 +95,10 @@ local function CreateRow(parent)
     row._owners:SetWordWrap(false)
 
     row:SetScript("OnEnter", function(self)
-        -- Shared helper: battlepet links route to BattlePetToolTip_ShowLink
-        -- (and outrank the cage itemID); plain items keep the SetItemByID-
-        -- first idiom.
         Bags.ItemButtons.ShowItemTooltip(self, self._link, self._itemID)
     end)
     row:SetScript("OnLeave", function() Bags.ItemButtons.HideItemTooltip() end)
     row:SetScript("OnClick", function(self)
-        -- Navigate to the best placement (ResolveTarget priority): open the
-        -- owning window, auto-select its tab, pulse the item. Chat-link
-        -- modifier keeps Blizzard semantics and outranks navigation.
         if IsModifiedClick and IsModifiedClick("CHATLINK") and self._link
             and HandleModifiedItemClick then
             HandleModifiedItemClick(self._link)
@@ -153,8 +118,6 @@ local function CreateRow(parent)
     return row
 end
 
---- Clamp + apply a vertical scroll offset, then sync the display-only thumb
---- (auto-hidden while the content fits the viewport).
 local function SetScroll(offset)
     local viewH = win._scroll:GetHeight()
     local contentH = win._scrollChild:GetHeight()
@@ -193,19 +156,14 @@ local function EnsureWindow()
         end,
         onSearchChanged = function(text)
             queryText = text or ""
-            -- debounce: query at most once per typing pause; 0.15s (vs the
-            -- grids' 0.1s) because each keystroke here walks EVERY owner
             if searchTimer then searchTimer:Cancel() end
             searchTimer = C_Timer.NewTimer(DEBOUNCE, function()
                 searchTimer = nil
                 SearchWindow.Refresh()
             end)
         end,
-        -- informational window: plain hide on X is exactly right (no live
-        -- session, no opener to clear), so no onUserClose override
     })
 
-    -- body: viewport + scroll child carrying the row pool
     local scroll = CreateFrame("ScrollFrame", nil, win._body)
     scroll:SetPoint("TOPLEFT", 0, 0)
     scroll:SetPoint("BOTTOMRIGHT", 0, 0)
@@ -216,14 +174,13 @@ local function EnsureWindow()
     win._scroll = scroll
 
     local child = CreateFrame("Frame", nil, scroll)
-    child:SetSize(1, 1) -- real size assigned per render
+    child:SetSize(1, 1)
     scroll:SetScrollChild(child)
     scroll:SetScript("OnSizeChanged", function(_, w)
         if w and w > 0 then child:SetWidth(w) end
     end)
     win._scrollChild = child
 
-    -- display-only thumb (damage_meter / options-dropdown convention)
     local bar = CreateFrame("Frame", nil, win._body)
     bar:SetWidth(SCROLLBAR_W)
     bar:SetPoint("TOPRIGHT", scroll, "TOPRIGHT", 0, -1)
@@ -238,7 +195,6 @@ local function EnsureWindow()
     bar.thumb = thumb
     win._scrollBar = bar
 
-    -- footer: result count / "+N more" / blank-query hint
     win._status = win._footer:CreateFontString(nil, "ARTWORK")
     win._status:SetPoint("LEFT", 8, 0)
     CJKFont(win._status, Helpers.GetGeneralFont() or STANDARD_TEXT_FONT, 11, "OUTLINE")
@@ -249,34 +205,26 @@ local function EnsureWindow()
     return win
 end
 
----------------------------------------------------------------------------
--- Rendering
----------------------------------------------------------------------------
-
 local function DressRow(row, item)
     row._itemID = item.itemID
     row._link = item.link
-    row._item = item -- aggregated result (owners breakdown) for click navigation
-    row._icon:SetTexture(item.icon or 134400) -- INV_Misc_QuestionMark fallback
+    row._item = item
+    row._icon:SetTexture(item.icon or 134400)
     if item.name then
         local r, g, b = Bags.ItemButtons.GetQualityColor(item.quality or 1)
         row._name:SetText(item.name)
         row._name:SetTextColor(r, g, b)
     else
-        -- details not loaded yet; the next refresh picks the name up
         row._name:SetText(ns.L["Item #"] .. item.itemID)
         row._name:SetTextColor(0.6, 0.6, 0.6)
     end
-    row._total:SetText("\195\151" .. item.total) -- ×total
+    row._total:SetText("\195\151" .. item.total)
     row._owners:SetText(SearchWindow.BuildOwnersLine(item.owners))
 end
 
 function SearchWindow.Refresh()
     if not win or not win:IsShown() then return end
     local results = Bags.Everywhere.Query(queryText)
-    -- thumb tracks the skin per refresh (sort-button/tab-strip contract);
-    -- DisablePixelSnap must follow EVERY SetColorTexture or the quad can
-    -- vanish position-dependently
     local sr, sg, sb = Helpers.GetSkinColors()
     win._scrollBar.thumb:SetColorTexture(sr, sg, sb, 0.5)
     UIKit.DisablePixelSnap(win._scrollBar.thumb)
@@ -294,26 +242,20 @@ function SearchWindow.Refresh()
         row:Show()
     end
     win._scrollChild:SetHeight(math.max(#results * ROW_H, 1))
-    SetScroll(0) -- a new result set always starts at the top
+    SetScroll(0)
     if results.blank then
         win._status:SetText(ns.L["Type to search every cached bag, bank, mailbox, auction and guild vault."])
     elseif results.truncated then
         win._status:SetText(#results .. " " .. ns.L["shown"] .. ", +" .. results.truncated
-            .. " " .. ns.L["more"] .. " \226\128\148 " .. ns.L["refine the query"]) -- — em dash
+            .. " " .. ns.L["more"] .. " \226\128\148 " .. ns.L["refine the query"])
     else
         win._status:SetText(#results .. (#results == 1 and " " .. ns.L["match"] or " " .. ns.L["matches"]))
     end
 end
 
----------------------------------------------------------------------------
--- Public surface
----------------------------------------------------------------------------
-
 function SearchWindow.Show()
     EnsureWindow()
     win:Show()
-    -- a fresh look always re-queries: the cache may have moved since the
-    -- last render, and the box keeps its text across closes
     SearchWindow.Refresh()
     win._searchBox:SetFocus()
 end
@@ -330,7 +272,6 @@ function SearchWindow.IsShown()
     return win ~= nil and win:IsShown()
 end
 
---- Profile switched while the module stays enabled: re-anchor + re-render.
 function SearchWindow.OnProfileChanged()
     if not win then return end
     win:ApplyPosition()

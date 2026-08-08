@@ -2,20 +2,11 @@ local addonName, ns = ...
 
 -- luacheck: globals RaiderIO
 
----------------------------------------------------------------------------
--- QUI PARTY KEYSTONE MODULE
--- Shows party keystones on PVEFrame (Group Finder)
--- Requires LibOpenRaid for keystone sharing between party members
----------------------------------------------------------------------------
-
 local openRaidLib = LibStub and LibStub:GetLibrary("LibOpenRaid-1.0", true)
 if not openRaidLib then
-    -- LibOpenRaid not available, module disabled
     return
 end
 
--- CJK-safe font setter: preserves the roman font and only adds CJK fallback
--- members where available, degrading to plain SetFont otherwise.
 local function CJKFont(fs, p, s, f)
     if ns.Helpers and ns.Helpers.ApplyFontWithFallback then
         ns.Helpers.ApplyFontWithFallback(fs, p, s, f)
@@ -23,10 +14,6 @@ local function CJKFont(fs, p, s, f)
         fs:SetFont(p, s, f)
     end
 end
-
----------------------------------------------------------------------------
--- SETTINGS ACCESS
----------------------------------------------------------------------------
 
 local Helpers = ns.Helpers
 local UIKit = ns.UIKit
@@ -61,10 +48,6 @@ local function GetTextColor()
     return 1, 1, 1, 1
 end
 
----------------------------------------------------------------------------
--- CONSTANTS
----------------------------------------------------------------------------
-
 local BUTTON_SIZE = 20
 local ENTRY_PADDING_X = 4
 local ENTRY_PADDING_Y = 4
@@ -72,28 +55,20 @@ local ENTRY_SPACING = 6
 local HEADER_HEIGHT = BUTTON_SIZE + (ENTRY_PADDING_Y * 2)
 local ENTRY_HEIGHT = BUTTON_SIZE + ENTRY_SPACING
 
--- Font size setting access
 local function GetFontSize()
     local s = GetSettings()
     return s and s.keyTrackerFontSize or 9
 end
 
--- Timer delays (seconds)
 local INITIAL_REQUEST_DELAY = 3
 local GROUP_CHANGE_DELAY = 2
 local UPDATE_DELAY = 1
 local VISIBILITY_DELAY = 0.1
 local INITIAL_KEYSTONE_REQUEST_DELAY = 5
 
--- Skinning colors (retrieved dynamically)
 local GetSkinColors = Helpers.CreateSkinColorGetter()
 
----------------------------------------------------------------------------
--- HELPER FUNCTIONS
----------------------------------------------------------------------------
-
 local function GetDungeonInfo(mapID)
-    -- Defensive nil check
     if not mapID then
         return "Interface\\Icons\\INV_Misc_QuestionMark", "???", nil
     end
@@ -101,37 +76,30 @@ local function GetDungeonInfo(mapID)
     if _G.QUI_DungeonData then
         local data = _G.QUI_DungeonData.GetDungeonData(mapID)
         if data then
-            -- Get icon from C_ChallengeMode
             local _, _, _, icon = C_ChallengeMode.GetMapUIInfo(mapID)
             return icon, data.short, data.spellID
         end
     end
-    -- Fallback
     local name, _, _, icon = C_ChallengeMode.GetMapUIInfo(mapID)
     local short = name and name:match("^(%S+)") or "???"
     return icon, short, nil
 end
 
--- Get key level color - uses shared function if available
 local function GetKeyColor(level)
-    -- Try shared dungeon data module first
     if _G.QUI_DungeonData and _G.QUI_DungeonData.GetKeyColor then
         return _G.QUI_DungeonData.GetKeyColor(level)
     end
-    -- Fallback
     if not level or level == 0 then return 0.7, 0.7, 0.7 end
-    if level >= 12 then return 1, 0.5, 0 end      -- Orange for 12+
-    if level >= 10 then return 0.64, 0.21, 0.93 end -- Purple for 10-11
-    if level >= 7 then return 0, 0.44, 0.87 end   -- Blue for 7-9
-    if level >= 5 then return 0.12, 0.75, 0.26 end -- Green for 5-6
-    return 1, 1, 1                                 -- White for 2-4
+    if level >= 12 then return 1, 0.5, 0 end
+    if level >= 10 then return 0.64, 0.21, 0.93 end
+    if level >= 7 then return 0, 0.44, 0.87 end
+    if level >= 5 then return 0.12, 0.75, 0.26 end
+    return 1, 1, 1
 end
 
--- Get M+ score and color for a unit
 local function GetPlayerScoreInfo(unit)
     local score, color = 0, { r = 1, g = 1, b = 1 }
 
-    -- Try RaiderIO first
     if RaiderIO and RaiderIO.GetProfile then
         local profile = RaiderIO.GetProfile(unit)
         if profile and profile.mythicKeystoneProfile and profile.mythicKeystoneProfile.currentScore then
@@ -144,7 +112,6 @@ local function GetPlayerScoreInfo(unit)
         end
     end
 
-    -- Fallback to Blizzard API
     local ratingInfo = C_PlayerInfo.GetPlayerMythicPlusRatingSummary(unit)
     if ratingInfo and ratingInfo.currentSeasonScore and ratingInfo.currentSeasonScore > 0 then
         score = math.floor(ratingInfo.currentSeasonScore)
@@ -158,11 +125,6 @@ local function GetPlayerScoreInfo(unit)
     return score, color
 end
 
----------------------------------------------------------------------------
--- FRAME CREATION
----------------------------------------------------------------------------
-
--- Create frame parented to UIParent initially, will reparent when PVEFrame loads
 local KeyTrackerFrame = CreateFrame("Frame", "QUIKeyTrackerFrame", UIParent, "BackdropTemplate")
 KeyTrackerFrame:SetFrameStrata("HIGH")
 KeyTrackerFrame:SetSize(GetFrameWidth(), HEADER_HEIGHT)
@@ -195,18 +157,15 @@ KeyTrackerFrame:RegisterForDrag("LeftButton")
 KeyTrackerFrame:SetClampedToScreen(true)
 KeyTrackerFrame:Hide()
 
--- Title
 local title = KeyTrackerFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
 title:SetPoint("TOP", KeyTrackerFrame, "TOP", 0, -2)
 CJKFont(title, title:GetFont(), 9, "OUTLINE")
 
--- Update title color with skin
 local function UpdateTitleColor()
     local sr, sg, sb = GetSkinColors()
     title:SetText("|cff" .. string.format("%02x%02x%02x", sr*255, sg*255, sb*255) .. ns.L["Party Keys|r"])
 end
 
--- Apply skin colors (consolidated - called after QUI is loaded)
 local function ApplySkinColors()
     UpdateKeyTrackerPixelSize()
     local sr, sg, sb, sa, bgr, bgg, bgb, bga = GetSkinColors()
@@ -215,8 +174,6 @@ local function ApplySkinColors()
     UpdateTitleColor()
 end
 
-
--- Function to position frame (attached to PVEFrame)
 local function PositionKeyTracker()
     KeyTrackerFrame:ClearAllPoints()
     if PVEFrame then
@@ -229,8 +186,6 @@ local function PositionKeyTracker()
     end
 end
 
--- Always re-anchor to PVEFrame when shown — overrides layout-mode absolute
--- positioning so the frame stays attached to the instance panel.
 KeyTrackerFrame:HookScript("OnShow", function()
     if PVEFrame then
         PositionKeyTracker()
@@ -246,7 +201,6 @@ KeyTrackerFrame:SetScript("OnDragStop", function(self)
     self:StopMovingOrSizing()
 end)
 
--- Tooltip for key tracker panel
 KeyTrackerFrame:SetScript("OnEnter", function(self)
     GameTooltip:SetOwner(self, "ANCHOR_TOP")
     GameTooltip:AddLine(ns.L["Party Keys"], 1, 1, 1)
@@ -259,10 +213,6 @@ KeyTrackerFrame:SetScript("OnLeave", function()
     GameTooltip:Hide()
 end)
 
----------------------------------------------------------------------------
--- KEYSTONE BUTTON CREATION
----------------------------------------------------------------------------
-
 local function GetRowWidth()
     return GetFrameWidth() - (ENTRY_PADDING_X * 2)
 end
@@ -273,19 +223,16 @@ local function CreateKeystoneButton(parent, yOffset)
     button:SetPoint("TOPLEFT", parent, "TOPLEFT", ENTRY_PADDING_X, yOffset)
     button:RegisterForClicks("AnyDown", "AnyUp")
 
-    -- Icon (fixed size at left edge of button)
     button.icon = button:CreateTexture(nil, "ARTWORK")
     button.icon:SetSize(BUTTON_SIZE, BUTTON_SIZE)
     button.icon:SetPoint("LEFT", button, "LEFT", 0, 0)
     button.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
 
-    -- Cooldown overlay (anchored to icon)
     button.cooldownOverlay = button:CreateTexture(nil, "ARTWORK", nil, 1)
     button.cooldownOverlay:SetAllPoints(button.icon)
     button.cooldownOverlay:SetColorTexture(0, 0, 0, 0.6)
     button.cooldownOverlay:Hide()
 
-    -- Highlight (full row, subtle)
     button.highlight = button:CreateTexture(nil, "HIGHLIGHT")
     button.highlight:SetAllPoints()
     button.highlight:SetColorTexture(1, 1, 1, 0.06)
@@ -293,39 +240,33 @@ local function CreateKeystoneButton(parent, yOffset)
     local fontSize = GetFontSize()
     local fontPath = GetFont()
 
-    -- Key level text (centered on icon)
     button.keyLevel = button:CreateFontString(nil, "OVERLAY")
     button.keyLevel:SetPoint("CENTER", button.icon, "CENTER", 0, 0)
     CJKFont(button.keyLevel, fontPath, fontSize + 1, "OUTLINE")
 
-    -- Dungeon short name (right of icon, parented to button)
     button.dungeonName = button:CreateFontString(nil, "OVERLAY")
     button.dungeonName:SetPoint("LEFT", button.icon, "RIGHT", 4, 0)
     CJKFont(button.dungeonName, fontPath, fontSize, "OUTLINE")
     button.dungeonName:SetJustifyH("LEFT")
-    button.dungeonName:SetWidth(40)  -- Fixed width for alignment
+    button.dungeonName:SetWidth(40)
 
-    -- Player name (right of dungeon name, parented to button)
     button.playerName = button:CreateFontString(nil, "OVERLAY")
     button.playerName:SetPoint("LEFT", button.dungeonName, "RIGHT", 4, 0)
     CJKFont(button.playerName, fontPath, fontSize, "OUTLINE")
     button.playerName:SetJustifyH("LEFT")
 
-    -- Score (right side, parented to button)
     button.score = button:CreateFontString(nil, "OVERLAY")
     button.score:SetPoint("RIGHT", button, "RIGHT", 0, 0)
     CJKFont(button.score, fontPath, fontSize, "OUTLINE")
     button.score:SetJustifyH("RIGHT")
     button.score:SetJustifyV("MIDDLE")
 
-    -- Leader icon (anchored to icon)
     button.leaderIcon = button:CreateTexture(nil, "OVERLAY")
     button.leaderIcon:SetSize(10, 10)
     button.leaderIcon:SetPoint("TOPLEFT", button.icon, "TOPLEFT", -2, 2)
     button.leaderIcon:SetTexture("Interface\\GroupFrame\\UI-Group-LeaderIcon")
     button.leaderIcon:Hide()
 
-    -- Tooltip
     button:SetScript("OnEnter", function(self)
         if self.tooltipDungeon then
             GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
@@ -343,15 +284,13 @@ local function CreateKeystoneButton(parent, yOffset)
     return button
 end
 
--- Create buttons (player + up to 4 party members)
 local TITLE_HEIGHT = 12
 local keystoneButtons = {}
-keystoneButtons[0] = CreateKeystoneButton(KeyTrackerFrame, -TITLE_HEIGHT) -- Player button (after title)
+keystoneButtons[0] = CreateKeystoneButton(KeyTrackerFrame, -TITLE_HEIGHT)
 for i = 1, 4 do
     keystoneButtons[i] = CreateKeystoneButton(KeyTrackerFrame, -TITLE_HEIGHT - (i * ENTRY_HEIGHT))
 end
 
--- Update all button fonts (called when settings change or on refresh)
 local function UpdateAllButtonFonts()
     local fontSize = GetFontSize()
     local fontPath = GetFont()
@@ -368,20 +307,11 @@ local function UpdateAllButtonFonts()
     end
 end
 
-
----------------------------------------------------------------------------
--- UPDATE FUNCTIONS
----------------------------------------------------------------------------
-
 local function UpdateButtonCooldown(button)
     if InCombatLockdown() then return end
     if button.spellID then
         local cooldownInfo = C_Spell.GetSpellCooldown(button.spellID)
-        -- SpellCooldownInfo is a non-nilable plain struct; startTime/duration
-        -- are SecretWhenCooldownsRestricted — probe each at its decision
-        -- point before comparing. An unreadable field leaves the overlay
-        -- untouched (hold-last) instead of manufacturing an off state.
-        local showCooldown  -- nil = unknown, true/false = decided
+        local showCooldown
         if cooldownInfo then -- @secret-safe: SpellCooldownInfo container is a plain table-or-nil (MayReturnNothing); fields probed below
             local startTime = cooldownInfo.startTime
             if issecretvalue and issecretvalue(startTime) then
@@ -404,11 +334,6 @@ local function UpdateButtonCooldown(button)
         elseif showCooldown == false then
             button.cooldownOverlay:Hide()
         elseif button._quiCooldownSpellID ~= button.spellID then
-            -- Unknown verdict for a DIFFERENT spell than the overlay's last
-            -- decision: buttons are reused across roster passes, so holding
-            -- here would leak the previous spell's overlay onto this one.
-            -- Hold-last is only valid within the same spell identity; reset
-            -- to hidden (the fresh-button default) until a readable tick.
             button.cooldownOverlay:Hide()
         end
         button._quiCooldownSpellID = button.spellID
@@ -422,7 +347,6 @@ local function UpdateButton(button, keystoneInfo, unitName, unit, isLeader)
     if InCombatLockdown() then return end
 
     local _, class = UnitClass(unit)
-    -- Probe FIRST — a secret class throws on the RAID_CLASS_COLORS table index.
     -- @secret-policy: collapse-only — white player-name fallback
     if Helpers.IsSecretValue(class) then class = nil end
     local classColor = class and RAID_CLASS_COLORS[class] and RAID_CLASS_COLORS[class].colorStr or "FFFFFFFF"
@@ -440,7 +364,6 @@ local function UpdateButton(button, keystoneInfo, unitName, unit, isLeader)
         button.dungeonName:SetTextColor(tr, tg, tb, ta)
         button.playerName:SetText("|c" .. classColor .. displayName .. "|r")
 
-        -- Score
         local score, scoreColor = GetPlayerScoreInfo(unit)
         if score > 0 then
             button.score:SetText(string.format("|cff%02x%02x%02x%d|r", scoreColor.r*255, scoreColor.g*255, scoreColor.b*255, score))
@@ -448,7 +371,6 @@ local function UpdateButton(button, keystoneInfo, unitName, unit, isLeader)
             button.score:SetText("")
         end
 
-        -- Teleport spell
         if spellID and IsSpellKnown(spellID) then
             button:SetAttribute("type", "spell")
             button:SetAttribute("spell", spellID)
@@ -459,11 +381,9 @@ local function UpdateButton(button, keystoneInfo, unitName, unit, isLeader)
             button.spellID = nil
         end
 
-        -- Tooltip data
         button.tooltipDungeon = C_ChallengeMode.GetMapUIInfo(keystoneInfo.challengeMapID)
     end
 
-    -- Leader icon
     if isLeader and not IsInRaid() then
         button.leaderIcon:Show()
     else
@@ -486,12 +406,10 @@ end
 local function UpdateAllKeystones()
     if InCombatLockdown() or not IsEnabled() then return end
 
-    -- Hide all buttons first
     for i = 0, 4 do
         HideButton(keystoneButtons[i])
     end
 
-    -- In raid, don't show party keys
     if IsInRaid() then
         KeyTrackerFrame:SetHeight(HEADER_HEIGHT)
         return
@@ -500,13 +418,9 @@ local function UpdateAllKeystones()
     local allKeystoneInfo = openRaidLib.GetAllKeystonesInfo()
     local buttonIndex = 0
 
-    -- Check player's key first
     local myKeystoneInfo = openRaidLib.GetKeystoneInfo("player")
     if myKeystoneInfo and myKeystoneInfo.level and myKeystoneInfo.level > 0 then
         local isLeader = UnitIsGroupLeader("player")
-        -- UnitName is SecretWhenUnitNameRestricted (12.1); UpdateButton
-        -- pattern-matches and concats the name, so a secret name must not
-        -- reach it.
         local myName = UnitName("player")
         if issecretvalue and issecretvalue(myName) then
             myName = nil -- @secret-policy: reject-secret-value (skip row this pass)
@@ -517,14 +431,10 @@ local function UpdateAllKeystones()
         end
     end
 
-    -- Check party members' keys (only show those with keys)
     local numMembers = GetNumGroupMembers()
     for i = 1, numMembers - 1 do
         local unitId = "party" .. i
         local unitName, realm = UnitName(unitId)
-        -- UnitName is SecretWhenUnitNameRestricted (12.1); a secret name
-        -- cannot key allKeystoneInfo (secret table index throws) or concat
-        -- the realm suffix — probe each return before any use.
         if issecretvalue and issecretvalue(unitName) then
             unitName = nil -- @secret-policy: reject-secret-value (skip row this pass)
         end
@@ -540,7 +450,6 @@ local function UpdateAllKeystones()
 
             local keystoneInfo = allKeystoneInfo[fullName] or allKeystoneInfo[unitName]
 
-            -- Only show if they have a key
             if keystoneInfo and keystoneInfo.level and keystoneInfo.level > 0 then
                 local isLeader = UnitIsGroupLeader(unitId)
                 UpdateButton(keystoneButtons[buttonIndex], keystoneInfo, fullName, unitId, isLeader)
@@ -549,7 +458,6 @@ local function UpdateAllKeystones()
         end
     end
 
-    -- Resize frame based on number of entries with keys
     if buttonIndex > 0 then
         KeyTrackerFrame:SetHeight(TITLE_HEIGHT + (buttonIndex * ENTRY_HEIGHT) + ENTRY_PADDING_Y)
     else
@@ -565,18 +473,11 @@ local function UpdateAll()
     UpdateAllKeystones()
 end
 
----------------------------------------------------------------------------
--- REFRESH (consolidates all live-update logic for options panel)
----------------------------------------------------------------------------
-
 local function RefreshKeyTracker()
     if InCombatLockdown() then return end
-    -- Reposition
     PositionKeyTracker()
-    -- Resize frame width
     local w = GetFrameWidth()
     KeyTrackerFrame:SetWidth(w)
-    -- Resize all buttons to new row width
     local rowW = w - (ENTRY_PADDING_X * 2)
     for i = 0, 4 do
         local button = keystoneButtons[i]
@@ -584,11 +485,8 @@ local function RefreshKeyTracker()
             button:SetWidth(rowW)
         end
     end
-    -- Update fonts and text color
     UpdateAllButtonFonts()
-    -- Reapply skin colors
     ApplySkinColors()
-    -- Refresh keystone data display
     if IsEnabled() then
         UpdateAllKeystones()
     else
@@ -596,7 +494,6 @@ local function RefreshKeyTracker()
     end
 end
 
--- Expose consolidated refresh for options panel
 _G.QUI_RefreshKeyTracker = RefreshKeyTracker
 
 if ns.Registry then
@@ -606,9 +503,6 @@ if ns.Registry then
         group = "data",
         importCategories = { "minimapDatatexts" },
     })
-    -- Companion skinning registration: the tracker's bg/border/title track the
-    -- global skin, but the "data" group above isn't refreshed on a skin-color
-    -- change (which fires only RefreshAll("skinning")). Re-skin on that too.
     ns.Registry:Register("keyTrackerSkin", {
         refresh = _G.QUI_RefreshKeyTracker,
         priority = 55,
@@ -616,10 +510,6 @@ if ns.Registry then
         importCategories = { "skinning", "theme" },
     })
 end
-
----------------------------------------------------------------------------
--- REQUEST FUNCTIONS
----------------------------------------------------------------------------
 
 local requestTimer = nil
 
@@ -636,10 +526,6 @@ local function RequestKeystones()
     end
 end
 
----------------------------------------------------------------------------
--- VISIBILITY
----------------------------------------------------------------------------
-
 local function UpdateVisibility()
     if InCombatLockdown() then return end
     if not IsEnabled() then
@@ -647,7 +533,6 @@ local function UpdateVisibility()
         return
     end
 
-    -- Check if anyone has a key (player or party)
     local anyoneHasKey = false
     local myKeystoneInfo = openRaidLib.GetKeystoneInfo("player")
     if myKeystoneInfo and myKeystoneInfo.level and myKeystoneInfo.level > 0 then
@@ -664,13 +549,11 @@ local function UpdateVisibility()
         end
     end
 
-    -- Hide if nobody has a key
     if not anyoneHasKey then
         KeyTrackerFrame:Hide()
         return
     end
 
-    -- Show when PVEFrame is visible (any tab)
     if PVEFrame and PVEFrame:IsShown() then
         KeyTrackerFrame:Show()
         UpdateAll()
@@ -678,10 +561,6 @@ local function UpdateVisibility()
         KeyTrackerFrame:Hide()
     end
 end
-
----------------------------------------------------------------------------
--- PVEFRAME HOOKS (LoadOnDemand safe)
----------------------------------------------------------------------------
 
 local pveFrameHooked = false
 
@@ -704,10 +583,6 @@ local function SetupPVEFrameHooks()
     end)
 end
 
----------------------------------------------------------------------------
--- EVENT HANDLING
----------------------------------------------------------------------------
-
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 eventFrame:RegisterEvent("ADDON_LOADED")
@@ -725,7 +600,6 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
             PositionKeyTracker()
         end
     elseif event == "PLAYER_ENTERING_WORLD" then
-        -- Try to hook if PVEFrame already loaded
         SetupPVEFrameHooks()
         PositionKeyTracker()
         ApplySkinColors()
@@ -762,13 +636,6 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
     end
 end)
 
--- No WhenLoggedIn catch-up: this file rides the root TOC (QUI_UI dissolve),
--- so it loads before PLAYER_LOGIN and the initial PLAYER_ENTERING_WORLD
--- branch above covers login (hooks, position, skin, fonts, request) — a
--- PLAYER_LOGIN callback would double-run all of it. Blizzard_GroupFinder
--- loading later is covered by the ADDON_LOADED branch.
-
--- LibOpenRaid callback (with combat lockdown check)
 if openRaidLib then
     openRaidLib.RegisterCallback(addonName, "KeystoneUpdate", function()
         C_Timer.After(UPDATE_DELAY, function()
@@ -779,7 +646,6 @@ if openRaidLib then
     end)
 end
 
--- Right-click to refresh
 KeyTrackerFrame:SetScript("OnMouseUp", function(self, button)
     if button == "RightButton" and not InCombatLockdown() then
         RequestKeystones()
@@ -787,11 +653,9 @@ KeyTrackerFrame:SetScript("OnMouseUp", function(self, button)
     end
 end)
 
--- Initial setup (in case PVEFrame already exists)
 SetupPVEFrameHooks()
 PositionKeyTracker()
 
--- Initial request
 C_Timer.After(INITIAL_KEYSTONE_REQUEST_DELAY, function()
     if not InCombatLockdown() then
         RequestKeystones()

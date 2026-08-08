@@ -1,10 +1,3 @@
---- QUI Info Bar — right-click context menu on empty bar space: quick
---- add/remove of widgets (categorized checkboxes; target zone = the bar
---- third under the cursor) plus per-widget boolean overrides, mirroring
---- the settings page's data shapes (db.zones / db.widgetSettings).
---- Loads after infobar.lua in the TOC; wires itself by wrapping
---- InfoBar.ApplyAll (the bar frame is created there).
-
 local _, ns = ...
 local QUICore = ns.Addon
 
@@ -17,11 +10,6 @@ InfoBar.ContextMenu = ContextMenu
 local ZONE_ORDER = { "left", "center", "right" }
 local ZONE_LABELS = { left = ns.L["Left Zone"], center = ns.L["Center Zone"], right = ns.L["Right Zone"] }
 
----------------------------------------------------------------------------
--- PURE HELPERS (headlessly unit-tested: tests/unit/infobar_contextmenu_test.lua)
----------------------------------------------------------------------------
-
--- Bar third under the cursor decides which zone an added widget joins.
 function ContextMenu.ZoneFromCursorX(relX, barWidth)
     if not barWidth or barWidth <= 0 then return "left" end
     if relX < barWidth / 3 then return "left" end
@@ -29,8 +17,6 @@ function ContextMenu.ZoneFromCursorX(relX, barWidth)
     return "right"
 end
 
--- Sub-table guards only (same contract as the settings page): scalars come
--- from AceDB defaults; writing them here would pin shipped defaults.
 function ContextMenu.EnsureZones(db)
     if not db.zones then db.zones = {} end
     for _, key in ipairs(ZONE_ORDER) do
@@ -61,8 +47,6 @@ function ContextMenu.AddWidget(db, zoneKey, widgetId)
     return true
 end
 
--- Removes the first match only: every write surface (this menu and the
--- settings page) enforces the one-zone-per-widget invariant.
 function ContextMenu.RemoveWidget(db, widgetId)
     local key, idx = ContextMenu.FindWidget(db, widgetId)
     if not key then return false end
@@ -70,13 +54,8 @@ function ContextMenu.RemoveWidget(db, widgetId)
     return true
 end
 
--- Same seeding shape as the settings page (infobar_content.lua): both now
--- delegate to the shared core helper so the defaults can never drift apart.
 ContextMenu.EnsureWidgetSettings = ns.QUI_InfoBarShared.EnsureWidgetSettings
 
--- Group Datatexts:GetAll() output (already sorted by category, then name)
--- into { { category = "...", widgets = { { id, name }, ... } }, ... },
--- preserving first-seen category order.
 function ContextMenu.BuildCategories(defs)
     local out, byCat = {}, {}
     for _, def in ipairs(defs or {}) do
@@ -91,9 +70,6 @@ function ContextMenu.BuildCategories(defs)
     return out
 end
 
--- Placed widgets across all zones in visual order (left, center, right).
--- getDef(id) -> registry def or nil; nil marks a "(not loaded)" entry whose
--- only menu action is Remove.
 function ContextMenu.PlacedList(db, getDef)
     local zones = ContextMenu.EnsureZones(db)
     local out = {}
@@ -110,10 +86,6 @@ function ContextMenu.PlacedList(db, getDef)
     return out
 end
 
----------------------------------------------------------------------------
--- MENU (in-game only below this line; nothing here runs under the test)
----------------------------------------------------------------------------
-
 local function GetDB()
     local db = QUICore.db and QUICore.db.profile
     return db and db.infobar
@@ -121,9 +93,6 @@ end
 
 local function RefreshAll()
     if _G.QUI_RefreshInfoBar then _G.QUI_RefreshInfoBar() end
-    -- Keep an open options page in sync — the same structural notify the
-    -- settings page fires on its own mutations. The settings layer may not
-    -- be loaded; guard every step.
     local compat = ns.Settings and ns.Settings.RenderAdapters
     if compat and compat.NotifyProviderChanged then
         compat.NotifyProviderChanged("infobar", { structural = true })
@@ -135,14 +104,9 @@ local function OpenInfoBarSettings()
     if QUI and type(QUI.OpenOptions) == "function" then
         QUI:OpenOptions()
     end
-    -- A cold open LoadAddOns QUI_Options synchronously, but the shell
-    -- builds over the first frame; navigate next frame (the pattern the
-    -- CDM composer deep-link uses).
     C_Timer.After(0, function()
         local gui = _G.QUI and _G.QUI.GUI
         if gui and gui.NavigateTo then
-            -- Info Bar tab route — keep in sync with the navRoutes in
-            -- QUI_Options/tiles/infobar.lua.
             gui:NavigateTo(18, 1)
         end
     end)
@@ -169,10 +133,6 @@ local function BuildMenu(owner, zoneKey)
                 function() end)
             note:SetEnabled(false)
         else
-            -- Checkbox state is "placed in ANY zone"; checking adds to the
-            -- clicked zone, unchecking removes from the owning zone.
-            -- Checkboxes respond with MenuResponse.Refresh by default, so
-            -- the menu stays open for adding several widgets in a row.
             local add = root:CreateButton(ns.L["Add Widget"])
             for _, cat in ipairs(ContextMenu.BuildCategories(Datatexts:GetAll())) do
                 local catMenu = add:CreateButton(cat.category)
@@ -190,10 +150,6 @@ local function BuildMenu(owner, zoneKey)
                 end
             end
 
-            -- Submenu lists are generator-time snapshots: a widget added a
-            -- moment ago appears under Configure Widget on the NEXT open
-            -- (Refresh reinitializes frames, it does not re-run this
-            -- generator). Acceptable; spec'd.
             local placed = ContextMenu.PlacedList(db,
                 function(id) return Datatexts:Get(id) end)
             if #placed > 0 then
@@ -228,19 +184,8 @@ local function BuildMenu(owner, zoneKey)
     end)
 end
 
----------------------------------------------------------------------------
--- WIRING
----------------------------------------------------------------------------
-
 local function OnBarMouseUp(self, button)
     if button ~= "RightButton" then return end
-    -- Widget slots are mouse-enabled Buttons that swallow their own clicks
-    -- (several widgets own right-click menus already); only genuine
-    -- empty-space clicks reach the bar frame here.
-    -- GetEffectiveScale: SecretReturnsForAspect=Scale, and GetLeft/GetWidth
-    -- are SecretWhenAnchoringSecret — guard all three (SafeToNumber maps
-    -- secrets to the fallback) so the zone math can't throw in combat.
-    -- GetCursorPosition is never secret. Degraded fallback: right zone.
     local Helpers = ns.Helpers
     local scale = Helpers.SafeToNumber(self:GetEffectiveScale(), 0)
     local left = Helpers.SafeToNumber(self:GetLeft(), 0)
@@ -253,15 +198,9 @@ local function OnBarMouseUp(self, button)
     BuildMenu(self, zoneKey)
 end
 
--- Wire on the next ApplyAll: the bar frame is created there, and this file
--- loads after infobar.lua in the TOC so the wrap is installed before the
--- deferred login-time ApplyAll fires. Insecure script on an insecure frame;
--- combat needs no handling here (mutations ride ApplyAll's own deferral).
 local origApplyAll = InfoBar.ApplyAll
 function InfoBar:ApplyAll()
     origApplyAll(self)
-    -- Bracket access: the frame global is created by name (CreateFrame) and
-    -- is invisible to the language server's _G field list.
     local bar = _G["QUI_InfoBar"]
     if bar and not bar._quiContextMenuWired then
         bar._quiContextMenuWired = true

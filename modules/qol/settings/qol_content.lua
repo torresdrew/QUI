@@ -1,9 +1,3 @@
---[[
-    QUI QoL Options - General Tab (Quality of Life tile sub-page)
-    Migrated to V3 body pattern (CreateAccentDotLabel + CreateSettingsCardGroup
-    + BuildSettingRow). Each registered feature shows a single section.
-]]
-
 local _, ns = ...
 local QUI = QUI
 local GUI = QUI.GUI
@@ -28,10 +22,6 @@ end
 local function ShouldBuildSection(selectedSectionKey, sectionKey)
     return selectedSectionKey == nil or selectedSectionKey == sectionKey
 end
-
----------------------------------------------------------------------------
--- BUILDERS PER SECTION (each is its own subpage)
----------------------------------------------------------------------------
 
 local function BuildSettingsPanel(L, db)
     if not db.general then return end
@@ -408,14 +398,13 @@ local function BuildAutomation(L, generalDB)
     end, { description = ns.L["Show a panel of this season's M+ dungeon teleports on the world map. Unlearned teleports show desaturated. Panel builds out of combat."] })
     s.AddRow(row(s.frame, ns.L["World Map Teleport Panel"], mapTelW))
 
-    -- FOCUS + RAID MARKER BUTTON
     if type(generalDB.focusMarker) ~= "table" then generalDB.focusMarker = {} end
     local fm = generalDB.focusMarker
     local function RefreshFM()
         if ns.RefreshFocusMarker then ns.RefreshFocusMarker() end
     end
     local fmEnableW = GUI:CreateFormCheckbox(s.frame, nil, "enabled", fm, RefreshFM,
-        { description = ns.L["One press sets your focus AND puts a raid marker on it (hostile living mouseover first, else your target). Keeps a character macro named 'QUI Focus Marker' in sync — drag it to a bar or keybind it. Updates apply out of combat."] })
+        { description = ns.L["One press sets your focus AND puts a raid marker on it (hostile living mouseover first, else your target). Keeps a character macro named 'FocusMarker_DUI' in sync — drag it to a bar or keybind it. Updates apply out of combat."] })
     local markerOptions = {
         { value = 1, text = ns.L["Star"] },
         { value = 2, text = ns.L["Circle"] },
@@ -433,10 +422,9 @@ local function BuildAutomation(L, generalDB)
     local fmMouseoverW = GUI:CreateFormCheckbox(s.frame, nil, "useMouseover", fm, RefreshFM,
         { description = ns.L["Prefer the hostile living unit under your mouse; fall back to your current target."] })
     local fmMacroW = GUI:CreateFormCheckbox(s.frame, nil, "writeMacro", fm, RefreshFM,
-        { description = ns.L["Create/update the 'QUI Focus Marker' character macro automatically."] })
+        { description = ns.L["Create/update the 'FocusMarker_DUI' character macro automatically."] })
     s.AddRow(row(s.frame, ns.L["Use Mouseover"], fmMouseoverW), row(s.frame, ns.L["Maintain Macro"], fmMacroW))
 
-    -- HEALER MANA WATCHER
     if type(generalDB.healerMana) ~= "table" then generalDB.healerMana = {} end
     local hm = generalDB.healerMana
     local function RefreshHM()
@@ -448,7 +436,6 @@ local function BuildAutomation(L, generalDB)
         { description = ns.L["Only show inside dungeons, raids, and other instances."] })
     s.AddRow(row(s.frame, ns.L["Healer Mana Bars"], hmEnableW), row(s.frame, ns.L["Instances Only"], hmInstanceW))
 
-    -- GROUP DEATH ALERT
     if type(generalDB.deathAlert) ~= "table" then generalDB.deathAlert = {} end
     local da = generalDB.deathAlert
     local function RefreshDA()
@@ -516,7 +503,6 @@ local function BuildAutomation(L, generalDB)
         { description = ns.L["After sending a mail, keep the recipient name filled in for the next one."] })
     s.AddRow(row(s.frame, ns.L["Mail Contacts Panel"], mailPanelW), row(s.frame, ns.L["Remember Mail Recipient"], mailRememberW))
 
-    -- TRADE & MAIL LOG
     if type(generalDB.tradeMailLog) ~= "table" then generalDB.tradeMailLog = {} end
     local tml = generalDB.tradeMailLog
     local tmlEnableW = GUI:CreateFormCheckbox(s.frame, nil, "enabled", tml, nil,
@@ -610,7 +596,6 @@ local function BuildPopupBlocker(L, generalDB)
 
     UpdatePopupToggleState()
 
-    -- LOOT TOAST CURATION (own enable, independent of the blocker master)
     if type(generalDB.lootToastFilter) ~= "table" then generalDB.lootToastFilter = {} end
     local lootCfg = generalDB.lootToastFilter
 
@@ -680,7 +665,6 @@ local function BuildConsumableCheck(L, generalDB)
         if _G.QUI_RefreshConsumables then _G.QUI_RefreshConsumables() end
     end
 
-    -- Main toggle + persistent mode
     local s1 = L.sectionAt()
     local enableW = GUI:CreateFormCheckbox(s1.frame, nil, "consumableCheckEnabled", generalDB, nil,
         { description = ns.L["Show a consumables window listing food, flasks, weapon enchants, runes, and healthstones based on the triggers below."] })
@@ -694,7 +678,6 @@ local function BuildConsumableCheck(L, generalDB)
     s1.AddRow(row(s1.frame, ns.L["Enable Consumable Check"], enableW), row(s1.frame, ns.L["Always Show (Persistent Mode)"], persistW))
     L.closeSection(s1)
 
-    -- Triggers card
     L.headerAt(ns.L["Triggers"])
     local s2 = L.sectionAt()
     local trgRC = GUI:CreateFormCheckbox(s2.frame, nil, "consumableOnReadyCheck", generalDB, nil,
@@ -710,7 +693,6 @@ local function BuildConsumableCheck(L, generalDB)
     s2.AddRow(row(s2.frame, ns.L["Raid Entrance"], trgR), row(s2.frame, ns.L["Instanced Resurrect"], trgRez))
     L.closeSection(s2)
 
-    -- Buff checks
     L.headerAt(ns.L["Buff Checks"])
     local s3 = L.sectionAt()
     local foodW = GUI:CreateFormCheckbox(s3.frame, nil, "consumableFood", generalDB, nil,
@@ -734,7 +716,6 @@ local function BuildConsumableCheck(L, generalDB)
     s3.AddRow(row(s3.frame, ns.L["Augment Rune"], runeW), row(s3.frame, ns.L["Healthstones"], hsW, ns.L["Only shows when a Warlock is in the group."]))
     L.closeSection(s3)
 
-    -- Expiration warning
     L.headerAt(ns.L["Expiration Warning"])
     local s4 = L.sectionAt()
     local warnW = GUI:CreateFormCheckbox(s4.frame, nil, "consumableExpirationWarning", generalDB, nil,
@@ -744,7 +725,6 @@ local function BuildConsumableCheck(L, generalDB)
     s4.AddRow(row(s4.frame, ns.L["Warn When Buffs Expiring"], warnW), row(s4.frame, ns.L["Warning Threshold (sec)"], threshW))
     L.closeSection(s4)
 
-    -- Display
     L.headerAt(ns.L["Display"])
     local s5 = L.sectionAt()
     local iconW = GUI:CreateFormSlider(s5.frame, nil, 24, 64, 2, "consumableIconSize", generalDB, RefreshConsumables,
@@ -766,7 +746,6 @@ local function BuildConsumableMacros(L, generalDB)
         if ns.ConsumableMacros then ns.ConsumableMacros:ForceRefresh() end
     end
 
-    -- Enable + chat notifications
     local s1 = L.sectionAt()
     local enableW = GUI:CreateFormCheckbox(s1.frame, nil, "enabled", cmDB, function()
         if ns.ConsumableMacros then
@@ -779,7 +758,6 @@ local function BuildConsumableMacros(L, generalDB)
     s1.AddRow(row(s1.frame, ns.L["Enable Consumable Macros"], enableW), row(s1.frame, ns.L["Chat Notifications"], chatW))
     L.closeSection(s1)
 
-    -- Dropdowns
     L.headerAt(ns.L["Macro Selections"])
     local s2 = L.sectionAt()
     local flaskOpts = ns.ConsumableMacros and ns.ConsumableMacros.FLASK_OPTIONS or { { value = "none", text = ns.L["None"] } }
@@ -791,29 +769,29 @@ local function BuildConsumableMacros(L, generalDB)
     local weaponOpts = ns.ConsumableMacros and ns.ConsumableMacros.WEAPON_OPTIONS or { { value = "none", text = ns.L["None"] } }
 
     local flaskW = GUI:CreateFormDropdown(s2.frame, nil, flaskOpts, "selectedFlask", cmDB, Refresh,
-        { description = ns.L["Flask family the QUI_Flask macro should prefer. The macro always picks the highest-quality variant in your bags."] })
+        { description = ns.L["Flask family the Flask_DUI macro should prefer. The macro always picks the highest-quality variant in your bags."] })
     local potW = GUI:CreateFormDropdown(s2.frame, nil, potionOpts, "selectedPotion", cmDB, Refresh,
-        { description = ns.L["Combat utility potion (e.g., stat/tempered potions) used by the QUI_Pot macro."] })
+        { description = ns.L["Combat utility potion (e.g., stat/tempered potions) used by the Pot_DUI macro."] })
     s2.AddRow(row(s2.frame, ns.L["Flask Type"], flaskW), row(s2.frame, ns.L["Potion Type"], potW))
 
     local healthW = GUI:CreateFormDropdown(s2.frame, nil, healthOpts, "selectedHealth", cmDB, Refresh,
-        { description = ns.L["Healing potion family used by the QUI_Health macro."] })
+        { description = ns.L["Healing potion family used by the Health_DUI macro."] })
     local hsW = GUI:CreateFormDropdown(s2.frame, nil, hsOpts, "selectedHealthstone", cmDB, Refresh,
-        { description = ns.L["Healthstone variant used by the QUI_Stone macro."] })
+        { description = ns.L["Healthstone variant used by the Stone_DUI macro."] })
     s2.AddRow(row(s2.frame, ns.L["Health Potion"], healthW), row(s2.frame, ns.L["Healthstone"], hsW))
 
     local augW = GUI:CreateFormDropdown(s2.frame, nil, augOpts, "selectedAugment", cmDB, Refresh,
-        { description = ns.L["Augment rune family used by the QUI_Rune macro."] })
+        { description = ns.L["Augment rune family used by the Rune_DUI macro."] })
     local vantusW = GUI:CreateFormDropdown(s2.frame, nil, vantusOpts, "selectedVantus", cmDB, Refresh,
-        { description = ns.L["Vantus rune the QUI_Vantus macro should use — useful for raid boss attempt buffs."] })
+        { description = ns.L["Vantus rune the Vantus_DUI macro should use — useful for raid boss attempt buffs."] })
     s2.AddRow(row(s2.frame, ns.L["Augment Rune"], augW), row(s2.frame, ns.L["Vantus Rune"], vantusW))
 
     local weaponW = GUI:CreateFormDropdown(s2.frame, nil, weaponOpts, "selectedWeapon", cmDB, Refresh,
-        { description = ns.L["Weapon oil, stone, or enchant consumable used by the QUI_Weapon macro."] })
+        { description = ns.L["Weapon oil, stone, or enchant consumable used by the Weapon_DUI macro."] })
     s2.AddRow(row(s2.frame, ns.L["Weapon Consumable"], weaponW))
     L.closeSection(s2)
 
-    L.intro(ns.L["Creates per-character macros: QUI_Flask, QUI_Pot, QUI_Health, QUI_Stone, QUI_Rune, QUI_Vantus, QUI_Weapon. Drag them to your action bars."])
+    L.intro(ns.L["Creates per-character macros: Flask_DUI, Pot_DUI, Health_DUI, Stone_DUI, Rune_DUI, Vantus_DUI, Weapon_DUI. Drag them to your action bars."])
 end
 
 local function BuildTargetDistance(L, db)
@@ -840,7 +818,6 @@ local function BuildTargetDistance(L, db)
         end
     end
 
-    -- Toggle + preview
     local s1 = L.sectionAt()
     local enableW = GUI:CreateFormCheckbox(s1.frame, nil, "enabled", rangeCheckDB, function()
         Shared.RefreshRangeCheck()
@@ -951,8 +928,6 @@ local function BuildMerchantGrid(L, db)
     local mDB = db and db.merchantGrid
     if not mDB then return end
 
-    -- Live re-apply on change. Reaches the runtime module via the QUI table
-    -- (no _G.QUI_* global — see the ratchet note in merchant_grid.lua).
     local function RefreshMerchantGrid()
         if QUI and QUI.MerchantGrid and QUI.MerchantGrid.Refresh then
             QUI.MerchantGrid.Refresh()
@@ -982,7 +957,6 @@ local function BuildMerchantGrid(L, db)
     end
     L.closeSection(s)
 
-    -- VENDOR SELL RULES
     if generalDB then
         if type(generalDB.vendorRules) ~= "table" then generalDB.vendorRules = {} end
         local vr = generalDB.vendorRules
@@ -1023,7 +997,6 @@ local function BuildFriendsList(L, db)
     local generalDB = db and db.general
     if not generalDB then return end
 
-    -- Live re-apply on change via ns.* (no _G.QUI_* global — ratchet).
     local function Refresh()
         if ns.RefreshFriendsDecor then ns.RefreshFriendsDecor() end
     end
@@ -1167,10 +1140,6 @@ local function BuildSoundMute(L, generalDB)
     UpdateEntryState()
 end
 
----------------------------------------------------------------------------
--- DISPATCH
----------------------------------------------------------------------------
-
 local SECTION_BUILDERS = {
     settingsPanel    = function(L, db) BuildSettingsPanel(L, db) end,
     uiScale          = function(L, db) BuildUIScale(L, db) end,
@@ -1223,7 +1192,6 @@ local function BuildGeneralTab(tabContent, searchContext, selectedSectionKey)
     return L.finish()
 end
 
--- Export
 ns.QUI_QoLOptions = {
     BuildGeneralTab = BuildGeneralTab,
 }

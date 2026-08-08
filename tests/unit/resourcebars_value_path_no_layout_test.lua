@@ -70,7 +70,7 @@ assert(secondaryValue:find("self:UpdateChargedComboPoints(bar, resource, max, cu
     "charged combo overlays must update on the value path")
 
 local secondaryFull = extract("function QUICore:UpdateSecondaryPowerBar()",
-    "-- EVENT HANDLER")
+    "function QUICore:OnUnitPower(event, unit, powerType)")
 assert(secondaryFull:find("self:UpdateSecondaryPowerBarValue(true)", 1, true),
     "UpdateSecondaryPowerBar must run the value pass inline")
 assert(secondaryFull:find("bar._cachedIsVertical = isVertical", 1, true),

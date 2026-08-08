@@ -14,7 +14,6 @@ local function GetModel()
     return ns.QUI_NameplatesSettingsModel
 end
 
--- No moverKey / layout route: nameplates are world-anchored, not movable frames.
 SurfaceFeatures:Register({
     id = "nameplatesPage",
     category = "frames",

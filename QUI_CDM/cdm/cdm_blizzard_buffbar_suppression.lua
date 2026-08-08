@@ -1,6 +1,3 @@
--- QUI_CDM/cdm/cdm_blizzard_buffbar_suppression.lua
--- Keeps Blizzard's BuffBarCooldownViewer alive as a data source while hiding
--- the native visual shell when QUI renders the tracked buff bar itself.
 local _, ns = ...
 local unpackValue = table.unpack or unpack
 
@@ -104,9 +101,6 @@ function Suppressor:Suppress(frame)
     end
     state.hidden = true
 
-    -- Never Hide(): Blizzard's OnShow/OnHide event registration is part of the
-    -- aura data feed. Reference-style suppression keeps the viewer alive while
-    -- parking its visual shell offscreen when geometry writes are legal.
     if frame.SetAlpha then frame:SetAlpha(0) end
 
     if not InCombat() then

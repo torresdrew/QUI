@@ -11,7 +11,7 @@ end
 local buffLayout = readAll("QUI_CDM/cdm/cdm_buff_layout.lua")
 local layoutStart = assert(buffLayout:find("LayoutBuffBars = function()", 1, true),
     "LayoutBuffBars definition not found")
-local layoutEnd = assert(buffLayout:find("\nend\n\n-- CHANGE DETECTION", layoutStart, true),
+local layoutEnd = assert(buffLayout:find("local lastIconState = { count = -1 }", layoutStart, true),
     "LayoutBuffBars end marker not found")
 local layoutBody = buffLayout:sub(layoutStart, layoutEnd)
 

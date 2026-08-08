@@ -96,11 +96,15 @@ assert(container.mouse == true, "container mouse enabled for hover")
 container.mouseOver = true
 container.scripts.OnUpdate(container)
 assert(button.shown == true, "shown while cursor is over the window")
+container.scripts.OnUpdate(container)
+assert(button.shown == true, "stays shown on idle frames (transition-only toggle)")
 
 -- True leave -> hidden.
 container.mouseOver = false
 container.scripts.OnUpdate(container)
 assert(button.shown == false, "hidden on true leave")
+container.scripts.OnUpdate(container)
+assert(button.shown == false, "stays hidden while cursor is away (no thrash)")
 
 -- Switch to always: shown, hover scripts cleared, mouse released
 settings.copyButtonMode = "always"
@@ -110,9 +114,18 @@ assert(container.scripts.OnEnter == nil and container.scripts.OnLeave == nil, "h
 assert(container.scripts.OnUpdate == nil, "hover poll cleared")
 assert(container.mouse == false, "container mouse released")
 
--- Hidden mode hides
+-- Switching back to hover re-arms the poll after "always" released it
+settings.copyButtonMode = "hover"
+Copy.EnsureCustomCopyButton()
+assert(type(container.scripts.OnUpdate) == "function", "hover poll re-armed after always")
+container.mouseOver = true
+container.scripts.OnUpdate(container)
+assert(button.shown == true, "re-armed poll shows the button again")
+
+-- Hidden mode hides and clears the stale poll
 settings.copyButtonMode = "hidden"
 Copy.EnsureCustomCopyButton()
 assert(button.shown == false, "hidden mode hides")
+assert(container.scripts.OnUpdate == nil, "hidden mode clears the stale poll")
 
 print("OK: chat_copy_button_hover_test")

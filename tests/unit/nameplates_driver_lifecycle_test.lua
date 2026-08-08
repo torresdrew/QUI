@@ -123,6 +123,11 @@ UnitGetTotalAbsorbs = function() return 0 end
 UnitIsDeadOrGhost = function() return false end
 UnitName = function(u) local d = U(u) return d and d.name or "Stub" end
 UnitHealthPercent = function() return 55 end
+UnitClassification = function(u) local d = U(u) return d and d.classification end
+UnitLevel = function(u) local d = U(u) return d and d.level end
+UnitIsMinion = function(u) local d = U(u) return d and d.isMinion end
+UnitIsOtherPlayersPet = function(u) local d = U(u) return d and d.isOtherPet end
+UnitTreatAsPlayerForDisplay = function(u) local d = U(u) return d and d.treatAsPlayer end
 CurveConstants = { ScaleTo100 = {} }
 IsInInstance = function() return false, "none" end
 UnitGroupRolesAssigned = function() return "DAMAGER" end
@@ -215,9 +220,10 @@ UnitChannelInfo = function() return nil end
 GetPlayerInfoByGUID = function() return nil end
 
 assert(loadfile("core/cast_engine.lua"))("QUI", ns)
+assert(loadfile("core/classification.lua"))("QUI", ns)
 
 local SUITE = {
-    "shared.lua", "cvars.lua", "plate_colors.lua", "plate_health.lua",
+    "shared.lua", "cvars.lua", "plate_type.lua", "plate_colors.lua", "plate_health.lua",
     "plate_castbar.lua", "plate_auras.lua", "plate_extras.lua",
     "friendly.lua", "driver.lua",
 }
@@ -333,12 +339,16 @@ test("REMOVED: ClearUnit field hygiene + pool reuse + art restored", function()
     FireRemoved("nameplate2")
 end)
 
-test("friendly routing: suppressed art handed back for non-attackable units", function()
+test("friendly routing: non-attackable units build through the standard path", function()
     world.units.nameplate3 = { canAttack = false, reaction = 6, health = 50, maxHealth = 100 }
     local base = NewBase("nameplate3")
     FireAdded("nameplate3")
-    if NP.plates.nameplate3 then fail("friendly units must not get an enemy plate in phase 1") end
-    if base.UnitFrame._alpha ~= 1 then fail("friendly handoff must restore Blizzard art") end
+    local plate = NP.plates.nameplate3
+    if not plate then fail("friendly units must reach BuildEnemyPlate") end
+    if plate.npType ~= "friendly" then fail("a non-attackable unit must resolve types.friendly") end
+    if base.UnitFrame._alpha ~= 0 then fail("the friendly plate must keep Blizzard art suppressed") end
+    FireRemoved("nameplate3")
+    if base.UnitFrame._alpha ~= 1 then fail("REMOVED must hand Blizzard its art back") end
 end)
 
 ---------------------------------------------------------------------------

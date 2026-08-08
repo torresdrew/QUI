@@ -19,7 +19,7 @@ f:close()
 
 -- Isolate the friendly-nameplate block: from the section comment to the
 -- closing of its `do ... end`.
-local blockStart = src:find("-- Friendly Player/NPC Nameplates", 1, true)
+local blockStart = src:find("local hidePlayers = settings.hideFriendlyPlayerNameplates", 1, true)
 if not blockStart then fail("friendly nameplate section comment not found") end
 local block = src:sub(blockStart, blockStart + 2200)
 

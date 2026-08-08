@@ -37,19 +37,19 @@ local loadchunk = loadstring or load
 
 -- ---------------------------------------------------------------------------
 -- File enumeration via git ls-files (same scope as the global-assignment
--- ratchet). QUI_OptionsSearch* caches are generated flat data with trivial
--- local counts; skip them to keep this test fast.
+-- ratchet). The generated search index used to live in its own folder and was
+-- skipped by prefix; it is QUI_Options/search_cache.lua now and stays in
+-- scope — it declares two file-scope locals, so it costs nothing to check.
 -- ---------------------------------------------------------------------------
 local function listInScopeFiles()
     local files = {}
     local p = io.popen and io.popen('git ls-files "*.lua"')
     if p then
         for line in p:lines() do
-            if (line:match("^core/")
-                    or line:match("^modules/")
-                    or line:match("^QUI_[^/]+/")
-                    or line == "init.lua")
-                and not line:match("^QUI_OptionsSearch")
+            if line:match("^core/")
+                or line:match("^modules/")
+                or line:match("^QUI_[^/]+/")
+                or line == "init.lua"
             then
                 files[#files + 1] = line
             end

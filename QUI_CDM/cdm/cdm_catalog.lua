@@ -1,19 +1,12 @@
 local _, ns = ...
 
----------------------------------------------------------------------------
--- CDM Catalog
---
--- Non-combat catalog facade for Blizzard Cooldown Viewer data. Runtime
--- modules should consume this module instead of scattering
--- C_CooldownViewer walks across render/update code.
----------------------------------------------------------------------------
-
 local CDMCatalog = {}
 ns.CDMCatalog = CDMCatalog
 
 local ipairs = ipairs
 local pairs = pairs
 local type = type
+local tonumber = tonumber
 local tostring = tostring
 local table_sort = table.sort
 
@@ -34,32 +27,14 @@ local CATEGORY_FOR_KIND = {
     trackedBar  = 3,
 }
 
-local KIND_FOR_CATEGORY = {
-    [0] = "essential",
-    [1] = "utility",
-    [2] = "buff",
-    [3] = "trackedBar",
-}
-
-local COOLDOWN_CATEGORIES = { 0, 1 }   -- spell cooldowns (dormancy/identity) — keep narrow
+local COOLDOWN_CATEGORIES = { 0, 1 }
 local BUILTIN_COOLDOWN_PICKER_CATEGORIES = {
     essential = { 0, 1 },
     utility = { 1, 0 },
 }
--- Equipped-item / spec-agnostic categories (12.x): SpecAgnosticEssential(5),
--- SpecAgnosticTracked(6), EquipSlotEssential(7), EquipSlotTracked(8). Item-ness is
--- decided per entry by cdInfo.equipSlot, not by category. Picker unions drive the
--- composer "Blizzard CDM" tab; the spell-only groups above stay narrow so item
--- on-use spells never pollute spell dormancy/identity.
 local PICKER_COOLDOWN_CATEGORIES = { 0, 1, 5, 7 }
 local PICKER_AURA_CATEGORIES = { 2, 3, 6, 8 }
 local ALL_RENDERED_CATEGORIES = { 0, 1, 2, 3, 5, 6, 7, 8 }
--- Blizzard spell-category consumables (mirrors spellCategoryMetadataLookup in
--- FrameXML CooldownViewerItemData.lua). name is English; localized at emit via
--- ns.L. icon strings are Blizzard's EXACT values (yes, "Warlock_ Healthstone"
--- has a space) -- the category icon always wins on the native frame
--- (GetSpellTexture returns it first), so composer cells + preview icons must
--- use the same strings to match the runtime render.
 local CONSUMABLE_CATEGORY_META = {
     [4]    = { name = "Combat Potion", icon = "Interface/ICONS/INV_POTION_114" },
     [30]   = { name = "Health Potion", icon = "Interface/ICONS/INV_POTION_54" },
@@ -67,20 +42,8 @@ local CONSUMABLE_CATEGORY_META = {
 }
 local BLIZZARD_CDM_ENTRY_SOURCE = "blizzardCDM"
 
-function CDMCatalog.GetCategoryForKind(kind)
-    return CATEGORY_FOR_KIND[kind]
-end
-
--- Consumable spell-category display meta (icon + English name) for
--- consumable-typed entries (entry.id = spellCategoryID). Shared by the
--- composer picker cells, entry rows, and the resolvers' entry-texture path so
--- every surface renders the same icon as Blizzard's native frame.
 function CDMCatalog.GetConsumableCategoryMeta(catID)
     return CONSUMABLE_CATEGORY_META[catID]
-end
-
-function CDMCatalog.GetKindForCategory(category)
-    return KIND_FOR_CATEGORY[category]
 end
 
 function CDMCatalog.IsUsableID(id)
@@ -217,13 +180,6 @@ function CDMCatalog.GetTrackedCategorySet(category, allowUnlearned)
             return nil, false
         end
 
-        -- Cold-boot taint gate (see cdm_index BuildOrderedMaps for the full
-        -- story): GetOrderedCooldownIDsForCategory lazily BUILDS the
-        -- provider's shared displayData cache, and building it on QUI's
-        -- stack taints the cooldownInfo/order tables Blizzard's secure item
-        -- mint reads -- every buff item is then born inactive for the
-        -- session. Read the memo fields RAW (never via getters) and report
-        -- not-ready until a secure consumer has built the cache.
         if provider.displayDataDirty or provider.displayData == nil then
             return nil, false
         end
@@ -280,24 +236,6 @@ local function SelectPreferredSpellID(info, isAuraCategory)
     return nil
 end
 
--- Persistent (catalog/entry) identity spell id for a cooldown slot.
---
--- SelectPreferredSpellID is display-oriented: it prefers the live
--- info.overrideSpellID so the icon shows the current override art. That id is
--- wrong for *identity* when the override is a TRANSIENT PROC override — e.g.
--- Hammer of Light (427453) overriding Wake of Ashes (255647) on a Light's
--- Guidance proc. The base ability stays independently learned while the proc
--- is live, so keying identity off the override makes the base drop out of the
--- learned-cooldown set every proc (the live icon goes dormant / disappears)
--- and surfaces the proc spell as an "unlearned" phantom entry in the composer.
---
--- A PERMANENT TALENT override is the opposite: it converts the base away, so
--- the base is no longer IsSpellKnown and the override id is the correct
--- surviving identity (the Death Charge / Augmentation conversion cases the
--- learned-preferred set exists to handle).
---
--- Discriminate on whether the base spellID is still independently known. Only
--- meaningful for cooldown categories; aura categories keep SelectPreferredSpellID.
 local function SelectPersistentSpellID(info)
     if not info then return nil end
     local baseSid = info.spellID
@@ -309,8 +247,6 @@ local function SelectPersistentSpellID(info)
             return baseSid
         end
     end
-    -- Base not independently known (talent conversion) -> the override id is
-    -- the surviving identity.
     if CDMCatalog.IsUsableID(info.overrideSpellID) then
         return info.overrideSpellID
     end
@@ -340,11 +276,6 @@ local function AddCooldownInfoFamilyIDs(outSet, info)
     end
 end
 
--- Current-loadout knownness proves class applicability immediately. For an
--- unlearned row, ask the player spellbook with hidden/future/off-spec lanes
--- included. A definitive miss across the entire CDM family means the row is
--- foreign to this class; nil means the spellbook is not ready, so callers
--- retain the row conservatively.
 local function CooldownInfoAppliesToPlayerClass(info)
     if not info then return nil end
     if info.isKnown == true then return true end
@@ -393,6 +324,70 @@ local function ResolveContainerCategories(containerKey, containerType)
     return ALL_RENDERED_CATEGORIES, false
 end
 
+local BUILTIN_CONTAINER_TYPES = {
+    essential   = "cooldown",
+    utility     = "cooldown",
+    buff        = "aura",
+    trackedBar  = "auraBar",
+}
+
+local function ResolveContainerType(containerKey)
+    local Shared = ns.CDMShared
+    if Shared and Shared.GetContainerType then
+        local containerType = Shared.GetContainerType(containerKey)
+        if containerType then
+            return containerType
+        end
+    end
+    if BUILTIN_CONTAINER_TYPES[containerKey] then
+        return BUILTIN_CONTAINER_TYPES[containerKey]
+    end
+    return "cooldown"
+end
+
+local function GetCooldownRowLimits(db)
+    local rows = {}
+    if type(db) ~= "table" then return rows end
+    for r = 1, 3 do
+        local rowData = db["row" .. r]
+        local iconCount = rowData and tonumber(rowData.iconCount)
+        if iconCount and iconCount > 0 then
+            rows[#rows + 1] = { rowNum = r, max = iconCount }
+        end
+    end
+    return rows
+end
+
+function CDMCatalog.AssignCooldownRowsByCapacity(entries, containerKey)
+    if type(entries) ~= "table" or ResolveContainerType(containerKey) ~= "cooldown" then
+        return entries
+    end
+
+    local Shared = ns.CDMShared
+    local db = Shared and Shared.GetContainerDB and Shared.GetContainerDB(containerKey)
+    local rows = GetCooldownRowLimits(db)
+    if #rows == 0 then return entries end
+
+    local rowIdx = 1
+    local rowUsed = 0
+    for _, entry in ipairs(entries) do
+        if type(entry) == "table" then
+            local row = rows[rowIdx]
+            if row and rowUsed < row.max then
+                entry.row = row.rowNum
+                rowUsed = rowUsed + 1
+                if rowUsed >= row.max then
+                    rowIdx = rowIdx + 1
+                    rowUsed = 0
+                end
+            else
+                entry.row = nil
+            end
+        end
+    end
+    return entries
+end
+
 function CDMCatalog.SeedFromBlizzard(containerKind)
     local category = CATEGORY_FOR_KIND[containerKind]
     if not category then return {}, false end
@@ -409,8 +404,6 @@ function CDMCatalog.SeedFromBlizzard(containerKind)
         if not info then
             missingInfo = true
         elseif info.equipSlot then
-            -- Categorized trinket/equipped item: seed item-typed so the re-anchor
-            -- engine claims its Blizzard frame (CDMIndex.GetByEquipSlot).
             local slot = info.equipSlot
             local key = "slot:" .. slot
             if not seen[key] then
@@ -422,8 +415,6 @@ function CDMCatalog.SeedFromBlizzard(containerKind)
                 }
             end
         elseif info.spellCategoryID then
-            -- Categorized consumable (potion/healthstone): seed by spell category
-            -- so the re-anchor engine claims its Blizzard frame (GetByCategory).
             local catID = info.spellCategoryID
             local key = "consumable:" .. catID
             if not seen[key] then
@@ -450,7 +441,12 @@ function CDMCatalog.SeedFromBlizzard(containerKind)
     if missingInfo then
         return {}, false
     end
-    return entries, ready == true
+
+    local isReady = ready == true
+    if isReady then
+        CDMCatalog.AssignCooldownRowsByCapacity(entries, containerKind)
+    end
+    return entries, isReady
 end
 
 local function AppendAuraIDs(map, key, auraIDs)
@@ -569,18 +565,6 @@ function CDMCatalog.RebuildBlizzardCatalogMaps(spellToCDID, inCooldowns, inAuras
     return true
 end
 
--- Learned/active cooldown catalog signal for dormancy classification.
---
--- _spellInCDMCooldowns (built above with allowUnlearned=TRUE) is a stable
--- superset that never drops a spell once the spec has ever known it, so it
--- cannot answer "is this still a live cooldown right now." When a talent
--- converts an active ability into a passive (different spell ID), the old
--- active ID lingers in that superset forever. This set instead collects the
--- PREFERRED spell id of each LEARNED cooldown slot (allowUnlearned=FALSE),
--- so the converted-away active ID drops out and the slot's new preferred id
--- (the passive / override target) takes its place. A blizzardCDM cooldown
--- entry whose id is absent here is dormant. Cooldown categories only (0,1);
--- aura families keep their own membership path.
 function CDMCatalog.RebuildCooldownLearnedPreferredIDs(outSet)
     if type(outSet) ~= "table" then return false end
     if not HasCooldownViewerAPI() then return false end
@@ -591,9 +575,6 @@ function CDMCatalog.RebuildCooldownLearnedPreferredIDs(outSet)
             for _, cdID in ipairs(ids) do
                 local info = CDMCatalog.GetCooldownInfo(cdID)
                 if info then
-                    -- Persistent identity (not the live display override): a
-                    -- proc override must not evict its still-learned base from
-                    -- the learned set (else the base icon goes dormant on proc).
                     local sid = SelectPersistentSpellID(info)
                     if CDMCatalog.IsUsableID(sid) then
                         outSet[sid] = true
@@ -605,16 +586,6 @@ function CDMCatalog.RebuildCooldownLearnedPreferredIDs(outSet)
     return true
 end
 
--- Current-spec aura-family membership for dormancy classification.
---
--- RebuildBlizzardCatalogMaps intentionally walks allowUnlearned=TRUE so the
--- picker and saved snapshots can retain talent/loadout choices. That superset
--- can also contain PTR rows from another class, though, and therefore cannot
--- answer whether a blizzardCDM aura is valid for the current character. This
--- set walks the same aura categories with allowUnlearned=FALSE and records all
--- spell identities attached to each learned row. Keeping the whole family
--- (base, override, tooltip aura, and linked auras) preserves older snapshots
--- whose stored identity differs from today's preferred tooltip identity.
 function CDMCatalog.RebuildAuraLearnedFamilyIDs(outSet)
     if type(outSet) ~= "table" then return false end
     if not HasCooldownViewerAPI() then return false end
@@ -638,10 +609,29 @@ function CDMCatalog.RebuildAuraLearnedFamilyIDs(outSet)
     return ready
 end
 
--- Full current-class spell family used to exclude foreign PTR/stale-profile
--- rows entirely. Unlike the learned aura set above, this walks
--- allowUnlearned=true and accepts future/off-spec player-spellbook entries, so
--- valid same-class talent/loadout choices remain eligible for Dormant status.
+function CDMCatalog.RebuildTrackedDisplayFamilyIDs(iconSet, barSet)
+    if type(iconSet) ~= "table" or type(barSet) ~= "table" then return false end
+    if not HasCooldownViewerAPI() then return false end
+
+    local ready = true
+    for category, outSet in pairs({ [2] = iconSet, [3] = barSet }) do
+        local ids = CDMCatalog.GetTrackedCategorySet(category, true)
+        if not ids then
+            ready = false
+        else
+            for _, cdID in ipairs(ids) do
+                local info = CDMCatalog.GetCooldownInfo(cdID)
+                if not info then
+                    ready = false
+                elseif not info.equipSlot and not info.spellCategoryID then
+                    AddCooldownInfoFamilyIDs(outSet, info)
+                end
+            end
+        end
+    end
+    return ready
+end
+
 function CDMCatalog.RebuildClassApplicableSpellIDs(outSet)
     if type(outSet) ~= "table" then return false end
     if not HasCooldownViewerAPI() then return false end
@@ -825,11 +815,4 @@ function CDMCatalog.GetOrderedSpellMap()
         return ns.CDMIndex.GetOrderedSpellMap()
     end
     return {}
-end
-
-function CDMCatalog.GetIndexEntry(spellID)
-    if ns.CDMIndex and ns.CDMIndex.Get then
-        return ns.CDMIndex.Get(spellID)
-    end
-    return nil
 end

@@ -1,47 +1,22 @@
---[[
-    QUI Tooltip Provider
-    Abstraction layer for the tooltip engine.
-    Load order: tooltip_provider.lua → tooltip.lua
-    Engine files call RegisterEngine() at load time.
-    Provider calls Initialize() on the selected engine after PLAYER_LOGIN.
-]]
-
 local ADDON_NAME, ns = ...
 local Helpers = ns.Helpers
 local GetCore = Helpers.GetCore
 
----------------------------------------------------------------------------
--- PROVIDER STATE
----------------------------------------------------------------------------
 local TooltipProvider = {
-    engines = {},           -- name → engine table
-    activeEngine = nil,     -- the initialized engine table
-    activeEngineName = nil, -- "default"
+    engines = {},
+    activeEngine = nil,
+    activeEngineName = nil,
     initialized = false,
 }
 
----------------------------------------------------------------------------
--- ENGINE REGISTRATION
----------------------------------------------------------------------------
-
---- Register a tooltip engine implementation.
---- @param name string  Engine identifier ("default")
---- @param engine table  Table with contract methods (Initialize, Refresh, etc.)
 function TooltipProvider:RegisterEngine(name, engine)
     self.engines[name] = engine
 end
 
---- Get the name of the active engine (or nil if not yet initialized).
---- @return string|nil
 function TooltipProvider:GetActiveEngineName()
     return self.activeEngineName
 end
 
----------------------------------------------------------------------------
--- SHARED UTILITIES (engine-agnostic)
----------------------------------------------------------------------------
-
--- Locals for performance
 local GameTooltip = GameTooltip
 local UIParent = UIParent
 local GetCursorPosition = GetCursorPosition
@@ -87,7 +62,6 @@ local function IsOPieFrame(frame)
         if not frame.GetParent then
             break
         end
-        -- GetMouseFoci() can return frames (e.g. PingListenerFrame) whose GetParent errors with "bad self".
         local ok, parent = pcall(frame.GetParent, frame)
         if not ok or not parent then
             break
@@ -98,12 +72,6 @@ local function IsOPieFrame(frame)
     return false
 end
 
----------------------------------------------------------------------------
--- Cached UI Scale
--- GetEffectiveScale() can return secret values during combat.
--- Cache the scale on UI_SCALE_CHANGED and use the cached value for
--- cursor positioning arithmetic. This is the MidnightTooltip pattern.
----------------------------------------------------------------------------
 local cachedUIScale = 1
 
 local function UpdateCachedUIScale()
@@ -126,17 +94,8 @@ scaleEventFrame:SetScript("OnEvent", function()
     UpdateCachedUIScale()
 end)
 
----------------------------------------------------------------------------
--- Mouse Focus Detection
--- PERFORMANCE: Cached to prevent repeated GetMouseFoci() calls with @mouseover macros
----------------------------------------------------------------------------
 local cachedMouseFrame = nil
 local cachedMouseFrameTime = 0
--- Cache TTL must be short: long staleness causes IsTooltipOwnerHovered to keep
--- returning true after the cursor leaves the owner, which masks hideDelay=0
--- and makes "instant hide" look laggy. 50ms still coalesces the multiple
--- GetMouseFoci calls within a single visibility-check tick (those happen
--- microseconds apart) without carrying focus across ticks.
 local MOUSE_FRAME_CACHE_TTL = 0.05
 local contextCache = Helpers.CreateStateTable()
 local CONTEXT_CACHE_TTL = 0.12
@@ -181,7 +140,6 @@ local function IsFrameOrChildOf(frame, ancestor)
         if not frame.GetParent then
             break
         end
-        -- GetMouseFoci() can return frames whose GetParent errors with "bad self".
         local ok, parent = pcall(frame.GetParent, frame)
         if not ok or not parent or parent == frame then
             break
@@ -199,15 +157,10 @@ function TooltipProvider:IsFrameBlockingMouse(ignoredFrame)
     if ignoredFrame and IsFrameOrChildOf(focus, ignoredFrame) then return false end
     if focus == WorldFrame then return false end
     if IsOPieFrame(focus) then return false end
-    -- Some frames (e.g. PingListenerFrame) are forbidden objects
-    -- where IsVisible() cannot be called from addon code.
     local ok, visible = pcall(focus.IsVisible, focus)
     return ok and visible
 end
 
----------------------------------------------------------------------------
--- Settings Cache
----------------------------------------------------------------------------
 local cachedSettings = nil
 
 function TooltipProvider:GetSettings()
@@ -220,9 +173,6 @@ function TooltipProvider:InvalidateCache()
     cachedSettings = nil
 end
 
----------------------------------------------------------------------------
--- Owner Alpha Detection
----------------------------------------------------------------------------
 local FADED_ALPHA_THRESHOLD = 0.5
 
 function TooltipProvider:IsOwnerFadedOut(owner)
@@ -231,8 +181,6 @@ function TooltipProvider:IsOwnerFadedOut(owner)
     if IsOPieFrame(owner) then return false end
     local ok, alpha = pcall(owner.GetEffectiveAlpha, owner)
     if not ok then return false end
-    -- Fade suppression only ever HIDES tooltips, so an unreadable (secret)
-    -- alpha must fail open — an explicit reject here, not a folded comparison.
     if Helpers.IsSecretValue(alpha) then
         return false -- @secret-policy: treat-unknown-alpha-as-visible
     end
@@ -325,11 +273,6 @@ local function GetActionSlot(frame)
         return nil
     end
 
-    -- The secure template overloads the "action" attribute: for
-    -- type="action" it is a numeric slot, but raidtarget/worldmarker
-    -- buttons (e.g. QUI's own marker bar) carry verbs like "toggle" /
-    -- "set" / "clear". GetActionInfo only accepts numeric slots, so
-    -- non-numeric values must be treated as "not an action button".
     if frame.GetAttribute then
         local ok, actionSlot = pcall(frame.GetAttribute, frame, "action")
         if ok and actionSlot and not Helpers.IsSecretValue(actionSlot) then
@@ -405,10 +348,6 @@ local function IsUnitFrameName(frame, name)
         strmatch(name, "^QUI_.*Frame$")
 end
 
----------------------------------------------------------------------------
--- Context Detection
--- Determines what triggered the tooltip based on owner frame
----------------------------------------------------------------------------
 function TooltipProvider:GetTooltipContext(owner)
     if not owner then return "npcs" end
     if owner.IsForbidden and owner:IsForbidden() then return "npcs" end
@@ -513,9 +452,6 @@ function TooltipProvider:GetTooltipContext(owner)
     return nil
 end
 
----------------------------------------------------------------------------
--- Modifier Key Check
----------------------------------------------------------------------------
 function TooltipProvider:IsModifierActive(modKey)
     if modKey == "SHIFT" then return IsShiftKeyDown() end
     if modKey == "CTRL" then return IsControlKeyDown() end
@@ -523,13 +459,10 @@ function TooltipProvider:IsModifierActive(modKey)
     return false
 end
 
----------------------------------------------------------------------------
--- Visibility Logic
----------------------------------------------------------------------------
 function TooltipProvider:ShouldShowTooltip(context)
     local settings = self:GetSettings()
     if not settings or not settings.enabled then
-        return true  -- Module disabled = default behavior
+        return true
     end
 
     if settings.hideInCombat and InCombatLockdown() then
@@ -555,9 +488,6 @@ function TooltipProvider:ShouldShowTooltip(context)
     end
 end
 
----------------------------------------------------------------------------
--- Cursor Anchor Config
----------------------------------------------------------------------------
 local CURSOR_ANCHOR_POINTS = {
     TOPLEFT = true, TOP = true, TOPRIGHT = true,
     LEFT = true, CENTER = true, RIGHT = true,
@@ -585,8 +515,6 @@ function TooltipProvider:PositionTooltipAtCursor(tooltip, settings)
     local cursorX, cursorY = GetCursorPosition()
     if not cursorX or not cursorY then return end
 
-    -- Use cached scale (updated on UI_SCALE_CHANGED) to avoid calling
-    -- GetEffectiveScale() during combat where it may return secret values.
     local core = GetCore and GetCore()
     local scale = cachedUIScale
     if core and type(core.uiscale) == "number" and core.uiscale > 0 then
@@ -599,10 +527,6 @@ function TooltipProvider:PositionTooltipAtCursor(tooltip, settings)
     local x = (cursorX / scale) + offsetX
     local y = (cursorY / scale) + offsetY
 
-    -- Snap the final tooltip rect to the pixel grid so the existing 1px border
-    -- math in the skinning layer does not land on fractional screen coordinates.
-    -- Use the cached UIParent scale path here rather than frame:GetEffectiveScale()
-    -- so cursor anchoring stays combat-safe.
     if core and core.GetPixelPerfectScale and scale > 0 then
         local px = core:GetPixelPerfectScale() / scale
         if px > 0 then
@@ -615,29 +539,18 @@ function TooltipProvider:PositionTooltipAtCursor(tooltip, settings)
     tooltip:SetPoint(anchor, UIParent, "BOTTOMLEFT", x, y)
 end
 
----------------------------------------------------------------------------
--- TOOLTIP ANCHOR (fixed position when not cursor-anchored)
----------------------------------------------------------------------------
-
 local tooltipAnchor = CreateFrame("Frame", "QUI_TooltipAnchor", UIParent)
 tooltipAnchor:SetSize(200, 40)
 tooltipAnchor:SetPoint("BOTTOMRIGHT", UIParent, "BOTTOMRIGHT", -200, 100)
 tooltipAnchor:SetClampedToScreen(true)
 
---- Position the tooltip at the fixed anchor frame.
 function TooltipProvider:PositionTooltipAtAnchor(tooltip, settings)
     if not tooltip then return end
     tooltip:ClearAllPoints()
     tooltip:SetPoint("BOTTOMRIGHT", tooltipAnchor, "BOTTOMRIGHT", 0, 0)
 end
 
---- Legacy position helpers removed — frameAnchoring system handles positioning.
---- RestoreAnchorPosition kept as no-op for any remaining callers.
 function TooltipProvider:RestoreAnchorPosition() end
-
----------------------------------------------------------------------------
--- INITIALIZATION
----------------------------------------------------------------------------
 
 function TooltipProvider:InitializeEngine()
     if self.initialized then return end
@@ -666,26 +579,9 @@ function TooltipProvider:InitializeEngine()
         engine:Initialize()
     end
 
-    -- Restore saved tooltip anchor position
     self:RestoreAnchorPosition()
 end
 
----------------------------------------------------------------------------
--- INIT TRIGGER
----------------------------------------------------------------------------
--- Initialize the selected engine after login. NOT gated on this addon's own
--- ADDON_LOADED: post-split that "QUI_QoL" self-event isn't delivered when the
--- core eager-LoadAddOn's the module from OnEnable, so the cursor-follow / anchor
--- hooks were never installed (anchorToCursor did nothing).
---
--- Two subtleties drive the shape below:
---   1. ns.WhenLoggedIn fires the callback IMMEDIATELY when already logged in
---      (init.lua) — which is the eager-LOD case.
---   2. tooltip.lua registers the "default" engine LATER in the TOC
---      (tooltip_provider precedes it), so initializing inline here runs before
---      the engine exists and InitializeEngine bails (no engine -> cursor-anchor
---      stays dead). Defer one frame so the whole addon (incl. tooltip.lua) has
---      finished loading and every engine is registered.
 local function InitTooltipEngineDeferred()
     if C_Timer and C_Timer.After then
         C_Timer.After(0, function() TooltipProvider:InitializeEngine() end)
@@ -697,9 +593,6 @@ if ns.WhenLoggedIn then
     ns.WhenLoggedIn(InitTooltipEngineDeferred)
 end
 
----------------------------------------------------------------------------
--- GLOBAL REFRESH
----------------------------------------------------------------------------
 ns.QUI_RefreshTooltips = function()
     TooltipProvider:InvalidateCache()
     if TooltipProvider.activeEngine and TooltipProvider.activeEngine.Refresh then
@@ -707,7 +600,4 @@ ns.QUI_RefreshTooltips = function()
     end
 end
 
----------------------------------------------------------------------------
--- NAMESPACE EXPORT
----------------------------------------------------------------------------
 ns.TooltipProvider = TooltipProvider

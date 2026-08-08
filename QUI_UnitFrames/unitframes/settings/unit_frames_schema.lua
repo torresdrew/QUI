@@ -48,8 +48,6 @@ local UNIT_DISPLAY_NAMES = {
     focus = ns.L["Focus"],
     boss = ns.L["Boss"],
 }
--- Publish the unit -> display-name map. This file loads before the settings
--- model in QUI_Options.toc, so the model aliases this single source of truth.
 ns.QUI_UnitFramesUnitDisplayNames = UNIT_DISPLAY_NAMES
 local UNIT_SURFACE_TABS = {
     ["Frame"] = "frame",
@@ -103,8 +101,6 @@ local function GetGUI()
     return QUI and QUI.GUI or nil
 end
 
--- Dim a companion settings cell when a higher-priority color toggle is on
--- (the custom-color row greys to 0.4 alpha while the override is active).
 local function SetCompanionCellDim(cell, dimmed)
     cell:SetAlpha(dimmed and 0.4 or 1.0)
 end
@@ -189,14 +185,6 @@ local function UnitHasHostilityColors(unitKey)
         or unitKey == "boss"
 end
 
--- Static reaction of this unit frame type toward the player, for the shared
--- aura editor's polarity hint (Wave 4 Task 2c, QUI_Options/aura_elements_
--- editor.lua caps.unitPolarity). Only unit types whose UnitCanAssist verdict
--- can NEVER flip are given a value: player/pet are always the player's own
--- (assistable); boss encounters are always enemies (non-assistable).
--- target/focus/targettarget are deliberately omitted (nil) — their reaction
--- depends entirely on the player's live target, so a static hint there would
--- be wrong about half the time.
 local function UnitPolarity(unitKey)
     if unitKey == "player" or unitKey == "pet" then
         return "friendly"
@@ -378,8 +366,6 @@ local BOSS_GROW_OPTIONS = {
 
 local BOSS_GROW_DIRECTIONS_VALID = { UP = true, DOWN = true, LEFT = true, RIGHT = true }
 
--- Refresh boss frames after a layout setting changes: rebuild the frames,
--- re-chain boss2-5 off boss1, and resync the grouped layout-mode mover.
 local function RefreshBossLayout()
     RefreshUnitFrames()
     local unitFrames = ns.QUI_UnitFrames
@@ -407,7 +393,8 @@ local function SetSearchContext(searchContext)
 end
 
 local function CreateUnitSearchContext(unitKey, subTabName)
-    return {
+    local SearchRoute = ns.Settings and ns.Settings.SearchRoute
+    local searchContext = {
         tabIndex = 5,
         tabName = "Unit Frames",
         subTabIndex = UNIT_SUBTAB_INDEX[unitKey] or 2,
@@ -418,6 +405,10 @@ local function CreateUnitSearchContext(unitKey, subTabName)
         surfaceTabKey = UNIT_SURFACE_TABS[subTabName],
         surfaceUnitKey = unitKey,
     }
+    if SearchRoute and type(SearchRoute.Apply) == "function" then
+        return SearchRoute.Apply(searchContext)
+    end
+    return searchContext
 end
 
 local function PrepareSectionHost(sectionHost, ctx)
@@ -620,36 +611,6 @@ local function RenderEnableSection(sectionHost, ctx)
     end)
 
     return builder.Height(0)
-end
-
--- Pointer row: the Auras tab used to live on this surface (TAB_DEFINITIONS
--- key "icons", unit_frames_model.lua); aura config now lives on the Auras
--- hub tile (tiles/auras.lua, tabIndex 21, subTabIndex 2 = Unit Frames).
--- RenderIconsTab itself is untouched -- the hub's Unit Frames sub-page
--- (core/settings/content/auras_unit_page.lua) still calls it directly.
-local function RenderAurasHubPointerSection(sectionHost, ctx)
-    local gui = GetGUI()
-    local optionsAPI = GetOptionsAPI()
-    local db = ResolveGeneralDB()
-    if not gui or not optionsAPI or not db then
-        return nil
-    end
-
-    local builder = CreateSectionBuilder(sectionHost, ctx, GENERAL_SEARCH_CONTEXT)
-    if not builder then
-        return nil
-    end
-
-    local card = builder.Card()
-    local openButton = gui:CreateButton(card.frame, ns.L["Open Auras"], 140, 26, function()
-        if gui.NavigateTo then
-            gui:NavigateTo(21, 2)
-        end
-    end)
-    card.AddRow(optionsAPI.BuildSettingRow(card.frame, ns.L["Aura settings have moved to the Auras section."], openButton))
-    builder.CloseCard(card)
-
-    return builder.Height()
 end
 
 local function RenderDefaultColorsSection(sectionHost, ctx)
@@ -1176,8 +1137,6 @@ local function RenderFrameAppearanceSection(sectionHost, ctx)
         optionsAPI.BuildSettingRow(card.frame, ns.L["Bar Texture"], textureDropdown)
     )
 
-    -- Per-frame border color (prefix "" -> unit.unitDB.borderColorSource/borderColor).
-    -- Same keys exposed in Appearance > Border Coloring > Unit Frames > "Frame".
     if ns.QUI_BorderControl then
         local borderSrcW, borderColorW = ns.QUI_BorderControl.Attach(
             gui, card.frame, unit.unitDB, "", RefreshUnitFrames,
@@ -1195,8 +1154,6 @@ local function RenderFrameAppearanceSection(sectionHost, ctx)
     end
 
     if unitKey == "boss" then
-        -- Seed the directional spacing keys from the legacy single spacing so
-        -- existing profiles keep their customized boss spacing.
         local legacySpacing = unit.unitDB.spacing or 35
         if not BOSS_GROW_DIRECTIONS_VALID[unit.unitDB.growDirection] then
             unit.unitDB.growDirection = "DOWN"
@@ -1692,7 +1649,6 @@ local function RenderCastbarSection(sectionHost, ctx)
 
     local refresh = RefreshUnitFrames
 
-    -- General -----------------------------------------------------------
     builder.Header(ns.L["General"])
     local generalCard = builder.Card()
     local enableCheckbox = gui:CreateFormCheckbox(generalCard.frame, nil, "enabled", castDB, refresh, {
@@ -1802,7 +1758,6 @@ local function RenderCastbarSection(sectionHost, ctx)
 
     builder.CloseCard(generalCard)
 
-    -- GCD (player) ------------------------------------------------------
     if unitKey == "player" then
         builder.Header(ns.L["GCD"])
         local gcdCard = builder.Card()
@@ -1830,7 +1785,6 @@ local function RenderCastbarSection(sectionHost, ctx)
         builder.CloseCard(gcdCard)
     end
 
-    -- Size --------------------------------------------------------------
     builder.Header(ns.L["Size"])
     local sizeCard = builder.Card()
     local widthSlider = gui:CreateFormSlider(sizeCard.frame, nil, 50, 2000, 1, "width", castDB, refresh, { deferOnDrag = true }, {
@@ -1861,7 +1815,6 @@ local function RenderCastbarSection(sectionHost, ctx)
     sizeCard.AddRow(optionsAPI.BuildSettingRow(sizeCard.frame, ns.L["Castbar Preview"], previewCheckbox))
     builder.CloseCard(sizeCard)
 
-    -- Channel Ticks (skip boss/pet) ------------------------------------
     if unitKey ~= "boss" and unitKey ~= "pet" then
         builder.Header(ns.L["Channel Ticks"])
         local tickCard = builder.Card()
@@ -1894,7 +1847,6 @@ local function RenderCastbarSection(sectionHost, ctx)
         builder.CloseCard(tickCard)
     end
 
-    -- Text & Display ---------------------------------------------------
     builder.Header(ns.L["Text & Display"])
     local textCard = builder.Card()
     local fontSizeSlider = gui:CreateFormSlider(textCard.frame, nil, 8, 24, 1, "fontSize", castDB, refresh, { deferOnDrag = true }, {
@@ -1909,7 +1861,6 @@ local function RenderCastbarSection(sectionHost, ctx)
     )
     builder.CloseCard(textCard)
 
-    -- Element Positioning: Icon ----------------------------------------
     builder.Header(ns.L["Icon Positioning"])
     local iconCard = builder.Card()
     local iconAnchorDropdown = gui:CreateFormDropdown(iconCard.frame, nil, optionsAPI.NINE_POINT_ANCHOR_OPTIONS, "iconAnchor", castDB, refresh, {
@@ -1929,7 +1880,6 @@ local function RenderCastbarSection(sectionHost, ctx)
     iconCard.AddRow(optionsAPI.BuildSettingRow(iconCard.frame, ns.L["Icon Border Size"], iconBorderSlider))
     builder.CloseCard(iconCard)
 
-    -- Spell Name Text --------------------------------------------------
     builder.Header(ns.L["Spell Name Text"])
     local spellTextCard = builder.Card()
     local spellAnchorDropdown = gui:CreateFormDropdown(spellTextCard.frame, nil, optionsAPI.NINE_POINT_ANCHOR_OPTIONS, "spellTextAnchor", castDB, refresh, {
@@ -1955,7 +1905,6 @@ local function RenderCastbarSection(sectionHost, ctx)
     )
     builder.CloseCard(spellTextCard)
 
-    -- Time Remaining Text ----------------------------------------------
     builder.Header(ns.L["Time Remaining Text"])
     local timeTextCard = builder.Card()
     local timeAnchorDropdown = gui:CreateFormDropdown(timeTextCard.frame, nil, optionsAPI.NINE_POINT_ANCHOR_OPTIONS, "timeTextAnchor", castDB, refresh, {
@@ -1981,7 +1930,6 @@ local function RenderCastbarSection(sectionHost, ctx)
     )
     builder.CloseCard(timeTextCard)
 
-    -- Empowered (player) -----------------------------------------------
     if unitKey == "player" then
         builder.Header(ns.L["Empowered Spells"])
         local empoweredCard = builder.Card()
@@ -2095,7 +2043,6 @@ local function RenderCastbarSection(sectionHost, ctx)
         end)
     end
 
-    -- Copy From Other Unit ---------------------------------------------
     local copyOptions = {}
     for _, k in ipairs({ "player", "target", "targettarget", "focus", "pet", "boss" }) do
         if k ~= unitKey then
@@ -2573,9 +2520,6 @@ local function RenderTextStanceSection(sectionHost, ctx)
     return builder.Height()
 end
 
--- Selected-row memory for the shared aura element editor mount, keyed by
--- unitKey (unit frames have no spec-bucket dimension, unlike group frames),
--- so a re-render triggered by a height change restores which row was open.
 local function GetAuraSelectedElementIndex(ctx, unitKey)
     local state = ctx and ctx.state
     local store = state and state._aurasSelectedElement
@@ -2595,9 +2539,6 @@ local function SetAuraSelectedElementIndex(ctx, unitKey, index)
     store[unitKey or "*"] = (type(index) == "number" and index) or nil
 end
 
--- Re-render just the aura section (not the whole tab) when the embedded
--- editor's height changes (element added/removed/expanded), so the section
--- sizes to match. Deferred a frame so it never re-enters mid-rebuild.
 local function ScheduleAuraSectionRepaint(ctx)
     if not ctx or type(ctx.RerenderSection) ~= "function" then
         return
@@ -2611,11 +2552,6 @@ local function ScheduleAuraSectionRepaint(ctx)
     end
 end
 
--- Single mount point for the shared aura element editor (Task 8/9): unit
--- frames store ONE unified bucket (auras.elements["*"]) holding a debuff
--- filter strip + a buff filter strip (plus any tracked icons/squares/bars the
--- user adds), so ONE editor replaces the old four inline builders (which read
--- the flat auraDB.* keys migration v50 pruned once elements shipped).
 local function RenderAuraElementsSection(sectionHost, ctx)
     local gui = GetGUI()
     local optionsAPI = GetOptionsAPI()
@@ -2663,7 +2599,6 @@ local function RenderAuraElementsSection(sectionHost, ctx)
             trackedDisplayTypes = { icon = true, square = true, bar = true },
             cancelEligible      = (unitKey == "player"),
             allowSpecOverride   = false,
-            -- Single-unit surface: no roster roles to gate on (applyToRoles hidden).
             roleGate            = false,
             defaultBucketFn     = UnitFrameAuras and UnitFrameAuras.DefaultUnitAuraBucket,
             unitPolarity        = UnitPolarity(unitKey),
@@ -2801,9 +2736,6 @@ local function BuildIconsTabFeature(unitKey)
     return feature
 end
 
--- Shared "this feature isn't available on this unit" placeholder section.
--- Returns nil when the unit DOES support the feature (caller renders the real
--- section instead); otherwise paints the message and returns the section height.
 local function RenderUnavailableSection(sectionHost, ctx, supported, surfaceName, message)
     if supported then
         return nil
@@ -3248,7 +3180,6 @@ local GENERAL_TAB_FEATURE = Schema.Feature({
         unitFrameTab = {
             sections = {
                 "enable",
-                "aurasHubPointer",
                 "defaultColors",
                 "darkMode",
                 "textColorOverrides",
@@ -3268,12 +3199,6 @@ local GENERAL_TAB_FEATURE = Schema.Feature({
             kind = "custom",
             minHeight = 42,
             render = RenderEnableSection,
-        }),
-        Schema.Section({
-            id = "aurasHubPointer",
-            kind = "custom",
-            minHeight = 70,
-            render = RenderAurasHubPointerSection,
         }),
         Schema.Section({
             id = "defaultColors",
@@ -3313,10 +3238,6 @@ local GENERAL_TAB_FEATURE = Schema.Feature({
         }),
     },
 })
-
-function UnitFramesSchema.GetGeneralTabFeature()
-    return GENERAL_TAB_FEATURE
-end
 
 function UnitFramesSchema.RenderGeneralTab(host)
     if not host then

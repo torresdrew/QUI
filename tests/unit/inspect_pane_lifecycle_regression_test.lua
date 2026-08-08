@@ -55,7 +55,7 @@ local guildGuardStart = assert(
     source:find("local function PatchInspectGuildNilGuard()", 1, true),
     "Inspect guild nil guard should exist")
 local guildGuardEnd = assert(
-    source:find("---------------------------------------------------------------------------\n-- Event frame for inspect-specific events", guildGuardStart, true),
+    source:find("local eventFrame = CreateFrame(\"Frame\")", guildGuardStart, true),
     "Inspect guild nil guard block should end before the event frame")
 local guildGuardBlock = source:sub(guildGuardStart, guildGuardEnd)
 
@@ -106,7 +106,7 @@ local layoutStart = assert(
     source:find("ApplyInspectPaneLayout = function(force)", 1, true),
     "Inspect layout entry point should exist")
 local layoutEnd = assert(
-    source:find("end\n\n---------------------------------------------------------------------------\n-- Initialize slot overlays for inspect frame", layoutStart, true),
+    source:find("local function InitializeInspectOverlays()", layoutStart, true),
     "Inspect layout block should end before overlay initialization")
 local layoutBlock = source:sub(layoutStart, layoutEnd)
 

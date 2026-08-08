@@ -1,15 +1,8 @@
---[[
-    QUI Tooltip Engine
-    Hook-based tooltip system.
-    Registers with TooltipProvider as the "default" engine.
-]]
-
 local ADDON_NAME, ns = ...
 local Helpers = ns.Helpers
-local Provider  -- resolved after provider loads
+local Provider
 local TooltipInspect
 
--- Locals for performance
 local GameTooltip = GameTooltip
 local UIParent = UIParent
 local WorldFrame = WorldFrame
@@ -19,15 +12,9 @@ local wipe = wipe
 local debugprofilestop = debugprofilestop
 local collectgarbage = collectgarbage
 
----------------------------------------------------------------------------
--- ENGINE TABLE
----------------------------------------------------------------------------
 local TooltipEngine = {}
 
----------------------------------------------------------------------------
--- Tooltip Debug Sampler
----------------------------------------------------------------------------
-local _dbgCounters, _dbgSlowLog -- forward refs for SetupDebugInstrumentation (defined after mount caches)
+local _dbgCounters, _dbgSlowLog
 local TooltipDebug = ns.QUI_TooltipDebug
 if not TooltipDebug then
     local debugCounters = {}
@@ -48,7 +35,6 @@ if not TooltipDebug then
         lastReportTime = nil,
     }
     ns.QUI_TooltipDebug = TooltipDebug
-    -- Tooltip_debugCounters / Tooltip_debugSlowLog memprobe anchor
     _dbgCounters = debugCounters
     _dbgSlowLog  = debugSlowLog
 
@@ -449,27 +435,14 @@ local function TooltipDebugEnd(dbg, name, startMS, detail, startHeapKB)
     end
 end
 
----------------------------------------------------------------------------
--- Cursor Follow State (engine-local)
----------------------------------------------------------------------------
 local cursorFollowActive = Helpers.CreateStateTable()
 local cursorFollowHooked = Helpers.CreateStateTable()
 local CURSOR_SAFETY_CHECK_INTERVAL = 0.2
 local gtCursorSafetyElapsed = CURSOR_SAFETY_CHECK_INTERVAL
 
--- TAINT SAFETY: For GameTooltip, cursor follow uses a SEPARATE watcher
--- frame instead of HookScript. HookScript on GameTooltip permanently taints
--- its dispatch tables, causing ADDON_ACTION_BLOCKED when the world map's
--- secure context (secureexecuterange) uses GameTooltip for map pins.
 local gtCursorWatcher
--- Last cursor position seen by the watcher; lets it skip the anchor math
--- on frames where the cursor hasn't moved.
 local gtCursorLastX, gtCursorLastY
 
--- Single transition point for cursor-follow state. The GameTooltip watcher
--- frame is hidden (no OnUpdate fires) whenever follow is inactive, so a
--- session that used cursor-anchoring once doesn't pay for the watcher on
--- every frame forever after.
 local function SetCursorFollowActive(tooltip, active)
     cursorFollowActive[tooltip] = active or nil
     if tooltip == GameTooltip and gtCursorWatcher then
@@ -482,10 +455,6 @@ local function SetCursorFollowActive(tooltip, active)
     end
 end
 
--- World quest / map tooltips can register a widget container on GameTooltip.
--- Re-anchoring or re-showing the tooltip from addon code while that container
--- is active can re-enter Blizzard's secure widget layout and trigger
--- LayoutFrame secret-value comparison errors.
 local function HasActiveWidgetContainer(tooltip)
     if Helpers.HasTaintedWidgetContainer then
         TooltipDebugCount("qol.widgetScan")
@@ -511,9 +480,6 @@ local function HasActiveWidgetContainer(tooltip)
 
             local shownWidgetCount = child.shownWidgetCount
             if shownWidgetCount ~= nil then
-                -- ACTION POLICY: an unreadable count is INDETERMINATE, not
-                -- "widgets present" — treat-as-widgeted keeps the layout on
-                -- the safe (non-clobbering) path.
                 if Helpers.IsSecretValue(shownWidgetCount) then
                     TooltipDebugCount("qol.widgetHit")
                     return true -- @secret-policy: keep-native-when-unknown
@@ -551,9 +517,6 @@ local function HasActiveWidgetContainer(tooltip)
     return false
 end
 
--- Quest/world map reward tooltips can also attach Blizzard MoneyFrame children
--- to GameTooltip. Re-anchoring or forcing a re-show while those are active can
--- taint Blizzard's money width math and explode in MoneyFrame_Update.
 local function HasActiveMoneyFrame(tooltip)
     if not tooltip or not tooltip.GetChildren or not tooltip.GetNumChildren then return false end
     TooltipDebugCount("qol.moneyScan")
@@ -593,14 +556,12 @@ local function EnsureCursorFollowHooks(tooltip)
     cursorFollowHooked[tooltip] = true
 
     if tooltip == GameTooltip then
-        -- Use a separate watcher frame for GameTooltip to avoid taint
         if not gtCursorWatcher then
             gtCursorWatcher = CreateFrame("Frame")
-            gtCursorWatcher:Hide()  -- parked until cursor follow activates
+            gtCursorWatcher:Hide()
             gtCursorWatcher:SetScript("OnUpdate", function(self, elapsed)
                 TooltipDebugCount("qol.cursorFrame")
                 if not cursorFollowActive[GameTooltip] then
-                    -- Self-heal: the flag was cleared without the helper.
                     self:Hide()
                     return
                 end
@@ -626,8 +587,6 @@ local function EnsureCursorFollowHooks(tooltip)
                     SetCursorFollowActive(GameTooltip, false)
                     return
                 end
-                -- Reposition only when the cursor actually moved (same gate
-                -- the reticle uses); skips the anchor math on still frames.
                 local cx, cy = GetCursorPosition()
                 if cx == gtCursorLastX and cy == gtCursorLastY then return end
                 gtCursorLastX, gtCursorLastY = cx, cy
@@ -638,7 +597,6 @@ local function EnsureCursorFollowHooks(tooltip)
         return
     end
 
-    -- Non-GameTooltip frames can safely use HookScript
     tooltip:HookScript("OnUpdate", function(self)
         if not cursorFollowActive[self] then return end
         local settings = Provider:GetSettings()
@@ -646,9 +604,6 @@ local function EnsureCursorFollowHooks(tooltip)
             cursorFollowActive[self] = nil
             return
         end
-        -- PositionTooltipAtCursor uses cached UIParent scale (updated on
-        -- UI_SCALE_CHANGED) so arithmetic is safe during combat.
-        -- GetCursorPosition returns screen coordinates, not combat-restricted data.
         Provider:PositionTooltipAtCursor(self, settings)
     end)
 
@@ -672,9 +627,6 @@ local function AnchorTooltipToCursor(tooltip, parent, settings)
     return true
 end
 
----------------------------------------------------------------------------
--- DEBOUNCE STATE
----------------------------------------------------------------------------
 local pendingSetUnitToken = 0
 local tooltipPlayerItemLevelGUID = setmetatable({}, {__mode = "k"})
 local DEFAULT_PLAYER_ILVL_BRACKETS = {
@@ -685,10 +637,8 @@ local DEFAULT_PLAYER_ILVL_BRACKETS = {
     orange = 285,
 }
 
--- Tooltip Unit Info State (target, mount, M+ rating)
 local tooltipUnitInfoState = setmetatable({}, {__mode = "k"})
 
--- Mount Name Cache
 local mountNameCache = {}
 local mountNameCacheTime = {}
 local mountIDCache = {}
@@ -706,29 +656,17 @@ local ScheduleDeferredUnitInfo
 
 local function SetupDebugInstrumentation()
     local mp = ns._memprobes or {}; ns._memprobes = mp
-    -- Tooltip_debugCounters / Tooltip_debugSlowLog memprobe anchor.
-    -- nil if ns.QUI_TooltipDebug pre-existed at load (creation block skipped;
-    -- that instance registered its own probes).
     if _dbgCounters   then mp[#mp + 1] = { name = "Tooltip_debugCounters", tbl = _dbgCounters } end
     if _dbgSlowLog    then mp[#mp + 1] = { name = "Tooltip_debugSlowLog",  tbl = _dbgSlowLog  } end
     mp[#mp + 1] = { name = "Tooltip_mountNameCache",  tbl = mountNameCache }
     mp[#mp + 1] = { name = "Tooltip_mountSpellCache", tbl = mountSpellNameCache }
 end
-if ns.DebugRegister then -- gate contract: core/debug_gate.lua
+if ns.DebugRegister then
     ns.DebugRegister(SetupDebugInstrumentation)
 else
-    SetupDebugInstrumentation() -- standalone test harness: no gate, run eagerly
+    SetupDebugInstrumentation()
 end
 
--- Reentrancy latch. On Midnight, RefreshTooltipLayout's Show() nudge re-runs
--- Blizzard's TooltipDataProcessor post-calls (Show -> C rebuild -> SetAttribute
--- -> AttributeDelegate -> ProcessTooltipPostCalls). Those post-calls land back
--- in our ID-injection path, which calls RefreshTooltipLayout -> Show() again,
--- recursing until the C stack overflows. The per-tooltip dedupe can't break it
--- because each rebuild re-fetches tooltip data with a fresh dataInstanceID, so
--- the dedupe key differs every cycle. Lua is single-threaded and Show() is
--- synchronous, so a plain boolean spanning the Show() call suppresses the whole
--- nested storm.
 local tooltipRefreshInProgress = false
 
 local function RefreshTooltipLayout(tooltip)
@@ -736,9 +674,6 @@ local function RefreshTooltipLayout(tooltip)
     if tooltipRefreshInProgress then return end
     if tooltip.IsForbidden and tooltip:IsForbidden() then return end
 
-    -- Re-layout of GameTooltip is unsafe while Blizzard widget containers are
-    -- active. World quest/map tooltips use this path, and forcing a refresh from
-    -- addon code can trip LayoutFrame secret-value comparisons on clear/hide.
     if tooltip == GameTooltip then
         if HasActiveMoneyFrame(tooltip) then
             return
@@ -751,21 +686,10 @@ local function RefreshTooltipLayout(tooltip)
         end
     end
 
-    -- Try the legacy resize hook (still present on some tooltip variants).
-    -- Midnight's GameTooltip dropped Layout/MarkDirty/UpdateTooltipSize from
-    -- the Lua API entirely, so for that path the chrome refit below is what
-    -- actually fixes the short-chrome artifact.
     if type(tooltip.UpdateTooltipSize) == "function" then
         ns.SafeCallMethod("best-effort-style", tooltip, "UpdateTooltipSize")
     end
     local alreadyShown = tooltip.IsShown and tooltip:IsShown()
-    -- AddLine/AddDoubleLine on an already visible GameTooltip can render the
-    -- new FontStrings without updating the Lua-facing line/layout state. Show()
-    -- is the only reliable nudge on Midnight; the skinning watcher re-hides
-    -- NineSlice and the deferred refit below catches the final extents.
-    -- Show() re-runs the tooltip's own layout (GameTooltip_CalculatePadding on
-    -- 12.0.7), growing it to fit the appended lines. The skinning chrome is pure
-    -- SetAllPoints, so it tracks that new size — no addon-side extent refit.
     if tooltip == GameTooltip or not alreadyShown then
         tooltipRefreshInProgress = true
         ns.SafeCallMethod("best-effort-style", tooltip, "Show")
@@ -814,11 +738,6 @@ local function ResolveTooltipVisibilityContext(tooltip, fallbackContext)
     return fallbackContext
 end
 
--- Identify owners that are themselves tooltip frames (addon detail panel
--- anchored to FriendsTooltip etc.). FriendsTooltip in WoW Midnight is a
--- styled Frame, not a SharedTooltipTemplate-derived tooltip — its
--- IsObjectType("GameTooltip") and NumLines/AddLine duck-typing both return
--- false. Name-based fallback catches it.
 local function IsTooltipFrameOwner(owner)
     if not owner then return false end
     if type(owner.NumLines) == "function" and type(owner.AddLine) == "function" then
@@ -839,9 +758,6 @@ local function ShouldHideOwnedTooltip(tooltip, fallbackContext)
     end
 
     local owner = tooltip.GetOwner and tooltip:GetOwner() or nil
-    -- Tooltip-frame owners: parent's transient fade-in alpha would trigger
-    -- the faded-hide path every frame. Trust the parent's IsShown via
-    -- ShouldKeepTooltipVisible's matching branch instead.
     if owner and not Provider:IsTransientTooltipOwner(owner) and not IsTooltipFrameOwner(owner) and Provider:IsOwnerFadedOut(owner) then
         return true
     end
@@ -858,13 +774,6 @@ local function ShouldHideOwnedTooltip(tooltip, fallbackContext)
     return false
 end
 
--- Sticky flag for the current GameTooltip show cycle: did this tooltip ever
--- carry a unit token (player, NPC, nameplate, mouseover) since it was last
--- shown? Set true the first tick we observe GetUnit returning a unit, reset
--- to false on the show→hide transition. Used to distinguish "world unit
--- tooltip whose mouseover just cleared" (where unit is now nil but we want to
--- hide) from "true world object tooltip" (mining node, etc., where unit was
--- always nil and we must keep the WorldFrame safety net).
 local gtTooltipHadUnit = false
 
 local tooltipHideFadeState = {
@@ -931,10 +840,6 @@ local function IsChildOfFrame(frame, ancestor)
     return false
 end
 
--- GameTooltip.ItemTooltip is Blizzard's embedded quest reward card. World
--- quest reward hovers show this frame and its child tooltip, then immediately
--- run EmbeddedItemTooltip_UpdateSize, which reads their widths. Appending QoL
--- lines during that TooltipDataProcessor pass can taint those width reads.
 local function IsInternalEmbeddedItemRoot(root, tooltip)
     if not root or not tooltip then return false end
     if tooltip == root or tooltip == root.Tooltip or tooltip == root.FollowerTooltip then
@@ -991,9 +896,6 @@ local function IsTooltipOwnerHovered(owner)
         return true
     end
 
-    -- Some Blizzard tooltips are owned by a FontString/Texture child rather
-    -- than the button frame itself, e.g. Professions RecipeSourceButton.Text.
-    -- In that case the mouse focus is the parent frame, not the region owner.
     local regionOwnerParent = GetRegionOwnerParent(owner)
     if regionOwnerParent and focus and IsChildOfFrame(focus, regionOwnerParent) then
         return true
@@ -1023,11 +925,6 @@ local function ShouldKeepTooltipVisible(tooltip)
 
     local owner = tooltip.GetOwner and tooltip:GetOwner() or nil
     if owner and not Provider:IsTransientTooltipOwner(owner) then
-        -- Owner is itself a tooltip frame (addon detail panel anchored to
-        -- FriendsTooltip etc.): cursor sits on the frame that owns the parent
-        -- tooltip, never on this tooltip's rect, so IsTooltipOwnerHovered
-        -- always returns false → hideDelay=0 fires Hide → addon's per-frame
-        -- Show puts it back → 12 Hz flash. Track parent's IsShown instead.
         if IsTooltipFrameOwner(owner) then
             local okShown, shown = pcall(owner.IsShown, owner)
             return okShown and shown
@@ -1048,16 +945,6 @@ local function ShouldKeepTooltipVisible(tooltip)
         return true
     end
 
-    -- World object tooltips (mining/herb nodes, summon stones, fishing schools,
-    -- ground loot) have no unit slot and mouse focus on WorldFrame. The throttle
-    -- can fire on the very first frame they show; without this safety net the
-    -- check returns false and the tooltip is hidden before the user sees it.
-    -- Gate on the "had a unit this cycle" flag: if the tooltip ever carried
-    -- a unit during this show cycle (player, NPC, nameplate, mouseover), then
-    -- a current `unit == nil` means mouseover just cleared and we should fall
-    -- through to the hide path so hideDelay=0 actually takes effect.
-    -- Only true world *objects* (unit was never set this cycle) get the
-    -- WorldFrame safety net.
     if not gtTooltipHadUnit then
         local focus = Provider.GetTopMouseFrame and Provider:GetTopMouseFrame()
         if focus == WorldFrame then
@@ -1235,10 +1122,6 @@ local function AddPlayerItemLevelToTooltip(tooltip, unit, skipShow)
     return true
 end
 
----------------------------------------------------------------------------
--- Tooltip Unit Info Helper Functions (Target, Mount, M+ Rating)
----------------------------------------------------------------------------
-
 local function IsSettingEnabled(settings, key, defaultValue)
     if not settings then
         return defaultValue == true
@@ -1304,9 +1187,6 @@ local function ResolveTooltipTargetInfo(unit)
 
     local okClass, _, classToken = pcall(UnitClass, targetUnit)
     if not okClass then classToken = nil end
-    -- Probe BEFORE the truth-test, unconditionally — `classToken and` throws
-    -- on a secret. IsSecretValue(nil) is safe, so the probe can lead.
-    -- @secret-policy=collapse-only — white target text fallback
     if Helpers.IsSecretValue(classToken) then classToken = nil end
     local valueR, valueG, valueB = 1, 1, 1
     if classToken then
@@ -1324,11 +1204,6 @@ end
 local function AddTooltipTargetInfo(tooltip, unit, state)
     if not tooltip or not unit or not state then return false end
 
-    -- Add the Target line once per tooltip state cycle. State resets when the
-    -- mouseover GUID changes (via EnsureTooltipUnitInfoState), so a fresh hover
-    -- always re-adds. Comparing names is unsafe because UnitName on a tainted
-    -- target unit can return a secret string that taints == comparison even
-    -- when forwarded through C-side AddDoubleLine cleanly.
     if state.targetAdded then return false end
 
     local targetInfo = ResolveTooltipTargetInfo(unit)
@@ -1343,13 +1218,9 @@ end
 
 local TARGETED_BY_MAX_NAMES = 10
 
--- Returns the member's display name when groupUnit is currently targeting
--- mouseoverUnit, otherwise nil. UnitIsUnit is SecretWhenUnitComparisonRestricted
--- (secret in combat); callers must already be out of combat.
 local function GetTargetingMemberName(groupUnit, mouseoverUnit)
     local okExists, exists = pcall(UnitExists, groupUnit)
     if not okExists or not exists or Helpers.IsSecretValue(exists) then return nil end
-    -- Don't list the hovered unit as targeting itself.
     local okSelf, isSelf = pcall(UnitIsUnit, groupUnit, mouseoverUnit)
     if not okSelf or Helpers.IsSecretValue(isSelf) or isSelf then return nil end
     local okTarget, targetsUnit = pcall(UnitIsUnit, groupUnit .. "target", mouseoverUnit)
@@ -1365,8 +1236,6 @@ end
 
 local function ResolveTooltipTargetedBy(unit)
     if not unit then return nil end
-    -- UnitIsUnit returns a secret while restricted in combat, so the whole scan
-    -- is out-of-combat only — never call UnitIsUnit during a lockdown.
     if InCombatLockdown() then return nil end
     if not IsInGroup() and not IsInRaid() then return nil end
 
@@ -1408,8 +1277,6 @@ local function AddTooltipTargetedByInfo(tooltip, unit, state)
     if InCombatLockdown() then return false end
 
     local names = ResolveTooltipTargetedBy(unit)
-    -- Latch even on an empty scan: snapshot semantics, mirroring targetAdded.
-    -- Prevents re-scanning the group every deferred OnUpdate tick.
     state.targetedByAdded = true
     if not names then return false end
 
@@ -1544,7 +1411,6 @@ local function GetMountedPlayerMountName(unit, state)
     if not unit or not UnitExists(unit) then return nil, true end
     TooltipDebugCount("qol.mountScanPass")
     if InCombatLockdown() then
-        -- During combat, can't iterate auras, skip mount detection
         return nil, true
     end
 
@@ -1562,7 +1428,6 @@ local function GetMountedPlayerMountName(unit, state)
     local startIndex = (state and state.mountNextAuraIndex) or 1
     local endIndex = math.min(80, startIndex + MOUNT_SCAN_AURAS_PER_PASS - 1)
 
-    -- Try C_UnitAuras (modern API, WoW 10.0+)
     if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
         for i = startIndex, endIndex do
             TooltipDebugCount("qol.mountAuraScanned")
@@ -1586,7 +1451,6 @@ local function GetMountedPlayerMountName(unit, state)
             end
         end
     else
-        -- Fallback to legacy UnitAura API
         for i = startIndex, endIndex do
             TooltipDebugCount("qol.mountAuraScanned")
             local ok, name, _, _, _, _, _, _, _, spellID = pcall(UnitAura, unit, i, "HELPFUL")
@@ -1627,12 +1491,6 @@ local function AddTooltipMountInfo(tooltip, unit, state)
     end
     if not mountName then return resolved and false or nil end
 
-    -- Dedupe by name: skip if the same mount was already appended.
-    -- Aura ticks (HoTs, raid buffs) fire OnUnitAuraChanged constantly while
-    -- the tooltip is shown, and that handler clears mountResolved/mountName
-    -- to force a re-scan. Without this guard each tick re-appended a fresh
-    -- "Mount: X" line because Blizzard's tooltip API has no way to remove
-    -- or edit existing lines.
     if state.lastMountName == mountName then return false end
 
     EnsureTooltipInfoSpacer(tooltip, state)
@@ -1662,7 +1520,6 @@ local function GetPlayerMythicRating(unit)
     if type(provider) == "table" and type(provider.GetProfile) == "function" then
         local ok, profile = pcall(provider.GetProfile, unit)
         if ok and profile and profile.mythicKeystoneProfile and profile.mythicKeystoneProfile.currentScore then
-            -- Third-party provider table value, never secret — plain coercion.
             local score = tonumber(profile.mythicKeystoneProfile.currentScore) or 0
             if score > 0 then
                 local color = provider.GetScoreColor and provider.GetScoreColor(score)
@@ -1691,9 +1548,6 @@ local function GetPlayerMythicRating(unit)
     return nil
 end
 
--- NPC ID lives in field 6 of a Creature/Vehicle/Pet GUID
--- ("Creature-0-server-instance-zone-<npcID>-spawn"). Player GUIDs have no
--- NPC ID, so this returns nil for them.
 -- <<< QUI_TEST_EXTRACT npc_id
 local function NpcIDFromGUID(guid)
     if type(guid) ~= "string" then return nil end
@@ -1793,7 +1647,7 @@ local function DeferredUnitInfoOnUpdate(self, elapsed)
     local unitGUID = UnitGUID(unit)
     local guidStale
     if Helpers.IsSecretValue(unitGUID) then
-        guidStale = true -- reject/defer: an unreadable GUID can't confirm the deferred unit
+        guidStale = true
     else
         guidStale = not unitGUID or unitGUID ~= guid
     end
@@ -1883,9 +1737,6 @@ ScheduleDeferredUnitInfo = function(tooltip, unit)
     deferredUnitFrame:SetScript("OnUpdate", DeferredUnitInfoOnUpdate)
 end
 
----------------------------------------------------------------------------
--- SETUP HOOKS
----------------------------------------------------------------------------
 local function SetupTooltipHook()
     ns.QUI_AnchorTooltipToCursor = AnchorTooltipToCursor
 
@@ -1958,18 +1809,12 @@ local function SetupTooltipHook()
         local settings = Provider:GetSettings()
         if not settings or not settings.enabled then return end
 
-        -- TIP-05: user tooltip scale (1 = Blizzard default). Applied here so
-        -- every default-anchored tooltip picks it up before it is positioned.
         local userScale = tonumber(settings.scale) or 1
         if userScale <= 0 then userScale = 1 end
         ns.SafeCallMethod("sink-forward", tooltip, "SetScale", userScale)
 
         InvalidatePendingSetUnit()
 
-        -- Visibility/context checks call methods on Blizzard frames (GetName,
-        -- GetAttribute, GetActionInfo) which can taint the execution context
-        -- during combat. Skip them — combat hiding is handled by the SetUnit
-        -- hook and OnCombatStateChanged instead.
         if not InCombatLockdown() then
             local context = Provider:GetTooltipContext(parent)
             if context and not Provider:ShouldShowTooltip(context) then
@@ -1985,9 +1830,6 @@ local function SetupTooltipHook()
             return
         end
 
-        -- Reposition immediately — ClearAllPoints/SetPoint are C-side and
-        -- handle combat safely. Do NOT call SetOwner here; Blizzard already
-        -- set it and re-calling mid-build disrupts the tooltip chain.
         if settings.anchorToCursor then
             EnsureCursorFollowHooks(tooltip)
             if tooltip == GameTooltip then
@@ -2028,10 +1870,6 @@ local function SetupTooltipHook()
         return false
     end
 
-    -- Scan tooltip left-lines 2..maxLine (default 5); on the first non-secret
-    -- line where matches(text) is true, blank + hide it. Mirrors the
-    -- realm/guild loops. Faction/PvP lines sit lower on player tooltips, so
-    -- those callers pass a larger maxLine.
     local function HideTooltipLineMatching(tooltip, matches, maxLine)
         for i = 2, maxLine or 5 do
             local line = tooltip.GetLeftLine and tooltip:GetLeftLine(i)
@@ -2049,11 +1887,6 @@ local function SetupTooltipHook()
         end
     end
 
-    -- TIP-01: connected-realm lookup. C_AutoComplete.GetAutoCompleteRealms()
-    -- (AutoCompleteDocumentation: returns table<string>, the player's
-    -- connected-realm group). Built lazily once; realm names normalized on
-    -- both sides (spaces/hyphens/apostrophes stripped, case-folded) since
-    -- UnitName realm strings and autocomplete realm strings differ in form.
     local connectedRealmSet
     local function NormalizeRealmName(name)
         return (name:gsub("[%s%-']", "")):lower()
@@ -2113,9 +1946,6 @@ local function SetupTooltipHook()
 
         if hideGuild then
             local okGuild, guildName = pcall(GetGuildInfo, unit)
-            -- PTR7: probe BEFORE any truth-test — `guildName and ...` on a
-            -- secret throws; the pcall above does not cover this expression.
-            -- @secret-policy=collapse-only
             if okGuild and Helpers.IsSecretValue(guildName) then guildName = nil end
             if okGuild and guildName and guildName ~= "" then
                 local bracketed = "<" .. guildName .. ">"
@@ -2125,11 +1955,6 @@ local function SetupTooltipHook()
             end
         end
 
-        -- TIP-05: hide the faction ("Alliance"/"Horde"/"Neutral") and "PvP"
-        -- lines. Exact-match against the Blizzard global strings (legacy
-        -- globals, absent from the FrameXML dump here but shipped since
-        -- vanilla and matched the same way by current tooltip addons);
-        -- existence-guarded so a renamed global degrades to a no-op.
         if hideFaction then
             HideTooltipLineMatching(tooltip, function(lt)
                 return (FACTION_ALLIANCE and lt == FACTION_ALLIANCE)
@@ -2143,9 +1968,6 @@ local function SetupTooltipHook()
             end, 8)
         end
 
-        -- TIP-01: append a connected-realm marker to the realm line (the line
-        -- Blizzard adds for cross-realm players). Skipped when the realm line
-        -- is being hidden.
         if showConnected and not hideServer then
             local okRealm, _, unitRealm = pcall(UnitName, unit)
             unitRealm = Helpers.SafeValue(unitRealm)
@@ -2167,11 +1989,6 @@ local function SetupTooltipHook()
         end
     end
 
-    -- TIP-03: decorate the guild line (the <GuildName> line on guilded player
-    -- tooltips): optionally append the unit's guild rank and recolor own-guild
-    -- vs other-guild. GetGuildInfo's 2nd return is the rank name (FrameXML
-    -- 4-return usage); UnitIsInMyGuild verified in UnitDocumentation
-    -- (AllowedWhenUntainted). Skipped entirely when the guild line is hidden.
     local GUILD_COLOR_MINE  = { r = 0.25, g = 1.0,  b = 0.25 }
     local GUILD_COLOR_OTHER = { r = 0.0,  g = 0.75, b = 1.0 }
     local function HandleUnitGuildPost(tooltip, settings, unit)
@@ -2181,7 +1998,6 @@ local function SetupTooltipHook()
         if not wantRank and not wantColor then return end
 
         local okGuild, guildName, guildRankName = pcall(GetGuildInfo, unit)
-        -- @secret-policy=collapse-only — probe before truth-test (see hideGuild site)
         if okGuild and Helpers.IsSecretValue(guildName) then guildName = nil end
         if okGuild and Helpers.IsSecretValue(guildRankName) then guildRankName = nil end
         if not okGuild or not guildName or guildName == "" then return end
@@ -2219,10 +2035,6 @@ local function SetupTooltipHook()
 
         local okClass, _, class = pcall(UnitClass, unit)
         if not okClass then class = nil end
-        -- Probe FIRST, unconditionally — `not class` and the
-        -- RAID_CLASS_COLORS index below both throw on a secret class token.
-        -- IsSecretValue(nil) is safe, so the probe can lead.
-        -- @secret-policy=collapse-only — name line keeps its native color
         if Helpers.IsSecretValue(class) then class = nil end
         if not class then return end
 
@@ -2263,9 +2075,6 @@ local function SetupTooltipHook()
                 ns.SafeCallMethod("best-effort-style", GameTooltipStatusBar, "SetShown", false)
                 ns.SafeCallMethod("sink-forward", GameTooltipStatusBar, "SetAlpha", 0)
             end
-            -- TIP-05: modern tooltips can attach the bar to the tooltip itself
-            -- (tooltip.StatusBar) or acquire from a pool (tooltip.StatusBarPool);
-            -- cover both, existence-guarded.
             local attachedBar = tooltip and tooltip.StatusBar
             if attachedBar and not (attachedBar.IsForbidden and attachedBar:IsForbidden()) then
                 ns.SafeCallMethod("best-effort-style", attachedBar, "SetShown", false)
@@ -2284,8 +2093,6 @@ local function SetupTooltipHook()
         end
     end
 
-    -- TAINT SAFETY: Use TooltipDataProcessor instead of hooksecurefunc(GameTooltip, "SetUnit")
-    -- to avoid tainting GameTooltip's dispatch tables.
     AddTrackedTooltipPostCall(Enum.TooltipDataType.Unit, "qol.unitProcessor", function(tooltip)
         TooltipDebugCount("qol.unitPost")
         if tooltip ~= GameTooltip then return end
@@ -2317,26 +2124,14 @@ local function SetupTooltipHook()
         RunTrackedUnitStep("qol.unitExtrasPost", HandleUnitExtrasPost, tooltip, settings, unit)
     end)
 
-    -- Spell ID tracking (per-tooltip dedupe signature)
     local tooltipSpellIDAdded = setmetatable({}, {__mode = "k"})
-    -- Max stack size tracking (independent per-tooltip dedupe signature)
     local tooltipMaxStackAdded = setmetatable({}, {__mode = "k"})
 
-    -- TAINT SAFETY: Use a separate watcher frame to detect GameTooltip
-    -- hide/clear instead of HookScript("OnHide"/"OnTooltipCleared").
-    -- HookScript on GameTooltip permanently taints its dispatch tables.
     local gtSpellIDWatcher = CreateFrame("Frame")
     local gtSpellIDWasShown = false
     local gtVisibilityElapsed = 0
-    -- Polled detection latency for "should this tooltip hide now?". Kept tight
-    -- so hideDelay=0 reads as instant — total perceived hide latency is bounded
-    -- by this interval plus the mouse-focus cache TTL.
     local TOOLTIP_VISIBILITY_CHECK_INTERVAL = 0.05
     gtSpellIDWatcher:SetScript("OnUpdate", function(_, elapsed)
-        -- IsShown polling, show/hide edge detection, and the visibility
-        -- evaluation all run at the check interval, not per frame — the idle
-        -- path is one accumulate-and-compare. Perceived hide latency was
-        -- already bounded by this interval.
         gtVisibilityElapsed = gtVisibilityElapsed + (elapsed or 0)
         if gtVisibilityElapsed >= TOOLTIP_VISIBILITY_CHECK_INTERVAL then
             gtVisibilityElapsed = 0
@@ -2359,10 +2154,6 @@ local function SetupTooltipHook()
                 tooltipUnitInfoState[GameTooltip] = nil
             elseif shown then
                 TooltipDebugCount("qol.visibilityCheck")
-                -- Latch the "had a unit this cycle" flag before evaluating
-                -- visibility, so ShouldKeepTooltipVisible can distinguish a
-                -- post-mouseoff unit tooltip (hide it) from a true world
-                -- object tooltip (keep the WorldFrame safety net).
                 if not gtTooltipHadUnit then
                     local gtUnit = ResolveTooltipUnit(GameTooltip)
                     if gtUnit then
@@ -2388,10 +2179,6 @@ local function SetupTooltipHook()
             gtSpellIDWasShown = shown
         end
 
-        -- The hide-fade alpha animation is the only per-frame work, and it
-        -- only runs while a fade is active, so the fade renders smoothly. It
-        -- sits after the evaluation so a fade started this tick also begins
-        -- progressing this tick.
         if tooltipHideFadeState.active then
             tooltipHideFadeState.elapsed = tooltipHideFadeState.elapsed + (elapsed or 0)
             local duration = tooltipHideFadeState.duration
@@ -2465,9 +2252,6 @@ local function SetupTooltipHook()
     end
 
     local function ShouldProcessTooltipIDs(tooltip)
-        -- Suppress re-fired post-calls during RefreshTooltipLayout's Show()
-        -- nudge. Without this the Show-triggered rebuild re-enters ID injection,
-        -- duplicating lines and recursing into a C stack overflow.
         if tooltipRefreshInProgress then
             TooltipDebugCount("qol.idPostSkipped")
             return false
@@ -2491,8 +2275,6 @@ local function SetupTooltipHook()
         return true
     end
 
-    -- Resolve a numeric, non-secret id from data.id or data[secondaryKey].
-    -- Increments dataCounter and returns the id on hit, else nil.
     local function ResolveIDFromDataFields(data, secondaryKey, dataCounter)
         if not data then return nil end
         local fromID = data.id
@@ -2677,16 +2459,6 @@ local function SetupTooltipHook()
         end)
     end
 
-    -- TAINT SAFETY: Aura spell ID display now uses TooltipDataProcessor
-    -- instead of hooksecurefunc(GameTooltip, auraMethod). The Aura
-    -- TooltipDataProcessor callback above already handles spell IDs for
-    -- aura tooltips. The per-method hooks were redundant and tainted
-    -- GameTooltip's dispatch tables.
-
-    -- TAINT SAFETY: Suppress tooltips that bypass GameTooltip_SetDefaultAnchor.
-    -- Uses TooltipDataProcessor instead of hooksecurefunc(GameTooltip, "SetSpellByID"/"SetItemByID")
-    -- to avoid tainting GameTooltip's dispatch tables.
-    -- Shared owned-tooltip visibility gate for the Spell/Item post-calls.
     local function ApplyOwnedTooltipHide(tooltip, context)
         if tooltip ~= GameTooltip then return end
         if tooltip.IsForbidden and tooltip:IsForbidden() then return end
@@ -2739,32 +2511,21 @@ local function SetupTooltipHook()
 
 end
 
----------------------------------------------------------------------------
--- Modifier / Combat Event Handlers
----------------------------------------------------------------------------
 local function OnUnitTargetChanged(changedUnit)
     if not GameTooltip:IsShown() then return end
     local unit = ResolveTooltipUnit(GameTooltip)
     if not unit or unit ~= changedUnit then return end
 
-    -- Tooltip is showing this unit and their target changed
     local settings = Provider:GetSettings()
     if not settings or not settings.enabled or not IsSettingEnabled(settings, "showTooltipTarget", true) then return end
 
     local state = tooltipUnitInfoState[GameTooltip]
     if not state then return end
 
-    -- Re-resolve target on next pass; AddTooltipTargetInfo dedupes by name,
-    -- so a re-run only appends a new line when the target actually changed.
     RefreshTooltipLayout(GameTooltip)
 end
 
 local function OnUnitAuraChanged(changedUnit)
-    -- Mount status can't change in combat, and combat is exactly when UNIT_AURA
-    -- traffic peaks: every roster buff/debuff tick reaches "all" subscribers, and
-    -- a tooltip is frequently up (nameplates/raid frames). Bailing here before
-    -- ResolveTooltipUnit's pcall keeps this hot aura path zero-allocation during
-    -- combat — the mount line has nothing new to resolve anyway.
     if InCombatLockdown() then return end
     if not GameTooltip:IsShown() then return end
     local unit = ResolveTooltipUnit(GameTooltip)
@@ -2775,16 +2536,12 @@ local function OnUnitAuraChanged(changedUnit)
         ClearCachedMountName(guid)
     end
 
-    -- Tooltip is showing this unit and their auras changed (mount status)
     local settings = Provider:GetSettings()
     if not settings or not settings.enabled or not IsSettingEnabled(settings, "showPlayerMount", true) then return end
 
     local state = tooltipUnitInfoState[GameTooltip]
     if not state then return end
 
-    -- Mark mount as needing re-resolve. AddTooltipMountInfo dedupes by name
-    -- (state.lastMountName), so a re-scan only appends a new line when the
-    -- mount actually changed — aura ticks no longer stack duplicate lines.
     state.mountResolved = false
     state.mountName = nil
     state.mountNextAuraIndex = 1
@@ -2812,17 +2569,12 @@ local function OnCombatStateChanged(inCombat)
     end
 end
 
----------------------------------------------------------------------------
--- ENGINE CONTRACT
----------------------------------------------------------------------------
-
 function TooltipEngine:Initialize()
     Provider = ns.TooltipProvider
     TooltipInspect = ns.TooltipInspect
 
     SetupTooltipHook()
 
-    -- Event handlers (UNIT_AURA handled by centralized dispatcher)
     local eventFrame = CreateFrame("Frame")
     eventFrame:RegisterEvent("MODIFIER_STATE_CHANGED")
     eventFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
@@ -2840,25 +2592,15 @@ function TooltipEngine:Initialize()
         end
     end)
 
-    -- Subscribe to centralized aura dispatcher (all units — tooltip needs any
-    -- unit). Pass OnUnitAuraChanged directly: it reads only the unit arg and
-    -- ignores updateInfo, so the old wrapper closure was pure overhead. The
-    -- handler self-gates on combat + tooltip visibility, so this stays a no-op
-    -- until a tooltip is actually up out of combat.
     if ns.AuraEvents then
         ns.AuraEvents:Subscribe("all", OnUnitAuraChanged)
     end
 end
 
 function TooltipEngine:Refresh()
-    -- Settings apply on next tooltip show
 end
 
 function TooltipEngine:SetEnabled(enabled)
-    -- Hooks are permanent once installed
 end
 
----------------------------------------------------------------------------
--- REGISTER WITH PROVIDER
----------------------------------------------------------------------------
 ns.TooltipProvider:RegisterEngine("default", TooltipEngine)

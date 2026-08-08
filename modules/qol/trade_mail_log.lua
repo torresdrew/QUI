@@ -1,36 +1,6 @@
 local ADDON_NAME, ns = ...
 local Helpers = ns.Helpers
 
----------------------------------------------------------------------------
--- TRADE & MAIL LOG
---
--- Records every trade (both sides' items + gold, partner, zone,
--- completed/cancelled) plus sent mail (recipient, subject, gold, COD,
--- attachments) and every inbox mail you open (sender, subject, gold, COD,
--- attachments). History is account-wide (QUIDB.global.tradeMailLog),
--- newest-first, capped. Viewer: /quilog [n] prints the latest n entries to
--- chat — item links stay clickable there.
---
--- Capture mechanics (all doc/FrameXML-verified):
---   * Trades: TRADE_SHOW starts a snapshot; TRADE_UPDATE /
---     TRADE_PLAYER_ITEM_CHANGED / TRADE_TARGET_ITEM_CHANGED /
---     TRADE_MONEY_CHANGED / PLAYER_TRADE_MONEY refresh it (items via
---     GetTradePlayerItemInfo/Link + GetTradeTargetItemInfo/Link over
---     MAX_TRADE_ITEMS(7) minus the TRADE_ENCHANT_SLOT; gold via
---     GetPlayerTradeMoney/GetTargetTradeMoney); TRADE_ACCEPT_UPDATE
---     (payload: playerAccepted, targetAccepted numbers) latches the accept
---     flags; TRADE_CLOSED commits — completed iff both flags were 1.
---     Partner from GetUnitName("NPC", true) (the trade unit token).
---   * Sent mail: hooksecurefunc("SendMailFrame_SendMail") captures the form
---     (editboxes + GetSendMailMoney/GetSendMailCOD + HasSendMailItem/
---     GetSendMailItem over ATTACHMENTS_MAX_SEND(12)); committed on
---     MAIL_SEND_SUCCESS, dropped on MAIL_FAILED/MAIL_CLOSED.
---   * Received mail: hooksecurefunc("InboxFrame_OnClick") logs the opened
---     mail once via GetInboxHeaderInfo (sender 3rd/subject 4th/money 5th/
---     COD 6th/itemCount 8th returns) + GetInboxItem/GetInboxItemLink.
--- hooksecurefunc-only around the mail path (mailbox taint rule).
----------------------------------------------------------------------------
-
 local GetSettings = Helpers.CreateDBGetter("general")
 
 local MAX_ENTRIES = 300
@@ -61,22 +31,18 @@ local function AddEntry(entry)
     if not entries then return end
     entry.time = entry.time or time()
     entry.who = UnitName("player")
-    table.insert(entries, 1, entry) -- newest first
+    table.insert(entries, 1, entry)
     for i = #entries, MAX_ENTRIES + 1, -1 do
         table.remove(entries, i)
     end
 end
-
----------------------------------------------------------------------------
--- Trade capture
----------------------------------------------------------------------------
 
 local tradeState
 
 local function TradeItemSlots()
     local maxSlots = MAX_TRADE_ITEMS or 7
     if TRADE_ENCHANT_SLOT and maxSlots == TRADE_ENCHANT_SLOT then
-        maxSlots = maxSlots - 1 -- last slot is the will-not-be-traded slot
+        maxSlots = maxSlots - 1
     end
     return math.max(maxSlots, 1)
 end
@@ -134,10 +100,6 @@ local function FinishTrade()
     end
 end
 
----------------------------------------------------------------------------
--- Mail capture
----------------------------------------------------------------------------
-
 local pendingSend
 
 local function CaptureSendMail()
@@ -165,7 +127,7 @@ local function CaptureSendMail()
     pendingSend = entry
 end
 
-local loggedInbox = {} -- [mailIndex .. sender .. subject] session dedupe
+local loggedInbox = {}
 
 local function LogInboxMail(index)
     if not Enabled("logReceivedMail") then return end
@@ -195,10 +157,6 @@ local function LogInboxMail(index)
     end
     AddEntry(entry)
 end
-
----------------------------------------------------------------------------
--- Viewer: /quilog [n]
----------------------------------------------------------------------------
 
 local function Coins(amount)
     if not amount or amount <= 0 then return nil end
@@ -277,10 +235,6 @@ SlashCmdList["QUILOG"] = function(msg)
     end
 end
 
----------------------------------------------------------------------------
--- Events / hooks
----------------------------------------------------------------------------
-
 local hooksInstalled = false
 local function InstallMailHooks()
     if hooksInstalled then return end
@@ -293,7 +247,6 @@ local function InstallMailHooks()
 end
 
 local frame = CreateFrame("Frame")
--- Literal RegisterEvent calls so tools/generate_event_allowlist.lua detects them.
 frame:RegisterEvent("TRADE_SHOW")
 frame:RegisterEvent("TRADE_CLOSED")
 frame:RegisterEvent("TRADE_ACCEPT_UPDATE")
@@ -329,7 +282,6 @@ frame:SetScript("OnEvent", function(_, event, ...)
     elseif event == "MAIL_FAILED" or event == "MAIL_CLOSED" then
         pendingSend = nil
     else
-        -- one of the trade change events
         if tradeState then UpdateTradeSnapshot() end
     end
 end)

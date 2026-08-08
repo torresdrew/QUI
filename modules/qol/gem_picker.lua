@@ -1,26 +1,6 @@
 local ADDON_NAME, ns = ...
 local Helpers = ns.Helpers
 
----------------------------------------------------------------------------
--- GEM SOCKET PICKER
---
--- When the item-socketing window is open, shows a panel of the gems in your
--- bags; clicking one picks it up onto the cursor ready to drop into a
--- socket. (Cursor-pickup only, mirroring how sockets are filled by hand —
--- deliberately no auto-ClickSocketButton in v1.)
---
--- Detection: C_Container.GetContainerItemInfo per slot; classID 3 (Gem) via
--- C_Item.GetItemInfoInstant (doc-verified: MayReturnNothing; classID 6th
--- return). No per-color filtering: 12.x sockets are overwhelmingly
--- prismatic, and the gem-color/subclass mapping has no doc backing — v1
--- lists every gem and lets you choose. Pickup via ClearCursor +
--- C_Container.PickupContainerItem (doc-verified, AllowedWhenUntainted).
--- Events: SOCKET_INFO_UPDATE (ItemSocketInfoDocumentation) rebuilds on
--- window open/change; BAG_UPDATE_DELAYED + CURSOR_CHANGED (Container/
--- CursorDocumentation) refresh while shown. Panel hangs below
--- ItemSocketingFrame (Blizzard_ItemSocketingUI, LoadOnDemand).
----------------------------------------------------------------------------
-
 local GetSettings = Helpers.CreateDBGetter("general")
 
 local ICON = 30
@@ -61,7 +41,6 @@ local function GetButton(i)
         if not self.bag or not self.slot then return end
         ClearCursor()
         C_Container.PickupContainerItem(self.bag, self.slot)
-        -- Grey out: this copy is on the cursor now.
         self.icon:SetDesaturated(true)
         self.icon:SetAlpha(0.5)
     end)
@@ -80,7 +59,7 @@ local function CollectBagGems()
     local gems = {}
     for bag = 0, 5 do
         for slot = 1, C_Container.GetContainerNumSlots(bag) do
-            local info = C_Container.GetContainerItemInfo(bag, slot) -- MayReturnNothing
+            local info = C_Container.GetContainerItemInfo(bag, slot)
             if info and info.hyperlink and not info.isLocked then
                 local okI, _, _, _, _, icon, classID = pcall(C_Item.GetItemInfoInstant, info.hyperlink)
                 if okI and classID == 3 then
@@ -138,15 +117,12 @@ local function Refresh()
 end
 
 local frame = CreateFrame("Frame")
--- Literal RegisterEvent calls so tools/generate_event_allowlist.lua detects them.
 frame:RegisterEvent("SOCKET_INFO_UPDATE")
 frame:RegisterEvent("BAG_UPDATE_DELAYED")
 frame:RegisterEvent("CURSOR_CHANGED")
 frame:SetScript("OnEvent", function(_, event)
     local socketFrame = _G.ItemSocketingFrame
     if event == "SOCKET_INFO_UPDATE" then
-        -- Fires on window open/target change; defer one frame so the
-        -- socketing UI has finished its own layout.
         C_Timer.After(0, Refresh)
         if socketFrame and not socketFrame._quiGemPickerHooked then
             socketFrame._quiGemPickerHooked = true

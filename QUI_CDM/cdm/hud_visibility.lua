@@ -1,35 +1,12 @@
---[[
-    QUI HUD Visibility Controllers
-    Manages fade-in/fade-out visibility for CDM viewers and unit frames.
-    Independent of CDM engine — reads QUI-owned frames from ns.CDMProvider.
-]]
-
 local ADDON_NAME, ns = ...
 local Helpers = ns.Helpers
 local QUICore = ns.Addon
 
----------------------------------------------------------------------------
--- FORWARD DECLARATIONS
----------------------------------------------------------------------------
 local UpdateCDMVisibility
 local UpdateCustomTrackersVisibility
 local UpdateUnitframesVisibility
 local HookCustomTrackerFrameForMouseover
 
----------------------------------------------------------------------------
--- HEALTH STATE TRACKER (curve-driven alpha override)
--- UnitHealth / UnitHealthMax / UnitHealthPercent return secret values for
--- the player in 12.0+. Build a step NumberCurve mapping fraction→alpha
--- and pass UnitHealthPercent's secret return straight into frame:SetAlpha
--- — the value never re-enters Lua, so no taint comparisons happen.
---
---   fraction <  1.0 → alpha 1 (damaged: frame visible)
---   fraction == 1.0 → alpha 0 (full HP: frame hidden)
---
--- Drives unit frame visibility directly when the bool-rule path
--- (ShouldUnitframesBeVisible) returns false and the user has
--- "Show when health below 100%" enabled.
----------------------------------------------------------------------------
 local _damagedAlphaCurve
 
 local function GetDamagedAlphaCurve()
@@ -40,21 +17,12 @@ local function GetDamagedAlphaCurve()
     end
     local curve = C_CurveUtil.CreateCurve()
     curve:SetType(Enum.LuaCurveType.Step)
-    curve:AddPoint(0.0, 1)  -- below full health
-    curve:AddPoint(1.0, 0)  -- exactly full health
+    curve:AddPoint(0.0, 1)
+    curve:AddPoint(1.0, 0)
     _damagedAlphaCurve = curve
     return curve
 end
 
----------------------------------------------------------------------------
--- SHARED HELPERS
----------------------------------------------------------------------------
-
--- type() returns "number" for both ordinary numbers and WoW's "secret"
--- numbers (e.g. GetAlpha() on a SecureUnitButtonTemplate frame such as
--- QUI_BossN, or UnitHealthPercent called without a curve). Arithmetic
--- on a secret value from tainted code throws — short-circuit with
--- issecretvalue so callers snap-to-target instead of exploding.
 local function ReadNumber(value, fallback)
     if issecretvalue and issecretvalue(value) then return fallback end
     local valueType = type(value)
@@ -63,19 +31,15 @@ local function ReadNumber(value, fallback)
     return fallback
 end
 
--- Check if player is in a group (party or raid)
 local function IsPlayerInGroup()
     return IsInGroup() or IsInRaid()
 end
 
--- Housing instance types - excluded from "Show in Instance" detection
 local HOUSING_INSTANCE_TYPES = {
-    ["neighborhood"] = true,  -- Founder's Point, Razorwind Shores
-    ["interior"] = true,      -- Inside player houses
+    ["neighborhood"] = true,
+    ["interior"] = true,
 }
 
--- Check if player is in an instance (dungeon, raid, arena, pvp, scenario)
--- Excludes housing zones which are technically instances but shouldn't trigger "Show In Instance"
 local function IsPlayerInInstance()
     local _, instanceType = GetInstanceInfo()
     if instanceType == "none" or instanceType == nil then
@@ -87,18 +51,13 @@ local function IsPlayerInInstance()
     return true
 end
 
----------------------------------------------------------------------------
--- CDM FRAME CACHE
----------------------------------------------------------------------------
 local _cdmFramesCache = {}
 local _cdmFramesDirty = true
 
--- Invalidate cache so next GetCDMFrames() rebuilds
 local function InvalidateCDMFrameCache()
     _cdmFramesDirty = true
 end
 
--- Get CDM frames (viewers + power bars) — cached to avoid per-frame allocations
 local function IsCustomCDMBarFrame(frame)
     if not frame then return false end
     local key = frame._quiCdmKey
@@ -122,10 +81,6 @@ local function GetCDMFrames()
 
     wipe(_cdmFramesCache)
 
-    -- Use QUI-owned provider frames only. Blizzard CooldownViewer globals are
-    -- deliberately excluded here; visibility fading must not touch native CDM
-    -- viewers during cold login because their UNIT_AURA tables disallow tainted
-    -- access.
     if ns.CDMProvider and ns.CDMProvider.GetViewerFrames then
         local frames = ns.CDMProvider:GetViewerFrames()
         if frames then
@@ -157,9 +112,6 @@ local function GetCustomTrackerFrames()
     return frames
 end
 
----------------------------------------------------------------------------
--- CDM VISIBILITY SETTINGS CACHE
----------------------------------------------------------------------------
 local function GetCDMVisibilitySettings()
     if QUICore and QUICore.db and QUICore.db.profile and QUICore.db.profile.cdmVisibility then
         return QUICore.db.profile.cdmVisibility
@@ -173,23 +125,6 @@ local function IsCDMMasterEnabled()
     return not ncdm or ncdm.enabled ~= false
 end
 
----------------------------------------------------------------------------
--- RE-ANCHORED BLIZZARD VIEWER FADE
--- The 12.1 re-anchor engine keeps live Blizzard CooldownViewer item frames
--- parented to their native viewers (SetPoint bridge, never SetParent), so
--- fading the QUI containers never reaches the icon art / cooldown swipe /
--- charge count — those pixels inherit alpha from the viewer, not from the
--- container the frame is anchored onto. Drive the four viewer frames' alpha
--- alongside the containers.
---
--- Gated on ns._cdmBoot: nil during cold login until the re-anchor runtime
--- owns the viewers, so this never touches a native viewer pre-boot (the
--- UNIT_AURA disallow-tainted-access hazard the provider exclusion in
--- GetCDMFrames protects against). Viewer references come from the boot
--- wiring, never from Blizzard globals enumerated here. Writes go through a
--- raw, unhooked SetAlpha under securecall — the bridge's taint-safe recipe.
--- While the CDM master toggle is off the viewers are Blizzard's own UI
--- again, so they are pinned to alpha 1 instead of following the fade.
 local _viewerAlphaProxy = CreateFrame and CreateFrame("Frame") or nil
 local _rawViewerSetAlpha = _viewerAlphaProxy and _viewerAlphaProxy.SetAlpha or nil
 local _securecall = securecallfunction or function(fn, ...) return fn(...) end
@@ -209,9 +144,6 @@ local function ApplyReanchorViewerAlpha(alpha)
     end
 end
 
----------------------------------------------------------------------------
--- CDM VISIBILITY CONTROLLER
----------------------------------------------------------------------------
 local CDMVisibility = {
     currentlyHidden = false,
     isFading = false,
@@ -226,11 +158,6 @@ local CDMVisibility = {
     leaveTimer = nil,
 }
 
--- Shared mounted/flying/skyriding/(vehicle) hide rules used by every
--- ShouldXBeVisible controller. Returns true when the location-based hide rules
--- dictate the frame should be hidden. `includeVehicle` mirrors the per-
--- controller behavior (the buff-icon controller omits the vehicle rule); the
--- order of the independent early-return checks does not affect the result.
 local function ShouldHideForLocationRules(vis, includeVehicle)
     local ignoreHideRules = vis.dontHideInDungeonsRaids and Helpers.IsPlayerInDungeonOrRaid and Helpers.IsPlayerInDungeonOrRaid()
     if ignoreHideRules then return false end
@@ -241,7 +168,6 @@ local function ShouldHideForLocationRules(vis, includeVehicle)
     return false
 end
 
--- Determine if CDM should be visible (SHOW logic)
 local function ShouldCDMBeVisible()
     if not IsCDMMasterEnabled() then return false end
 
@@ -253,7 +179,6 @@ local function ShouldCDMBeVisible()
         return true
     end
 
-    -- Active show conditions override hide rules
     if vis.showWhenTargetExists and UnitExists("target") then return true end
     if vis.showInCombat and UnitAffectingCombat("player") then return true end
     if vis.showInGroup and IsPlayerInGroup() then return true end
@@ -261,13 +186,11 @@ local function ShouldCDMBeVisible()
     if vis.showOnMouseover and CDMVisibility.mouseOver then return true end
     if vis.showWhenMounted and Helpers.IsPlayerMounted() then return true end
 
-    -- No active show condition — apply hide rules
     if ShouldHideForLocationRules(vis, true) then return false end
 
     return false
 end
 
--- OnUpdate handler for CDM fade animation
 local function OnCDMFadeUpdate(self)
     local targetAlpha = ReadNumber(CDMVisibility.fadeTargetAlpha, 1)
     local vis = GetCDMVisibilitySettings()
@@ -284,10 +207,6 @@ local function OnCDMFadeUpdate(self)
     local frames = CDMVisibility.fadeTargets or GetCDMFrames()
     for i = #frames, 1, -1 do
         local frame = frames[i]
-        -- Existence/forbidden probes moved INSIDE the trampoline: the guard's
-        -- own frame.SetAlpha / frame.IsForbidden lookups throw on 68675
-        -- DenyTaintedAccess children. A forbidden SetAlpha errors as the
-        -- expected class (silent) and still prunes via ok=false.
         local ok = false
         if frame then
             ok = ns.SafeCallMethodIfPresent("best-effort-style", frame, "SetAlpha", alpha)
@@ -306,7 +225,6 @@ local function OnCDMFadeUpdate(self)
     end
 end
 
--- Start CDM fade animation
 local function StartCDMFade(targetAlpha)
     local frames = GetCDMFrames()
     if #frames == 0 then return end
@@ -318,9 +236,6 @@ local function StartCDMFade(targetAlpha)
         CDMVisibility.currentlyHidden = (targetAlpha < 1)
         CDMVisibility.fadeStartAlpha = targetAlpha
         CDMVisibility.fadeTargetAlpha = targetAlpha
-        -- Containers already at target (e.g. the init path pre-sets alpha on
-        -- /reload while mounted, then refreshes) — the viewers still need the
-        -- target applied or the re-anchored icons stay at their old alpha.
         ApplyReanchorViewerAlpha(targetAlpha)
         return
     end
@@ -340,10 +255,6 @@ local function StartCDMFade(targetAlpha)
     CDMVisibility.fadeFrame:SetScript("OnUpdate", OnCDMFadeUpdate)
 end
 
--- Jump any in-progress CDM fade straight to its resolved target alpha and stop
--- the animation. Used on Layout Mode exit so the containers hide instantly
--- instead of fading out (the fade reads as a 1-frame lag). Gameplay fades are
--- untouched — only the instant refresh path below calls this.
 local function SnapCDMFadeToTarget()
     local target = ReadNumber(CDMVisibility.fadeTargetAlpha, 1)
     local frames = CDMVisibility.fadeTargets or GetCDMFrames()
@@ -362,7 +273,6 @@ local function SnapCDMFadeToTarget()
     end
 end
 
--- Update CDM visibility
 UpdateCDMVisibility = function()
     if not IsCDMMasterEnabled() then
         StartCDMFade(0)
@@ -377,15 +287,10 @@ UpdateCDMVisibility = function()
     local shouldShow = ShouldCDMBeVisible()
     local vis = GetCDMVisibilitySettings()
 
-    -- Curve-driven "Show when health below 100%". Player HP is a secret value;
-    -- route the secret HP fraction through the step curve and pipe its return
-    -- straight into each CDM frame's alpha (it never enters Lua), mirroring the
-    -- unitframe path. Below full -> alpha 1; exactly 1.0 -> the fade rule wins.
     local hpCurve = ((not shouldShow) and vis and vis.showWhenHealthBelow100
         and UnitHealthPercent) and GetDamagedAlphaCurve() or nil
     if hpCurve then
         local damagedAlpha = UnitHealthPercent("player", true, hpCurve)
-        -- Stop any in-flight fade so it doesn't overwrite the curve alpha.
         if CDMVisibility.fadeFrame then
             CDMVisibility.fadeFrame:SetScript("OnUpdate", nil)
         end
@@ -398,8 +303,6 @@ UpdateCDMVisibility = function()
                 ns.SafeCallMethodIfPresent("sink-forward", frame, "SetAlpha", damagedAlpha)
             end
         end
-        -- Secret curve-resolved alpha forwards straight into SetAlpha — the
-        -- sanctioned secret-forwarding path; it never enters Lua arithmetic.
         ApplyReanchorViewerAlpha(damagedAlpha)
         if QUICore then
             if QUICore.UpdatePowerBar then QUICore:UpdatePowerBar() end
@@ -414,7 +317,6 @@ UpdateCDMVisibility = function()
         StartCDMFade(vis and vis.fadeOutAlpha or 0)
     end
 
-    -- Refresh resource bars so CDM visibility changes apply immediately
     if QUICore then
         if QUICore.UpdatePowerBar then
             QUICore:UpdatePowerBar()
@@ -425,9 +327,6 @@ UpdateCDMVisibility = function()
     end
 end
 
----------------------------------------------------------------------------
--- CDM MOUSEOVER DETECTION
----------------------------------------------------------------------------
 local _mouseoverHooked = Helpers.CreateStateTable()
 
 local function IsAddonOwnedCDMMouseoverFrame(frame)
@@ -435,8 +334,6 @@ local function IsAddonOwnedCDMMouseoverFrame(frame)
         and (frame._isQUICDMIcon or frame._quiCdmKey or frame._quiCDMMouseoverTarget)
 end
 
--- Hook a single frame for mouseover detection
--- Exported on ns so CDM engines can call it when skinning new icons
 local function HookFrameForMouseover(frame)
     if not IsAddonOwnedCDMMouseoverFrame(frame) or _mouseoverHooked[frame] then return end
     if IsCustomCDMBarFrame(frame) then
@@ -486,11 +383,9 @@ local function HookFrameForMouseover(frame)
     end)
 end
 
--- Setup CDM mouseover detector
 local function SetupCDMMouseoverDetector()
     local vis = GetCDMVisibilitySettings()
 
-    -- Remove existing detector
     if CDMVisibility.mouseoverDetector then
         CDMVisibility.mouseoverDetector:SetScript("OnUpdate", nil)
         CDMVisibility.mouseoverDetector:Hide()
@@ -509,15 +404,11 @@ local function SetupCDMMouseoverDetector()
         return
     end
 
-    -- Hook addon-owned container frames
     local cdmFrames = GetCDMFrames()
     for _, frame in ipairs(cdmFrames) do
         HookFrameForMouseover(frame)
     end
 
-    -- Hook existing addon-owned icons from each viewer. Do not HookScript
-    -- arbitrary Blizzard viewer children; CDM icon creation calls the same
-    -- API for late-created addon-owned icons.
     local viewers
     if ns.CDMProvider and ns.CDMProvider.GetViewerFrames then
         viewers = ns.CDMProvider:GetViewerFrames()
@@ -537,15 +428,11 @@ local function SetupCDMMouseoverDetector()
         end
     end
 
-    -- Create minimal detector frame (just for cleanup tracking, no OnUpdate)
     local detector = CreateFrame("Frame", nil, UIParent)
     detector:EnableMouse(false)
     CDMVisibility.mouseoverDetector = detector
 end
 
----------------------------------------------------------------------------
--- CUSTOM TRACKER / CUSTOM CDM BAR VISIBILITY CONTROLLER
----------------------------------------------------------------------------
 local CustomTrackersVisibility = {
     currentlyHidden = false,
     isFading = false,
@@ -605,10 +492,6 @@ local function OnCustomTrackersFadeUpdate(self)
     local frames = CustomTrackersVisibility.fadeTargets or GetCustomTrackerFrames()
     for i = #frames, 1, -1 do
         local frame = frames[i]
-        -- Existence/forbidden probes moved INSIDE the trampoline: the guard's
-        -- own frame.SetAlpha / frame.IsForbidden lookups throw on 68675
-        -- DenyTaintedAccess children. A forbidden SetAlpha errors as the
-        -- expected class (silent) and still prunes via ok=false.
         local ok = false
         if frame then
             ok = ns.SafeCallMethodIfPresent("best-effort-style", frame, "SetAlpha", alpha)
@@ -757,9 +640,6 @@ local function SetupCustomTrackersMouseoverDetector()
     CustomTrackersVisibility.mouseoverDetector = detector
 end
 
----------------------------------------------------------------------------
--- UNITFRAMES VISIBILITY CONTROLLER
----------------------------------------------------------------------------
 local UnitframesVisibility = {
     currentlyHidden = false,
     isFading = false,
@@ -778,7 +658,6 @@ local function IsUnitframesCombatLocked()
     return UnitAffectingCombat and UnitAffectingCombat("player")
 end
 
--- Get unitframesVisibility settings from profile
 local function GetUnitframesVisibilitySettings()
     if QUICore and QUICore.db and QUICore.db.profile and QUICore.db.profile.unitframesVisibility then
         return QUICore.db.profile.unitframesVisibility
@@ -786,7 +665,6 @@ local function GetUnitframesVisibilitySettings()
     return nil
 end
 
--- Get unit frames and castbars for visibility control
 local function GetUnitframeFrames()
     local frames = {}
 
@@ -812,10 +690,6 @@ local function GetUnitframeFrames()
     return frames
 end
 
--- Player-only subset for the curve-driven HP override. The "Show when
--- health below 100%" condition reads PLAYER hp, so it should only re-show
--- the player's own frame (and castbar) — target/focus/pet/etc. follow
--- their own rules.
 local function GetPlayerUnitframes()
     local frames = {}
     if _G.QUI_UnitFrames and _G.QUI_UnitFrames.player then
@@ -866,27 +740,19 @@ local function ApplyUnitframeVisibilityAlpha(frame, alpha)
     frame:SetAlpha(alpha)
 end
 
--- Determine if Unitframes should be visible (SHOW logic)
 local function ShouldUnitframesBeVisible()
     local vis = GetUnitframesVisibilitySettings()
     if not vis then return true end
 
-    -- Combat visibility is a safety floor. Unit frames must not fade out while
-    -- protected combat interactions and secret health values are active.
     if IsUnitframesCombatLocked() then
         return true
     end
-
-    -- "Show when health below 100%" override is applied later as a
-    -- curve-driven alpha in UpdateUnitframesVisibility — it can't live
-    -- here because it'd require comparing a secret HP value in Lua.
 
     if vis.showAlways then
         if ShouldHideForLocationRules(vis, false) then return false end
         return true
     end
 
-    -- Active show conditions override hide rules
     if vis.showWhenTargetExists and UnitExists("target") then return true end
     if vis.showInCombat and UnitAffectingCombat("player") then return true end
     if vis.showInGroup and IsPlayerInGroup() then return true end
@@ -894,13 +760,11 @@ local function ShouldUnitframesBeVisible()
     if vis.showOnMouseover and UnitframesVisibility.mouseOver then return true end
     if vis.showWhenMounted and Helpers.IsPlayerMounted() then return true end
 
-    -- No active show condition — apply hide rules
     if ShouldHideForLocationRules(vis, false) then return false end
 
     return false
 end
 
--- OnUpdate handler for Unitframes fade animation
 local function OnUnitframesFadeUpdate(self)
     local targetAlpha = ReadNumber(UnitframesVisibility.fadeTargetAlpha, 1)
     if targetAlpha < 1 and IsUnitframesCombatLocked() then
@@ -940,9 +804,6 @@ local function OnUnitframesFadeUpdate(self)
     end
 end
 
--- Start Unitframes fade animation. `framesOverride` lets callers fade a
--- subset (e.g. non-player frames while the player frame is being driven
--- directly by the HP curve).
 local function StartUnitframesFade(targetAlpha, framesOverride)
     local frames = framesOverride or GetUnitframeFrames()
     if #frames == 0 then return end
@@ -982,7 +843,6 @@ local function StartUnitframesFade(targetAlpha, framesOverride)
     UnitframesVisibility.fadeFrame:SetScript("OnUpdate", OnUnitframesFadeUpdate)
 end
 
--- Update Unitframes visibility
 UpdateUnitframesVisibility = function()
     if (_G.QUI_IsUnitFrameEditModeActive and _G.QUI_IsUnitFrameEditModeActive())
         or Helpers.IsLayoutModeActive() then
@@ -993,14 +853,6 @@ UpdateUnitframesVisibility = function()
     local vis = GetUnitframesVisibilitySettings()
     local shouldShow = ShouldUnitframesBeVisible()
 
-    -- Curve-driven "Show when health below 100%" override (PLAYER ONLY).
-    -- When rules say hide and the option is enabled, route the secret HP
-    -- fraction through the step curve and pipe its return straight into
-    -- the player frame's SetAlpha. The value never enters Lua. Other
-    -- frames (target/focus/pet/etc.) follow the normal fade rule because
-    -- they don't track player HP.
-    --   below full → alpha 1 (player frame visible)
-    --   exactly 1.0 → alpha 0 (player frame hidden, hide rules win)
     local hpCurve = ((not shouldShow) and vis and vis.showWhenHealthBelow100
         and UnitHealthPercent) and GetDamagedAlphaCurve() or nil
     if hpCurve then
@@ -1009,14 +861,11 @@ UpdateUnitframesVisibility = function()
             ApplyUnitframeVisibilityAlpha(frame, damagedAlpha)
         end
 
-        -- Non-player frames + castbars: fade per rule.
         local fadeAlpha = vis and vis.fadeOutAlpha or 0
         local nonPlayerFrames = GetUnitframeFramesExcludingPlayer()
         if #nonPlayerFrames > 0 then
             StartUnitframesFade(fadeAlpha, nonPlayerFrames)
         else
-            -- Only player frame exists — stop any in-flight fade so it
-            -- doesn't overwrite the curve-driven alpha.
             if UnitframesVisibility.fadeFrame then
                 UnitframesVisibility.fadeFrame:SetScript("OnUpdate", nil)
             end
@@ -1026,7 +875,6 @@ UpdateUnitframesVisibility = function()
         return
     end
 
-    -- Sync castbar alpha based on "Always Show Castbars" setting
     if _G.QUI_Castbars then
         local targetAlpha = 1
 
@@ -1050,7 +898,6 @@ UpdateUnitframesVisibility = function()
     end
 end
 
--- Setup Unitframes mouseover detector
 local function SetupUnitframesMouseoverDetector()
     local vis = GetUnitframesVisibilitySettings()
 
@@ -1112,9 +959,6 @@ local function SetupUnitframesMouseoverDetector()
     UnitframesVisibility.mouseoverDetector = detector
 end
 
----------------------------------------------------------------------------
--- ACTION BARS VISIBILITY CONTROLLER
----------------------------------------------------------------------------
 local ActionBarsVisibility = {
     currentlyHidden = false,
     isFading = false,
@@ -1137,7 +981,6 @@ end
 
 local function GetActionBarFrames()
     local frames = {}
-    -- Action bar containers from the owned action bar system
     if ns.ActionBarsOwned and ns.ActionBarsOwned.containers then
         for barKey, container in pairs(ns.ActionBarsOwned.containers) do
             if container then
@@ -1153,12 +996,10 @@ local function ShouldActionBarsBeVisible()
     if not vis then return true end
 
     if vis.showAlways then
-        -- "Always show" still respects hide rules (mounted/flying/etc.)
         if ShouldHideForLocationRules(vis, true) then return false end
         return true
     end
 
-    -- Active show conditions (target, combat, etc.) override hide rules
     if vis.showWhenTargetExists and UnitExists("target") then return true end
     if vis.showInCombat and UnitAffectingCombat("player") then return true end
     if vis.showInGroup and IsPlayerInGroup() then return true end
@@ -1166,19 +1007,11 @@ local function ShouldActionBarsBeVisible()
     if vis.showOnMouseover and ActionBarsVisibility.mouseOver then return true end
     if vis.showWhenMounted and Helpers.IsPlayerMounted() then return true end
 
-    -- No active show condition matched — apply hide rules
     if ShouldHideForLocationRules(vis, true) then return false end
 
     return false
 end
 
--- Exposed on the shared namespace for the action bar module (QUI_ActionBars)
--- so its per-bar fade system can yield to this global location-hide decision.
--- Without it, per-bar alwaysShow / force-show refreshes race the global fade
--- and flicker the bars while skyriding (the override-bar swap fires action-bar
--- events that re-run the per-bar fade setup, which pulls alpha back to 1).
--- Returns true when the action bars should currently be hidden by the global
--- visibility rules. Edit/Layout mode never hides — both keep all bars visible.
 ns.ShouldHideActionBarsForVisibility = function()
     if Helpers.IsEditModeActive() or Helpers.IsLayoutModeActive() then
         return false
@@ -1214,9 +1047,6 @@ local function OnActionBarsFadeUpdate(self)
             ApplyBarAlpha(setBarAlpha, entry.barKey, entry.container, alpha)
         end
     else
-        -- Defensive fallback (fadeTargets is normally set for the fade's
-        -- lifetime): iterate the containers directly instead of allocating
-        -- a snapshot per frame.
         local containers = ns.ActionBarsOwned and ns.ActionBarsOwned.containers
         if containers then
             for barKey, container in pairs(containers) do
@@ -1376,8 +1206,6 @@ local function SetupActionBarsMouseoverDetector()
         end
     end
 
-    -- Polling detector: catches mouseover when bars are fully faded out
-    -- and OnEnter may not fire reliably on transparent containers
     local detector = CreateFrame("Frame", nil, UIParent)
     detector:EnableMouse(false)
     local pollInterval = 0
@@ -1392,9 +1220,6 @@ local function SetupActionBarsMouseoverDetector()
             return
         end
 
-        -- Iterate the owned containers directly — this poll runs for the
-        -- whole time bars are hidden or fading, so it must not allocate a
-        -- snapshot table per tick.
         local containers = ns.ActionBarsOwned and ns.ActionBarsOwned.containers
         if not containers then return end
         for _, container in pairs(containers) do
@@ -1414,9 +1239,6 @@ local function SetupActionBarsMouseoverDetector()
     ActionBarsVisibility.mouseoverDetector = detector
 end
 
----------------------------------------------------------------------------
--- CHAT FRAMES VISIBILITY CONTROLLER
----------------------------------------------------------------------------
 local ChatVisibility = {
     currentlyHidden = false,
     isFading = false,
@@ -1442,11 +1264,9 @@ local function GetChatFrames()
     for i = 1, NUM_CHAT_WINDOWS do
         local chatFrame = _G["ChatFrame" .. i]
         if chatFrame and chatFrame:IsShown() then
-            -- Include the chat frame and its dock/tab
             frames[#frames + 1] = chatFrame
         end
     end
-    -- Include GeneralDockManager (the tab bar)
     if _G.GeneralDockManager then
         frames[#frames + 1] = _G.GeneralDockManager
     end
@@ -1462,7 +1282,6 @@ local function ShouldChatBeVisible()
         return true
     end
 
-    -- Active show conditions override hide rules
     if vis.showWhenTargetExists and UnitExists("target") then return true end
     if vis.showInCombat and UnitAffectingCombat("player") then return true end
     if vis.showInGroup and IsPlayerInGroup() then return true end
@@ -1470,15 +1289,12 @@ local function ShouldChatBeVisible()
     if vis.showOnMouseover and ChatVisibility.mouseOver then return true end
     if vis.showWhenMounted and Helpers.IsPlayerMounted() then return true end
 
-    -- No active show condition — apply hide rules
     if ShouldHideForLocationRules(vis, true) then return false end
 
     return false
 end
 
 local function OnChatFadeUpdate(self)
-    -- If the takeover's Blizzard-frame suppression activated mid-fade, stop:
-    -- the suppression anchor owns chat visibility; don't fade back over it.
     local Suppress = ns.QUI and ns.QUI.Chat and ns.QUI.Chat.BlizzardSuppress
     if Suppress and Suppress.IsActive and Suppress.IsActive() then
         ChatVisibility.isFading = false
@@ -1513,8 +1329,6 @@ local function OnChatFadeUpdate(self)
 end
 
 local function StartChatFade(targetAlpha)
-    -- The chat takeover's Blizzard-frame suppression owns chat alpha while
-    -- active — skip visibility fades so the two systems don't fight.
     local Suppress = ns.QUI and ns.QUI.Chat and ns.QUI.Chat.BlizzardSuppress
     if Suppress and Suppress.IsActive and Suppress.IsActive() then return end
 
@@ -1620,9 +1434,6 @@ local function SetupChatMouseoverDetector()
     ChatVisibility.mouseoverDetector = detector
 end
 
----------------------------------------------------------------------------
--- SHARED EVENT HANDLING
----------------------------------------------------------------------------
 local visibilityEventFrame = CreateFrame("Frame")
 visibilityEventFrame:RegisterEvent("ADDON_LOADED")
 visibilityEventFrame:RegisterEvent("PLAYER_TARGET_CHANGED")
@@ -1648,10 +1459,6 @@ visibilityEventFrame:RegisterUnitEvent("UNIT_MAXHEALTH", "player")
 
 local _pendingSetupTimer = nil
 
--- Frame-based event coalescing: burst-prone events (GROUP_ROSTER_UPDATE,
--- ZONE_CHANGED_NEW_AREA, etc.) fire multiple times in the same frame.
--- Instead of running 4 visibility updates per event, coalesce into one
--- update on the next frame.  Show/Hide pattern auto-deduplicates.
 local visCoalesceFrame = CreateFrame("Frame")
 visCoalesceFrame:Hide()
 visCoalesceFrame:SetScript("OnUpdate", function(self)
@@ -1673,8 +1480,6 @@ visibilityEventFrame:SetScript("OnEvent", function(self, event, ...)
         if unit ~= "player" then return end
     end
 
-    -- Health events — re-run unit-frame visibility so the curve-driven
-    -- alpha override picks up the new HP fraction.
     if event == "UNIT_HEALTH" or event == "UNIT_MAXHEALTH" then
         if UpdateUnitframesVisibility then UpdateUnitframesVisibility() end
     end
@@ -1686,8 +1491,6 @@ visibilityEventFrame:SetScript("OnEvent", function(self, event, ...)
     end
 
     if event == "ADDON_LOADED" or event == "PLAYER_ENTERING_WORLD" then
-        -- Schedule delayed setup so CDM/UF frames have time to render.
-        -- Also runs on PLAYER_ENTERING_WORLD to cover zone transitions.
         if _pendingSetupTimer then
             _pendingSetupTimer:Cancel()
         end
@@ -1698,48 +1501,27 @@ visibilityEventFrame:SetScript("OnEvent", function(self, event, ...)
             SetupUnitframesMouseoverDetector()
             SetupActionBarsMouseoverDetector()
             SetupChatMouseoverDetector()
-            -- CDM and custom bars run here — UF/AB/Chat visibility is driven by
-            -- events (dismount, combat, target, etc.).  Running a full
-            -- re-eval here flashes frames because IsMounted() and
-            -- IsPlayerInDungeonOrRaid() can still return stale values
-            -- 2+ seconds after a zone transition. UNIT_HEALTH events keep
-            -- the curve-driven HP override current independently.
             UpdateCDMVisibility()
             UpdateCustomTrackersVisibility()
         end)
     end
 
-    -- On zone-transition events, skip the coalesced visibility update for
-    -- controllers that are currently hidden. IsMounted()/IsFlying() return
-    -- stale values right after a load screen, which makes ShouldBeVisible
-    -- erroneously return true and flash frames.  The 2-second setup timer
-    -- runs the authoritative re-evaluation once API state has settled.
-    -- All other events (dismount, combat, target change) trigger normally.
     if (event == "PLAYER_ENTERING_WORLD" or event == "ZONE_CHANGED_NEW_AREA")
         and (UnitframesVisibility.currentlyHidden
             or CustomTrackersVisibility.currentlyHidden
             or ActionBarsVisibility.currentlyHidden
             or ChatVisibility.currentlyHidden) then
-        -- Run CDM only — it doesn't have mount-based hide rules
         UpdateCDMVisibility()
         return
     end
 
-    -- Coalesce visibility updates: if multiple events fire in the same
-    -- frame (e.g. GROUP_ROSTER_UPDATE bursts), only one update runs.
     visCoalesceFrame:Show()
 end)
 
----------------------------------------------------------------------------
--- GLOBAL EXPORTS
----------------------------------------------------------------------------
 _G.QUI_RefreshCDMVisibility = function()
     _cdmFramesDirty = true
     UpdateCDMVisibility()
 end
--- Instant variant: resolve visibility then snap past the fade. For Layout Mode
--- exit, where a fade-out reads as the container lingering for a frame. Exported
--- on ns (not _G) — only the CDM module's layout registration consumes it.
 ns.RefreshCDMVisibilityInstant = function()
     _cdmFramesDirty = true
     UpdateCDMVisibility()
@@ -1773,17 +1555,12 @@ if ns.Registry then
     })
 end
 
----------------------------------------------------------------------------
--- NAMESPACE EXPORTS
----------------------------------------------------------------------------
--- Expose HookFrameForMouseover so CDM engines can hook new icons during skinning
 ns.HookFrameForMouseover = function(frame)
     HookFrameForMouseover(frame)
     if HookCustomTrackerFrameForMouseover then
         HookCustomTrackerFrameForMouseover(frame)
     end
 end
--- Expose cache invalidation so engines can mark frames dirty after init
 ns.InvalidateCDMFrameCache = InvalidateCDMFrameCache
 ns.GetCDMFrameCacheStats = function()
     return {
@@ -1792,9 +1569,6 @@ ns.GetCDMFrameCacheStats = function()
     }
 end
 
----------------------------------------------------------------------------
--- LAYOUT MODE: force all frames visible on enter, restore on exit
----------------------------------------------------------------------------
 local function RefreshAllVisibility()
     UpdateCDMVisibility()
     UpdateCustomTrackersVisibility()

@@ -2,7 +2,7 @@
 ## Title: |cFF30D1FFQUI|r Options
 ## IconTexture: Interface\AddOns\QUI\assets\QUI
 ## Notes: Configuration UI for QUI
-## Author: Zol
+## Author: Drew
 ## Version: 5.0.0-alpha29
 ## Category: User Interface
 ## Group: QUI
@@ -25,11 +25,15 @@ bootstrap.lua
 # builders are loaded here); no builder captures a module symbol at file scope,
 # so the ordering is belt-and-suspenders (proven by the headless generator
 # smoke test).
-# The ~3MB generated search index lives in the QUI_OptionsSearch LoadOnDemand
-# addon and is pulled in on demand the first time the search box is used.
 search_synonyms.lua
+# The generated search index, packed as a long-bracket string (~1.2 MB).
+# Loading this file lexes ONE token; framework.lua compiles it on first search.
+# It used to be the LoadOnDemand QUI_OptionsSearch addon — one folder for
+# one deferral point. Packing gives the same deferral without the folder.
+search_cache.lua
 framework.lua
 border_control.lua
+reorder_list.lua
 shared.lua
 wizard.lua
 # Options-only settings framework, deferred out of the login path. Every
@@ -46,7 +50,6 @@ wizard.lua
 ..\QUI\core\settings\surfaces.lua
 ..\QUI\core\settings\surface_features.lua
 ..\QUI\core\settings\nav.lua
-..\QUI\core\settings\sync.lua
 ..\QUI\core\settings\renderer.lua
 # Options-only profile machinery, deferred out of the main-addon login path.
 # profile_io.lua (import/export engine) + bundled preset import strings:
@@ -151,8 +154,8 @@ aura_elements_editor.lua
 ..\QUI\core\settings\content\auras_group_page.lua
 ..\QUI\core\settings\content\auras_unit_page.lua
 ..\QUI\core\settings\content\auras_actionbar_page.lua
-..\QUI\core\settings\content\auras_dispel_page.lua
 ..\QUI\core\settings\content\auras_wizard_page.lua
+..\QUI\core\settings\content\auras_nameplate_page.lua
 init.lua
 tiles\related.lua
 tiles\minimap.lua

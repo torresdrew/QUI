@@ -22,10 +22,10 @@ end
 local source = readAll("QUI_UnitFrames/unitframes/unitframes.lua")
 
 local startPos = assert(
-    source:find("%-%- Force update ToT frame when target%-related events fire"),
+    source:find("local function ForceUpdateToT(", 1, true),
     "ToT section should exist")
 local endPos = assert(
-    source:find("%-%-%-+%s*\n%-%- Boss Target Highlight", startPos),
+    source:find("local _bossTargetHighlightFrame", startPos, true),
     "ToT section should end before Boss Target Highlight")
 local body = source:sub(startPos, endPos - 1)
 

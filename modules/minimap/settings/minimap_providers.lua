@@ -1,10 +1,3 @@
---[[
-    QUI Minimap Shared Settings Providers
-    Owns provider-backed settings content for the Minimap surface
-    in the shared settings layer. Migrated to V3 body pattern
-    (CreateAccentDotLabel + CreateSettingsCardGroup + BuildSettingRow).
-]]
-
 local _, ns = ...
 
 local Settings = ns.Settings
@@ -13,12 +6,6 @@ if not ProviderPanels or type(ProviderPanels.RegisterAfterLoad) ~= "function" th
     return
 end
 
--- NOTE: do NOT capture `ns.QUI_Options` as a local in this outer closure.
--- This file is loaded by the QUI addon before the on-demand QUI_Options
--- addon is loaded; at that point ns.QUI_Options is the minimal stub
--- installed by core/gui_shell.lua. Once QUI_Options/shared.lua runs it
--- REPLACES the table, so any captured local would be stale. Re-resolve
--- ns.QUI_Options at call time inside MakeLayout / row / build bodies.
 ProviderPanels:RegisterAfterLoad(function(ctx)
     local GUI = ctx.GUI
     local U = ctx.U
@@ -26,7 +13,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
     local HEADER_GAP = 26
     local SECTION_GAP = 14
 
-    -- Shared provider-panel layout scaffold (core/settings_layout_shared.lua).
     local function MakeLayout(content)
         if U._layoutModePositionOnly then
             return U.MakeSuppressedProviderLayout(content)
@@ -38,9 +24,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         return ns.QUI_Options.BuildSettingRow(parent, label, widget, desc)
     end
 
-    ---------------------------------------------------------------------------
-    -- MINIMAP PROVIDER
-    ---------------------------------------------------------------------------
     ctx.RegisterShared("minimap", { build = function(content, key, _width)
         local db = U.GetProfileDB()
         if not db or not db.minimap or not ns.QUI_Options then return 80 end
@@ -50,9 +33,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         local function Refresh() if _G.QUI_RefreshMinimap then _G.QUI_RefreshMinimap() end end
         local function RefreshUIHider() if _G.QUI_RefreshUIHider then _G.QUI_RefreshUIHider() end end
 
-        -- Moving the mission button between the minimap and the drawer only
-        -- fully settles after a reload (drawer collection is one-way at runtime),
-        -- so refresh then offer a reload either direction.
         local function RefreshMissionsDrawer()
             Refresh()
             local QUI = _G.QUI
@@ -70,7 +50,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
 
         local layout = MakeLayout(content)
 
-        -- GENERAL
         layout.headerAt(ns.L["General"])
         local s1 = layout.sectionAt()
         local sizeW = GUI:CreateFormSlider(s1.frame, nil, 120, 380, 1, "size", mm, Refresh,
@@ -97,7 +76,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         s1.AddRow(row(s1.frame, ns.L["Hide Addon Buttons Until Hover"], hideAddonW))
         layout.closeSection(s1)
 
-        -- BORDER
         layout.headerAt(ns.L["Border"])
         local s2 = layout.sectionAt()
         local borderSizeW = GUI:CreateFormSlider(s2.frame, nil, 1, 16, 1, "borderSize", mm, Refresh,
@@ -109,7 +87,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         s2.AddRow(row(s2.frame, ns.L["Border Color Source"], srcW), row(s2.frame, ns.L["Border Color"], colorW))
         layout.closeSection(s2)
 
-        -- HIDE ELEMENTS
         layout.headerAt(ns.L["Hide Elements"])
         local s3 = layout.sectionAt()
         local hideMailW = GUI:CreateFormCheckboxInverted(s3.frame, nil, "showMail", mm, Refresh,
@@ -143,7 +120,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         s3.AddRow(row(s3.frame, ns.L["Hide Zone Text (Native)"], hideZoneW), row(s3.frame, ns.L["Hide Zoom Buttons"], hideZoomW))
         layout.closeSection(s3)
 
-        -- ZONE LABEL
         layout.headerAt(ns.L["Zone Label"])
         local s4 = layout.sectionAt()
         if not mm.zoneTextConfig then mm.zoneTextConfig = {} end
@@ -168,7 +144,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         s4.AddRow(row(s4.frame, ns.L["Uppercase Text"], zlAllCapsW), row(s4.frame, ns.L["Use Class Color"], zlClassW))
         layout.closeSection(s4)
 
-        -- DUNGEON EYE
         if not mm.dungeonEye then
             mm.dungeonEye = { enabled = true, corner = "BOTTOMLEFT", scale = 0.6, offsetX = 0, offsetY = 0 }
         end
@@ -199,7 +174,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         s5.AddRow(row(s5.frame, ns.L["Y Offset"], eyeYW))
         layout.closeSection(s5)
 
-        -- GREAT VAULT
         if not mm.greatVault then
             mm.greatVault = { enabled = false, anchor = "TOPLEFT", fadeWhenMouseOut = false, fadeOpacity = 0, scale = 1.0, offsetX = 1, offsetY = -1 }
         end
@@ -236,7 +210,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         s6.AddRow(row(s6.frame, ns.L["Y Offset"], gvYW))
         layout.closeSection(s6)
 
-        -- TRACKING BUTTON
         if not mm.trackingConfig then
             mm.trackingConfig = { anchor = "TOPLEFT", offsetX = 0, offsetY = 0 }
         end
@@ -258,7 +231,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         sTrack.AddRow(row(sTrack.frame, ns.L["Vertical Offset"], tkYW))
         layout.closeSection(sTrack)
 
-        -- MAIL BUTTON (position of QUI's new-mail icon; seeded lazily like tracking)
         if not mm.mailConfig then
             mm.mailConfig = { anchor = "BOTTOMLEFT", offsetX = 2, offsetY = 2, scale = 1 }
         end
@@ -283,7 +255,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         sMail.AddRow(row(sMail.frame, ns.L["X Offset"], mailXW), row(sMail.frame, ns.L["Y Offset"], mailYW))
         layout.closeSection(sMail)
 
-        -- BUTTON DRAWER
         if not mm.buttonDrawer then
             mm.buttonDrawer = {
                 enabled = false, anchor = "RIGHT", offsetX = 0, offsetY = 0,
@@ -297,7 +268,7 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         end
         local drawer = mm.buttonDrawer
         if drawer.toggleSize == nil then drawer.toggleSize = 20 end
-        if not drawer.toggleIcon then drawer.toggleIcon = "hammer" end
+        if not drawer.toggleIcon then drawer.toggleIcon = "qui" end
         if drawer.hiddenButtons == nil then drawer.hiddenButtons = {} end
         if drawer.padding == nil then drawer.padding = 6 end
         if not drawer.growthDirection then drawer.growthDirection = "RIGHT" end
@@ -318,7 +289,9 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             { value = "DOWN", text = ns.L["Down"] }, { value = "UP", text = ns.L["Up"] },
         }
         local toggleIconOptions = {
-            { value = "hammer", text = ns.L["Hammer"] }, { value = "grid", text = ns.L["Grid Dots"] },
+            { value = "qui", text = ns.L["QUI"] },
+            { value = "hammer", text = ns.L["Hammer"] },
+            { value = "grid", text = ns.L["Grid Dots"] },
         }
 
         layout.headerAt(ns.L["Button Drawer"])
@@ -382,7 +355,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         s7.AddRow(row(s7.frame, ns.L["Button Spacing"], bdSpaceW), row(s7.frame, ns.L["Show Drawer Tooltip"], bdTipW))
         layout.closeSection(s7)
 
-        -- DRAWER APPEARANCE
         layout.headerAt(ns.L["Drawer Appearance"])
         local s8 = layout.sectionAt()
         local daBgColorW = GUI:CreateFormColorPicker(s8.frame, nil, "bgColor", drawer, Refresh,
@@ -400,7 +372,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         s8.AddRow(row(s8.frame, ns.L["Border Color Source"], daBdSrcW), row(s8.frame, ns.L["Border Color"], daBdColW))
         layout.closeSection(s8)
 
-        -- HIDDEN BUTTONS IN DRAWER
         local buttonNames = _G.QUI_GetDrawerButtonNames and _G.QUI_GetDrawerButtonNames() or {}
         layout.headerAt(ns.L["Hidden Buttons in Drawer"])
         if #buttonNames > 0 then
@@ -431,7 +402,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             layout.placeCustom(empty, 24)
         end
 
-        -- Layout-mode chrome (V3-styled collapsibles)
         U.BuildPositionCollapsible(content, "minimap", nil, layout.sections, layout.relayoutSections)
         U.BuildOpenFullSettingsLink(content, key, layout.sections, layout.relayoutSections)
         layout.relayoutSections()

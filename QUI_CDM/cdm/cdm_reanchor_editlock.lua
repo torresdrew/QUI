@@ -1,20 +1,8 @@
--- QUI_CDM/cdm/cdm_reanchor_editlock.lua
--- Locks the Blizzard CooldownViewer systems out of Blizzard Edit Mode. The
--- native systems are QUI-managed or mirrored, so they must not be visible,
--- draggable, or configurable in Blizzard Edit Mode.
---
--- Taint posture: do not touch viewer/Selection state until Blizzard_EditMode's
--- settings dialog exists. Cold-login UNIT_AURA can run before that point, and
--- Blizzard's CooldownViewer aura lookup tables reject tainted access.
 local _, ns = ...
 
 local CDMReanchorEditLock = {}
 ns.CDMReanchorEditLock = CDMReanchorEditLock
 
--- Every body here post-hooks a CDM viewer / its Edit-Mode selection / the settings
--- dialog -- the same SettingsLayoutManager machinery the SetHiddenGroupBuffs cascade
--- runs through. Bodies run under securecall so they can't leak this addon's taint into
--- Blizzard's continuation (required for EVERY hook on a CDM frame).
 local _securecall = securecallfunction or function(fn, ...) return fn(...) end
 
 local InstanceMT = { __index = CDMReanchorEditLock }
@@ -24,9 +12,9 @@ function CDMReanchorEditLock.New(deps)
     local self = {
         _deps = deps,
         _hooksecurefunc = deps.hooksecurefunc or hooksecurefunc,
-        _managed = setmetatable({}, { __mode = "k" }),        -- viewer -> true
-        _hookedViewers = setmetatable({}, { __mode = "k" }),  -- viewer -> true
-        _selHooked = setmetatable({}, { __mode = "k" }),      -- Selection frame -> true
+        _managed = setmetatable({}, { __mode = "k" }),
+        _hookedViewers = setmetatable({}, { __mode = "k" }),
+        _selHooked = setmetatable({}, { __mode = "k" }),
         _dialog = nil,
         _dialogHooked = false,
         _notified = false,
@@ -42,8 +30,6 @@ function CDMReanchorEditLock:IsManaged(frame)
     return frame ~= nil and self._managed[frame] == true
 end
 
--- Resolve the Edit-Mode settings dialog (lazily -- the global may not exist until
--- Edit Mode first loads) and ensure it's hooked. Returns the dialog or nil.
 function CDMReanchorEditLock:_ResolveDialog()
     if not self._dialog then
         local getDialog = self._deps.getDialog
@@ -133,12 +119,6 @@ function CDMReanchorEditLock:_QueueCooldownViewerDataRetry()
     end)
 end
 
--- Make the Edit-Mode selection/mover of a managed viewer invisible. The mover
--- visual is the system's `.Selection` frame (border + label + drag handles),
--- shown via Selection:ShowHighlighted()/ShowSelected() -- both only call Show()
--- and never touch alpha. So forcing Selection alpha 0 and re-asserting it on any
--- SetAlpha hides the mover entirely while leaving the frame structurally intact.
--- Taint-safe: additive hook + unprotected SetAlpha; no keys written onto the frame.
 function CDMReanchorEditLock:HideSelection(viewer)
     local sel = viewer and viewer.Selection
     if not sel or not sel.SetAlpha then return end
@@ -183,9 +163,6 @@ function CDMReanchorEditLock:SuppressNativeTrackedBar(viewer, key)
     end
 end
 
--- Make one viewer un-editable: force non-movable now, re-assert on every Edit-Mode
--- enter / system-select (Blizzard re-enables movability there), close the settings
--- dialog if selection routed it open, and keep the mover/selection invisible.
 function CDMReanchorEditLock:LockViewer(viewer, key)
     if not viewer or self._hookedViewers[viewer] then return false end
     self._managed[viewer] = true
@@ -224,8 +201,6 @@ function CDMReanchorEditLock:LockViewer(viewer, key)
     return true
 end
 
--- When Blizzard attaches its settings dialog to a managed viewer, close it (the
--- system is QUI-managed; there's nothing to edit here).
 function CDMReanchorEditLock:HookDialog(dialog)
     if not dialog then return false end
     self._dialog = dialog

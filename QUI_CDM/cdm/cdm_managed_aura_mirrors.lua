@@ -1,7 +1,3 @@
--- QUI_CDM/cdm/cdm_managed_aura_mirrors.lua
--- Exact aura overlays for duplicate CDM placements. Blizzard's managed
--- CustomAuraContainer owns aura identity, visibility, stacks, and duration;
--- QUI owns only stable placement hosts and static presentation.
 local _, ns = ...
 
 local CDMManagedAuraMirrors = {}
@@ -59,9 +55,6 @@ function CDMManagedAuraMirrors:_GetPool(ownerContainer, allowCreate)
     pool = {
         auraContainer = auraContainer,
         records = {},
-        -- Placement keys embed the container ordinal, so configuration churn
-        -- retires keys constantly. Frames and managed aura slots can never be
-        -- destroyed, so retired records are recycled instead of re-minted.
         free = {},
         slotSeq = 0,
         generation = 0,
@@ -87,11 +80,6 @@ local function ParkRecord(pool, record)
     record.parked = true
 end
 
--- A retired record keeps its old key in pool.records until something claims it,
--- so it can leave the free list either by recycling (tail take) or by being
--- reclaimed under its own key. Both remove their exact entry, because a
--- skip-the-stale-entry list would grow by one on every retire/reclaim cycle.
--- Invariant: record.free is true exactly while it occupies one free slot.
 local function ReleaseToFree(pool, record)
     if record.free then return end
     local free = pool.free
@@ -141,8 +129,6 @@ function CDMManagedAuraMirrors:Acquire(ownerContainer, placementKey, entry, prof
     else
         record = TakeFree(pool)
         if record then
-            -- Recycle a retired placement: the host frame and its managed aura
-            -- slots are permanent, so only the key and filters change.
             pool.records[record.placementKey] = nil
             record.placementKey = placementKey
             pool.records[placementKey] = record
@@ -165,8 +151,6 @@ function CDMManagedAuraMirrors:Acquire(ownerContainer, placementKey, entry, prof
             auraContainer:SetAuraSlotCandidateFilters(slot.key, CandidateFilter(spellID))
             slot.spellID = spellID
         else
-            -- Slot keys must outlive the placement key: a recycled record keeps
-            -- its permanent slots and only re-points their candidate filters.
             pool.slotSeq = pool.slotSeq + 1
             local key = "quiAuraMirror:" .. tostring(pool.slotSeq)
             local host = record.host
@@ -184,10 +168,8 @@ function CDMManagedAuraMirrors:Acquire(ownerContainer, placementKey, entry, prof
                     end
                     if button.SetFrameLevel then
                         local base = host.GetFrameLevel and host:GetFrameLevel() or 0
-                        -- First candidate is the highest-priority CDM identity.
                         button:SetFrameLevel(base + 32 - i)
                     end
-                    -- The owned CDM icon beneath owns tooltip/click behavior.
                     if button.EnableMouse then button:EnableMouse(false) end
                     if button.SetMouseClickEnabled then button:SetMouseClickEnabled(false) end
                     if button.SetMouseMotionEnabled then button:SetMouseMotionEnabled(false) end

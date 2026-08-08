@@ -1,14 +1,6 @@
--- qui_spellscanner.lua
--- Spell Scanner System for Combat-Safe Buff Detection
---
--- Scans spell/item → buff mappings out of combat
--- Detects active states via UNIT_SPELLCAST_SUCCEEDED and item cooldown starts.
--- Enables accurate tracking of trinkets, potions, and class abilities during combat.
-
 local ADDON_NAME, ns = ...
 local QUI = QUI
 
--- Performance: cache frequently-called globals as locals
 local type = type
 local pairs = pairs
 local pcall = pcall
@@ -39,49 +31,27 @@ local function IsFutureExpiration(expirationTime, now)
     return IsCleanNumber(expirationTime) and expirationTime > now
 end
 
----------------------------------------------------------------------------
--- MODULE STATE
----------------------------------------------------------------------------
 local SpellScanner = {}
 QUI.SpellScanner = SpellScanner
 
--- Runtime state: currently active buffs
--- Structure: { [spellID] = { startTime, duration, expirationTime, auraInstanceID, hasAuraInstanceID, auraUnit, source, sourceId } }
 SpellScanner.activeBuffs = {}
 
--- Pending scanning: spells cast in combat that we'll try to scan after
--- Structure: { [spellID] = { timestamp, itemID (optional) } }
 SpellScanner.pendingScanning = {}
 
--- Item use spells registered by CDM entries.
--- Structure: { [useSpellID] = itemID }
 SpellScanner.registeredItemUseSpells = {}
 
--- Recent item use casts waiting for the matching UNIT_AURA addedAuras payload.
--- Structure: list of { spellID, itemID, time }
 SpellScanner.pendingItemAuraCasts = {}
 
--- Recent player helpful aura additions. Used when item cooldown events arrive
--- after UNIT_AURA for trinkets/items that do not produce a useful cast event.
--- Structure: list of { auraInstanceID, hasAuraInstanceID, auraUnit, time }
 SpellScanner.recentPlayerAuras = {}
 
--- Last observed item cooldown state. The item/aura fallback only correlates
--- player auras to item cooldowns that just started, not stale active cooldowns.
--- Structure: { [itemID] = { active, startTime, duration } }
 SpellScanner.itemCooldownStates = {}
 
--- Scan mode toggle (explicit /quiscan)
 SpellScanner.scanMode = false
 
--- Auto-scan: try to scan unknown spells when cast out of combat (off by default)
--- Stored in database for persistence
 SpellScanner.autoScan = false
 
--- Callback for UI refresh when spell is scanned (set by options panel)
 SpellScanner.onScanCallback = nil
 
--- Forward declarations
 local EnsureCleanupTicker
 local ITEM_AURA_CORRELATION_WINDOW = 0.1
 local ITEM_COOLDOWN_AURA_WINDOW = 0.1
@@ -157,10 +127,6 @@ local function AuraInstanceAllowsHelpful(unit, auraInstanceID)
     return true
 end
 
--- ACTION POLICY on the secret branches below (retain-on-secrecy): an
--- unreadable result is INDETERMINATE, never "still present" as truth — the
--- policy RETAINS the tracked instance so restriction can't wipe live
--- tracking; readable results decide normally and regen rescans reconcile.
 local function AuraInstanceIsStillPresent(unit, auraInstanceID, hasAuraInstanceID)
     if hasAuraInstanceID ~= true then return false end
     if not (C_UnitAuras and C_UnitAuras.GetAuraDataByAuraInstanceID) then
@@ -290,29 +256,15 @@ local function ItemCooldownRecentlyStarted(itemID)
     return false
 end
 
--- 68569: UNIT_AURA payload can be whole-secret under restriction. This frame
--- registered for "player" only via RegisterUnitEvent — never trust the
--- payload's own unit arg (not read here); probe updateInfo before any field
--- access.
 local function HandleUnitAura(updateInfo)
-    -- Probe UNCONDITIONALLY: a whole-secret updateInfo throws on the bare
-    -- truth test itself, so `updateInfo and ScannerIsSecretValue(updateInfo)`
-    -- would crash before the probe ran. issecretvalue(nil) is false, so no
-    -- nil pre-check is needed.
     if ScannerIsSecretValue(updateInfo) then
-        updateInfo = nil -- opaque invalidation → full-rescan path
+        updateInfo = nil
     end
-    -- 12.1 per-field secrecy: the table itself can read fine while its scalar
-    -- isFullUpdate field is a secret boolean — the boolean test below throws
-    -- on it. Probe the field and fold to the same bail path.
     if updateInfo and ScannerIsSecretValue(updateInfo.isFullUpdate) then
         updateInfo = nil
     end
     if not updateInfo or updateInfo.isFullUpdate then return end
     local added = updateInfo.addedAuras
-    -- 12.1: addedAuras is a SecretValue while auras are restricted (combat); the
-    -- length operator and ipairs over a secret value throw. Bail — item-buff
-    -- matching resumes from the next non-secret UNIT_AURA / post-combat rescan.
     if ScannerIsSecretValue(added) then return end
     if type(added) ~= "table" or #added == 0 then return end
 
@@ -348,21 +300,15 @@ local function HandleBagUpdateCooldown()
     end
 end
 
----------------------------------------------------------------------------
--- DATABASE ACCESS
--- Uses QUI.db.global.spellScanner for cross-character persistence
----------------------------------------------------------------------------
-
 local function GetDB()
     if QUI and QUI.db and QUI.db.global then
         if not QUI.db.global.spellScanner then
             QUI.db.global.spellScanner = {
-                spells = {},  -- [castSpellID] = { buffSpellID, duration, icon, name }
-                items = {},   -- [itemID] = { useSpellID, buffSpellID, duration, icon, name }
-                autoScan = false,  -- Auto-scan setting (off by default)
+                spells = {},
+                items = {},
+                autoScan = false,
             }
         end
-        -- Load autoScan from DB into runtime state
         if QUI.db.global.spellScanner.autoScan ~= nil then
             SpellScanner.autoScan = QUI.db.global.spellScanner.autoScan
         end
@@ -444,19 +390,6 @@ local function SaveScannedItem(itemID, data)
     return true
 end
 
----------------------------------------------------------------------------
--- SCANNING LOGIC
----------------------------------------------------------------------------
-
--- 12.1: GetAuraDataByIndex throws while aura data is secret (combat). When
--- auras are secret the walk doesn't start; the cast stays pending and is
--- retried after combat (PLAYER_REGEN_ENABLED -> ProcessPendingScanning).
--- Otherwise the walk is UNBOUNDED, matching the iterator's own termination
--- contract: plain nil terminates, pcall-fail terminates, and a per-spell
--- SECRET entry is SKIPPED (secret entry ≠ end-of-list) — the old 1..40 bound
--- silently truncated heavy aura sets, and folding a secret entry to nil then
--- breaking ended the scan at the first secret element. Callback returning
--- true stops the walk early.
 local C_Secrets = C_Secrets
 local function ForEachPlayerHelpfulAura(callback)
     if C_Secrets and C_Secrets.ShouldAurasBeSecret and C_Secrets.ShouldAurasBeSecret() then
@@ -480,7 +413,6 @@ end
 
 local function ScanSpellFromBuffs(castSpellID, itemID)
     if InCombatLockdown() then
-        -- Queue for post-combat scanning
         SpellScanner.pendingScanning[castSpellID] = {
             timestamp = GetTime(),
             itemID = itemID,
@@ -488,7 +420,6 @@ local function ScanSpellFromBuffs(castSpellID, itemID)
         return false
     end
 
-    -- Already scanned?
     local scannedSpell = GetScannedSpell(castSpellID)
     if scannedSpell then
         if itemID and not GetScannedItem(itemID) then
@@ -503,15 +434,10 @@ local function ScanSpellFromBuffs(castSpellID, itemID)
         return true
     end
 
-    -- Scan player buffs for recently applied ones
     local now = GetTime()
     local bestMatch = nil
 
     ForEachPlayerHelpfulAura(function(aura)
-        -- Secret values in Midnight: reading doesn't error, but comparisons/arithmetic do.
-        -- Fold any secret field to nil (ScannerIsSecretValue is a registered guard) so the
-        -- Lua-side comparisons/arithmetic below never touch an opaque value; IsCleanNumber
-        -- rejects nil the same as a secret, so the match logic is unchanged.
         local spellId = aura.spellId
         if ScannerIsSecretValue(spellId) then spellId = nil end
         local duration = aura.duration
@@ -521,12 +447,6 @@ local function ScanSpellFromBuffs(castSpellID, itemID)
         local icon = aura.icon
         local name = aura.name
 
-        -- Strict match: only accept a buff whose spellId equals the spell that
-        -- was cast/used. That is the same ID for self-buff abilities and
-        -- self-buff trinkets, and it eliminates the "newest recent buff wins"
-        -- false positives (e.g. an external Ebon Might landing in the window
-        -- when a health potion is used). A secret spellId cannot be confirmed
-        -- to match, so it is rejected.
         local matchesCast = IsCleanNumber(spellId) and spellId == castSpellID
 
         local buffAge
@@ -551,10 +471,6 @@ local function ScanSpellFromBuffs(castSpellID, itemID)
     end)
 
     if bestMatch then
-        -- Save spell and item mappings in their own namespaces. Item use
-        -- spell IDs are implementation details of the item, so avoid writing
-        -- them into the generic spell map where they could affect unrelated
-        -- spell lookups.
         local success
         if itemID then
             success = SaveScannedItem(itemID, {
@@ -574,7 +490,6 @@ local function ScanSpellFromBuffs(castSpellID, itemID)
         end
 
         if success then
-            -- Immediately activate the buff
             SpellScanner.activeBuffs[castSpellID] = {
                 startTime = bestMatch.expirationTime - bestMatch.duration,
                 duration = bestMatch.duration,
@@ -584,13 +499,11 @@ local function ScanSpellFromBuffs(castSpellID, itemID)
             }
             EnsureCleanupTicker()
 
-            -- Notify user in scan mode
             if SpellScanner.scanMode then
                 print(string_format(ns.L["|cff00ff00QUI:|r Scanned: %s = %.1fs"],
                     bestMatch.name, bestMatch.duration))
             end
 
-            -- Trigger UI refresh callback if registered
             if SpellScanner.onScanCallback then
                 SpellScanner.onScanCallback()
             end
@@ -608,21 +521,11 @@ local function ProcessPendingScanning()
     if not next(SpellScanner.pendingScanning) then return end
 
     for spellID, data in pairs(SpellScanner.pendingScanning) do
-        -- Try to scan this spell now
         ScanSpellFromBuffs(spellID, data.itemID)
         SpellScanner.pendingScanning[spellID] = nil
     end
 end
 
----------------------------------------------------------------------------
--- SPELL CAST DETECTION
----------------------------------------------------------------------------
-
--- 68569: UNIT_SPELLCAST_SUCCEEDED payload can be whole-secret under
--- restriction (castBarID alone is NeverSecret) — SecretWhenUnitSpellCastRestricted
--- applies regardless of which unit the frame is registered for. Registered
--- for "player" only via RegisterUnitEvent above — never trust the payload's
--- own unit arg (not read here); probe spellID before any compare/index.
 local function OnSpellCastSucceeded(_, castGUID, spellID)
     if ScannerIsSecretValue(spellID) then return end
     if not spellID or spellID <= 0 then return end
@@ -634,8 +537,6 @@ local function OnSpellCastSucceeded(_, castGUID, spellID)
         RecordPendingItemAuraCast(spellID, registeredItemID)
     end
 
-    -- Check if this cast is already scanned. Item mappings live under the
-    -- item ID; fall back to the generic spell map only for legacy data.
     local itemData = registeredItemID and GetScannedItem(registeredItemID) or nil
     local data = itemData or GetScannedSpell(spellID)
 
@@ -649,7 +550,6 @@ local function OnSpellCastSucceeded(_, castGUID, spellID)
                 name = data.name,
             })
         end
-        -- Known spell: activate buff tracking (if we have valid duration data)
         local duration = data.duration
         if IsCleanPositiveDuration(duration) then
             local now = GetTime()
@@ -663,7 +563,6 @@ local function OnSpellCastSucceeded(_, castGUID, spellID)
             EnsureCleanupTicker()
         end
         NotifyScannerChanged(spellID, registeredItemID)
-        -- Even without duration data, we treat this as "known" and skip further scanning
         return
     end
 
@@ -681,26 +580,19 @@ local function OnSpellCastSucceeded(_, castGUID, spellID)
         return
     end
 
-    -- Unknown spell: try to scan if enabled
     if SpellScanner.scanMode or SpellScanner.autoScan then
         if InCombatLockdown() then
-            -- Queue for post-combat scanning
             SpellScanner.pendingScanning[spellID] = {
                 timestamp = GetTime(),
                 itemID = nil,
             }
         else
-            -- Scan immediately (with small delay for buff to appear)
             C_Timer.After(0.3, function()
                 ScanSpellFromBuffs(spellID, nil)
             end)
         end
     end
 end
-
----------------------------------------------------------------------------
--- CACHE MAINTENANCE
----------------------------------------------------------------------------
 
 local function CleanupExpiredBuffs()
     local now = GetTime()
@@ -713,7 +605,6 @@ local function CleanupExpiredBuffs()
             hasAny = true
         end
     end
-    -- Auto-stop ticker when no active buffs remain
     if not hasAny and SpellScanner.cleanupTicker then
         SpellScanner.cleanupTicker:Cancel()
         SpellScanner.cleanupTicker = nil
@@ -726,12 +617,6 @@ EnsureCleanupTicker = function()
     end
 end
 
----------------------------------------------------------------------------
--- PUBLIC API (for Custom Trackers)
----------------------------------------------------------------------------
-
--- Check if a spell's buff is currently active
--- Returns: isActive, expirationTime, duration
 function SpellScanner.IsSpellActive(spellID)
     if not spellID then return false end
 
@@ -747,8 +632,6 @@ function SpellScanner.IsSpellActive(spellID)
         end
     end
 
-    -- Also check if this is a known spell with buff still applied
-    -- (handles cases where we missed the cast event)
     local data = GetScannedSpell(spellID)
     if data and data.buffSpellID and not InCombatLockdown() then
         local ok, aura = pcall(C_UnitAuras.GetPlayerAuraBySpellID, data.buffSpellID)
@@ -765,8 +648,6 @@ function SpellScanner.IsSpellActive(spellID)
     return false
 end
 
--- Check if an item's buff is currently active
--- Returns: isActive, expirationTime, duration
 function SpellScanner.IsItemActive(itemID)
     if not itemID then return false end
 
@@ -809,73 +690,27 @@ function SpellScanner.RegisterItemUseSpell(itemID, useSpellID)
     return true
 end
 
--- Check if a spellID has been scanned
-function SpellScanner.IsSpellScanned(spellID)
-    return GetScannedSpell(spellID) ~= nil
-end
-
--- Get scanned duration for a spell (or nil if not scanned)
-function SpellScanner.GetScannedDuration(spellID)
-    local data = GetScannedSpell(spellID)
-    return data and data.duration or nil
-end
-
--- Toggle scan mode
 function SpellScanner.ToggleScanMode()
     SpellScanner.scanMode = not SpellScanner.scanMode
     return SpellScanner.scanMode
 end
 
--- Toggle auto-scan and persist to DB
-function SpellScanner.ToggleAutoScan()
-    SpellScanner.autoScan = not SpellScanner.autoScan
-    local db = GetDB()
-    if db then
-        db.autoScan = SpellScanner.autoScan
-    end
-    return SpellScanner.autoScan
-end
-
--- Set auto-scan and persist to DB
-function SpellScanner.SetAutoScan(enabled)
-    SpellScanner.autoScan = enabled
-    local db = GetDB()
-    if db then
-        db.autoScan = enabled
-    end
-end
-
--- Manual trigger to scan a spell (for testing)
 function SpellScanner.ScanSpell(spellID, itemID)
     return ScanSpellFromBuffs(spellID, itemID)
 end
 
----------------------------------------------------------------------------
--- EVENT HANDLING
----------------------------------------------------------------------------
-
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
 eventFrame:RegisterEvent("BAG_UPDATE_COOLDOWN")
--- 68569: RegisterUnitEvent filters delivery to "player" only — that
--- registration is the sole trusted unit identity; the payload's own unit arg
--- is never read (see HandleUnitAura / OnSpellCastSucceeded). Both frames'
--- payloads can still be whole-secret under restriction even though delivery
--- is player-scoped — see the secret probes inside each handler.
 eventFrame:RegisterUnitEvent("UNIT_AURA", "player")
 eventFrame:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
 
--- Initialize the DB after login. ns.WhenLoggedIn runs now if already logged in
--- (the post-login LOD case) rather than this addon's own ADDON_LOADED, which is
--- NOT delivered when the core eager-LoadAddOn's the module from OnEnable (see
--- tooltip_provider.lua). Nil only in the headless test harness.
 if ns.WhenLoggedIn then
     ns.WhenLoggedIn(GetDB)
 end
 
 eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2, arg3)
     if event == "PLAYER_REGEN_ENABLED" then
-        -- Process pending scanning after combat
         C_Timer.After(0.3, ProcessPendingScanning)
 
     elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
@@ -893,19 +728,12 @@ local function SetupDebugInstrumentation()
     ns.QUI_PerfRegistry = ns.QUI_PerfRegistry or {}
     ns.QUI_PerfRegistry[#ns.QUI_PerfRegistry + 1] = { name = "SpellScanner_Events", frame = eventFrame }
 end
-if ns.DebugRegister then -- gate contract: core/debug_gate.lua
+if ns.DebugRegister then
     ns.DebugRegister(SetupDebugInstrumentation)
 else
-    SetupDebugInstrumentation() -- standalone test harness: no gate, run eagerly
+    SetupDebugInstrumentation()
 end
 
--- Cleanup ticker starts on-demand when buffs are tracked (see EnsureCleanupTicker)
-
----------------------------------------------------------------------------
--- SLASH COMMANDS
----------------------------------------------------------------------------
-
--- /quiscan - Toggle scan mode
 SLASH_QUISCAN1 = "/quiscan"
 SlashCmdList["QUISCAN"] = function()
     local enabled = SpellScanner.ToggleScanMode()
@@ -918,7 +746,6 @@ SlashCmdList["QUISCAN"] = function()
     end
 end
 
--- /quiscanned - List scanned spells
 SLASH_QUISCANNED1 = "/quiscanned"
 SlashCmdList["QUISCANNED"] = function()
     local db = GetDB()
@@ -950,7 +777,6 @@ SlashCmdList["QUISCANNED"] = function()
         print(ns.L["  |cff888888(none)|r"])
     end
 
-    -- Show pending queue
     local pendingCount = 0
     for _ in pairs(SpellScanner.pendingScanning) do
         pendingCount = pendingCount + 1
@@ -959,7 +785,6 @@ SlashCmdList["QUISCANNED"] = function()
         print(string_format(ns.L["|cffff8800Pending scanning: %d spells|r"], pendingCount))
     end
 
-    -- Show active buffs
     local activeCount = 0
     for _ in pairs(SpellScanner.activeBuffs) do
         activeCount = activeCount + 1
@@ -967,7 +792,6 @@ SlashCmdList["QUISCANNED"] = function()
     print(string_format(ns.L["|cff888888Active buffs tracked: %d|r"], activeCount))
 end
 
--- /quiclearscan <spellID|itemID> | all - Remove a scanned entry, or wipe all
 SLASH_QUICLEARSCAN1 = "/quiclearscan"
 SlashCmdList["QUICLEARSCAN"] = function(msg)
     local db = GetDB()

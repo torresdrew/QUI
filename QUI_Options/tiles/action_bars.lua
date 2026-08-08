@@ -1,7 +1,3 @@
---[[
-    QUI Options V2 — Action Bars tile
-]]
-
 local ADDON_NAME, ns = ...
 
 local V2 = {}
@@ -26,13 +22,6 @@ function V2.Register(frame)
                 end
             end,
         },
-        -- Buff/Debuff sub-page removed (moved to the Auras hub tile, tabIndex
-        -- 21 subTabIndex 4 = Buff/Debuff Frames -- see tiles/auras.lua). The
-        -- actionBarsBuffDebuff feature registration (action_bars.lua) stays
-        -- alive: Layout Mode's buffFrame/debuffFrame mover drawers still
-        -- resolve through it via moverKey/lookupKeys, now repointed at the
-        -- hub. "Per-Bar" shifted from array position 3 to 2 -- its own nav
-        -- (action_bars_per_bar.lua) was updated to match.
         subPages = {
             {
                 id = "general",
@@ -55,6 +44,18 @@ function V2.Register(frame)
                     tabName = ns.L["Action Bars"],
                     subTabIndex = 3,
                     subTabName = ns.L["Per-Bar"],
+                },
+            },
+            {
+                id = "buffDebuff",
+                name = ns.L["Buff/Debuff Frames"],
+                featureId = "actionBarsBuffDebuffPage",
+                navRoutes = { { tabIndex = 8, subTabIndex = 4 } },
+                searchContext = {
+                    tabIndex = 8,
+                    tabName = ns.L["Action Bars"],
+                    subTabIndex = 4,
+                    subTabName = ns.L["Buff/Debuff Frames"],
                 },
             },
         },

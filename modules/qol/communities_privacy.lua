@@ -1,22 +1,6 @@
 local ADDON_NAME, ns = ...
 local Helpers = ns.Helpers
 
----------------------------------------------------------------------------
--- COMMUNITIES CHAT PRIVACY
---
--- Stream-safety: hides the Communities/guild chat panel and member list
--- behind an opaque "click the eye to reveal" cover until explicitly
--- revealed. Reveal is per-open — reopening the window hides again.
---
--- Mechanism (no protected calls anywhere): plain :Hide()/:Show() on the
--- CommunitiesFrame.Chat / .MemberList child frames + an overlay Frame with
--- instructional text, toggled by an eye Button. Child names verified against
--- 12.x Blizzard_Communities/CommunitiesFrame.lua (COMMUNITIES_FRAME_DISPLAY_MODES
--- lists "Chat"/"MemberList"; CommunitiesFrameMixin:GetDisplayMode and the
--- DisplayModeChanged mixin event exist). Blizzard_Communities is LoadOnDemand
--- — init on its ADDON_LOADED.
----------------------------------------------------------------------------
-
 local GetSettings = Helpers.CreateDBGetter("general")
 
 local initialized = false
@@ -62,7 +46,6 @@ end
 
 local function SetEyeTexture()
     if not eyeButton then return end
-    -- LFG eye sheet: 4x4 frames of 64px on 512x256; frame 1 = open, 4 = closed.
     local tex = eyeButton:GetNormalTexture()
     if not tex then return end
     if revealed then
@@ -72,7 +55,7 @@ local function SetEyeTexture()
     end
 end
 
-local Apply -- fwd
+local Apply
 
 local function EnsureEyeButton()
     if eyeButton then return end
@@ -106,7 +89,6 @@ Apply = function()
     if not Enabled() then
         if overlay then overlay:Hide() end
         if eyeButton then eyeButton:Hide() end
-        -- Restore whatever the current display mode wants visible.
         if frame.Chat and DisplayModeShows("Chat") then frame.Chat:Show() end
         if frame.MemberList and DisplayModeShows("MemberList") then frame.MemberList:Show() end
         return
@@ -120,8 +102,6 @@ Apply = function()
     if IsHidden() then
         if frame.Chat then frame.Chat:Hide() end
         if frame.MemberList then frame.MemberList:Hide() end
-        -- Cover the chat area (or the member list when chat isn't part of
-        -- the current display mode).
         local target = (DisplayModeShows("Chat") and frame.Chat)
             or (DisplayModeShows("MemberList") and frame.MemberList) or nil
         if target then
@@ -152,7 +132,7 @@ local function Initialize()
         end, {})
     end
     frame:HookScript("OnShow", function()
-        revealed = false -- re-hide on every open (stream safety)
+        revealed = false
         Apply()
     end)
     frame:HookScript("OnHide", function()
@@ -162,7 +142,6 @@ local function Initialize()
 end
 
 local frame = CreateFrame("Frame")
--- Literal RegisterEvent call so tools/generate_event_allowlist.lua detects it.
 frame:RegisterEvent("ADDON_LOADED")
 frame:SetScript("OnEvent", function(_, _, addonName)
     if addonName == "Blizzard_Communities" then

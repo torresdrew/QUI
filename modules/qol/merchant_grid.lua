@@ -1,21 +1,6 @@
 local addonName, ns = ...
 local Helpers = ns.Helpers
 
----------------------------------------------------------------------------
--- MERCHANT GRID EXTENDER
---
--- Grows the vendor "Items" tab into a configurable Columns x Rows grid by
--- raising MERCHANT_ITEMS_PER_PAGE (so Blizzard's own fill loop populates the
--- extra buttons) and re-asserting layout after Blizzard's per-update
--- re-anchor. The Buyback tab is left on the vanilla path.
---
--- Geometry verified vs 12.0.7 FrameXML MerchantFrame.xml:
---   MerchantItem1 TOPLEFT (11, -69) from MerchantFrame
---   col stride 165 (153 cell + 12 gap); row stride 52 (44 cell + 8 gap)
---   base frame 336 x 444; MerchantItem1..12 exist in XML (11/12 buyback-only)
---   MerchantNextPageButton anchors x=310 from BOTTOMLEFT -> reposition to W-26
----------------------------------------------------------------------------
-
 local GetSettings = Helpers.CreateDBGetter("merchantGrid")
 
 local BASE_W, BASE_H         = 336, 444
@@ -25,15 +10,11 @@ local VANILLA_PER_PAGE       = 10
 local XML_BUTTONS            = 12
 local MIN_COLS, MAX_COLS     = 2, 4
 local MIN_ROWS, MAX_ROWS     = 5, 8
-local MAX_BUTTONS            = MAX_COLS * MAX_ROWS   -- 32
-local NEXT_PAGE_INSET        = 26                    -- next-page x = W - 26 (336-26=310 == vanilla)
-local BUYBACK_ANCHOR_X       = 30                    -- MerchantBuyBackItem XML offset from its ref slot
-local BUYBACK_ANCHOR_Y       = -53                   -- (BOTTOMLEFT 30,-53) — mirrors MerchantFrame.xml
+local MAX_BUTTONS            = MAX_COLS * MAX_ROWS
+local NEXT_PAGE_INSET        = 26
+local BUYBACK_ANCHOR_X       = 30
+local BUYBACK_ANCHOR_Y       = -53
 
--- Vanilla relative anchors for the slots Blizzard's Lua never re-anchors itself
--- (even columns + buyback 11/12). MerchantItem1 and odd slots 3/5/7/9 ARE
--- re-anchored by Blizzard every UpdateMerchantInfo/BuybackInfo (and item1 grid
--- coords equal vanilla), so RestoreVanilla only needs to reset these.
 local VANILLA_RELANCHORS = {
     { 2,  "MerchantItem1",  "TOPRIGHT",   12,   0 },
     { 4,  "MerchantItem3",  "TOPRIGHT",   12,   0 },
@@ -61,9 +42,6 @@ local function ClampedConfig()
     return enabled, cols, rows
 end
 
--- Lazily create MerchantItem13..32 from the virtual template. Buy/cost/
--- tooltip scripts wire up automatically; they need no separate skinning
--- (identical template to 1..12; QUI skins only window chrome + page arrows).
 local function EnsureButtons()
     if buttonsBuilt then return end
     local frame = _G.MerchantFrame
@@ -80,7 +58,7 @@ local function SafePanelUpdate()
     local frame = _G.MerchantFrame
     if not frame then return end
     if InCombatLockdown() then
-        pendingPanelUpdate = true   -- re-flow after combat (PLAYER_REGEN_ENABLED)
+        pendingPanelUpdate = true
         return
     end
     if _G.UpdateUIPanelPositions then
@@ -88,22 +66,11 @@ local function SafePanelUpdate()
     end
 end
 
--- MerchantBuyBackItem (the "last sold" quick-slot shown on the Items tab) is
--- XML-anchored to MerchantItem10's BOTTOMLEFT and Blizzard NEVER re-anchors it
--- in Lua. At 2 cols item10 is the bottom-right slot, so the buyback slot rests
--- below the grid. At >2 cols (or >5 rows) item10 lands in the grid INTERIOR and
--- drags the buyback slot on top of the item buttons. Re-pin it to the slot that
--- inherits item10's ROLE in the grid: last row, 2nd column -> (rows-1)*cols + 2.
--- That index is always in column 1 (x == vanilla 206), tracks the bottom row,
--- and equals 10 at 2x5 (so ApplyGrid stays pixel-vanilla at the default size).
 -- <<< QUI_TEST_EXTRACT buyback_anchor
 local function BuybackRefIndex(cols, rows)
     return (rows - 1) * cols + 2
 end
 
--- Runs AFTER Blizzard's UpdateMerchantInfo: override its 2-col re-anchor and
--- its MerchantItem11/12:Hide(); place 1..N into the grid, hide N+1..MAX,
--- resize the frame, and re-pin the next-page button.
 local function ApplyGrid(cols, rows)
     local frame = _G.MerchantFrame
     local n = cols * rows
@@ -133,7 +100,6 @@ local function ApplyGrid(cols, rows)
         nextBtn:SetPoint("CENTER", frame, "BOTTOMLEFT", w - NEXT_PAGE_INSET, 96)
     end
 
-    -- Re-pin the buyback quick-slot below the grid (see BuybackRefIndex note).
     local buyback = _G.MerchantBuyBackItem
     local ref = _G["MerchantItem" .. BuybackRefIndex(cols, rows)]
     if buyback and ref then
@@ -144,11 +110,6 @@ local function ApplyGrid(cols, rows)
     SafePanelUpdate()
 end
 
--- Buyback tab or feature disabled: vanilla dimensions, extra buttons hidden,
--- and the even/buyback slots' XML relative anchors re-established (ApplyGrid
--- re-pointed them to absolute grid coords; Blizzard never resets these, so
--- without this they stay scattered at columns != 2 until /reload). Slots
--- 1/3/5/7/9 self-heal: Blizzard re-anchors them each update.
 local function RestoreVanilla()
     local frame = _G.MerchantFrame
     if not frame then return end
@@ -170,8 +131,6 @@ local function RestoreVanilla()
         nextBtn:ClearAllPoints()
         nextBtn:SetPoint("CENTER", frame, "BOTTOMLEFT", BASE_W - NEXT_PAGE_INSET, 96)
     end
-    -- Restore the buyback slot to its XML anchor (item10 BOTTOMLEFT 30,-53);
-    -- item10 itself is reset above via VANILLA_RELANCHORS, so this is pixel-exact.
     local buyback = _G.MerchantBuyBackItem
     local item10 = _G.MerchantItem10
     if buyback and item10 then
@@ -200,11 +159,6 @@ local function InstallHook()
     hookInstalled = true
 end
 
--- Set the page-size global BEFORE Blizzard's fill loop runs. Buttons 13..N are
--- created FIRST so the invariant holds: MERCHANT_ITEMS_PER_PAGE > 12 implies the
--- extra buttons exist (else Blizzard's `for i=1,MERCHANT_ITEMS_PER_PAGE` loop
--- would nil-index MerchantItem13ItemButton). Buyback ignores this global (uses
--- its own BUYBACK_ITEMS_PER_PAGE), so it is safe to leave set on the buyback tab.
 local function ApplyPageSize()
     local enabled, cols, rows = ClampedConfig()
     if enabled then
@@ -215,7 +169,6 @@ local function ApplyPageSize()
     end
 end
 
--- Public: re-read config and re-apply live (settings onChange + registry).
 function MerchantGrid.Refresh()
     ApplyPageSize()
     if ClampedConfig() then InstallHook() end
@@ -242,8 +195,6 @@ eventFrame:SetScript("OnEvent", function(_, event)
     end
 end)
 
--- LOD: this sub-addon's own ADDON_LOADED is not delivered (core eager-loads it
--- from OnEnable). Install via WhenLoggedIn. Nil only in the headless harness.
 if ns.WhenLoggedIn then
     ns.WhenLoggedIn(function()
         if ClampedConfig() then

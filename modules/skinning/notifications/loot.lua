@@ -1,7 +1,3 @@
---- QUI Loot & Roll Frames
---- Custom loot window and roll frames with QUI styling
---- Replaces Blizzard's LootFrame and GroupLootFrame
-
 local ADDON_NAME, ns = ...
 local QUICore = ns.Addon
 local Helpers = ns.Helpers
@@ -18,22 +14,17 @@ end
 
 local tinsert, tremove = tinsert, tremove
 
--- Module reference
 local Loot = {}
 QUICore.Loot = Loot
 
--- Helper to get theme colors from QUI skin system
 local function GetThemeColors()
     local db = QUICore.db and QUICore.db.profile or {}
-    -- Canonical 8-value resolver: border + per-module bg override path, consistent
-    -- with readycheck.lua, instead of pairing GetSkinBorderColor + override-less GetSkinBgColor.
     local sr, sg, sb, sa, bgr, bgg, bgb, bga = SkinBase.GetSkinColors(db.loot or {}, "loot")
     return {bgr, bgg, bgb, bga}, {sr, sg, sb, sa}, {0.95, 0.96, 0.97, 1}
 end
 
--- Constants
 local MAX_LOOT_SLOTS = 10
-local MAX_ROLL_FRAMES = 8  -- Increased from 4 to handle more simultaneous raid drops
+local MAX_ROLL_FRAMES = 8
 local SLOT_HEIGHT = 32
 local SLOT_WIDTH = 230
 local SLOT_SPACING = 2
@@ -48,7 +39,6 @@ local ROLL_ICON_SIZE = 32
 local ROLL_BUTTON_SIZE = 26
 local ROLL_TIMER_HEIGHT = 6
 
--- Roll button textures
 local ROLL_TEXTURES = {
     pass = "Interface\\Buttons\\UI-GroupLoot-Pass-Up",
     disenchant = "Interface\\Buttons\\UI-GroupLoot-DE-Up",
@@ -57,17 +47,15 @@ local ROLL_TEXTURES = {
     transmog = "Interface\\MINIMAP\\TRACKING\\Transmogrifier",
 }
 
--- Frame storage
 local lootFrame = nil
 local rollFramePool = {}
 local activeRolls = {}
 local rollAnchor = nil
-local waitingRolls = {}  -- Queue for rolls when all frames are busy
+local waitingRolls = {}
 
--- Shared roll timer: single OnUpdate replaces up to MAX_ROLL_FRAMES individual handlers
-local rollTimerFrames = {}  -- [frame] = true for frames with active timers
+local rollTimerFrames = {}
 local rollTimerManager = CreateFrame("Frame")
-rollTimerManager:Hide()  -- shown only when rollTimerFrames is non-empty
+rollTimerManager:Hide()
 rollTimerManager:SetScript("OnUpdate", function(self, elapsed)
     local now = GetTime()
     local anyActive = false
@@ -86,22 +74,15 @@ rollTimerManager:SetScript("OnUpdate", function(self, elapsed)
     end
 end)
 
--- TAINT SAFETY: Store per-frame hook guards in weak-keyed tables instead of writing
--- properties directly to Blizzard frames, which taints them in Midnight (12.0)
 local hookedBorders = Helpers.CreateStateTable()
 local hookedContainers = Helpers.CreateStateTable()
 local hookedLootFrames = Helpers.CreateStateTable()
-local itemBorders = Helpers.CreateStateTable()   -- item → border frame
-local frameParts = Helpers.CreateStateTable()     -- frame → { bg, text, etc. }
+local itemBorders = Helpers.CreateStateTable()
+local frameParts = Helpers.CreateStateTable()
 
--- Forward declarations (needed for mutual references)
 local ProcessRollQueue
 local StartRoll
 local pendingLootFrameHeight = nil
-
----=================================================================================
---- UTILITY FUNCTIONS
----=================================================================================
 
 local function GetGeneralFont()
     local db = QUICore.db and QUICore.db.profile and QUICore.db.profile.general
@@ -120,10 +101,8 @@ local function IsUncollectedTransmog(itemLink)
     local itemID, _, _, _, _, classID = GetItemInfoInstant(itemLink)
     if not itemID then return false end
 
-    -- Check if it's equipment
-    if classID ~= 2 and classID ~= 4 then return false end  -- Weapon or Armor
+    if classID ~= 2 and classID ~= 4 then return false end
 
-    -- Check if we can learn it
     local _, sourceID = C_TransmogCollection.GetItemInfo(itemLink)
     if sourceID then
         local _, canCollect = C_TransmogCollection.PlayerCanCollectSource(sourceID)
@@ -135,10 +114,6 @@ local function IsUncollectedTransmog(itemLink)
     return false
 end
 
----=================================================================================
---- LOOT WINDOW
----=================================================================================
-
 local function CreateLootSlot(parent, index)
     local bgColor, borderColor, textColor = GetThemeColors()
 
@@ -146,19 +121,16 @@ local function CreateLootSlot(parent, index)
     slot:SetSize(SLOT_WIDTH, SLOT_HEIGHT)
     slot:SetPoint("TOP", parent, "TOP", 0, -HEADER_HEIGHT - ((index-1) * (SLOT_HEIGHT + SLOT_SPACING)))
 
-    -- Icon
     slot.icon = slot:CreateTexture(nil, "ARTWORK")
     slot.icon:SetSize(ICON_SIZE, ICON_SIZE)
     slot.icon:SetPoint("LEFT", 4, 0)
     slot.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
 
-    -- Icon border (quality colored)
     slot.iconBorder = CreateFrame("Frame", nil, slot, "BackdropTemplate")
     slot.iconBorder:SetSize(ICON_BORDER_SIZE, ICON_BORDER_SIZE)
     slot.iconBorder:SetPoint("CENTER", slot.icon, "CENTER")
     SkinBase.ApplyPixelBackdrop(slot.iconBorder, 1, false, false)
 
-    -- Item name
     slot.name = slot:CreateFontString(nil, "OVERLAY")
     CJKFont(slot.name, LSM:Fetch("font", GetGeneralFont()), 11, "OUTLINE")
     slot.name:SetPoint("LEFT", slot.icon, "RIGHT", 6, 0)
@@ -166,39 +138,33 @@ local function CreateLootSlot(parent, index)
     slot.name:SetJustifyH("LEFT")
     slot.name:SetWordWrap(false)
 
-    -- Stack count
     slot.count = slot:CreateFontString(nil, "OVERLAY")
     CJKFont(slot.count, LSM:Fetch("font", GetGeneralFont()), 10, "OUTLINE")
     SkinBase.SetPixelPoint(slot.count, "BOTTOMRIGHT", slot.icon, "BOTTOMRIGHT", -2, 2)
     slot.count:SetTextColor(1, 1, 1)
 
-    -- Transmog marker (star icon for uncollected appearances)
     slot.transmogMarker = slot:CreateFontString(nil, "OVERLAY")
     CJKFont(slot.transmogMarker, LSM:Fetch("font", GetGeneralFont()), 12, "OUTLINE")
     slot.transmogMarker:SetPoint("TOPRIGHT", slot, "TOPRIGHT", -4, -4)
     slot.transmogMarker:SetText("*")
-    slot.transmogMarker:SetTextColor(1, 0.82, 0)  -- Gold
+    slot.transmogMarker:SetTextColor(1, 0.82, 0)
     slot.transmogMarker:Hide()
 
-    -- Quest item indicator
     slot.questIcon = slot:CreateTexture(nil, "OVERLAY")
     slot.questIcon:SetSize(14, 14)
     SkinBase.SetPixelPoint(slot.questIcon, "TOPLEFT", slot.icon, "TOPLEFT", -2, 2)
     slot.questIcon:SetAtlas("QuestNormal")
     slot.questIcon:Hide()
 
-    -- Hover highlight
     slot:SetHighlightTexture("Interface\\Buttons\\WHITE8x8")
     slot:GetHighlightTexture():SetVertexColor(borderColor[1], borderColor[2], borderColor[3], 0.2)
 
-    -- Click to loot
     slot:SetScript("OnClick", function(self)
         if self.slotIndex then
             LootSlot(self.slotIndex)
         end
     end)
 
-    -- Tooltip
     slot:SetScript("OnEnter", function(self)
         if self.slotIndex then
             GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
@@ -228,19 +194,16 @@ local function CreateLootWindow()
     frame:EnableMouse(true)
     frame:Hide()
 
-    -- QUI backdrop
     SkinBase.ApplyPixelBackdrop(frame, 1, true, false)
     Helpers.SetFrameBackdropColor(frame, unpack(bgColor))
     Helpers.SetFrameBackdropBorderColor(frame, unpack(borderColor))
 
-    -- Header
     frame.header = frame:CreateFontString(nil, "OVERLAY")
     CJKFont(frame.header, LSM:Fetch("font", GetGeneralFont()), 12, "OUTLINE")
     frame.header:SetPoint("TOP", 0, -8)
     frame.header:SetTextColor(unpack(textColor))
     frame.header:SetText(ns.L["Loot"])
 
-    -- Dragging
     frame:RegisterForDrag("LeftButton")
     frame:SetScript("OnDragStart", function(self)
         if IsShiftKeyDown() then
@@ -251,14 +214,12 @@ local function CreateLootWindow()
         self:StopMovingOrSizing()
     end)
 
-    -- Close button
     frame.closeBtn = SkinBase.CreateCloseButton(frame, {
         size = 16, lineLen = 8,
         point = "TOPRIGHT", x = -4, y = -4,
         onClick = function() CloseLoot() end,
     })
 
-    -- Loot slots
     frame.slots = {}
     for i = 1, MAX_LOOT_SLOTS do
         frame.slots[i] = CreateLootSlot(frame, i)
@@ -272,8 +233,6 @@ local function ApplyLootFrameHeight(height)
         return
     end
 
-    -- Geometry writes on the named loot frame can become protected during combat.
-    -- Cache the latest requested size and apply it once combat ends.
     if InCombatLockdown() then
         pendingLootFrameHeight = height
         return
@@ -290,15 +249,8 @@ local function OnLootOpened(autoLoot)
     local db = GetDB()
     if not db.loot or not db.loot.enabled then return end
 
-    -- Skip custom loot frame when fast auto loot is enabled
-    -- Fast loot clears items faster than the frame can populate
     if db.general and db.general.fastAutoLoot then return end
 
-    -- Position window. TAINT SAFETY: skip all repositioning in combat.
-    -- GetCursorPosition/UIParent:GetEffectiveScale can return secret values in
-    -- combat; forwarding them to SetPoint taints the frame, and subsequent
-    -- ClearAllPoints/SetPoint calls then fire ADDON_ACTION_BLOCKED. The frame
-    -- keeps its last valid position while in combat.
     if not InCombatLockdown() then
         if db.loot.lootUnderMouse then
             local x, y = GetCursorPosition()
@@ -307,17 +259,14 @@ local function OnLootOpened(autoLoot)
             local offsetY = tonumber(db.loot.lootUnderMouseOffsetY) or 0
             lootFrame:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", (x / scale) + offsetX, (y / scale) + offsetY)
         elseif not (_G.QUI_HasFrameAnchor and _G.QUI_HasFrameAnchor("lootFrame")) then
-            -- No frameAnchoring override — use default
             lootFrame:SetPoint("CENTER", UIParent, "CENTER", 0, 100)
         else
-            -- frameAnchoring handles position; reapply in case Blizzard reset
             if _G.QUI_ApplyAllFrameAnchors then
                 _G.QUI_ApplyAllFrameAnchors()
             end
         end
     end
 
-    -- Populate slots
     local visibleSlots = 0
     for i = 1, numItems do
         local slot = lootFrame.slots[i]
@@ -329,12 +278,10 @@ local function OnLootOpened(autoLoot)
             slot.icon:SetTexture(texture)
             slot.name:SetText(name or "")
 
-            -- Quality color
             local r, g, b = GetItemQualityColor(quality or 1)
             Helpers.SetFrameBackdropBorderColor(slot.iconBorder, r, g, b, 1)
             slot.name:SetTextColor(r, g, b)
 
-            -- Stack count
             if quantity and quantity > 1 then
                 slot.count:SetText(quantity)
                 slot.count:Show()
@@ -342,10 +289,8 @@ local function OnLootOpened(autoLoot)
                 slot.count:Hide()
             end
 
-            -- Quest indicator
             slot.questIcon:SetShown(isQuestItem or (questID and questID > 0))
 
-            -- Transmog marker (check if uncollected appearance)
             if db.loot.showTransmogMarker then
                 local link = GetLootSlotLink(i)
                 local isUncollected = IsUncollectedTransmog(link)
@@ -361,14 +306,12 @@ local function OnLootOpened(autoLoot)
         end
     end
 
-    -- Hide unused slots
     for i = numItems + 1, MAX_LOOT_SLOTS do
         if lootFrame.slots[i] then
             lootFrame.slots[i]:Hide()
         end
     end
 
-    -- Resize window to fit items
     local height = 40 + (visibleSlots * (SLOT_HEIGHT + SLOT_SPACING))
     ApplyLootFrameHeight(height)
     lootFrame:Show()
@@ -377,8 +320,6 @@ end
 local function OnLootSlotCleared(slot)
     if lootFrame and lootFrame.slots[slot] then
         lootFrame.slots[slot]:Hide()
-        -- Don't resize frame - just hide the slot
-        -- Frame will close via LOOT_CLOSED when all items are looted
     end
 end
 
@@ -393,10 +334,6 @@ local function OnLootClosed()
     end
 end
 
----=================================================================================
---- ROLL FRAMES
----=================================================================================
-
 local function CreateRollButton(parent, rollType, rollValue, texture)
     local btn = CreateFrame("Button", nil, parent)
     btn:SetSize(ROLL_BUTTON_SIZE, ROLL_BUTTON_SIZE)
@@ -405,7 +342,6 @@ local function CreateRollButton(parent, rollType, rollValue, texture)
     btn.icon:SetAllPoints()
     btn.icon:SetTexture(texture)
 
-    -- Subtle background for button
     btn.bg = btn:CreateTexture(nil, "BACKGROUND")
     btn.bg:SetAllPoints()
     btn.bg:SetColorTexture(0, 0, 0, 0.3)
@@ -415,23 +351,19 @@ local function CreateRollButton(parent, rollType, rollValue, texture)
     btn.rollValue = rollValue
     btn.rollType = rollType
 
-    -- Click handler - call RollOnLoot and hide frame immediately
     btn:SetScript("OnClick", function(self)
         local frame = self:GetParent()
         if frame.rollID then
             local rollID = frame.rollID
             RollOnLoot(rollID, self.rollValue)
-            -- Hide frame immediately after rolling (don't wait for CANCEL_LOOT_ROLL)
             frame:Hide()
             frame.rollID = nil
             rollTimerFrames[frame] = nil
             activeRolls[rollID] = nil
-            -- Defer repositioning and queue processing
             C_Timer.After(0, ProcessRollQueue)
         end
     end)
 
-    -- Tooltip
     btn:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
         GameTooltip:SetText(rollType)
@@ -442,16 +374,14 @@ local function CreateRollButton(parent, rollType, rollValue, texture)
     return btn
 end
 
--- Quality background tint colors (subtle)
 local QUALITY_BG_TINTS = {
-    [0] = { 0.5, 0.5, 0.5, 0.08 },   -- Poor (gray)
-    [1] = { 1.0, 1.0, 1.0, 0.05 },   -- Common (white)
-    [2] = { 0.12, 1.0, 0.0, 0.08 },  -- Uncommon (green)
-    [3] = { 0.0, 0.44, 0.87, 0.1 },  -- Rare (blue)
-    [4] = { 0.64, 0.21, 0.93, 0.12 }, -- Epic (purple)
-    [5] = { 1.0, 0.5, 0.0, 0.15 },   -- Legendary (orange)
+    [0] = { 0.5, 0.5, 0.5, 0.08 },
+    [1] = { 1.0, 1.0, 1.0, 0.05 },
+    [2] = { 0.12, 1.0, 0.0, 0.08 },
+    [3] = { 0.0, 0.44, 0.87, 0.1 },
+    [4] = { 0.64, 0.21, 0.93, 0.12 },
+    [5] = { 1.0, 0.5, 0.0, 0.15 },
 }
-
 
 local function CreateRollFrame(index)
     local bgColor, borderColor, textColor = GetThemeColors()
@@ -461,54 +391,46 @@ local function CreateRollFrame(index)
     frame:SetFrameStrata("DIALOG")
     frame:SetToplevel(true)
 
-    -- Minimal backdrop (very subtle border)
     SkinBase.ApplyPixelBackdrop(frame, 1, true, false)
     Helpers.SetFrameBackdropColor(frame, bgColor[1], bgColor[2], bgColor[3], 0.95)
-    Helpers.SetFrameBackdropBorderColor(frame, borderColor[1], borderColor[2], borderColor[3], 0.3)  -- Very subtle border
+    Helpers.SetFrameBackdropBorderColor(frame, borderColor[1], borderColor[2], borderColor[3], 0.3)
 
-    -- Quality tint overlay (set per item)
     frame.qualityTint = frame:CreateTexture(nil, "BACKGROUND", nil, 1)
     frame.qualityTint:SetAllPoints()
     frame.qualityTint:SetColorTexture(1, 1, 1, 0.1)
     frame.qualityTint:SetBlendMode("ADD")
 
-    -- Icon (larger) - centered vertically above timer bar
     frame.icon = frame:CreateTexture(nil, "ARTWORK")
     frame.icon:SetSize(ROLL_ICON_SIZE, ROLL_ICON_SIZE)
-    frame.icon:SetPoint("LEFT", 4, 4)  -- Centered above timer bar
+    frame.icon:SetPoint("LEFT", 4, 4)
     frame.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
 
-    -- Icon border (quality) - thicker border
     frame.iconBorder = CreateFrame("Frame", nil, frame, "BackdropTemplate")
     frame.iconBorder:SetSize(ROLL_ICON_SIZE + 4, ROLL_ICON_SIZE + 4)
     frame.iconBorder:SetPoint("CENTER", frame.icon, "CENTER")
     SkinBase.ApplyPixelBackdrop(frame.iconBorder, SkinBase.CHROME.BORDER_PX, false, false)
 
-    -- Item name (larger font) - aligned with icon
     frame.name = frame:CreateFontString(nil, "OVERLAY")
     CJKFont(frame.name, LSM:Fetch("font", GetGeneralFont()), 12, "OUTLINE")
     frame.name:SetPoint("LEFT", frame.icon, "RIGHT", 8, 0)
-    frame.name:SetPoint("RIGHT", frame, "RIGHT", -120, 4)  -- More room for buttons
+    frame.name:SetPoint("RIGHT", frame, "RIGHT", -120, 4)
     frame.name:SetJustifyH("LEFT")
     frame.name:SetWordWrap(false)
 
-    -- Timer bar (full width at very bottom)
     frame.timer = CreateFrame("StatusBar", nil, frame)
     frame.timer:SetHeight(ROLL_TIMER_HEIGHT)
     frame.timer:SetPoint("BOTTOMLEFT", 4, 4)
     frame.timer:SetPoint("BOTTOMRIGHT", -4, 4)
     frame.timer:SetStatusBarTexture(LSM:Fetch("statusbar", "Quazii") or "Interface\\TargetingFrame\\UI-StatusBar")
-    frame.timer:SetStatusBarColor(borderColor[1], borderColor[2], borderColor[3], 1)  -- Accent color
+    frame.timer:SetStatusBarColor(borderColor[1], borderColor[2], borderColor[3], 1)
     frame.timer:SetMinMaxValues(0, 1)
     frame.timer:SetValue(1)
 
-    -- Timer background
     frame.timer.bg = frame.timer:CreateTexture(nil, "BACKGROUND")
     frame.timer.bg:SetAllPoints()
     frame.timer.bg:SetColorTexture(0, 0, 0, 0.6)
 
-    -- Roll buttons (right to left: Pass, DE, Greed, Need) - centered vertically above timer
-    local buttonY = 4  -- Centered in content area above timer
+    local buttonY = 4
     frame.passBtn = CreateRollButton(frame, "Pass", 0, ROLL_TEXTURES.pass)
     frame.passBtn:SetPoint("RIGHT", frame, "RIGHT", -6, buttonY)
 
@@ -518,20 +440,17 @@ local function CreateRollFrame(index)
     frame.greedBtn = CreateRollButton(frame, "Greed", 2, ROLL_TEXTURES.greed)
     frame.greedBtn:SetPoint("RIGHT", frame.disenchantBtn, "LEFT", -4, 0)
 
-    -- Transmog button (rollValue=4) - swaps with Greed when transmog available
     frame.transmogBtn = CreateRollButton(frame, TRANSMOGRIFY, 4, ROLL_TEXTURES.transmog)
     frame.transmogBtn:SetPoint("RIGHT", frame.disenchantBtn, "LEFT", -4, 0)
-    frame.transmogBtn:Hide()  -- Hidden by default, shown when canTransmog
+    frame.transmogBtn:Hide()
 
     frame.needBtn = CreateRollButton(frame, "Need", 1, ROLL_TEXTURES.need)
     frame.needBtn:SetPoint("RIGHT", frame.greedBtn, "LEFT", -4, 0)
 
-    -- Item tooltip on hover
     frame:EnableMouse(true)
     frame:SetScript("OnEnter", function(self)
         if self.rollID then
             GameTooltip:SetOwner(self, "ANCHOR_BOTTOMRIGHT")
-            -- pcall guards against third-party tooltip hooks (e.g. Altoholic) that may error
             local ok = ns.SafeCallMethod("best-effort-style", GameTooltip, "SetLootRollItem", self.rollID)
             if ok then
                 GameTooltip:Show()
@@ -550,7 +469,6 @@ local function GetAvailableRollFrame()
     local db = GetDB()
     local maxVisible = (db.lootRoll and db.lootRoll.maxFrames) or 4
 
-    -- Count currently visible frames
     local visibleCount = 0
     for i = 1, MAX_ROLL_FRAMES do
         if rollFramePool[i] and rollFramePool[i]:IsShown() then
@@ -558,12 +476,10 @@ local function GetAvailableRollFrame()
         end
     end
 
-    -- If at max visible, return nil to trigger queue
     if visibleCount >= maxVisible then
         return nil
     end
 
-    -- Find an available frame from the pool
     for i = 1, MAX_ROLL_FRAMES do
         if not rollFramePool[i] then
             rollFramePool[i] = CreateRollFrame(i)
@@ -575,7 +491,6 @@ local function GetAvailableRollFrame()
     return nil
 end
 
--- Anchor a single roll frame at stacking slot `index` relative to rollAnchor
 local function AnchorRollFrame(frame, growDirection, spacing, index)
     frame:ClearAllPoints()
     if growDirection == "UP" then
@@ -614,17 +529,14 @@ local function RepositionAllRolls()
     end
 end
 
--- Process the waiting queue when a roll frame becomes available
 ProcessRollQueue = function()
     RepositionAllRolls()
     if #waitingRolls > 0 then
         local nextRoll = tremove(waitingRolls, 1)
-        -- Validate the roll is still valid before starting
         local texture = GetLootRollItemInfo(nextRoll.rollID)
         if texture then
             StartRoll(nextRoll.rollID, nextRoll.rollTime)
         elseif #waitingRolls > 0 then
-            -- Roll was cancelled/expired, try next in queue
             ProcessRollQueue()
         end
     end
@@ -639,22 +551,19 @@ StartRoll = function(rollID, rollTime)
 
     local frame = GetAvailableRollFrame()
     if not frame then
-        -- All frames busy - queue this roll for later
         tinsert(waitingRolls, { rollID = rollID, rollTime = rollTime })
         return
     end
 
-    -- Reset frame state from previous roll
     frame:SetAlpha(1)
     frame:SetScript("OnUpdate", nil)
 
-    -- Reset all buttons to default state
     local buttons = { frame.needBtn, frame.greedBtn, frame.disenchantBtn, frame.passBtn, frame.transmogBtn }
     for _, btn in ipairs(buttons) do
         btn:Enable()
         btn:SetAlpha(1)
         btn.icon:SetDesaturated(false)
-        btn:Show()  -- Reset visibility
+        btn:Show()
     end
 
     frame.rollID = rollID
@@ -664,16 +573,13 @@ StartRoll = function(rollID, rollTime)
     frame.icon:SetTexture(texture)
     frame.name:SetText(name or "")
 
-    -- Quality color
     local r, g, b = GetItemQualityColor(quality or 1)
     Helpers.SetFrameBackdropBorderColor(frame.iconBorder, r, g, b, 1)
     frame.name:SetTextColor(r, g, b)
 
-    -- Quality background tint
     local tint = QUALITY_BG_TINTS[quality or 1] or QUALITY_BG_TINTS[1]
     frame.qualityTint:SetColorTexture(tint[1], tint[2], tint[3], tint[4])
 
-    -- Enable/disable buttons based on eligibility
     frame.needBtn:SetEnabled(canNeed)
     frame.needBtn.icon:SetDesaturated(not canNeed)
     frame.needBtn:SetAlpha(canNeed and 1 or 0.4)
@@ -687,33 +593,25 @@ StartRoll = function(rollID, rollTime)
     frame.disenchantBtn:SetAlpha(canDE and 1 or 0.4)
     frame.disenchantBtn:SetShown(canDE)
 
-    -- Transmog button handling (swaps with Greed)
     if canTransmog then
-        -- Show transmog, hide greed
         frame.transmogBtn:SetEnabled(true)
         frame.transmogBtn.icon:SetDesaturated(false)
         frame.transmogBtn:SetAlpha(1)
         frame.transmogBtn:Show()
         frame.greedBtn:Hide()
-        -- Reanchor need button to transmog
         frame.needBtn:ClearAllPoints()
         frame.needBtn:SetPoint("RIGHT", frame.transmogBtn, "LEFT", -4, 0)
     else
-        -- Show greed, hide transmog
         frame.transmogBtn:Hide()
         frame.greedBtn:Show()
-        -- Reanchor need button to greed
         frame.needBtn:ClearAllPoints()
         frame.needBtn:SetPoint("RIGHT", frame.greedBtn, "LEFT", -4, 0)
     end
 
-    -- Position in stack
     PositionRollFrame(frame)
 
-    -- Timer update
     local _, accentColor = GetThemeColors()
     frame.timer:SetStatusBarColor(accentColor[1], accentColor[2], accentColor[3], 1)
-    -- Register with shared timer manager instead of per-frame OnUpdate
     rollTimerFrames[frame] = true
     rollTimerManager:Show()
 
@@ -722,7 +620,6 @@ StartRoll = function(rollID, rollTime)
 end
 
 local function CancelRoll(rollID)
-    -- Check if roll is in the waiting queue and remove it
     for i = #waitingRolls, 1, -1 do
         if waitingRolls[i].rollID == rollID then
             tremove(waitingRolls, i)
@@ -730,21 +627,15 @@ local function CancelRoll(rollID)
         end
     end
 
-    -- Check active rolls
     local frame = activeRolls[rollID]
     if frame then
         frame:Hide()
         frame.rollID = nil
         rollTimerFrames[frame] = nil
         activeRolls[rollID] = nil
-        -- Use C_Timer to defer repositioning and queue processing
         C_Timer.After(0, ProcessRollQueue)
     end
 end
-
----=================================================================================
---- ANCHOR FRAME (For positioning roll frames)
----=================================================================================
 
 local function CreateRollAnchor()
     local anchor = CreateFrame("Frame", "QUI_LootRollAnchor", UIParent, "BackdropTemplate")
@@ -753,41 +644,28 @@ local function CreateRollAnchor()
     anchor:SetMovable(true)
     anchor:EnableMouse(false)
 
-    -- Hidden by default - only shown in config/test mode
     anchor:Hide()
 
     return anchor
 end
 
----=================================================================================
---- LOOT HISTORY FRAME SKINNING (Retail GroupLootHistoryFrame)
----=================================================================================
-
 local lootHistorySkinned = false
 
--- Skin individual loot history item elements
 local function SkinLootHistoryElement(button)
-    -- TAINT SAFETY: Use weak-keyed table instead of writing to Blizzard scroll element
     if hookedLootFrames[button] then return end
 
-    -- Strip background textures (NameFrame/BorderFrame are parentKey'd under
-    -- BackgroundArtFrame, so this alpha covers them too)
     if button.BackgroundArtFrame then
         button.BackgroundArtFrame:SetAlpha(0)
     end
 
-    -- Style the item icon
     local item = button.Item
     if item then
         local icon = item.icon or item.Icon
         if icon then
-            -- Hide existing textures instead of setting to nil
             if item.NormalTexture then item.NormalTexture:SetAlpha(0) end
             if item.PushedTexture then item.PushedTexture:SetAlpha(0) end
             if item.HighlightTexture then item.HighlightTexture:SetAlpha(0) end
 
-            -- Create QUI-style icon border
-            -- TAINT SAFETY: Use weak-keyed table instead of writing to Blizzard item frame
             if not itemBorders[item] then
                 local quiBorder = CreateFrame("Frame", nil, item, "BackdropTemplate")
                 SkinBase.SetExpandedPixelPoints(quiBorder, icon, 1)
@@ -796,11 +674,8 @@ local function SkinLootHistoryElement(button)
                 itemBorders[item] = quiBorder
             end
 
-            -- Apply texcoord
             icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
 
-            -- Hook IconBorder to update our border color
-            -- TAINT SAFETY: Defer to break taint chain from secure context.
             if item.IconBorder and not hookedBorders[item] then
                 hookedBorders[item] = true
                 hooksecurefunc(item.IconBorder, "SetVertexColor", function(self, r, g, b)
@@ -811,7 +686,7 @@ local function SkinLootHistoryElement(button)
                         end
                     end)
                 end)
-                item.IconBorder:SetAlpha(0)  -- Hide Blizzard's border
+                item.IconBorder:SetAlpha(0)
             end
         end
     end
@@ -819,7 +694,6 @@ local function SkinLootHistoryElement(button)
     hookedLootFrames[button] = true
 end
 
--- Main function to skin GroupLootHistoryFrame
 local function SkinGroupLootHistoryFrame()
     if lootHistorySkinned then return end
 
@@ -828,12 +702,8 @@ local function SkinGroupLootHistoryFrame()
 
     local bgColor, borderColor, textColor = GetThemeColors()
 
-    -- Strip Blizzard chrome via the canonical helper (NineSlice, Bg,
-    -- TopTileStreaks, portrait, title bg) rather than a hand-picked NineSlice/Bg
-    -- pair — keeps the title text, hides the chrome our backdrop replaces.
     SkinBase.HidePortraitFrameChrome(HistoryFrame)
 
-    -- Apply QUI backdrop
     local hfBd = SkinBase.GetFrameData(HistoryFrame, "backdrop")
     if not hfBd then
         hfBd = CreateFrame("Frame", nil, HistoryFrame, "BackdropTemplate")
@@ -845,7 +715,6 @@ local function SkinGroupLootHistoryFrame()
     Helpers.SetFrameBackdropColor(hfBd, unpack(bgColor))
     Helpers.SetFrameBackdropBorderColor(hfBd, unpack(borderColor))
 
-    -- Style the timer bar
     local Timer = HistoryFrame.Timer
     if Timer then
         if Timer.Background then Timer.Background:SetAlpha(0) end
@@ -856,8 +725,6 @@ local function SkinGroupLootHistoryFrame()
             Timer.Fill:SetVertexColor(borderColor[1], borderColor[2], borderColor[3], 1)
         end
 
-        -- Add timer background
-        -- TAINT SAFETY: Store created texture in weak table instead of on Blizzard frame
         local timerParts = frameParts[Timer]
         if not timerParts or not timerParts.bg then
             local bg = Timer:CreateTexture(nil, "BACKGROUND")
@@ -868,34 +735,20 @@ local function SkinGroupLootHistoryFrame()
         end
     end
 
-    -- Style the dropdown if it exists
     local Dropdown = HistoryFrame.EncounterDropdown
     if Dropdown then
-        -- Canonical dropdown (was a no-op NineSlice alpha — the template draws via a
-        -- .Background atlas, so the stock control showed through). Matches the QUI
-        -- backdrop look every other dropdown (e.g. AH DurationDropdown) gets.
         SkinBase.SkinDropdown(Dropdown)
     end
 
-    -- Style the close button. ClosePanelButton inherits
-    -- UIPanelCloseButtonDefaultAnchors (LootHistory.xml:217), so route it through
-    -- the canonical helper that hides all 5 Blizzard X layers and stamps the QUI
-    -- "×" — a SetVertexColor dim alone left the red X visible.
     if HistoryFrame.ClosePanelButton then
         local closeButton = HistoryFrame.ClosePanelButton
         SkinBase.SkinCloseButton(closeButton)
-        -- UIPanelCloseButtonDefaultAnchors anchors the button TOPRIGHT +1,0, so
-        -- it overhangs the frame corner. The stock red-X atlas hid that with
-        -- transparent padding, but the solid QUI box pokes out past the skinned
-        -- chrome. Re-anchor it to tuck just inside the corner (same fix as the
-        -- ItemRefTooltip close button).
         if closeButton.ClearAllPoints and closeButton.SetPoint then
             closeButton:ClearAllPoints()
             closeButton:SetPoint("TOPRIGHT", HistoryFrame, "TOPRIGHT", -2, -2)
         end
     end
 
-    -- Style the resize button
     local ResizeButton = HistoryFrame.ResizeButton
     if ResizeButton then
         if ResizeButton.NineSlice then ResizeButton.NineSlice:SetAlpha(0) end
@@ -909,8 +762,6 @@ local function SkinGroupLootHistoryFrame()
             Helpers.SetFrameBackdropBorderColor(rbBd, unpack(borderColor))
             SkinBase.SetFrameData(ResizeButton, "backdrop", rbBd)
 
-            -- Add resize text
-            -- TAINT SAFETY: Store created font string in weak table instead of on Blizzard frame
             local rbParts = frameParts[ResizeButton]
             if not rbParts then rbParts = {}; frameParts[ResizeButton] = rbParts end
             rbParts.text = ResizeButton:CreateFontString(nil, "OVERLAY")
@@ -921,20 +772,13 @@ local function SkinGroupLootHistoryFrame()
         end
     end
 
-    -- Skin loot history elements as they're acquired from the pool.
     if HistoryFrame.ScrollBox then
         SkinBase.HookScrollBoxAcquired(HistoryFrame.ScrollBox, SkinLootHistoryElement)
-        -- SkinLootHistoryElement only restyles the row icon/border; the row's
-        -- ItemName/winner/roll FontStrings stay at stock GameFontNormal otherwise.
-        -- Route them through the canonical pooled-row font lock (the same single
-        -- source of truth peer modules use) so each acquired row carries the QUI font.
         if SkinBase.HookScrollBoxRowFonts then
             SkinBase.HookScrollBoxRowFonts(HistoryFrame.ScrollBox, 3)
         end
     end
 
-    -- Hook Show to re-apply theme each time frame is shown
-    -- TAINT SAFETY: Defer to break taint chain from secure context.
     hooksecurefunc(HistoryFrame, "Show", function()
         C_Timer.After(0, function()
             Loot:ApplyLootHistoryTheme()
@@ -944,7 +788,6 @@ local function SkinGroupLootHistoryFrame()
     lootHistorySkinned = true
 end
 
--- Apply theme to loot history frame
 function Loot:ApplyLootHistoryTheme()
     local HistoryFrame = _G.GroupLootHistoryFrame
     if not HistoryFrame then return end
@@ -952,7 +795,6 @@ function Loot:ApplyLootHistoryTheme()
     local db = GetDB()
     local enabled = db.lootResults and db.lootResults.enabled ~= false
 
-    -- If disabled, restore Blizzard look
     local themeBd = SkinBase.GetFrameData(HistoryFrame, "backdrop")
     if not enabled then
         if themeBd then
@@ -984,12 +826,10 @@ function Loot:ApplyLootHistoryTheme()
         return
     end
 
-    -- Enabled - apply QUI skin
     if not themeBd then return end
 
     local bgColor, borderColor, textColor = GetThemeColors()
 
-    -- Show our backdrop, hide Blizzard's
     themeBd:Show()
     if HistoryFrame.NineSlice then HistoryFrame.NineSlice:SetAlpha(0) end
     if HistoryFrame.Bg then HistoryFrame.Bg:SetAlpha(0) end
@@ -1024,20 +864,14 @@ function Loot:ApplyLootHistoryTheme()
     end
 end
 
--- Legacy function name for backwards compatibility with options
 function Loot:ApplyResultsTheme()
     self:ApplyLootHistoryTheme()
 end
 
----=================================================================================
---- INITIALIZATION
----=================================================================================
-
--- Combat deferral: pending flags and event frame for taint safety
 local pendingDisableBlizzard = false
 local pendingEnableBlizzard = false
 local pendingRefreshBlizzard = false
-local DisableBlizzardLoot, EnableBlizzardLoot  -- forward declarations
+local DisableBlizzardLoot, EnableBlizzardLoot
 
 local combatDeferFrame = CreateFrame("Frame")
 combatDeferFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
@@ -1068,14 +902,13 @@ local function SetupDebugInstrumentation()
     ns.QUI_PerfRegistry = ns.QUI_PerfRegistry or {}
     ns.QUI_PerfRegistry[#ns.QUI_PerfRegistry + 1] = { name = "Loot_CombatDefer", frame = combatDeferFrame }
 end
-if ns.DebugRegister then -- gate contract: core/debug_gate.lua
+if ns.DebugRegister then
     ns.DebugRegister(SetupDebugInstrumentation)
 else
-    SetupDebugInstrumentation() -- standalone test harness: no gate, run eagerly
+    SetupDebugInstrumentation()
 end
 
 DisableBlizzardLoot = function()
-    -- TAINT SAFETY: Defer to after combat if in combat lockdown
     if InCombatLockdown() then
         pendingDisableBlizzard = true
         return
@@ -1083,7 +916,6 @@ DisableBlizzardLoot = function()
 
     local db = GetDB()
 
-    -- Disable Blizzard Loot Frame
     if db.loot and db.loot.enabled then
         if not InCombatLockdown() then
             LootFrame:UnregisterAllEvents()
@@ -1091,24 +923,19 @@ DisableBlizzardLoot = function()
         end
     end
 
-    -- Disable Blizzard Roll Frames
     if db.lootRoll and db.lootRoll.enabled then
-        -- Hide the container
         if GroupLootContainer then
             if not InCombatLockdown() then
                 GroupLootContainer:UnregisterAllEvents()
                 GroupLootContainer:Hide()
             end
-            -- Hook to keep it hidden when Blizzard tries to show frames
-            -- TAINT SAFETY: Defer to break taint chain from secure context.
             if not hookedContainers[GroupLootContainer] then
                 Helpers.DeferredHideOnShow(GroupLootContainer, { combatCheck = false })
                 hookedContainers[GroupLootContainer] = true
             end
         end
 
-        -- Hide individual roll frames as they're created
-        local numRollFrames = 4  -- NUM_GROUP_LOOT_FRAMES is file-local in Blizzard's GroupLootFrame.lua
+        local numRollFrames = 4
         for i = 1, numRollFrames do
             local frame = _G["GroupLootFrame"..i]
             if frame then
@@ -1116,7 +943,6 @@ DisableBlizzardLoot = function()
                     frame:UnregisterAllEvents()
                     frame:Hide()
                 end
-                -- TAINT SAFETY: Defer to break taint chain from secure context.
                 if not hookedLootFrames[frame] then
                     Helpers.DeferredHideOnShow(frame, { combatCheck = false })
                     hookedLootFrames[frame] = true
@@ -1127,13 +953,11 @@ DisableBlizzardLoot = function()
 end
 
 EnableBlizzardLoot = function()
-    -- TAINT SAFETY: Defer to after combat if in combat lockdown
     if InCombatLockdown() then
         pendingEnableBlizzard = true
         return
     end
 
-    -- Re-enable Blizzard Loot Frame
     if not InCombatLockdown() then
         LootFrame:RegisterEvent("LOOT_OPENED")
         LootFrame:RegisterEvent("LOOT_SLOT_CLEARED")
@@ -1141,10 +965,6 @@ EnableBlizzardLoot = function()
         LootFrame:RegisterEvent("LOOT_CLOSED")
     end
 
-    -- 12.1 routes START_LOOT_ROLL/CANCEL_LOOT_ROLL through GameEvent
-    -- (Blizzard_Game/EventRouting.lua), not UIParent — there is no UIParent
-    -- registration to restore. Native roll frames are suppressed after their
-    -- lifecycle (hide + GroupLootContainer alpha), not at the event source.
     if GroupLootContainer then
         GroupLootContainer:SetAlpha(1)
     end
@@ -1153,7 +973,6 @@ end
 function Loot:Initialize()
     local db = GetDB()
 
-    -- Create frames
     if not lootFrame then
         lootFrame = CreateLootWindow()
     end
@@ -1162,43 +981,33 @@ function Loot:Initialize()
         rollAnchor = CreateRollAnchor()
     end
 
-    -- frameAnchoring positions the roll anchor; default set in CreateRollAnchor
-
-    -- Disable Blizzard frames if enabled
     DisableBlizzardLoot()
 
-    -- Skin Blizzard's GroupLootHistoryFrame (shows roll results)
     if db.lootResults and db.lootResults.enabled ~= false then
-        -- GroupLootHistoryFrame may not exist until first loot roll
-        -- Check periodically until it exists, then skin it
         local function TrySkinLootHistory()
             if GroupLootHistoryFrame and not lootHistorySkinned then
                 SkinGroupLootHistoryFrame()
-                -- Re-apply theme after skinning to ensure correct colors
                 Loot:ApplyLootHistoryTheme()
                 return true
             end
             return false
         end
 
-        -- Try immediately
         if not TrySkinLootHistory() then
-            -- If frame doesn't exist yet, set up a repeating check
             local checkFrame = CreateFrame("Frame")
             checkFrame.elapsed = 0
             checkFrame:SetScript("OnUpdate", function(self, elapsed)
                 self.elapsed = self.elapsed + elapsed
-                if self.elapsed > 1 then  -- Check every 1 second
+                if self.elapsed > 1 then
                     self.elapsed = 0
                     if TrySkinLootHistory() then
-                        self:SetScript("OnUpdate", nil)  -- Stop checking once skinned
+                        self:SetScript("OnUpdate", nil)
                     end
                 end
             end)
         end
     end
 
-    -- Event handling
     local eventFrame = CreateFrame("Frame")
     eventFrame:RegisterEvent("LOOT_READY")
     eventFrame:RegisterEvent("LOOT_OPENED")
@@ -1239,16 +1048,12 @@ end
 function Loot:Refresh()
     local db = GetDB()
 
-    -- Reapply frameAnchoring positions for loot and roll anchor
     if _G.QUI_ApplyAllFrameAnchors then
         _G.QUI_ApplyAllFrameAnchors()
     end
 
-    -- Reposition active rolls
     RepositionAllRolls()
 
-    -- Toggle Blizzard frames based on settings
-    -- TAINT SAFETY: Guard secure frame operations against combat lockdown
     if not InCombatLockdown() then
         if db.loot and db.loot.enabled then
             LootFrame:UnregisterAllEvents()
@@ -1257,17 +1062,11 @@ function Loot:Refresh()
             EnableBlizzardLoot()
         end
 
-        -- 12.1 routes START_LOOT_ROLL/CANCEL_LOOT_ROLL through GameEvent
-        -- (Blizzard_Game/EventRouting.lua), not UIParent — there is no
-        -- UIParent registration to toggle for lootRoll. Native roll frames
-        -- are suppressed after their lifecycle (hide + GroupLootContainer
-        -- alpha), not at the event source.
     else
         pendingRefreshBlizzard = true
     end
 end
 
--- Apply theme colors to loot frame
 function Loot:ApplyLootTheme()
     if not lootFrame then return end
     local bgColor, borderColor, textColor = GetThemeColors()
@@ -1278,7 +1077,6 @@ function Loot:ApplyLootTheme()
     CJKFont(lootFrame.header, fontPath, 12, "OUTLINE")
     lootFrame.header:SetTextColor(unpack(textColor))
 
-    -- Update slot fonts and highlight colors
     for i = 1, MAX_LOOT_SLOTS do
         local slot = lootFrame.slots[i]
         if slot then
@@ -1290,7 +1088,6 @@ function Loot:ApplyLootTheme()
     end
 end
 
--- Apply theme colors to roll frames
 function Loot:ApplyRollTheme()
     local bgColor, borderColor, textColor = GetThemeColors()
     local fontPath = LSM:Fetch("font", GetGeneralFont())
@@ -1299,22 +1096,19 @@ function Loot:ApplyRollTheme()
         local frame = rollFramePool[i]
         if frame then
             Helpers.SetFrameBackdropColor(frame, bgColor[1], bgColor[2], bgColor[3], 0.95)
-            Helpers.SetFrameBackdropBorderColor(frame, borderColor[1], borderColor[2], borderColor[3], 0.3)  -- Subtle border
-            frame.timer:SetStatusBarColor(borderColor[1], borderColor[2], borderColor[3], 1)  -- Accent color
+            Helpers.SetFrameBackdropBorderColor(frame, borderColor[1], borderColor[2], borderColor[3], 0.3)
+            frame.timer:SetStatusBarColor(borderColor[1], borderColor[2], borderColor[3], 1)
             CJKFont(frame.name, fontPath, 12, "OUTLINE")
         end
     end
 end
 
--- Refresh all loot/roll colors (called when user changes skin color pickers)
 function Loot:RefreshColors()
-    -- Apply to all components
     self:ApplyLootTheme()
     self:ApplyRollTheme()
     self:ApplyLootHistoryTheme()
 end
 
--- Register global refresh function for RefreshAllSkinning()
 _G.QUI_RefreshLootColors = function()
     if QUICore and QUICore.Loot then
         QUICore.Loot:RefreshColors()
@@ -1330,32 +1124,26 @@ if ns.Registry then
     })
 end
 
--- Preview state tracking
 local lootPreviewActive = false
 local rollPreviewActive = false
 
--- Show preview for loot window (stays until hidden)
 function Loot:ShowLootPreview()
     if not lootFrame then
         lootFrame = CreateLootWindow()
     end
 
-    -- Apply current theme
     self:ApplyLootTheme()
 
-    -- Position from frameAnchoring or default
     lootFrame:SetPoint("CENTER", UIParent, "CENTER", 0, 100)
     if _G.QUI_ApplyAllFrameAnchors then
         _G.QUI_ApplyAllFrameAnchors()
     end
 
-    -- Enable direct drag during preview (no shift required)
     lootFrame:SetScript("OnDragStart", function(self)
         self:StartMoving()
     end)
     lootFrame._previewMode = true
 
-    -- Show test items
     local testItems = {
         { texture = "Interface\\Icons\\INV_Misc_Gem_Diamond_02", name = "Test Epic Item", quality = 4 },
         { texture = "Interface\\Icons\\INV_Misc_Coin_02", name = "Gold Coin", quality = 1, count = 47 },
@@ -1364,7 +1152,7 @@ function Loot:ShowLootPreview()
 
     for i, item in ipairs(testItems) do
         local slot = lootFrame.slots[i]
-        slot.slotIndex = nil  -- Not real loot
+        slot.slotIndex = nil
         slot.icon:SetTexture(item.texture)
         slot.name:SetText(item.name)
         local r, g, b = GetItemQualityColor(item.quality)
@@ -1381,12 +1169,10 @@ function Loot:ShowLootPreview()
         slot:Show()
     end
 
-    -- Hide unused slots
     for i = #testItems + 1, MAX_LOOT_SLOTS do
         lootFrame.slots[i]:Hide()
     end
 
-    -- Resize
     local height = 40 + (#testItems * (SLOT_HEIGHT + SLOT_SPACING))
     ApplyLootFrameHeight(height)
     lootFrame:Show()
@@ -1394,11 +1180,9 @@ function Loot:ShowLootPreview()
     lootPreviewActive = true
 end
 
--- Hide loot preview
 function Loot:HideLootPreview()
     if lootFrame then
         lootFrame:Hide()
-        -- Restore shift+drag for actual looting
         lootFrame:SetScript("OnDragStart", function(self)
             if IsShiftKeyDown() then
                 self:StartMoving()
@@ -1409,12 +1193,6 @@ function Loot:HideLootPreview()
     lootPreviewActive = false
 end
 
--- Check if loot preview is active
-function Loot:IsLootPreviewActive()
-    return lootPreviewActive
-end
-
--- Preview test items (8 total to match MAX_ROLL_FRAMES)
 local PREVIEW_ROLL_ITEMS = {
     { texture = "Interface\\Icons\\INV_Sword_39", name = "Blade of Eternal Night", quality = 4, timer = 0.85 },
     { texture = "Interface\\Icons\\INV_Helmet_25", name = "Crown of the Fallen King", quality = 4, timer = 0.7 },
@@ -1426,7 +1204,6 @@ local PREVIEW_ROLL_ITEMS = {
     { texture = "Interface\\Icons\\INV_Jewelry_Ring_36", name = "Band of Eternal Champions", quality = 4, timer = 0.1 },
 }
 
--- Show preview for roll frame (stays until hidden)
 function Loot:ShowRollPreview()
     if not rollAnchor then
         rollAnchor = CreateRollAnchor()
@@ -1437,46 +1214,38 @@ function Loot:ShowRollPreview()
     local spacing = (db.lootRoll and db.lootRoll.spacing) or 4
     local maxFrames = (db.lootRoll and db.lootRoll.maxFrames) or 4
 
-    -- frameAnchoring positions the roll anchor
     if _G.QUI_ApplyAllFrameAnchors then
         _G.QUI_ApplyAllFrameAnchors()
     end
 
     local bgColor, borderColor, textColor = GetThemeColors()
 
-    -- Store current maxFrames for HideRollPreview
     self._previewMaxFrames = maxFrames
 
-    -- Create preview frames up to maxFrames setting
     for i = 1, maxFrames do
-        local item = PREVIEW_ROLL_ITEMS[i] or PREVIEW_ROLL_ITEMS[1]  -- Cycle through if needed
-        -- Ensure frame exists in pool
+        local item = PREVIEW_ROLL_ITEMS[i] or PREVIEW_ROLL_ITEMS[1]
         if not rollFramePool[i] then
             rollFramePool[i] = CreateRollFrame(i)
         end
         local frame = rollFramePool[i]
 
-        -- Apply current theme (subtle border)
         Helpers.SetFrameBackdropColor(frame, bgColor[1], bgColor[2], bgColor[3], 0.95)
         Helpers.SetFrameBackdropBorderColor(frame, borderColor[1], borderColor[2], borderColor[3], 0.3)
 
-        frame.rollID = nil  -- Not a real roll
+        frame.rollID = nil
         frame.icon:SetTexture(item.texture)
         frame.name:SetText(item.name)
         local r, g, b = GetItemQualityColor(item.quality)
         Helpers.SetFrameBackdropBorderColor(frame.iconBorder, r, g, b, 1)
         frame.name:SetTextColor(r, g, b)
 
-        -- Quality background tint
         local tint = QUALITY_BG_TINTS[item.quality] or QUALITY_BG_TINTS[1]
         frame.qualityTint:SetColorTexture(tint[1], tint[2], tint[3], tint[4])
 
-        -- Timer with accent color
         frame.timer:SetValue(item.timer)
         frame.timer:SetStatusBarColor(borderColor[1], borderColor[2], borderColor[3], 1)
-        rollTimerFrames[frame] = nil  -- Not a real roll, remove from shared timer
+        rollTimerFrames[frame] = nil
 
-        -- Make first frame draggable during preview
         if i == 1 then
             frame:SetMovable(true)
             frame:EnableMouse(true)
@@ -1486,14 +1255,12 @@ function Loot:ShowRollPreview()
             end)
             frame:SetScript("OnDragStop", function(self)
                 self:StopMovingOrSizing()
-                -- Update anchor to match dragged position
                 local point, _, relPoint, x, y = QUICore:SnapFramePosition(self)
                 if not point then return end
                 if rollAnchor then
                     rollAnchor:ClearAllPoints()
                     rollAnchor:SetPoint(point, UIParent, relPoint, x, y + ROLL_FRAME_HEIGHT)
                 end
-                -- Reposition other frames relative to new anchor
                 local previewCount = Loot._previewMaxFrames or 4
                 for j = 2, previewCount do
                     if rollFramePool[j] then
@@ -1508,7 +1275,6 @@ function Loot:ShowRollPreview()
             end)
         end
 
-        -- Position based on grow direction
         frame:ClearAllPoints()
         if growDirection == "UP" then
             frame:SetPoint("BOTTOM", rollAnchor, "TOP", 0, ((i-1) * (ROLL_FRAME_HEIGHT + spacing)))
@@ -1521,13 +1287,10 @@ function Loot:ShowRollPreview()
     rollPreviewActive = true
 end
 
--- Hide roll preview
 function Loot:HideRollPreview()
-    -- Hide all preview frames (up to MAX_ROLL_FRAMES since we could show that many)
     for i = 1, MAX_ROLL_FRAMES do
         if rollFramePool[i] then
             rollFramePool[i]:Hide()
-            -- Remove drag handlers from first frame
             if i == 1 then
                 rollFramePool[i]:SetMovable(false)
                 rollFramePool[i]:RegisterForDrag()
@@ -1540,35 +1303,20 @@ function Loot:HideRollPreview()
     rollPreviewActive = false
 end
 
--- Check if roll preview is active
 function Loot:IsRollPreviewActive()
     return rollPreviewActive
 end
 
----=================================================================================
---- EDIT MODE INTEGRATION
----=================================================================================
-
 local editModeActive = false
 
--- Toggle movers (edit mode) for repositioning frames
-function Loot:ToggleMovers()
-    if editModeActive then
-        self:DisableEditMode()
-    else
-        self:EnableEditMode()
-    end
-end
-local EDIT_BORDER_COLOR = { 0.2, 0.8, 0.8, 1 }  -- Cyan/teal to match QUI style
+local EDIT_BORDER_COLOR = { 0.2, 0.8, 0.8, 1 }
 local EDIT_BORDER_SIZE = 2
 
--- Create border highlight around a frame (matching QUI player frame style)
 local function CreateEditModeBorder(frame)
     if frame.editBorder then return frame.editBorder end
 
     local border = {}
 
-    -- Top border (DisablePixelSnap so the 2px quad stays on-grid at fractional UI scales)
     border.top = frame:CreateTexture(nil, "OVERLAY")
     border.top:SetColorTexture(unpack(EDIT_BORDER_COLOR))
     SkinBase.DisablePixelSnap(border.top)
@@ -1576,7 +1324,6 @@ local function CreateEditModeBorder(frame)
     border.top:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 0, 0)
     border.top:SetHeight(EDIT_BORDER_SIZE)
 
-    -- Bottom border
     border.bottom = frame:CreateTexture(nil, "OVERLAY")
     border.bottom:SetColorTexture(unpack(EDIT_BORDER_COLOR))
     SkinBase.DisablePixelSnap(border.bottom)
@@ -1584,7 +1331,6 @@ local function CreateEditModeBorder(frame)
     border.bottom:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", 0, 0)
     border.bottom:SetHeight(EDIT_BORDER_SIZE)
 
-    -- Left border
     border.left = frame:CreateTexture(nil, "OVERLAY")
     border.left:SetColorTexture(unpack(EDIT_BORDER_COLOR))
     SkinBase.DisablePixelSnap(border.left)
@@ -1592,7 +1338,6 @@ local function CreateEditModeBorder(frame)
     border.left:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 0, 0)
     border.left:SetWidth(EDIT_BORDER_SIZE)
 
-    -- Right border
     border.right = frame:CreateTexture(nil, "OVERLAY")
     border.right:SetColorTexture(unpack(EDIT_BORDER_COLOR))
     SkinBase.DisablePixelSnap(border.right)
@@ -1625,25 +1370,21 @@ function Loot:EnableEditMode()
     if editModeActive then return end
     editModeActive = true
 
-    -- Show loot preview with edit border
     self:ShowLootPreview()
     if lootFrame then
-        -- Add edit mode border highlight
         ShowEditModeBorder(lootFrame)
 
-        -- Add label
         if not lootFrame.editLabel then
             local label = lootFrame:CreateFontString(nil, "OVERLAY")
             CJKFont(label, LSM:Fetch("font", GetGeneralFont()), 10, "OUTLINE")
             label:SetPoint("BOTTOM", lootFrame, "TOP", 0, 4)
             label:SetText(ns.L["QUI Loot Window"])
-            label:SetTextColor(0.2, 0.8, 0.8)  -- Match border color
+            label:SetTextColor(0.2, 0.8, 0.8)
             lootFrame.editLabel = label
         end
         lootFrame.editLabel:Show()
     end
 
-    -- Show roll preview with edit border
     self:ShowRollPreview()
     local rollFrame = rollFramePool[1]
     if rollFrame then
@@ -1654,7 +1395,7 @@ function Loot:EnableEditMode()
             CJKFont(label, LSM:Fetch("font", GetGeneralFont()), 10, "OUTLINE")
             label:SetPoint("BOTTOM", rollFrame, "TOP", 0, 4)
             label:SetText(ns.L["QUI Roll Frame"])
-            label:SetTextColor(0.2, 0.8, 0.8)  -- Match border color
+            label:SetTextColor(0.2, 0.8, 0.8)
             rollFrame.editLabel = label
         end
         rollFrame.editLabel:Show()
@@ -1665,7 +1406,6 @@ function Loot:DisableEditMode()
     if not editModeActive then return end
     editModeActive = false
 
-    -- Hide borders and labels
     if lootFrame then
         HideEditModeBorder(lootFrame)
         if lootFrame.editLabel then lootFrame.editLabel:Hide() end
@@ -1677,7 +1417,6 @@ function Loot:DisableEditMode()
         if rollFrame.editLabel then rollFrame.editLabel:Hide() end
     end
 
-    -- Hide previews
     self:HideLootPreview()
     self:HideRollPreview()
 end
@@ -1686,20 +1425,14 @@ function Loot:IsEditModeActive()
     return editModeActive
 end
 
--- Hook Blizzard's Edit Mode
 function Loot:HookBlizzardEditMode()
     if self._editModeHooked then return end
     self._editModeHooked = true
 
-    -- Use central Edit Mode dispatcher to avoid taint from multiple hooksecurefunc
-    -- callbacks on EnterEditMode/ExitEditMode.
-    -- Only hook ExitEditMode to auto-hide movers
-    -- EnterEditMode intentionally NOT hooked - users toggle movers manually via Skinning options
     local core = ns.Addon
     if core and core.RegisterEditModeExit then
         core:RegisterEditModeExit(function()
             if InCombatLockdown() then
-                -- Defer via a one-shot PLAYER_REGEN_ENABLED handler
                 local f = CreateFrame("Frame")
                 f:RegisterEvent("PLAYER_REGEN_ENABLED")
                 f:SetScript("OnEvent", function(ef)
@@ -1713,22 +1446,12 @@ function Loot:HookBlizzardEditMode()
     end
 end
 
----=================================================================================
---- MODULE INITIALIZATION HOOK
----=================================================================================
-
--- Initialize after login. ns.WhenLoggedIn runs now if already logged in (the
--- post-login LOD case after the suite split) rather than this addon's own
--- ADDON_LOADED, which is NOT delivered when the core eager-LoadAddOn's the
--- module from OnEnable (see modules/qol/tooltip_provider.lua). ns.WhenLoggedIn
--- is nil only in the headless test harness.
 if ns.WhenLoggedIn then
     ns.WhenLoggedIn(function()
-        if ns.IsSkinningEnabled and not ns.IsSkinningEnabled() then return end -- master skinning gate
+        if ns.IsSkinningEnabled and not ns.IsSkinningEnabled() then return end
         local db = GetDB()
         if db.loot or db.lootRoll then
             Loot:Initialize()
-            -- Hook Edit Mode after initialization
             Loot:HookBlizzardEditMode()
         end
     end)

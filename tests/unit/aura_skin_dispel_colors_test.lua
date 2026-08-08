@@ -137,6 +137,7 @@ local function MakeContainer()
 end
 
 local ns = {}
+assert(loadfile("core/safecall.lua"))("QUI", ns)
 assert(loadfile("core/aura_theme.lua"))("QUI", ns)
 assert(loadfile("core/aura_skin.lua"))("QUI", ns)
 assert(loadfile("core/aura_elements.lua"))("QUI", ns)

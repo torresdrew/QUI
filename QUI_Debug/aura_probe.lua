@@ -1,25 +1,5 @@
 local ADDON_NAME, ns = ...
 
-----------------------------------------------------------------------------
--- Aura payload probe
---
--- Usage:
---   /qaura on       enable player/pet UNIT_AURA payload logging
---   /qaura off      disable logging
---   /qaura copy     open a copyable sanitized log
---   /qaura clear    clear the live and copyable logs
---   /qaura status   print current state
---   /qcleu on       enable player/pet combat-log aura event logging
---   /qcleu all      enable player/pet combat-log logging for all subevents
---   /qcleu frameall use direct frame registration for all subevents
---   /qcleu off      disable combat-log aura event logging
---
--- This is a diagnostic surface only. It avoids tostring/concat on secret
--- aura payload fields; secret-bearing lines are composed via
--- C_StringUtil.WrapString and rendered through a dedicated FontString
--- (SetText is AllowedWhenTainted; SimpleMessageFrame:AddMessage is not).
-----------------------------------------------------------------------------
-
 local PREFIX = "|cff34D399[QAura]|r"
 local CLEU_PREFIX = "|cff34D399[QCLEU]|r"
 local enabled = false
@@ -68,7 +48,7 @@ local function EnsureOutputFrame()
 
     local title = outputFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     title:SetPoint("TOPLEFT", 8, -6)
-    title:SetText("[QAura/QCLEU] drag to move - mouse wheel scrolls - /qaura copy opens sanitized text")
+    title:SetText("[QAura/QCLEU] drag to move - mouse wheel scrolls - /quiaura copy opens sanitized text")
 
     outputMessages = CreateFrame("ScrollingMessageFrame", nil, outputFrame)
     outputMessages:SetPoint("TOPLEFT", 8, -24)
@@ -86,10 +66,6 @@ local function EnsureOutputFrame()
         end
     end)
 
-    -- Secret lines render through a FontString: SetText is AllowedWhenTainted
-    -- (adds SecretAspect.Text) while SimpleMessageFrame:AddMessage is
-    -- AllowedWhenUntainted, so tainted code cannot push secret strings into
-    -- the scrolling frame above.
     outputSecretText = outputFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     outputSecretText:SetPoint("BOTTOMLEFT", 8, 8)
     outputSecretText:SetPoint("BOTTOMRIGHT", -8, 8)
@@ -121,17 +97,10 @@ end
 
 local function AppendSecretLine(message)
     if not (outputSecretText and C_StringUtil and C_StringUtil.WrapString) then return end
-    -- Reset decisions read only clean state: the buffer is secret after the
-    -- first append, so `not buffer` would throw here. count == 0 iff the
-    -- buffer is unset (init, ClearOutput, and every reset keep them in
-    -- lockstep).
     if secretPane.count == 0 or secretPane.count >= 6 then
         secretPane.buffer = SECRET_PANE_HEADER
         secretPane.count = 0
     end
-    -- The buffer rides as WrapString's INFIX (never empty: starts with the
-    -- header literal) so the empty-infix -> "" short-circuit can't drop it;
-    -- the secret line rides as the suffix.
     secretPane.buffer = C_StringUtil.WrapString(secretPane.buffer, nil, "\n")
     secretPane.buffer = C_StringUtil.WrapString(secretPane.buffer, nil, message)
     secretPane.count = secretPane.count + 1
@@ -269,11 +238,6 @@ local function OpenCopyFrame(lines, emptyText, printPrefix)
     print((printPrefix or PREFIX) .. " copy window opened (" .. tostring(#lines) .. " lines)")
 end
 
--- Append clean text to a message that may already be secret. Lua-side `..`
--- on a secret throws, so once the message is secret it rides through
--- WrapString as the INFIX: the message is never empty (it starts with the
--- prefix), which sidesteps WrapString's empty-infix -> "" short-circuit
--- that would drop the accumulated text.
 local function AppendText(message, messageSecret, text)
     if messageSecret and C_StringUtil and C_StringUtil.WrapString then
         return C_StringUtil.WrapString(message, nil, text)
@@ -285,9 +249,6 @@ local function AppendPart(message, hasSecret, label, value, secret)
     message = AppendText(message, hasSecret, " " .. label .. "=")
     if secret then
         if C_StringUtil and C_StringUtil.WrapString then
-            -- Secret value rides as the suffix (stringView args accept
-            -- secrets: SecretArguments = AllowedWhenTainted); the message
-            -- stays the infix so it can't be dropped.
             message = C_StringUtil.WrapString(message, nil, value)
         else
             message = AppendText(message, hasSecret, "<secret>")
@@ -309,8 +270,6 @@ local function EmitWithPrefix(prefix, copyTag, mirrorToChat, ...)
         local value = select(i, ...)
         local secret = IsSecret(value)
         if secret and C_StringUtil and C_StringUtil.WrapString then
-            -- Same infix/suffix discipline as AppendPart: the accumulated
-            -- message may already be secret, so never Lua-concat onto it.
             message = AppendText(message, messageSecret, " ")
             message = C_StringUtil.WrapString(message, nil, value)
             hasSecret, messageSecret = true, true
@@ -324,9 +283,6 @@ local function EmitWithPrefix(prefix, copyTag, mirrorToChat, ...)
 
     if not hasSecret then
         if mirrorToChat then
-            -- hasSecret is kept in lockstep with message secrecy (every
-            -- secret part sets it above) — this branch only prints
-            -- clean-built messages; secret lines take AppendLiveLine.
             -- @secret-safe: hasSecret lockstep shadow flag; clean-only branch
             print(message)
         end
@@ -387,7 +343,6 @@ local function EmitAura(prefix, unit, index, aura)
         return
     end
 
-    -- AppendPart made the message secret only when WrapString was available.
     AppendLiveLine(message, (C_StringUtil and C_StringUtil.WrapString) ~= nil)
 end
 
@@ -396,9 +351,6 @@ local function ProbeUpdatedAura(unit, index, auraInstanceID)
         Emit("updated", "unit=", unit, "i=", index, "inst=", auraInstanceID, "query=missing")
         return
     end
-    -- GetAuraDataByAuraInstanceID is SecretWhenUnitAuraRestricted — the
-    -- pcall protects the call only; probe the RETURN before truth-testing
-    -- (statement-split: the analyzer-provable guard shape).
     local ok, aura = pcall(C_UnitAuras.GetAuraDataByAuraInstanceID, unit, auraInstanceID)
     if not ok then
         Emit("updated", "unit=", unit, "i=", index, "inst=", auraInstanceID, "aura=nil")
@@ -418,13 +370,6 @@ end
 local function OnUnitAura(_, event, unit, updateInfo)
     if not enabled then return end
 
-    -- 68569: probe FIRST, before any other check (including the unit ~=
-    -- "player"/"pet" token comparison below) touches either payload arg.
-    -- A secret unit token or a secret updateInfo table throws on ==/~=
-    -- and on indexing respectively; render the shape (which arg is
-    -- secret, restriction state) instead of the values themselves and
-    -- bail. Never tostring/format the secret value -- only the booleans
-    -- and state around it.
     local unitSecret = IsSecret(unit)
     local infoSecret = IsSecret(updateInfo)
     if unitSecret or infoSecret then
@@ -435,8 +380,6 @@ local function OnUnitAura(_, event, unit, updateInfo)
         return
     end
 
-    -- unit proven readable — the IsSecret probe + early return above runs
-    -- first (stored-boolean guard, analyzer-invisible).
     -- @secret-safe: IsSecret probe + early return above proves unit readable
     if unit ~= "player" and unit ~= "pet" then return end
 
@@ -445,13 +388,6 @@ local function OnUnitAura(_, event, unit, updateInfo)
         return
     end
 
-    -- 12.1 per-field secrecy: each delta array (and isFullUpdate) can be a
-    -- secret value while updateInfo itself reads fine. Boolean test, #, and
-    -- ipairs on a secret all throw; type() does NOT (it leaks the real type),
-    -- so the type()=="table" checks alone would still walk a secret array.
-    -- Probe each field once, render "<secret>" for its count, skip its walk.
-    -- isFullUpdate needs no probe here: it's only passed through Emit, which
-    -- probes every vararg itself.
     local added = updateInfo.addedAuras
     local updated = updateInfo.updatedAuraInstanceIDs
     local removed = updateInfo.removedAuraInstanceIDs
@@ -471,9 +407,6 @@ local function OnUnitAura(_, event, unit, updateInfo)
         "updated=", deltaCount(updated, updatedSecret),
         "removed=", deltaCount(removed, removedSecret))
 
-    -- Each array was IsSecret-probed above (stored-boolean guard,
-    -- analyzer-invisible); elements can still be secret and every consumer
-    -- below (EmitAura/ProbeUpdatedAura/Emit) probes its own args.
     if not addedSecret and type(added) == "table" then
         for i, aura in ipairs(added) do -- @secret-safe: addedSecret probe above proves the array readable
             EmitAura("added", unit, i, aura)
@@ -519,8 +452,6 @@ local CLEU_AURA_EVENTS = {
 
 local function IsObservedGUID(guid)
     if not guid then return false end
-    -- UnitGUID is SecretWhenUnitIdentityRestricted: probe each return before
-    -- the ==/truth-test. A secret identity is treated as not-observed.
     local playerGUID = UnitGUID and UnitGUID("player")
     if IsSecret(playerGUID) then playerGUID = nil end
     if playerGUID and guid == playerGUID then return true end
@@ -582,7 +513,7 @@ local function SetCLEUEnabled(value, mode, registerMode)
         cleuMode = registerMode == "frame" and "frame" or "callback"
         if cleuMode == "frame" then
             if not EnsureCLEUFrameRegistered() then
-                print(CLEU_PREFIX .. " frame registration failed; see /qcleu copy")
+                print(CLEU_PREFIX .. " frame registration failed; see /quicleu copy")
                 return
             end
         else
@@ -606,11 +537,11 @@ local function SetCLEUEnabled(value, mode, registerMode)
     end
 end
 
-SLASH_QUI_AURAPROBE1 = "/qaura"
+SLASH_QUI_AURAPROBE1 = "/quiaura"
 SlashCmdList["QUI_AURAPROBE"] = function(msg)
     local text = msg and strtrim(msg):lower() or ""
     if text == "" or text == "status" then
-        print(PREFIX .. " " .. (enabled and "on" or "off") .. " cleu=" .. (cleuEnabled and "on" or "off") .. " lines=" .. tostring(#copyLines) .. " (/qaura on|off|copy|clear|status)")
+        print(PREFIX .. " " .. (enabled and "on" or "off") .. " cleu=" .. (cleuEnabled and "on" or "off") .. " lines=" .. tostring(#copyLines) .. " (/quiaura on|off|copy|clear|status)")
     elseif text == "on" or text == "1" or text == "true" then
         SetEnabled(true)
     elseif text == "off" or text == "0" or text == "false" then
@@ -621,15 +552,15 @@ SlashCmdList["QUI_AURAPROBE"] = function(msg)
         ClearOutput()
         print(PREFIX .. " cleared")
     else
-        print(PREFIX .. " usage: /qaura on|off|copy|clear|status")
+        print(PREFIX .. " usage: /quiaura on|off|copy|clear|status")
     end
 end
 
-SLASH_QUI_CLEUPROBE1 = "/qcleu"
+SLASH_QUI_CLEUPROBE1 = "/quicleu"
 SlashCmdList["QUI_CLEUPROBE"] = function(msg)
     local text = msg and strtrim(msg):lower() or ""
     if text == "" or text == "status" then
-        print(CLEU_PREFIX .. " " .. (cleuEnabled and "on" or "off") .. " mode=" .. cleuMode .. " filter=" .. (cleuLogAll and "all" or "aura") .. " events=" .. tostring(cleuEventCount) .. " lines=" .. tostring(#cleuCopyLines) .. " (/qcleu on|all|aura|frameall|off|copy|clear|status)")
+        print(CLEU_PREFIX .. " " .. (cleuEnabled and "on" or "off") .. " mode=" .. cleuMode .. " filter=" .. (cleuLogAll and "all" or "aura") .. " events=" .. tostring(cleuEventCount) .. " lines=" .. tostring(#cleuCopyLines) .. " (/quicleu on|all|aura|frameall|off|copy|clear|status)")
     elseif text == "on" or text == "1" or text == "true" then
         SetCLEUEnabled(true, "aura", "callback")
     elseif text == "all" then
@@ -649,7 +580,7 @@ SlashCmdList["QUI_CLEUPROBE"] = function(msg)
         cleuEventCount = 0
         print(CLEU_PREFIX .. " cleared")
     else
-        print(CLEU_PREFIX .. " usage: /qcleu on|all|aura|frame|frameall|off|copy|clear|status")
+        print(CLEU_PREFIX .. " usage: /quicleu on|all|aura|frame|frameall|off|copy|clear|status")
     end
 end
 

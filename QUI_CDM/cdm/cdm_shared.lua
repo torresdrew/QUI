@@ -1,12 +1,5 @@
 local _, ns = ...
 
----------------------------------------------------------------------------
--- CDM Shared Helpers
---
--- Small CDM-specific helpers used across runtime modules. Addon-wide helpers
--- stay in core/utils.lua; this file only owns cooldown-manager primitives.
----------------------------------------------------------------------------
-
 local CDMShared = {}
 ns.CDMShared = CDMShared
 
@@ -29,8 +22,6 @@ CDMShared.BUILTIN_CONTAINER_LABELS = {
     trackedBar = "Buff Bars",
 }
 
--- Legacy persisted container type: describes the historical entry family,
--- not the renderer shape. New layout code should prefer container shape.
 CDMShared.BUILTIN_CONTAINER_TYPES = {
     essential  = "cooldown",
     utility    = "cooldown",
@@ -45,8 +36,6 @@ CDMShared.BUILTIN_CONTAINER_SHAPES = {
     trackedBar = "bar",
 }
 
--- Layout/options element key -> builtin container key. Shared by
--- cdm_layout_mode.lua and settings/containers_page.lua.
 CDMShared.ELEMENT_TO_CONTAINER_MAP = {
     cdmEssential = "essential",
     cdmUtility = "utility",
@@ -311,7 +300,6 @@ end
 
 do
 -- Inlined from cdm_viewer_addon.lua
--- Shared identity/loading helper for Blizzard's CooldownViewer addon.
 local _, ns = ...
 
 local CDMCooldownViewerAddon = {}

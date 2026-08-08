@@ -1,15 +1,9 @@
--- QUI Target Distance Bracket Display
--- Shows target distance as range brackets (e.g. 0-5, 5-10, 10-25, 25+)
--- Uses LibRangeCheck-3.0 when available, with a built-in fallback.
----------------------------------------------------------------------------
 local ADDON_NAME, ns = ...
 
 local Helpers = ns.Helpers
 local UIKit = ns.UIKit
 local RangeLib = LibStub("LibRangeCheck-3.0", true)
 
--- CJK-safe font setter: preserves the roman font and only adds CJK fallback
--- members where available, degrading to plain SetFont otherwise.
 local function CJKFont(fs, p, s, f)
     if ns.Helpers and ns.Helpers.ApplyFontWithFallback then
         ns.Helpers.ApplyFontWithFallback(fs, p, s, f)
@@ -35,12 +29,12 @@ local DEFAULT_SETTINGS = {
 }
 
 local DYNAMIC_RANGE_COLORS = {
-    [0]  = { 0.2, 0.95, 0.55, 1 }, -- 0-4
-    [5]  = { 0.8, 0.95, 0.2, 1 },  -- 5-9
-    [10] = { 1, 0.75, 0.25, 1 },   -- 10-14
-    [15] = { 1, 0.55, 0.2, 1 },    -- 15-19
-    [20] = { 1, 0.35, 0.2, 1 },    -- 20-24
-    [25] = { 1, 0.2, 0.2, 1 },     -- 25+
+    [0]  = { 0.2, 0.95, 0.55, 1 },
+    [5]  = { 0.8, 0.95, 0.2, 1 },
+    [10] = { 1, 0.75, 0.25, 1 },
+    [15] = { 1, 0.55, 0.2, 1 },
+    [20] = { 1, 0.35, 0.2, 1 },
+    [25] = { 1, 0.2, 0.2, 1 },
 }
 
 local state = {
@@ -59,15 +53,11 @@ local state = {
     lastA = nil,
 }
 
----------------------------------------------------------------------------
--- Range checking via shared RangeUtils (cached action bar scan)
----------------------------------------------------------------------------
-local RangeUtils  -- resolved after PLAYER_LOGIN (core loads before modules)
+local RangeUtils
 
 local function GetSettings()
     local settings = Helpers.GetModuleSettings("rangeCheck", DEFAULT_SETTINGS)
 
-    -- Backward compatibility for earlier iterations of this feature.
     if settings.dynamicColor == nil then
         settings.dynamicColor = settings.useBracketColors == true
     end
@@ -190,10 +180,6 @@ local function CreateRangeFrame()
     frame:EnableMouse(false)
     frame:RegisterForDrag("LeftButton")
 
-    -- Use raw CreateFontString so the text is NOT registered in the global
-    -- fontRegistry.  ApplyAppearance() sets the real font/size from user
-    -- settings; if we used UIKit.CreateText here, the hardcoded 22 would be
-    -- recorded and RefreshAllFonts() (UI_SCALE_CHANGED) could revert it.
     local text = frame:CreateFontString(nil, "OVERLAY")
     CJKFont(text, UIKit.ResolveFontPath(), 22, "OUTLINE")
     text:SetTextColor(1, 1, 1, 1)
@@ -386,10 +372,6 @@ eventFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
 eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
 eventFrame:RegisterEvent("PLAYER_TARGET_CHANGED")
 
--- Install after login. ns.WhenLoggedIn runs now if already logged in (the
--- post-login LOD case) rather than this addon's own ADDON_LOADED, which is NOT
--- delivered when the core eager-LoadAddOn's the module from OnEnable (see
--- tooltip_provider.lua). Nil only in the headless test harness.
 if ns.WhenLoggedIn then
     ns.WhenLoggedIn(function()
         state.inCombat = InCombatLockdown()
@@ -399,8 +381,6 @@ end
 
 eventFrame:SetScript("OnEvent", function(_, event, arg1)
     if event == "PLAYER_ENTERING_WORLD" then
-        -- Re-apply appearance after zone-in / reload so the user's font size
-        -- and position survive any scale changes that happened during loading.
         ApplyAppearance()
     end
 

@@ -138,7 +138,7 @@ check("preview frames use a separate non-ping field",
 local rebindStart = assert(gf:find(
     'frame:HookScript("OnAttributeChanged", function(self, key, value)', 1, true))
 local rebindEnd = assert(gf:find(
-    "\n    -- Pick up the current unit if already assigned", rebindStart, true))
+    "\n    local currentUnit = frame:GetAttribute(\"unit\")", rebindStart, true))
 local rebind = gf:sub(rebindStart, rebindEnd - 1)
 local getOld = rebind:find("local oldUnit = QUI_GF.GetFrameUnit(self)", 1, true)
 local setNew = rebind:find("QUI_GF.SetFrameUnit(self, value)", 1, true)

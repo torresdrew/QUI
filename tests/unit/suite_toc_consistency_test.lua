@@ -89,29 +89,25 @@ for norm in pairs(coreSet) do
     end
 end
 
--- Group 1 guard: search/locale addons stay data-only (engine lives in
--- QUI_Options). Plain QUI_OptionsSearch = English index only. The
--- locale-suffixed ones are COMBINED addons: namespace bootstrap + the
--- UI-string overlay chunk + the search index, in that order (the chunk
--- writes ns.LocaleData through the bootstrap proxy; the index parks on the
--- shared ns until QUI_Options consumes it).
+-- Group 1 guard: no shipped folder exists just to hold generated data. The
+-- English search index used to be its own LoadOnDemand addon
+-- (QUI_OptionsSearch), one folder for one deferral point; it ships packed
+-- inside QUI_Options now and framework.lua compiles it on first search. The
+-- ten QUI_OptionsSearch_<loc> overlay addons are retired the same way —
+-- their chunks are root-TOC files in core/locale/ because
+-- core/locale/locale.lua captures ns.LocaleData.active as an upvalue at login.
 do
     local p = io.popen('ls -d QUI_OptionsSearch* 2>/dev/null')
-    for folder in p:lines() do
-        local _, order = tocLuaEntries(folder .. "/" .. folder .. ".toc")
-        local loc = folder:match("^QUI_OptionsSearch_(%w+)$")
-        if loc then
-            assert(#order == 3
-                    and order[1] == "bootstrap.lua"
-                    and order[2] == loc .. ".lua"
-                    and order[3] == "search_cache.lua",
-                folder .. ": must be bootstrap.lua, " .. loc .. ".lua, search_cache.lua (combined locale addon)")
-        else
-            assert(#order == 1 and order[1] == "search_cache.lua",
-                folder .. ": must contain only search_cache.lua (English one-of-N index)")
-        end
-    end
+    local stray = p:read("*l")
     p:close()
+    assert(stray == nil,
+        "search-index addon folders are retired (the index is packed into "
+            .. "QUI_Options/search_cache.lua): " .. tostring(stray))
+
+    local optionsToc = tocLuaEntries("QUI_Options/QUI_Options.toc")
+    assert(optionsToc["search_cache.lua"],
+        "QUI_Options.toc must load search_cache.lua — without it the search "
+            .. "box only ever finds the tile-seeded routes")
 end
 
 print("suite_toc_consistency_test OK")

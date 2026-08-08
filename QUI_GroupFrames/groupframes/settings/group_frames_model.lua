@@ -46,20 +46,13 @@ local RenderHealth = BuildSchemaRender("RenderHealthTab", ns.L["Health"])
 local RenderIndicators = BuildSchemaRender("RenderIndicatorsTab", ns.L["Indicators"])
 local RenderAuras = BuildSchemaRender("RenderAurasTab", ns.L["Auras"])
 
--- Order only; the tab strip wraps these across rows responsively by window
--- width (group_frames_surface.lua uses wrapRows), so no explicit row field.
--- Spotlight was folded into Layout (raid only) and Dispel Overlay into
--- Appearance, so neither is a standalone tab any more. Auras moved to the
--- Auras hub tile (tiles/auras.lua subTabIndex 1) -- RenderAuras/RenderAurasTab
--- stay defined (the hub calls RenderAurasTab directly); only the surface
--- tab-strip entry that duplicated it is gone. The General tab carries a
--- pointer row to the hub (group_frames_schema.lua RenderAurasHubPointerSection).
 local TAB_DEFINITIONS = {
     { key = "general", label = ns.L["General"], render = RenderGeneral },
     { key = "appearance", label = ns.L["Appearance"], render = RenderAppearance },
     { key = "layout", label = ns.L["Layout"], render = RenderLayout },
     { key = "health", label = ns.L["Health"], render = RenderHealth },
     { key = "indicators", label = ns.L["Indicators"], render = RenderIndicators },
+    { key = "auras", label = ns.L["Auras"], render = RenderAuras },
 }
 
 function Model.GetTabDefinitions()

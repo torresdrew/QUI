@@ -1,7 +1,3 @@
---[[
-    Blizzard UI Mover — modifier-drag repositioning for default Blizzard panels.
-]]
-
 local ADDON_NAME, ns = ...
 local Helpers = ns.Helpers
 
@@ -10,10 +6,6 @@ local M = {
     variables = {},
 }
 ns.QUI_BlizzardMover = M
-
----------------------------------------------------------------------------
--- Saved settings (profile.blizzardMover); refreshed on profile change
----------------------------------------------------------------------------
 
 local db
 
@@ -37,10 +29,6 @@ function M.functions.InitDB()
 	syncDbFromProfile()
 end
 
----------------------------------------------------------------------------
--- Frame path "A.B.C" → object (WoW global + table chain)
----------------------------------------------------------------------------
-
 local function objectFromDottedPath(path)
 	if type(path) ~= "string" or path == "" then return nil end
 	local head, tail = path:match("^([^.]+)%.?(.*)$")
@@ -52,10 +40,6 @@ local function objectFromDottedPath(path)
 	end
 	return obj
 end
-
----------------------------------------------------------------------------
--- Registry of panels (filled by blizzard_mover_frames.lua)
----------------------------------------------------------------------------
 
 local R = {
 	groups = {},
@@ -328,41 +312,16 @@ function M.functions.GetEntryForFrameName(name)
 	return id and R.panels[id] or nil
 end
 
-function M.functions.IsFrameEnabled(entry)
-	return panelIsActive(resolvePanel(entry))
-end
-
-function M.functions.SetFrameEnabled(entry, on)
-	local row = storageRowForPanel(entry)
-	if row then row.enabled = on and true or false end
-end
-
----------------------------------------------------------------------------
--- Transient runtime (not saved): combat queue, session positions, scale UI
----------------------------------------------------------------------------
-
 M.variables.pendingApply = M.variables.pendingApply or {}
 M.variables.combatQueue = M.variables.combatQueue or {}
 M.variables.sessionPositions = M.variables.sessionPositions or {}
--- "Until frame closes" persistence: the dragged position lives only while
--- the frame stays open, but it still has to be RE-ASSERTABLE while open —
--- UIParentPanelManager re-stamps area panels on every UpdateUIPanelPositions
--- pass, and both the SetPoint-hook re-assert and the secure-frame drift
--- watcher read the saved offset to repair that. Keyed by panel.id; entries
--- are written on drag end and cleared when the frame hides (except
--- skipOnHide panels, which intentionally keep their position across
--- open/close in every mode).
 M.variables.openPositions = M.variables.openPositions or {}
--- Transition log backing the until-close slot: which frames of each panel
--- are currently shown, per OUR observed show/hide signals (see
--- panelShownSet below for why this is never probed live).
 M.variables.openPanelShown = M.variables.openPanelShown or {}
 M.variables.scalePin = M.variables.scalePin or {}
 M.variables.scaleUnderMouse = M.variables.scaleUnderMouse or {}
 M.variables.moveHandleSet = M.variables.moveHandleSet or {}
 M.variables.wheelProxy = M.variables.wheelProxy or nil
 
--- Weak keys: which helper objects already have scripts (avoids cluttering frame fields)
 local leafScriptState = setmetatable({}, { __mode = "k" })
 
 local function leafMark(target, key)
@@ -380,11 +339,6 @@ local function leafHas(target, key)
 	return t and t[key]
 end
 
----------------------------------------------------------------------------
--- Per-root-frame context stored outside Blizzard widgets to avoid custom
--- fields on protected frames.
----------------------------------------------------------------------------
-
 local rootContext = setmetatable({}, { __mode = "k" })
 local playerChoiceGuarded = setmetatable({}, { __mode = "k" })
 local playerChoiceReapply = setmetatable({}, { __mode = "k" })
@@ -401,10 +355,6 @@ end
 function M.functions.deferApply(frame, entry)
 	if frame then M.variables.pendingApply[frame] = entry or true end
 end
-
----------------------------------------------------------------------------
--- Saved layout: where to pin relative to UIParent
----------------------------------------------------------------------------
 
 local function readSavedOffset(panel, row)
 	local mode = db.positionPersistence or "reset"
@@ -454,20 +404,6 @@ local function clearSavedOffset(panel, row)
 	end
 end
 
--- The until-close position expires when the frame hides. Cleared from both
--- hide paths (secure-frame watcher transition + root OnHide hook); skipOnHide
--- panels keep theirs, matching their restore-on-hide opt-out. Multi-name
--- panels (QuestFrame+GossipFrame, the StaticPopup cluster) share ONE slot —
--- a sibling hiding must not erase the position a still-open frame is being
--- drift-repaired against, so the slot only clears once every frame of the
--- panel is hidden (the frame currently hiding already reads not-shown).
--- Cluster liveness for the until-close slot comes from OUR OWN observed
--- transitions (watcher flips + OnShow/OnHide hooks + one instrument-time
--- seed), never from probing IsShown at decision time: a live IsShown read
--- can be unreadable (throw / secret), and no probe polarity is safe on both
--- sides — treating unreadable as shown leaks the position into the next
--- open, treating it as hidden erases the slot a still-open (but unreadable)
--- sibling is being re-asserted against. [panel.id] = { [frame] = true }.
 local function panelShownSet(panel)
 	local all = M.variables.openPanelShown
 	local set = all[panel.id]
@@ -478,14 +414,6 @@ local function panelShownSet(panel)
 	return set
 end
 
--- Lazy log repair: a MISSED hide leaves a stale entry that would keep the
--- slot alive across a real cluster close (leaking the position into the
--- next open). At every observed cluster transition, re-probe only the
--- frames the log claims are shown and drop entries that answer provably
--- hidden. Unreadable answers (throw / secret — pcall + probe before the
--- truth-test) leave the log untouched: under doubt the log stays the
--- source of truth (no live-probe polarity is safe both ways), and the
--- next readable moment repairs it. Removing keys during pairs() is legal.
 local function sweepPanelShownLog(set, skipFrame)
 	for f in pairs(set) do
 		if f ~= skipFrame and f.IsShown then
@@ -497,10 +425,6 @@ local function sweepPanelShownLog(set, skipFrame)
 	end
 end
 
--- Hide transition: drop the hiding frame from the shown-set; the slot
--- expires only when no other frame of the panel is still recorded shown.
--- skipOnHide panels have no hide tracking at all (their OnHide hook is
--- deliberately not installed) and keep their position across open/close.
 local function clearOpenPosition(panel, hiddenRoot)
 	if panel.skipOnHide then return end
 	local set = panelShownSet(panel)
@@ -511,11 +435,6 @@ local function clearOpenPosition(panel, hiddenRoot)
 	if op then op[panel.id] = nil end
 end
 
--- Show transition: a fresh open (no OTHER frame recorded shown after the
--- sweep — stale entries for the showing frame itself or for provably
--- hidden siblings must not count) invalidates any leftover slot, so a
--- slot that survived a missed hide cannot leak the position into the next
--- open. An overlapping sibling (StaticPopup cluster) keeps the slot.
 local function reconcileOpenPositionOnShow(panel, shownRoot)
 	local set = panelShownSet(panel)
 	set[shownRoot] = true
@@ -532,10 +451,6 @@ local function reconcileOpenPositionOnShow(panel, shownRoot)
 	local op = M.variables.openPositions
 	if op then op[panel.id] = nil end
 end
-
----------------------------------------------------------------------------
--- Remember Blizzard layout before we override; restore on demand
----------------------------------------------------------------------------
 
 local function rememberAnchors(f)
 	local c = ctx(f)
@@ -594,8 +509,6 @@ local function applyInteractionBaseline(f, panel, active, usedOverlay)
 	if InCombatLockdown() and f.IsProtected and f:IsProtected() then return end
 	if active then
 		if f.SetMovable then f:SetMovable(true) end
-		-- proxyParent panels (the hero-talent dialog) skip clamping: clamping
-		-- auto-re-anchors the frame as it resizes during its populate/Layout pass.
 		if f.SetClampedToScreen and not panel.proxyParent then f:SetClampedToScreen(true) end
 		if panel.userPlaced ~= nil and f.SetUserPlaced then f:SetUserPlaced(panel.userPlaced) end
 		if panel.ignoreFramePositionManager ~= nil then f.ignoreFramePositionManager = panel.ignoreFramePositionManager end
@@ -623,10 +536,6 @@ local function applyLeafInteraction(f, active)
 	if base.wheel ~= nil and f.EnableMouseWheel then f:EnableMouseWheel(base.wheel) end
 end
 
----------------------------------------------------------------------------
--- Apply stored point + scale to a root frame
----------------------------------------------------------------------------
-
 local function applyDualCornerSize(f, x, y, pt, relPt)
 	pt, relPt = pt or "TOPLEFT", relPt or pt
 	local w, h = f:GetSize()
@@ -639,17 +548,6 @@ local function applyDualCornerSize(f, x, y, pt, relPt)
 	f:SetPoint("BOTTOMRIGHT", UIParent, relPt, (x or 0) + w, (y or 0) - h)
 end
 
----------------------------------------------------------------------------
--- Secure positioner: reposition/scale PROTECTED frames without tainting them.
---
--- Calling frame:SetPoint / frame:SetScale on a protected Blizzard frame from
--- insecure code taints the frame. Frames that drive their OnShow through
--- secureexecuterange (e.g. the world map) then propagate that taint into the
--- protected calls in that path, producing ADDON_ACTION_BLOCKED. Running the
--- SetPoint inside a SecureHandlerBaseTemplate :Execute snippet keeps the
--- mutation in the restricted (untainted) environment -- the same secure-handler
--- idiom used elsewhere in QUI.
----------------------------------------------------------------------------
 local securePositioner
 local secureAnchor
 
@@ -663,11 +561,6 @@ local function ensureSecurePositioner()
 	return securePositioner
 end
 
--- Pin `frame` to (point, x, y) relative to the UIParent-mirroring secure anchor
--- and/or set its scale, entirely inside the secure snippet. Passing point=nil
--- (scale-only) skips the SetPoint. Saved positions are always UIParent-relative
--- with anchorPoint == relativePoint, matching the legacy raw path. All attribute
--- values are non-nil (SetAttribute's value is non-nilable); false means "skip".
 local function securePlace(frame, point, x, y, scale)
 	local poser = ensureSecurePositioner()
 	if not poser then return false end
@@ -706,13 +599,10 @@ function M.functions.applyFrameSettings(f, entry)
 	local c = ctx(f)
 	c.applyingLayout = true
 	if ((f.IsProtected and f:IsProtected()) or panel.proxyParent) and not panel.keepTwoPointSize then
-		-- Protected frame OR proxyParent: position/scale via the secure
-		-- positioner, pinned to the UIParent-mirroring secure anchor (no taint;
-		-- and, for proxyParent, a distinct anchor node from the real UIParent).
 		if hasPos then
 			securePlace(f, saved.point, saved.x, saved.y, sc)
 		elseif sc then
-			securePlace(f, nil, nil, nil, sc)  -- scale only; leaves current anchor
+			securePlace(f, nil, nil, nil, sc)
 		end
 	else
 		if hasPos then
@@ -737,10 +627,6 @@ function M.functions.StoreFramePosition(f, entry)
 	if not pt then return end
 	writeSavedOffset(panel, row, pt, ox, oy)
 end
-
----------------------------------------------------------------------------
--- Mouse-wheel scaling: full-screen catcher only when modifier + valid target
----------------------------------------------------------------------------
 
 local function wheelConsumeTarget()
 	if not GetMouseFoci then return nil end
@@ -812,10 +698,6 @@ function M.functions.EnsureScaleCaptureFrame()
 	M.functions.UpdateScaleWheelCaptureState()
 end
 
----------------------------------------------------------------------------
--- Blizzard-specific layout quirks (public API names unchanged for options)
----------------------------------------------------------------------------
-
 local function collectionsPanelEnabled()
 	if not db or not db.enabled then return false end
 	local p = R.panels.CollectionsJournal
@@ -871,24 +753,6 @@ local function installPlayerChoiceLayoutGuard(f)
 	return true
 end
 
--- NOTE: There is deliberately no hero-talent "anchor workaround" here.
--- A previous version hooked TalentFrameUtil.GetNormalizedSubTreeNodePosition
--- and ClearAllPoints()'d every subTree (hero talent) button while the dialog
--- was shown. Blizzard calls that same function *during* the talent-tree
--- rebuild that follows activating a hero spec (OnTraitConfigUpdated ->
--- SetConfigID -> LoadTalentTree -> InstantiateTalentButton/PlaceHeroTalentButton),
--- so the clear raced the rebuild and stripped anchors off live tree buttons.
--- Under 12.0's anchor-family guard that tripped "anchor family connection" /
--- "Not allowed to depend on Button" in the tree edges (Line:SetStartPoint),
--- AcquireTalentButton, and PlaceHeroTalentButton. Blizzard already
--- ClearAllPoints()'s each button itself right before re-anchoring it, so the
--- extra clear was both redundant and harmful. Repositioning the dialog
--- (root -> UIParent) never touches these buttons and does not need it.
-
----------------------------------------------------------------------------
--- Install hooks on one concrete root frame for a panel definition
----------------------------------------------------------------------------
-
 function M.functions.createHooks(root, entry)
 	local panel = resolvePanel(entry) or M.functions.GetEntryForFrameName(root:GetName() or "")
 	if not root or (root.IsForbidden and root:IsForbidden()) then return end
@@ -897,13 +761,6 @@ function M.functions.createHooks(root, entry)
 	local c = ctx(root)
 	if c.hooksInstalled then return end
 
-	-- Seed a declarative default anchor BEFORE remembering Blizzard's layout, so an
-	-- entry that ships at an unwanted FrameXML default (e.g. the reserved
-	-- InstanceAbandonPopup, hard-anchored BOTTOMRIGHT and left there by
-	-- StaticPopup_SetUpPosition's fixed-dialog path) instead defaults to the entry's
-	-- canonical home. rememberAnchors then captures THIS as the restore baseline; a
-	-- saved offset still layers on top via applyFrameSettings. UIParent-relative with
-	-- anchorPoint == relativePoint, matching the saved-offset path.
 	local dp = panel.defaultPoint
 	if dp and dp.point and not (InCombatLockdown() and root.IsProtected and root:IsProtected()) then
 		root:ClearAllPoints()
@@ -980,7 +837,7 @@ function M.functions.createHooks(root, entry)
 			return
 		end
 		if root.IsProtected and root:IsProtected() then
-			securePlace(root, nil, nil, nil, next)  -- scale via secure snippet; no taint
+			securePlace(root, nil, nil, nil, next)
 		elseif root.SetScale then
 			root:SetScale(next)
 		end
@@ -1174,8 +1031,6 @@ function M.functions.createHooks(root, entry)
 		end
 	end
 
-	-- QUI character pane: stats panel / scroll areas sit above the default root drag strip
-	-- (strip uses rootLevel+1; QUI uses ~+10). Add a thin top band above those children.
 	if not panel.disableMove and panel.id == "CharacterFrame" then
 		local topHost = root._QUI_BlizzardMoverCharTopDrag
 		if not topHost then
@@ -1183,7 +1038,7 @@ function M.functions.createHooks(root, entry)
 			root._QUI_BlizzardMoverCharTopDrag = topHost
 		end
 		local topH = 36
-		local rightInset = 140 -- sidebar tabs + close; leave clickable
+		local rightInset = 140
 		local function layoutCharTopDragHost(self)
 			local h = self._QUI_BlizzardMoverCharTopDrag
 			if not h then return end
@@ -1226,9 +1081,6 @@ function M.functions.createHooks(root, entry)
 		end
 		c.applyingLayout = true
 		if panel.proxyParent and not panel.keepTwoPointSize then
-			-- Pin via the UIParent-mirroring secure anchor (QUI_MoverSecureAnchor),
-			-- never the real UIParent, so the moved dialog does not share UIParent's
-			-- anchor node with the talent buttons it borrows from the live tree.
 			if hasPos then
 				securePlace(self, saved.point, saved.x, saved.y, sc)
 			elseif sc then
@@ -1248,16 +1100,6 @@ function M.functions.createHooks(root, entry)
 		c.applyingLayout = false
 	end
 
-	-- Defer the SetPoint-hook re-assert out of the current frame, coalescing
-	-- multiple SetPoints in one frame into a single re-apply. Blizzard's
-	-- UIParentPanelManager re-anchors UIPanel frames (e.g. PlayerSpellsFrame via
-	-- UpdateUIPanelPositions) SYNCHRONOUSLY during layout passes that also run
-	-- the hero-talent tree rebuild. Slamming the moved frame back to its saved
-	-- position *inside* that pass re-anchors the tree while Blizzard is handing
-	-- the hero-talent buttons back, tripping 12.0's anchor-family guard
-	-- (HeroTalentsContainer:UpdateHeroTalentButtonPosition). Running a frame
-	-- later lets Blizzard's re-anchor + button hand-back finish first, then we
-	-- restore the saved position.
 	local reassertQueued = false
 	local function reassertLayoutSoon()
 		if reassertQueued then return end
@@ -1277,25 +1119,7 @@ function M.functions.createHooks(root, entry)
 		end
 	end
 
-	-- TAINT SAFETY: Frames that use secureexecuterange internally (e.g.
-	-- WorldMapFrame for map data providers) cannot have addon hooks on them.
-	-- hooksecurefunc and HookScript taint the frame's dispatch tables;
-	-- the taint propagates through secureexecuterange, causing
-	-- ADDON_ACTION_BLOCKED on protected calls like SetPassThroughButtons
-	-- when map pins are acquired. Some interaction panels also call
-	-- protected functions after ShowUIPanel returns; root OnShow hooks would
-	-- taint the remaining call chain. Use a watcher frame instead.
 	if panel.secureFrame then
-		-- Drift detection (reassertOnDrift panels only): UIParentPanelManager
-		-- re-anchors the left-area panel with ClearAllPoints + SetPoint on
-		-- EVERY UpdateUIPanelPositions pass (UIParentPanelManager.lua:597-598),
-		-- not just on show — any pass later than the 5-tick post-show burst
-		-- snapped MailFrame back to its default slot with this watcher blind
-		-- (no SetPoint hook allowed on these frames: taint). Compare the live
-		-- first anchor against the saved offset each tick while shown and
-		-- re-assert when the panel manager has re-stamped the frame. Opt-in
-		-- per panel: the world map must keep transition-only re-assert or the
-		-- drift check would fight Blizzard's own maximize re-anchor.
 		local function savedPositionDrifted(f)
 			if c.dragging or c.applyingLayout then return false end
 			if InCombatLockdown() then return false end
@@ -1304,10 +1128,6 @@ function M.functions.createHooks(root, entry)
 			local row = storageRowForPanel(panel)
 			local saved = readSavedOffset(panel, row)
 			if not (saved and saved.point and saved.x ~= nil and saved.y ~= nil) then return false end
-			-- GetPoint can throw on a tainted stack and any return can be a
-			-- secret; probe every value BEFORE truth-testing or comparing
-			-- (truth-testing a secret itself throws). Unprovable = no drift:
-			-- never mutate on a guess.
 			local ok, pt, rel, relPt, x, y = pcall(f.GetPoint, f, 1)
 			if not ok then return false end
 			if issecretvalue and (issecretvalue(pt) or issecretvalue(rel)
@@ -1321,8 +1141,6 @@ function M.functions.createHooks(root, entry)
 		end
 
 		local wasShown = root:IsShown()
-		-- Seed the transition log for a frame already visible at instrument
-		-- time (LOD catch-up): its show transition predates the watcher.
 		if wasShown then panelShownSet(panel)[root] = true end
 		local reassertTicks = 0
 		local watcher = CreateFrame("Frame")
@@ -1356,19 +1174,9 @@ function M.functions.createHooks(root, entry)
 			end
 		end)
 	else
-		-- Synchronous re-assert by default: when the UIParent panel manager
-		-- re-anchors a moved panel (MoveUIPanel -> SetPoint as a sibling panel
-		-- opens/closes), snapping back in the SAME frame means Blizzard's
-		-- position never renders, so there is no flicker. Only panels that opt
-		-- into deferReassert (PlayerSpellsFrame -> hero-talent anchor-family
-		-- guard) take the one-frame-later path.
 		local reassertHook = panel.deferReassert and reassertLayoutSoon or reassertLayout
 		hooksecurefunc(root, "SetPoint", reassertHook)
 
-		-- Seed the transition log for a frame already visible at instrument
-		-- time (LOD catch-up): its show transition predates our hooks.
-		-- pcall+probe (IsShown can throw / answer a secret); unreadable seeds
-		-- as hidden and self-corrects on the frame's next real transition.
 		local okSeed, seedShown = pcall(root.IsShown, root)
 		if okSeed and not (issecretvalue and issecretvalue(seedShown)) and seedShown then
 			panelShownSet(panel)[root] = true
@@ -1378,10 +1186,6 @@ function M.functions.createHooks(root, entry)
 			reconcileOpenPositionOnShow(panel, self)
 			if not ctx(self).blizzardAnchors then rememberAnchors(self) end
 			if panel.proxyParent then
-				-- Do NOT re-anchor synchronously while the dialog is populating
-				-- with borrowed talent buttons (that was the original 610/442
-				-- trip). Restore the saved position one frame later, after the
-				-- populate/Layout pass, via the deferred proxy-routed re-assert.
 				reassertLayoutSoon()
 			else
 				M.functions.applyFrameSettings(self, panel)
@@ -1450,10 +1254,6 @@ function M.functions.createHooks(root, entry)
 
 	c.refresh()
 end
-
----------------------------------------------------------------------------
--- Addon / combat drivers
----------------------------------------------------------------------------
 
 local function addonsSatisfied(panel)
 	local need = requiredAddonsForPanel(panel)
@@ -1571,9 +1371,6 @@ local function attachEventFrame()
 		if ev == "ADDON_LOADED" then onAddonLoaded(a1)
 		elseif ev == "PLAYER_REGEN_ENABLED" then onRegenEnabled() end
 	end)
-	-- LOD catch-up: these Blizzard addons may have loaded before this module
-	-- did (the watcher above would have missed them). Panel hooks for
-	-- already-loaded addons are covered by TryHookAll() at boot.
 	if C_AddOns.IsAddOnLoaded("Blizzard_Collections") then tweakWardrobeSecondaryLabel() end
 	if C_AddOns.IsAddOnLoaded("Blizzard_PlayerChoice") and PlayerChoiceFrame then installPlayerChoiceLayoutGuard(PlayerChoiceFrame) end
 end
@@ -1585,13 +1382,6 @@ end
 
 local function boot(core)
 	syncDbFromProfile()
-	-- _FrameRegistryData is set by blizzard_mover_frames.lua, the NEXT TOC entry.
-	-- As a LoadOnDemand sub-addon we load after core init, so RegisterPostInitialize
-	-- runs boot() synchronously mid-load — before that sibling file has loaded and
-	-- the panel data exists. InitRegistry() would bail on a nil pack and leave the
-	-- registry permanently empty. Defer one frame (the whole addon loads in a single
-	-- synchronous batch, so the data is guaranteed present next frame) when the data
-	-- isn't ready yet; take the fast path when it already is.
 	if M._FrameRegistryData then
 		initRegistryAndHooks()
 	else

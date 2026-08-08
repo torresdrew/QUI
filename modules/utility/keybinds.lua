@@ -1,8 +1,4 @@
--- keybinds.lua
--- Displays action bar keybinds on Essential and Utility cooldown viewer icons
--- Also handles Rotation Helper overlay (C_AssistedCombat integration)
-
-local _, QUI = ... -- QUI = private addon namespace (the table other files call "ns"), not the AceAddon global
+local _, QUI = ...
 local LSM = QUI.LSM
 
 local function CJKFont(fs, p, s, f)
@@ -15,12 +11,10 @@ end
 
 local GetCore = QUI.Helpers.GetCore
 
--- Map resolver keys ("essential"/"utility") to DB profile keys
 local VIEWER_DB_KEY = {
     essential = "EssentialCooldownViewer",
     utility   = "UtilityCooldownViewer",
 }
--- Reverse map: frame/container names → resolver keys (for exports + layout callbacks)
 local VIEWER_RESOLVER_KEY = {
     EssentialCooldownViewer = "essential",
     UtilityCooldownViewer   = "utility",
@@ -28,18 +22,13 @@ local VIEWER_RESOLVER_KEY = {
     QUI_UtilityContainer    = "utility",
 }
 
--- Cache for spell ID to keybind mapping
 local spellToKeybind = {}
--- Cache for spell NAME to keybind mapping (fallback for macros)
 local spellNameToKeybind = {}
--- Cache for item ID to keybind mapping (custom trackers)
 local itemToKeybind = {}
--- Cache for item NAME to keybind mapping (fallback for macros with items)
 local itemNameToKeybind = {}
 local lastCacheUpdate = 0
-local CACHE_UPDATE_INTERVAL = 1.0 -- Seconds between cache rebuilds
+local CACHE_UPDATE_INTERVAL = 1.0
 
--- Cache of known action buttons (built once, reused)
 local cachedActionButtons = {}
 local actionButtonsCached = false
 
@@ -54,18 +43,14 @@ local COMPAT_ACTION_PREFIX_B = CompatGlobalName(68, 111, 109, 105, 110, 111, 115
 local COMPAT_BAR_PREFIX_C = CompatGlobalName(69, 108, 118, 85, 73, 95, 66, 97, 114)
 local COMPAT_BAR_BUTTON_SUFFIX_C = "Button"
 
--- Macro name → index lookup table for O(1) lookup instead of O(138) loop
 local macroNameToIndex = {}
 
--- Combat throttling
 local pendingRebuild = false
 
--- Rotation Helper state
 local rotationHelperEnabled = false
-local currentRotationSpellID = nil  -- current recommendation (resolved override), for OnShow re-apply
-local currentRotationBaseSpellID = nil  -- original base spell from Blizzard
+local currentRotationSpellID = nil
+local currentRotationBaseSpellID = nil
 
--- Position-based keybind cache (remembers keybinds by icon to handle procs)
 local iconKeybindCache = {}
 
 local function SetupDebugInstrumentation()
@@ -76,19 +61,15 @@ local function SetupDebugInstrumentation()
     mp[#mp + 1] = { name = "KB_macroNameToIndex",   tbl = macroNameToIndex }
     mp[#mp + 1] = { name = "KB_iconKeybindCache",   tbl = iconKeybindCache }
 end
-if QUI.DebugRegister then -- gate contract: core/debug_gate.lua
+if QUI.DebugRegister then
     QUI.DebugRegister(SetupDebugInstrumentation)
 else
-    SetupDebugInstrumentation() -- standalone test harness: no gate, run eagerly
+    SetupDebugInstrumentation()
 end
 
--- TAINT SAFETY: Store per-icon state in local weak-keyed tables instead of
--- writing custom properties to Blizzard CDM icon frames.
-local iconKeybindState = QUI.Helpers.CreateStateTable()      -- icon → { text (FontString), keybind, spellID, overlay }
-local hookedKeybindViewers = QUI.Helpers.CreateStateTable()  -- viewer → true (hook guard for Layout)
+local iconKeybindState = QUI.Helpers.CreateStateTable()
+local hookedKeybindViewers = QUI.Helpers.CreateStateTable()
 
--- Performance: Check if ANY keybind display feature is enabled across all viewers
--- This gates expensive operations to prevent CPU spikes when features are disabled
 local function IsAnyKeybindFeatureEnabled()
     local core = GetCore()
     if not core or not core.db or not core.db.profile then return false end
@@ -102,7 +83,6 @@ local function IsAnyKeybindFeatureEnabled()
         end
     end
 
-    -- Also check custom containers
     local ncdm = core.db.profile.ncdm
     local ct = ncdm and ncdm.containers
     if ct then
@@ -119,12 +99,10 @@ local function IsAnyKeybindFeatureEnabled()
     return false
 end
 
--- Get font from general settings (uses shared helpers)
 local Helpers = QUI.Helpers
 local GetGeneralFont = Helpers.GetGeneralFont
 local GetGeneralFontOutline = Helpers.GetGeneralFontOutline
 
--- Helper: get viewer settings safely
 local function GetViewerSettings(viewerName)
     local QUICore = _G.QUI and _G.QUI.QUICore
     if not QUICore or not QUICore.db or not QUICore.db.profile then return nil end
@@ -133,7 +111,6 @@ local function GetViewerSettings(viewerName)
         local viewers = QUICore.db.profile.viewers
         return viewers and viewers[dbKey]
     end
-    -- Custom container: settings live in ncdm.containers[key]
     local ncdm = QUICore.db.profile.ncdm
     local container = ncdm and ncdm.containers and ncdm.containers[viewerName]
     if type(container) == "table"
@@ -158,7 +135,6 @@ local function GetViewerKeybindContext(viewerName)
     return "cdm"
 end
 
--- Helper: get current specialization ID
 local function GetCurrentSpecID()
     local specIndex = GetSpecialization()
     if not specIndex then return 0 end
@@ -166,15 +142,12 @@ local function GetCurrentSpecID()
     return specID or 0
 end
 
--- Helper: get shared keybind overrides from DB (character and spec-specific)
--- Uses specID as key, falling back to 0 for characters without a spec (below level 10)
 local function GetSharedOverrides()
     local QUICore = _G.QUI and _G.QUI.QUICore
     if not QUICore or not QUICore.db or not QUICore.db.char then return nil end
 
     local specID = GetCurrentSpecID()
 
-    -- Initialize spec-specific table if needed (char.keybindOverrides is guaranteed by AceDB defaults)
     if not QUICore.db.char.keybindOverrides[specID] then
         QUICore.db.char.keybindOverrides[specID] = {}
     end
@@ -182,16 +155,12 @@ local function GetSharedOverrides()
     return QUICore.db.char.keybindOverrides[specID]
 end
 
--- Helper: get an override keybind, if any, for a given spell/baseSpell (shared across viewers)
 local function GetOverrideKeybind(spellID, baseSpellID)
     local overrides = GetSharedOverrides()
     if not overrides then return nil end
 
-    -- Guard against secret values being used as table keys (12.0 combat protection)
     local isSecret = type(issecretvalue) == "function" and issecretvalue or nil
 
-    -- Prefer explicit base spell override, then direct spellID
-    -- Allow "" to mean "explicitly hide keybind"
     if baseSpellID and not (isSecret and isSecret(baseSpellID)) and overrides[baseSpellID] ~= nil then
         return overrides[baseSpellID]
     end
@@ -203,15 +172,12 @@ local function GetOverrideKeybind(spellID, baseSpellID)
     return nil
 end
 
--- Helper: get an override keybind for an item (shared across viewers)
--- Uses negative itemID as key (since spellIDs are always positive)
 local function GetOverrideKeybindForItem(itemID)
     if not itemID then return nil end
     if type(issecretvalue) == "function" and issecretvalue(itemID) then return nil end
     local overrides = GetSharedOverrides()
     if not overrides then return nil end
 
-    -- Use negative itemID as key to avoid conflicts with spellIDs
     local key = -tonumber(itemID)
     if overrides[key] ~= nil then
         return overrides[key]
@@ -220,15 +186,8 @@ local function GetOverrideKeybindForItem(itemID)
     return nil
 end
 
--- FormatKeybind now lives in core (core/utils.lua, set on the shared namespace
--- as ns.FormatKeybind). Core loads first and is a hard dependency of every
--- sub-addon, so login-class consumers (action bars render keybind text at
--- login) resolve it immediately instead of waiting on this LoadOnDemand module.
--- Pulled into a local here for the internal call sites below; QUI is this
--- module's namespace alias (see top of file), so this reads the core export.
 local FormatKeybind = QUI.FormatKeybind
 
--- BT4 bar number to WoW binding name mapping (mirrors the bar addon's own binding table)
 local BT4_BINDING_MAPPINGS = {
     [1] = "ACTIONBUTTON%d",
     [3] = "MULTIACTIONBAR3BUTTON%d",
@@ -240,7 +199,6 @@ local BT4_BINDING_MAPPINGS = {
     [15] = "MULTIACTIONBAR7BUTTON%d",
 }
 
--- Get binding name from BT4 button number (e.g., BT4Button5 -> ACTIONBUTTON5)
 local function GetBT4BindingName(buttonNum)
     local bar = math.ceil(buttonNum / 12)
     local buttonInBar = ((buttonNum - 1) % 12) + 1
@@ -251,7 +209,6 @@ local function GetBT4BindingName(buttonNum)
     return nil
 end
 
--- Maps action slot numbers to WoW binding names (fallback)
 local function GetBindingNameFromActionSlot(slot)
     if not slot or slot < 1 then return nil end
     if slot <= 12 then
@@ -270,11 +227,9 @@ local function GetBindingNameFromActionSlot(slot)
     return nil
 end
 
--- Get the keybind for an action button by scanning the button directly
 local function GetKeybindFromActionButton(button, actionSlot)
     if not button then return nil end
 
-    -- Method 1: Check if button has a hotkey text (most reliable for action bar addons)
     if button.HotKey then
         local ok, hotkeyText = pcall(function() return button.HotKey:GetText() end)
         if ok and hotkeyText and hotkeyText ~= "" and hotkeyText ~= RANGE_INDICATOR then
@@ -282,7 +237,6 @@ local function GetKeybindFromActionButton(button, actionSlot)
         end
     end
 
-    -- Method 2: Check hotKey (lowercase k - some addons use this)
     if button.hotKey then
         local ok, hotkeyText = pcall(function() return button.hotKey:GetText() end)
         if ok and hotkeyText and hotkeyText ~= "" and hotkeyText ~= RANGE_INDICATOR then
@@ -290,7 +244,6 @@ local function GetKeybindFromActionButton(button, actionSlot)
         end
     end
 
-    -- Method 3: Try GetHotkey method (some addons provide this)
     if button.GetHotkey then
         local ok, hotkey = pcall(function() return button:GetHotkey() end)
         if ok and hotkey and hotkey ~= "" then
@@ -298,17 +251,13 @@ local function GetKeybindFromActionButton(button, actionSlot)
         end
     end
 
-    -- Method 4: Get binding from button name
     local buttonName = button:GetName()
     if buttonName then
-        -- Try CLICK binding (used by many addons)
         local key1 = GetBindingKey("CLICK " .. buttonName .. ":LeftButton")
         if key1 then
             return FormatKeybind(key1)
         end
 
-        -- Try standard action button bindings based on name
-        -- QUI fresh buttons (bar1-8)
         if buttonName:match("^QUI_Bar1Button(%d+)$") then
             local num = tonumber(buttonName:match("^QUI_Bar1Button(%d+)$"))
             if num then
@@ -357,7 +306,6 @@ local function GetKeybindFromActionButton(button, actionSlot)
                 key1 = GetBindingKey("MULTIACTIONBAR7BUTTON" .. num)
                 if key1 then return FormatKeybind(key1) end
             end
-        -- Blizzard button names (fallback)
         elseif buttonName:match("ActionButton(%d+)$") then
             local num = tonumber(buttonName:match("ActionButton(%d+)$"))
             if num then
@@ -391,19 +339,16 @@ local function GetKeybindFromActionButton(button, actionSlot)
         elseif buttonName:match("^BT4Button(%d+)$") then
             local num = tonumber(buttonName:match("^BT4Button(%d+)$"))
             if num then
-                -- Priority 1: Try the bar addon's CLICK binding formats
                 key1 = GetBindingKey("CLICK " .. buttonName .. ":Keybind")
                 if not key1 then
                     key1 = GetBindingKey("CLICK " .. buttonName .. ":LeftButton")
                 end
-                -- Priority 2: Try BT4 bar-based binding (ACTIONBUTTON, MULTIACTIONBAR, etc.)
                 if not key1 then
                     local bindingName = GetBT4BindingName(num)
                     if bindingName then
                         key1 = GetBindingKey(bindingName)
                     end
                 end
-                -- Priority 3: Fallback to action slot-based binding
                 if not key1 and actionSlot then
                     local bindingName = GetBindingNameFromActionSlot(actionSlot)
                     if bindingName then
@@ -506,49 +451,38 @@ local function StoreMacroItemToken(itemIDs, itemNames, value)
     end
 end
 
--- Parse macro body text to extract spell/item names/IDs
--- Returns spellIDs, spellNames, itemIDs, and itemNames lookup tables.
 local function ParseMacroForSpells(macroIndex)
     local spellIDs = {}
     local spellNames = {}
     local itemIDs = {}
     local itemNames = {}
 
-    -- Get macro body
     local _, _, body = GetMacroInfo(macroIndex)
     if not body then return spellIDs, spellNames, itemIDs, itemNames end
 
-    -- First, try the simple GetMacroSpell which handles basic cases
     local simpleSpell = GetMacroSpell(macroIndex)
     if simpleSpell then
         spellIDs[simpleSpell] = true
-        -- Also get the spell name for this ID
         local spellInfo = C_Spell.GetSpellInfo(simpleSpell)
         if spellInfo and spellInfo.name then
             spellNames[spellInfo.name:lower()] = true
         end
     end
 
-    -- Parse each line for /cast, /use, #showtooltip commands
     for line in body:gmatch("[^\r\n]+") do
         local lineLower = line:lower()
 
-        -- Skip comments
         if not lineLower:match("^%s*%-%-") then
             local spellName = nil
             local itemName = nil
 
-            -- Try to extract spell name from various patterns
-            -- Pattern 1: /cast [conditions] SpellName or /cast SpellName
             if lineLower:match("/cast") then
-                -- Remove the /cast part and any conditions in brackets
                 local afterCast = line:match("/[cC][aA][sS][tT]%s*(.*)")
                 if afterCast then
                     spellName = CleanMacroCommandPayload(afterCast)
                 end
             end
 
-            -- Pattern 2: /use [conditions] SpellName or /use SpellName
             if not spellName or spellName == "" then
                 if lineLower:match("/use") then
                     local afterUse = line:match("/[uU][sS][eE]%s*(.*)")
@@ -559,7 +493,6 @@ local function ParseMacroForSpells(macroIndex)
                 end
             end
 
-            -- Pattern 3: #showtooltip SpellName
             if not spellName or spellName == "" then
                 if lineLower:match("#showtooltip") then
                     spellName = line:match("#[sS][hH][oO][wW][tT][oO][oO][lL][tT][iI][pP]%s+(.+)")
@@ -570,19 +503,15 @@ local function ParseMacroForSpells(macroIndex)
                 end
             end
 
-            -- Process the extracted spell name
             if spellName and spellName ~= "" and spellName ~= "?" then
-                -- Remove any trailing semicolons or slashes
                 spellName = spellName:match("^([^;/]+)")
                 if spellName then
                     spellName = spellName:match("^%s*(.-)%s*$")
                 end
 
                 if spellName and spellName ~= "" then
-                    -- Store the spell name (lowercase for consistent matching)
                     spellNames[spellName:lower()] = true
 
-                    -- Also try to get spell ID if possible
                     local spellInfo = C_Spell.GetSpellInfo(spellName)
                     if spellInfo and spellInfo.spellID then
                         spellIDs[spellInfo.spellID] = true
@@ -599,17 +528,14 @@ local function ParseMacroForSpells(macroIndex)
     return spellIDs, spellNames, itemIDs, itemNames
 end
 
--- Helper to process an action button and add to cache
 local function ProcessActionButton(button)
     if not button then return end
 
     local buttonName = button:GetName()
     local action
 
-    -- Some button implementations expose internal state for accurate paged slot mapping.
     if buttonName and buttonName:match("^" .. COMPAT_ACTION_PREFIX_A) then
         action = button._state_action
-        -- Fallback: GetAction() returns (type, actionSlot)
         if not action and button.GetAction then
             local actionType, actionSlot = button:GetAction()
             if actionType == "action" then
@@ -617,7 +543,6 @@ local function ProcessActionButton(button)
             end
         end
     else
-        -- Standard handling for native and compatible button implementations.
         action = button.action or (button.GetAction and button:GetAction())
     end
 
@@ -627,13 +552,11 @@ local function ProcessActionButton(button)
     local keybind = nil
 
     if actionType == "spell" and id then
-        -- Direct spell - cache by both ID and name
         keybind = GetKeybindFromActionButton(button, action)
         if keybind then
             if not spellToKeybind[id] then
                 spellToKeybind[id] = keybind
             end
-            -- Also cache by spell name
             local spellInfo = C_Spell.GetSpellInfo(id)
             if spellInfo and spellInfo.name then
                 local nameLower = spellInfo.name:lower()
@@ -643,13 +566,11 @@ local function ProcessActionButton(button)
             end
         end
     elseif actionType == "item" and id then
-        -- Direct item on action bar - cache by ID and name
         keybind = GetKeybindFromActionButton(button, action)
         if keybind then
             if not itemToKeybind[id] then
                 itemToKeybind[id] = keybind
             end
-            -- Also cache by item name
             local itemName = C_Item.GetItemInfo(id)
             if itemName then
                 local nameLower = itemName:lower()
@@ -662,49 +583,38 @@ local function ProcessActionButton(button)
         keybind = GetKeybindFromActionButton(button, action)
         if not keybind then return end
 
-        -- In modern WoW, GetActionInfo for macros may return the spell ID directly
-        -- First, check if 'id' is a valid macro index (1-138)
         local macroName = id and GetMacroInfo(id)
 
         if macroName then
-            -- Valid macro index - parse the macro for spells
             local macroSpells, macroSpellNames, macroItems, macroItemNames = ParseMacroForSpells(id)
 
-            -- Cache by spell ID
             for spellID in pairs(macroSpells) do
                 if not spellToKeybind[spellID] then
                     spellToKeybind[spellID] = keybind
                 end
             end
-            -- Cache by spell name
             for spellName in pairs(macroSpellNames) do
                 if not spellNameToKeybind[spellName] then
                     spellNameToKeybind[spellName] = keybind
                 end
             end
-            -- Cache by item ID
             for itemID in pairs(macroItems) do
                 if not itemToKeybind[itemID] then
                     itemToKeybind[itemID] = keybind
                 end
             end
-            -- Cache by item name
             for itemName in pairs(macroItemNames) do
                 if not itemNameToKeybind[itemName] then
                     itemNameToKeybind[itemName] = keybind
                 end
             end
         else
-            -- 'id' might be a spell ID returned by modern API
-            -- Also try GetActionText to get macro/action name
             local actionText = GetActionText(action)
 
             if id and id > 0 then
-                -- Treat id as a spell ID
                 if not spellToKeybind[id] then
                     spellToKeybind[id] = keybind
                 end
-                -- Also cache by spell name
                 local spellInfo = C_Spell.GetSpellInfo(id)
                 if spellInfo and spellInfo.name then
                     local nameLower = spellInfo.name:lower()
@@ -714,7 +624,6 @@ local function ProcessActionButton(button)
                 end
             end
 
-            -- If we have action text (macro name), use hash lookup (O(1) instead of O(138))
             if actionText and actionText ~= "" then
                 local macroIndex = macroNameToIndex[actionText:lower()]
                 if macroIndex then
@@ -745,13 +654,10 @@ local function ProcessActionButton(button)
     end
 end
 
--- Widget probe for the _G sweep. Module-level so the sweep doesn't allocate
--- a closure per candidate table.
 local function LooksLikeActionButton(frame)
     local objType = frame:GetObjectType()
     if not objType then return false end
 
-    -- Check for common action button indicators
     if frame.action or (frame.GetAction and type(frame.GetAction) == "function") then
         return true
     end
@@ -759,12 +665,6 @@ local function LooksLikeActionButton(frame)
     return false
 end
 
--- Method 1 results survive cache invalidation: the full pairs(_G) sweep is
--- expensive (easily 100k+ entries with addons loaded) and the nonstandard
--- buttons it discovers exist for the rest of the session, so it runs once
--- instead of after every loading screen. The named-prefix scans in
--- BuildActionButtonCache still rerun on every rebuild and pick up
--- late-created standard/compat buttons.
 local globalSweepButtons = {}
 local globalSweepDone = false
 
@@ -772,21 +672,11 @@ local function RunGlobalActionButtonSweep()
     if globalSweepDone then return end
     globalSweepDone = true
 
-    -- Scan by iterating all global frames that look like action buttons.
-    -- This catches most action bar addons.
     for globalName, frame in pairs(_G) do
         if type(globalName) == "string" and type(frame) == "table" then
-            -- Fast-path: skip forbidden tables without pcall overhead (12.0.x+).
-            -- 12.1 adds fully locked-down objects whose methods throw on call
-            -- even though the table itself indexes fine — canaccessvalue is the
-            -- documented probe for those.
             if not Helpers.CanAccessTable(frame) or not Helpers.CanAccessValue(frame) then
-                -- Forbidden/locked-down table, skip
             elseif type(frame.GetObjectType) ~= "function" then
-                -- Not a WoW widget, skip
             else
-                -- pcall the widget check — some addons expose GetObjectType via
-                -- metatables on non-widget objects, which errors when called
                 local ok, isActionButton = QUI.SafeCall("best-effort-style", LooksLikeActionButton, frame)
 
                 if ok and isActionButton then
@@ -797,27 +687,22 @@ local function RunGlobalActionButtonSweep()
     end
 end
 
--- Build the list of action buttons (cheap except the one-time _G sweep)
 local function BuildActionButtonCache()
     if actionButtonsCached then return end
 
     wipe(cachedActionButtons)
 
-    -- Method 1: one-per-session _G sweep, replayed from its saved results
     RunGlobalActionButtonSweep()
     for _, btn in ipairs(globalSweepButtons) do
         table.insert(cachedActionButtons, btn)
     end
 
-    -- Method 2: Explicitly scan known button patterns as backup
-    -- Use a lookup table for faster duplicate checking
     local addedButtons = {}
     for _, btn in ipairs(cachedActionButtons) do
         addedButtons[btn] = true
     end
 
     local buttonPrefixes = {
-        -- QUI fresh buttons
         "QUI_Bar1Button",
         "QUI_Bar2Button",
         "QUI_Bar3Button",
@@ -826,7 +711,6 @@ local function BuildActionButtonCache()
         "QUI_Bar6Button",
         "QUI_Bar7Button",
         "QUI_Bar8Button",
-        -- Default Blizzard (both old and new naming conventions)
         "ActionButton",
         "MultiBarBottomLeftButton",
         "MultiBarBottomRightButton",
@@ -835,7 +719,6 @@ local function BuildActionButtonCache()
         "MultiBar5Button",
         "MultiBar6Button",
         "MultiBar7Button",
-        -- Alternate naming (ActionButton suffix)
         "MultiBarBottomLeftActionButton",
         "MultiBarBottomRightActionButton",
         "MultiBarRightActionButton",
@@ -843,9 +726,7 @@ local function BuildActionButtonCache()
         "MultiBar5ActionButton",
         "MultiBar6ActionButton",
         "MultiBar7ActionButton",
-        -- Override bar
         "OverrideActionBarButton",
-        -- Compatible action bar implementations
         COMPAT_ACTION_PREFIX_A,
         COMPAT_ACTION_PREFIX_B,
         COMPAT_BAR_PREFIX_C .. "1" .. COMPAT_BAR_BUTTON_SUFFIX_C,
@@ -856,7 +737,6 @@ local function BuildActionButtonCache()
         COMPAT_BAR_PREFIX_C .. "6" .. COMPAT_BAR_BUTTON_SUFFIX_C,
     }
 
-    -- Standard 12-button bars
     for _, prefix in ipairs(buttonPrefixes) do
         for i = 1, 12 do
             local button = _G[prefix .. i]
@@ -867,7 +747,6 @@ local function BuildActionButtonCache()
         end
     end
 
-    -- Some implementations expose a wider contiguous button range.
     for i = 1, 180 do
         local button = _G[COMPAT_ACTION_PREFIX_B .. i]
         if button and not addedButtons[button] then
@@ -876,7 +755,6 @@ local function BuildActionButtonCache()
         end
     end
 
-    -- Some implementations expose a second contiguous button range.
     for i = 1, 120 do
         local button = _G[COMPAT_ACTION_PREFIX_A .. i]
         if button and not addedButtons[button] then
@@ -885,7 +763,6 @@ local function BuildActionButtonCache()
         end
     end
 
-    -- Compatible pet bar buttons.
     for i = 1, 10 do
         local button = _G[COMPAT_PET_PREFIX_A .. i]
         if button and not addedButtons[button] then
@@ -894,7 +771,6 @@ local function BuildActionButtonCache()
         end
     end
 
-    -- Compatible stance bar buttons.
     for i = 1, 10 do
         local button = _G[COMPAT_STANCE_PREFIX_A .. i]
         if button and not addedButtons[button] then
@@ -903,29 +779,22 @@ local function BuildActionButtonCache()
         end
     end
 
-    -- Sort cache so bar 1 buttons (lower numbers) are processed first
-    -- This ensures bar 1 keybinds take priority when a spell is on multiple bars
-    -- CRITICAL: pairs(_G) iterates in undefined order, so without sorting,
-    -- bar 5 buttons might be cached before bar 1 buttons, causing wrong keybinds
     table.sort(cachedActionButtons, function(a, b)
         local nameA = (type(a.GetName) == "function") and a:GetName() or ""
         local nameB = (type(b.GetName) == "function") and b:GetName() or ""
 
-        -- Linear button ranges: sort by button number.
         local numA = nameA:match("^" .. COMPAT_ACTION_PREFIX_A .. "(%d+)$")
         local numB = nameB:match("^" .. COMPAT_ACTION_PREFIX_A .. "(%d+)$")
         if numA and numB then
             return tonumber(numA) < tonumber(numB)
         end
 
-        -- Alternate linear button ranges: sort by button number.
         numA = nameA:match("^" .. COMPAT_ACTION_PREFIX_B .. "(%d+)$")
         numB = nameB:match("^" .. COMPAT_ACTION_PREFIX_B .. "(%d+)$")
         if numA and numB then
             return tonumber(numA) < tonumber(numB)
         end
 
-        -- Bar-scoped button ranges: sort by bar then number.
         local barA, slotA = nameA:match("^" .. COMPAT_BAR_PREFIX_C .. "(%d+)" .. COMPAT_BAR_BUTTON_SUFFIX_C .. "(%d+)$")
         local barB, slotB = nameB:match("^" .. COMPAT_BAR_PREFIX_C .. "(%d+)" .. COMPAT_BAR_BUTTON_SUFFIX_C .. "(%d+)$")
         if barA and barB then
@@ -933,7 +802,6 @@ local function BuildActionButtonCache()
             return tonumber(slotA) < tonumber(slotB)
         end
 
-        -- Compatible implementations before native frames for deterministic ties.
         local priorityA = nameA:match("^" .. COMPAT_ACTION_PREFIX_A) and 1
             or nameA:match("^" .. COMPAT_ACTION_PREFIX_B) and 2
             or nameA:match("^" .. COMPAT_BAR_PREFIX_C) and 3
@@ -946,29 +814,23 @@ local function BuildActionButtonCache()
             return priorityA < priorityB
         end
 
-        -- Fallback: keep original order
         return false
     end)
 
     actionButtonsCached = true
 end
 
--- Scan cached action buttons and build spell-to-keybind cache (fast)
 local function RebuildCache()
-    -- PERFORMANCE: Skip entirely if no keybind features are enabled
-    -- This prevents CPU spikes from @mouseover macros when features are OFF
     if not IsAnyKeybindFeatureEnabled() then
-        lastCacheUpdate = GetTime()  -- Mark as "fresh" to prevent repeated checks
+        lastCacheUpdate = GetTime()
         return
     end
 
-    -- Skip if in combat - defer until combat ends
     if InCombatLockdown() then
         pendingRebuild = true
         return
     end
 
-    -- Build button cache if not done yet
     if not actionButtonsCached then
         BuildActionButtonCache()
     end
@@ -978,7 +840,6 @@ local function RebuildCache()
     wipe(itemToKeybind)
     wipe(itemNameToKeybind)
 
-    -- Build macro name → index lookup table (O(138) once, enables O(1) lookups)
     wipe(macroNameToIndex)
     for i = 1, 138 do
         local name = GetMacroInfo(i)
@@ -987,7 +848,6 @@ local function RebuildCache()
         end
     end
 
-    -- Process cached buttons (fast - no _G iteration)
     for _, button in ipairs(cachedActionButtons) do
         QUI.SafeCall("best-effort-style", ProcessActionButton, button)
     end
@@ -996,17 +856,14 @@ local function RebuildCache()
     pendingRebuild = false
 end
 
--- Get keybind for a spell ID (uses cache)
 local function GetKeybindForSpell(spellID)
     if not spellID then return nil end
 
-    -- Rebuild cache if stale
     local now = GetTime()
     if now - lastCacheUpdate > CACHE_UPDATE_INTERVAL then
         RebuildCache()
     end
 
-    -- Wrap in pcall to handle "secret" spell IDs
     local ok, result = pcall(function()
         return spellToKeybind[spellID]
     end)
@@ -1017,28 +874,23 @@ local function GetKeybindForSpell(spellID)
     return nil
 end
 
--- Get keybind for a spell name (fallback for macros)
 local function GetKeybindForSpellName(spellName)
     if not spellName then return nil end
 
-    -- Rebuild cache if stale
     local now = GetTime()
     if now - lastCacheUpdate > CACHE_UPDATE_INTERVAL then
         RebuildCache()
     end
 
-    -- Lowercase for consistent matching (wrap in pcall for secret values)
     local ok, nameLower = pcall(function() return spellName:lower() end)
     if not ok or not nameLower then return nil end
 
     return spellNameToKeybind[nameLower]
 end
 
--- Get keybind for an item ID (uses cache)
 local function GetKeybindForItem(itemID)
     if not itemID then return nil end
 
-    -- Rebuild cache if stale
     local now = GetTime()
     if now - lastCacheUpdate > CACHE_UPDATE_INTERVAL then
         RebuildCache()
@@ -1047,24 +899,20 @@ local function GetKeybindForItem(itemID)
     return itemToKeybind[itemID]
 end
 
--- Get keybind for an item name (fallback for macros with items)
 local function GetKeybindForItemName(itemName)
     if not itemName then return nil end
 
-    -- Rebuild cache if stale
     local now = GetTime()
     if now - lastCacheUpdate > CACHE_UPDATE_INTERVAL then
         RebuildCache()
     end
 
-    -- Lowercase for consistent matching
     local ok, nameLower = pcall(function() return itemName:lower() end)
     if not ok or not nameLower then return nil end
 
     return itemNameToKeybind[nameLower]
 end
 
--- Apply keybind text to a cooldown icon
 local function ApplyKeybindToIcon(icon, viewerName)
     local QUICore = _G.QUI and _G.QUI.QUICore
     if not QUICore or not QUICore.db or not QUICore.db.profile then return end
@@ -1072,7 +920,6 @@ local function ApplyKeybindToIcon(icon, viewerName)
     local settings = GetViewerSettings(viewerName)
     if not settings then return end
 
-    -- Check if keybinds should be shown
     if not settings.showKeybinds then
         local iks = iconKeybindState[icon]
         if iks and iks.text then
@@ -1081,21 +928,12 @@ local function ApplyKeybindToIcon(icon, viewerName)
         return
     end
 
-    -- Get spell ID from the icon (wrap in pcall to handle "secret" values)
     local spellID
     local spellName
     local itemID
     local itemName
 
-    -- New CDM icons (cdm_icon_renderer.lua) store data in _spellEntry.
-    -- Two paths populate item-typed entries:
-    --   _isCustomEntry: legacy essential/utility custom merge (cdm_icons BuildIcons)
-    --   _isOwnedEntry:  Composer/owned containers (cdm_spelldata ResolveOwnedEntry)
-    -- Both carry .type and .id; either should be treated as an item entry.
     local spellEntry = icon._spellEntry
-    -- Re-anchored Blizzard CDM frames carry no _spellEntry (we never write keys
-    -- onto Blizzard frames); resolve the curated entry the re-anchor engine
-    -- claimed this frame for, so its spellID/name drive the keybind like an owned icon.
     if not spellEntry and _G.QUI_ResolveCDMFrameEntry then
         spellEntry = _G.QUI_ResolveCDMFrameEntry(icon)
     end
@@ -1103,7 +941,6 @@ local function ApplyKeybindToIcon(icon, viewerName)
         or (spellEntry and (spellEntry._isCustomEntry or spellEntry._isOwnedEntry) and spellEntry)
     local isItemEntry = customEntry and (customEntry.type == "item" or customEntry.type == "trinket" or customEntry.type == "slot")
 
-    -- Try _spellEntry first (new addon-owned CDM icons)
     if spellEntry then
         spellID = spellEntry.overrideSpellID or spellEntry.spellID
         if spellEntry.name and type(spellEntry.name) == "string" and spellEntry.name ~= "" then
@@ -1111,7 +948,6 @@ local function ApplyKeybindToIcon(icon, viewerName)
         end
     end
 
-    -- Fallback: legacy icon properties
     if not spellID then
         local ok, result = pcall(function()
             local id = icon.spellID
@@ -1122,7 +958,6 @@ local function ApplyKeybindToIcon(icon, viewerName)
         end)
 
         if ok and result then
-            -- Verify result isn't a secret value (can't be used as table key)
             if type(issecretvalue) == "function" and issecretvalue(result) then
                 result = nil
             end
@@ -1130,12 +965,10 @@ local function ApplyKeybindToIcon(icon, viewerName)
         end
     end
 
-    -- Custom CDM entries can represent items/trinket slots; resolve those up front
     if isItemEntry and customEntry and customEntry.id then
         if customEntry.type == "item" then
             itemID = tonumber(customEntry.id)
         elseif customEntry.type == "trinket" or customEntry.type == "slot" then
-            -- entry.id stores equipment slot (13/14) for trinket/slot entries
             itemID = customEntry.itemID or GetInventoryItemID("player", customEntry.id)
         end
         if itemID then
@@ -1143,11 +976,9 @@ local function ApplyKeybindToIcon(icon, viewerName)
         end
     end
 
-    -- Try to get from action info if available
     if not spellID and icon.action then
         local actionOk, actionType, id = pcall(GetActionInfo, icon.action)
         if actionOk and actionType == "spell" then
-            -- Verify id isn't a secret value
             if type(issecretvalue) == "function" and issecretvalue(id) then
                 id = nil
             end
@@ -1155,19 +986,14 @@ local function ApplyKeybindToIcon(icon, viewerName)
         end
     end
 
-    -- Try to get spell name from icon (for fallback matching)
-    -- Must validate that name is a real string (not a secret value)
     if not spellName then
         pcall(function()
-            -- Try cooldownInfo first (legacy CDM uses this)
             if icon.cooldownInfo and icon.cooldownInfo.name then
-                -- Validate it's a usable string by attempting string operation
                 local testOk, _ = pcall(function() return icon.cooldownInfo.name:len() end)
                 if testOk then
                     spellName = icon.cooldownInfo.name
                 end
             end
-            -- Try getting name from spell ID
             if not spellName and spellID then
                 local info = C_Spell.GetSpellInfo(spellID)
                 if info and info.name then
@@ -1180,14 +1006,9 @@ local function ApplyKeybindToIcon(icon, viewerName)
         end)
     end
 
-    -- Get keybind for this spell:
-    -- 1) User override (by baseSpellID / spellID)
-    -- 2) Auto-detected cache by ID/base
-    -- 3) Auto-detected cache by spell name (macro fallback)
     local keybind = nil
     local baseSpellID = nil
 
-    -- Step 1: explicit user override, if configured
     local overrideKeybind = nil
     local cdmOverridesEnabled = true
     local QUICore_ref = _G.QUI and _G.QUI.QUICore
@@ -1207,7 +1028,6 @@ local function ApplyKeybindToIcon(icon, viewerName)
     end
     if overrideKeybind then
         if overrideKeybind == "" then
-            -- Explicit clear: hide keybind text (cache-aware) and return
             local iks = iconKeybindState[icon]
             if iks and iks.text then
                 if iks.shownText then
@@ -1221,7 +1041,6 @@ local function ApplyKeybindToIcon(icon, viewerName)
         keybind = overrideKeybind
     end
 
-    -- Step 2a: item auto-detection for item/trinket custom CDM entries
     if not keybind and isItemEntry and itemID then
         keybind = GetKeybindForItem(itemID)
     end
@@ -1229,26 +1048,19 @@ local function ApplyKeybindToIcon(icon, viewerName)
         keybind = GetKeybindForItemName(itemName)
     end
 
-    -- Step 2b: spell auto-detection via cache (spellID / base spell)
     if not keybind and spellID then
         keybind = GetKeybindForSpell(spellID)
     end
 
-    -- If no keybind found yet, try base spell sources
     if not keybind and spellID and not isItemEntry then
-        -- Try the BASE spell from _spellEntry or cooldownInfo
-        -- (CDM icons store the base spell ID even when showing evolved form)
         local baseFromInfo = (spellEntry and spellEntry.spellID) or (icon.cooldownInfo and icon.cooldownInfo.spellID)
         if baseFromInfo then
-            -- Use pcall for comparison since spellID may be a secret value
             local compareOk, isDifferent = pcall(function() return baseFromInfo ~= spellID end)
             if compareOk and isDifferent then
-                -- Verify baseFromInfo isn't a secret value
                 if type(issecretvalue) == "function" and issecretvalue(baseFromInfo) then
                     baseFromInfo = nil
                 end
                 baseSpellID = baseFromInfo
-                -- Re-check for explicit override on base spell
                 if cdmOverridesEnabled then
                     overrideKeybind = GetOverrideKeybind(spellID, baseSpellID)
                 end
@@ -1272,20 +1084,15 @@ local function ApplyKeybindToIcon(icon, viewerName)
         end
     end
 
-    -- Try C_Spell.GetBaseSpell API (evolved → base lookup)
-    -- e.g., Raze → Ravage, Thunder Blast → Thunder Clap
     if not keybind and spellID and C_Spell.GetBaseSpell and not isItemEntry then
         local okBase, resultBase = pcall(C_Spell.GetBaseSpell, spellID)
         if okBase and resultBase then
-            -- Use pcall for comparison since spellID may be a secret value
             local compareOk, isDifferent = pcall(function() return resultBase ~= spellID end)
             if compareOk and isDifferent then
-                -- Verify resultBase isn't a secret value
                 if type(issecretvalue) == "function" and issecretvalue(resultBase) then
                     resultBase = nil
                 end
                 baseSpellID = resultBase
-                -- Re-check override for this base spell
                 if cdmOverridesEnabled then
                     overrideKeybind = GetOverrideKeybind(spellID, baseSpellID)
                 end
@@ -1309,12 +1116,10 @@ local function ApplyKeybindToIcon(icon, viewerName)
         end
     end
 
-    -- Step 3: fallback to name-based cache (important for macros)
     if not keybind and spellName then
         keybind = GetKeybindForSpellName(spellName)
     end
 
-    -- If no keybind at all, just hide (cache-aware) and return
     if not keybind then
         local iks = iconKeybindState[icon]
         if iks and iks.text then
@@ -1327,14 +1132,12 @@ local function ApplyKeybindToIcon(icon, viewerName)
         return
     end
 
-    -- Get settings
     local fontSize = settings.keybindTextSize or 10
     local anchor = settings.keybindAnchor or "TOPLEFT"
     local offsetX = settings.keybindOffsetX or 2
     local offsetY = settings.keybindOffsetY or -2
     local textColor = settings.keybindTextColor or { 1, 1, 1, 1 }
 
-    -- Get or create per-icon state table
     local iks = iconKeybindState[icon]
     if not iks then
         iks = {}
@@ -1343,7 +1146,6 @@ local function ApplyKeybindToIcon(icon, viewerName)
 
     local textLayerParent = (icon.TextOverlay and icon.TextOverlay.CreateFontString and icon.TextOverlay) or icon
 
-    -- Ensure keybind text sits above cooldown swipe/darkening overlays.
     if iks.textLayer and iks.textLayer.GetParent and iks.textLayer:GetParent() ~= textLayerParent then
         if iks.text then
             iks.text:Hide()
@@ -1375,14 +1177,12 @@ local function ApplyKeybindToIcon(icon, viewerName)
         end
     end
 
-    -- Create keybind text FontString if it doesn't exist
     if not iks.text then
         local textParent = iks.textLayer or icon
         iks.text = textParent:CreateFontString(nil, "OVERLAY", nil, 7)
         iks.text:SetShadowOffset(1, -1)
         iks.text:SetShadowColor(0, 0, 0, 1)
     elseif iks.textLayer and iks.text:GetParent() ~= iks.textLayer then
-        -- Parent may have changed if icon state was rebuilt.
         local existingText = iks.text:GetText()
         local shown = iks.text:IsShown()
         iks.text:Hide()
@@ -1391,14 +1191,11 @@ local function ApplyKeybindToIcon(icon, viewerName)
         iks.text:SetShadowColor(0, 0, 0, 1)
         iks.text:SetText(existingText or "")
         if shown then iks.text:Show() end
-        -- Force a full style/anchor refresh after reparenting.
         iks.anchor, iks.offsetX, iks.offsetY = nil, nil, nil
         iks.font, iks.fontSize, iks.fontOutline = nil, nil, nil
         iks.r, iks.g, iks.b, iks.a = nil, nil, nil, nil
     end
 
-    -- Skip redundant work: only touch the FontString when something changed.
-    -- ClearAllPoints/SetPoint every call causes visible flicker.
     local curFont = GetGeneralFont()
     local curOutline = GetGeneralFontOutline()
     local r, g, b, a = textColor[1], textColor[2], textColor[3], textColor[4] or 1
@@ -1435,11 +1232,6 @@ local function ApplyKeybindToIcon(icon, viewerName)
     end
 end
 
--- Hide all keybind/rotation overlays on an icon and forget cached values.
--- Called when the icon factory recycles an icon between viewer pools so a
--- buff slot doesn't inherit a previous essential/utility cycle's keybind text.
--- Frames stay alive (FontString + overlay) so the next ApplyKeybindToIcon /
--- ApplyRotationHelperToIcon can re-show them without re-creating widgets.
 local function ClearKeybindIconState(icon)
     if not icon then return end
     local iks = iconKeybindState[icon]
@@ -1460,13 +1252,9 @@ local function ClearKeybindIconState(icon)
     end
 end
 
--- Override management API ----------------------------------------------------
-
--- Set or clear a keybind override for a spellID (shared across all viewers).
 local function SetKeybindOverride(spellID, keybindText)
     if not spellID then return end
 
-    -- Ensure spellID is a number (convert from string if needed)
     spellID = tonumber(spellID)
     if not spellID or spellID <= 0 then return end
 
@@ -1474,20 +1262,15 @@ local function SetKeybindOverride(spellID, keybindText)
     if not overrides then return end
 
     if keybindText == nil then
-        -- Explicitly remove override (user clicked X)
         overrides[spellID] = nil
     else
-        -- Store exactly what the user wants to see (no auto-formatting)
-        -- Empty string "" is allowed - it means "added to list but no binding set yet"
         overrides[spellID] = keybindText
     end
 
-    -- Immediately refresh CDM keybinds to reflect changes
     if _G.QUI_RefreshKeybinds then
         _G.QUI_RefreshKeybinds()
     end
 
-    -- Also refresh custom tracker keybinds (in case spell is also tracked there)
     if _G.QUI_RefreshCustomTrackerKeybinds then
         _G.QUI_RefreshCustomTrackerKeybinds()
     end
@@ -1503,46 +1286,36 @@ local function ClearAllKeybindOverrides()
         _G.QUI_RefreshKeybinds()
     end
 
-    -- Also refresh custom tracker keybinds
     if _G.QUI_RefreshCustomTrackerKeybinds then
         _G.QUI_RefreshCustomTrackerKeybinds()
     end
 end
 
--- Set or clear a keybind override for an itemID (shared across all viewers)
--- Uses negative itemID as key to avoid conflicts with spellIDs
 local function SetKeybindOverrideForItem(itemID, keybindText)
     if not itemID then return end
 
-    -- Ensure itemID is a number (convert from string if needed)
     itemID = tonumber(itemID)
     if not itemID or itemID <= 0 then return end
 
     local overrides = GetSharedOverrides()
     if not overrides then return end
-    local key = -itemID -- Use negative itemID as key
+    local key = -itemID
 
     if keybindText == nil then
-        -- Explicitly remove override
         overrides[key] = nil
     else
-        -- Store exactly what the user wants to see (no auto-formatting)
-        -- Empty string "" is allowed - it means "added to list but no binding set yet"
         overrides[key] = keybindText
     end
 
-    -- Immediately refresh custom tracker keybinds to reflect changes
     if _G.QUI_RefreshCustomTrackerKeybinds then
         _G.QUI_RefreshCustomTrackerKeybinds()
     end
 
-    -- Also refresh CDM keybinds (in case there are any spell overrides)
     if _G.QUI_RefreshKeybinds then
         _G.QUI_RefreshKeybinds()
     end
 end
 
--- Helper: get custom container keys from ncdm.containers
 local function GetCustomContainerKeys()
     local core = GetCore()
     if not core or not core.db or not core.db.profile then return end
@@ -1559,7 +1332,6 @@ local function GetCustomContainerKeys()
     return keys
 end
 
--- Resolve a viewer's icon-container children list, or nil if no viewer.
 local function GetViewerChildren(viewerName)
     local viewer = _G.QUI_GetCDMViewerFrame and _G.QUI_GetCDMViewerFrame(viewerName)
     local out
@@ -1567,9 +1339,6 @@ local function GetViewerChildren(viewerName)
         local container = viewer.viewerFrame or viewer
         out = { container:GetChildren() }
     end
-    -- Re-anchor engine: Blizzard CDM frames re-anchored into this container stay
-    -- parented to the Blizzard viewer, so they are NOT in container:GetChildren().
-    -- Append them so keybinds cover every icon (not just owned synthetic ones).
     if _G.QUI_GetReanchoredCDMFrames then
         local extra = _G.QUI_GetReanchoredCDMFrames(viewerName)
         if extra and #extra > 0 then
@@ -1582,7 +1351,6 @@ local function GetViewerChildren(viewerName)
     return out
 end
 
--- Update keybinds on all icons in a viewer
 local function UpdateViewerKeybinds(viewerName)
     local children = GetViewerChildren(viewerName)
     if not children then return end
@@ -1594,11 +1362,6 @@ local function UpdateViewerKeybinds(viewerName)
     end
 end
 
--- Clear stored keybinds from all icons (called when bindings change).
--- Does NOT hide the FontString — the text stays visible with its old
--- value until the next ApplyKeybindToIcon re-evaluates and either
--- confirms or changes it.  Hiding here caused a visible blink because
--- the ThrottledUpdate that re-shows text runs 0.5 s later.
 local function ClearStoredKeybinds(viewerName)
     local children = GetViewerChildren(viewerName)
     if not children then return end
@@ -1608,7 +1371,7 @@ local function ClearStoredKeybinds(viewerName)
         if cks then
             cks.keybind = nil
             cks.spellID = nil
-            cks.shownText = nil  -- clear cached text so next apply re-evaluates
+            cks.shownText = nil
         end
     end
 end
@@ -1624,9 +1387,7 @@ local function ClearAllStoredKeybinds()
     end
 end
 
--- Update keybinds on Essential, Utility, and custom container viewers
 local function UpdateAllKeybinds()
-    -- Force cache rebuild
     lastCacheUpdate = 0
     RebuildCache()
 
@@ -1640,9 +1401,8 @@ local function UpdateAllKeybinds()
     end
 end
 
--- Throttle for event-driven updates
 local updatePending = false
-local UPDATE_THROTTLE = 0.5 -- Don't rebuild more than once per 0.5 seconds
+local UPDATE_THROTTLE = 0.5
 
 local function ThrottledUpdate()
     if updatePending then return end
@@ -1650,7 +1410,6 @@ local function ThrottledUpdate()
 
     C_Timer.After(UPDATE_THROTTLE, function()
         updatePending = false
-        -- Skip if in combat
         if InCombatLockdown() then
             pendingRebuild = true
             return
@@ -1659,24 +1418,18 @@ local function ThrottledUpdate()
     end)
 end
 
--- Event frame for cache updates
 local eventFrame = CreateFrame("Frame")
--- ACTIONBAR_SLOT_CHANGED intentionally not registered: fires constantly
--- even while idle.  UPDATE_BINDINGS and SPELLS_CHANGED cover real changes.
 eventFrame:RegisterEvent("UPDATE_BINDINGS")
 eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 eventFrame:RegisterEvent("SPELLS_CHANGED")
-eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED") -- Combat ended
+eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
 
 eventFrame:SetScript("OnEvent", function(self, event)
-    -- PERFORMANCE: Skip expensive processing if no keybind features are enabled
-    -- Exception: PLAYER_ENTERING_WORLD and PLAYER_REGEN_ENABLED are lightweight
     if event ~= "PLAYER_ENTERING_WORLD" and event ~= "PLAYER_REGEN_ENABLED" then
         if not IsAnyKeybindFeatureEnabled() then return end
     end
 
     if event == "PLAYER_REGEN_ENABLED" then
-        -- Combat ended - process pending rebuild if any
         if pendingRebuild and IsAnyKeybindFeatureEnabled() then
             C_Timer.After(0.2, UpdateAllKeybinds)
         end
@@ -1684,11 +1437,10 @@ eventFrame:SetScript("OnEvent", function(self, event)
     end
 
     if event == "PLAYER_ENTERING_WORLD" then
-        -- Full rebuild on world enter (only if features enabled)
         C_Timer.After(0.5, function()
             if not IsAnyKeybindFeatureEnabled() then return end
-            actionButtonsCached = false -- Force button cache rebuild
-            wipe(iconKeybindCache) -- Clear position cache on world enter
+            actionButtonsCached = false
+            wipe(iconKeybindCache)
             UpdateAllKeybinds()
         end)
         return
@@ -1702,31 +1454,24 @@ eventFrame:SetScript("OnEvent", function(self, event)
     ThrottledUpdate()
 end)
 
--- LOD catch-up: first PEW already fired before this module loads.
--- QUI.WhenLoggedIn is nil only in the headless test harness, where the old
--- never-firing PEW registration was equally inert.
 if QUI.WhenLoggedIn then
     QUI.WhenLoggedIn(function()
         C_Timer.After(0.5, function()
             if not IsAnyKeybindFeatureEnabled() then return end
-            actionButtonsCached = false -- Force button cache rebuild
+            actionButtonsCached = false
             wipe(iconKeybindCache)
             UpdateAllKeybinds()
         end)
     end)
 end
 
--- Hook into viewer layout updates
 local function HookViewerLayout(viewerName)
     local viewer = _G.QUI_GetCDMViewerFrame and _G.QUI_GetCDMViewerFrame(viewerName)
     if not viewer then return end
 
-    -- Layout hook removed: CooldownViewerSettings:RefreshLayout hook in
-    -- cdm_viewer.lua triggers LayoutViewer → QUI_UpdateViewerKeybinds.
-    hookedKeybindViewers[viewer] = true  -- mark hooked so we don't retry
+    hookedKeybindViewers[viewer] = true
 end
 
--- Initialize hooks when viewers are available
 local initFrame = CreateFrame("Frame")
 initFrame:RegisterEvent("ADDON_LOADED")
 initFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
@@ -1760,8 +1505,6 @@ initFrame:SetScript("OnEvent", function(self, event, arg)
     end
 end)
 
--- LOD catch-up: first PEW already fired before this module loads. Also covers
--- Blizzard_CooldownManager having loaded before us (same hook/update calls).
 if QUI.WhenLoggedIn then
     QUI.WhenLoggedIn(function()
         C_Timer.After(1.0, function()
@@ -1773,60 +1516,42 @@ if QUI.WhenLoggedIn then
     end)
 end
 
--- Export for NCDM integration (allows LayoutViewer to trigger keybind updates)
--- Accepts both resolver keys ("essential") and legacy frame names ("EssentialCooldownViewer")
 _G.QUI_UpdateViewerKeybinds = function(viewerName)
-    -- PERFORMANCE: Skip if no keybind features are enabled
     if not IsAnyKeybindFeatureEnabled() then return end
     UpdateViewerKeybinds(VIEWER_RESOLVER_KEY[viewerName] or viewerName)
 end
 
--- ============================================================================
--- ROTATION HELPER OVERLAY (C_AssistedCombat integration)
--- Shows a border on the CDM icon that matches the next recommended spell
--- ============================================================================
-
--- Create or get the rotation helper border overlay for an icon
--- Uses simple textures instead of BackdropTemplate to avoid "arithmetic on secret value" errors
--- when icons are resized during combat (GetWidth/GetHeight return secret values)
--- Border renders INSIDE the icon frame, above glow effects (frame level +15)
 local function GetRotationHelperOverlay(icon)
     local iks = iconKeybindState[icon]
     if iks and iks.overlay then
         return iks.overlay
     end
 
-    -- Create a simple frame for the overlay (no BackdropTemplate)
     local overlay = CreateFrame("Frame", nil, icon)
     overlay:SetAllPoints(icon)
-    overlay:SetFrameLevel(icon:GetFrameLevel() + 15)  -- Above LibCustomGlow (+8)
+    overlay:SetFrameLevel(icon:GetFrameLevel() + 15)
 
-    -- Create border textures (4 edges) - INSIDE the icon frame
     local borderSize = 2
     local borders = {}
 
-    -- Top border (inside)
     borders.top = overlay:CreateTexture(nil, "OVERLAY")
     borders.top:SetColorTexture(0, 1, 0, 0.8)
     borders.top:SetPoint("TOPLEFT", overlay, "TOPLEFT", 0, 0)
     borders.top:SetPoint("TOPRIGHT", overlay, "TOPRIGHT", 0, 0)
     borders.top:SetHeight(borderSize)
 
-    -- Bottom border (inside)
     borders.bottom = overlay:CreateTexture(nil, "OVERLAY")
     borders.bottom:SetColorTexture(0, 1, 0, 0.8)
     borders.bottom:SetPoint("BOTTOMLEFT", overlay, "BOTTOMLEFT", 0, 0)
     borders.bottom:SetPoint("BOTTOMRIGHT", overlay, "BOTTOMRIGHT", 0, 0)
     borders.bottom:SetHeight(borderSize)
 
-    -- Left border (inside)
     borders.left = overlay:CreateTexture(nil, "OVERLAY")
     borders.left:SetColorTexture(0, 1, 0, 0.8)
     borders.left:SetPoint("TOPLEFT", overlay, "TOPLEFT", 0, 0)
     borders.left:SetPoint("BOTTOMLEFT", overlay, "BOTTOMLEFT", 0, 0)
     borders.left:SetWidth(borderSize)
 
-    -- Right border (inside)
     borders.right = overlay:CreateTexture(nil, "OVERLAY")
     borders.right:SetColorTexture(0, 1, 0, 0.8)
     borders.right:SetPoint("TOPRIGHT", overlay, "TOPRIGHT", 0, 0)
@@ -1835,14 +1560,12 @@ local function GetRotationHelperOverlay(icon)
 
     overlay.borders = borders
 
-    -- Helper to set border color
     overlay.SetBorderColor = function(self, r, g, b, a)
         for _, tex in pairs(self.borders) do
             tex:SetColorTexture(r, g, b, a or 0.8)
         end
     end
 
-    -- Helper to set border thickness
     overlay.SetBorderSize = function(self, size)
         self.borders.top:SetHeight(size)
         self.borders.bottom:SetHeight(size)
@@ -1857,15 +1580,11 @@ local function GetRotationHelperOverlay(icon)
     end
     iks.overlay = overlay
 
-
     return overlay
 end
 
--- Apply rotation helper overlay to a single icon.
--- `settings` is pre-resolved by the caller to avoid per-icon DB lookups.
 local function ApplyRotationHelperToIcon(icon, settings, nextSpellID, nextBaseSpellID)
     if not settings or not settings.showRotationHelper then
-        -- Hide overlay if disabled
         local iks = iconKeybindState[icon]
         if iks and iks.overlay then
             iks.overlay:Hide()
@@ -1873,28 +1592,21 @@ local function ApplyRotationHelperToIcon(icon, settings, nextSpellID, nextBaseSp
         return
     end
 
-    -- Get the icon's spell ID
     local iconSpellID
-    -- Re-anchored Blizzard frames have no _spellEntry; resolve the curated entry
-    -- the re-anchor engine claimed this frame for (covers rotation glow on them too).
     local resolvedEntry = icon._spellEntry
     if not resolvedEntry and _G.QUI_ResolveCDMFrameEntry then
         resolvedEntry = _G.QUI_ResolveCDMFrameEntry(icon)
     end
     local ok, result = pcall(function()
-        -- Try owned engine _spellEntry first
         if resolvedEntry then
             return resolvedEntry.overrideSpellID or resolvedEntry.spellID or resolvedEntry.id
         end
-        -- Try cooldownID for compatibility with older-style cooldown frames
         if icon.cooldownID then
             return icon.cooldownID
         end
-        -- Try cooldownInfo
         if icon.cooldownInfo and icon.cooldownInfo.spellID then
             return icon.cooldownInfo.spellID
         end
-        -- Try spellID
         if icon.spellID then
             return icon.spellID
         end
@@ -1913,22 +1625,14 @@ local function ApplyRotationHelperToIcon(icon, settings, nextSpellID, nextBaseSp
         return
     end
 
-    -- Check if this icon matches the next spell.
-    -- nextSpellID is the resolved override; nextBaseSpellID (4th arg) is the
-    -- original base from Blizzard, so we can match either direction.
-    -- == is safe with secret values (returns false for type mismatch).
     local isNextSpell = false
     if nextSpellID then
-        -- Direct match against resolved override
         if iconSpellID == nextSpellID then
             isNextSpell = true
         end
-        -- Match against original base spell
         if not isNextSpell and nextBaseSpellID and iconSpellID == nextBaseSpellID then
             isNextSpell = true
         end
-        -- Check both IDs on the spell entry (owned _spellEntry or the re-anchored
-        -- frame's resolved curated entry).
         if not isNextSpell and resolvedEntry then
             local entryBase = resolvedEntry.spellID
             local entryOvr = resolvedEntry.overrideSpellID
@@ -1938,7 +1642,6 @@ local function ApplyRotationHelperToIcon(icon, settings, nextSpellID, nextBaseSp
                 isNextSpell = true
             end
         end
-        -- Reverse lookup: if the icon's spell has a base that matches
         if not isNextSpell and iconSpellID then
             local okBase, resolvedBase = pcall(FindBaseSpellByID, iconSpellID)
             if okBase and resolvedBase and resolvedBase ~= iconSpellID then
@@ -1962,11 +1665,7 @@ local function ApplyRotationHelperToIcon(icon, settings, nextSpellID, nextBaseSp
     end
 end
 
--- Update rotation helper on all icons in a viewer.
--- Resolves DB settings once per viewer, then uses CDMIcons pool directly
--- to avoid the table allocation of { container:GetChildren() }.
 local function UpdateViewerRotationHelper(viewerName, nextSpellID, nextBaseSpellID)
-    -- Resolve settings once for all icons in this viewer
     local settings
     local core = GetCore()
     if core and core.db and core.db.profile then
@@ -1976,13 +1675,6 @@ local function UpdateViewerRotationHelper(viewerName, nextSpellID, nextBaseSpell
         end
     end
 
-    -- Process ALL icons in the pool, not just shown ones.  When CDM
-    -- recycles an icon (hides it), the rotation overlay stays as a child.
-    -- When the icon is reused for a different spell, the stale overlay
-    -- would reappear.  Processing hidden icons ensures overlays get
-    -- cleaned up on recycled frames.
-    -- Re-anchored Blizzard frames aren't in the owned pool / container children;
-    -- process them so the rotation glow covers every icon, not just owned ones.
     local function ProcessReanchored()
         if not _G.QUI_GetReanchoredCDMFrames then return end
         local extra = _G.QUI_GetReanchoredCDMFrames(viewerName)
@@ -2004,7 +1696,6 @@ local function UpdateViewerRotationHelper(viewerName, nextSpellID, nextBaseSpell
         end
     end
 
-    -- Fallback: use GetChildren if CDMIcons pool is unavailable
     local viewer = _G.QUI_GetCDMViewerFrame and _G.QUI_GetCDMViewerFrame(viewerName)
     if not viewer then
         ProcessReanchored()
@@ -2021,20 +1712,15 @@ local function UpdateViewerRotationHelper(viewerName, nextSpellID, nextBaseSpell
     ProcessReanchored()
 end
 
--- Update rotation helper on all viewers.
--- overrideSpellID: resolved override spell (from actionbars hook).
--- baseSpellID: original base spell from Blizzard (nil when self-queried).
 local function UpdateAllRotationHelpers(overrideSpellID, baseSpellID)
     local nextSpellID = overrideSpellID
     local nextBaseSpellID = baseSpellID
     if not nextSpellID then
-        -- Fallback: query the API if no override provided
         if not C_AssistedCombat or not C_AssistedCombat.GetNextCastSpell then
             return
         end
         local ok, sid = pcall(C_AssistedCombat.GetNextCastSpell, false)
         if ok then nextSpellID = sid end
-        -- Resolve override when self-queried (no pre-resolved ID from hook)
         if nextSpellID and C_Spell and C_Spell.GetOverrideSpell then
             nextBaseSpellID = nextSpellID
             local okOvr, ovrID = pcall(C_Spell.GetOverrideSpell, nextSpellID)
@@ -2044,18 +1730,13 @@ local function UpdateAllRotationHelpers(overrideSpellID, baseSpellID)
         end
     end
 
-    -- Track current recommendation so OnShow hooks can re-apply.
     currentRotationSpellID = nextSpellID
     currentRotationBaseSpellID = nextBaseSpellID
 
-    -- No dedup — always re-process all icons.  CDM icons may be created
-    -- after the first call, and the OnShow hook hides overlays on recycled
-    -- icons that need re-evaluation.  The per-icon cost is negligible.
     UpdateViewerRotationHelper("essential", nextSpellID, nextBaseSpellID)
     UpdateViewerRotationHelper("utility", nextSpellID, nextBaseSpellID)
 end
 
--- Check if rotation helper should be running
 local function ShouldRunRotationHelper()
     local core = GetCore()
     if not core or not core.db or not core.db.profile then return false end
@@ -2069,7 +1750,6 @@ local function ShouldRunRotationHelper()
     return (essential and essential.showRotationHelper) or (utility and utility.showRotationHelper)
 end
 
--- Start/stop rotation helper based on settings
 local function RefreshRotationHelper()
     rotationHelperEnabled = ShouldRunRotationHelper()
 
@@ -2081,28 +1761,20 @@ local function RefreshRotationHelper()
     end
 end
 
--- Initialize rotation helper when entering world
 local rotationHelperInitFrame = CreateFrame("Frame")
 rotationHelperInitFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 rotationHelperInitFrame:SetScript("OnEvent", function()
     C_Timer.After(1.0, RefreshRotationHelper)
 end)
 
--- LOD catch-up: first PEW already fired before this module loads
 if QUI.WhenLoggedIn then
     QUI.WhenLoggedIn(function()
         C_Timer.After(1.0, RefreshRotationHelper)
     end)
 end
 
--- CDM icon assignment callback: when CDM assigns a spell to an icon
--- (new or recycled), immediately apply the rotation helper glow if
--- the icon matches the current recommendation.  This replaces tickers
--- and OnShow hooks — fires at exactly the right moment with _spellEntry set.
 QUI._onIconAssigned = function(icon)
     if not rotationHelperEnabled or not currentRotationSpellID then return end
-    -- Resolve settings from the icon's own spell entry viewerType
-    -- (can't search pools — icon isn't in the pool yet at this point).
     local entry = icon._spellEntry
     if not entry then return end
     local vType = entry.viewerType
@@ -2115,7 +1787,6 @@ QUI._onIconAssigned = function(icon)
     end
 end
 
--- Export functions
 QUI.Keybinds = {
     UpdateAll = UpdateAllKeybinds,
     UpdateViewer = UpdateViewerKeybinds,
@@ -2134,7 +1805,6 @@ QUI.Keybinds = {
     UpdateAllRotationHelpers = UpdateAllRotationHelpers,
 }
 
--- Global refresh function for config panel
 _G.QUI_RefreshKeybinds = UpdateAllKeybinds
 _G.QUI_RefreshRotationHelper = RefreshRotationHelper
 _G.QUI_ClearKeybindIconState = ClearKeybindIconState

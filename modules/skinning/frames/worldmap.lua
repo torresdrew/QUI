@@ -1,22 +1,5 @@
----------------------------------------------------------------------------
--- WORLD MAP FRAME SKINNING
---
--- WorldMapFrame's chrome is split into two parts per
--- Blizzard_WorldMap/Blizzard_WorldMap.xml:28-:
---   - WorldMapFrame itself inherits MapCanvasFrameTemplate (just the scroll
---     container + canvas — no decorative chrome).
---   - WorldMapFrame.BorderFrame inherits PortraitFrameTemplateMinimizable,
---     which is what carries NineSlice / Bg / TopTileStreaks / PortraitContainer
---     / TitleContainer / CloseButton / MaximizeMinimizeFrame.
---
--- So skinning WorldMapFrame == skinning its BorderFrame, plus hiding the
--- BorderFrame.Underlay texture and the InsetBorderTop separator.
----------------------------------------------------------------------------
-
 local addonName, ns = ...
 
--- Master skinning gate (skinning.enabled): disabled + /reload installs no QUI
--- skin hooks for this file. Default ON; reload-required. See core/uikit.lua.
 if ns.IsSkinningEnabled and not ns.IsSkinningEnabled() then return end
 local SkinBase = ns.SkinBase
 local GetCore = ns.Helpers.GetCore
@@ -51,15 +34,10 @@ end
 
 local function ApplyBorderBackdrop(backdrop)
     if not backdrop then return end
-    -- Recolor via the shared persistence helper (same idiom as achievement/weeklyrewards),
-    -- rather than re-driving ApplyPixelBackdrop on the already-managed backdrop child.
     local sr, sg, sb, sa, bgr, bgg, bgb, bga = SkinBase.GetSkinColors()
     SkinBase.SetBackdropColors(backdrop, { sr, sg, sb, sa }, { bgr, bgg, bgb, bga })
 end
 
--- Section-header rows are BUTTONS with a declared HighlightFont: the engine swaps
--- to the highlight font OBJECT on hover with no setter call, so also drive the
--- button font objects.
 local function styleQuestHeader(f)
     SkinBase.ApplyButtonFontObjects(f)
 end
@@ -93,12 +71,6 @@ local function SkinWorldMap()
     local frame = _G.WorldMapFrame
     if not frame or SkinBase.IsSkinned(frame) then return end
 
-    -- BorderFrame carries the PortraitFrameTemplateMinimizable chrome.
-    -- The shared helper handles chrome strip + backdrop + close button.
-    -- BorderFrame is frameStrata="HIGH"; raise ScrollContainer and overlay
-    -- controls to that strata so they stay above the full-frame skinned
-    -- backdrop while title controls remain above the canvas at
-    -- MAP_OVERLAY_FRAME_LEVEL (200).
     if frame.BorderFrame then
         SkinBase.SkinButtonFrameTemplate(frame.BorderFrame)
         ApplyBorderBackdrop(SkinBase.GetBackdrop(frame.BorderFrame))
@@ -133,10 +105,6 @@ end
 
 SkinBase.OnAddOnLoaded("Blizzard_WorldMap", SkinWorldMap, 0)
 
----------------------------------------------------------------------------
--- FlightMapFrame (taxi map) — same MapCanvasFrameTemplate split as WorldMap:
--- its BorderFrame carries the PortraitFrameTemplate chrome. LOD: Blizzard_FlightMap.
----------------------------------------------------------------------------
 local function SkinFlightMap()
     if not IsSettingEnabled("skinFlightMap") then return end
     local frame = _G.FlightMapFrame
@@ -149,9 +117,6 @@ local function SkinFlightMap()
         if frame.BorderFrame.InsetBorderTop then frame.BorderFrame.InsetBorderTop:Hide() end
     end
 
-    -- BorderFrame is frameStrata="HIGH" setAllPoints="true", so the skinned
-    -- full-frame backdrop sits above the map canvas. Raise ScrollContainer /
-    -- overlays to HIGH (same as WorldMap) so the taxi map renders above it.
     RaiseMapCanvas(frame)
 
     SkinBase.MarkSkinned(frame)

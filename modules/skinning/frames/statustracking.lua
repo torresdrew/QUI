@@ -1,12 +1,5 @@
----------------------------------------------------------------------------
--- QUI Skinning: Status Tracking Bars (XP, Reputation, Honor, etc.)
--- Styles Blizzard's StatusTrackingBarManager HUD bars to match QUI:
--- configurable fill color, dimensions, backdrop, border, bar text.
----------------------------------------------------------------------------
 local _, ns = ...
 
--- Master skinning gate (skinning.enabled): disabled + /reload installs no QUI
--- skin hooks for this file. Default ON; reload-required. See core/uikit.lua.
 if ns.IsSkinningEnabled and not ns.IsSkinningEnabled() then return end
 local Helpers = ns.Helpers
 local SkinBase = ns.SkinBase
@@ -55,7 +48,6 @@ local function GetModuleSkinColors()
     return SkinBase.GetSkinColors(g, "statusTrackingBars")
 end
 
---- Resolve bar fill RGBA. mode overrides g.statusTrackingBarsBarColorMode when passed.
 local function GetBarFillRGBA(g, mode)
     if not g then return 1, 1, 1, 1 end
     mode = mode or g.statusTrackingBarsBarColorMode or "accent"
@@ -103,7 +95,6 @@ local function GetBarTextOutline(g)
     return o
 end
 
---- Hide default art on the StatusBar widget (not the rested / level-up extras on the parent bar).
 local function HideStatusBarChrome(statusBar)
     if statusBar.Background then statusBar.Background:SetAlpha(0) end
     if statusBar.Underlay then statusBar.Underlay:SetAlpha(0) end
@@ -151,7 +142,6 @@ local function UpdateBackdropLayout(backdrop)
     SkinBase.ApplyPixelBackdrop(backdrop, borderPixels, true, true, nil, nil, FALLBACK_TEXTURE, FALLBACK_TEXTURE)
 end
 
---- Font, size, outline, color, anchors (does not change visibility).
 local function ApplyBarTextStyle(bar)
     if not bar or not bar.OverlayFrame or not bar.OverlayFrame.Text then return end
     local fs = bar.OverlayFrame.Text
@@ -195,7 +185,6 @@ local function ApplyBarTextStyle(bar)
     end
 end
 
---- After Blizzard's UpdateTextVisibility: enforce hide, or force show when "always".
 local function FinalizeBarTextVisibility(bar)
     if not IsModuleEnabled() or not bar then return end
     local g = GetGeneralSettings()
@@ -240,15 +229,11 @@ local function SyncBarTextLockedAndVisibility(bar)
     FinalizeBarTextVisibility(bar)
 end
 
---- Re-apply texture + fill after Blizzard bar:Update() resets colors.
 local function RefreshBarFillAndTexture(bar)
     if not IsModuleEnabled() or not bar or not bar.StatusBar then return end
 
     local statusBar = bar.StatusBar
     local g = GetGeneralSettings()
-    -- Helpers.GetGeneralTexture never existed, so the old expression always resolved to
-    -- the solid fallback. There is no per-module statusbar-texture setting for these bars,
-    -- so keep the solid fill; wiring an LSM statusbar texture would require a new setting.
     if statusBar.SetStatusBarTexture then
         statusBar:SetStatusBarTexture(FALLBACK_TEXTURE)
     end
@@ -390,9 +375,6 @@ local function HookManager()
     end)
 end
 
----------------------------------------------------------------------------
--- Live refresh (options / profile change)
----------------------------------------------------------------------------
 local function RefreshStatusTrackingBarSkin()
     if not IsModuleEnabled() then return end
 
@@ -413,9 +395,6 @@ end
 
 _G.QUI_RefreshStatusTrackingBarSkin = RefreshStatusTrackingBarSkin
 
--- Register in the standard skinning refresh path so a global skin-color change
--- (RefreshAll("skinning")) recolors the bars. The _G.QUI_* global and its manual
--- call sites remain; the resulting double-refresh is idempotent.
 if ns.Registry then
     ns.Registry:Register("statusTracking", {
         refresh = RefreshStatusTrackingBarSkin,
@@ -425,9 +404,6 @@ if ns.Registry then
     })
 end
 
----------------------------------------------------------------------------
--- Init: Blizzard_ActionBar provides StatusTrackingBarManager
----------------------------------------------------------------------------
 local initFrame = CreateFrame("Frame")
 initFrame:RegisterEvent("ADDON_LOADED")
 initFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
@@ -442,8 +418,6 @@ initFrame:SetScript("OnEvent", function(_, event, arg1)
     end
 end)
 
--- LOD catch-up: Blizzard_ActionBar loads at startup, long before this module;
--- the watcher above would never fire for it.
 if SkinBase.IsAddOnFullyLoaded("Blizzard_ActionBar") then
     RunAfterFirstFrame(function()
         HookManager()

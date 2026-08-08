@@ -1,26 +1,3 @@
---[[
-    QUI Nameplates — castbar (consumes the shared cast engine, ns.CastEngine).
-
-    Every plate unit is non-player, so the secret-timing/engine-driven path
-    is the PRIMARY path: SetTimerDuration(durationObj, 0, direction) set once
-    per cast — casts/empowered fill (0), channels drain (1) — and the C
-    engine animates. No per-frame Lua for the fill.
-
-    Timer text runs on ONE shared 10 Hz ticker with a refcount (active while
-    any plate is casting), reading GetRemainingDuration under pcall into
-    SetFormattedText("%.1f") via CastEngine.UpdateTimerText.
-
-    Uninterruptible state can be secret: a user-facing grey overlay + shield
-    icon are driven by SetAlphaFromBoolean(secret, ...) — no Lua branch ever
-    inspects the secret. Clean booleans take the direct color path.
-
-    Cast events arrive via one global dispatcher frame (13 UNIT_SPELLCAST_*
-    events) routing through the unit registry — never per-plate registration.
-
-    Teardown decisions use UnitExists (plain false when the mob despawns);
-    UnitCastingInfo truthiness is the "stale secret channel info" hazard.
-]]
-
 local ADDON_NAME, ns = ...
 local NP = ns.QUI_Nameplates
 if not NP then return end
@@ -51,10 +28,9 @@ local function GetBarTexture(name)
     return WHITE8X8
 end
 
----------------------------------------------------------------------------
--- SHARED 10 Hz TIMER-TEXT TICKER (refcounted)
----------------------------------------------------------------------------
-local activeCastPlates = {}   -- [plate] = true
+local activeCastPlates = {}
+
+local UpdateCastTarget
 local activeCount = 0
 local textTicker = nil
 
@@ -64,8 +40,9 @@ local function TickCastText()
         if castBar and plate.npShowCastTimer then
             CastEngine.UpdateTimerText(castBar)
         end
-        -- Despawn teardown: UnitExists returns a plain false once the unit
-        -- is gone even when cast info would still read as a truthy secret.
+        if plate.npShowCastTarget then
+            UpdateCastTarget(plate)
+        end
         local unit = plate.unit
         if not unit or not UnitExists(unit) then
             NPCastbar.StopCast(plate)
@@ -95,35 +72,21 @@ local function CastTickerRelease(plate)
     end
 end
 
----------------------------------------------------------------------------
--- KICK TICK (v1.1): where the player's interrupt lands on the cast timeline
----------------------------------------------------------------------------
--- Construction: a second StatusBar (invisible fill) anchored to the cast
--- fill texture's leading edge, value domain = the cast's total duration
--- (possibly secret — SetMinMaxValues is a secret sink), engine-animated
--- with the INTERRUPT's cooldown DurationObject draining toward zero. Both
--- edges animate C-side, so the tick (a texture pinned to the kick bar's
--- fill edge) converges onto the cast's leading edge exactly when the kick
--- comes off cooldown. Both anchors are re-pinned together on
--- SPELL_UPDATE_COOLDOWN/USABLE or the tick drifts.
-
--- Class interrupt candidates, first known wins (player spells — cooldown
--- values are always plain).
 local INTERRUPT_SPELLS = {
-    1766,   -- Rogue: Kick
-    6552,   -- Warrior: Pummel
-    2139,   -- Mage: Counterspell
-    57994,  -- Shaman: Wind Shear
-    96231,  -- Paladin: Rebuke
-    47528,  -- Death Knight: Mind Freeze
-    106839, -- Druid: Skull Bash
-    116705, -- Monk: Spear Hand Strike
-    183752, -- Demon Hunter: Disrupt
-    147362, -- Hunter: Counter Shot
-    187707, -- Hunter (SV): Muzzle
-    351338, -- Evoker: Quell
-    15487,  -- Priest: Silence
-    119910, -- Warlock: Spell Lock (command demon)
+    1766,
+    6552,
+    2139,
+    57994,
+    96231,
+    47528,
+    106839,
+    116705,
+    183752,
+    147362,
+    187707,
+    351338,
+    15487,
+    119910,
 }
 
 local interruptSpellID = nil
@@ -160,10 +123,6 @@ local function GetInterruptSpell()
     return interruptSpellID
 end
 
--- Plain remaining seconds of the player's interrupt CD. Player-spell
--- cooldowns are plain in practice, but GetSpellCooldown is a cooldown-secret
--- source by contract — unwrap through SafeToNumber (secret ⇒ 0 ⇒ no tick,
--- fail closed). Returns 0 when ready or unknown.
 local SafeToNumber = Helpers.SafeToNumber
 local function GetInterruptRemaining()
     local spellID = GetInterruptSpell()
@@ -172,16 +131,12 @@ local function GetInterruptRemaining()
     if not ok or type(info) ~= "table" then return 0 end
     local start = SafeToNumber(info.startTime, 0)
     local duration = SafeToNumber(info.duration, 0)
-    -- Ignore the GCD (short duration) — only a real CD produces a tick.
     if duration <= 1.6 then return 0 end
     local remaining = (start + duration) - GetTime()
     if remaining < 0 then remaining = 0 end
     return remaining
 end
 
--- Re-pin BOTH anchors and re-arm the drain. Fill textures are re-created by
--- SetStatusBarTexture and the engine re-bases on new duration objects, so
--- partial refreshes drift.
 local function PinKickTick(plate)
     local castBar = plate.castBar
     local kickBar = plate.kickBar
@@ -197,7 +152,6 @@ local function PinKickTick(plate)
         return
     end
 
-    -- Anchor 1: kick bar starts at the cast fill's leading edge.
     local fillTex = castBar:GetStatusBarTexture()
     if not fillTex then
         kickBar:Hide()
@@ -207,8 +161,6 @@ local function PinKickTick(plate)
     kickBar:SetPoint("TOPLEFT", fillTex, "TOPRIGHT", 0, 0)
     kickBar:SetPoint("BOTTOMLEFT", fillTex, "BOTTOMRIGHT", 0, 0)
 
-    -- Value domain: the cast's total duration — possibly secret, and
-    -- SetMinMaxValues accepts it raw.
     local okTotal, total = pcall(function()
         local getter = durationObj.GetTotalDuration or durationObj.GetDuration or durationObj.GetMaxDuration
         return getter and getter(durationObj) or nil
@@ -219,7 +171,6 @@ local function PinKickTick(plate)
     end
     pcall(kickBar.SetMinMaxValues, kickBar, 0, total)
 
-    -- Drain the interrupt's cooldown DurationObject C-side (direction 1).
     local armed = false
     if C_Spell and C_Spell.GetSpellCooldownDuration then
         local spellID = GetInterruptSpell()
@@ -229,15 +180,11 @@ local function PinKickTick(plate)
         end
     end
     if not armed then
-        -- Static fallback: plain remaining, no animation (still re-pinned on
-        -- every cooldown event).
         kickBar:SetValue(GetInterruptRemaining())
     end
     kickBar:Show()
 end
 
--- Cooldown events re-pin every casting plate's tick (module-level frame;
--- these events are player-scoped and infrequent outside spam).
 local kickEventFrame = CreateFrame("Frame")
 kickEventFrame:RegisterEvent("SPELL_UPDATE_COOLDOWN")
 kickEventFrame:RegisterEvent("SPELL_UPDATE_USABLE")
@@ -251,7 +198,6 @@ kickEventFrame:SetScript("OnEvent", function(_, event)
         return
     end
     if event == "UI_SCALE_CHANGED" or event == "DISPLAY_SIZE_CHANGED" then
-        -- Re-pin lift-overlay scale for every managed plate (rare event).
         for _, plate in pairs(NP.plates) do
             if plate.npLiftOverlay and NPCastbar.ApplyLift then
                 NPCastbar.ApplyLift(plate)
@@ -264,14 +210,15 @@ kickEventFrame:SetScript("OnEvent", function(_, event)
         if plate.npKickTickEnabled and plate.npCasting then
             PinKickTick(plate)
         end
+        if plate.npInterruptReadyTint and plate.npCasting
+            and plate.npPlainNotInterruptible ~= nil and NPCastbar.ReapplyInterruptibleVisuals then
+            NPCastbar.ReapplyInterruptibleVisuals(plate)
+        end
     end
 end)
 
-local ApplyLift -- defined in the LIFT OVERLAY section below
+local ApplyLift
 
----------------------------------------------------------------------------
--- BUILD (once per pooled plate)
----------------------------------------------------------------------------
 function NPCastbar.Build(plate)
     local castBar = CreateFrame("StatusBar", nil, plate)
     castBar:SetStatusBarTexture(WHITE8X8)
@@ -284,8 +231,6 @@ function NPCastbar.Build(plate)
     plate.castBg = UIKit.CreateBackground(castBar, 0.1, 0.1, 0.1, 0.9)
     UIKit.CreateBorderLines(castBar)
 
-    -- Grey uninterruptible overlay: alpha driven by the (possibly secret)
-    -- notInterruptible boolean via SetAlphaFromBoolean — never branched on.
     local overlay = castBar:CreateTexture(nil, "ARTWORK", nil, 2)
     overlay:SetAllPoints(castBar)
     overlay:SetColorTexture(0.45, 0.45, 0.45, 0.85)
@@ -305,12 +250,10 @@ function NPCastbar.Build(plate)
     plate.castSpellText:SetPoint("LEFT", castBar, "LEFT", 2, 0)
     plate.castSpellText:SetJustifyH("LEFT")
 
-    -- Field name `timeText` is the CastEngine.UpdateTimerText contract.
     castBar.timeText = UIKit.CreateText(castBar, 10, nil, "OUTLINE", "OVERLAY")
     castBar.timeText:SetPoint("RIGHT", castBar, "RIGHT", -2, 0)
     castBar.timeText:SetJustifyH("RIGHT")
 
-    -- Kick tick: invisible drain bar + tick texture on its fill edge.
     local kickBar = CreateFrame("StatusBar", nil, castBar)
     kickBar:SetStatusBarTexture(WHITE8X8)
     kickBar:SetStatusBarColor(0, 0, 0, 0)
@@ -326,11 +269,13 @@ function NPCastbar.Build(plate)
         kickTick:SetPoint("CENTER", kickFill, "RIGHT", 0, 0)
     end
     plate.kickTick = kickTick
+
+    plate.castTargetText = UIKit.CreateText(castBar, 9, nil, "OUTLINE", "OVERLAY")
+    plate.castTargetText:SetPoint("TOP", castBar, "BOTTOM", 0, -1)
+    plate.castTargetText:SetJustifyH("CENTER")
+    plate.castTargetText:Hide()
 end
 
----------------------------------------------------------------------------
--- APPEARANCE (generation-gated static styling)
----------------------------------------------------------------------------
 function NPCastbar.ApplyAppearance(plate, settings)
     local cast = settings.castbar or {}
     local health = settings.health or {}
@@ -344,19 +289,21 @@ function NPCastbar.ApplyAppearance(plate, settings)
     local width = health.width or 210
     local height = cast.height or 17
     QUICore:SetPixelPerfectSize(plate.kickTick, 2, height + 4)
-    -- Width caps the drain bar's extent so a long CD can't spill past the
-    -- bar; the engine clamps the fill to the (secret) cast-domain max.
     plate.kickBar:SetWidth(QUICore:Pixels(width, plate))
     QUICore:SetPixelPerfectSize(castBar, width, height)
     castBar:ClearAllPoints()
-    castBar:SetPoint("TOP", plate.healthBar, "BOTTOM", 0, -QUICore:Pixels((cast.gap or 0) + 1, plate))
-    castBar:SetStatusBarTexture(GetBarTexture(health.texture))
+    local castAnchorTo = (plate.npPowerBarEnabled and plate.powerBar) or plate.healthBar
+    castBar:SetPoint("TOP", castAnchorTo, "BOTTOM", 0, -QUICore:Pixels((cast.gap or 0) + 1, plate))
+    local castTexName = (cast.texture and cast.texture ~= "") and cast.texture or health.texture
+    castBar:SetStatusBarTexture(GetBarTexture(castTexName))
     local tex = castBar:GetStatusBarTexture()
     if tex then
         tex:SetHorizTile(false)
         tex:SetVertTile(false)
     end
-    UIKit.UpdateBorderLines(castBar, health.borderSize or 1, 0, 0, 0, 1, (health.borderSize or 1) <= 0)
+    local bc = health.borderColor or { 0, 0, 0 }
+    UIKit.UpdateBorderLines(castBar, health.borderSize or 1, bc[1] or 0, bc[2] or 0, bc[3] or 0, 1,
+        (health.borderSize or 1) <= 0)
 
     local iconSize = height
     plate.castIcon:ClearAllPoints()
@@ -368,27 +315,24 @@ function NPCastbar.ApplyAppearance(plate, settings)
     plate.castShield:SetPoint("CENTER", plate.castIcon, "CENTER", 0, 0)
     QUICore:SetPixelPerfectSize(plate.castShield, iconSize + 6, iconSize + 6)
 
-    local fontPath = UIKit.ResolveFontPath()
-    QUICore:ApplyFont(plate.castSpellText, nil, cast.nameSize or 10, fontPath, "OUTLINE")
-    QUICore:ApplyFont(plate.castBar.timeText, nil, cast.timerSize or 10, fontPath, "OUTLINE")
+    local fontPath, fontOutline = NP.ResolveFont(plate)
+    QUICore:ApplyFont(plate.castSpellText, nil, cast.nameSize or 10, fontPath, fontOutline)
+    QUICore:ApplyFont(plate.castBar.timeText, nil, cast.timerSize or 10, fontPath, fontOutline)
     if cast.showSpellName == false then plate.castSpellText:Hide() else plate.castSpellText:Show() end
     if cast.showTimer == false then castBar.timeText:Hide() else castBar.timeText:Show() end
 
     plate.castSpellText:SetWidth(QUICore:Pixels(width - 34, plate))
 
-    -- Lift overlay reparenting last: the castBar keeps its cross-tree anchor
-    -- to the health bar, so position is unchanged — only strata/scale move.
+    plate.npShowCastTarget = cast.showCastTarget == true
+    plate.npInterruptReadyTint = cast.interruptReadyTint == true
+    if plate.castTargetText then
+        QUICore:ApplyFont(plate.castTargetText, nil, cast.castTargetSize or 9, fontPath, fontOutline)
+        if not plate.npShowCastTarget then plate.castTargetText:Hide() end
+    end
+
     ApplyLift(plate)
 end
 
----------------------------------------------------------------------------
--- LIFT OVERLAY (v1.1): render the castbar above neighboring plates
----------------------------------------------------------------------------
--- Reparents the REAL castbar (never a mirror bar) into a HIGH-strata
--- per-plate container under UIParent. SetIgnoreParentScale(true) with
--- effective-scale pinning keeps it pixel-identical — valid ONLY because the
--- CVar block pins plate scale to 1. Container visibility follows the plate
--- via OnShow/OnHide hooks; anchors track the health bar across bases.
 ApplyLift = function(plate)
     local castBar = plate.castBar
     if not castBar then return end
@@ -399,7 +343,6 @@ ApplyLift = function(plate)
         end
         if castBar:GetParent() ~= plate then
             castBar:SetParent(plate)
-            -- ApplyAppearance re-anchors below the health bar right after.
         end
         return
     end
@@ -413,7 +356,6 @@ ApplyLift = function(plate)
             container:SetIgnoreParentScale(true)
         end
         plate.npLiftContainer = container
-        -- Visibility sync: the container lives outside the plate tree.
         plate:HookScript("OnHide", function() container:Hide() end)
         plate:HookScript("OnShow", function()
             if plate.npLiftOverlay then container:Show() end
@@ -433,29 +375,40 @@ ApplyLift = function(plate)
 end
 NPCastbar.ApplyLift = ApplyLift
 
----------------------------------------------------------------------------
--- CAST LIFECYCLE
----------------------------------------------------------------------------
+local function ResolveCastBaseColor(plate, colors)
+    if plate.npCastImportant == true then
+        return colors.castImportant or { 1, 0.25, 0.25 }
+    end
+    if plate.npCastKind == "channel" then
+        return colors.castChannel or { 0.35, 0.60, 0.90 }
+    elseif plate.npCastKind == "empower" then
+        return colors.castEmpowered or { 0.90, 0.55, 0.15 }
+    end
+    return colors.castInterruptible or { 0.70, 0.40, 0.90 }
+end
+
 local function ApplyInterruptibleVisuals(plate, notInterruptible, settings)
-    local colors = (settings or NP.GetSettings()).colors or {}
+    local colors = (settings or NP.GetTypeSettings(plate) or {}).colors or {}
     local castBar = plate.castBar
 
-    -- NP.Plain, not type(): a SECRET boolean reports type "boolean" and
-    -- errors on its first truthiness test (the live 12.0 combat scar).
     local plainNI = NP.Plain(notInterruptible, "boolean")
+    plate.npPlainNotInterruptible = plainNI
     if plainNI ~= nil then
-        -- Clean boolean: direct color path, overlay off.
-        local c = plainNI and (colors.castUninterruptible or { 0.45, 0.45, 0.45 })
-            or (colors.castInterruptible or { 0.70, 0.40, 0.90 })
+        local c
+        if plainNI then
+            c = colors.castUninterruptible or { 0.45, 0.45, 0.45 }
+        elseif plate.npInterruptReadyTint and GetInterruptRemaining() <= 0 then
+            c = colors.castInterruptReady or { 0.30, 0.85, 0.40 }
+        else
+            c = ResolveCastBaseColor(plate, colors)
+        end
         castBar:SetStatusBarColor(c[1], c[2], c[3])
         plate.castUninterruptibleOverlay:SetAlpha(0)
         plate.castShield:SetAlpha(plainNI and 1 or 0)
         return
     end
 
-    -- Secret (or unavailable): interruptible base color; the grey overlay and
-    -- shield consume the secret through the C-side boolean-alpha sink.
-    local c = colors.castInterruptible or { 0.70, 0.40, 0.90 }
+    local c = ResolveCastBaseColor(plate, colors)
     castBar:SetStatusBarColor(c[1], c[2], c[3])
     if type(notInterruptible) ~= "nil"
         and plate.castUninterruptibleOverlay.SetAlphaFromBoolean then
@@ -468,14 +421,44 @@ local function ApplyInterruptibleVisuals(plate, notInterruptible, settings)
     end
 end
 
--- Full setup on START only; DELAYED/CHANNEL_UPDATE re-arm the timer only.
+UpdateCastTarget = function(plate)
+    local text = plate.castTargetText
+    if not text then return end
+    if not plate.npShowCastTarget or not plate.npCasting then
+        text:Hide()
+        return
+    end
+    local unit = plate.unit
+    if not unit or type(UnitShouldDisplaySpellTargetName) ~= "function"
+        or type(UnitSpellTargetName) ~= "function" then
+        text:Hide()
+        return
+    end
+    local okShould, should = pcall(UnitShouldDisplaySpellTargetName, unit)
+    if not (okShould and NP.Plain(should, "boolean") == true) then
+        text:Hide()
+        return
+    end
+    local okName, targetName = pcall(UnitSpellTargetName, unit)
+    if okName and type(targetName) ~= "nil" then
+        local okSet = pcall(text.SetFormattedText, text, "%s", targetName) -- @secret-safe: SecretReturns name rides the C-side %s sink
+        if okSet then text:Show() else text:Hide() end
+    else
+        text:Hide()
+    end
+end
+
+function NPCastbar.ReapplyInterruptibleVisuals(plate)
+    ApplyInterruptibleVisuals(plate, plate.npPlainNotInterruptible)
+end
+
 local function StartCast(plate)
     if not plate.npCastEnabled then return end
     local unit = plate.unit
     if not unit then return end
 
     local spellName, text, texture, startTimeMS, endTimeMS, notInterruptible,
-        _, isChanneled, _, durationObj, hasSecretTiming = CastEngine.GetCastInfo(unit)
+        unitSpellID, isChanneled, channelStages, durationObj, hasSecretTiming = CastEngine.GetCastInfo(unit)
 
     local castBar = plate.castBar
     local canShow, useTimerDriven, startTime, endTime = CastEngine.ResolveNonPlayerTiming(
@@ -485,35 +468,47 @@ local function StartCast(plate)
         return
     end
 
+    local plainStages = NP.Plain(channelStages, "number") or 0
+    if isChanneled then
+        plate.npCastKind = (plainStages > 0) and "empower" or "channel"
+    else
+        plate.npCastKind = "cast"
+    end
+
+    plate.npCastImportant = false
+    local colorsS = ((NP.GetTypeSettings(plate) or {}).colors) or {}
+    if colorsS.castImportantEnabled == true and C_Spell and C_Spell.IsSpellImportant
+        and type(unitSpellID) ~= "nil" then
+        local okI, important = pcall(C_Spell.IsSpellImportant, unitSpellID)
+        if okI and NP.Plain(important, "boolean") == true then
+            plate.npCastImportant = true
+        end
+    end
+
     plate.npCasting = true
     plate.npInterrupted = nil
     plate.npChanneled = isChanneled
     castBar.durationObj = durationObj
 
     if useTimerDriven then
-        -- Engine fill: casts/empowered fill (0), channels drain (1).
         CastEngine.ApplyTimerDriven(castBar, durationObj, isChanneled and 1 or 0)
         plate.npCastStart, plate.npCastEnd = nil, nil
     elseif durationObj then
-        -- Clean timing but a duration object exists — still let the engine
-        -- animate (zero per-frame Lua beats manual progress math).
         CastEngine.ApplyTimerDriven(castBar, durationObj, isChanneled and 1 or 0)
         plate.npCastStart, plate.npCastEnd = nil, nil
     else
-        -- Rare fallback: no duration object. Static min/max + a coarse fill
-        -- from the shared ticker (10 Hz is fine for a plate).
         plate.npCastStart, plate.npCastEnd = startTime, endTime
         castBar:SetMinMaxValues(startTime or 0, endTime or 1)
         castBar:SetValue(startTime or 0)
     end
 
-    -- Spell name/icon/timer: straight to C-side sinks (accept secrets).
     pcall(plate.castIcon.SetTexture, plate.castIcon, texture)
     local okName = pcall(plate.castSpellText.SetText, plate.castSpellText, text or spellName)
     if not okName then plate.castSpellText:SetText("") end
     castBar.timeText:SetText("")
 
     ApplyInterruptibleVisuals(plate, notInterruptible)
+    UpdateCastTarget(plate)
 
     castBar:Show()
     CastTickerAcquire(plate)
@@ -523,7 +518,6 @@ local function StartCast(plate)
     end
 end
 
--- DELAYED / CHANNEL_UPDATE: re-arm the engine timer only.
 local function RearmCast(plate)
     if not plate.npCasting then return end
     local unit = plate.unit
@@ -538,16 +532,19 @@ local function RearmCast(plate)
     if useTimerDriven or durationObj then
         CastEngine.ApplyTimerDriven(castBar, durationObj, isChanneled and 1 or 0)
     end
-    -- The cast domain changed (pushback/haste re-read) — re-pin the tick.
     if plate.npKickTickEnabled then
         PinKickTick(plate)
     end
+    UpdateCastTarget(plate)
 end
 
 function NPCastbar.StopCast(plate)
     plate.npCasting = nil
     plate.npInterrupted = nil
     plate.npChanneled = nil
+    plate.npCastKind = nil
+    plate.npCastImportant = nil
+    plate.npPlainNotInterruptible = nil
     plate.npCastStart, plate.npCastEnd = nil, nil
     local castBar = plate.castBar
     if castBar then
@@ -559,16 +556,16 @@ function NPCastbar.StopCast(plate)
     if plate.kickBar then
         plate.kickBar:Hide()
     end
+    if plate.castTargetText then
+        plate.castTargetText:Hide()
+    end
     CastTickerRelease(plate)
 end
 
----------------------------------------------------------------------------
--- INTERRUPTED FLASH
----------------------------------------------------------------------------
 local INTERRUPT_HOLD_FALLBACK = 1.0
 
 local function ShowInterrupted(plate, interrupterGUID)
-    local settings = NP.GetSettings()
+    local settings = NP.GetTypeSettings(plate) or {}
     local colors = settings.colors or {}
     local castBar = plate.castBar
     if not plate.npCastEnabled then return end
@@ -585,9 +582,6 @@ local function ShowInterrupted(plate, interrupterGUID)
     plate.castShield:SetAlpha(0)
     castBar.timeText:SetText("")
 
-    -- Interrupter name from the event-arg GUID, class-colored. The GUID is
-    -- SECRET in restricted combat — only a verifiably plain GUID feeds the
-    -- name lookup (a secret one just shows the bare "Interrupted" label).
     local label = _G.INTERRUPTED or "Interrupted"
     local plainGUID = NP.Plain(interrupterGUID, "string")
     if plainGUID and plainGUID ~= "" then
@@ -606,7 +600,6 @@ local function ShowInterrupted(plate, interrupterGUID)
     plate.castSpellText:SetText(label)
     castBar:Show()
 
-    -- Hold the flash, guarded against late STOPs (_interrupted) and death.
     local holdFor = (settings.castbar and settings.castbar.interruptedHoldTime) or INTERRUPT_HOLD_FALLBACK
     local unitAtFlash = plate.unit
     C_Timer.After(holdFor, function()
@@ -616,9 +609,6 @@ local function ShowInterrupted(plate, interrupterGUID)
     end)
 end
 
----------------------------------------------------------------------------
--- GLOBAL CAST DISPATCHER (one frame, 13 events, registry routing)
----------------------------------------------------------------------------
 local CAST_EVENTS = {
     "UNIT_SPELLCAST_START",
     "UNIT_SPELLCAST_STOP",
@@ -641,7 +631,9 @@ for i = 1, #CAST_EVENTS do
 end
 
 dispatcher:SetScript("OnEvent", function(_, event, unit, arg2, arg3, arg4)
-    local plate = NP.plates[unit]
+    local unitToken = NP.Plain(unit, "string")
+    if not unitToken then return end
+    local plate = NP.plates[unitToken]
     if not plate then return end
 
     if event == "UNIT_SPELLCAST_START"
@@ -653,13 +645,13 @@ dispatcher:SetScript("OnEvent", function(_, event, unit, arg2, arg3, arg4)
         or event == "UNIT_SPELLCAST_EMPOWER_UPDATE" then
         RearmCast(plate)
     elseif event == "UNIT_SPELLCAST_INTERRUPTED" then
-        -- 12.0 payload: unit, castGUID, spellID, interrupterGUID (defensive).
-        ShowInterrupted(plate, arg4 or arg3)
+        local interrupterGUID = arg4
+        if type(interrupterGUID) == "nil" then interrupterGUID = arg3 end
+        ShowInterrupted(plate, interrupterGUID)
     elseif event == "UNIT_SPELLCAST_STOP"
         or event == "UNIT_SPELLCAST_CHANNEL_STOP"
         or event == "UNIT_SPELLCAST_EMPOWER_STOP"
         or event == "UNIT_SPELLCAST_FAILED" then
-        -- Late STOPs during the interrupted flash must not cut it short.
         if not plate.npInterrupted then
             NPCastbar.StopCast(plate)
         end
@@ -670,16 +662,11 @@ dispatcher:SetScript("OnEvent", function(_, event, unit, arg2, arg3, arg4)
     end
 end)
 
--- A plate acquired mid-cast (spawn during a pull) misses the START event;
--- the driver's deferred phase probes once.
 function NPCastbar.ProbeCast(plate)
     if plate.npCasting or plate.npInterrupted then return end
     StartCast(plate)
 end
 
----------------------------------------------------------------------------
--- PERF INSTRUMENTATION
----------------------------------------------------------------------------
 local function SetupDebugInstrumentation()
     ns.QUI_PerfRegistry = ns.QUI_PerfRegistry or {}
     ns.QUI_PerfRegistry[#ns.QUI_PerfRegistry + 1] = { name = "NameplateCast", frame = dispatcher }

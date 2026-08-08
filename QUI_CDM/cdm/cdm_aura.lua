@@ -1,19 +1,8 @@
--- Consolidated CDM source (canonical; the one-shot consolidation tool is retired — edit directly).
--- CDM Aura -- consolidated catalog + runtime aura helpers.
 -- Each `do -- Inlined from X ... end` block is a self-contained chunk that
--- tests load individually via load_cdm_consolidated_chunk.lua.
 
 do
 -- Inlined from cdm_aura_catalog.lua
 local _, ns = ...
-
----------------------------------------------------------------------------
--- CDM Aura Catalog
---
--- Pure helpers for catalog-provided aura links. CDMSpellData owns entry
--- assembly; this module owns ability->aura display remaps and linked aura
--- ID attachment rules derived from the Blizzard catalog maps.
----------------------------------------------------------------------------
 
 local CDMAuraCatalog = {}
 ns.CDMAuraCatalog = CDMAuraCatalog
@@ -83,15 +72,6 @@ end
 do
 -- Inlined from cdm_aura_runtime.lua
 local _, ns = ...
-
----------------------------------------------------------------------------
--- CDM Aura Runtime
---
--- Runtime aura-state interface. CDMSpellData currently provides the adapter
--- implementation because it owns the UNIT_AURA capture indexes and scratch
--- helpers; callers consume this module instead of treating SpellData as a
--- parallel runtime truth source.
----------------------------------------------------------------------------
 
 local CDMAuraRuntime = {}
 ns.CDMAuraRuntime = CDMAuraRuntime

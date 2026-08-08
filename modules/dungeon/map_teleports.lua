@@ -1,29 +1,6 @@
 local ADDON_NAME, ns = ...
 local Helpers = ns.Helpers
 
----------------------------------------------------------------------------
--- WORLD MAP TELEPORT PANEL
---
--- A compact panel floating over the world map's top-right corner listing the
--- current M+ season's dungeon teleports as secure click-to-cast buttons
--- (icon + short name + cooldown swipe). Unknown teleports render
--- desaturated and unclickable.
---
--- Data: C_ChallengeMode.GetMapTable() (doc-verified: current-season
--- mapChallengeModeIDs) + the shared dungeon data module (ns.DungeonData:
--- GetShortName / GetTeleportSpellID) + C_ChallengeMode.GetMapUIInfo for the
--- icon. Cooldowns via C_Spell.GetSpellCooldown (doc-verified:
--- MayReturnNothing) into a CooldownFrameTemplate.
---
--- Secure/taint model (mirrors dungeon/teleport.lua): buttons are
--- SecureActionButtonTemplate children created OUT OF COMBAT only, with
--- type/spell attributes set at build time. The panel itself is a plain
--- frame parented to WorldMapFrame, so it shows/hides with the map through
--- visibility inheritance — no protected calls at show/hide time. If the
--- map first opens in combat, the build is deferred to the next
--- out-of-combat open.
----------------------------------------------------------------------------
-
 local GetSettings = Helpers.CreateDBGetter("general")
 
 local BTN = 26
@@ -44,10 +21,7 @@ local function UpdateCooldowns()
     if not (C_Spell and C_Spell.GetSpellCooldownDuration) then return end
     for _, btn in ipairs(buttons) do
         if btn.spellID and btn.cooldown then
-            -- Duration object is the secret-safe cooldown carrier; raw
-            -- GetSpellCooldown fields are SecretWhenCooldownsRestricted and
-            -- CooldownFrame_Set compares them.
-            local dur = C_Spell.GetSpellCooldownDuration(btn.spellID) -- MayReturnNothing
+            local dur = C_Spell.GetSpellCooldownDuration(btn.spellID)
             if dur then
                 btn.cooldown:SetCooldownFromDurationObject(dur)
             else
@@ -85,7 +59,6 @@ local function Build()
     bg:SetAllPoints()
     bg:SetColorTexture(0.05, 0.05, 0.05, 0.85)
 
-    -- Stable order: sort by short name.
     local entries = {}
     for _, mapID in ipairs(maps) do
         local spellID = DD.GetTeleportSpellID(mapID)
@@ -167,7 +140,6 @@ local function EnsureHook()
 end
 
 local frame = CreateFrame("Frame")
--- Literal RegisterEvent calls so tools/generate_event_allowlist.lua detects them.
 frame:RegisterEvent("SPELL_UPDATE_COOLDOWN")
 frame:SetScript("OnEvent", function()
     UpdateCooldowns()

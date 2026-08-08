@@ -1,19 +1,8 @@
 local ADDON_NAME, ns = ...
 local Helpers = ns.Helpers
 
----------------------------------------------------------------------------
--- FRIENDS LIST DECOR
--- Class-colors the names in the WoW friends list (regular friends and
--- Battle.net friends currently playing WoW). Pure post-hook on the Blizzard
--- button update: reads friend info, recolors button.name (a FontString) by
--- class. Visual-only + hooksecurefunc on a named global -> taint-safe.
----------------------------------------------------------------------------
-
 local GetSettings = Helpers.CreateDBGetter("general")
 
--- GetPlayerInfoByGUID(guid) verified vs PlayerScriptDocumentation:
---   Returns localizedClass, englishClass, ... ; MayReturnNothing = true
---   (nil for an unknown/uncached GUID -> must guard before indexing).
 local function ClassColorForGUID(guid)
     if not guid then return nil end
     local _, englishClass = GetPlayerInfoByGUID(guid)
@@ -45,10 +34,6 @@ local function DecorateFriendButton(button)
     end
 end
 
----------------------------------------------------------------------------
--- INSTALL
----------------------------------------------------------------------------
-
 local hooked = false
 local function InstallHook()
     if hooked then return end
@@ -57,7 +42,6 @@ local function InstallHook()
     hooked = true
 end
 
--- Re-run the visible list so a settings change / theme refresh recolors now.
 local function RefreshFriendsDecor()
     InstallHook()
     if _G.FriendsListFrame and _G.FriendsListFrame:IsShown()
@@ -77,11 +61,10 @@ end)
 
 if ns.WhenLoggedIn then
     ns.WhenLoggedIn(function()
-        -- FriendsFrame ships with the base UI in retail, but guard for LoD.
         InstallHook()
+        ---@diagnostic disable-next-line: empty-block
         if not hooked and C_AddOns and C_AddOns.IsAddOnLoaded
             and not C_AddOns.IsAddOnLoaded("Blizzard_FriendsFrame") then
-            -- Will install via ADDON_LOADED when the social panel first opens.
         end
     end)
 end

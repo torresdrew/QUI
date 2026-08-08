@@ -1,20 +1,10 @@
 local _, ns = ...
 
--- Master skinning gate (skinning.enabled): disabled + /reload installs no QUI
--- skin hooks for this file. Default ON; reload-required. See core/uikit.lua.
 if ns.IsSkinningEnabled and not ns.IsSkinningEnabled() then return end
 
 local Helpers = ns.Helpers
 local GetCore = Helpers.GetCore
 local SkinBase = ns.SkinBase
-
----------------------------------------------------------------------------
--- Context menu + StaticPopup skinning
---
--- Covers modern right-click menus created by Blizzard's Menu manager and the
--- shared StaticPopup dialogs used for summon confirmations, release spirit,
--- many confirmation prompts, and addon-defined StaticPopup dialogs.
----------------------------------------------------------------------------
 
 local FONT_SIZE = 12
 
@@ -110,9 +100,6 @@ local function HideDecorativeTextures(frame)
     end
 end
 
--- Font facing is owned by the canonical SkinBase helpers (SkinFontString / SkinFrameText),
--- which carry the size>0 guard, CJK fallback, and the user's configured outline.
-
 local function HideButtonTexture(texture)
     if not texture or not texture.SetAlpha then return end
     texture:SetAlpha(0)
@@ -158,9 +145,6 @@ local function RefreshButtonState(button)
     local border = SkinBase.GetFrameData(button, "systemPopupBorder")
 
     if backdrop then
-        -- Enabled/disabled is a persistent state: route through SetBackdropColors
-        -- so the next scale-refresh rebuild keeps it instead of reverting to the
-        -- creation-time color.
         local bg = enabled and normalBg or disabledBg
         local borderColor = border and { border[1], border[2], border[3], enabled and border[4] or 0.35 } or nil
         SkinBase.SetBackdropColors(backdrop, borderColor, bg)
@@ -198,9 +182,6 @@ local function StyleButton(button, prefix)
     })
     SkinBase.SetFrameData(button, "systemPopupBorder", { sr, sg, sb, sa })
 
-    -- Drive the button's font OBJECTS so the QUI font face survives hover
-    -- (StaticPopupButtonTemplate HighlightFont) and disable (DisabledFont);
-    -- RefreshButtonState owns the text COLOR per enable/disable/hover state.
     SkinBase.ApplyButtonFontObjects(button, { size = FONT_SIZE })
 
     if not SkinBase.GetFrameData(button, "systemPopupHooks") then
@@ -240,9 +221,6 @@ local function SkinStaticPopup(popup)
 
     local name = popup.GetName and popup:GetName()
     for i = 1, 4 do
-        -- Modern GameDialogMixin exposes popup:GetButton(i) (Blizzard_StaticPopup_Game
-        -- /GameDialog.lua:533); keep the lowercase parentKey + global-name fallbacks for
-        -- legacy popup types that lack the accessor.
         local button = (popup.GetButton and popup:GetButton(i))
             or popup["button" .. i] or (name and _G[name .. "Button" .. i])
         StyleButton(button, "staticPopup")
@@ -251,20 +229,14 @@ local function SkinStaticPopup(popup)
 
     StyleEditBox((popup.GetEditBox and popup:GetEditBox())
         or popup.editBox or (name and _G[name .. "EditBox"]), "staticPopup")
-    -- Single canonical walk faces every fontstring (incl. nested) and applies the
-    -- near-white chrome color (was a separate StyleFrameText top-level pass).
     SkinBase.SkinFrameText(popup, { recurse = true, chrome = true, color = { 0.9, 0.9, 0.9, 1 } })
 
-    -- GameDialogMixin:SetupText re-SetFontObject's SubText/Text on every show; lock
-    -- so the QUI face re-applies after each Blizzard re-assert (not only per OnShow).
     if popup.SubText then SkinBase.LockFontObject(popup.SubText, { fontOnly = true }) end
     if popup.Text then SkinBase.LockFontObject(popup.Text, { fontOnly = true }) end
 
     if popup.UpdateRecapButton and not SkinBase.GetFrameData(popup, "systemPopupRecapHooked") then
         SkinBase.SetFrameData(popup, "systemPopupRecapHooked", true)
         hooksecurefunc(popup, "UpdateRecapButton", function(self)
-            -- Resolve buttons the SAME way the main loop does (lowercase parentKey may
-            -- not exist on modern popups; fall back to the global capital-B name).
             local recapName = self.GetName and self:GetName()
             for i = 1, 4 do
                 RefreshButtonState(self["button" .. i] or (recapName and _G[recapName .. "Button" .. i]))
@@ -287,12 +259,6 @@ local function HookStaticPopups()
     return true
 end
 
--- isCompositorMenu: the frame belongs to Blizzard's modern Menu manager, whose
--- FontStrings are Compositor-managed and disallow SetFont. Reading or calling
--- SetFont on them reports "Use of function 'SetFont' is disallowed" via assertsafe
--- (which routes to the error handler and does NOT throw, so pcall can't suppress
--- it). For those menus we skin the frame/backdrop only and leave their text alone;
--- legacy DropDownList fontstrings are not Compositor-managed and still get the font.
 local function SkinContextMenuFrame(frame, isCompositorMenu)
     if not frame or IsForbidden(frame) or not ContextMenusEnabled() then return end
 
@@ -317,11 +283,7 @@ local function SkinContextMenuFrame(frame, isCompositorMenu)
     if backdrop then
         backdrop:SetFrameLevel(math.max(0, SafeFrameLevel(frame) - 1))
     end
-    -- Compositor menus lock SetFont; skin frame/backdrop only (see note above).
     if not isCompositorMenu then
-        -- Legacy DropDownList menu entries are Buttons whose template declares a
-        -- HighlightFont OBJECT the engine swaps on hover (and a DisabledFont when
-        -- greyed) with NO setter call; driving the button font objects is the durable fix.
         if SkinBase.ApplyButtonFontObjectsDeep then
             SkinBase.ApplyButtonFontObjectsDeep(frame, 3)
         end
@@ -445,10 +407,4 @@ local function InstallStartupHooks()
     return startupHooksComplete
 end
 
--- This module's own ADDON_LOADED never reliably fires under eager LOD (the addon
--- is force-loaded during core init, so a self-registered ADDON_LOADED handler is
--- dead). Install via ns.WhenLoggedIn, which runs immediately because PLAYER_LOGIN
--- has already fired by the time this module loads. InstallStartupHooks is
--- idempotent. ns.WhenLoggedIn is nil only in the headless test harness, where the
--- old self-ADDON_LOADED registration was equally inert.
 if ns.WhenLoggedIn then ns.WhenLoggedIn(InstallStartupHooks) end

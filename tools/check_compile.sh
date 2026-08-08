@@ -14,7 +14,9 @@
 # QUI Lua file under 5.1.
 #
 # Vendored framexml/api-docs corpora are excluded (reference-only, never
-# loaded in-game). Shipped libs/ ARE compiled — in a second pass that strips
+# loaded in-game), as is a project-local .luarocks/ tree: CI installs luacheck
+# into the workspace, and luacheck vendors a Lua 5.3-only sha1 backend that
+# luac5.1 cannot parse. Shipped libs/ ARE compiled — in a second pass that strips
 # the UTF-8 BOMs stock luac rejects (WoW's loader strips them itself) — since
 # a vendored lib that fails 5.1 limits crashes in-game exactly like our code;
 # libs were previously exempt from every gate, which let a shipped
@@ -40,7 +42,7 @@ while IFS= read -r f; do
     echo "  ${out#*: }"
     fail=1
   fi
-done < <(git ls-files --cached --others --exclude-standard '*.lua' | grep -viE '^libs/|^Libs/|^tests/framexml/|^tests/api-docs/')
+done < <(git ls-files --cached --others --exclude-standard '*.lua' | grep -viE '^libs/|^Libs/|^tests/framexml/|^tests/api-docs/|^\.luarocks/')
 
 libcount=0
 while IFS= read -r f; do

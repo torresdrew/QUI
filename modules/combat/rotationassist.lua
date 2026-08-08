@@ -1,17 +1,11 @@
--- qui_rotationassist.lua
--- Displays a standalone icon showing Blizzard's next recommended ability
--- Uses C_AssistedCombat API (Starter Build / Rotation Helper)
-
-local ADDON_NAME, QUI = ... -- QUI = private addon namespace (the table other files call "ns"), not the AceAddon global
-local ns = QUI  -- alias so localization keys use the extractor-recognized ns.L[...] form
+local ADDON_NAME, QUI = ...
+local ns = QUI
 local LSM = QUI.LSM
 
 local GetCore = QUI.Helpers.GetCore
 local IsSecretValue = QUI.Helpers.IsSecretValue
 local ApplyCooldownFromSpell = QUI.Helpers.ApplyCooldownFromSpell
 
--- CJK-safe font setter: preserves the roman font and only adds CJK fallback
--- members where available, degrading to plain SetFont otherwise.
 local function CJKFont(fs, p, s, f)
     if ns.Helpers and ns.Helpers.ApplyFontWithFallback then
         ns.Helpers.ApplyFontWithFallback(fs, p, s, f)
@@ -20,7 +14,6 @@ local function CJKFont(fs, p, s, f)
     end
 end
 
--- Locals for performance
 local GetTime = GetTime
 local InCombatLockdown = InCombatLockdown
 local UnitCanAttack = UnitCanAttack
@@ -31,38 +24,25 @@ local pcall = pcall
 local ipairs = ipairs
 local C_Timer = C_Timer
 
--- No polling ticker — updates are event-driven via the centralized
--- OnSetActionSpell EventRegistry callback in actionbars.lua which calls
--- RotationAssistIcon.Update, plus direct DoUpdate() calls on
--- PLAYER_TARGET_CHANGED and combat state transitions.
-
--- Icon state colors
 local COLOR_USABLE = { 1, 1, 1 }
 local COLOR_UNUSABLE = { 0.4, 0.4, 0.4 }
 local COLOR_NO_MANA = { 0.5, 0.5, 1 }
 local COLOR_OUT_OF_RANGE = { 0.8, 0.2, 0.2 }
 
--- Frame references
 local iconFrame = nil
 local isInitialized = false
 local lastSpellID = nil
 local inCombat = false
 
--- GCD spell ID (standard global cooldown reference)
 local GCD_SPELL_ID = 61304
 
--- Forward declarations
 local CreateIconFrame, RefreshIconFrame, UpdateIconDisplay, UpdateVisibility
-
---------------------------------------------------------------------------------
--- Keybind Lookup (uses shared formatter from keybinds.lua)
---------------------------------------------------------------------------------
 
 local function FormatKeybind(keybind)
     if QUI.FormatKeybind then
         return QUI.FormatKeybind(keybind)
     end
-    return keybind -- fallback if not available
+    return keybind
 end
 
 local function GetKeybindForSpell(spellID)
@@ -70,12 +50,9 @@ local function GetKeybindForSpell(spellID)
 
     local keybind = nil
 
-    -- Use QUI.Keybinds if available (from keybinds.lua)
     if QUI.Keybinds and QUI.Keybinds.GetKeybindForSpell then
         keybind = QUI.Keybinds.GetKeybindForSpell(spellID)
 
-        -- If no keybind found, try finding the BASE spell (for proc abilities)
-        -- e.g., Thunder Blast -> Thunder Clap
         if not keybind then
             local ok, baseSpellID = pcall(function()
                 return FindBaseSpellByID and FindBaseSpellByID(spellID)
@@ -85,7 +62,6 @@ local function GetKeybindForSpell(spellID)
             end
         end
 
-        -- Also try C_Spell.GetOverrideSpell in reverse
         if not keybind then
             local ok, overrideID = pcall(function()
                 return C_Spell.GetOverrideSpell and C_Spell.GetOverrideSpell(spellID)
@@ -98,13 +74,11 @@ local function GetKeybindForSpell(spellID)
         if keybind then return keybind end
     end
 
-    -- Fallback: Find action buttons with this spell (try base spell too)
     local baseSpellID = FindBaseSpellByID and FindBaseSpellByID(spellID) or spellID
     local slots = C_ActionBar.FindSpellActionButtons(baseSpellID)
 
     if slots and #slots > 0 then
         for _, slot in ipairs(slots) do
-            -- Try to get keybind for this action slot
             local actionName = "ACTIONBUTTON" .. slot
             if slot > 12 and slot <= 24 then
                 actionName = "ACTIONBUTTON" .. (slot - 12)
@@ -127,10 +101,6 @@ local function GetKeybindForSpell(spellID)
 
     return nil
 end
-
---------------------------------------------------------------------------------
--- Database Access
---------------------------------------------------------------------------------
 
 local function GetDB()
     local core = GetCore()
@@ -165,14 +135,9 @@ local function ApplyIconFrameLayering(frame, db)
     end
 end
 
---------------------------------------------------------------------------------
--- Icon Frame Creation
---------------------------------------------------------------------------------
-
 CreateIconFrame = function()
     if iconFrame then return iconFrame end
 
-    -- Main frame
     iconFrame = CreateFrame("Button", "QUI_RotationAssistIcon", UIParent, "BackdropTemplate")
     iconFrame:SetSize(56, 56)
     iconFrame:SetPoint("CENTER", UIParent, "CENTER", 0, -180)
@@ -182,13 +147,11 @@ CreateIconFrame = function()
     iconFrame:SetMovable(true)
     iconFrame:RegisterForDrag("LeftButton")
 
-    -- Icon texture (inset by 2px default for border visibility)
     iconFrame.icon = iconFrame:CreateTexture(nil, "ARTWORK")
     iconFrame.icon:SetPoint("TOPLEFT", 2, -2)
     iconFrame.icon:SetPoint("BOTTOMRIGHT", -2, 2)
-    iconFrame.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92) -- Crop edges
+    iconFrame.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
 
-    -- Cooldown frame (matches icon inset)
     iconFrame.cooldown = CreateFrame("Cooldown", nil, iconFrame, "CooldownFrameTemplate")
     iconFrame.cooldown:SetPoint("TOPLEFT", 2, -2)
     iconFrame.cooldown:SetPoint("BOTTOMRIGHT", -2, 2)
@@ -197,7 +160,6 @@ CreateIconFrame = function()
     iconFrame.cooldown:SetSwipeColor(0, 0, 0, 0.8)
     iconFrame.cooldown:SetHideCountdownNumbers(true)
 
-    -- Keybind text
     iconFrame.keybindText = iconFrame:CreateFontString(nil, "OVERLAY")
     CJKFont(iconFrame.keybindText, QUI.Helpers.GetGeneralFont(), 13, QUI.Helpers.GetGeneralFontOutline())
     iconFrame.keybindText:SetPoint("BOTTOMRIGHT", iconFrame, "BOTTOMRIGHT", -2, 2)
@@ -205,7 +167,6 @@ CreateIconFrame = function()
     iconFrame.keybindText:SetShadowOffset(1, -1)
     iconFrame.keybindText:SetShadowColor(0, 0, 0, 1)
 
-    -- Drag handlers
     iconFrame:SetScript("OnDragStart", function(self)
         local db = GetDB()
         local isAnchoredOverride = _G.QUI_HasFrameAnchor and _G.QUI_HasFrameAnchor("rotationAssistIcon")
@@ -217,12 +178,10 @@ CreateIconFrame = function()
     iconFrame:SetScript("OnDragStop", function(self)
         self:StopMovingOrSizing()
 
-        -- Frame anchoring owns position while an override is active.
         if _G.QUI_HasFrameAnchor and _G.QUI_HasFrameAnchor("rotationAssistIcon") then
             return
         end
 
-        -- Save position relative to screen center
         local db = GetDB()
         if db then
             local selfX, selfY = self:GetCenter()
@@ -240,15 +199,10 @@ CreateIconFrame = function()
         end
     end)
 
-    -- Hide initially
     iconFrame:Hide()
 
     return iconFrame
 end
-
---------------------------------------------------------------------------------
--- Icon Display Update
---------------------------------------------------------------------------------
 
 UpdateIconDisplay = function(spellID)
     if not iconFrame then return end
@@ -259,36 +213,22 @@ UpdateIconDisplay = function(spellID)
         return
     end
 
-    -- spellID may be secret during combat.  All downstream calls use
-    -- C-side functions that accept secrets natively.  The `== 0` check
-    -- is gated on IsSecretValue first — comparing a secret userdata to
-    -- a number taints the comparison even when the branch result is
-    -- correct.  Secret userdata is never 0 by definition.
     local isEmpty = (spellID == nil) or
         (not IsSecretValue(spellID) and spellID == 0)
     if isEmpty then
-        -- No recommendation right now.  If the frame is already visible
-        -- (mid-combat), keep showing the last spell rather than hiding
-        -- and re-showing every time the API has a brief gap.
         if not iconFrame:IsShown() then
             UpdateVisibility()
         end
         return
     end
 
-    -- We have a spell - make sure frame is visible (respecting visibility mode)
     UpdateVisibility()
 
-    -- Texture: C_Spell.GetSpellTexture + SetTexture are both C-side.
     local texOk, texture = pcall(C_Spell.GetSpellTexture, spellID)
     if texOk and texture then
         iconFrame.icon:SetTexture(texture)
     end
 
-    -- Usability / range tinting.
-    -- C_Spell.IsSpellUsable and IsSpellInRange can return secret booleans.
-    -- Secret userdata is always truthy, so use strict == true checks to
-    -- avoid misclassification (e.g., secret-false → truthy → wrong branch).
     local usableOk, isUsable, notEnoughMana = pcall(C_Spell.IsSpellUsable, spellID)
     if not usableOk then isUsable, notEnoughMana = true, false end
     isUsable = (isUsable == true)
@@ -315,10 +255,6 @@ UpdateIconDisplay = function(spellID)
     end
     iconFrame.icon:SetVertexColor(color[1], color[2], color[3], 1)
 
-    -- GCD cooldown swipe is handled separately by UpdateGCDCooldown()
-    -- (triggered by SPELL_UPDATE_COOLDOWN events for responsiveness)
-
-    -- Update keybind text
     if db.showKeybind then
         local keybind = GetKeybindForSpell(spellID)
         iconFrame.keybindText:SetText(keybind or "")
@@ -327,10 +263,6 @@ UpdateIconDisplay = function(spellID)
         iconFrame.keybindText:Hide()
     end
 end
-
---------------------------------------------------------------------------------
--- GCD Cooldown Update (event-driven for responsiveness)
---------------------------------------------------------------------------------
 
 local function UpdateGCDCooldown()
     if not iconFrame or not iconFrame.cooldown then return end
@@ -341,13 +273,9 @@ local function UpdateGCDCooldown()
         return
     end
 
-    -- Only show GCD swipe when the icon itself is visible
     if not iconFrame:IsShown() then return end
 
     local cd = iconFrame.cooldown
-    -- ignoreGCD=false: we ARE the GCD swipe. With ignoreGCD=true (the helper
-    -- default) the API returns nil for spell 61304 because the GCD has no
-    -- spell-specific cooldown when the GCD is excluded from the query.
     if ApplyCooldownFromSpell(cd, GCD_SPELL_ID, nil, false) then
         cd:Show()
         return
@@ -356,17 +284,11 @@ local function UpdateGCDCooldown()
     cd:Clear()
 end
 
---------------------------------------------------------------------------------
--- Visibility Management
---------------------------------------------------------------------------------
-
--- Cache IsAvailable() result — spec/talent changes are the only triggers,
--- and we re-evaluate on PLAYER_SPECIALIZATION_CHANGED / TRAIT_CONFIG_UPDATED.
 local _isAvailable = nil
 
 local function RefreshAvailability()
     if not (C_AssistedCombat and C_AssistedCombat.IsAvailable) then
-        _isAvailable = true  -- Pre-API client: assume available, let other gates decide.
+        _isAvailable = true
         return
     end
     local ok, available = pcall(C_AssistedCombat.IsAvailable)
@@ -406,10 +328,6 @@ UpdateVisibility = function()
     end
 end
 
---------------------------------------------------------------------------------
--- Ticker-based Update (Performance: runs only when needed, not every frame)
---------------------------------------------------------------------------------
-
 local function DoUpdate(overrideSpellID)
     local db = GetDB()
     if not db or not db.enabled then
@@ -418,7 +336,6 @@ local function DoUpdate(overrideSpellID)
 
     local spellID = overrideSpellID
     if not spellID then
-        -- Fallback: query the API if no override provided
         if not C_AssistedCombat or not C_AssistedCombat.GetNextCastSpell then
             return
         end
@@ -426,19 +343,12 @@ local function DoUpdate(overrideSpellID)
         if ok then spellID = sid end
     end
 
-    -- Secret spellID: pass directly to C-side display functions (texture,
-    -- tint, keybind).  Skip the equality dedup — comparing secret to
-    -- non-secret taints, and the update is cheap. Probe unconditionally:
-    -- `spellID and` would itself throw on a secret truth-test.
     local isSecret = IsSecretValue(spellID)
     if isSecret then
         UpdateIconDisplay(spellID)
         return
     end
 
-    -- Resolve talent-transformed display spell.  Blizzard may recommend a
-    -- base spell ID while talents have replaced it with an override.
-    -- The texture, keybind, and usability should reflect the override.
     if spellID and C_Spell and C_Spell.GetOverrideSpell then
         local okOvr, overrideID = ns.SafeCall("chain-next", C_Spell.GetOverrideSpell, spellID)
         if okOvr and overrideID and overrideID ~= spellID then
@@ -446,17 +356,11 @@ local function DoUpdate(overrideSpellID)
         end
     end
 
-    -- Non-secret: dedup by value
     if spellID ~= lastSpellID then
         lastSpellID = spellID
         UpdateIconDisplay(spellID)
     end
 end
-
-
---------------------------------------------------------------------------------
--- Frame Refresh (Apply Settings)
---------------------------------------------------------------------------------
 
 RefreshIconFrame = function()
     if not iconFrame then
@@ -476,12 +380,9 @@ RefreshIconFrame = function()
         return
     end
 
-    -- Size (guard with pcall to prevent secret value crash when backdrop recalculates)
-    -- SetSize triggers backdrop texture coordinate recalculation which can fail during combat
     local size = db.iconSize or 56
     ns.SafeCallMethod("best-effort-style", iconFrame, "SetSize", size, size)
 
-    -- Position (manual only when no frame-anchoring override is active)
     local isAnchoredOverride = _G.QUI_HasFrameAnchor and _G.QUI_HasFrameAnchor("rotationAssistIcon")
     if not isAnchoredOverride then
         iconFrame:ClearAllPoints()
@@ -490,7 +391,6 @@ RefreshIconFrame = function()
         iconFrame:SetPoint("CENTER", UIParent, "CENTER", posX, posY)
     end
 
-    -- Border (uses SafeSetBackdrop to avoid secret value errors during combat)
     local inset = 0
     local core = GetCore()
     local SafeSetBackdrop = core and core.SafeSetBackdrop
@@ -500,13 +400,11 @@ RefreshIconFrame = function()
         local thickness = db.borderThickness or 2
         inset = thickness
 
-        -- Use backdrop for border
         local backdropInfo = {
             edgeFile = "Interface\\Buttons\\WHITE8x8",
             edgeSize = thickness,
         }
         if not db.isLocked then
-            -- Green border when unlocked
             if SafeSetBackdrop then
                 SafeSetBackdrop(iconFrame, backdropInfo, { 0, 1, 0, 1 })
             else
@@ -532,7 +430,6 @@ RefreshIconFrame = function()
         end
     end
 
-    -- Adjust icon and cooldown inset based on border
     iconFrame.icon:ClearAllPoints()
     iconFrame.icon:SetPoint("TOPLEFT", inset, -inset)
     iconFrame.icon:SetPoint("BOTTOMRIGHT", -inset, inset)
@@ -540,19 +437,14 @@ RefreshIconFrame = function()
     iconFrame.cooldown:SetPoint("TOPLEFT", inset, -inset)
     iconFrame.cooldown:SetPoint("BOTTOMRIGHT", -inset, inset)
 
-    -- Update cooldown swipe visibility based on setting
     iconFrame.cooldown:SetDrawSwipe(db.cooldownSwipeEnabled)
     if not db.cooldownSwipeEnabled then
         iconFrame.cooldown:Hide()
     end
 
-    -- Mouse stays enabled so tooltips/hover work; drag gating is enforced
-    -- in OnDragStart, which inspects db.isLocked at drag-start time.
     iconFrame:EnableMouse(true)
 
-    -- Keybind text styling
     if db.showKeybind then
-        -- Get font: use keybindFont if set, otherwise fall back to general.font
         local fontName = db.keybindFont
         if not fontName then
             if core and core.db and core.db.profile and core.db.profile.general then
@@ -567,7 +459,6 @@ RefreshIconFrame = function()
         local color = db.keybindColor or { 1, 1, 1, 1 }
         iconFrame.keybindText:SetTextColor(color[1], color[2], color[3], color[4] or 1)
 
-        -- Anchor position
         local anchor = db.keybindAnchor or "BOTTOMRIGHT"
         local offsetX = db.keybindOffsetX or -2
         local offsetY = db.keybindOffsetY or 2
@@ -575,16 +466,9 @@ RefreshIconFrame = function()
         iconFrame.keybindText:SetPoint(anchor, iconFrame, anchor, offsetX, offsetY)
     end
 
-    -- Force a full visibility + display recheck with the new settings.
-    -- Reset lastSpellID so the next DoUpdate() treats the current spell as
-    -- "changed" and runs UpdateIconDisplay → UpdateVisibility.
     lastSpellID = nil
     DoUpdate()
 end
-
---------------------------------------------------------------------------------
--- Event Handling
---------------------------------------------------------------------------------
 
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
@@ -596,17 +480,6 @@ eventFrame:RegisterEvent("TRAIT_CONFIG_UPDATED")
 eventFrame:RegisterEvent("SPELL_UPDATE_COOLDOWN")
 eventFrame:RegisterEvent("ACTIONBAR_UPDATE_COOLDOWN")
 
--- Assisted Combat dispatch (self-owned).
--- Two complementary signals catch the recommendation change:
---   1. EventRegistry "AssistedCombatManager.OnSetActionSpell" — fires when
---      a bar button hosts the assist slot.  Under soft targeting this
---      fires every OnUpdate frame; DoUpdate's lastSpellID + IsSecretValue
---      gate collapses no-op invocations.
---   2. hooksecurefunc on AssistedCombatManager.UpdateAllAssistedHighlight-
---      FramesForSpell — catches spell changes when NO bar button hosts
---      the assist slot (the EventRegistry event doesn't reliably fire in
---      that case).  Passes the raw spellID through — secret values are
---      handled natively by DoUpdate's C-side downstream.
 if EventRegistry and EventRegistry.RegisterCallback then
     EventRegistry:RegisterCallback("AssistedCombatManager.OnSetActionSpell", function()
         if not (C_AssistedCombat and C_AssistedCombat.GetNextCastSpell) then return end
@@ -623,7 +496,6 @@ if AssistedCombatManager and AssistedCombatManager.UpdateAllAssistedHighlightFra
     end)
 end
 
--- Shared login/catch-up init body (PEW and LOD WhenLoggedIn run it identically).
 local function InitOrCatchUp()
     C_Timer.After(0.5, function()
         if not isInitialized then
@@ -665,19 +537,15 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         end
     elseif event == "PLAYER_TARGET_CHANGED" then
         UpdateVisibility()
-        -- Force spell update on target change
         lastSpellID = nil
-        DoUpdate()  -- Immediate update on target change
+        DoUpdate()
     elseif event == "SPELL_UPDATE_COOLDOWN" or event == "ACTIONBAR_UPDATE_COOLDOWN" then
-        -- Skip if icon is hidden (no work needed when not visible)
         if iconFrame and iconFrame:IsShown() then
             UpdateGCDCooldown()
         end
     end
 end)
 
--- LOD catch-up: first PEW already fired before this module loads.
--- QUI.WhenLoggedIn is nil only in the headless test harness.
 if QUI.WhenLoggedIn then
     QUI.WhenLoggedIn(function()
         InitOrCatchUp()
@@ -688,15 +556,11 @@ local function SetupDebugInstrumentation()
     QUI.QUI_PerfRegistry = QUI.QUI_PerfRegistry or {}
     QUI.QUI_PerfRegistry[#QUI.QUI_PerfRegistry + 1] = { name = "RotationAssist", frame = eventFrame }
 end
-if QUI.DebugRegister then -- gate contract: core/debug_gate.lua
+if QUI.DebugRegister then
     QUI.DebugRegister(SetupDebugInstrumentation)
 else
-    SetupDebugInstrumentation() -- standalone test harness: no gate, run eagerly
+    SetupDebugInstrumentation()
 end
-
---------------------------------------------------------------------------------
--- Global Refresh Function
---------------------------------------------------------------------------------
 
 local function RefreshRotationAssistIcon()
     RefreshIconFrame()
@@ -704,14 +568,10 @@ end
 
 _G.QUI_RefreshRotationAssistIcon = RefreshRotationAssistIcon
 
---------------------------------------------------------------------------------
--- Export
---------------------------------------------------------------------------------
-
 QUI.RotationAssistIcon = {
     Refresh = RefreshRotationAssistIcon,
     GetFrame = function() return iconFrame end,
-    Update = DoUpdate,  -- called by centralized OnSetActionSpell callback
+    Update = DoUpdate,
 }
 
 if QUI.Registry then

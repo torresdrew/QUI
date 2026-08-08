@@ -34,7 +34,7 @@ assert(source:find("entry and IsEntryApplicableOnCurrentPlayer(entry)", grouping
 
 local cooldownRenderStart = assert(source:find("if isCooldown and #activeRowNums > 0 then", groupingStart, true),
     "RefreshEntryList should render built-in cooldown rows")
-local customRenderStart = assert(source:find("else\n        -- customBar entries render", cooldownRenderStart, true),
+local customRenderStart = assert(source:find("local reverse = isCustomBar and (db.growDirection", cooldownRenderStart, true),
     "custom/non-row entry rendering should follow built-in cooldown row rendering")
 local cooldownRenderBlock = source:sub(cooldownRenderStart, customRenderStart - 1)
 assert(cooldownRenderBlock:find("Dormant — Not Learned on This Character", 1, true),
@@ -101,7 +101,7 @@ local addStart = assert(source:find("RefreshAddList = function()", 1, true),
 assert(source:find("EntryCountsForCooldownRowCapacity(e)", addStart, true),
     "right-click add row selection should skip dormant entries")
 
-local splitStart = assert(source:find("-- For non-specSpecific", refreshStart, true),
+local splitStart = assert(source:find("local splitDormant = not (isCustomBar and db.specSpecific)", refreshStart, true),
     "RefreshEntryList should document the dormant split for non-row containers")
 assert(source:find("local splitDormant = not (isCustomBar and db.specSpecific)", splitStart, true),
     "aura, bar, and non-spec custom containers should render dormant entries in their own section")

@@ -440,10 +440,6 @@ function FullSurface.BuildDropdownPreviewBlock(parent, options)
     }
 end
 
--- Union bounding box (width, height) of a frame plus all its descendant
--- frames/regions, in screen pixels. Used to size a preview panel to the
--- cell's *actual* extent including icons that hang outside the cell rect.
--- Returns 0,0 if nothing is laid out yet (caller should retry next frame).
 function FullSurface.MeasureRenderedExtent(root)
     if not root then return 0, 0 end
     local L, R, T, B
@@ -451,13 +447,6 @@ function FullSurface.MeasureRenderedExtent(root)
         if not region or not region.GetLeft or not region.IsShown or not region:IsShown() then return end
         local l, r, t, b = region:GetLeft(), region:GetRight(), region:GetTop(), region:GetBottom()
         if not (l and r and t and b) then return end
-        -- Normalize to absolute screen pixels. GetLeft/Right/Top/Bottom are reported
-        -- in each region's OWN coordinate space (screen px / effective scale), so a
-        -- child with SetScale ~= 1 (e.g. a private-aura/aura count fontstring scaled
-        -- by its textScale) reports coordinates that are NOT comparable to its
-        -- unscaled siblings — a 0.5-scaled child reports 2x coordinates and looks a
-        -- screen away. Multiply by effective scale so every contributor is compared
-        -- in true screen pixels.
         local s = (region.GetEffectiveScale and region:GetEffectiveScale()) or 1
         if s <= 0 then s = 1 end
         l, r, t, b = l * s, r * s, t * s, b * s
@@ -470,10 +459,6 @@ function FullSurface.MeasureRenderedExtent(root)
     local function walk(f)
         if f.GetChildren then
             for _, c in ipairs({ f:GetChildren() }) do
-                -- Skip hidden subtrees: a hidden frame's children keep their own
-                -- IsShown()==true (e.g. a hidden icon's cooldown/count), so
-                -- descending would keep the extent grown after the parent is
-                -- hidden (the panel would never shrink back on toggle-off).
                 if not (c.IsShown and not c:IsShown()) then
                     acc(c)
                     walk(c)
@@ -486,33 +471,28 @@ function FullSurface.MeasureRenderedExtent(root)
     end
     walk(root)
     if L == nil then return 0, 0 end
-    -- Convert the screen-pixel extent back into root's coordinate space (the units
-    -- the docked panel sizes in). For unscaled content this is identity.
     local rootScale = (root.GetEffectiveScale and root:GetEffectiveScale()) or 1
     if rootScale <= 0 then rootScale = 1 end
     return (R - L) / rootScale, (T - B) / rootScale
 end
 
--- Reusable preview panel docked to the right edge of the options window.
--- opts: { gui, window?, title?, gap?, pad?, headerHeight?, minWidth?, idSuffix? }
--- Returns: { frame, contentHost, Show, Hide, SetTitle, Resize }
 function FullSurface.CreateDockedPreviewPanel(opts)
     opts = opts or {}
     local gui = opts.gui or (_G.QUI and _G.QUI.GUI)
-    -- Prefer gui.MainFrame over the _G.QUI_Options global: the global can be left
-    -- stale (pointing at an old, torn-down window) after a theme-change rebuild.
     local window = opts.window or (gui and gui.MainFrame) or _G.QUI_Options
     if not gui or not window then return nil end
 
-    -- Session-only UI state. The caller owns this table and passes the SAME
-    -- table across theme rebuilds so collapse/scale survive; `detached` is
-    -- deliberately reset every build (a fresh window starts docked).
+    local SCALE_MIN = tonumber(opts.scaleMin) or 0.4
+    local SCALE_MAX = tonumber(opts.scaleMax) or 1.25
+    if SCALE_MAX < SCALE_MIN then SCALE_MAX = SCALE_MIN end
+
     local session = opts.sessionState or {}
-    if session.scale == nil then session.scale = 1 end
+    if session.scale == nil then
+        local seed = tonumber(opts.defaultScale) or 1
+        session.scale = math.max(SCALE_MIN, math.min(SCALE_MAX, seed))
+    end
     if session.collapsed == nil then session.collapsed = false end
     session.detached = false
-
-    local SCALE_MIN, SCALE_MAX = 0.4, 1.25
 
     local UIKit = ns.UIKit
     local C = gui.Colors or {}
@@ -525,23 +505,9 @@ function FullSurface.CreateDockedPreviewPanel(opts)
     local STRIP_H = opts.controlStripHeight or 0
     local MIN_W = opts.minWidth or 140
 
-    -- Anonymous (no global name): the host window is torn down + recreated on
-    -- theme change, so this panel is rebuilt against the new window; a fixed
-    -- global name would collide across rebuilds.
     local panel = CreateFrame("Frame", nil, window, "BackdropTemplate")
     panel:SetFrameStrata("FULLSCREEN_DIALOG")
-    -- The main window is itself top-level and raises when interacted with.
-    -- Without an independent top-level panel, clicking ordinary settings
-    -- controls can promote their window tree over a detached preview even
-    -- though the preview started at a higher frame level.
     panel:SetToplevel(true)
-    -- The panel can be dragged ON TOP of the settings window, so it has to
-    -- outrank everything that window hosts. A +5 offset does not: the sub-tab
-    -- bar is window+5 (tie), the resize handle window+10, sticky strips
-    -- scrollFrame+5, and every nesting step of a widget tree adds a level of
-    -- its own. +40 clears the deepest in-window stack with headroom while
-    -- staying under the confirm dialog (UIParent child, SetToplevel + Raise()
-    -- on show, so it always wins its strata).
     local LEVEL_OFFSET = 40
     local function RaiseAboveWindow()
         panel:SetFrameLevel((window:GetFrameLevel() or 500) + LEVEL_OFFSET)
@@ -551,13 +517,7 @@ function FullSurface.CreateDockedPreviewPanel(opts)
     panel:SetClampedToScreen(true)
     panel:SetSize(MIN_W + PAD * 2, HEADER_H + PAD * 2 + 40)
     panel:Hide()
-    -- Themed pixel-perfect backdrop matching QUI settings panels (the central
-    -- kit's 1px-edge pattern, C.bg/C.border with their own alpha). The kit
-    -- persists colors + re-applies on scale change so the border stays a single
-    -- physical pixel and colors survive a refresh.
     local function ApplyBackdrop()
-        -- If the host window was torn down (theme change), this panel is an
-        -- orphan pending rebuild; don't touch a dead frame on scale refresh.
         if not panel:GetParent() then return end
         if ns.SkinBase and ns.SkinBase.ApplyPixelBackdrop then
             ns.SkinBase.ApplyPixelBackdrop(panel, 1, true, false,
@@ -570,9 +530,6 @@ function FullSurface.CreateDockedPreviewPanel(opts)
         UIKit.RegisterScaleRefresh(panel, "dockedPreviewPanel" .. (opts.idSuffix or ""), ApplyBackdrop)
     end
 
-    -- Softer content-area look matching the main settings window's content pane:
-    -- a faint white wash + a horizontal accent-glow gradient layered over the
-    -- dark backdrop (inset 1px to stay inside the pixel border).
     local contentBg = C.bgContent
     if contentBg then
         local wash = panel:CreateTexture(nil, "BACKGROUND", nil, 1)
@@ -602,11 +559,6 @@ function FullSurface.CreateDockedPreviewPanel(opts)
         panel._accentGlow = glow
     end
 
-    -- Title-bar chrome, mirroring the main settings window's own title row
-    -- (accent-light title text + a 1px border-colored separator under it) so
-    -- the strip reads as a grab handle. Regions live on `panel`, NOT on the
-    -- `header` frame below: child-frame regions draw above ALL parent regions
-    -- regardless of layer, so a band on `header` would paint over the title.
     local HEADER_BAND_H = HEADER_H + PAD
     local bandColor = C.bgSidebar or { 0, 0, 0, 0.25 }
     local bandHover = C.accentFaint or { 1, 1, 1, 0.07 }
@@ -621,7 +573,6 @@ function FullSurface.CreateDockedPreviewPanel(opts)
     SetBandColor(bandColor)
     panel._headerBand = headerBand
 
-    -- Separator under the band, inset like the main window's title separator.
     local headerSep = panel:CreateTexture(nil, "ARTWORK", nil, 1)
     headerSep:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD, -HEADER_BAND_H)
     headerSep:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -PAD, -HEADER_BAND_H)
@@ -629,23 +580,13 @@ function FullSurface.CreateDockedPreviewPanel(opts)
     headerSep:SetColorTexture(border[1], border[2], border[3], border[4] or 1)
     panel._headerSep = headerSep
 
-    -- QUI settings font (Quazii) via CreateLabel. Title takes the main
-    -- window's accentLight title color; the header buttons stay C.text.
     local titleColor = C.text or { 1, 1, 1, 1 }
     local title = gui:CreateLabel(panel, opts.title or ns.L["Preview"], 13,
         C.accentLight or titleColor, "TOPLEFT", PAD, -PAD)
     title:SetJustifyH("LEFT")
 
-    -- Forward-declared so the header button closures below can close over it
-    -- as an upvalue; a `local P` declared only at the bottom of the function
-    -- (where the returned table is built) would leave those closures reading
-    -- the *global* P instead (Lua only captures locals already in scope when
-    -- the closure is created -- this is lexical scoping, not late dispatch).
     local P
 
-    -- Header band: mouse-enabled drag target spanning the title row. A
-    -- transparent frame does not occlude the title fontstring (child frames
-    -- render above parent regions), but it does capture drag.
     panel:SetMovable(true)
     local header = CreateFrame("Frame", nil, panel)
     header:SetPoint("TOPLEFT", 0, 0)
@@ -654,7 +595,7 @@ function FullSurface.CreateDockedPreviewPanel(opts)
     header:EnableMouse(true)
     header:RegisterForDrag("LeftButton")
 
-    local UpdateHeaderButtons, ApplySize, ApplyCollapsedSize, grip -- forward decls
+    local UpdateHeaderButtons, ApplySize, ApplyCollapsedSize, grip
 
     header:SetScript("OnDragStart", function()
         session.detached = true
@@ -665,15 +606,9 @@ function FullSurface.CreateDockedPreviewPanel(opts)
     header:SetScript("OnDragStop", function()
         panel:StopMovingOrSizing()
     end)
-    -- Accent-tint the band on hover: the second half of the drag affordance
-    -- (the separator says "title bar", the hover says "this one is live").
     header:SetScript("OnEnter", function() SetBandColor(bandHover) end)
     header:SetScript("OnLeave", function() SetBandColor(bandColor) end)
 
-    -- Header buttons use the canonical themed button (pixel border + hover
-    -- wash + press nudge) so "Dock" reads as a button instead of loose text.
-    -- Fallback keeps the old text glyph for hosts without the kit (headless
-    -- tests, and any load order where core/uikit.lua has not run yet).
     local BTN_H = 18
     local function MakeHeaderButton(text, width, onClick)
         if UIKit and UIKit.CreateButton then
@@ -681,7 +616,7 @@ function FullSurface.CreateDockedPreviewPanel(opts)
                 text = text, width = width, height = BTN_H,
                 onClick = onClick, variant = "ghost", fontSize = 10,
             })
-            b._label = b.text          -- keep the pre-kit accessor working
+            b._label = b.text
             return b
         end
         local b = CreateFrame("Button", nil, header)
@@ -702,11 +637,6 @@ function FullSurface.CreateDockedPreviewPanel(opts)
     end)
     dockBtn:SetPoint("TOPRIGHT", collapseBtn, "TOPLEFT", -4, 0)
 
-    -- Collapsed footprint: the panel shrinks to its title strip in BOTH axes,
-    -- so a minimized preview is a small pill, not a full-width bar. Width is
-    -- measured from the LIVE title string plus whichever header buttons are
-    -- currently shown (Dock only exists while detached), so it is recomputed
-    -- on title change and on detach/redock -- not once at collapse time.
     local COLLAPSED_MIN_W = 96
     ApplyCollapsedSize = function()
         local titleW = (title.GetStringWidth and title:GetStringWidth()) or 0
@@ -723,13 +653,9 @@ function FullSurface.CreateDockedPreviewPanel(opts)
         dockBtn:SetShown(session.detached and true or false)
         collapseBtn._label:SetText(session.collapsed and "+" or "–")
         grip:SetShown(not session.collapsed)
-        -- Showing/hiding Dock changes the strip's minimum width.
         if session.collapsed then ApplyCollapsedSize() end
     end
 
-    -- Optional control strip (filter chips, raid-size slider) hosted by the
-    -- caller. Reserved as a fixed band so the auto-resize math (which measures
-    -- only the content host) never overlaps it.
     local controlStrip
     if STRIP_H > 0 then
         controlStrip = CreateFrame("Frame", nil, panel)
@@ -742,29 +668,15 @@ function FullSurface.CreateDockedPreviewPanel(opts)
     content:SetPoint("TOPLEFT", PAD, -(PAD + HEADER_H + STRIP_H))
     content:SetPoint("BOTTOMRIGHT", -PAD, PAD)
 
-    -- Inner scaled host: the preview driver parents its mock roster AND its
-    -- animation ticker here (exposed as P.contentHost, the driver-facing
-    -- contract). SetScale here scales the whole roster; `content` stays an
-    -- unscaled clipping-free wrapper whose Show/Hide drives collapse (hidden
-    -- frames get no OnUpdate, pausing the driver ticker for free).
     local scaleHost = CreateFrame("Frame", nil, content)
     scaleHost:SetPoint("TOPLEFT", content, "TOPLEFT", 0, 0)
     scaleHost:SetSize(1, 1)
     scaleHost:SetScale(session.scale or 1)
 
-    -- Extra breathing room (screen px) kept between the panel and the screen
-    -- edge when we nudge the window left to make the right dock fit.
     local EDGE_MARGIN = 8
 
     local function Reflow()
-        -- While the user has dragged the panel away, every auto-anchor
-        -- trigger (panel OnShow, window resize/move) must leave it alone.
         if session.detached then return end
-        -- All edge math is done in SCREEN pixels: the window carries its own
-        -- scale (configPanelScale) so its GetLeft/GetRight are in window units,
-        -- while UIParent's are in UIParent units -- multiply each by its
-        -- effective scale before comparing. The panel is a child of the window,
-        -- so it shares the window scale (GAP/width are window units).
         local ws = window:GetEffectiveScale() or 1
         local us = UIParent:GetEffectiveScale() or 1
         if ws <= 0 then ws = 1 end
@@ -779,12 +691,6 @@ function FullSurface.CreateDockedPreviewPanel(opts)
 
         panel:ClearAllPoints()
 
-        -- Top-aligned on the window's side edge: the preview can be tall, so dock
-        -- its top to the window's top rather than centering it vertically.
-        -- Priority: dock right if it fits -> flip to the left if THAT fits (so
-        -- dragging the window toward the right edge moves the preview to the left
-        -- instead of overlapping or shoving the window) -> only as a last resort,
-        -- when neither side fits, nudge the window left to make room on the right.
         local neededRightPx = winRightPx + gapPx + panelWpx
         if neededRightPx <= screenRightPx then
             panel:SetPoint("TOPLEFT", window, "TOPRIGHT", GAP, 0)
@@ -797,35 +703,30 @@ function FullSurface.CreateDockedPreviewPanel(opts)
             return
         end
 
-        -- Neither side fits at the window's current position. Shift the window
-        -- left just enough (+ a small margin) for the right dock to fit, if the
-        -- window still clears the left edge afterwards.
         local overflowPx = (neededRightPx - screenRightPx) + EDGE_MARGIN
         if (winLeftPx - overflowPx) >= screenLeftPx then
             local point, relTo, relPoint, x, y = window:GetPoint(1)
             if point then
-                -- GetPoint offsets are in the window's own units; shift in the
-                -- same units (overflow is screen px -> divide by window scale).
                 window:SetPoint(point, relTo, relPoint, (x or 0) - (overflowPx / ws), y or 0)
                 panel:SetPoint("TOPLEFT", window, "TOPRIGHT", GAP, 0)
                 return
             end
         end
 
-        -- Truly no room either way (panel wider than the free space): dock left
-        -- and let SetClampedToScreen keep it on screen.
         panel:SetPoint("TOPRIGHT", window, "TOPLEFT", -GAP, 0)
     end
 
-    panel:HookScript("OnShow", Reflow)
+    panel:HookScript("OnShow", function()
+        if not session.collapsed and (session.contentW or 0) > 0 then
+            ApplySize()
+        end
+        Reflow()
+    end)
     window:HookScript("OnSizeChanged", function() if panel:IsShown() then Reflow() end end)
     if type(window.StopMovingOrSizing) == "function" then
         hooksecurefunc(window, "StopMovingOrSizing", function() if panel:IsShown() then Reflow() end end)
     end
 
-    -- Session-only detach: closing the options window forgets the dragged
-    -- position. No reflow here (window is hiding); the panel's own OnShow
-    -- hook re-docks on next open.
     window:HookScript("OnHide", function()
         if grip then grip:SetScript("OnUpdate", nil) end
         if session.detached then
@@ -840,9 +741,6 @@ function FullSurface.CreateDockedPreviewPanel(opts)
 
     P = { frame = panel, contentHost = scaleHost, controlStrip = controlStrip }
 
-    -- Bottom-right grip: drag horizontally to scale the mock roster
-    -- (uniform, width-driven). Same SizeGrabber art + cursor tracking as the
-    -- options window's resize handle; this one drives SCALE, not free size.
     grip = CreateFrame("Button", nil, panel)
     grip:SetSize(16, 16)
     grip:SetPoint("BOTTOMRIGHT", -2, 2)
@@ -856,10 +754,6 @@ function FullSurface.CreateDockedPreviewPanel(opts)
     gripHi:SetAllPoints()
     gripHi:SetTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
 
-    -- Cancel an in-flight grip drag: OnMouseUp may never fire if the panel is
-    -- hidden or torn down while the button is held, which would leave a stale
-    -- OnUpdate to resume when the frame is shown again. Also stop any active
-    -- header move so StartMoving state never outlives a hide.
     local function CancelGripDrag()
         grip:SetScript("OnUpdate", nil)
         if type(panel.StopMovingOrSizing) == "function" then
@@ -869,23 +763,10 @@ function FullSurface.CreateDockedPreviewPanel(opts)
 
     grip:SetScript("OnMouseDown", function(self, button)
         if button ~= "LeftButton" or session.collapsed then return end
-        -- Pin the panel's top-left for the duration of the drag so the box
-        -- grows down/right from a fixed top-left, regardless of which edge
-        -- Reflow last docked to (left-dock pins the RIGHT edge, so a naive
-        -- SetSize would move the opposite edge). Same technique as the options
-        -- window's own resize handle; Reflow on release re-docks.
         local ox = (panel:GetLeft() or 0) - (window:GetLeft() or 0)
         local oy = (panel:GetTop() or 0) - (window:GetTop() or 0)
         panel:ClearAllPoints()
         panel:SetPoint("TOPLEFT", window, "TOPLEFT", ox, oy)
-        -- Scale is driven by the VERTICAL drag. The panel width floors at
-        -- MIN_W (the header needs a minimum), and the shipped party layout is
-        -- narrow enough (contentW < MIN_W) that its panel width never changes
-        -- across the whole scale range -- a width-driven grip would sit
-        -- frozen there. Panel HEIGHT tracks contentH*scale for both party and
-        -- raid, so the grabbed bottom edge follows the cursor: a downward drag
-        -- of dy pixels should grow the content height by dy, i.e. add
-        -- dy/contentH to the scale.
         local es = panel:GetEffectiveScale() or 1
         if es <= 0 then es = 1 end
         local _, cy = GetCursorPosition()
@@ -901,26 +782,18 @@ function FullSurface.CreateDockedPreviewPanel(opts)
             local es2 = panel:GetEffectiveScale() or 1
             if es2 <= 0 then es2 = 1 end
             local _, y = GetCursorPosition()
-            -- Apply the cursor delta to the START scale, NOT to the live panel
-            -- height: ApplySize caps height at the window, so panel:GetHeight()
-            -- can be less than contentH*scale + chrome. Deriving from the
-            -- capped height would make merely holding the grip (zero delta)
-            -- snap the scale down. Drag DOWN => cursor Y decreases => grow.
             local dyDown = self._startY - y / es2
             P.SetContentScale(self._startScale + dyDown / contentH)
         end)
     end)
     grip:SetScript("OnMouseUp", function(self)
         self:SetScript("OnUpdate", nil)
-        Reflow()   -- one re-dock pass after the drag settles
+        Reflow()
     end)
-    -- Precedent: alts view drag teardown clears tracking in OnHide.
     panel:HookScript("OnHide", CancelGripDrag)
 
     function P.SetTitle(text)
         title:SetText(text or ns.L["Preview"])
-        -- Collapsed width is title-driven (Party vs Raid differ), so a title
-        -- swap while minimized has to resize + re-dock the pill.
         if session.collapsed then
             ApplyCollapsedSize()
             Reflow()
@@ -928,7 +801,7 @@ function FullSurface.CreateDockedPreviewPanel(opts)
     end
     function P.Show()
         panel:Show()
-        RaiseAboveWindow()   -- window level can shift (toplevel raise) between shows
+        RaiseAboveWindow()
         Reflow()
     end
     function P.Hide() panel:Hide() end
@@ -936,10 +809,6 @@ function FullSurface.CreateDockedPreviewPanel(opts)
     function P.Redock()
         session.detached = false
         panel:ClearAllPoints()
-        -- Re-measure BEFORE the dock-side decision. Redocking hides the Dock
-        -- button, which narrows a collapsed pill, and Reflow picks its side
-        -- from panel:GetWidth() -- reflowing first can flip to the left dock
-        -- over a width the panel no longer has.
         UpdateHeaderButtons()
         Reflow()
     end
@@ -963,14 +832,14 @@ function FullSurface.CreateDockedPreviewPanel(opts)
         session.scale = s
         scaleHost:SetScale(s)
         if not session.collapsed then
-            ApplySize()   -- deliberately NO Reflow: grip drag calls this
-        end               -- per-tick; Reflow happens on grip release
+            ApplySize()
+        end
     end
     function P.GetContentScale() return session.scale or 1 end
 
     function P.Resize(contentW, contentH)
         session.contentW, session.contentH = contentW or 0, contentH or 0
-        if session.collapsed then return end   -- deferred; applied on expand
+        if session.collapsed then return end
         ApplySize()
         Reflow()
     end
@@ -980,9 +849,6 @@ function FullSurface.CreateDockedPreviewPanel(opts)
         if session.collapsed then
             content:Hide()
             if controlStrip then controlStrip:Hide() end
-            -- Band fills the whole pill and the separator goes away: with no
-            -- content below it, a divider floating above 8px of empty backdrop
-            -- reads as a rendering glitch.
             headerBand:SetHeight(HEADER_H + PAD * 2 - 2)
             headerSep:Hide()
             ApplyCollapsedSize()
@@ -1002,7 +868,7 @@ function FullSurface.CreateDockedPreviewPanel(opts)
     P.grip = grip
 
     if session.collapsed then
-        P.SetCollapsed(true)   -- also hides grip via UpdateHeaderButtons
+        P.SetCollapsed(true)
     else
         UpdateHeaderButtons()
     end
@@ -1010,10 +876,6 @@ function FullSurface.CreateDockedPreviewPanel(opts)
     return P
 end
 
--- Compact standalone context selector row (e.g. Party/Raid) for the top of
--- a settings page. opts: { gui, parent (defaults to first arg), label,
--- options, stateKey?, selectedValue, onChanged, meta?, config?, height?, pad? }
--- Returns: { row, dropdown, dropdownDB }
 function FullSurface.BuildContextDropdownRow(parent, opts)
     opts = opts or {}
     local gui = opts.gui or (_G.QUI and _G.QUI.GUI)
@@ -1237,10 +1099,6 @@ function FullSurface.CreateTabStrip(parent, options)
     return strip, Paint
 end
 
--- Shared tab-repaint wiring used by both BuildScrollTabBody and
--- BuildMultiHostTabBody. Builds the reentry-guarded RepaintTabs closure and a
--- RepaintAndRender convenience over a caller-supplied RenderActive. Returns
--- (RepaintTabs, RepaintAndRender).
 local function CreateTabRepainter(options, paintTabs, RenderActive)
     local repainting = false
     local function RepaintTabs()
@@ -1356,8 +1214,6 @@ function FullSurface.BuildScrollTabBody(body, options)
         cached = {
             container = container,
             content = content or container,
-            -- Exposed so a caller's render() can wire an in-tab section-nav
-            -- chip strip (GUI:RenderSectionNav) onto this tab's scroll frame.
             scrollFrame = scrollFrame,
             rendered = false,
         }

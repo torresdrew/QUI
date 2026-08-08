@@ -1,9 +1,3 @@
---[[
-    QUI QoL Shared Settings Providers
-    Owns provider-backed settings content for QoL and gameplay movers/pages routed through the shared settings layer.
-    Migrated to V3 body pattern (CreateAccentDotLabel + CreateSettingsCardGroup + BuildSettingRow).
-]]
-
 local ADDON_NAME, ns = ...
 
 local Settings = ns.Settings
@@ -20,12 +14,6 @@ local function CJKFont(fs, p, s, f)
     end
 end
 
--- NOTE: do NOT capture `ns.QUI_Options` as a local in this outer closure.
--- This file is loaded by the QUI addon before the on-demand QUI_Options
--- addon is loaded; at that point ns.QUI_Options is the minimal stub
--- installed by core/gui_shell.lua. Once QUI_Options/shared.lua runs it
--- REPLACES the table, so any captured local would be stale. Re-resolve
--- ns.QUI_Options at call time inside MakeLayout / row / build bodies.
 ProviderPanels:RegisterAfterLoad(function(ctx)
     local GUI = ctx.GUI
     local U = ctx.U
@@ -40,7 +28,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         ctx.RegisterShared(key, provider)
     end
 
-    -- Shared provider-panel layout scaffold (core/settings_layout_shared.lua).
     local function MakeLayout(content)
         if U._layoutModePositionOnly then
             return U.MakeSuppressedProviderLayout(content)
@@ -59,8 +46,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         return content:GetHeight()
     end
 
-    -- Shared "Backdrop" card (showBackdrop checkbox + backdropColor picker).
-    -- elementPhrase fills the showBackdrop description ("behind the <phrase>").
     local function BuildBackdropSection(L, db, Refresh, elementPhrase)
         L.headerAt(ns.L["Backdrop"])
         local s3 = L.sectionAt()
@@ -72,7 +57,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         L.closeSection(s3)
     end
 
-    -- Shared "Use Custom Font" + conditional font dropdown row.
     local function BuildUseCustomFontRow(section, db, Refresh, fontDesc)
         local useCustomFontW = GUI:CreateFormCheckbox(section.frame, nil, "useCustomFont", db, Refresh,
             { description = ns.L["Override the global font for this element with the font selected below."] })
@@ -86,7 +70,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         end
     end
 
-    -- Shared "Border" card (hideBorder + borderSize + BorderControl.Attach).
     local function BuildBorderSection(L, db, Refresh)
         L.headerAt(ns.L["Border"])
         local s4 = L.sectionAt()
@@ -102,9 +85,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         L.closeSection(s4)
     end
 
-    ---------------------------------------------------------------------------
-    -- XP TRACKER
-    ---------------------------------------------------------------------------
     RegisterSharedOnly("xpTracker", { build = function(content, key, _width)
         local db = U.GetProfileDB()
         if not db or not db.xpTracker then return 80 end
@@ -112,7 +92,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         local L = MakeLayout(content)
         local function Refresh() if _G.QUI_RefreshXPTracker then _G.QUI_RefreshXPTracker() end end
 
-        -- SIZE & TEXT
         L.headerAt(ns.L["Size & Text"])
         local s1 = L.sectionAt()
         local widthW = GUI:CreateFormSlider(s1.frame, nil, 200, 1000, 1, "width", xp, Refresh,
@@ -146,7 +125,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         s1.AddRow(row(s1.frame, ns.L["Details Grow Direction"], growW))
         L.closeSection(s1)
 
-        -- COLORS
         L.headerAt(ns.L["Colors"])
         local s2 = L.sectionAt()
         local barColorW = GUI:CreateFormColorPicker(s2.frame, nil, "barColor", xp, Refresh, nil,
@@ -160,7 +138,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         s2.AddRow(row(s2.frame, ns.L["Backdrop Color"], backdropColorW))
         L.closeSection(s2)
 
-        -- BORDER
         L.headerAt(ns.L["Border"])
         local s2b = L.sectionAt()
         local srcW, colW = ns.QUI_BorderControl.Attach(GUI, s2b.frame, xp, "", Refresh,
@@ -168,7 +145,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         s2b.AddRow(row(s2b.frame, ns.L["Border Color Source"], srcW), row(s2b.frame, ns.L["Border Color"], colW))
         L.closeSection(s2b)
 
-        -- DISPLAY
         L.headerAt(ns.L["Display"])
         local s3 = L.sectionAt()
         local showBarTextW = GUI:CreateFormCheckbox(s3.frame, nil, "showBarText", xp, Refresh,
@@ -185,9 +161,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         return FinishProviderPage(L, content, key, "xpTracker")
     end })
 
-    ---------------------------------------------------------------------------
-    -- COMBAT TIMER
-    ---------------------------------------------------------------------------
     RegisterSharedOnly("combatTimer", { build = function(content, key, _width)
         local db = U.GetProfileDB()
         if not db or not db.combatTimer then return 80 end
@@ -195,7 +168,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         local L = MakeLayout(content)
         local function Refresh() if _G.QUI_RefreshCombatTimer then _G.QUI_RefreshCombatTimer() end end
 
-        -- GENERAL
         L.headerAt(ns.L["General"])
         local s1 = L.sectionAt()
         local onlyEncW = GUI:CreateFormCheckbox(s1.frame, nil, "onlyShowInEncounters", ct, Refresh,
@@ -211,7 +183,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         s1.AddRow(row(s1.frame, ns.L["Height"], heightW), row(s1.frame, ns.L["Font Size"], fontSizeW))
         L.closeSection(s1)
 
-        -- TEXT
         L.headerAt(ns.L["Text"])
         local s2 = L.sectionAt()
         local useClassW = GUI:CreateFormCheckbox(s2.frame, nil, "useClassColorText", ct, Refresh,
@@ -229,9 +200,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         return FinishProviderPage(L, content, key, "combatTimer")
     end })
 
-    ---------------------------------------------------------------------------
-    -- LUST TIMER
-    ---------------------------------------------------------------------------
     RegisterSharedOnly("lustTimer", { build = function(content, key, _width)
         local db = U.GetProfileDB()
         if not db or not db.lustTimer then return 80 end
@@ -277,9 +245,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         return FinishProviderPage(L, content, key, "lustTimer")
     end })
 
-    ---------------------------------------------------------------------------
-    -- BREZ COUNTER
-    ---------------------------------------------------------------------------
     RegisterSharedOnly("brezCounter", { build = function(content, key, _width)
         local db = U.GetProfileDB()
         if not db or not db.brzCounter then return 80 end
@@ -287,7 +252,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         local L = MakeLayout(content)
         local function Refresh() if _G.QUI_RefreshBrezCounter then _G.QUI_RefreshBrezCounter() end end
 
-        -- GENERAL
         L.headerAt(ns.L["General"])
         local s1 = L.sectionAt()
         local lockedW = GUI:CreateFormCheckbox(s1.frame, nil, "locked", bz, Refresh,
@@ -307,7 +271,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         s1.AddRow(row(s1.frame, ns.L["Timer Font Size"], timerFontW))
         L.closeSection(s1)
 
-        -- COLORS
         L.headerAt(ns.L["Colors"])
         local s2 = L.sectionAt()
         local hasChargesW = GUI:CreateFormColorPicker(s2.frame, nil, "hasChargesColor", bz, Refresh, nil,
@@ -331,9 +294,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         return FinishProviderPage(L, content, key, "brezCounter")
     end })
 
-    ---------------------------------------------------------------------------
-    -- ATONEMENT COUNTER
-    ---------------------------------------------------------------------------
     RegisterSharedOnly("atonementCounter", { build = function(content, key, _width)
         local db = U.GetProfileDB()
         if not db or not db.atonementCounter then return 80 end
@@ -341,7 +301,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         local L = MakeLayout(content)
         local function Refresh() if _G.QUI_RefreshAtonementCounter then _G.QUI_RefreshAtonementCounter() end end
 
-        -- GENERAL
         L.headerAt(ns.L["General"])
         local s1 = L.sectionAt()
         local lockedW = GUI:CreateFormCheckbox(s1.frame, nil, "locked", ac, Refresh,
@@ -363,7 +322,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         s1.AddRow(row(s1.frame, ns.L["Height"], heightW), row(s1.frame, ns.L["Count Font Size"], fontSizeW))
         L.closeSection(s1)
 
-        -- COLORS
         L.headerAt(ns.L["Colors"])
         local s2 = L.sectionAt()
         local useClassW = GUI:CreateFormCheckbox(s2.frame, nil, "useClassColorText", ac, Refresh,
@@ -392,9 +350,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         return FinishProviderPage(L, content, key, "atonementCounter")
     end })
 
-    ---------------------------------------------------------------------------
-    -- ROTATION ASSIST ICON
-    ---------------------------------------------------------------------------
     RegisterSharedOnly("rotationAssistIcon", { build = function(content, key, _width)
         local db = U.GetProfileDB()
         if not db or not db.rotationAssistIcon then return 80 end
@@ -405,7 +360,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         local L = MakeLayout(content)
         local function Refresh() if _G.QUI_RefreshRotationAssistIcon then _G.QUI_RefreshRotationAssistIcon() end end
 
-        -- GENERAL
         L.headerAt(ns.L["General"])
         local s1 = L.sectionAt()
         local lockW = GUI:CreateFormCheckbox(s1.frame, nil, "isLocked", ra, Refresh,
@@ -431,7 +385,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         s1.AddRow(row(s1.frame, ns.L["Icon Size"], iconSizeW), row(s1.frame, ns.L["Border Size"], borderSizeW))
         L.closeSection(s1)
 
-        -- BORDER
         L.headerAt(ns.L["Border"])
         local s1b = L.sectionAt()
         local showBorderW = GUI:CreateFormCheckbox(s1b.frame, nil, "showBorder", ra, Refresh,
@@ -443,7 +396,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         s1b.AddRow(row(s1b.frame, ns.L["Border Color Source"], srcW), row(s1b.frame, ns.L["Border Color"], colW))
         L.closeSection(s1b)
 
-        -- KEYBIND
         L.headerAt(ns.L["Keybind"])
         local s2 = L.sectionAt()
         local showKbW = GUI:CreateFormCheckbox(s2.frame, nil, "showKeybind", ra, Refresh,
@@ -470,9 +422,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         return FinishProviderPage(L, content, key, "rotationAssistIcon")
     end })
 
-    ---------------------------------------------------------------------------
-    -- FOCUS CAST ALERT
-    ---------------------------------------------------------------------------
     RegisterSharedOnly("focusCastAlert", { build = function(content, key, _width)
         local db = U.GetProfileDB()
         local general = db and db.general
@@ -519,9 +468,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         return FinishProviderPage(L, content, key, "focusCastAlert")
     end })
 
-    ---------------------------------------------------------------------------
-    -- PET WARNING
-    ---------------------------------------------------------------------------
     RegisterSharedOnly("petWarning", { build = function(content, key, _width)
         local db = U.GetProfileDB()
         local general = db and db.general
@@ -541,9 +487,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         return FinishProviderPage(L, content, key, "petWarning")
     end })
 
-    ---------------------------------------------------------------------------
-    -- NO-TARGET WARNING
-    ---------------------------------------------------------------------------
     RegisterSharedOnly("noTargetWarning", { build = function(content, key, _width)
         local db = U.GetProfileDB()
         local general = db and db.general
@@ -573,9 +516,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         return FinishProviderPage(L, content, key, "noTargetWarning")
     end })
 
-    ---------------------------------------------------------------------------
-    -- ACTION TRACKER
-    ---------------------------------------------------------------------------
     RegisterSharedOnly("actionTracker", { build = function(content, key, _width)
         local db = U.GetProfileDB()
         if not db or not db.general then return 80 end
@@ -594,7 +534,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         local L = MakeLayout(content)
         local function Refresh() if _G.QUI_RefreshActionTracker then _G.QUI_RefreshActionTracker() end end
 
-        -- BEHAVIOR
         L.headerAt(ns.L["Behavior"])
         local s1 = L.sectionAt()
         local onlyCombatW = GUI:CreateFormCheckbox(s1.frame, nil, "onlyInCombat", at, Refresh,
@@ -616,7 +555,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         s1.AddRow(row(s1.frame, ns.L["Clear History After Inactivity"], clearInactW), row(s1.frame, ns.L["Show Failed/Interrupted Casts"], showFailedW))
         L.closeSection(s1)
 
-        -- LAYOUT
         L.headerAt(ns.L["Layout"])
         local s2 = L.sectionAt()
         local orientationOpts = {{value="VERTICAL",text=ns.L["Vertical"]},{value="HORIZONTAL",text=ns.L["Horizontal"]}}
@@ -637,7 +575,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         s2.AddRow(row(s2.frame, ns.L["Icon Spacing"], iconSpaceW))
         L.closeSection(s2)
 
-        -- ICON BORDER
         L.headerAt(ns.L["Icon Border"])
         local s3 = L.sectionAt()
         local hideIconBdrW = GUI:CreateFormCheckbox(s3.frame, nil, "iconHideBorder", at, Refresh,
@@ -651,7 +588,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         end
         L.closeSection(s3)
 
-        -- CONTAINER BACKDROP & BORDER
         L.headerAt(ns.L["Backdrop & Border"])
         local s4 = L.sectionAt()
         local showBgW = GUI:CreateFormCheckbox(s4.frame, nil, "showBackdrop", at, Refresh,
@@ -673,7 +609,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         end
         L.closeSection(s4)
 
-        -- SPELL BLOCKLIST (custom block — edit box + placeholder + help label)
         L.headerAt(ns.L["Spell Blocklist"])
         local blocklistBlock = CreateFrame("Frame", nil, content)
         local BLOCKLIST_HEIGHT = (FORM_ROW or 28) + 22
@@ -711,9 +646,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         return FinishProviderPage(L, content, key, "actionTracker")
     end })
 
-    ---------------------------------------------------------------------------
-    -- CONSUMABLES PROVIDER
-    ---------------------------------------------------------------------------
     RegisterSharedOnly("consumables", { build = function(content, key, _width)
         local db = U.GetProfileDB()
         if not db or not db.general then return 80 end
@@ -723,7 +655,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             if _G.QUI_RefreshConsumables then _G.QUI_RefreshConsumables() end
         end
 
-        -- TRIGGERS
         L.headerAt(ns.L["Triggers"])
         local s1 = L.sectionAt()
         local readyW = GUI:CreateFormCheckbox(s1.frame, nil, "consumableOnReadyCheck", settings, nil,
@@ -739,7 +670,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         s1.AddRow(row(s1.frame, ns.L["Raid Entrance"], raidW), row(s1.frame, ns.L["Instanced Resurrect"], resW))
         L.closeSection(s1)
 
-        -- BUFF CHECKS
         local mhLabel = (ns.ConsumableCheckLabels and ns.ConsumableCheckLabels.GetMHLabel() or ns.L["Weapon Oil"]) .. ns.L[" (MH)"]
         local ohLabel = (ns.ConsumableCheckLabels and ns.ConsumableCheckLabels.GetOHLabel() or ns.L["Weapon Oil"]) .. ns.L[" (OH)"]
         L.headerAt(ns.L["Buff Checks"])
@@ -763,7 +693,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         s2.AddRow(row(s2.frame, ns.L["Augment Rune"], runeW), row(s2.frame, ns.L["Healthstones"], hsW))
         L.closeSection(s2)
 
-        -- EXPIRATION WARNING
         L.headerAt(ns.L["Expiration Warning"])
         local s3 = L.sectionAt()
         local warnW = GUI:CreateFormCheckbox(s3.frame, nil, "consumableExpirationWarning", settings, nil,
@@ -773,7 +702,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         s3.AddRow(row(s3.frame, ns.L["Warn When Buffs Expiring"], warnW), row(s3.frame, ns.L["Warning Threshold (seconds)"], threshW))
         L.closeSection(s3)
 
-        -- DISPLAY
         L.headerAt(ns.L["Display"])
         local s4 = L.sectionAt()
         local persistW = GUI:CreateFormCheckbox(s4.frame, nil, "consumablePersistent", settings, function()
@@ -865,7 +793,7 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
                 if CM then
                     if cmDB.enabled then CM:ForceRefresh() else CM:DeleteMacros() end
                 end
-            end, { description = ns.L["Auto-generate per-character QUI_* macros for the consumables selected below. Disabling deletes the macros."] })
+            end, { description = ns.L["Auto-generate per-character *_DUI macros for the consumables selected below. Disabling deletes the macros."] })
             s5.AddRow(row(s5.frame, ns.L["Character-specific"], charSpecW), row(s5.frame, ns.L["Enable Consumable Macros"], enableMacrosW))
 
             local mFlaskW = GUI:CreateFormDropdown(s5.frame, nil,
@@ -904,9 +832,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         return FinishProviderPage(L, content, key, "consumables")
     end })
 
-    ---------------------------------------------------------------------------
-    -- MISSING RAID BUFFS
-    ---------------------------------------------------------------------------
     RegisterSharedOnly("missingRaidBuffs", { build = function(content, key, _width)
         local db = U.GetProfileDB()
         if not db or not db.raidBuffs then return 80 end
@@ -916,7 +841,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             if ns.RaidBuffs and ns.RaidBuffs.Refresh then ns.RaidBuffs:Refresh() end
         end
 
-        -- GENERAL
         L.headerAt(ns.L["General"])
         local s1 = L.sectionAt()
         local onlyGroupW = GUI:CreateFormCheckbox(s1.frame, nil, "showOnlyInGroup", settings, Refresh,
@@ -943,7 +867,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         s1.AddRow(row(s1.frame, ns.L["Hide Label Bar"], hideLabelW), row(s1.frame, ns.L["Grow Direction"], growW))
         L.closeSection(s1)
 
-        -- APPEARANCE
         L.headerAt(ns.L["Appearance"])
         local s2 = L.sectionAt()
         local iconSizeW = GUI:CreateFormSlider(s2.frame, nil, 16, 64, 1, "iconSize", settings, Refresh,
@@ -957,7 +880,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         s2.AddRow(row(s2.frame, ns.L["Label Font Size"], labelSizeW))
         L.closeSection(s2)
 
-        -- ICON BORDER
         if not settings.iconBorder then
             settings.iconBorder = { show = true, width = 1, useClassColor = false, useAccentColor = false, color = {0.376, 0.647, 0.980, 1} }
         end
@@ -981,7 +903,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         s3.AddRow(row(s3.frame, ns.L["Border Width"], bdrWidthW))
         L.closeSection(s3)
 
-        -- BUFF COUNT
         if not settings.buffCount then
             settings.buffCount = { show = true, position = "BOTTOM", fontSize = 10, color = {1, 1, 1, 1} }
         end
@@ -1014,9 +935,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         return FinishProviderPage(L, content, key, "missingRaidBuffs")
     end })
 
-    ---------------------------------------------------------------------------
-    -- TOOLTIP
-    ---------------------------------------------------------------------------
     local DEFAULT_PLAYER_ILVL_BRACKETS = {
         white = 245, green = 255, blue = 265, purple = 275, orange = 285,
     }
@@ -1033,7 +951,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         if not db or not db.tooltip then return 80 end
         local tooltip = db.tooltip
 
-        -- Initialize defaults
         if tooltip.colorPlayerItemLevel == nil then tooltip.colorPlayerItemLevel = true end
         if type(tooltip.itemLevelBrackets) ~= "table" then tooltip.itemLevelBrackets = {} end
         for bkey, defaultValue in pairs(DEFAULT_PLAYER_ILVL_BRACKETS) do
@@ -1053,7 +970,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         end
         local function RefreshTooltipSkin() if ns.QUI_RefreshTooltipSkinColors then ns.QUI_RefreshTooltipSkinColors() end end
 
-        -- TOOLTIP SKINNING
         L.headerAt(ns.L["Tooltip Skinning"])
         local s1 = L.sectionAt()
         local skinW = GUI:CreateFormCheckbox(s1.frame, nil, "skinTooltips", tooltip, function()
@@ -1089,7 +1005,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         s1.AddRow(row(s1.frame, ns.L["Hide Health Bar"], hideHealthW))
         L.closeSection(s1)
 
-        -- FONT & CONTENT
         L.headerAt(ns.L["Font & Content"])
         local s2 = L.sectionAt()
         local fontSizeW = GUI:CreateFormSlider(s2.frame, nil, 8, 24, 1, "fontSize", tooltip, RefreshTooltipFontSize,
@@ -1157,7 +1072,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         s2.AddRow(row(s2.frame, ns.L["Show Guild Rank"], guildRankW), row(s2.frame, ns.L["Color Guild Names"], guildColorW))
         L.closeSection(s2)
 
-        -- PLAYER ITEM LEVEL
         L.headerAt(ns.L["Player Item Level"])
         local s3 = L.sectionAt()
 
@@ -1195,7 +1109,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         s3.AddRow(row(s3.frame, ns.L["Show Player Item Level"], showILvlW), row(s3.frame, ns.L["Color Player Item Level by Bracket"], colorILvlW))
         L.closeSection(s3)
 
-        -- Bracket breakpoint inputs — custom block below the Player Item Level card
         local bracketBlock = CreateFrame("Frame", nil, content)
         local BRACKET_BLOCK_HEIGHT = 16 + 48 + 24
 
@@ -1273,7 +1186,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         RefreshPlayerItemLevelBracketInputs()
         L.placeCustom(bracketBlock, BRACKET_BLOCK_HEIGHT)
 
-        -- CURSOR ANCHOR
         L.headerAt(ns.L["Cursor Anchor"])
         local s4 = L.sectionAt()
         local anchorCursorW = GUI:CreateFormCheckbox(s4.frame, nil, "anchorToCursor", tooltip, RefreshTooltips,
@@ -1289,7 +1201,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         s4.AddRow(row(s4.frame, ns.L["Cursor X Offset"], cursorXW), row(s4.frame, ns.L["Cursor Y Offset"], cursorYW))
         L.closeSection(s4)
 
-        -- TOOLTIP VISIBILITY
         if tooltip.visibility then
             local visibilityOptions = {
                 {value = "SHOW", text = ns.L["Always Show"]},
@@ -1321,7 +1232,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             L.closeSection(s5)
         end
 
-        -- COMBAT
         L.headerAt(ns.L["Combat"])
         local s6 = L.sectionAt()
         local hideCombatW = GUI:CreateFormCheckbox(s6.frame, nil, "hideInCombat", tooltip, RefreshTooltips,
@@ -1340,16 +1250,12 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         return FinishProviderPage(L, content, key, "tooltipAnchor")
     end })
 
-    ---------------------------------------------------------------------------
-    -- SKYRIDING
-    ---------------------------------------------------------------------------
     RegisterSharedOnly("skyriding", { build = function(content, key, _width)
         local db = U.GetProfileDB()
         if not db then return 80 end
         if not db.skyriding then db.skyriding = {} end
         local sr = db.skyriding
 
-        -- Initialize defaults
         if sr.width == nil then sr.width = 250 end
         if sr.vigorHeight == nil then sr.vigorHeight = 20 end
         if sr.secondWindHeight == nil then sr.secondWindHeight = 20 end
@@ -1371,7 +1277,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         local L = MakeLayout(content)
         local function Refresh() if _G.QUI_RefreshSkyriding then _G.QUI_RefreshSkyriding() end end
 
-        -- VISIBILITY
         L.headerAt(ns.L["Visibility"])
         local s1 = L.sectionAt()
         local visW = GUI:CreateFormDropdown(s1.frame, nil, {
@@ -1391,7 +1296,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         s1.AddRow(row(s1.frame, ns.L["Fade Speed (sec)"], fadeDurW), row(s1.frame, ns.L["Hide When FarmHud Is Active"], hideFarmW))
         L.closeSection(s1)
 
-        -- BAR (shared by both bars)
         L.headerAt(ns.L["Bar"])
         local s2 = L.sectionAt()
         local widthW = GUI:CreateFormSlider(s2.frame, nil, 100, 500, 1, "width", sr, Refresh,
@@ -1407,7 +1311,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         s2.AddRow(row(s2.frame, ns.L["Segment Marker Color"], segColorW), row(s2.frame, ns.L["Segment Thickness"], segThickW))
         L.closeSection(s2)
 
-        -- VIGOR
         L.headerAt(ns.L["Vigor"])
         local s3 = L.sectionAt()
         local vigorHW = GUI:CreateFormSlider(s3.frame, nil, 4, 30, 1, "vigorHeight", sr, Refresh,
@@ -1443,7 +1346,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         s3.AddRow(row(s3.frame, ns.L["Change Color with Thrill of the Skies"], thrillToggleW), row(s3.frame, ns.L["Thrill of the Skies Color"], thrillColorW))
         L.closeSection(s3)
 
-        -- SECOND WIND
         L.headerAt(ns.L["Second Wind"])
         local s4 = L.sectionAt()
         local swModeW = GUI:CreateFormDropdown(s4.frame, nil, {
@@ -1470,7 +1372,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         s4.AddRow(row(s4.frame, ns.L["Use Class Color"], classSWW), row(s4.frame, ns.L["Second Wind Color"], swColorW))
         L.closeSection(s4)
 
-        -- TEXT DISPLAY
         L.headerAt(ns.L["Text Display"])
         local s5 = L.sectionAt()
         local showSpeedW = GUI:CreateFormCheckbox(s5.frame, nil, "showSpeed", sr, Refresh,
@@ -1489,7 +1390,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         s5.AddRow(row(s5.frame, ns.L["Show Whirling Surge Icon"], showAbilityW), row(s5.frame, ns.L["Text Font Size"], textSizeW))
         L.closeSection(s5)
 
-        -- BORDER
         L.headerAt(ns.L["Border"])
         local s6 = L.sectionAt()
         local borderSizeW = GUI:CreateFormSlider(s6.frame, nil, 0, 5, 1, "borderSize", sr, Refresh,
@@ -1504,9 +1404,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         return FinishProviderPage(L, content, key, "skyriding")
     end })
 
-    ---------------------------------------------------------------------------
-    -- PARTY KEYSTONES
-    ---------------------------------------------------------------------------
     RegisterSharedOnly("partyKeystones", { build = function(content, key, _width)
         local db = U.GetProfileDB()
         if not db or not db.general then return 80 end
@@ -1514,7 +1411,6 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         local L = MakeLayout(content)
         local function Refresh() if _G.QUI_RefreshKeyTracker then _G.QUI_RefreshKeyTracker() end end
 
-        -- APPEARANCE
         L.headerAt(ns.L["Appearance"])
         local s1 = L.sectionAt()
         local fontW = GUI:CreateFormDropdown(s1.frame, nil, U.GetFontList(), "keyTrackerFont", general, Refresh,

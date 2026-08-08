@@ -1,10 +1,3 @@
----------------------------------------------------------------------------
--- QUI Alts — settings feature registration (bags settings precedent).
--- Loaded from QUI_Options.toc (LoD): registers the provider-backed "alts"
--- feature so the Alts tile sub-page renders the shared provider panel built
--- in alts_providers.lua. The module master toggle (enabled + reload prompt)
--- lives in core/settings/content/modules_nonvisual_onboarding.lua.
----------------------------------------------------------------------------
 local ADDON_NAME, ns = ...
 
 local Settings = ns.Settings

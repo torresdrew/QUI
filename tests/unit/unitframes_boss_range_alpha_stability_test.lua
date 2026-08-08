@@ -10,9 +10,9 @@ end
 
 local source = readAll("QUI_UnitFrames/unitframes/unitframes.lua")
 
-local startPos = assert(source:find("%-%- Boss Range Alpha"),
+local startPos = assert(source:find("local bossRange = {", 1, true),
     "Boss Range Alpha section should exist")
-local endPos = assert(source:find("%-%-%-+%s*\n%-%- CREATE: Unit Frame", startPos),
+local endPos = assert(source:find("local function CreateUnitFrame(", startPos, true),
     "Boss Range Alpha section should end before CreateUnitFrame")
 local body = source:sub(startPos, endPos)
 
@@ -41,7 +41,7 @@ assert(not body:find("BOSS_RANGE_CHANGE_CONFIRMATIONS", 1, true),
 do
     local rangeStart = assert(source:find("local bossRange = {", 1, true),
         "boss range alpha state table should exist")
-    local rangeEnd = assert(source:find("---------------------------------------------------------------------------\n-- CREATE: Unit Frame",
+    local rangeEnd = assert(source:find("local function CreateUnitFrame(",
         rangeStart, true), "boss range alpha section should end before CreateUnitFrame")
     local loader = loadstring or load
     local chunk = "local UpdateBossRangeAlpha, SeedBossFrameRangeAlpha\n"

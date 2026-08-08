@@ -1,20 +1,3 @@
----------------------------------------------------------------------------
--- Alts reputations tab. ONE selected character at a time; left side is a
--- flat virtualized list of ALL faction IDs seen across ALL characters so you
--- can see gaps. Group-label rows (gold text) precede their factions; groups
--- sorted alphabetically with "Other" last; factions within a group sorted by
--- name. Footer: "%d factions". Wheel scroll + row pool exactly like the
--- roster/professions tabs. Rows honor alts.reputationFilter ([id] = false
--- hides, absent = visible); the top-right Filter button opens the shared
--- searchable checkbox popup (filter_popup.lua: search box + Select all/
--- Deselect all on matched rows, gold group header rows) editing that map
--- (the options panel's "Reputations Tab" section shares the key).
---
--- Pure helpers are exported on Alts.ReputationsView for headless tests:
---   FormatEntry(entry)  → value-cell string
---   BuildDisplayRows(characters, names, groups, filter) → flat row list
--- Frame parts are NOT tested (no WoW frame API headless).
----------------------------------------------------------------------------
 local ADDON_NAME, ns = ...
 
 local Shared = ns.AltsViewShared
@@ -33,7 +16,7 @@ Alts.ReputationsView = ReputationsView
 local ROW_H, FOOTER_H = 22, 22
 local CELL_PAD = 6
 
-local NAME_W = 240   -- faction name column width
+local NAME_W = 240
 
 local STANDING_LABELS = {
     [1] = "Hated",
@@ -46,15 +29,6 @@ local STANDING_LABELS = {
     [8] = "Exalted",
 }
 
----------------------------------------------------------------------------
--- Pure helpers (tested headless).
----------------------------------------------------------------------------
-
---- Format the value cell for a single faction entry (or nil).
---- entry nil → "—"; renownLevel present → "Renown %d (%d/%d)";
---- paragonValue present → "Paragon %d/%d%s" (see modulo comment below);
---- else → "%s %d/%d" or just the label when ceiling <= floor;
---- accountWide entries get a " (account)" suffix.
 function ReputationsView.FormatEntry(entry)
     if not entry then return "—" end
 
@@ -62,19 +36,14 @@ function ReputationsView.FormatEntry(entry)
     local text
 
     if entry.renownLevel then
-        -- Major factions: show renown progress
         local earned    = entry.renownEarned    or 0
         local threshold = entry.renownThreshold or 0
         text = string.format("Renown %d (%d/%d)", entry.renownLevel, earned, threshold)
 
     elseif entry.paragonValue then
-        -- Paragon factions: paragonValue is a running total that keeps
-        -- accumulating past the threshold.  Display the current cycle's
-        -- progress by taking the remainder so the bar resets each cycle.
-        -- paragonThreshold > 0 guard prevents divide-by-zero.
         local shown
         if entry.paragonThreshold and entry.paragonThreshold > 0 then
-            shown = entry.paragonValue % entry.paragonThreshold  -- modulo for cycle display
+            shown = entry.paragonValue % entry.paragonThreshold
         else
             shown = entry.paragonValue
         end
@@ -83,13 +52,11 @@ function ReputationsView.FormatEntry(entry)
         text = string.format("Paragon %d/%d%s", shown, threshold, pendingSuffix)
 
     else
-        -- Standard standing
         local standing = entry.standing or 0
         local label = STANDING_LABELS[standing] or ("Standing " .. standing)
         local floor   = entry.floor   or 0
         local ceiling = entry.ceiling or 0
         if ceiling <= floor then
-            -- Capped / exalted: no progress fraction
             text = label
         else
             local progress = (entry.value or 0) - floor
@@ -101,24 +68,10 @@ function ReputationsView.FormatEntry(entry)
     return text .. suffix
 end
 
---- Build the flat display-row list from the union of all factionIDs across
---- all characters' reputations. Returns ordered array of:
----   { kind = "group",   label = groupName }
----   { kind = "faction", label = factionName, factionID = id }
---- Groups are sorted alphabetically; "Other" (nil group) is last.
---- Factions within each group are sorted by name.
----
---- characters: { [key] = rec, ... } (any value shape; only rec.reputations used)
---- names:      [factionID] = name  (or nil → "Faction "..id)
---- groups:     [factionID] = groupLabel (or nil → "Other")
---- filter:     optional visibility map; [id] == false hides that faction
----             (alts.reputationFilter shape — absent/true = visible). Groups
----             whose every faction is hidden lose their header row too.
 function ReputationsView.BuildDisplayRows(characters, names, groups, filter)
     names  = names  or {}
     groups = groups or {}
 
-    -- 1. Collect union of all factionIDs across all characters.
     local seen = {}
     for _, rec in pairs(characters or {}) do
         local reps = rec and rec.reputations
@@ -129,11 +82,8 @@ function ReputationsView.BuildDisplayRows(characters, names, groups, filter)
         end
     end
 
-    -- 2. Bucket factionIDs by their group label; record unique group labels.
-    --    Hidden factions (filter[id] == false) are skipped here, so groups
-    --    whose every faction is hidden never get a header row.
-    local groupBuckets = {}  -- { [groupLabel] = { factionID, ... } }
-    local groupSet     = {}  -- unique group labels
+    local groupBuckets = {}
+    local groupSet     = {}
     for id in pairs(seen) do
         if not (filter and filter[id] == false) then
             local g = groups[id] or "Other"
@@ -146,14 +96,12 @@ function ReputationsView.BuildDisplayRows(characters, names, groups, filter)
         end
     end
 
-    -- 3. Sort group labels alphabetically, "Other" forced to the end.
     table.sort(groupSet, function(a, b)
         if a == "Other" then return false end
         if b == "Other" then return true  end
         return a < b
     end)
 
-    -- 4. Within each group sort factions by display name.
     for _, g in ipairs(groupSet) do
         local bucket = groupBuckets[g]
         table.sort(bucket, function(a, b)
@@ -163,7 +111,6 @@ function ReputationsView.BuildDisplayRows(characters, names, groups, filter)
         end)
     end
 
-    -- 5. Flatten into the display row list.
     local rows = {}
     for _, g in ipairs(groupSet) do
         rows[#rows + 1] = { kind = "group", label = g }
@@ -176,14 +123,6 @@ function ReputationsView.BuildDisplayRows(characters, names, groups, filter)
     return rows
 end
 
----------------------------------------------------------------------------
--- Frame parts (no headless test).
----------------------------------------------------------------------------
-
-
-
-
-
 local function Builder(parent)
     local Store = ns.Storage and ns.Storage.Store
     local Bus   = ns.Storage and ns.Storage.Bus
@@ -192,16 +131,14 @@ local function Builder(parent)
 
     local view       = { frame = frame }
     local offset     = 0
-    local scrollbar          -- vertical scroll bar (created below)
-    local rows       = {}   -- flat display-row list (group + faction rows)
+    local scrollbar
+    local rows       = {}
     local rowPool    = {}
-    local selectedKey = nil  -- currently selected character key
+    local selectedKey = nil
 
-    -- total faction count (for footer)
     local factionCount = 0
 
-    -- cached per-Refresh data
-    local cachedChars    = {}  -- { [key] = rec }
+    local cachedChars    = {}
     local cachedNames    = {}
     local cachedGroups   = {}
 
@@ -212,14 +149,10 @@ local function Builder(parent)
         return math.max(1, math.floor(usable / ROW_H))
     end
 
-    -- footer
     local footer = MakeFS(frame, 11)
     footer:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", CELL_PAD, 4)
     footer:SetTextColor(0.8, 0.8, 0.8)
 
-    ---- character selector (top-left) ---------------------------------------
-    -- Styled like the settings-form dropdown (GUI:CreateFormDropdown chrome):
-    -- faint bg, 1px white-0.2 border brightening on hover, chevron caret.
     local selector = CreateFrame("Button", nil, frame)
     selector:SetHeight(22)
     selector:SetWidth(200)
@@ -264,7 +197,6 @@ local function Builder(parent)
 
     selector:SetScript("OnClick", function(self)
         if not (MenuUtil and MenuUtil.CreateContextMenu) then return end
-        -- Gather available character keys sorted by name
         local keys = {}
         for key, rec in pairs(cachedChars) do
             keys[#keys + 1] = { key = key, name = (rec and rec.name) or key }
@@ -277,16 +209,12 @@ local function Builder(parent)
                     selectedKey = k
                     offset = 0
                     UpdateSelectorLabel()
-                    view.Refresh() -- full re-render joins the new selection
+                    view.Refresh()
                 end)
             end
         end)
     end)
 
-    ---- filter button (top-right; selector chrome) --------------------------
-    -- Edits alts.reputationFilter in place ([id] = false hides, absent
-    -- shows); opens the shared searchable popup attached below. The
-    -- options panel's "Reputations Tab" section writes the same key.
     local filterBtn = CreateFrame("Button", nil, frame)
     filterBtn:SetHeight(22)
     filterBtn:SetWidth(70)
@@ -305,14 +233,10 @@ local function Builder(parent)
     filterLabel:SetText("Filter")
     filterLabel:SetTextColor(0.9, 0.9, 0.9)
 
-    ---- filter popup (shared searchable checkbox popup; filter_popup.lua) ---
-    -- Group rows become gold header rows inside the popup list; searching a
-    -- group name keeps its whole group (FilterPopup.MatchRows).
     Alts.FilterPopup.Attach({
         tabFrame = frame,
         anchorButton = filterBtn,
         getRows = function()
-            -- UNFILTERED rows so hidden entries stay listed (re-checkable)
             local popupRows = {}
             for _, e in ipairs(ReputationsView.BuildDisplayRows(cachedChars, cachedNames, cachedGroups, nil)) do
                 if e.kind == "group" then
@@ -338,7 +262,6 @@ local function Builder(parent)
         onChanged = function() view.Refresh() end,
     })
 
-    ---- row pool (one Button per visible slot) -----------------------------
     local function GetRow(i)
         local r = rowPool[i]
         if r then return r end
@@ -355,10 +278,8 @@ local function Builder(parent)
             end,
             onLeave = function() GameTooltip:Hide() end,
         })
-        r._name  = MakeFS(r, 11)   -- left cell: group label or faction name
-        r._value = MakeFS(r, 11)   -- right cell: value or empty for groups
-        -- Right-click hides the faction (alts.reputationFilter[id] = false);
-        -- re-show via the Filter button. Matches the popup's setChecked.
+        r._name  = MakeFS(r, 11)
+        r._value = MakeFS(r, 11)
         r:RegisterForClicks("LeftButtonUp", "RightButtonUp")
         r:SetScript("OnClick", function(self, button)
             if button ~= "RightButton" then return end
@@ -375,14 +296,12 @@ local function Builder(parent)
         return r
     end
 
-    ---- render -------------------------------------------------------------
     local function RenderRows()
         local visible = VisibleRows()
         local maxOff  = math.max(0, #rows - visible)
         if offset > maxOff then offset = maxOff end
         if offset < 0 then offset = 0 end
 
-        -- selector is 22px tall at top; rows start 28px below TOPLEFT
         local topY = -28
 
         local selRec = selectedKey and cachedChars[selectedKey]
@@ -410,7 +329,6 @@ local function Builder(parent)
                 r._value:Hide()
                 r:Show()
             else
-                -- faction row
                 r._row     = row
                 r._isGroup = false
 
@@ -437,7 +355,6 @@ local function Builder(parent)
                 r:Show()
             end
         end
-        -- hide surplus rows
         for i = visible + 1, #rowPool do
             rowPool[i]._row = nil
             rowPool[i]:Hide()
@@ -445,7 +362,6 @@ local function Builder(parent)
         if scrollbar then scrollbar:Update(#rows, visible, offset) end
     end
 
-    -- Choose the best default key: current character first, then first cached.
     local function ChooseDefaultKey(chars)
         if Store and Store.GetCurrentCharacterKey then
             local cur = Store.GetCurrentCharacterKey()
@@ -458,7 +374,6 @@ local function Builder(parent)
     function view.Refresh()
         if not (Store and Store.IsInitialized and Store.IsInitialized()) then return end
 
-        -- Rebuild character cache
         cachedChars = {}
         if Store.ListCharacters and Store.GetCharacter then
             for _, key in ipairs(Store.ListCharacters()) do
@@ -470,7 +385,6 @@ local function Builder(parent)
         cachedNames  = (Store.GetFactionNames  and Store.GetFactionNames())  or {}
         cachedGroups = (Store.GetFactionGroups and Store.GetFactionGroups()) or {}
 
-        -- Validate or pick selected key
         if not selectedKey or not cachedChars[selectedKey] then
             selectedKey = ChooseDefaultKey(cachedChars)
         end
@@ -478,13 +392,11 @@ local function Builder(parent)
         local filter = (Alts.GetSettings and Alts.GetSettings() or {}).reputationFilter
         rows = ReputationsView.BuildDisplayRows(cachedChars, cachedNames, cachedGroups, filter)
 
-        -- Count faction rows for footer
         factionCount = 0
         for _, r in ipairs(rows) do
             if r.kind == "faction" then factionCount = factionCount + 1 end
         end
 
-        -- unfiltered count just for the footer's hidden tally
         local total = 0
         for _, r in ipairs(ReputationsView.BuildDisplayRows(cachedChars, cachedNames, cachedGroups, nil)) do
             if r.kind == "faction" then total = total + 1 end
@@ -500,8 +412,6 @@ local function Builder(parent)
         end
     end
 
-    -- vertical scroll bar: rows start 28px below the top (selector chrome) and
-    -- stop above the footer count line.
     scrollbar = Shared.CreateScrollBar(frame, {
         orientation = "vertical",
         onScroll = function(n) offset = n; RenderRows() end,
@@ -509,7 +419,6 @@ local function Builder(parent)
     scrollbar.track:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -2, -28)
     scrollbar.track:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -2, FOOTER_H)
 
-    -- mouse-wheel scroll
     frame:EnableMouseWheel(true)
     frame:SetScript("OnMouseWheel", function(_, delta)
         local maxOff = math.max(0, #rows - VisibleRows())
@@ -519,14 +428,12 @@ local function Builder(parent)
         RenderRows()
     end)
 
-    -- Bus subscriptions: refresh only when visible
     if Bus and Bus.Subscribe then
         local function OnBus()
             if frame:IsVisible() then view.Refresh() end
         end
         Bus.Subscribe("ReputationsChanged", OnBus)
         Bus.Subscribe("CharacterDeleted",   function()
-            -- selected character may have been deleted; let Refresh re-pick
             if frame:IsVisible() then view.Refresh() end
         end)
     end

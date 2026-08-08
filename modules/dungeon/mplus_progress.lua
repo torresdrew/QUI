@@ -1,14 +1,8 @@
----------------------------------------------------------------------------
--- QUI Mythic+ Progress
--- Per-unit enemy forces values for tooltips and nameplates.
----------------------------------------------------------------------------
 local ADDON_NAME, ns = ...
 
 local Helpers = ns.Helpers
 local GetSettings = Helpers.CreateDBGetter("mplusProgress")
 
--- CJK-safe font setter: preserves the roman font and only adds CJK fallback
--- members where available, degrading to plain SetFont otherwise.
 local function CJKFont(fs, p, s, f)
     if ns.Helpers and ns.Helpers.ApplyFontWithFallback then
         ns.Helpers.ApplyFontWithFallback(fs, p, s, f)
@@ -29,14 +23,13 @@ local DEFAULTS = {
     tooltipShowNoProgress = false,
     nameplateEnabled = true,
     nameplateTextFormat = "+$percent$%",
-    nameplateFont = "", -- empty = global QUI font
+    nameplateFont = "",
     nameplateFontSize = 12,
     nameplateTextColor = { 1, 1, 1, 1 },
     nameplateTextScale = 1.0,
     nameplateOffsetX = 0,
     nameplateOffsetY = 0,
 }
--- Exported so the settings provider reuses one source of truth (no drift).
 MPlusProgress.DEFAULTS = DEFAULTS
 
 local State = {
@@ -146,9 +139,6 @@ local function BuildNameplateText(percentString)
     return rendered, true
 end
 
--- Resolve the nameplate font: an explicit nameplateFont name overrides the
--- global QUI font, otherwise inherit it. Mirrors focuscastalert.lua's idiom.
--- Size comes from nameplateFontSize; outline tracks the global setting.
 local function GetNameplateFont()
     local settings = Settings()
     local name = settings.nameplateFont
@@ -184,10 +174,6 @@ local function AcquireNameplateFrame()
     frame = CreateFrame("Frame", nil, UIParent)
     frame:SetSize(120, 22)
     frame:SetFrameStrata("HIGH")
-    -- Pin the strata: this frame is reparented onto the nameplate in
-    -- UpdateNameplatePosition, and strata is inherited on reparent — without a fixed
-    -- strata the HIGH drops to the nameplate's low strata and the text renders behind
-    -- plate art. SetFixedFrameStrata(true) keeps HIGH across SetParent(nameplate).
     if frame.SetFixedFrameStrata then
         frame:SetFixedFrameStrata(true)
     end
@@ -239,10 +225,6 @@ function MPlusProgress:UpdateNameplatePosition(unit)
     end
 
     local settings = Settings()
-    -- Prefer QUI_Nameplates' visual anchor when the custom plates are active:
-    -- the Blizzard base frame's edges don't line up with QUI's plate art, so
-    -- "RIGHT of plate" would float in space. Parent stays the Blizzard base
-    -- (its lifecycle drives visibility); only the anchor region changes.
     local anchorRegion = nameplate
     local customPlates = ns.QUI_Nameplates
     if customPlates and customPlates.GetPlateAnchor then
@@ -417,10 +399,6 @@ eventFrame:RegisterEvent("SCENARIO_UPDATE")
 eventFrame:RegisterEvent("ZONE_CHANGED")
 eventFrame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
 
--- Install the tooltip hook after login. ns.WhenLoggedIn runs now if already
--- logged in (the post-login LOD case) rather than this addon's own ADDON_LOADED,
--- which is NOT delivered when the core eager-LoadAddOn's the module from
--- OnEnable (see tooltip_provider.lua). Nil only in the headless test harness.
 if ns.WhenLoggedIn then
     ns.WhenLoggedIn(function()
         MPlusProgress:RegisterTooltipHook()

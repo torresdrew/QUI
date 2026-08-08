@@ -1,20 +1,3 @@
----------------------------------------------------------------------------
--- Alts equipment tab. Cross-character comparison grid: rows are equipment
--- slots, columns are characters (header row: class-colored names; footer
--- row: average item level). Cells render icon + per-slot item level with a
--- 1px quality-colored border. Data comes entirely from core storage
--- (rec.equipped.slots — itemID/link/quality/icon/ilvl, scan_equipped.lua);
--- entries scanned before ilvl existed fall back to a live
--- C_Item.GetDetailedItemLevelInfo(link) lookup (MayReturnNothing → blank).
--- Mouse wheel scrolls columns horizontally when characters overflow.
--- Hover: GameTooltip:SetHyperlink(link). Shift-click: link to chat.
---
--- Pure helpers exported on Alts.EquipmentView for headless tests:
---   BuildSlotRows(characters) → ordered { slot, label } list (optional
---     slots — shirt/tabard/ranged — elided when empty on every character)
---   BuildColumns(characters)  → { key, name } sorted by display name
--- Frame parts are NOT tested (no WoW frame API headless).
----------------------------------------------------------------------------
 -- luacheck: read globals ColorManager ITEM_QUALITY_COLORS ChatEdit_InsertLink
 local ADDON_NAME, ns = ...
 
@@ -32,16 +15,12 @@ local EquipmentView = {}
 Alts.EquipmentView = EquipmentView
 
 local ROW_H, HEADER_H = 22, 22
--- bottom band reserved below the grid: status line + horizontal scroll track.
 local BOTTOM_BAND = 34
 local CELL_PAD = 6
-local SLOT_LABEL_W = 80  -- left column: slot names
-local COL_W = 78         -- one character column
+local SLOT_LABEL_W = 80
+local COL_W = 78
 local ICON_SIZE = 18
 
--- Paper-doll display order (inv slots 1..19; constants vendored
--- Blizzard_FrameXMLBase/Constants.lua — scan_equipped.lua precedent).
--- optional = true rows are elided when empty across every character.
 local SLOT_DEFS = {
     { slot = 1,  label = "Head" },
     { slot = 2,  label = "Neck" },
@@ -61,15 +40,9 @@ local SLOT_DEFS = {
     { slot = 14, label = "Trinket 2" },
     { slot = 16, label = "Main Hand" },
     { slot = 17, label = "Off Hand" },
-    { slot = 18, label = "Ranged", optional = true }, -- retail-dead relic slot
+    { slot = 18, label = "Ranged", optional = true },
 }
 
----------------------------------------------------------------------------
--- Pure helpers (tested headless).
----------------------------------------------------------------------------
-
---- Ordered { slot, label } rows. Optional slots (shirt/tabard/ranged) are
---- included only when at least one character has that slot filled.
 function EquipmentView.BuildSlotRows(characters)
     local filled = {}
     for _, rec in pairs(characters or {}) do
@@ -89,7 +62,6 @@ function EquipmentView.BuildSlotRows(characters)
     return rows
 end
 
---- Sorted { key, name } character columns (name falls back to the key).
 function EquipmentView.BuildColumns(characters)
     local cols = {}
     for key, rec in pairs(characters or {}) do
@@ -102,18 +74,7 @@ function EquipmentView.BuildColumns(characters)
     return cols
 end
 
----------------------------------------------------------------------------
--- Frame parts (no headless test).
----------------------------------------------------------------------------
-
-
-
-
-
 local function GetQualityColor(quality)
-    -- 12.0 modern path: ColorManager wraps quality colors (incl. user
-    -- accessibility overrides); ITEM_QUALITY_COLORS kept as fallback
-    -- (bags item_buttons.lua precedent).
     local c
     if ColorManager and ColorManager.GetColorDataForItemQuality then
         c = ColorManager.GetColorDataForItemQuality(quality)
@@ -125,8 +86,6 @@ local function GetQualityColor(quality)
     return 0.5, 0.5, 0.5
 end
 
---- Per-slot item level: stored value first; pre-ilvl records resolve live
---- from the stored link (MayReturnNothing → nil → blank cell text).
 local function EntryIlvl(entry)
     if entry.ilvl then return entry.ilvl end
     local itemInfo = entry.link or entry.itemID
@@ -143,14 +102,12 @@ local function Builder(parent)
     local frame = CreateFrame("Frame", nil, parent)
 
     local view      = { frame = frame }
-    local colOffset = 0      -- first visible character column (0-based)
-    local scrollbar          -- horizontal column scroll bar (created below)
-    local slotRows  = {}     -- BuildSlotRows result
-    local columns   = {}     -- BuildColumns result
+    local colOffset = 0
+    local scrollbar
+    local slotRows  = {}
+    local columns   = {}
     local cachedChars = {}
 
-    -- pools: cells[rowIndex][visibleColIndex]; header/footer fontstrings
-    -- per visible column; slot labels per row
     local cellPool   = {}
     local headerPool = {}
     local footerPool = {}
@@ -205,8 +162,6 @@ local function Builder(parent)
         cell._icon = cell:CreateTexture(nil, "ARTWORK")
         cell._icon:SetSize(ICON_SIZE, ICON_SIZE)
         cell._icon:SetPoint("LEFT", cell, "LEFT", 4, 0)
-        -- 1px quality border around the icon (UIKit border lines handle
-        -- DisablePixelSnap internally — window.lua precedent)
         cell._iconFrame = CreateFrame("Frame", nil, cell)
         cell._iconFrame:SetPoint("TOPLEFT", cell._icon, "TOPLEFT", -1, 1)
         cell._iconFrame:SetPoint("BOTTOMRIGHT", cell._icon, "BOTTOMRIGHT", 1, -1)
@@ -231,7 +186,6 @@ local function Builder(parent)
         return cell
     end
 
-    -- status line (bottom-left; footer chrome shared with other tabs)
     local status = MakeFS(frame, 11)
     status:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", CELL_PAD, 4)
     status:SetTextColor(0.8, 0.8, 0.8)
@@ -242,15 +196,12 @@ local function Builder(parent)
         if colOffset > maxOff then colOffset = maxOff end
         if colOffset < 0 then colOffset = 0 end
 
-        -- slot labels (left column)
         for i, rowDef in ipairs(slotRows) do
             local fs = GetSlotLabel(i)
             fs:SetText(rowDef.label)
             fs:Show()
         end
         for i = #slotRows + 1, #labelPool do labelPool[i]:Hide() end
-        -- hide surplus pooled cell rows from a previously taller grid
-        -- (e.g. an optional slot emptied), across every visible column
         for i = #slotRows + 1, #cellPool do
             local row = cellPool[i]
             if row then
@@ -258,9 +209,6 @@ local function Builder(parent)
             end
         end
 
-        -- footer (avg ilvl) floats just below the last slot row, but is
-        -- clamped so it never drops into the bottom band (status line + the
-        -- horizontal scroll track) — that overlap was the reported bug.
         local bodyH = frame:GetHeight() or 0
         local footY = -(HEADER_H + 2) - #slotRows * ROW_H
         local minFootY = BOTTOM_BAND - bodyH
@@ -301,7 +249,7 @@ local function Builder(parent)
                     local entry = slots and slots[rowDef.slot]
                     if entry then
                         cell._link = entry.link
-                        cell._icon:SetTexture(entry.icon or 134400) -- question mark
+                        cell._icon:SetTexture(entry.icon or 134400)
                         cell._icon:Show()
                         local qr, qg, qb = GetQualityColor(entry.quality)
                         UIKit.UpdateBorderLines(cell._iconFrame, 1, qr, qg, qb, 0.8)
@@ -320,7 +268,6 @@ local function Builder(parent)
                 end
             end
         end
-        -- hide surplus pooled columns beyond `visible`
         for c = visible + 1, #headerPool do
             headerPool[c]:Hide()
             if footerPool[c] then footerPool[c]:Hide() end
@@ -347,8 +294,6 @@ local function Builder(parent)
         RenderGrid()
     end
 
-    -- horizontal scroll bar: spans the character-column area, sitting in the
-    -- bottom band beside the status line. Drag/click jumps the column offset.
     scrollbar = Shared.CreateScrollBar(frame, {
         orientation = "horizontal",
         onScroll = function(n) colOffset = n; RenderGrid() end,
@@ -356,7 +301,6 @@ local function Builder(parent)
     scrollbar.track:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", SLOT_LABEL_W, 4)
     scrollbar.track:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -2, 4)
 
-    -- mouse-wheel: horizontal column scroll (vertical content always fits)
     frame:EnableMouseWheel(true)
     frame:SetScript("OnMouseWheel", function(_, delta)
         local maxOff = math.max(0, #columns - VisibleCols())
@@ -366,7 +310,6 @@ local function Builder(parent)
         RenderGrid()
     end)
 
-    -- Bus subscriptions: refresh only when visible
     if Bus and Bus.Subscribe then
         local function OnBus()
             if frame:IsVisible() then view.Refresh() end

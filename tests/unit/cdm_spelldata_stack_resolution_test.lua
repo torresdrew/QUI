@@ -43,7 +43,9 @@ local ns = {
         IsRuntimeEnabled = function() return true end,
     },
     CDMSources = {},
-    CDMComposer = {
+    -- Runtime reads ns.CDMCatalog directly; ns.CDMComposer is only the alias
+    -- that ships in the LoadOnDemand options addon.
+    CDMCatalog = {
         RebuildBlizzardCatalogMaps = function(_, _, _, abilityToAura, auraIDsForSpell)
             abilityToAura[55090] = 194310
             auraIDsForSpell[55090] = { 194310 }

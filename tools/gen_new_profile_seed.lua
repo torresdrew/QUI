@@ -15,6 +15,11 @@
   cooldown-effect overrides/glow keys left behind by a deleted container —
   same rule as core/migrations.lua's v51 squash step (f)) are purged too.
 
+  Per-character CDM spell lists under ncdm (ownedSpells/dormantSpells/
+  removedSpells/spellOverrides/entries) are purged as well — see
+  PurgeCharacterCDMLists below for why shipping them empties the Composer
+  for every new user.
+
   Usage:
     lua tools/gen_new_profile_seed.lua <path-to-string-file>
     lua tools/gen_new_profile_seed.lua -                       # string on stdin
@@ -133,6 +138,181 @@ local function PurgeOrphanSatellites(p)
 end
 
 ----------------------------------------------------------------------------
+-- Per-character CDM spell-list purge.
+--
+-- The source profile is captured from a REAL character, so every CDM
+-- container carries that character's curated spell list. Shipping those in
+-- the new-profile seed is a hard bug, not cosmetic noise: AceDB's
+-- OnNewProfile hook deep-applies the seed before the first read, so
+-- `ncdm.<key>.ownedSpells` is non-nil on a fresh install, and
+-- CDMSpellData:SnapshotBlizzardCDM (cdm_spelldata.lua) bails on
+-- `db.ownedSpells ~= nil`. The real per-character Blizzard snapshot then
+-- never runs for ANY new user, on any class, and reports ready=true so
+-- nothing retries. A non-matching class sees every seeded row fall into the
+-- composer's "Dormant — Not Learned on This Character" bucket: empty grid,
+-- empty HUD, permanent across reloads. (The foreign-class filter does not
+-- save it — seeded rows carry no `source`, and that filter only applies to
+-- `source == "blizzardCDM"` rows.)
+--
+-- ownedSpells MUST end up absent, not `{}`: an empty table is still
+-- non-nil and suppresses the snapshot exactly the same way.
+--
+-- Scoped to an explicit root list so the walk cannot touch same-named keys
+-- elsewhere in the profile (`chat.newMessageSound.entries` is a sound-routing
+-- list and must survive).
+--
+-- customTrackers is a SECOND root, not a convenience: a custom bar's rows are
+-- stored twice — `ncdm.containers.customBar_<id>.entries` and
+-- `customTrackers.bars[n].entries`, which sits OUTSIDE ncdm. An ncdm-only walk
+-- leaves the customTrackers copy in the shipped string. The post-migration
+-- fixture still comes out clean (migration rebuilds customTrackers from the
+-- ncdm side), so the leak is invisible there — purge both roots rather than
+-- leaning on that side effect.
+--
+-- Guard: tests/unit/starter_seed_no_cdm_spell_lists_test.lua
+----------------------------------------------------------------------------
+-- `entries` (custom containers) is purged for a different reason than the
+-- builtin lists. It never gated the snapshot — SnapshotBlizzardCDM returns
+-- early on non-builtin keys (`IsBuiltinContainerKey`) — and a custom bar has
+-- no re-seed path, so an emptied one stays empty until the user fills it.
+-- Purged anyway (Drew, 2026-07-26): the shipped list was residue, not a
+-- curated bar. Its six rows included TWO mutually-exclusive race-locked
+-- spells (26297 Berserking/Troll, 312411 Bag of Tricks/Vulpera — verified
+-- against libs/LibOpenRaid race tables), so no single character could ever
+-- have owned that list. Shipping any character's curated rows is the bug
+-- class; a configured-but-empty Custom Bar 1 is the intended shape.
+local CHARACTER_CDM_LIST_KEYS = {
+    ownedSpells    = true,  -- the curated tracked list — the load-bearing one
+    dormantSpells  = true,  -- shelf of that character's unlearned rows
+    removedSpells  = true,  -- that character's explicit removals
+    spellOverrides = true,  -- per-spellID display tweaks, keyed by their spells
+    entries        = true,  -- custom-container curated list (same role as ownedSpells)
+}
+
+local PURGE_ROOTS = { "ncdm", "customTrackers" }
+
+local function PurgeCharacterCDMLists(p)
+    local purged = 0
+    local function walk(t)
+        local doomed
+        for k, v in pairs(t) do
+            if type(k) == "string" and CHARACTER_CDM_LIST_KEYS[k] then
+                doomed = doomed or {}
+                doomed[#doomed + 1] = k
+            elseif type(v) == "table" then
+                walk(v)
+            end
+        end
+        if doomed then
+            for _, k in ipairs(doomed) do
+                t[k] = nil
+                purged = purged + 1
+            end
+        end
+    end
+    for _, root in ipairs(PURGE_ROOTS) do
+        local t = p[root]
+        if type(t) == "table" then walk(t) end
+    end
+
+    return purged
+end
+
+----------------------------------------------------------------------------
+-- Seeded custom-bar purge.
+--
+-- Emptying a custom bar's `entries` above still leaves the CONTAINER, so a
+-- fresh install shows an enabled, empty bar literally named "Custom Bar 1".
+-- That is capture-character residue, not curated content: both the id
+-- (`anon_1`) and the name are the values the addon auto-generates when a user
+-- clicks "New". Users create their own bars; the seed ships none.
+--
+-- Two stores, only one of them live:
+--   * `customTrackers.bars` + `ncdm.containers.customBar_<id>` — the live pair.
+--   * `ncdm.customBars` — DEAD. Nothing in the suite reads it; the only
+--     `customBars` in live code is `hudLayering.customBars` (a strata NUMBER,
+--     core/defaults.lua) which this must not touch. It has no defaults
+--     counterpart either, so profile_io's type validation — which walks the
+--     defaults tree — never sees it, and ~250 lines of unread bar data rode
+--     along in every profile.
+--
+-- ORDER: this must run BEFORE PurgeOrphanSatellites. That function derives its
+-- live-set from `ncdm.containers`, so it only reclaims the glow/anchor keys
+-- once the container is already gone.
+--
+-- Guard: tests/unit/starter_seed_no_cdm_spell_lists_test.lua
+----------------------------------------------------------------------------
+local function PurgeSeededCustomBars(p)
+    local purged = 0
+    local removedIDs = {}
+
+    local function noteID(bar)
+        if type(bar) == "table" and type(bar.id) == "string" then
+            removedIDs[bar.id] = true
+        end
+    end
+
+    local ncdm = p.ncdm
+    if type(ncdm) == "table" then
+        local containers = ncdm.containers
+        if type(containers) == "table" then
+            local doomed = {}
+            for k, v in pairs(containers) do
+                -- builtIn == false is the fallback for any historical row that
+                -- predates containerType being written.
+                if type(v) == "table"
+                    and (v.containerType == "customBar" or v.builtIn == false) then
+                    doomed[#doomed + 1] = k
+                    noteID(v)
+                end
+            end
+            for _, k in ipairs(doomed) do
+                containers[k] = nil
+                purged = purged + 1
+            end
+        end
+
+        if type(ncdm.customBars) == "table" then
+            if type(ncdm.customBars.bars) == "table" then
+                for _, bar in pairs(ncdm.customBars.bars) do noteID(bar) end
+            end
+            ncdm.customBars = nil
+            purged = purged + 1
+        end
+    end
+
+    -- customTrackers keeps its global settings (fade, hide-when-*, keybinds);
+    -- only the per-bar list is character data.
+    local trackers = p.customTrackers
+    if type(trackers) == "table" and type(trackers.bars) == "table" then
+        if next(trackers.bars) ~= nil then
+            for _, bar in pairs(trackers.bars) do noteID(bar) end
+            purged = purged + 1
+        end
+        trackers.bars = {}
+    end
+
+    -- PurgeOrphanSatellites only matches the "cdmCustom_" anchor prefix; the
+    -- legacy store uses "customCDMBar:<id>", which it would leave behind.
+    local anchors = p.frameAnchoring
+    if type(anchors) == "table" then
+        local doomed = {}
+        for k in pairs(anchors) do
+            if type(k) == "string" then
+                local id = k:match("^customCDMBar:(.+)$")
+                if id and removedIDs[id] then doomed[#doomed + 1] = k end
+            end
+        end
+        for _, k in ipairs(doomed) do
+            anchors[k] = nil
+            purged = purged + 1
+        end
+    end
+
+    return purged
+end
+
+----------------------------------------------------------------------------
 -- Decode
 ----------------------------------------------------------------------------
 local function ReadInput(path)
@@ -146,8 +326,8 @@ end
 
 local function Decode(raw)
     raw = (raw:gsub("%s+", ""))
-    assert(raw:sub(1, 5) == "QUI1:", "expected a QUI1: full-profile string")
-    local compressed = assert(LibDeflate:DecodeForPrint(raw:sub(6)), "DecodeForPrint failed")
+    assert(raw:sub(1, #"QUI1:") == "QUI1:", "expected a QUI1: full-profile string")
+    local compressed = assert(LibDeflate:DecodeForPrint(raw:sub(#"QUI1:" + 1)), "DecodeForPrint failed")
     local serialized = assert(LibDeflate:DecompressDeflate(compressed), "DecompressDeflate failed")
     local ok, payload = AceSerializer:Deserialize(serialized)
     assert(ok, "Deserialize failed: " .. tostring(payload))
@@ -199,23 +379,42 @@ end
 profile._quiBundledGlobals = nil
 
 local strippedTop = StripMetaKeysDeep(profile)
+-- Order is load-bearing: the custom-bar purge removes containers, and
+-- PurgeOrphanSatellites reclaims their anchor/effect/glow keys by diffing
+-- against the surviving ncdm.containers set. Satellites must run LAST.
+local purgedCDMLists = PurgeCharacterCDMLists(profile)
+local purgedCustomBars = PurgeSeededCustomBars(profile)
 PurgeOrphanSatellites(profile)
 
--- Force the shipped new-user theme to QUI's Classic Mint, regardless of the
+-- Force the shipped new-user theme to QUI's Sky Blue, regardless of the
 -- source profile's theme. general.themePreset is the live read (main.lua and
 -- the options theme picker, QUI_Options/framework.lua); the top-level copy is
 -- the legacy store. Set both + the derived accent color so every consumer
--- resolves mint. Mint = "Classic Mint" -> {0.204, 0.827, 0.600} (#34D399).
+-- resolves sky blue. "Sky Blue" -> {0.376, 0.647, 0.980} (#60A5FA).
 local function ApplyThemeOverride(p)
-    local function mint() return { 0.204, 0.827, 0.6, 1 } end
-    p.themePreset = "Classic Mint"
-    p.addonAccentColor = mint()
+    local function skyBlue() return { 0.376, 0.647, 0.98, 1 } end
+    p.themePreset = "Sky Blue"
+    p.addonAccentColor = skyBlue()
     if type(p.general) ~= "table" then p.general = {} end
-    p.general.themePreset = "Classic Mint"
-    p.general.addonAccentColor = mint()
+    p.general.themePreset = "Sky Blue"
+    p.general.addonAccentColor = skyBlue()
     p.general.skinUseClassColor = false   -- picker keeps this in sync with the preset
 end
 ApplyThemeOverride(profile)
+
+-- Force specific shipped-seed settings that differ from whatever the source
+-- profile happened to hold. --from-seed is re-strip only, so this table is the
+-- ONLY way a curated value reaches the seed; hand-editing the blob is not an
+-- option. Keep each entry commented with why it is pinned.
+local function ApplySettingOverrides(p)
+    -- Drawer toggle icon: new installs get the QUI mark, not the legacy
+    -- Quazii hammer. Existing profiles are untouched by design — a stored
+    -- "hammer" cannot be told apart from a deliberate user choice.
+    if type(p.minimap) ~= "table" then p.minimap = {} end
+    if type(p.minimap.buttonDrawer) ~= "table" then p.minimap.buttonDrawer = {} end
+    p.minimap.buttonDrawer.toggleIcon = "qui"
+end
+ApplySettingOverrides(profile)
 
 ----------------------------------------------------------------------------
 -- Encode: payload = seed keys at top level + the empty bundled-globals block
@@ -242,7 +441,10 @@ local body = table.concat({
     "-- core/new_profile_defaults.lua via the OnNewProfile hook) AND the",
     "-- Profiles-tab \"Starter Profile\" preset — they cannot drift.",
     "-- Stripped on generation: every \"_\"-prefixed meta/latch key at ANY depth +",
-    "-- fpsBackup + orphan CDM container satellites.",
+    "-- fpsBackup + orphan CDM container satellites + per-character CDM spell",
+    "-- lists under ncdm (ownedSpells/dormantSpells/removedSpells/",
+    "-- spellOverrides/entries -- ownedSpells MUST stay absent so",
+    "-- SnapshotBlizzardCDM seeds each character from Blizzard's viewer).",
     "-- Regenerate after curating: lua tools/gen_new_profile_seed.lua <string-file>",
     "-- Reprocess in place (re-strip only): lua tools/gen_new_profile_seed.lua --from-seed",
     "-- Decode guard: tests/unit/starter_preset_matches_seed_test.lua",
@@ -265,5 +467,8 @@ local kept = 0
 for _ in pairs(profile) do kept = kept + 1 end
 io.write(string.format(
     "Wrote %s\n  kept %d top-level setting keys, stripped %d top-level meta/runtime keys"
-        .. " (deep strip also ran below top level): %s\n",
-    outPath, kept, #strippedTop, table.concat(strippedTop, ", ")))
+        .. " (deep strip also ran below top level): %s\n"
+        .. "  purged %d per-character CDM spell list(s) under ncdm/customTrackers\n"
+        .. "  purged %d seeded custom-bar object(s)/store(s)\n",
+    outPath, kept, #strippedTop, table.concat(strippedTop, ", "),
+    purgedCDMLists, purgedCustomBars))

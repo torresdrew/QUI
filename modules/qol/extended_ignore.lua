@@ -1,24 +1,11 @@
 local ADDON_NAME, ns = ...
 local Helpers = ns.Helpers
 
----------------------------------------------------------------------------
--- EXTENDED IGNORE
--- A user-managed name list (beyond Blizzard's ignore cap) that both suppresses
--- public chat from those names and auto-declines their party invites / duels.
---
--- Chat suppression uses ChatFrameUtil.AddMessageEventFilter — QUI's custom chat
--- honors these filters (message_capture.lua calls ProcessMessageEventFilters and
--- discards on a truthy first return), and Blizzard skips filter callbacks on
--- secret payloads, so we never see secret sender values here.
----------------------------------------------------------------------------
-
 local GetSettings = Helpers.CreateDBGetter("general")
 
-local ignoreSet = {}   -- [normalizedName] = true
+local ignoreSet = {}
 local setEmpty = true
 
--- Normalize a name for matching: strip realm ("Name-Realm" -> "Name"), drop
--- whitespace, lowercase. Keeps matching forgiving of how the user typed it.
 -- <<< QUI_TEST_EXTRACT normalize_name
 local function NormalizeName(name)
     if type(name) ~= "string" or name == "" then return nil end
@@ -49,12 +36,6 @@ local function IsInSet(name)
     return norm ~= nil and ignoreSet[norm] == true
 end
 
--- Predicate consumed by qol.lua's PARTY_INVITE / DUEL handlers (and trade below).
--- `enabled` is the master toggle (defaults false → the `not cfg.enabled` gate).
--- `autoDecline`/`suppressChat` are sub-toggles that default to TRUE, so they use
--- `== false` ("on unless explicitly turned off") — the same idiom petwarning uses
--- for petCombatWarning. nil never reaches the sub-check with enabled true (AceDB
--- fills the defaults; the only nil path is an empty reset table, gated by enabled).
 function ns.ShouldAutoDeclineFrom(name)
     local settings = GetSettings()
     local cfg = settings and settings.extendedIgnore
@@ -62,16 +43,11 @@ function ns.ShouldAutoDeclineFrom(name)
     return IsInSet(name)
 end
 
----------------------------------------------------------------------------
--- CHAT SUPPRESSION
----------------------------------------------------------------------------
-
 local CHAT_EVENTS = {
     "CHAT_MSG_SAY", "CHAT_MSG_YELL", "CHAT_MSG_EMOTE", "CHAT_MSG_TEXT_EMOTE",
     "CHAT_MSG_CHANNEL", "CHAT_MSG_WHISPER",
 }
 
--- Filter signature: (chatFrame, event, msg, sender, ...) -> discard, ...
 local function ChatFilter(_, _, _, sender)
     local settings = GetSettings()
     local cfg = settings and settings.extendedIgnore
@@ -90,12 +66,6 @@ local function InstallChatFilters()
     filtersInstalled = true
 end
 
----------------------------------------------------------------------------
--- TRADE AUTO-DECLINE
----------------------------------------------------------------------------
-
--- Trade partner is GetUnitName("NPC") at TRADE_SHOW (verified vs FrameXML
--- TradeFrame.lua:72). CancelTrade() closes the trade window (PlayerScript API).
 local tradeWatcher = CreateFrame("Frame")
 tradeWatcher:RegisterEvent("TRADE_SHOW")
 tradeWatcher:SetScript("OnEvent", function()
@@ -104,10 +74,6 @@ tradeWatcher:SetScript("OnEvent", function()
         CancelTrade()
     end
 end)
-
----------------------------------------------------------------------------
--- LIFECYCLE
----------------------------------------------------------------------------
 
 local function Refresh()
     RebuildSet()

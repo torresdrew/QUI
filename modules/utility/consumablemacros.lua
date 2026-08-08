@@ -1,22 +1,8 @@
----------------------------------------------------------------------------
--- Consumable Macros
--- Auto-creates and maintains per-character macros for Flasks, Potions,
--- Health Potions, and Weapon Consumables with quality-priority fallback
--- chains. Scans bags for the best available variant and keeps each macro
--- body updated as inventory changes.
----------------------------------------------------------------------------
 local ADDON_NAME, ns = ...
 local Helpers = ns.Helpers
 
 local ConsumableMacros = {}
 ns.ConsumableMacros = ConsumableMacros
-
----------------------------------------------------------------------------
--- Item definitions
--- variants are ordered by quality priority: Gold Fleeting > Silver Fleeting
--- > Gold Crafted > Silver Crafted.  Items without fleeting variants list
--- Gold Crafted > Silver Crafted only.
----------------------------------------------------------------------------
 
 local FLASK_DEFS = {
     blood_knights = {
@@ -144,10 +130,9 @@ local VANTUS_DEFS = {
 }
 
 local WEAPON_DEFS = {
-    -- Oils (applied to main hand via /use 16)
     phoenix_oil = {
         label = "Thalassian Phoenix Oil (Crit + Haste)",
-        applyToSlot = 16,  -- INVSLOT_MAINHAND
+        applyToSlot = 16,
         variants = {
             { itemID = 243734, tag = "Gold Crafted" },
             { itemID = 243733, tag = "Silver Crafted" },
@@ -169,7 +154,6 @@ local WEAPON_DEFS = {
             { itemID = 243737, tag = "Silver Crafted" },
         },
     },
-    -- Stones (applied to main hand via /use 16)
     whetstone = {
         label = "Refulgent Whetstone (AP, bladed weapons)",
         applyToSlot = 16,
@@ -186,7 +170,6 @@ local WEAPON_DEFS = {
             { itemID = 237367, tag = "Silver Crafted" },
         },
     },
-    -- Ranged ammo (auto-applies, no slot target needed)
     hawkeye = {
         label = "Farstrider's Hawkeye (Crit)",
         variants = {
@@ -261,10 +244,6 @@ function ConsumableMacros.GetVariantOrderForItem(itemID)
     return itemVariantOrders[itemID]
 end
 
----------------------------------------------------------------------------
--- Dropdown option arrays (exported for the options panel)
----------------------------------------------------------------------------
-
 ConsumableMacros.FLASK_OPTIONS = {
     { value = "none", text = ns.L["None"] },
     { value = "blood_knights", text = ns.L["Blood Knights (Haste)"] },
@@ -315,54 +294,41 @@ ConsumableMacros.WEAPON_OPTIONS = {
     { value = "boomshots", text = ns.L["Weighted Boomshots (AoE Fire, ranged)"] },
 }
 
----------------------------------------------------------------------------
--- Macro definitions: { dbKey, macroName, defsTable, displayLabel }
----------------------------------------------------------------------------
-
 local MACRO_SLOTS = {
-    { dbKey = "selectedFlask",   macroName = "QUI_Flask",  defs = FLASK_DEFS,  label = "Flask" },
-    { dbKey = "selectedPotion",  macroName = "QUI_Pot",    defs = POTION_DEFS, label = "Potion" },
-    { dbKey = "selectedHealth",       macroName = "QUI_Health", defs = HEALTH_DEFS,       label = "Health Potion" },
-    { dbKey = "selectedHealthstone", macroName = "QUI_Stone",  defs = HEALTHSTONE_DEFS, label = "Healthstone" },
-    { dbKey = "selectedAugment",     macroName = "QUI_Rune",   defs = AUGMENT_DEFS,     label = "Augment Rune" },
-    { dbKey = "selectedVantus",      macroName = "QUI_Vantus", defs = VANTUS_DEFS,      label = "Vantus Rune" },
-    { dbKey = "selectedWeapon",      macroName = "QUI_Weapon", defs = WEAPON_DEFS,      label = "Weapon" },
+    { dbKey = "selectedFlask",   macroName = "Flask_DUI",  defs = FLASK_DEFS,  label = "Flask" },
+    { dbKey = "selectedPotion",  macroName = "Pot_DUI",    defs = POTION_DEFS, label = "Potion" },
+    { dbKey = "selectedHealth",       macroName = "Health_DUI", defs = HEALTH_DEFS,       label = "Health Potion" },
+    { dbKey = "selectedHealthstone", macroName = "Stone_DUI",  defs = HEALTHSTONE_DEFS, label = "Healthstone" },
+    { dbKey = "selectedAugment",     macroName = "Rune_DUI",   defs = AUGMENT_DEFS,     label = "Augment Rune" },
+    { dbKey = "selectedVantus",      macroName = "Vantus_DUI", defs = VANTUS_DEFS,      label = "Vantus Rune" },
+    { dbKey = "selectedWeapon",      macroName = "Weapon_DUI", defs = WEAPON_DEFS,      label = "Weapon" },
 }
 
----------------------------------------------------------------------------
--- Constants and state
----------------------------------------------------------------------------
+local MACRO_ICON = 134400
 
-local MACRO_ICON = 134400  -- INV_Misc_QuestionMark; #showtooltip overrides display
+local MAX_CHARACTER_MACROS_FALLBACK = 30
+
+local function GetCharacterMacroCap()
+    local consts = Constants and Constants.MacroConsts
+    local cap = consts and consts.MAX_CHARACTER_MACROS
+    if type(cap) ~= "number" then return MAX_CHARACTER_MACROS_FALLBACK end
+    return cap
+end
 
 local pendingUpdate  = false
 local debounceTimer  = nil
 local initialized    = false
 
--- Per-slot caches: lastBody[macroName], lastBest[macroName]
 local lastBody = {}
 local lastBest = {}
 
----------------------------------------------------------------------------
--- Database access
----------------------------------------------------------------------------
-
 local GetDB = Helpers.GetConsumableMacrosDB
 
----------------------------------------------------------------------------
--- Selection lookup (consumed by the consumable-check popup)
----------------------------------------------------------------------------
-
--- dbKey -> defs table, derived once from MACRO_SLOTS so the item-ID tables
--- live in exactly one place.
 local DEFS_BY_DBKEY = {}
 for _, slot in ipairs(MACRO_SLOTS) do
     DEFS_BY_DBKEY[slot.dbKey] = slot.defs
 end
 
---- Returns the representative item for the family currently configured in the
---- given macro slot, as { itemID = <first variant id>, label = <family label> },
---- or nil when the slot is unset, "none", or unknown.
 function ConsumableMacros.GetSelectedItem(dbKey)
     local db = GetDB and GetDB()
     if not db then return nil end
@@ -375,14 +341,6 @@ function ConsumableMacros.GetSelectedItem(dbKey)
     return { itemID = variant.itemID, label = def.label }
 end
 
----------------------------------------------------------------------------
--- Core logic
----------------------------------------------------------------------------
-
---- Build a macro body string from the selected type's variants.
--- Returns bodyString, bestItemID (first owned variant or nil).
--- If the def has applyToSlot, appends "/use <slot>" to auto-apply to
--- the equipment slot (e.g., 16 = main hand for weapon oils/stones).
 local function BuildMacroBody(typeKey, defs)
     if not typeKey or typeKey == "none" then return nil, nil end
     local def = defs[typeKey]
@@ -395,19 +353,14 @@ local function BuildMacroBody(typeKey, defs)
         if count and count > 0 then
             if not bestID then bestID = v.itemID end
             lines[#lines + 1] = "/use item:" .. v.itemID
-            -- Weapon enchants put the item on the cursor; a second /use item
-            -- would clobber it and break the trailing /use <slot>. Emit only
-            -- the highest-priority owned variant for cursor-targeted items.
             if def.applyToSlot then break end
         end
     end
 
-    -- If nothing owned, still produce a placeholder so the macro exists
     if #lines == 1 then
         lines[#lines + 1] = "/use item:" .. def.variants[1].itemID
     end
 
-    -- Auto-apply to equipment slot (e.g., oils/stones → main hand)
     if def.applyToSlot then
         lines[#lines + 1] = "/use " .. def.applyToSlot
     end
@@ -415,18 +368,17 @@ local function BuildMacroBody(typeKey, defs)
     return table.concat(lines, "\n"), bestID
 end
 
---- Ensure a named per-character macro exists with the given body.
--- Returns true if created or edited, false if unchanged or skipped.
 local function EnsureMacro(macroName, body)
     if not body then return false end
 
     local index = GetMacroIndexByName(macroName)
     if index == 0 then
-        -- Macro does not exist — create it
         local numGlobal, numChar = GetNumMacros()
-        if numChar >= MAX_CHARACTER_MACROS then
+        local cap = GetCharacterMacroCap()
+        numChar = numChar or 0
+        if numChar >= cap then
             local msg = ns.L["|cffff6666[QUI]|r Could not create macro '"] .. macroName
-                .. ns.L["': per-character macro slots full ("] .. numChar .. "/" .. MAX_CHARACTER_MACROS .. ")."
+                .. ns.L["': per-character macro slots full ("] .. numChar .. "/" .. cap .. ")."
             DEFAULT_CHAT_FRAME:AddMessage(msg)
             return false
         end
@@ -434,7 +386,6 @@ local function EnsureMacro(macroName, body)
         return true
     end
 
-    -- Macro exists — update body if changed
     local _, _, existingBody = GetMacroInfo(index)
     if existingBody == body then return false end
 
@@ -442,7 +393,6 @@ local function EnsureMacro(macroName, body)
     return true
 end
 
---- Print a chat notification when the active item changes.
 local function NotifyChange(macroType, newBestID, oldBestID)
     local db = GetDB()
     if not db or not db.chatNotifications then return end
@@ -459,7 +409,6 @@ local function NotifyChange(macroType, newBestID, oldBestID)
     end)
 end
 
---- Delete all QUI consumable macros (called when the feature is disabled).
 function ConsumableMacros:DeleteMacros()
     if InCombatLockdown() then return end
     for _, slot in ipairs(MACRO_SLOTS) do
@@ -472,7 +421,6 @@ function ConsumableMacros:DeleteMacros()
     wipe(lastBest)
 end
 
---- Main update — rebuild and apply all macros.
 function ConsumableMacros:UpdateMacros()
     if not initialized then return end
     local db = GetDB()
@@ -494,7 +442,6 @@ function ConsumableMacros:UpdateMacros()
                 lastBest[slot.macroName] = bestID
             end
         else
-            -- Slot set to "none": remove any stale macro and clear caches.
             local index = GetMacroIndexByName(slot.macroName)
             if index and index > 0 then
                 DeleteMacro(index)
@@ -505,10 +452,8 @@ function ConsumableMacros:UpdateMacros()
     end
 end
 
---- Public API for the options panel.
 function ConsumableMacros:ForceRefresh()
     initialized = true
-    -- Reset caches so the next update always writes
     wipe(lastBody)
     wipe(lastBest)
 
@@ -519,11 +464,6 @@ function ConsumableMacros:ForceRefresh()
     self:UpdateMacros()
 end
 
----------------------------------------------------------------------------
--- Event handling
----------------------------------------------------------------------------
-
--- Shared login/catch-up init: mark initialized and schedule a deferred update.
 local function RunLoginInit()
     initialized = true
     C_Timer.After(2, function()
@@ -570,10 +510,6 @@ eventFrame:RegisterEvent("BAG_UPDATE_DELAYED")
 eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
 eventFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
 
--- LOD catch-up: the login PEW (isInitialLogin/isReloadingUi) already fired
--- before this module loads, so the init branch above would never run.
--- ns.WhenLoggedIn is nil only in the headless test harness, where the old
--- never-firing PEW registration was equally inert.
 if ns.WhenLoggedIn then
     ns.WhenLoggedIn(function()
         local db = GetDB()

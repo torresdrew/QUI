@@ -1,9 +1,3 @@
---[[
-    QUI Options Init
-    Registers feature tiles, Welcome, Help, Tools strip, and the inline
-    search bar.
-]]
-
 local ADDON_NAME, ns = ...
 local QUI = QUI
 local GUI = QUI.GUI
@@ -24,12 +18,8 @@ end
 function GUI:InitializeOptions()
     local frame = self:CreateMainFrame()
 
-    -- Sidebar search bar (top)
     self:AddSidebarSearchBar(frame)
 
-    -- Keyboard shortcut: Ctrl+F focuses the search box while the panel is open.
-    -- SetPropagateKeyboardInput is only valid inside an OnKey handler; the handler
-    -- below sets propagation explicitly on every branch, so no init-time call needed.
     frame:EnableKeyboard(true)
     frame:SetScript("OnKeyDown", function(self, key)
         if key == "ESCAPE" then
@@ -37,7 +27,6 @@ function GUI:InitializeOptions()
             self:Hide()
             return
         end
-        -- Don't intercept if the user is typing in another edit box.
         local focused = GetCurrentKeyBoardFocus and GetCurrentKeyBoardFocus()
         if focused and focused ~= frame._searchBox and focused ~= (frame._searchBox and frame._searchBox.editBox) then
             SetKeyboardPropagation(self, true)
@@ -54,7 +43,6 @@ function GUI:InitializeOptions()
         SetKeyboardPropagation(self, true)
     end)
 
-    -- Welcome tile (top of sidebar)
     if ns.QUI_Options and type(ns.QUI_Options.RegisterFeatureTile) == "function" then
         ns.QUI_Options.RegisterFeatureTile(frame, {
             id = "welcome",
@@ -66,7 +54,6 @@ function GUI:InitializeOptions()
         })
     end
 
-    -- Feature tiles (guarded; each file in tiles/ attaches its own table to ns).
     if ns.QUI_GlobalTile then
         ns.QUI_GlobalTile.Register(frame)
     end
@@ -116,12 +103,10 @@ function GUI:InitializeOptions()
         ns.QUI_AltsTile.Register(frame)
     end
 
-    -- Help & Welcome tile — bottom of sidebar, two sub-pages.
     if ns.QUI_HelpTile then
         ns.QUI_HelpTile.Register(frame)
     end
 
-    -- Tools strip (bottom)
     self:AddToolsStripButton(frame, {
         id = "cdm_settings", icon = "+", label = ns.L["Blizz CDM"],
         onClick = function()
@@ -153,8 +138,6 @@ function GUI:InitializeOptions()
 
     self:SeedStaticSearchRoutesFromTiles(frame)
 
-    -- Select Welcome immediately. It's cheap and the only page the user
-    -- sees right after opening.
     GUI:SelectFeatureTile(frame, 1)
 
     return frame

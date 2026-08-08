@@ -1,7 +1,3 @@
----------------------------------------------------------------------------
--- QUI Combat Timer
--- Displays elapsed time in combat (resets on combat exit)
----------------------------------------------------------------------------
 local ADDON_NAME, ns = ...
 local QUI = ns.QUI or {}
 ns.QUI = QUI
@@ -10,8 +6,6 @@ local Helpers = ns.Helpers
 local UIKit = ns.UIKit
 local CreateOnUpdateThrottle = Helpers and Helpers.CreateOnUpdateThrottle
 
--- CJK-safe font setter: preserves the roman font and only adds CJK fallback
--- members where available, degrading to plain SetFont otherwise.
 local function CJKFont(fs, p, s, f)
     if ns.Helpers and ns.Helpers.ApplyFontWithFallback then
         ns.Helpers.ApplyFontWithFallback(fs, p, s, f)
@@ -22,15 +16,12 @@ end
 local floor = math.floor
 local format = string.format
 
----------------------------------------------------------------------------
--- State tracking
----------------------------------------------------------------------------
 local CombatTimerState = {
     combatStartTime = 0,
     timerFrame = nil,
     isInCombat = false,
     isPreviewMode = false,
-    isInEncounter = false,  -- Track boss encounter state
+    isInEncounter = false,
 }
 
 local TIMER_UPDATE_INTERVAL = 0.1
@@ -43,14 +34,8 @@ local RUNTIME_EVENTS = {
 }
 local runtimeEventsRegistered = false
 
----------------------------------------------------------------------------
--- Get settings from database
----------------------------------------------------------------------------
 local GetSettings = Helpers.CreateDBGetter("combatTimer")
 
----------------------------------------------------------------------------
--- Create the timer frame (one-time setup)
----------------------------------------------------------------------------
 local function CreateTimerFrame()
     if CombatTimerState.timerFrame then return end
 
@@ -60,15 +45,13 @@ local function CreateTimerFrame()
     frame:SetFrameStrata("HIGH")
     frame:SetFrameLevel(50)
 
-    -- Set up backdrop (background only)
     frame:SetBackdrop(UIKit.GetBackdropInfo(nil, nil, frame))
-    local _cbgr, _cbgg, _cbgb = 0, 0, 0        -- original fallback literals
+    local _cbgr, _cbgg, _cbgb = 0, 0, 0
     if Helpers and Helpers.GetSkinBgColor then
         _cbgr, _cbgg, _cbgb = Helpers.GetSkinBgColor()
     end
     frame:SetBackdropColor(_cbgr, _cbgg, _cbgb, 0.6)
 
-    -- Create manual border lines for uniform edges
     UIKit.CreateBorderLines(frame)
     UIKit.UpdateBorderLines(frame, 1, 0, 0, 0, 1)
 
@@ -85,9 +68,6 @@ local function CreateTimerFrame()
     CombatTimerState.timerFrame = frame
 end
 
----------------------------------------------------------------------------
--- Format elapsed time as MM:SS
----------------------------------------------------------------------------
 local _lastTimerSecs = -1
 local _lastTimerText = "00:00"
 
@@ -99,9 +79,6 @@ local function FormatTime(seconds)
     return _lastTimerText
 end
 
----------------------------------------------------------------------------
--- OnUpdate handler for timer
----------------------------------------------------------------------------
 local function UpdateTimerDisplay()
     if not CombatTimerState.isInCombat then return end
 
@@ -129,9 +106,6 @@ else
     end
 end
 
----------------------------------------------------------------------------
--- Get global addon font setting
----------------------------------------------------------------------------
 local function GetGlobalFont()
     if QUICore and QUICore.db and QUICore.db.profile and QUICore.db.profile.general and QUICore.db.profile.general.font then
         return QUICore.db.profile.general.font
@@ -139,17 +113,11 @@ local function GetGlobalFont()
     return "Quazii"
 end
 
----------------------------------------------------------------------------
--- Get player class color
----------------------------------------------------------------------------
 local function GetClassColor()
     local r, g, b = Helpers.GetPlayerClassColor()
     return {r, g, b, 1}
 end
 
----------------------------------------------------------------------------
--- Update timer appearance from settings
----------------------------------------------------------------------------
 local function UpdateTimerAppearance()
     if not CombatTimerState.timerFrame then
         CreateTimerFrame()
@@ -160,12 +128,10 @@ local function UpdateTimerAppearance()
 
     local frame = CombatTimerState.timerFrame
 
-    -- Update size
     local width = settings.width or 80
     local height = settings.height or 30
     frame:SetSize(width, height)
 
-    -- Update position
     local xOffset = settings.xOffset or 0
     local yOffset = settings.yOffset or -150
     if not (_G.QUI_HasFrameAnchor and _G.QUI_HasFrameAnchor("combatTimer")) then
@@ -173,13 +139,11 @@ local function UpdateTimerAppearance()
         frame:SetPoint("CENTER", UIParent, "CENTER", xOffset, yOffset)
     end
 
-    -- Update font (using LSM) - check if using custom font or global
     local fontSize = settings.fontSize or 16
     local fontName = settings.useCustomFont and settings.font or GetGlobalFont()
     local fontPath = UIKit.ResolveFontPath(fontName)
     CJKFont(frame.text, fontPath, fontSize, "OUTLINE")
 
-    -- Update text color (use class color or custom color)
     local textColor
     if settings.useClassColorText then
         textColor = GetClassColor()
@@ -188,7 +152,6 @@ local function UpdateTimerAppearance()
     end
     frame.text:SetTextColor(textColor[1], textColor[2], textColor[3], textColor[4] or 1)
 
-    -- Update backdrop and border
     local showBackdrop = settings.showBackdrop
     if showBackdrop == nil then showBackdrop = true end
 
@@ -196,11 +159,8 @@ local function UpdateTimerAppearance()
     local borderTexture = settings.borderTexture or "None"
     local useLSMBorder = borderTexture ~= "None" and borderSize > 0
 
-    -- Get border color via centralized resolver (honors per-module source enum)
     local bR, bG, bB, bA = Helpers.GetSkinBorderColor(settings, "")
 
-    -- Set up backdrop with or without LSM border
-    -- Skip LSM border if hideBorder is enabled
     local hideBorder = settings.hideBorder
     local effectiveUseLSMBorder = useLSMBorder and not hideBorder
 
@@ -232,29 +192,21 @@ local function UpdateTimerAppearance()
         end
     end
 
-    -- Update manual border lines (only used when no LSM border is selected)
-    -- Hide all borders if hideBorder is enabled
     UIKit.CreateBorderLines(frame)
     UIKit.UpdateBorderLines(frame, borderSize, bR, bG, bB, bA, useLSMBorder or hideBorder)
 
-    -- Ensure text is always centered
     frame.text:ClearAllPoints()
     frame.text:SetPoint("CENTER", frame, "CENTER", 0, 1)
 end
 
----------------------------------------------------------------------------
--- Combat start handler
----------------------------------------------------------------------------
 local function OnCombatStart()
     local settings = GetSettings()
     if not settings or not settings.enabled then return end
 
-    -- Don't start combat timer if we're in preview mode
     if CombatTimerState.isPreviewMode then return end
 
-    -- If encounters-only mode is enabled and we're not in an encounter, don't show
     if settings.onlyShowInEncounters and not CombatTimerState.isInEncounter then
-        CombatTimerState.isInCombat = true  -- Track combat state but don't show timer
+        CombatTimerState.isInCombat = true
         return
     end
 
@@ -271,11 +223,7 @@ local function OnCombatStart()
     end
 end
 
----------------------------------------------------------------------------
--- Combat end handler
----------------------------------------------------------------------------
 local function OnCombatEnd()
-    -- Don't hide if in preview mode
     if CombatTimerState.isPreviewMode then return end
 
     CombatTimerState.isInCombat = false
@@ -286,19 +234,14 @@ local function OnCombatEnd()
     end
 end
 
----------------------------------------------------------------------------
--- Encounter start handler (boss encounters)
----------------------------------------------------------------------------
 local function OnEncounterStart()
     local settings = GetSettings()
     if not settings or not settings.enabled then return end
 
     CombatTimerState.isInEncounter = true
 
-    -- Don't interfere with preview mode
     if CombatTimerState.isPreviewMode then return end
 
-    -- If encounters-only mode and we're in combat but timer not shown, show it now
     if settings.onlyShowInEncounters and CombatTimerState.isInCombat then
         CreateTimerFrame()
         UpdateTimerAppearance()
@@ -313,20 +256,14 @@ local function OnEncounterStart()
     end
 end
 
----------------------------------------------------------------------------
--- Encounter end handler
----------------------------------------------------------------------------
 local function OnEncounterEnd()
     CombatTimerState.isInEncounter = false
 
     local settings = GetSettings()
     if not settings then return end
 
-    -- Don't hide if in preview mode
     if CombatTimerState.isPreviewMode then return end
 
-    -- If encounters-only mode is enabled, hide the timer when encounter ends
-    -- (even if still in combat)
     if settings.onlyShowInEncounters and CombatTimerState.timerFrame then
         CombatTimerState.timerFrame:SetScript("OnUpdate", nil)
         CombatTimerState.timerFrame:Hide()
@@ -353,14 +290,10 @@ local function UpdateEventRegistrations()
     SetRuntimeEventsRegistered(shouldRegister)
 end
 
----------------------------------------------------------------------------
--- Refresh function (called when settings change)
----------------------------------------------------------------------------
 local function RefreshCombatTimer()
     local settings = GetSettings()
     UpdateEventRegistrations()
 
-    -- If disabled and not in preview mode, hide the timer
     if (not settings or not settings.enabled) and not CombatTimerState.isPreviewMode then
         CombatTimerState.isInCombat = false
         if CombatTimerState.timerFrame then
@@ -370,13 +303,10 @@ local function RefreshCombatTimer()
         return
     end
 
-    -- Update appearance if settings changed
     UpdateTimerAppearance()
 
-    -- If currently in combat (and not preview), make sure it's visible
     if InCombatLockdown() and CombatTimerState.timerFrame and not CombatTimerState.isPreviewMode then
         if not CombatTimerState.isInCombat then
-            -- Entered combat while feature was disabled, start now
             CombatTimerState.combatStartTime = GetTime()
             CombatTimerState.isInCombat = true
             CombatTimerState.timerFrame.text:SetText("00:00")
@@ -386,9 +316,6 @@ local function RefreshCombatTimer()
     end
 end
 
----------------------------------------------------------------------------
--- Toggle preview mode (for options panel)
----------------------------------------------------------------------------
 local function TogglePreview(enable)
     CreateTimerFrame()
     if not CombatTimerState.timerFrame then return end
@@ -396,16 +323,13 @@ local function TogglePreview(enable)
     CombatTimerState.isPreviewMode = enable
 
     if enable then
-        -- Show preview
         UpdateTimerAppearance()
         CombatTimerState.timerFrame.text:SetText("01:23")
         CombatTimerState.timerFrame:Show()
-        CombatTimerState.timerFrame:SetScript("OnUpdate", nil)  -- No counting in preview
+        CombatTimerState.timerFrame:SetScript("OnUpdate", nil)
     else
-        -- Hide preview (unless actually in combat with feature enabled)
         local settings = GetSettings()
         if settings and settings.enabled and InCombatLockdown() then
-            -- Don't hide, we're in combat with feature enabled
             CombatTimerState.isInCombat = true
             CombatTimerState.combatStartTime = GetTime()
             CombatTimerState.timerFrame.text:SetText("00:00")
@@ -421,9 +345,6 @@ local function IsPreviewMode()
     return CombatTimerState.isPreviewMode
 end
 
----------------------------------------------------------------------------
--- Initialize
----------------------------------------------------------------------------
 eventFrame:SetScript("OnEvent", function(self, event, ...)
     if event == "PLAYER_REGEN_DISABLED" then
         OnCombatStart()
@@ -436,12 +357,6 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
     end
 end)
 
--- Install after login. ns.WhenLoggedIn runs now if already logged in (the
--- post-login LOD case) rather than this addon's own ADDON_LOADED, which is NOT
--- delivered when the core eager-LoadAddOn's the module from OnEnable (see
--- petwarning.lua / tooltip_provider.lua). Without this CreateTimerFrame() +
--- UpdateEventRegistrations() never run, so the runtime combat events are never
--- registered and the timer never appears. Nil only in the headless test harness.
 if ns.WhenLoggedIn then
     ns.WhenLoggedIn(function()
         CreateTimerFrame()
@@ -449,9 +364,6 @@ if ns.WhenLoggedIn then
     end)
 end
 
----------------------------------------------------------------------------
--- Global functions for GUI
----------------------------------------------------------------------------
 _G.QUI_RefreshCombatTimer = RefreshCombatTimer
 _G.QUI_ToggleCombatTimerPreview = TogglePreview
 
@@ -468,9 +380,6 @@ if ns.Registry then
         group = "trackers",
         importCategories = { "trackersTimers" },
     })
-    -- Companion skinning registration: the timer backdrop tracks the global skin
-    -- bg, but the "trackers" group isn't refreshed on a skin-color change (which
-    -- fires only RefreshAll("skinning")). Re-skin on that too.
     ns.Registry:Register("combatTimerSkin", {
         refresh = _G.QUI_RefreshCombatTimer,
         priority = 40,

@@ -1,8 +1,3 @@
----------------------------------------------------------------------------
--- QUI Battle Res Counter
--- Displays available battle res charges and cooldown timer
--- Uses C_Spell.GetSpellCharges(20484) which returns the shared brez pool
----------------------------------------------------------------------------
 local ADDON_NAME, ns = ...
 local QUI = ns.QUI or {}
 ns.QUI = QUI
@@ -10,57 +5,46 @@ local Helpers = ns.Helpers
 local QUICore = ns.Addon
 local UIKit = ns.UIKit
 
----------------------------------------------------------------------------
--- Constants
----------------------------------------------------------------------------
 local REBIRTH_SPELL_ID = 20484
-local REBIRTH_ICON_ID = 136080  -- Spell_Nature_Reincarnation (Rebirth icon)
+local REBIRTH_ICON_ID = 136080
 
--- All battle res spell IDs for combat log tracking
 local BREZ_SPELL_IDS = {
-    [20484]  = true,  -- Rebirth (Druid)
-    [61999]  = true,  -- Raise Ally (Death Knight)
-    [95750]  = true,  -- Soulstone Resurrection (Warlock)
-    [391054] = true,  -- Intercession (Paladin)
-    [345130] = true,  -- Disposable Spectrophasic Reanimator (Engineering)
-    [385403] = true,  -- Tinker: Arclight Vital Correctors (Engineering)
-    [384893] = true,  -- Convincingly Realistic Jumper Cables (Engineering)
+    [20484]  = true,
+    [61999]  = true,
+    [95750]  = true,
+    [391054] = true,
+    [345130] = true,
+    [385403] = true,
+    [384893] = true,
 }
-local REINCARNATION_SPELL_ID = 21169  -- Shaman self-res
+local REINCARNATION_SPELL_ID = 21169
 
--- Raid difficulties that have battle res charges
 local VALID_DIFFICULTIES = {
-    [3]  = true,  -- 10-Player Raid
-    [4]  = true,  -- 25-Player Raid
-    [5]  = true,  -- 10-Player Heroic
-    [6]  = true,  -- 25-Player Heroic
-    [8]  = true,  -- Mythic Keystone
-    [14] = true,  -- Normal Raid
-    [15] = true,  -- Heroic Raid
-    [16] = true,  -- Mythic Raid
-    [17] = true,  -- LFR
-    [23] = true,  -- Mythic Dungeon
-    [33] = true,  -- Timewalking Raid
+    [3]  = true,
+    [4]  = true,
+    [5]  = true,
+    [6]  = true,
+    [8]  = true,
+    [14] = true,
+    [15] = true,
+    [16] = true,
+    [17] = true,
+    [23] = true,
+    [33] = true,
 }
 
----------------------------------------------------------------------------
--- State tracking
----------------------------------------------------------------------------
 local BrezState = {
     frame = nil,
     ticker = nil,
     isPreviewMode = false,
     isInRelevantContent = false,
-    resHistory = {},  -- { { source, target, spellId, timestamp, sourceClass, targetClass } }
+    resHistory = {},
     encounterStartTime = 0,
     challengeStartTime = 0,
     inChallenge = false,
     inEncounter = false,
 }
 
----------------------------------------------------------------------------
--- Get settings from database
----------------------------------------------------------------------------
 local GetSettings = Helpers.CreateDBGetter("brzCounter")
 
 local function GetClassColor()
@@ -79,9 +63,6 @@ local function SafeChargeNumber(value)
     return nil
 end
 
----------------------------------------------------------------------------
--- Format time as M:SS
----------------------------------------------------------------------------
 local function FormatTime(seconds)
     if seconds <= 0 then return "" end
     local mins = math.floor(seconds / 60)
@@ -89,9 +70,6 @@ local function FormatTime(seconds)
     return string.format("%d:%02d", mins, secs)
 end
 
----------------------------------------------------------------------------
--- Format combat-relative timestamp as M:SS
----------------------------------------------------------------------------
 local function FormatCombatTime(timestamp)
     local baseTime = 0
     if BrezState.inChallenge and BrezState.challengeStartTime > 0 then
@@ -107,14 +85,8 @@ local function FormatCombatTime(timestamp)
     return string.format("%d:%02d", mins, secs)
 end
 
----------------------------------------------------------------------------
--- Get class color for a class file name
----------------------------------------------------------------------------
 local GetClassColorByClass = Helpers.GetClassColor
 
----------------------------------------------------------------------------
--- Create the brez counter frame
----------------------------------------------------------------------------
 local function CreateBrezFrame()
     if BrezState.frame then return end
 
@@ -127,7 +99,6 @@ local function CreateBrezFrame()
     frame:EnableMouse(true)
     frame:SetClampedToScreen(true)
 
-    -- Set up backdrop
     local SSB = QUICore and QUICore.SafeSetBackdrop
     if SSB then
         SSB(frame, UIKit.GetBackdropInfo(nil, nil, frame))
@@ -136,18 +107,15 @@ local function CreateBrezFrame()
     end
     frame:SetBackdropColor(0, 0, 0, 0.6)
 
-    -- Create border lines
     UIKit.CreateBorderLines(frame)
     UIKit.UpdateBorderLines(frame, 1, 0, 0, 0, 1)
 
-    -- Spell icon texture (ARTWORK so backdrop bg redraws can't land on top of it)
     local icon = frame:CreateTexture(nil, "ARTWORK")
     icon:SetAllPoints(frame)
     icon:SetTexture(REBIRTH_ICON_ID)
-    icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)  -- Crop icon borders
+    icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
     frame.icon = icon
 
-    -- Charges text (bottom-right)
     local chargeText = frame:CreateFontString(nil, "OVERLAY")
     chargeText:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -2, 2)
     if ns.Helpers and ns.Helpers.ApplyFontWithFallback then
@@ -160,7 +128,6 @@ local function CreateBrezFrame()
     chargeText:SetText("0")
     frame.chargeText = chargeText
 
-    -- Timer text (top-left)
     local timerText = frame:CreateFontString(nil, "OVERLAY")
     timerText:SetPoint("TOPLEFT", frame, "TOPLEFT", 2, -2)
     if ns.Helpers and ns.Helpers.ApplyFontWithFallback then
@@ -173,7 +140,6 @@ local function CreateBrezFrame()
     timerText:SetText("")
     frame.timerText = timerText
 
-    -- Drag handling (only when unlocked and out of combat)
     frame:RegisterForDrag("LeftButton")
     frame:SetScript("OnDragStart", function(self)
         local settings = GetSettings()
@@ -185,7 +151,6 @@ local function CreateBrezFrame()
     end)
     frame:SetScript("OnDragStop", function(self)
         self:StopMovingOrSizing()
-        -- Save position back to settings
         local settings = GetSettings()
         if settings then
             local _, _, _, xOfs, yOfs = self:GetPoint()
@@ -194,12 +159,10 @@ local function CreateBrezFrame()
         end
     end)
 
-    -- Tooltip
     frame:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
         GameTooltip:SetText(ns.L["Battle Res Charges"], 0.204, 1.0, 0.6)
 
-        -- Current charges info
         local chargeInfo = C_Spell.GetSpellCharges(REBIRTH_SPELL_ID)
         if chargeInfo then -- @secret-safe: SpellChargeInfo container is a plain table-or-nil (MayReturnNothing); secret-capable fields go to SafeChargeNumber below
             local currentCharges = SafeChargeNumber(chargeInfo.currentCharges)
@@ -220,7 +183,6 @@ local function CreateBrezFrame()
             end
         end
 
-        -- Res history
         if #BrezState.resHistory > 0 then
             GameTooltip:AddLine(" ")
             GameTooltip:AddLine(ns.L["Res History"], 0.204, 1.0, 0.6)
@@ -228,12 +190,10 @@ local function CreateBrezFrame()
                 local timeStr = FormatCombatTime(entry.timestamp)
                 local sr, sg, sb = GetClassColorByClass(entry.sourceClass)
                 if entry.spellId == REINCARNATION_SPELL_ID then
-                    -- Reincarnation: self-res, no target
                     local line = string.format(ns.L["[%s] %s (Reincarnation)"], timeStr, entry.source)
                     GameTooltip:AddLine(line, sr, sg, sb)
                 else
                     local tr, tg, tb = GetClassColorByClass(entry.targetClass)
-                    -- Two-part colored line: source >> target
                     GameTooltip:AddDoubleLine(
                         string.format("[%s] %s >>", timeStr, entry.source),
                         entry.target,
@@ -254,12 +214,6 @@ local function CreateBrezFrame()
     BrezState.frame = frame
 end
 
----------------------------------------------------------------------------
--- Update the display (called by ticker)
--- Passes secret values directly to C-side functions (SetFormattedText)
--- instead of reading them into Lua.  Color/desaturation require Lua-side
--- comparison so we cache the last readable state for combat ticks.
----------------------------------------------------------------------------
 local _lastDesaturated = true
 
 local function UpdateDisplay()
@@ -269,7 +223,6 @@ local function UpdateDisplay()
     local settings = GetSettings()
     if not settings then return end
 
-    -- In preview mode, show static data
     if BrezState.isPreviewMode then
         frame.chargeText:SetText("2")
         frame.timerText:SetText("1:23")
@@ -288,17 +241,12 @@ local function UpdateDisplay()
         return
     end
 
-    -- Charge count: pass directly to C-side SetFormattedText — handles
-    -- secret values natively, no Lua-side read needed.
     pcall(frame.chargeText.SetFormattedText, frame.chargeText, "%d", chargeInfo.currentCharges)
 
-    -- Color/desaturation and timer need Lua-side reads.
-    -- When values are secret, keep the last known visual state.
     local charges = SafeChargeNumber(chargeInfo.currentCharges)
     local maxCharges = SafeChargeNumber(chargeInfo.maxCharges)
 
     if charges ~= nil and maxCharges ~= nil then
-        -- Readable: update color, desaturation, and timer
         if charges == 0 then
             local noColor = settings.noChargesColor or { 1, 0.3, 0.3, 1 }
             frame.chargeText:SetTextColor(noColor[1], noColor[2], noColor[3], noColor[4] or 1)
@@ -324,17 +272,12 @@ local function UpdateDisplay()
             frame.timerText:SetText("")
         end
     end
-    -- Secret values: charge text already updated via C-side above;
-    -- color/desat/timer keep their last state (no flicker).
 end
 
----------------------------------------------------------------------------
--- Start/stop the update ticker
----------------------------------------------------------------------------
 local function StartTicker()
     if BrezState.ticker then return end
     BrezState.ticker = C_Timer.NewTicker(1, UpdateDisplay)
-    UpdateDisplay()  -- Immediate first update
+    UpdateDisplay()
 end
 
 local function StopTicker()
@@ -344,9 +287,6 @@ local function StopTicker()
     end
 end
 
----------------------------------------------------------------------------
--- Update frame appearance from settings
----------------------------------------------------------------------------
 local function UpdateAppearance()
     if not BrezState.frame then
         CreateBrezFrame()
@@ -357,12 +297,10 @@ local function UpdateAppearance()
 
     local frame = BrezState.frame
 
-    -- Update size
     local width = settings.width or 50
     local height = settings.height or 50
     frame:SetSize(width, height)
 
-    -- Update position (skip if anchoring system has overridden this frame)
     local xOffset = settings.xOffset or 500
     local yOffset = settings.yOffset or -50
     if not (_G.QUI_HasFrameAnchor and _G.QUI_HasFrameAnchor("brezCounter")) then
@@ -370,7 +308,6 @@ local function UpdateAppearance()
         frame:SetPoint("CENTER", UIParent, "CENTER", xOffset, yOffset)
     end
 
-    -- Update fonts
     local fontPath = UIKit.ResolveFontPath(settings.useCustomFont and settings.font)
 
     local fontSize = settings.fontSize or 14
@@ -387,7 +324,6 @@ local function UpdateAppearance()
         frame.timerText:SetFont(fontPath, timerFontSize, "OUTLINE")
     end
 
-    -- Update timer text color
     local timerColor
     if settings.useClassColorText then
         timerColor = GetClassColor()
@@ -396,7 +332,6 @@ local function UpdateAppearance()
     end
     frame.timerText:SetTextColor(timerColor[1], timerColor[2], timerColor[3], timerColor[4] or 1)
 
-    -- Update backdrop and border
     local showBackdrop = settings.showBackdrop
     if showBackdrop == nil then showBackdrop = true end
 
@@ -404,7 +339,6 @@ local function UpdateAppearance()
     local borderTexture = settings.borderTexture or "None"
     local useLSMBorder = borderTexture ~= "None" and borderSize > 0
 
-    -- Get border color via centralized resolver (honors per-module source enum)
     local bR, bG, bB, bA = Helpers.GetSkinBorderColor(settings, "")
 
     local hideBorder = settings.hideBorder
@@ -438,29 +372,20 @@ local function UpdateAppearance()
         end
     end
 
-    -- Update manual border lines
     UIKit.CreateBorderLines(frame)
     UIKit.UpdateBorderLines(frame, borderSize, bR, bG, bB, bA, useLSMBorder or hideBorder)
 
-    -- Lock/unlock state
     local locked = settings.locked ~= false
     frame:SetMovable(not locked)
 
-    -- Update display immediately
     UpdateDisplay()
 end
 
----------------------------------------------------------------------------
--- Check if current content supports brez tracking
----------------------------------------------------------------------------
 local function IsInRelevantContent()
     local _, _, difficultyID = GetInstanceInfo()
     return VALID_DIFFICULTIES[difficultyID] or false
 end
 
----------------------------------------------------------------------------
--- Show/hide the frame based on context
----------------------------------------------------------------------------
 local function ShowFrame()
     if not BrezState.frame then
         CreateBrezFrame()
@@ -477,9 +402,6 @@ local function HideFrame()
     StopTicker()
 end
 
----------------------------------------------------------------------------
--- Evaluate visibility (called on zone change, settings change, etc.)
----------------------------------------------------------------------------
 local function EvaluateVisibility()
     local settings = GetSettings()
     if not settings or not settings.enabled then
@@ -502,15 +424,11 @@ local function EvaluateVisibility()
     end
 end
 
----------------------------------------------------------------------------
--- Combat log handler for res history
----------------------------------------------------------------------------
 local function OnCombatLogEvent()
     local _, subEvent, _, sourceGUID, sourceName, _, _, destGUID, destName, _, _, spellId = CombatLogGetCurrentEventInfo()
 
     if not spellId then return end
 
-    -- Check for brez spells (SPELL_RESURRECT)
     if subEvent == "SPELL_RESURRECT" and BREZ_SPELL_IDS[spellId] then
         local sourceClass = select(2, GetPlayerInfoByGUID(sourceGUID))
         local targetClass = select(2, GetPlayerInfoByGUID(destGUID))
@@ -522,11 +440,9 @@ local function OnCombatLogEvent()
             sourceClass = sourceClass,
             targetClass = targetClass,
         })
-        -- Trigger immediate display update
         UpdateDisplay()
     end
 
-    -- Check for Reincarnation (self-res via SPELL_CAST_SUCCESS)
     if subEvent == "SPELL_CAST_SUCCESS" and spellId == REINCARNATION_SPELL_ID then
         local sourceClass = select(2, GetPlayerInfoByGUID(sourceGUID))
         table.insert(BrezState.resHistory, {
@@ -541,16 +457,10 @@ local function OnCombatLogEvent()
     end
 end
 
----------------------------------------------------------------------------
--- Reset res history
----------------------------------------------------------------------------
 local function ResetHistory()
     wipe(BrezState.resHistory)
 end
 
----------------------------------------------------------------------------
--- Refresh function (called when settings change)
----------------------------------------------------------------------------
 local function RefreshBrezCounter()
     local settings = GetSettings()
 
@@ -562,15 +472,11 @@ local function RefreshBrezCounter()
 
     UpdateAppearance()
 
-    -- Re-evaluate visibility
     if not BrezState.isPreviewMode then
         EvaluateVisibility()
     end
 end
 
----------------------------------------------------------------------------
--- Toggle preview mode (for options panel)
----------------------------------------------------------------------------
 local function TogglePreview(enable)
     CreateBrezFrame()
     if not BrezState.frame then return end
@@ -597,9 +503,6 @@ local function IsPreviewMode()
     return BrezState.isPreviewMode
 end
 
----------------------------------------------------------------------------
--- Event handler
----------------------------------------------------------------------------
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 eventFrame:RegisterEvent("ENCOUNTER_START")
@@ -611,7 +514,6 @@ eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
 
 eventFrame:SetScript("OnEvent", function(self, event, ...)
     if event == "PLAYER_ENTERING_WORLD" then
-        -- Delay 1 frame to let instance info settle
         C_Timer.After(0, function()
             EvaluateVisibility()
         end)
@@ -635,13 +537,11 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         BrezState.inChallenge = false
 
     elseif event == "PLAYER_REGEN_DISABLED" then
-        -- Lock frame during combat
         if BrezState.frame then
             BrezState.frame:SetMovable(false)
         end
 
     elseif event == "PLAYER_REGEN_ENABLED" then
-        -- Unlock frame out of combat (only if not user-locked)
         if BrezState.frame then
             local settings = GetSettings()
             local locked = settings and settings.locked ~= false
@@ -651,10 +551,6 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
     end
 end)
 
--- Install after login. ns.WhenLoggedIn runs now if already logged in (the
--- post-login LOD case) rather than this addon's own ADDON_LOADED, which is NOT
--- delivered when the core eager-LoadAddOn's the module from OnEnable (see
--- petwarning.lua / tooltip_provider.lua). Nil only in the headless test harness.
 if ns.WhenLoggedIn then
     ns.WhenLoggedIn(function()
         CreateBrezFrame()
@@ -662,14 +558,8 @@ if ns.WhenLoggedIn then
     end)
 end
 
--- COMBAT_LOG_EVENT_UNFILTERED is protected in 12.0; RegisterEvent/RegisterFrameEventAndCallback
--- both trigger ADDON_ACTION_FORBIDDEN. Use RegisterCallback which subscribes to Blizzard's
--- own internal dispatch without calling RegisterEvent.
 EventRegistry:RegisterCallback("COMBAT_LOG_EVENT_UNFILTERED", OnCombatLogEvent, eventFrame)
 
----------------------------------------------------------------------------
--- Global functions for GUI
----------------------------------------------------------------------------
 _G.QUI_RefreshBrezCounter = RefreshBrezCounter
 _G.QUI_ToggleBrezCounterPreview = TogglePreview
 

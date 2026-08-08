@@ -1,22 +1,5 @@
 local ADDON_NAME, ns = ...
 
----------------------------------------------------------------------------
--- SOUND MUTE — CATALOG (data only)
---
--- The curated set of game sounds that can be muted, grouped into categories.
--- Each entry is a named group of Blizzard fileDataIDs; ticking its checkbox
--- runs MuteSoundFile() over every id (see sound_mute.lua). Values are raw
--- fileDataIDs (game asset ids), not soundKitIDs.
---
--- Published on the shared QUI namespace (ns proxies to QUI._ns), so both the
--- runtime engine (QUI_QoL) and the options UI (QUI_Options) read one source
--- of truth — no key duplication, no drift.
---
--- Entry keys are category-prefixed and globally unique (asserted by
--- tests/unit/sound_mute_catalog_test.lua). To extend: add an entry here only;
--- the engine and settings panel pick it up automatically.
----------------------------------------------------------------------------
-
 ns.SoundMuteCatalog = {
     categories = {
         {

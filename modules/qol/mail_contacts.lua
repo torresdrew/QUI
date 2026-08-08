@@ -1,29 +1,10 @@
 local ADDON_NAME, ns = ...
 local Helpers = ns.Helpers
 
----------------------------------------------------------------------------
--- MAILBOX CONTACTS + REMEMBER LAST RECIPIENT
---
--- (A) Address book: a side panel on the mail window (Send tab only) listing
---     your alts and everyone you've mailed; clicking a name fills the
---     recipient box. Contacts are account-wide (QUIDB.global.mailContacts,
---     ["Name-Realm"] = { name, realm, class, lastUsed }); auto-seeded from
---     the storage module's known characters and auto-captured on every send.
--- (B) Remember last recipient: after Blizzard resets the send form
---     post-send, restore the recipient so multi-mail sessions don't retype.
---
--- TAINT (bags/mailbox rule): ONLY hooksecurefunc post-hooks on the mail
--- globals — nothing is replaced. SendMailFrame_SendMail / SendMailFrame_Reset
--- / MailFrameTab_OnClick + SendMailNameEditBox verified in 12.x
--- Blizzard_MailFrame/MailFrame.lua. Filling the recipient is a plain
--- SetText on a non-protected editbox from an insecure click — the user still
--- presses the Send button themselves.
----------------------------------------------------------------------------
-
 local GetSettings = Helpers.CreateDBGetter("general")
 
 local MAX_ROWS = 14
-local MAX_CONTACTS = 60 -- LRU cap on stored contacts
+local MAX_CONTACTS = 60
 
 local panel, rows
 local hooksInstalled = false
@@ -48,9 +29,6 @@ local function GetStore()
 end
 
 -- <<< QUI_TEST_EXTRACT recipient_format
--- Build the SendMail recipient string: same-realm contacts get the bare
--- name (realm compared normalized: spaces/hyphens/apostrophes stripped,
--- case-folded); cross-realm keeps "Name-Realm".
 local function NormalizeRealm(realm)
     if type(realm) ~= "string" then return "" end
     return (realm:gsub("[%s%-']", "")):lower()
@@ -83,7 +61,6 @@ local function TouchContact(key, class)
     if class then rec.class = class end
     rec.lastUsed = time()
 
-    -- LRU cap: evict the stalest entries beyond MAX_CONTACTS.
     local keys = {}
     for k in pairs(store) do keys[#keys + 1] = k end
     if #keys > MAX_CONTACTS then
@@ -129,7 +106,6 @@ local function BuildSortedContacts()
             list[#list + 1] = { key = key, rec = rec }
         end
     end
-    -- Most recently used first, then alphabetical.
     table.sort(list, function(a, b)
         local la, lb = a.rec.lastUsed or 0, b.rec.lastUsed or 0
         if la ~= lb then return la > lb end
@@ -225,8 +201,6 @@ local function OnSendMail()
     local text = editBox and editBox:GetText()
     if type(text) ~= "string" or text == "" then return end
     lastRecipient = text
-    -- Capture into the address book (normalized key: bare names get the
-    -- player's realm appended so alts on other realms don't collide).
     if PanelEnabled() then
         local key = text
         if not key:find("-", 1, true) then
@@ -262,13 +236,11 @@ local function InstallHooks()
 end
 
 local frame = CreateFrame("Frame")
--- Literal RegisterEvent calls so tools/generate_event_allowlist.lua detects them.
 frame:RegisterEvent("MAIL_SHOW")
 frame:RegisterEvent("MAIL_CLOSED")
 frame:SetScript("OnEvent", function(_, event)
     if event == "MAIL_SHOW" then
         InstallHooks()
-        -- Defer: SendMailFrame visibility settles after MAIL_SHOW.
         C_Timer.After(0, UpdatePanel)
     else
         lastRecipient = nil

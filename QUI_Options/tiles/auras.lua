@@ -1,19 +1,3 @@
---[[
-    QUI Options V2 — Auras hub tile.
-    First sub-page is the guided Setup Wizard: detect role, preview + apply
-    role-appropriate aura intents across group/player/target
-    (aurasWizardPage, core/settings/content/auras_wizard_page.lua).
-    Second sub-page mounts the group-frame aura editor (aurasGroupPage,
-    core/settings/content/auras_group_page.lua). Third sub-page mounts
-    the unit-frame aura editor (aurasUnitPage, core/settings/content/
-    auras_unit_page.lua). Fourth sub-page mounts the action-bar buff/debuff
-    editor (aurasActionBarPage, core/settings/content/auras_actionbar_page.lua),
-    labelled "Buff/Debuff Frames". Fifth sub-page mounts the group-frame
-    dispel-overlay settings + role-aware dispel hints (aurasDispelPage,
-    core/settings/content/auras_dispel_page.lua).
-    More sub-pages (CDM, ...) land in later tasks.
-]]
-
 local ADDON_NAME, ns = ...
 
 ns.QUI_AurasTile = ns.QUI_AurasTile or {}
@@ -35,11 +19,6 @@ function ns.QUI_AurasTile.Register(frame)
                 name = ns.L["Setup Wizard"],
                 featureId = "aurasWizardPage",
                 navRoutes = { { tabIndex = 21, subTabIndex = 1 } },
-                -- The wizard renders its options as raw labels (not registered
-                -- widgets), so its step names and intent labels are not harvested
-                -- into the search cache the way form widgets are. Surface the key
-                -- terms explicitly so a search for "place hots" / "my hots" /
-                -- "boss debuffs" lands on the wizard.
                 searchAliases = {
                     ns.L["Setup Wizard"], ns.L["Party auras"], ns.L["Place HoTs"],
                     ns.L["My HoTs"], ns.L["Big defensives on allies"], ns.L["All buffs"],
@@ -104,15 +83,15 @@ function ns.QUI_AurasTile.Register(frame)
                 },
             },
             {
-                id = "aurasDispel",
-                name = ns.L["Dispel Colors"],
-                featureId = "aurasDispelPage",
+                id = "aurasNameplate",
+                name = ns.L["Nameplates"],
+                featureId = "aurasNameplatePage",
                 navRoutes = { { tabIndex = 21, subTabIndex = 5 } },
                 searchContext = {
                     tabIndex = 21,
                     tabName = ns.L["Auras"],
                     subTabIndex = 5,
-                    subTabName = ns.L["Dispel Colors"],
+                    subTabName = ns.L["Nameplates"],
                 },
             },
         },

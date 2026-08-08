@@ -51,7 +51,7 @@ end
 local source = readAll("QUI_CDM/cdm/cdm_spelldata.lua")
 local buildStart = assert(source:find("function CDMSpellData:BuildSpellListFromOwned", 1, true),
     "BuildSpellListFromOwned should exist")
-local buildEnd = assert(source:find("-- EXTRA SPELL TABLES", buildStart, true),
+local buildEnd = assert(source:find("local RACE_RACIALS = {", buildStart, true),
     "extra-spell-tables section should follow BuildSpellListFromOwned")
 local sortPos = source:find("table.sort(result", buildStart, true)
 assert(not sortPos or sortPos > buildEnd,

@@ -63,7 +63,7 @@ for _, entry in ipairs(manifest) do
     end
 end
 
-for _, companion in ipairs({ "QUI_Options", "QUI_OptionsSearch" }) do
+for _, companion in ipairs({ "QUI_Options" }) do
     assert(releaseFolders[companion],
         "required companion addon is not discoverable: " .. companion)
 end
@@ -79,14 +79,18 @@ for folder in pairs(releaseFolders) do
     local toc = folder .. "/" .. folder .. ".toc"
     assert(readFile(toc), "discoverable suite is missing TOC: " .. toc)
 
-    if folder:match("^QUI_OptionsSearch") then
-        assert(readFile(folder .. "/search_cache.lua"),
-            "search-cache suite is missing generated cache: " .. folder)
-    else
-        assert(readFile(folder .. "/bootstrap.lua"),
-            "suite addon is missing bootstrap.lua: " .. folder)
-    end
+    -- Every shipped suite folder is a real addon with a bootstrap. There is no
+    -- data-only folder any more: QUI_OptionsSearch existed solely to hold
+    -- the generated index, which ships packed inside QUI_Options now, and
+    -- the ten per-locale overlay addons are root-TOC files in core/locale/.
+    assert(readFile(folder .. "/bootstrap.lua"),
+        "suite addon is missing bootstrap.lua: " .. folder)
 end
+
+-- The generated index is not a folder any more, so nothing above would notice
+-- it going missing from the packaged build.
+assert(readFile("QUI_Options/search_cache.lua"),
+    "generated search index is missing: QUI_Options/search_cache.lua")
 
 for _, path in ipairs(WORKFLOWS) do
     local body = assert(readFile(path), "missing workflow: " .. path)
@@ -117,10 +121,16 @@ for _, path in ipairs(WORKFLOWS) do
         path .. ": workflow should require every discovered TOC")
     assertContains(body, 'required_paths+=("build/$folder/bootstrap.lua")',
         path .. ": workflow should require bootstrap.lua for runtime suites")
-    assertContains(body, 'required_paths+=("build/$folder/search_cache.lua")',
-        path .. ": workflow should require search_cache.lua for search suites")
-    assertContains(body, 'zip -r ../QUI-${{ steps.version.outputs.version }}.zip QUI "${suite_folders[@]}"',
+    assertContains(body, "build/QUI_Options/search_cache.lua",
+        path .. ": workflow should require the packed search index in the build")
+    -- Deliberately not pinning where the version expression comes from: the
+    -- guard here is that the zip carries the main addon plus every discovered
+    -- sibling, which is independent of whether the tag was parsed by a step
+    -- output or a job output.
+    assertContains(body, '.zip QUI "${suite_folders[@]}"',
         path .. ": workflow should zip every discovered suite folder")
+    assertContains(body, "zip -r ../QUI-",
+        path .. ": workflow should name the zip after the release tag")
     assertContains(body, "METADATA=$(jq -cn",
         path .. ": workflow should build compact CurseForge metadata JSON")
     assertContains(body, "printf '%s\\n' \"$METADATA\" | jq -e . >/dev/null",

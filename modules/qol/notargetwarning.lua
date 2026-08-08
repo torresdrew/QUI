@@ -2,13 +2,6 @@ local ADDON_NAME, ns = ...
 local Helpers = ns.Helpers
 local SkinBase = ns.SkinBase
 
----------------------------------------------------------------------------
--- NO-TARGET COMBAT WARNING
--- Flashes a "No Target" banner while you are in combat with no attackable,
--- living target selected. Opt-in; positioned via the frame anchor system
--- with X/Y offset fallback (mirrors petwarning.lua).
----------------------------------------------------------------------------
-
 local eventFrame = CreateFrame("Frame")
 local combatEventsRegistered = false
 
@@ -20,21 +13,17 @@ local function GetConfig()
     return settings.noTargetWarning
 end
 
----------------------------------------------------------------------------
--- WARNING FRAME
----------------------------------------------------------------------------
-
 local WarningFrame = CreateFrame("Frame", "QUI_NoTargetWarningFrame", UIParent, "BackdropTemplate")
 WarningFrame:SetSize(220, 44)
 WarningFrame:SetFrameStrata("HIGH")
 WarningFrame:Hide()
 
 do
-    local bgr, bgg, bgb = 0.1, 0.1, 0.1        -- original fallback literals
+    local bgr, bgg, bgb = 0.1, 0.1, 0.1
     if Helpers and Helpers.GetSkinBgColor then
         bgr, bgg, bgb = Helpers.GetSkinBgColor()
     end
-    local sr, sg, sb = 1, 0.3, 0.3             -- semantic warning border
+    local sr, sg, sb = 1, 0.3, 0.3
     if SkinBase and SkinBase.CreateBackdrop then
         SkinBase.CreateBackdrop(WarningFrame, sr, sg, sb, 1, bgr, bgg, bgb, 0.9)
     elseif SkinBase and SkinBase.ApplyPixelBackdrop then
@@ -47,8 +36,6 @@ WarningFrame.text:SetPoint("CENTER")
 WarningFrame.text:SetTextColor(1, 0.3, 0.3, 1)
 WarningFrame.text:SetText(ns.L["No Target"])
 
--- Pulse animation gives the "flashing" behavior. Runs on the frame; the
--- alpha oscillates while the banner is shown.
 local pulse = WarningFrame:CreateAnimationGroup()
 pulse:SetLooping("BOUNCE")
 local fade = pulse:CreateAnimation("Alpha")
@@ -70,10 +57,6 @@ local function ApplyFontSize()
     end
 end
 
----------------------------------------------------------------------------
--- POSITIONING
----------------------------------------------------------------------------
-
 local function PositionWarningFrame()
     if _G.QUI_HasFrameAnchor and _G.QUI_HasFrameAnchor("noTargetWarning") then return end
 
@@ -86,10 +69,6 @@ local function PositionWarningFrame()
 end
 
 PositionWarningFrame()
-
----------------------------------------------------------------------------
--- COMBAT POLLING
----------------------------------------------------------------------------
 
 local warningTicker = nil
 local shown = false
@@ -111,9 +90,6 @@ local function HideWarning()
     WarningFrame:Hide()
 end
 
--- True when combat should show the banner: no target, a friendly target, or a
--- dead target. UnitCanAttack(player,target) verified vs UnitDocumentation
--- (Arguments unit/target UnitToken, Returns bool, AllowedWhenUntainted).
 local function HasNoAttackableTarget()
     if not UnitExists("target") then return true end
     if UnitIsDead("target") then return true end
@@ -178,17 +154,12 @@ local function UpdateEventRegistration()
     end
 end
 
----------------------------------------------------------------------------
--- EVENT HANDLING
----------------------------------------------------------------------------
-
 eventFrame:SetScript("OnEvent", function(_, event)
     if event == "PLAYER_REGEN_DISABLED" then
         StartPolling()
     elseif event == "PLAYER_REGEN_ENABLED" then
         StopPolling()
     elseif event == "PLAYER_TARGET_CHANGED" then
-        -- Instant response on target change (in addition to the ticker).
         if InCombatLockdown() then UpdateWarningState() end
     end
 end)
@@ -201,12 +172,6 @@ if ns.WhenLoggedIn then
         end
     end)
 end
-
----------------------------------------------------------------------------
--- MODULE API (options panel + layout mode)
--- Exported on ns.* (bootstrap proxy → core ns), NOT _G.QUI_* — the global
--- assignment ratchet forbids new _G.QUI_* sites; consumers read ns.* / Registry.
----------------------------------------------------------------------------
 
 local function RefreshNoTargetWarning()
     PositionWarningFrame()

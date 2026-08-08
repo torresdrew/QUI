@@ -1,15 +1,8 @@
 local ADDON_NAME, ns = ...
 
--- Shared spell-list widget for the aura element editor (moved out of
--- QUI_GroupFrames/groupframes/settings/group_frames_spell_list.lua so every
--- aura surface can reuse it). Exposes the pill mini-toggle used by the element
--- list rows plus the preset-backed spell-list frame used by tracked spell
--- pickers and filter whitelist/blacklist editors.
 local SpellList = ns.QUI_AuraSpellList or {}
 ns.QUI_AuraSpellList = SpellList
 
--- AuraDefaults is resolved lazily (inside GetDefaultPresets) so this file has no
--- file-scope load-order dependency on the GF defaults module.
 local function GetAuraDefaults()
     return ns.QUI_GroupFramesAuraDefaults
 end
@@ -103,8 +96,6 @@ local function CreateMiniToggle(parent)
     return toggle
 end
 
--- Exported so the aura element editor can reuse the same pill toggle widget for
--- per-row enable switches.
 SpellList.CreateMiniToggle = CreateMiniToggle
 
 local BUFF_BLACKLIST_PRESETS = {
@@ -144,26 +135,13 @@ local DEBUFF_BLACKLIST_PRESETS = {
     },
 }
 
----------------------------------------------------------------------------
--- Browse popup: floating spell picker shared by every aura surface (mirrors
--- the click-cast Browse popup). Lazy singleton — ONE frame reused by all
--- editors. Rows toggle membership and the popup stays open for multi-add.
---
--- Staleness contract: the editor re-binds opts (fresh closures) via
--- RefreshBrowsePopup on EVERY detail render, so the popup never mutates a
--- dead map/array copy across list rebuilds. Begin/EndBrowseScope close the
--- popup when the spell list it was editing stops rendering (row collapsed,
--- element deleted, selection moved) without touching popups owned by other
--- editor instances.
----------------------------------------------------------------------------
-
 local BROWSE_ROW_H = 24
 local BROWSE_SCROLL_STEP = 24
 
 local browse = {
     popup = nil,
-    key = nil,   -- identity of the spell list being edited ("<prefix><kind>:<elementId>")
-    opts = nil,  -- { title, presets, isSelected(id), onToggle(id), onClose() }
+    key = nil,
+    opts = nil,
     scopeKept = false,
     dirty = false,
 }
@@ -410,9 +388,6 @@ local function AcquireBrowseSpellRow(index)
         row:SetScript("OnClick", function(self)
             local opts = browse.opts
             if self.spellId and opts and type(opts.onToggle) == "function" then
-                -- Keep the popup open for multi-select. The owning editor may
-                -- refresh its inline list in onToggle; these popup rows refresh
-                -- immediately as well. onClose remains an optional batch hook.
                 browse.dirty = true
                 opts.onToggle(self.spellId)
                 RebuildBrowseRows(browse.popup._search:GetText())
@@ -484,8 +459,6 @@ RebuildBrowseRows = function(filter)
     popup._empty:SetShown(spellIndex == 0)
     popup._scrollChild:SetHeight(math.max(1, math.abs(y)))
 
-    -- Preserve the scroll position across the per-click re-render (only clamp
-    -- to the new range) so multi-adding deep in the list doesn't jump to top.
     local scroll = popup._scroll
     local okCur, cur = pcall(scroll.GetVerticalScroll, scroll)
     local maxScroll = math.max(0, popup._scrollChild:GetHeight() - scroll:GetHeight())
@@ -495,9 +468,6 @@ RebuildBrowseRows = function(filter)
     end
 end
 
--- Open the popup for a spell list (or close it when already open for the same
--- key). opts: title, presets (grouped { name, spells = { { id, name, icon } } }),
--- isSelected(id), onToggle(id).
 function SpellList.ToggleBrowsePopup(key, opts)
     local popup = EnsureBrowsePopup()
     if not popup then return end
@@ -506,8 +476,6 @@ function SpellList.ToggleBrowsePopup(key, opts)
         return
     end
     if popup:IsShown() then
-        -- Finish (and, when dirty, commit) the previous browser session before
-        -- reusing this singleton popup for a different spell list.
         popup:Hide()
     end
     browse.key = key
@@ -522,9 +490,6 @@ function SpellList.ToggleBrowsePopup(key, opts)
     popup:Raise()
 end
 
--- Re-bind opts (fresh closures) for an already-open popup. Called on every
--- detail render so popup clicks never mutate a stale map/array copy. Also
--- marks the key as still-rendered for the enclosing browse scope.
 function SpellList.RefreshBrowsePopup(key, opts)
     if browse.key ~= key then return end
     browse.scopeKept = true
@@ -536,9 +501,6 @@ function SpellList.RefreshBrowsePopup(key, opts)
     RebuildBrowseRows(browse.popup._search:GetText())
 end
 
--- Scope guard around one editor list rebuild: if this editor instance owns the
--- open popup (key prefix match) and the pass did not re-render its spell list
--- (collapsed / deleted / selection moved), close the popup.
 function SpellList.BeginBrowseScope(prefix)
     if type(prefix) ~= "string" or prefix == "" then return end
     if type(browse.key) == "string" and browse.key:sub(1, #prefix) == prefix then
@@ -556,8 +518,6 @@ function SpellList.EndBrowseScope(prefix)
     end
 end
 
--- Close the popup when it belongs to this editor instance (prefix match); a
--- nil prefix closes unconditionally.
 function SpellList.CloseBrowsePopup(prefix)
     if not (browse.popup and browse.popup:IsShown()) then return end
     if prefix == nil
@@ -656,8 +616,6 @@ local function RebuildSpellToggleRows(container, listTable, presets, onChange)
     table.sort(extras)
 
     if #extras > 0 then
-        -- The "Other" divider only makes sense when preset groups render above;
-        -- a preset-less list (the editor's current-spells view) is ALL extras.
         if presets and #presets > 0 then
             rowIndex = rowIndex + 1
             local headerRow = container._rows[rowIndex]

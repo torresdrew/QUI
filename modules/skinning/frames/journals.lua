@@ -1,26 +1,7 @@
----------------------------------------------------------------------------
--- JOURNAL FRAMES SKINNING
---
---   - PlayerSpellsFrame  (PortraitFrameTemplate, LOD Blizzard_PlayerSpells)
---                        — modern combined SpellBook + Talents window
---   - EncounterJournal   (PortraitFrameTemplate, LOD Blizzard_EncounterJournal)
---                        — Adventure Guide
---   - CollectionsJournal (PortraitFrameTemplate, LOD Blizzard_Collections)
---                        — parent of MountJournal / PetJournal / ToyBox /
---                          WardrobeFrame / HeirloomsJournal sub-tabs
---
--- All inherit PortraitFrameTemplate, so SkinBase.SkinButtonFrameTemplate
--- handles chrome strip + backdrop + close-button styling. The Collections
--- sub-tab frames render inside CollectionsJournal so the parent skin
--- covers most visible chrome; per-tab work is a follow-up if needed.
----------------------------------------------------------------------------
-
 -- luacheck: globals PagedContentFrameBaseMixin MonthlyActivitiesFrameMixin
 
 local addonName, ns = ...
 
--- Master skinning gate (skinning.enabled): disabled + /reload installs no QUI
--- skin hooks for this file. Default ON; reload-required. See core/uikit.lua.
 if ns.IsSkinningEnabled and not ns.IsSkinningEnabled() then return end
 local SkinBase = ns.SkinBase
 local GetCore = ns.Helpers.GetCore
@@ -33,17 +14,10 @@ end
 
 local RefreshBackdropColors = SkinBase.RefreshFrameBackdropColors
 
----------------------------------------------------------------------------
--- PlayerSpellsFrame (SpellBook + Talents)
----------------------------------------------------------------------------
 local function GetSpellBookFrame(frame)
     return frame and (frame.SpellBookFrame or _G.SpellBookFrame)
 end
 
--- Skin ONLY the currently-displayed (pooled) spell rows. This is the cheap
--- per-page path: it touches the ~dozen visible element frames, never the whole
--- PlayerSpellsFrame tree. Runs on every PagedContentFrame OnUpdate (page /
--- category switch), so it must stay light.
 local function SkinSpellRows(frame)
     if not frame or not IsSettingEnabled("skinSpellBook") then return end
     local spellBookFrame = GetSpellBookFrame(frame)
@@ -55,11 +29,6 @@ local function SkinSpellRows(frame)
     end
 end
 
--- Full one-shot chrome pass over the whole PlayerSpellsFrame (titles, search
--- box, talent labels, category tabs). EXPENSIVE: recurses the entire frame
--- incl. the talent tree's hundreds of node children, so it runs ONLY at
--- init/refresh — NOT on every page update (that caused a stutter when clicking
--- between the class / general / pet category tabs).
 local function SkinPlayerSpellsText(frame)
     if not frame or not IsSettingEnabled("skinSpellBook") then return end
     SkinBase.SkinFrameText(frame, { recurse = true, chrome = true })
@@ -94,18 +63,9 @@ local function SkinPlayerSpells()
     local frame = _G.PlayerSpellsFrame
     if not frame or SkinBase.IsSkinned(frame) then return end
     SkinBase.SkinButtonFrameTemplate(frame)
-    -- Modern TabSystemTemplate tabs live at frame.TabSystem.tabs.
     if frame.TabSystem and frame.TabSystem.tabs then
-        -- SkinTabGroup already wires the SetTab programmatic-switch refresh via
-        -- RegisterOwnerTabRefresh (sets qTabSysHooked), so a manual hook here is dead.
         SkinBase.SkinTabGroup(frame.TabSystem.tabs, frame)
     end
-    -- The class / general / pet category tabs live on a SEPARATE TabSystem
-    -- (SpellBookFrame.CategoryTabSystem), not frame.TabSystem above. They use
-    -- TabSystemButtonArtMixin:SetTabSelected, which calls SetNormalFontObject
-    -- on every selection — reverting the QUI font on each click. Lock them so
-    -- the swap re-applies the QUI face. (Initial face comes from the full
-    -- SkinPlayerSpellsText recurse below.)
     local spellBookFrame = GetSpellBookFrame(frame)
     local categoryTabs = spellBookFrame and spellBookFrame.CategoryTabSystem
         and spellBookFrame.CategoryTabSystem.tabs
@@ -114,28 +74,15 @@ local function SkinPlayerSpells()
             SkinBase.ApplyButtonFontObjects(t)
         end
     end
-    -- Spellbook page-turn arrows (PagedSpellsFrame.PagingControls) ship UNSKINNED
-    -- inside the otherwise-skinned window — give them the canonical chevron so they
-    -- match the merchant/mail page arrows. SkinNextPrevButton is idempotent and
-    -- strips via durable alpha, so it survives PagedContent page/state updates.
     local pagedSpells = spellBookFrame and spellBookFrame.PagedSpellsFrame
     local paging = pagedSpells and pagedSpells.PagingControls
     if paging then
         if paging.PrevPageButton then SkinBase.SkinNextPrevButton(paging.PrevPageButton, "prev") end
         if paging.NextPageButton then SkinBase.SkinNextPrevButton(paging.NextPageButton, "next") end
     end
-    -- Spec/talent action buttons swap their Highlight/Disabled font OBJECT on
-    -- hover/disable with no setter call — SkinFrameText's one-shot face reverts.
-    -- Drive the button font objects so the QUI face survives.
     local function DriveButtonFont(btn)
         if btn then SkinBase.ApplyButtonFontObjects(btn) end
     end
-    -- The spec "Activate" buttons are NOT frame.SpecFrame.ActivateButton — they
-    -- live on a POOL of ClassSpecContentFrameTemplate frames (one per spec) at
-    -- frame.SpecFrame.SpecContentFramePool, each with its own .ActivateButton
-    -- (MagicButton). ClassSpecFrameMixin:SetEnabled re-asserts the stock Normal/
-    -- Disabled font object on every UpdateSpecFrame/activation, so font when the
-    -- pool is (re)built, not just once.
     local function FontSpecActivateButtons(specFrame)
         local pool = specFrame and specFrame.SpecContentFramePool
         if not pool or not pool.EnumerateActive then return end
@@ -170,7 +117,6 @@ local function RefreshPlayerSpells()
         return
     end
     RefreshBackdropColors(frame)
-    -- Re-read theme colors into the tab tints (RefreshTabSelected alone re-applies stale stored colors).
     if frame.TabSystem and frame.TabSystem.tabs then
         SkinBase.RefreshTabGroup(frame.TabSystem.tabs, frame)
     end
@@ -187,17 +133,9 @@ if ns.Registry then
     })
 end
 
----------------------------------------------------------------------------
--- EncounterJournal
----------------------------------------------------------------------------
 local function SkinEncounterJournalTextFrame(frame)
     if frame then
         SkinBase.SkinFrameText(frame, { recurse = true, chrome = true })
-        -- Drive descendant BUTTON font OBJECTS too. Boss-list buttons and the
-        -- Adventure-Guide suggest button declare a <HighlightFont> the engine swaps
-        -- on hover with NO setter call, which LockFrameTextObjects (a setter hook)
-        -- cannot see — so their label reverts to the stock Blizzard face on
-        -- mouseover unless the Normal/Highlight/Disabled font objects are driven.
         if SkinBase.ApplyButtonFontObjectsDeep then
             SkinBase.ApplyButtonFontObjectsDeep(frame, 3)
         end
@@ -224,13 +162,6 @@ local function GetEncounterJournalBottomTabs(frame)
     return tabs
 end
 
--- Bottom content tabs (Suggestions / Dungeons / Raids / Loot / Journeys /
--- Monthly Activities / Tutorials). Font-only fix — we DON'T reskin the tab art
--- (left as Blizzard's). ApplyButtonFontObjects sets the tab's Normal / Highlight
--- / Disabled font OBJECTS to the QUI font, so neither hover (engine shows the
--- HIGHLIGHT object with no setter call) nor selection (Blizzard sets the
--- DISABLED object) reverts; LockFrameTextObjects re-asserts after the
--- PanelTemplates_SelectTab SetDisabledFontObject swap.
 local function SkinEncounterJournalBottomTabs(frame)
     local tabs = GetEncounterJournalBottomTabs(frame)
     if not tabs or #tabs == 0 then return end
@@ -239,12 +170,6 @@ local function SkinEncounterJournalBottomTabs(frame)
     end
 end
 
--- Tutorials tab "Start Catch-Up Experience" button
--- (EncounterJournal.TutorialsFrame.Contents.StartButton, RPE_START_EXPERIENCE).
--- It inherits SharedButtonSmallTemplate whose Normal/Highlight/Disabled font
--- OBJECTS are GameFont* (FRIZQT); the engine re-asserts them on show/enable/
--- disable, reverting the one-shot recursive font sweep. ApplyButtonFontObjects
--- drives the button's font objects to the QUI face so the swaps stay QUI.
 local function SkinEncounterJournalTutorialsButton(frame)
     local tutorials = frame and frame.TutorialsFrame
     local contents = tutorials and tutorials.Contents
@@ -321,10 +246,6 @@ local function SkinMonthlyActivitiesText(monthlyFrame)
     ns.SafeCallMethodIfPresent("best-effort-style", filterScrollBox, "ForEachFrame", SkinMonthlyActivitiesFilterButton)
 end
 
--- Encounter description / overview / boss-ability headers only. This is the
--- subtree EncounterJournal_ToggleHeaders / SetBullets / SetDescriptionWithBullets
--- mutate, so the runtime hooks re-skin THIS (cheap) instead of recursing the
--- whole EncounterJournal tree.
 local function SkinEncounterJournalEncounterText(frame)
     local encounter = frame and frame.encounter
     if not encounter then return end
@@ -352,11 +273,6 @@ local function SkinEncounterJournalEncounterText(frame)
     end
 end
 
--- Full one-shot pass: whole-frame chrome recurse + Monthly Activities + the
--- encounter subtree. EXPENSIVE (recurses the entire EncounterJournal incl. the
--- instance / boss lists), so it runs ONLY at init/refresh — never on the
--- per-row update hooks, which caused the Adventure Guide / Traveler's Log open
--- stutter (mirrors the spellbook category-tab fix).
 local function SkinEncounterJournalText(frame)
     if not frame or not IsSettingEnabled("skinEncounterJournal") then return end
 
@@ -368,11 +284,6 @@ end
 local encounterTextPending
 local function ScheduleEncounterJournalText(frame, focusFrame)
     if focusFrame then
-        -- Targeted: skin the changed element (+ its parent header/container).
-        -- EncounterJournal_UpdateButtonState fires once per instance/boss row on
-        -- every list build; the old behavior ALSO recursed the whole
-        -- EncounterJournal tree per fire (incl. Monthly Activities) — that was
-        -- the open stutter. Skinning just focusFrame + parent is bounded.
         C_Timer.After(0, function()
             SkinEncounterJournalTextFrame(focusFrame)
             if focusFrame.GetParent then
@@ -381,9 +292,6 @@ local function ScheduleEncounterJournalText(frame, focusFrame)
         end)
         return
     end
-    -- No focus (boss description / bullets / headers changed): coalesce to one
-    -- encounter-subtree pass per frame instead of a whole-frame recurse per
-    -- hook fire.
     if encounterTextPending then return end
     encounterTextPending = true
     C_Timer.After(0, function()
@@ -432,15 +340,11 @@ end
 
 local monthlyTextPending
 local function ScheduleMonthlyActivitiesText(monthlyFrame, focusFrame)
-    -- Targeted element (e.g. BarComplete / HeaderContainer) — cheap, run now.
     if focusFrame then
         C_Timer.After(0, function()
             SkinEncounterJournalTextFrame(focusFrame)
         end)
     end
-    -- Traveler's Log fires OnShow + UpdateActivities + SetActivities +
-    -- SetThresholds (+ more) back-to-back on open; coalesce the full Monthly
-    -- Activities sweep to one run per frame so the open doesn't stutter.
     if monthlyTextPending then return end
     monthlyTextPending = true
     C_Timer.After(0, function()
@@ -517,12 +421,6 @@ local function HookEncounterJournalTextUpdates(frame)
     HookEncounterJournalFunction("EncounterJournal_UpdateButtonState", function(button)
         ScheduleEncounterJournalText(frame, button)
     end)
-    -- Adventure Guide "Suggestions" tab: EJSuggestFrame_RefreshDisplay
-    -- (Blizzard_EncounterJournal.lua) re-applies SetFontObject to the
-    -- suggestion title/description text on every show / scroll / next-prev,
-    -- and those Adventure-Journal font objects carry near-black / dark-red
-    -- colors meant for the light suggestion art -> unreadable on the QUI dark
-    -- theme. Re-skin the suggestFrame (chrome = near-white) after each refresh.
     HookEncounterJournalFunction("EJSuggestFrame_RefreshDisplay", function()
         ScheduleEncounterJournalTextFrame(frame.suggestFrame)
     end)
@@ -545,8 +443,6 @@ end
 
 local function RefreshEncounterJournal()
     local frame = _G.EncounterJournal
-    -- Gate before recoloring (matches RefreshPlayerSpells): a disabled module should
-    -- not recolor its (possibly leftover) backdrop on a theme refresh.
     if not frame or not IsSettingEnabled("skinEncounterJournal") then return end
     RefreshBackdropColors(frame)
     if not SkinBase.IsSkinned(frame) then
@@ -569,15 +465,8 @@ if ns.Registry then
     })
 end
 
----------------------------------------------------------------------------
--- CollectionsJournal
----------------------------------------------------------------------------
 local function LockCollectionsScrollBox(scrollBox)
     if not scrollBox then return end
-    -- Guarded per-row font lock (recursive pass runs once per pooled row; the
-    -- LockFontObject hooks re-assert the QUI face on later rebinds). Replaces an
-    -- unguarded acquire callback + redundant ForEachFrame sweep — re-walking
-    -- Mount/Pet/Heirloom rows on every open was the open-window hitch.
     SkinBase.HookScrollBoxRowFonts(scrollBox, 3)
 end
 
@@ -624,11 +513,6 @@ local function HookHeirloomsJournal(journal)
 end
 
 local function HookCollectionsText(frame)
-    -- Bottom action buttons (MountJournal.MountButton "MOUNT", PetJournal summon
-    -- buttons, etc.) are MagicButton/UIPanel-style: the engine swaps their
-    -- Highlight/Disabled font OBJECT on hover/disable without calling a setter.
-    -- Drive their font objects so the QUI face (applied via the global font-object
-    -- override) survives those swaps.
     if SkinBase.ApplyButtonFontObjectsDeep then
         SkinBase.ApplyButtonFontObjectsDeep(frame, 5)
     end
@@ -647,7 +531,6 @@ local function SkinCollections()
     local frame = _G.CollectionsJournal
     if not frame or SkinBase.IsSkinned(frame) then return end
     SkinBase.SkinButtonFrameTemplate(frame)
-    -- CollectionsJournalTab1..6: Mounts / Pets / Toys / Heirlooms / Wardrobe / WarbandScenes
     local tabs = {}
     for i = 1, 6 do
         local tab = _G["CollectionsJournalTab" .. i]
@@ -662,8 +545,6 @@ local function RefreshCollections()
     local frame = _G.CollectionsJournal
     if not frame or not IsSettingEnabled("skinCollections") then return end
     RefreshBackdropColors(frame)
-    -- Recolor the CollectionsJournalTab1..6 strip on a live theme/accent change
-    -- (RefreshTabSelected alone re-applies stale stored tints).
     local tabs = {}
     for i = 1, 6 do
         local tab = _G["CollectionsJournalTab" .. i]
@@ -682,12 +563,6 @@ if ns.Registry then
     })
 end
 
----------------------------------------------------------------------------
--- INITIALIZATION
----------------------------------------------------------------------------
--- delay 0 = skin synchronously inside the ADDON_LOADED handler, BEFORE the LOD
--- frame's first paint, so the window never flashes Blizzard FRIZQT before the
--- QUI font lands. (The 0.1s defer skinned a frame already on screen → flash.)
 SkinBase.OnAddOnLoaded("Blizzard_PlayerSpells",     SkinPlayerSpells,     0)
 SkinBase.OnAddOnLoaded("Blizzard_EncounterJournal", SkinEncounterJournal, 0)
 SkinBase.OnAddOnLoaded("Blizzard_Collections",      SkinCollections,      0)

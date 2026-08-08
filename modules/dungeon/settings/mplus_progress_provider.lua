@@ -1,6 +1,3 @@
----------------------------------------------------------------------------
--- M+ PROGRESS SETTINGS PROVIDER (V3)
----------------------------------------------------------------------------
 local _, ns = ...
 
 do
@@ -31,7 +28,6 @@ do
             end
         end
 
-        -- Shared provider-panel layout scaffold (core/settings_layout_shared.lua).
         local function MakeLayout(content)
             if U._layoutModePositionOnly then
                 return U.MakeSuppressedProviderLayout(content)
@@ -44,22 +40,12 @@ do
         end
 
         local function BuildMPlusProgressSettings(content, key, _width)
-            -- core/gui_shell.lua installs a minimal ns.QUI_Options stub, then
-            -- the on-demand QUI_Options addon (shared.lua) REPLACES the table
-            -- with the real one carrying the V3 body helpers. The Opts upvalue
-            -- captured at registration can thus be nil (headless) or the stale
-            -- stub (which lacks CreateAccentDotLabel). Re-resolve live-first each
-            -- build: a truthy stale stub must not win over the replacement.
             Opts = ns.QUI_Options or Opts
             PAD = (Opts and Opts.PADDING) or PAD
 
             local db = GetProgressDB()
             if not db then return 80 end
 
-            -- Reuse the feature's single DEFAULTS table so the panel and the
-            -- mplus_progress.lua feature can never diverge. ns.MPlusProgress is
-            -- defined by the QUI_QoL login module, loaded before this on-demand
-            -- options page; the inline fallback covers the headless harness.
             Helpers.EnsureDefaults(db, (ns.MPlusProgress and ns.MPlusProgress.DEFAULTS) or {
                 enabled = true,
                 tooltipEnabled = true,
@@ -77,7 +63,6 @@ do
 
             local L = MakeLayout(content)
 
-            -- General
             L.headerAt(ns.L["General"])
             local sGen = L.sectionAt()
             local genEnableW = GUI:CreateFormCheckbox(sGen.frame, nil, "enabled", db, Refresh,
@@ -94,7 +79,6 @@ do
             sGen.AddRow(row(sGen.frame, ns.L["Show Nameplate Progress"], genNameplateW))
             L.closeSection(sGen)
 
-            -- Tooltips
             L.headerAt(ns.L["Tooltips"])
             local sTT = L.sectionAt()
             local ttCountW = GUI:CreateFormCheckbox(sTT.frame, nil, "tooltipIncludeCount", db, Refresh,
@@ -107,7 +91,6 @@ do
             )
             L.closeSection(sTT)
 
-            -- Nameplates
             L.headerAt(ns.L["Nameplates"])
             local sNP = L.sectionAt()
             local formatOpts = {
@@ -157,7 +140,6 @@ do
             sNP.AddRow(row(sNP.frame, ns.L["Text Color"], npColorW))
             L.closeSection(sNP)
 
-            -- Layout-mode chrome (no Position collapsible for this provider)
             U.BuildOpenFullSettingsLink(content, key, L.sections, L.relayoutSections)
             L.relayoutSections()
             return content:GetHeight()

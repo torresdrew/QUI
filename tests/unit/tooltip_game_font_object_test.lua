@@ -263,7 +263,7 @@ assertContains(tooltipQoLSource, "tooltip == GameTooltip and HasActiveWidgetCont
     "cursor anchoring must refuse active widget-set GameTooltip cycles")
 assertBefore(tooltipQoLSource,
     "if tooltip == GameTooltip and HasActiveWidgetContainer(tooltip) then",
-    "-- Reposition immediately",
+    "if settings.anchorToCursor then",
     "default-anchor hook must bail before immediate custom positioning")
 
 print("OK: tooltip_game_font_object_test")

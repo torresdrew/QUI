@@ -23,12 +23,14 @@ return {
         "QUI_Debug/",
         "QUI_GroupFrames/",
         "QUI_Logger/",
+        -- Strict from day one (greenfield; plates are the most secret-hostile
+        -- surface in 12.0).
+        "QUI_Nameplates/",
         "QUI_Options/",
-        "QUI_OptionsSearch/",
-        -- Underscore prefix (no trailing slash) covers all ten generated
-        -- locale search-cache trees (QUI_OptionsSearch_deDE/ … _zhTW/) —
-        -- "QUI_OptionsSearch/" alone does not prefix-match them.
-        "QUI_OptionsSearch_",
+        -- (The generated search index used to need its own QUI_OptionsSearch/
+        -- entry; it is QUI_Options/search_cache.lua now, covered above. The
+        -- ten per-locale overlay trees are likewise retired — their chunks are
+        -- covered by the "core/" entry below.)
         "QUI_ResourceBars/",
         "QUI_UnitFrames/",
         "core/",

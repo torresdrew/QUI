@@ -1,14 +1,9 @@
----------------------------------------------------------------------------
--- Alts roster: pure data helpers (no frames — unit-tested headlessly).
--- Formatting + row building/sorting for the roster tab.
----------------------------------------------------------------------------
 local ADDON_NAME, ns = ...
 local Alts = ns.Alts or {}; ns.Alts = Alts
 
 local RosterData = {}
 Alts.RosterData = RosterData
 
---- Copper → "1,234g" (gold only; roster altitude doesn't need silver).
 function RosterData.FormatGold(copper)
     local gold = math.floor((copper or 0) / 10000)
     local s = tostring(gold)
@@ -16,7 +11,6 @@ function RosterData.FormatGold(copper)
     return formatted .. "g"
 end
 
---- Seconds → "3d 5h" / "2h 30m" / "1m"; nil → em dash.
 function RosterData.FormatPlayed(seconds)
     if not seconds then return "—" end
     local d = math.floor(seconds / 86400)
@@ -27,7 +21,6 @@ function RosterData.FormatPlayed(seconds)
     return string.format("%dm", math.max(m, 1))
 end
 
---- Epoch → "now" / "2h ago" / "3d ago"; nil → em dash.
 function RosterData.FormatLastSeen(ts, now)
     if not ts then return "—" end
     local age = (now or time()) - ts
@@ -40,11 +33,9 @@ local function SortValue(key, details, sortKey)
     if sortKey == "name" then return key:lower() end
     local v = details[sortKey]
     if type(v) == "number" then return v end
-    return -math.huge -- unseen fields sort last in desc, first in asc
+    return -math.huge
 end
 
---- characters: { key → record } (Store shape). opts: { sortKey, sortDesc }.
---- Returns dense rows: { key, name, realm, details, record }.
 function RosterData.BuildRows(characters, opts)
     opts = opts or {}
     local sortKey = opts.sortKey or "name"
@@ -69,7 +60,6 @@ function RosterData.BuildRows(characters, opts)
     return rows
 end
 
---- Sum of details.money across all records (copper).
 function RosterData.TotalGold(characters)
     local total = 0
     for _, rec in pairs(characters) do
@@ -78,7 +68,6 @@ function RosterData.TotalGold(characters)
     return total
 end
 
---- Absolute epoch → "2d 5h" countdown; past → "expired"; nil → em dash.
 function RosterData.FormatResetIn(resetAt, now)
     if not resetAt then return "—" end
     local left = resetAt - (now or time())

@@ -1,22 +1,3 @@
---[[
-    QUI Setup Wizard (plan 008)
-    Paged guided setup: scale → profile → feature toggles → nameplates →
-    frame layout.
-    Every page applies immediately and is skippable; the whole flow is
-    re-runnable via /qui install (trigger logic lives in init.lua OnEnable:
-    fresh installs auto-open once, tracked account-wide in
-    QUI.db.global.setupWizard).
-
-    The window is a STANDALONE frame parented to UIParent — never to
-    GUI.MainFrame: profile imports fire the full OnProfileChanged pipeline,
-    which tears the main options panel down, and the wizard must survive its
-    own profile step. Pages are rebuilt on every entry so widgets never hold
-    stale profile-table references across an import.
-
-    Wizard widgets deliberately pass NO registryInfo to the GUI factories so
-    nothing here leaks into the options search index.
-]]
-
 local ADDON_NAME, ns = ...
 local QUI = QUI
 local L = ns.L
@@ -27,17 +8,14 @@ ns.QUI_SetupWizard = Wizard
 
 local LAYOUT_NAME = "QUI"
 
-local frame          -- singleton window
-local bodyHost       -- inset region; each page gets a fresh child frame here
+local frame
+local bodyHost
 local activeBody
 local currentPage = 1
 
-local PAGES          -- forward declaration
-local RenderPage     -- forward declaration
+local PAGES
+local RenderPage
 
----------------------------------------------------------------------------
--- SMALL HELPERS
----------------------------------------------------------------------------
 local function GetGUI()
     return QUI and QUI.GUI
 end
@@ -69,7 +47,6 @@ local function MarkApplied(line)
     Wizard.applied[#Wizard.applied + 1] = line
 end
 
--- Wrapped body text. Returns the next y offset.
 local function AddText(body, text, sy, size, color)
     local GUI = GetGUI()
     local label = GUI:CreateLabel(body, text, size or 12, color)
@@ -82,7 +59,6 @@ local function AddText(body, text, sy, size, color)
     return sy - height - 10
 end
 
--- Page-local status line (result feedback for Apply/Import buttons).
 local function AddStatusLine(body, sy)
     local GUI = GetGUI()
     local label = GUI:CreateLabel(body, "", 12)
@@ -93,7 +69,6 @@ local function AddStatusLine(body, sy)
     return label, sy - 28
 end
 
--- Rebuild the current page next frame (after profile imports settle).
 local function QueueRerender()
     if C_Timer and C_Timer.After then
         C_Timer.After(0, function()
@@ -104,17 +79,6 @@ local function QueueRerender()
     end
 end
 
----------------------------------------------------------------------------
--- EDIT MODE BASE LAYOUT (first consumer of QUI.imports.QUIEditMode)
----------------------------------------------------------------------------
--- Adds or updates an Account-type Edit Mode layout named "QUI" from the
--- bundled export string, then activates it. Modeled on Blizzard's
--- EditModeManagerFrameMixin:MakeNewLayout (stamp layoutType/layoutName,
--- insert, SaveLayouts) but through the pure C_EditMode API so the manager
--- frame is never touched. Index math: SetActiveLayout counts preset layouts
--- first; GetLayouts() may or may not include them, so presets are detected
--- rather than assumed. Everything is pcall-guarded — this is the flagged
--- riskiest step of the wizard and callers must offer the manual fallback.
 local function ApplyEditModeBaseLayout()
     if InCombatLockdown() then
         return false, L["Cannot change Edit Mode layouts during combat."]
@@ -141,9 +105,6 @@ local function ApplyEditModeBaseLayout()
             error(L["Edit Mode layout list unavailable."], 0)
         end
 
-        -- SetActiveLayout indexes presets before user layouts. When the
-        -- returned list already contains preset entries the offset is zero;
-        -- otherwise offset by the preset count.
         local presetsInList = 0
         for _, layout in ipairs(list) do
             if layout.layoutType == Enum.EditModeLayoutType.Preset then
@@ -182,13 +143,9 @@ local function ApplyEditModeBaseLayout()
     return true
 end
 
-Wizard._ApplyEditModeBaseLayout = ApplyEditModeBaseLayout  -- exposed for tests
+Wizard._ApplyEditModeBaseLayout = ApplyEditModeBaseLayout
 
----------------------------------------------------------------------------
--- PAGES
----------------------------------------------------------------------------
 PAGES = {
-    -- 1 ------------------------------------------------------------------
     {
         title = L["Welcome to QUI"],
         nextLabel = L["Start Setup"],
@@ -205,7 +162,6 @@ PAGES = {
             notNow:SetPoint("TOPLEFT", 0, sy - 8)
         end,
     },
-    -- 2 ------------------------------------------------------------------
     {
         title = L["UI Scale"],
         build = function(body)
@@ -240,7 +196,6 @@ PAGES = {
             end
         end,
     },
-    -- 3 ------------------------------------------------------------------
     {
         title = L["Profile"],
         build = function(body)
@@ -311,7 +266,6 @@ PAGES = {
             status = AddStatusLine(body, sy)
         end,
     },
-    -- 4 ------------------------------------------------------------------
     {
         title = L["Features"],
         build = function(body)
@@ -338,7 +292,6 @@ PAGES = {
             AddText(body, L["Hide action bars until you mouse over them. Per-bar overrides live in the Action Bars tab."], sy, 11)
         end,
     },
-    -- 5 ------------------------------------------------------------------
     {
         title = L["Nameplates"],
         build = function(body)
@@ -355,21 +308,20 @@ PAGES = {
             end), body, sy)
             sy = AddText(body, L["Nameplates load with the UI — this toggle takes effect after the reload offered at the end of setup."], sy, 11)
 
-            -- Wizard-level simplification of the friendly mode: bars vs
-            -- name-only. The full three-mode dropdown (plus instance rules)
-            -- lives in the Nameplates → Behavior tab.
             profile.nameplates.friendly = profile.nameplates.friendly or {}
             local friendly = profile.nameplates.friendly
-            local friendlyProxy = { bars = friendly.mode == "bars" }
+            profile.nameplates.types = profile.nameplates.types or {}
+            profile.nameplates.types.friendly = profile.nameplates.types.friendly or {}
+            local friendlyType = profile.nameplates.types.friendly
+            local friendlyProxy = { bars = friendlyType.renderMode == "bars" }
             sy = Helpers.PlaceRow(GUI:CreateFormToggle(body, L["Friendly health bars (open world)"], "bars", friendlyProxy, function(value)
-                friendly.mode = value and "bars" or "nameonly"
+                friendlyType.renderMode = value and "bars" or "nameonly"
                 if ns.QUI_RefreshNameplates then ns.QUI_RefreshNameplates() end
                 MarkApplied(L["Friendly nameplate style chosen"])
             end), body, sy)
             AddText(body, L["Off keeps Blizzard's name-only friendly plates. In dungeons and raids, Blizzard protects friendly nameplates, so bars fall back to name-only there."], sy, 11)
         end,
     },
-    -- 6 ------------------------------------------------------------------
     {
         title = L["Frame Layout"],
         build = function(body)
@@ -385,8 +337,6 @@ PAGES = {
                     status:SetText("|cFF34D399" .. string.format(L["Edit Mode layout '%s' applied and activated."], LAYOUT_NAME) .. "|r")
                     MarkApplied(L["Edit Mode base layout applied"])
                 else
-                    -- Fallback: surface the string for manual import via
-                    -- Blizzard Edit Mode (Game Menu → Edit Mode → Import).
                     status:SetText("|cFFFF6666" .. (err or L["Layout apply failed."]) .. "|r  " ..
                         L["You can import it manually: copy the string below into Blizzard Edit Mode → Import."])
                     if not body._fallbackBox then
@@ -413,7 +363,6 @@ PAGES = {
             status = AddStatusLine(body, sy)
         end,
     },
-    -- 7 ------------------------------------------------------------------
     {
         title = L["All Done"],
         nextLabel = L["Finish"],
@@ -441,9 +390,6 @@ PAGES = {
     },
 }
 
----------------------------------------------------------------------------
--- WINDOW
----------------------------------------------------------------------------
 local function EnsureFrame()
     if frame then return frame end
     local GUI = GetGUI()
@@ -529,9 +475,6 @@ RenderPage = function(index)
     page.build(activeBody)
 end
 
----------------------------------------------------------------------------
--- PUBLIC API
----------------------------------------------------------------------------
 function Wizard:Show()
     if not WizardState() then
         print("|cFF30D1FFQUI|r " .. L["Setup wizard is not ready yet — try again in a moment."])
@@ -560,7 +503,6 @@ function Wizard:Finish()
     print("|cFF30D1FFQUI|r " .. L["Setup complete. Re-run any time with |cFFFFFF00/qui install|r."])
 end
 
--- Test seam: page metadata without building UI.
 function Wizard:_GetPages()
     return PAGES
 end

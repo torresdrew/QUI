@@ -1,7 +1,3 @@
----------------------------------------------------------------------------
--- QUI Reticle Module
--- GCD tracker ring that follows the mouse cursor with center reticle
----------------------------------------------------------------------------
 local ADDON_NAME, ns = ...
 local QUI = ns.QUI or {}
 ns.QUI = QUI
@@ -10,16 +6,9 @@ local CreateTimeThrottle = Helpers and Helpers.CreateTimeThrottle
 local ApplyCooldownFromSpell = Helpers and Helpers.ApplyCooldownFromSpell
 local IsSecretValue = Helpers and Helpers.IsSecretValue
 
--- Locals
 local UIParent = UIParent
 local CreateFrame = CreateFrame
--- 12.1 removed the in-world global GetScaledCursorPosition (now glue-screen
--- only, plus a mixin method / _Insecure variant). Reimplement it: raw cursor
--- position divided by UIParent's effective scale, exactly as the old global.
 local GetCursorPosition = GetCursorPosition
--- The bare global read below is deliberate (compat shim for pre-12.1 builds
--- where the global still exists); it is intentionally NOT in .luacheckrc /
--- meta since 12.1 removed it.
 -- luacheck: push ignore 113
 ---@diagnostic disable-next-line: undefined-global
 local GetScaledCursorPosition = GetScaledCursorPosition or function()
@@ -32,29 +21,21 @@ local InCombatLockdown = InCombatLockdown
 local UnitClass = UnitClass
 local C_ClassColor = C_ClassColor
 
--- Frame references
 local ringFrame, ringTexture, reticleTexture, gcdCooldown
 
--- State tracking
 local cachedSettings = nil
-local cursorUpdateEnabled = false  -- Track OnUpdate state for performance
+local cursorUpdateEnabled = false
 
--- Cached values for OnUpdate performance (avoid per-frame table lookups)
 local cachedOffsetX, cachedOffsetY = 0, 0
 local lastCursorX, lastCursorY = 0, 0
 
--- Forward declarations for cursor update functions
 local EnableCursorUpdate, DisableCursorUpdate
 
--- GCD spell ID (standard global cooldown reference)
 local GCD_SPELL_ID = 61304
 local RETICLE_FRAME_STRATA = "TOOLTIP"
 local RETICLE_FRAME_LEVEL = 9500
 local GCD_FRAME_LEVEL_OFFSET = 2
 
----------------------------------------------------------------------------
--- Ring texture paths
----------------------------------------------------------------------------
 local RING_TEXTURES = {
     thin     = Helpers.AssetPath .. "cursor\\qui_ring_thin.png",
     standard = Helpers.AssetPath .. "cursor\\qui_ring_standard.png",
@@ -62,7 +43,6 @@ local RING_TEXTURES = {
     solid    = Helpers.AssetPath .. "cursor\\qui_ring_solid.png",
 }
 
--- Reticle options (mix of custom texture and Blizzard Atlas)
 local RETICLE_OPTIONS = {
     dot     = { path = Helpers.AssetPath .. "cursor\\qui_reticle_dot.tga", isAtlas = false },
     cross   = { path = "uitools-icon-plus", isAtlas = true },
@@ -79,30 +59,22 @@ local function ApplyReticleLayering()
     end
 end
 
----------------------------------------------------------------------------
--- Get settings from database (cached for performance)
----------------------------------------------------------------------------
 local function GetSettings()
     if cachedSettings then return cachedSettings end
     cachedSettings = Helpers.GetModuleDB("reticle")
     return cachedSettings
 end
 
--- Cache invalidation (called on profile change)
 local function InvalidateCache()
     cachedSettings = nil
 end
 
--- Cache offsets for OnUpdate performance (called on settings change)
 local function CacheOffsets()
     local settings = GetSettings()
     cachedOffsetX = settings and settings.offsetX or 0
     cachedOffsetY = settings and settings.offsetY or 0
 end
 
----------------------------------------------------------------------------
--- Get color based on settings (class color or custom)
----------------------------------------------------------------------------
 local function GetRingColor()
     local settings = GetSettings()
     if not settings then return 1, 1, 1, 1 end
@@ -120,9 +92,6 @@ local function GetRingColor()
     end
 end
 
----------------------------------------------------------------------------
--- Get alpha based on combat state
----------------------------------------------------------------------------
 local function GetCurrentAlpha()
     local settings = GetSettings()
     if not settings then return 1 end
@@ -134,22 +103,16 @@ local function GetCurrentAlpha()
     end
 end
 
----------------------------------------------------------------------------
--- Create the cursor ring frame and elements
----------------------------------------------------------------------------
 local function CreateReticle()
     if ringFrame then return end
 
-    -- Main frame (follows cursor)
     ringFrame = CreateFrame("Frame", "QUI_Reticle", UIParent)
-    ringFrame:EnableMouse(false)  -- CRITICAL: Don't block mouse clicks
+    ringFrame:EnableMouse(false)
     ringFrame:SetSize(80, 80)
 
-    -- Ring texture (background layer)
     ringTexture = ringFrame:CreateTexture(nil, "BACKGROUND")
     ringTexture:SetAllPoints()
 
-    -- GCD Cooldown overlay (Blizzard template handles animation)
     gcdCooldown = CreateFrame("Cooldown", nil, ringFrame, "CooldownFrameTemplate")
     gcdCooldown:SetAllPoints()
     gcdCooldown:EnableMouse(false)
@@ -159,7 +122,6 @@ local function CreateReticle()
     if gcdCooldown.SetDrawBling then gcdCooldown:SetDrawBling(false) end
     if gcdCooldown.SetUseCircularEdge then gcdCooldown:SetUseCircularEdge(true) end
 
-    -- Reticle texture (overlay layer - always on top)
     reticleTexture = ringFrame:CreateTexture(nil, "OVERLAY")
     reticleTexture:SetPoint("CENTER", ringFrame, "CENTER", 0, 0)
 
@@ -167,9 +129,6 @@ local function CreateReticle()
     ringFrame:Hide()
 end
 
----------------------------------------------------------------------------
--- Update reticle appearance (center dot/crosshair)
----------------------------------------------------------------------------
 local function UpdateReticleDot()
     if not reticleTexture then return end
 
@@ -192,9 +151,6 @@ local function UpdateReticleDot()
     reticleTexture:SetVertexColor(r, g, b, a)
 end
 
----------------------------------------------------------------------------
--- Update ring appearance
----------------------------------------------------------------------------
 local function UpdateRingAppearance()
     if not ringFrame or not ringTexture then return end
 
@@ -205,16 +161,13 @@ local function UpdateRingAppearance()
     local size = settings.ringSize or 40
     local r, g, b, a = GetRingColor()
 
-    -- Set ring texture
     local texturePath = RING_TEXTURES[style] or RING_TEXTURES.standard
     ringTexture:SetTexture(texturePath)
     ringTexture:SetVertexColor(r, g, b, 1)
 
-    -- Calculate ring alpha based on combat and GCD state
     local baseAlpha = GetCurrentAlpha()
     local ringAlpha = baseAlpha
 
-    -- If GCD is active and enabled, fade the ring
     if gcdCooldown and gcdCooldown:IsShown() and settings.gcdEnabled then
         local fadeAmount = settings.gcdFadeRing or 0.35
         ringAlpha = baseAlpha * (1 - fadeAmount)
@@ -222,10 +175,8 @@ local function UpdateRingAppearance()
 
     ringTexture:SetAlpha(ringAlpha)
 
-    -- Update frame size
     ringFrame:SetSize(size, size)
 
-    -- Update GCD swipe styling
     if gcdCooldown and settings.gcdEnabled then
         if gcdCooldown.SetSwipeTexture then
             gcdCooldown:SetSwipeTexture(texturePath)
@@ -237,9 +188,6 @@ local function UpdateRingAppearance()
     end
 end
 
----------------------------------------------------------------------------
--- Update GCD cooldown display
----------------------------------------------------------------------------
 local function UpdateGCDCooldown()
     if not gcdCooldown then return end
 
@@ -250,9 +198,6 @@ local function UpdateGCDCooldown()
         return
     end
 
-    -- ignoreGCD=false: we ARE the GCD swipe. With ignoreGCD=true (the helper
-    -- default) the API returns nil for spell 61304 because the GCD has no
-    -- spell-specific cooldown when the GCD is excluded from the query.
     if ApplyCooldownFromSpell and ApplyCooldownFromSpell(gcdCooldown, GCD_SPELL_ID, nil, false) then
         gcdCooldown:Show()
     else
@@ -271,66 +216,49 @@ else
     ThrottledCooldownRefresh = UpdateGCDCooldown
 end
 
----------------------------------------------------------------------------
--- Update visibility based on settings and combat state
--- forcedInCombat: optional boolean to override InCombatLockdown() check
--- (used by combat event handlers to avoid timing issues)
----------------------------------------------------------------------------
 local function UpdateVisibility(forcedInCombat)
     if not ringFrame then return end
 
     local settings = GetSettings()
     if not settings or not settings.enabled then
         ringFrame:Hide()
-        DisableCursorUpdate()  -- Stop OnUpdate when disabled
+        DisableCursorUpdate()
         return
     end
 
-    -- Use forced state if provided, otherwise query InCombatLockdown
     local inCombat = (forcedInCombat ~= nil) and forcedInCombat or InCombatLockdown()
 
-    -- Check hide out of combat setting
     if settings.hideOutOfCombat and not inCombat then
         ringFrame:Hide()
-        DisableCursorUpdate()  -- Stop OnUpdate when hidden
+        DisableCursorUpdate()
         return
     end
 
     ringFrame:Show()
-    EnableCursorUpdate()  -- Start OnUpdate when visible
+    EnableCursorUpdate()
 end
 
----------------------------------------------------------------------------
--- Main update function (called on settings change)
----------------------------------------------------------------------------
 local function UpdateReticle()
     if not ringFrame then
         CreateReticle()
     end
 
-    CacheOffsets()  -- Cache offset values for OnUpdate performance
+    CacheOffsets()
     UpdateVisibility()
     UpdateReticleDot()
-    UpdateGCDCooldown()  -- internally calls UpdateRingAppearance()
+    UpdateGCDCooldown()
 end
 
----------------------------------------------------------------------------
--- Combat state handlers
----------------------------------------------------------------------------
 local function OnCombatStart()
-    UpdateVisibility(true)  -- Force: we ARE in combat
-    UpdateGCDCooldown()     -- Ensure GCD tracking starts; calls UpdateRingAppearance()
+    UpdateVisibility(true)
+    UpdateGCDCooldown()
 end
 
 local function OnCombatEnd()
-    UpdateVisibility(false)  -- Force: we are NOT in combat
+    UpdateVisibility(false)
     UpdateRingAppearance()
 end
 
----------------------------------------------------------------------------
--- Right-click hide functionality
----------------------------------------------------------------------------
--- TAINT SAFETY: Defer to break taint chain from secure WorldFrame context.
 local function SetupRightClickHide()
     WorldFrame:HookScript("OnMouseDown", function(_, button)
         C_Timer.After(0, function()
@@ -348,7 +276,6 @@ local function SetupRightClickHide()
             if button == "RightButton" then
                 local settings = GetSettings()
                 if settings and settings.enabled and settings.hideOnRightClick and ringFrame then
-                    -- Only show if settings allow
                     if not settings.hideOutOfCombat or InCombatLockdown() then
                         ringFrame:Show()
                     end
@@ -358,22 +285,15 @@ local function SetupRightClickHide()
     end)
 end
 
----------------------------------------------------------------------------
--- OnUpdate handler for cursor following
--- OPTIMIZED: No DB lookups, no ClearAllPoints, cursor delta check
--- Enable/disable is handled by UpdateVisibility(), not here
----------------------------------------------------------------------------
 local function CursorOnUpdate(self, elapsed)
     local x, y = GetScaledCursorPosition()
 
-    -- Skip if cursor hasn't moved (0.5 pixel threshold)
     local dx, dy = x - lastCursorX, y - lastCursorY
     if dx > -0.5 and dx < 0.5 and dy > -0.5 and dy < 0.5 then
         return
     end
     lastCursorX, lastCursorY = x, y
 
-    -- Direct SetPoint (no ClearAllPoints - frame uses single anchor)
     self:SetPoint("CENTER", UIParent, "BOTTOMLEFT", x + cachedOffsetX, y + cachedOffsetY)
 end
 
@@ -390,16 +310,12 @@ DisableCursorUpdate = function()
 end
 
 local function SetupCursorFollowing()
-    -- Initial setup - enable if reticle should be visible
     local settings = GetSettings()
     if settings and settings.enabled then
         EnableCursorUpdate()
     end
 end
 
----------------------------------------------------------------------------
--- Initialize
----------------------------------------------------------------------------
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 eventFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
@@ -422,30 +338,12 @@ eventFrame:SetScript("OnEvent", function(self, event, _, _, spellID)
         ThrottledCooldownRefresh()
 
     elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
-        -- 68569: registered player-only above (RegisterUnitEvent), so unit is
-        -- already C-side filtered — no unit compare needed. spellID may still
-        -- be secret under combat/encounter restriction; probe before ANY
-        -- operation on it — a secret spellID throws on table index, ==, AND
-        -- plain truthiness (`spellID and ...` is already a boolean test of
-        -- the secret). Forwarding to ApplyCooldownFromSpell (an API call)
-        -- stays safe; everything else must sit behind the probe below.
         local settings = GetSettings()
         if not settings or not settings.gcdEnabled then
             if gcdCooldown then gcdCooldown:Hide() end
             return
         end
 
-        -- Check cooldown of cast spell, fall back to GCD spell.
-        -- Probe FIRST, statement-split: the old compound guard
-        -- `spellID and not (IsSecretValue and IsSecretValue(spellID))`
-        -- truth-tested the secret BEFORE the probe ran — `spellID and ...`
-        -- is itself a boolean test of the secret and throws in-game.
-        -- ACTION POLICY: secret spellID -> generic GCD refresh, the same
-        -- fallback as "no spellID". (Strict taint scan was green on the
-        -- old compound order: analyzer gap, recorded for Task 8.)
-        -- Unconditional probe: core/utils.lua (QUI.toc:77) defines
-        -- Helpers.IsSecretValue unconditionally and loads before this file
-        -- (QUI.toc:245), so the file-local latch is never nil in-game.
         if IsSecretValue(spellID) then
             UpdateGCDCooldown()
         elseif spellID then
@@ -461,12 +359,6 @@ eventFrame:SetScript("OnEvent", function(self, event, _, _, spellID)
     end
 end)
 
--- Install after login. ns.WhenLoggedIn runs now if already logged in (the
--- post-login LOD case) rather than this addon's own ADDON_LOADED, which is NOT
--- delivered when the core eager-LoadAddOn's the module from OnEnable (see
--- petwarning.lua / tooltip_provider.lua). Without this CreateReticle() +
--- cursor-follow/right-click setup never run, so the reticle never appears. Nil
--- only in the headless test harness.
 if ns.WhenLoggedIn then
     ns.WhenLoggedIn(function()
         CreateReticle()
@@ -476,9 +368,6 @@ if ns.WhenLoggedIn then
     end)
 end
 
----------------------------------------------------------------------------
--- Global refresh function for GUI
----------------------------------------------------------------------------
 _G.QUI_RefreshReticle = function()
     InvalidateCache()
     UpdateReticle()
@@ -493,9 +382,6 @@ if ns.Registry then
     })
 end
 
----------------------------------------------------------------------------
--- Module API
----------------------------------------------------------------------------
 QUI.Reticle = {
     Update = UpdateReticle,
     Create = CreateReticle,

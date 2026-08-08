@@ -1,6 +1,3 @@
----------------------------------------------------------------------------
--- M+ TIMER SETTINGS PROVIDER (V3)
----------------------------------------------------------------------------
 local _, ns = ...
 
 do
@@ -45,7 +42,6 @@ do
             if _G.QUI_RefreshMPlusTimerColors then _G.QUI_RefreshMPlusTimerColors() end
         end
 
-        -- Shared provider-panel layout scaffold (core/settings_layout_shared.lua).
         local function MakeLayout(content)
             if U._layoutModePositionOnly then
                 return U.MakeSuppressedProviderLayout(content)
@@ -58,12 +54,6 @@ do
         end
 
         local function BuildMPlusTimerSettings(content, key, _width)
-            -- core/gui_shell.lua installs a minimal ns.QUI_Options stub, then
-            -- the on-demand QUI_Options addon (shared.lua) REPLACES the table
-            -- with the real one carrying the V3 body helpers. The Opts upvalue
-            -- captured at registration can thus be nil (headless) or the stale
-            -- stub (which lacks CreateAccentDotLabel). Re-resolve live-first each
-            -- build: a truthy stale stub must not win over the replacement.
             Opts = ns.QUI_Options or Opts
             PAD = (Opts and Opts.PADDING) or PAD
 
@@ -86,7 +76,6 @@ do
 
             local L = MakeLayout(content)
 
-            -- General
             L.headerAt(ns.L["General"])
             local sGen = L.sectionAt()
 
@@ -145,7 +134,6 @@ do
             sGen.AddRow(row(sGen.frame, ns.L["Objective Text Alignment"], genObjAlignW))
             L.closeSection(sGen)
 
-            -- Border
             L.headerAt(ns.L["Border"])
             local sBd = L.sectionAt()
             local bdSrcW, bdColW = ns.QUI_BorderControl.Attach(GUI, sBd.frame, mpDB, "", RefreshColors,
@@ -153,7 +141,6 @@ do
             sBd.AddRow(row(sBd.frame, ns.L["Border Color Source"], bdSrcW), row(sBd.frame, ns.L["Border Color"], bdColW))
             L.closeSection(sBd)
 
-            -- Background
             Helpers.EnsureDefaults(mpDB, {
                 bgOverride = false,
                 hideBackground = false,
@@ -201,7 +188,6 @@ do
             UpdateBgState()
             L.closeSection(sBg)
 
-            -- Forces Bar
             Helpers.EnsureDefaults(mpDB, {
                 forcesBarEnabled = true,
                 forcesDisplayMode = "bar",
@@ -312,7 +298,6 @@ do
             sFB.AddRow(row(sFB.frame, ns.L["Bar Fill Color"], fbBarColorPicker))
             L.closeSection(sFB)
 
-            -- Layout-mode chrome (V3-styled collapsibles)
             U.BuildPositionCollapsible(content, "mplusTimer", nil, L.sections, L.relayoutSections)
             U.BuildOpenFullSettingsLink(content, key, L.sections, L.relayoutSections)
             L.relayoutSections()

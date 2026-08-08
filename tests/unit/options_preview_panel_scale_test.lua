@@ -152,6 +152,56 @@ P.SetContentScale(9)
 assert(P.GetContentScale() == 1.25, "clamped high")
 
 ---------------------------------------------------------------------------
+-- 3b) A consumer may widen the clamp; the default stays 0.4 .. 1.25
+---------------------------------------------------------------------------
+local winZ = NewWindow()
+gui.MainFrame = winZ
+local PZ = FullSurface.CreateDockedPreviewPanel({
+    gui = gui, window = winZ, minWidth = 140,
+    controlStripHeight = 0, sessionState = {},
+    scaleMin = 0.25, scaleMax = 3,
+})
+PZ.Show()
+PZ.SetContentScale(9)
+assert(PZ.GetContentScale() == 3,
+    "scaleMax opt raises the ceiling, got " .. tostring(PZ.GetContentScale()))
+PZ.SetContentScale(0.01)
+assert(PZ.GetContentScale() == 0.25,
+    "scaleMin opt lowers the floor, got " .. tostring(PZ.GetContentScale()))
+
+---------------------------------------------------------------------------
+-- 3c) defaultScale seeds a fresh session and is clamped to the panel's range
+---------------------------------------------------------------------------
+local winD = NewWindow()
+gui.MainFrame = winD
+local PD = FullSurface.CreateDockedPreviewPanel({
+    gui = gui, window = winD, minWidth = 140,
+    controlStripHeight = 0, sessionState = {},
+    scaleMax = 3, defaultScale = 3,
+})
+assert(PD.GetContentScale() == 3,
+    "defaultScale seeds a fresh session, got " .. tostring(PD.GetContentScale()))
+assert(PD.contentHost.scale == 3, "seeded scale reaches the scaleHost")
+
+local carried = { scale = 0.75 }
+local PE = FullSurface.CreateDockedPreviewPanel({
+    gui = gui, window = winD, minWidth = 140,
+    controlStripHeight = 0, sessionState = carried,
+    scaleMax = 3, defaultScale = 3,
+})
+assert(PE.GetContentScale() == 0.75,
+    "defaultScale must not stomp a carried session scale, got " .. tostring(PE.GetContentScale()))
+
+local PF = FullSurface.CreateDockedPreviewPanel({
+    gui = gui, window = winD, minWidth = 140,
+    controlStripHeight = 0, sessionState = {},
+    defaultScale = 9,
+})
+assert(PF.GetContentScale() == 1.25,
+    "defaultScale clamps to the panel range, got " .. tostring(PF.GetContentScale()))
+gui.MainFrame = win
+
+---------------------------------------------------------------------------
 -- 4) MIN_W floor applies to the SCALED width
 ---------------------------------------------------------------------------
 P.SetContentScale(0.4)

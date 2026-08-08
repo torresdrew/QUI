@@ -1,11 +1,7 @@
---- QUI Datapanels
---- Creates and manages movable datatext panels
-
 local ADDON_NAME, ns = ...
 local QUICore = ns.Addon
 local LSM = ns.LSM
 
--- Module reference
 local Datapanels = {}
 QUICore.Datapanels = Datapanels
 
@@ -17,19 +13,14 @@ local function Warn(message)
     end
 end
 
--- Stop a panel's drag and persist its snapped position to both the live
--- config and the saved-variables panel list. Shared by the panel's own
--- OnDragStop and the slot drag-forward handler.
 local function PersistPanelPosition(panel)
     panel:StopMovingOrSizing()
 
-    -- Save position (snapped to pixel grid)
     local point, _, relPoint, x, y = QUICore:SnapFramePosition(panel)
     if point then
         panel.config.position = {point, relPoint, x, y}
     end
 
-    -- Update saved variables
     local db = QUICore.db.profile.quiDatatexts
     if db and db.panels then
         for i, panelConfig in ipairs(db.panels) do
@@ -41,9 +32,6 @@ local function PersistPanelPosition(panel)
     end
 end
 
--- Derive the shared element identity for a datapanel from its config + index.
--- Returns elementKey, displayName, order. Used by both RegisterFrameResolvers
--- and the layout-mode element registrar so the two never drift.
 local function DatapanelElementInfo(i, panelConfig)
     local panelID = panelConfig.id
     local elementKey = "datapanel_" .. panelID
@@ -51,21 +39,10 @@ local function DatapanelElementInfo(i, panelConfig)
     return elementKey, displayName, 10 + i
 end
 
--- Active panels storage
 Datapanels.activePanels = {}
 
--- Set whenever a rebuild/teardown lands in combat; drained at regen by the
--- regen watcher below.
 local rebuildPendingCombat = false
 
--- Persistent regen watcher draining the combat-deferred rebuild. Slot
--- teardown (DetachFromSlot + Hide/SetParent(nil)) and panel re-anchoring are
--- ADDON_ACTION_BLOCKED once a slot subtree hosts a protected child (e.g. the
--- travel widget's secure flyout), so RefreshAll/UpdatePanel/DeletePanel defer
--- wholesale and replay here. Created at file scope (matching QUI_InfoBar's
--- regenWatcher) so a rebuild deferred mid-combat replays at regen even if no
--- further UI action arrives. The flag is cleared before invoking the action,
--- so a re-deferral from inside RefreshAll re-arms cleanly.
 local regenWatcher = CreateFrame("Frame")
 regenWatcher:RegisterEvent("PLAYER_REGEN_ENABLED")
 regenWatcher:SetScript("OnEvent", function()
@@ -75,39 +52,27 @@ regenWatcher:SetScript("OnEvent", function()
     end
 end)
 
----=================================================================================
---- PANEL CREATION
----=================================================================================
-
---- Create a movable datapanel
--- @param panelID string Unique panel identifier
--- @param config table Panel configuration
--- @return Frame The created panel frame
 function Datapanels:CreatePanel(panelID, config)
     if self.activePanels[panelID] then
         Warn("Panel '" .. panelID .. "' already exists!")
         return self.activePanels[panelID]
     end
 
-    -- Create panel frame
     local panel = CreateFrame("Frame", "QUI_Datapanel_" .. panelID, UIParent)
     panel:SetFrameStrata("LOW")
     panel:SetFrameLevel(100)
     panel:SetSize(config.width or 300, config.height or 22)
 
-    -- Position
     if config.position then
         panel:SetPoint(config.position[1], UIParent, config.position[2], config.position[3], config.position[4])
     else
         panel:SetPoint("CENTER", UIParent, "CENTER", 0, 300)
     end
 
-    -- Background
     panel.bg = panel:CreateTexture(nil, "BACKGROUND")
     panel.bg:SetAllPoints()
     panel.bg:SetColorTexture(0, 0, 0, (config.bgOpacity or 50) / 100)
 
-    -- Borders
     local borderSize = config.borderSize or 2
     local bR, bG, bB, bA = ns.Helpers.GetSkinBorderColor(config, "")
     local borderColor = { bR, bG, bB, bA }
@@ -126,7 +91,6 @@ function Datapanels:CreatePanel(panelID, config)
     panel.borderTop:SetHeight(borderSize)
     panel.borderBottom:SetHeight(borderSize)
 
-    -- Hide borders when borderSize is 0 (WoW enforces 1px minimum on textures)
     local showBorder = borderSize > 0
     panel.borderLeft:SetShown(showBorder)
     panel.borderRight:SetShown(showBorder)
@@ -139,28 +103,22 @@ function Datapanels:CreatePanel(panelID, config)
     panel.borderRight:SetPoint("TOPLEFT", panel, "TOPRIGHT", 0, 0)
     panel.borderRight:SetPoint("BOTTOMLEFT", panel, "BOTTOMRIGHT", 0, 0)
 
-    -- Extend top/bottom borders to cover corners
     panel.borderTop:SetPoint("BOTTOMLEFT", panel, "TOPLEFT", -borderSize, 0)
     panel.borderTop:SetPoint("BOTTOMRIGHT", panel, "TOPRIGHT", borderSize, 0)
 
     panel.borderBottom:SetPoint("TOPLEFT", panel, "BOTTOMLEFT", -borderSize, 0)
     panel.borderBottom:SetPoint("TOPRIGHT", panel, "BOTTOMRIGHT", borderSize, 0)
 
-    -- Store config
     panel.panelID = panelID
     panel.config = config
     panel.slots = {}
 
-    -- Setup dragging
     self:SetupDragging(panel)
 
-    -- Create slots
     self:UpdateSlots(panel)
 
-    -- Store panel
     self.activePanels[panelID] = panel
 
-    -- Show/hide based on config AND whether any datatexts are assigned
     local hasDatatext = false
     if config.slots then
         for i = 1, (config.numSlots or 3) do
@@ -180,10 +138,6 @@ function Datapanels:CreatePanel(panelID, config)
     return panel
 end
 
----=================================================================================
---- DRAGGING
----=================================================================================
-
 function Datapanels:SetupDragging(panel)
     panel:SetMovable(true)
     panel:EnableMouse(true)
@@ -201,29 +155,14 @@ function Datapanels:SetupDragging(panel)
     end)
 end
 
-
----=================================================================================
---- SLOT MANAGEMENT
----=================================================================================
-
--- Free list mirroring QUI_InfoBar's slot pool (infobar.lua ReleaseSlots):
--- per-host pools, no shared abstraction — the two hosts' slots differ (fixed
--- size, centered text and drag forwarding here vs auto-width left-aligned
--- text there). WoW never GCs frames, so the old release-and-abandon leaked a
--- slot per rebuild. Released slots stay parented to their old panel (hidden);
--- reuse re-parents. Beyond the cap, abandon as before pooling.
 local slotPool = {}
 local SLOT_POOL_CAP = 32
 
 local function ReleasePanelSlots(panel)
     for _, slot in ipairs(panel.slots) do
         if QUICore.Datatexts then
-            -- Clears datatextInstance + provider OnClick/OnEnter/OnLeave.
             QUICore.Datatexts:DetachFromSlot(slot)
         end
-        -- Field-clearing contract (mirrors infobar.lua): every per-slot field
-        -- this host or any provider sets must be cleared, or it leaks into
-        -- the next datatext that reuses this frame.
         slot.index = nil
         slot.shortLabel = nil
         slot.noLabel = nil
@@ -242,14 +181,12 @@ local function ReleasePanelSlots(panel)
 end
 
 function Datapanels:UpdateSlots(panel)
-    -- Clear existing slots (pooled for reuse below)
     ReleasePanelSlots(panel)
 
     local numSlots = panel.config.numSlots or 3
     local slotWidth = panel:GetWidth() / numSlots
     local slotHeight = panel:GetHeight()
 
-    -- Apply font settings
     local generalFont = "Quazii"
     local generalOutline = "OUTLINE"
     if QUICore and QUICore.db and QUICore.db.profile and QUICore.db.profile.general then
@@ -266,12 +203,7 @@ function Datapanels:UpdateSlots(panel)
             slot:SetParent(panel)
             slot:Show()
         else
-            -- Unnamed on purpose: pooled frames migrate between panels, so a
-            -- baked-in "<panel>_SlotN" global name would lie after reuse (and
-            -- nothing references those names).
             slot = CreateFrame("Button", nil, panel)
-            -- Create text for datatext use; anchored to both edges to
-            -- constrain width and enable auto-truncation
             slot.text = slot:CreateFontString(nil, "OVERLAY")
             slot.text:SetPoint("LEFT", slot, "LEFT", 1, 0)
             slot.text:SetPoint("RIGHT", slot, "RIGHT", -1, 0)
@@ -282,8 +214,6 @@ function Datapanels:UpdateSlots(panel)
         slot:ClearAllPoints()
         slot:SetPoint("LEFT", panel, "LEFT", (i - 1) * slotWidth, 0)
 
-        -- Re-applied on pooled reuse too: panel font size / global font can
-        -- change between rebuilds.
         if ns.Helpers and ns.Helpers.ApplyFontWithFallback then
             ns.Helpers.ApplyFontWithFallback(slot.text, fontPath, fontSize, generalOutline)
         else
@@ -291,15 +221,12 @@ function Datapanels:UpdateSlots(panel)
         end
         slot.text:SetTextColor(1, 1, 1, 1)
 
-        -- Store slot index
         slot.index = i
 
-        -- Apply per-slot shortLabel/noLabel settings (#119)
         local slotSettings = panel.config.slotSettings and panel.config.slotSettings[i]
         slot.shortLabel = slotSettings and slotSettings.shortLabel or false
         slot.noLabel = slotSettings and slotSettings.noLabel or false
 
-        -- Forward drag events to parent
         slot:EnableMouse(true)
         slot:RegisterForDrag("LeftButton")
         slot:SetScript("OnDragStart", function()
@@ -311,12 +238,10 @@ function Datapanels:UpdateSlots(panel)
             PersistPanelPosition(panel)
         end)
 
-        -- Attach datatext if configured
         local datatextID = panel.config.slots and panel.config.slots[i]
         if datatextID and QUICore.Datatexts then
             QUICore.Datatexts:AttachToSlot(slot, datatextID, panel.config)
         else
-            -- Show placeholder for empty slots
             slot.text:SetText("|cffFFAA00" .. ns.L["Slot "] .. i .. "|r")
             slot.text:Show()
         end
@@ -325,33 +250,19 @@ function Datapanels:UpdateSlots(panel)
     end
 end
 
----=================================================================================
---- PANEL MANAGEMENT
----=================================================================================
-
---- Update panel appearance
---- NOTE: currently has no callers repo-wide — RefreshAll (DeletePanel +
---- CreatePanel) is the live rebuild path.
 function Datapanels:UpdatePanel(panelID)
     local panel = self.activePanels[panelID]
     if not panel then return end
 
-    -- Combat guard: the panel re-anchor + slot teardown below are blocked
-    -- when a slot subtree contains a protected child (e.g. the travel
-    -- widget's secure flyout). Defer wholesale; the regen watcher's
-    -- RefreshAll is a superset of this per-panel update.
     if InCombatLockdown() then
         rebuildPendingCombat = true
         return
     end
 
-    -- Update size
     panel:SetSize(panel.config.width or 300, panel.config.height or 22)
 
-    -- Update background opacity
     panel.bg:SetColorTexture(0, 0, 0, (panel.config.bgOpacity or 50) / 100)
 
-    -- Update borders
     local borderSize = panel.config.borderSize or 2
     local bR, bG, bB, bA = ns.Helpers.GetSkinBorderColor(panel.config, "")
     local borderColor = { bR, bG, bB, bA }
@@ -364,7 +275,6 @@ function Datapanels:UpdatePanel(panelID)
     panel.borderTop:SetColorTexture(unpack(borderColor))
     panel.borderBottom:SetColorTexture(unpack(borderColor))
 
-    -- Re-anchor top/bottom borders to cover corners with current borderSize
     panel.borderTop:ClearAllPoints()
     panel.borderTop:SetPoint("BOTTOMLEFT", panel, "TOPLEFT", -borderSize, 0)
     panel.borderTop:SetPoint("BOTTOMRIGHT", panel, "TOPRIGHT", borderSize, 0)
@@ -372,23 +282,19 @@ function Datapanels:UpdatePanel(panelID)
     panel.borderBottom:SetPoint("TOPLEFT", panel, "BOTTOMLEFT", -borderSize, 0)
     panel.borderBottom:SetPoint("TOPRIGHT", panel, "BOTTOMRIGHT", borderSize, 0)
 
-    -- Hide borders when borderSize is 0 (WoW enforces 1px minimum on textures)
     local showBorder = borderSize > 0
     panel.borderLeft:SetShown(showBorder)
     panel.borderRight:SetShown(showBorder)
     panel.borderTop:SetShown(showBorder)
     panel.borderBottom:SetShown(showBorder)
 
-    -- Update position if changed (skip during layout mode — mover owns position)
     if panel.config.position and not (_G.QUI_IsLayoutModeActive and _G.QUI_IsLayoutModeActive()) then
         panel:ClearAllPoints()
         panel:SetPoint(panel.config.position[1], UIParent, panel.config.position[2], panel.config.position[3], panel.config.position[4])
     end
 
-    -- Update slots
     self:UpdateSlots(panel)
 
-    -- Show/hide
     if panel.config.enabled then
         panel:Show()
     else
@@ -396,37 +302,23 @@ function Datapanels:UpdatePanel(panelID)
     end
 end
 
---- Delete a panel
 function Datapanels:DeletePanel(panelID)
     local panel = self.activePanels[panelID]
     if not panel then return end
 
-    -- Combat guard: detaching slots + SetParent(nil) below are blocked when
-    -- a slot subtree contains a protected child (e.g. the travel widget's
-    -- secure flyout). Defer wholesale: callers remove the panel from the db
-    -- first, so the regen watcher's RefreshAll tears this frame down and
-    -- rebuilds without it. (RefreshAll's own internal DeletePanel calls only
-    -- run after its guard has already passed out of combat.)
     if InCombatLockdown() then
         rebuildPendingCombat = true
         return
     end
 
-    -- Detach all datatexts and feed the slot pool. Pooled slots stay
-    -- parented (hidden) to this abandoned frame until UpdateSlots reuses
-    -- them and re-parents to the new panel.
     ReleasePanelSlots(panel)
 
-    -- Remove frame
     panel:Hide()
     panel:SetParent(nil)
 
-    -- Remove from storage
     self.activePanels[panelID] = nil
 end
 
---- Register frame resolvers for all active datapanels so the anchoring
---- system can locate and reposition them on login/reload.
 function Datapanels:RegisterFrameResolvers()
     local RegisterResolver = _G.QUI_RegisterFrameResolver
     if not RegisterResolver then return end
@@ -448,35 +340,21 @@ function Datapanels:RegisterFrameResolvers()
     end
 end
 
---- Refresh all panels from saved variables
 function Datapanels:RefreshAll()
-    -- Master enable gate: skip all panel-building when datatexts are disabled.
     local p = QUICore and QUICore.db and QUICore.db.profile
     if p and p.quiDatatexts and p.quiDatatexts.enabled == false then return end
 
-    -- Guard: db may not be ready yet on initial login
     if not QUICore.db or not QUICore.db.profile then return end
 
-    -- Combat guard: tearing down EXISTING panels (RefreshAll → DeletePanel →
-    -- ReleasePanelSlots → slot pool: DetachFromSlot + Hide) is blocked when a
-    -- slot subtree contains a protected child (e.g. the travel widget's
-    -- secure flyout). Only that teardown/re-layout is hazardous — on a fresh
-    -- login (incl. a combat /reload, where WhenLoggedIn fires outside the
-    -- ADDON_LOADED safe window) there are no panels yet, and creating
-    -- brand-new insecure frames + SetPoint on them is not blocked (travel's
-    -- own OnEnable defers its secure build to regen). So defer only when
-    -- panels already exist; the regen watcher replays the full refresh.
     if InCombatLockdown() and next(self.activePanels) then
         rebuildPendingCombat = true
         return
     end
 
-    -- Clear existing panels
     for panelID, panel in pairs(self.activePanels) do
         self:DeletePanel(panelID)
     end
 
-    -- Create panels from saved variables
     local db = QUICore.db.profile.quiDatatexts
     if not db or not db.panels then return end
 
@@ -486,19 +364,12 @@ function Datapanels:RefreshAll()
         end
     end
 
-    -- Register frame resolvers so the anchoring system can find and
-    -- reposition datapanels from saved frameAnchoring data on login.
     self:RegisterFrameResolvers()
 
-    -- Apply saved frame anchors (overrides config.position when present)
     if _G.QUI_ApplyAllFrameAnchors then
         _G.QUI_ApplyAllFrameAnchors()
     end
 end
-
----=================================================================================
---- GLOBAL REFRESH FUNCTION
----=================================================================================
 
 _G.QUI_RefreshDatapanels = function()
     if QUICore and QUICore.Datapanels then
@@ -513,12 +384,6 @@ if ns.Registry then
         group = "data",
         importCategories = { "minimapDatatexts" },
     })
-    -- Companion skinning registration (see skin_refresh_group_companion_test):
-    -- panel borders track the global skin via GetSkinBorderColor, but a live
-    -- skin/accent recolor fires only Registry:RefreshAll("skinning") — group
-    -- "data" would stay stale until /reload. Light recolor only: repaint the
-    -- four border textures of every live panel, no slot teardown/rebuild
-    -- (which is also why this doesn't route through UpdatePanel/RefreshAll).
     ns.Registry:Register("datapanelsSkin", {
         refresh = function()
             for _, panel in pairs(Datapanels.activePanels) do
@@ -535,27 +400,14 @@ if ns.Registry then
     })
 end
 
----=================================================================================
---- BORDER COLORING REGISTRY (multi-instance)
----
---- One entry owns every datatext border surface: the global minimap datatext
---- panel (profile.datatext) plus each user-created custom datapanel
---- (profile.quiDatatexts.panels[*]). Custom panels are created dynamically, so
---- instances() enumerates whatever panel tables exist in the live profile at
---- call time. Each returned table holds a borderColor + borderColorSource and is
---- mutated in place by the bulk-apply control and the v40 migration. The global
---- panel repaints via QUI_RefreshMinimap; custom panels via QUI_RefreshDatapanels.
----=================================================================================
 local function CollectDatatextSurfaces(profile)
     local out = {}
     if type(profile) ~= "table" then return out end
 
-    -- Global minimap datatext panel.
     if type(profile.datatext) == "table" and profile.datatext.borderColor ~= nil then
         out[#out + 1] = profile.datatext
     end
 
-    -- User-created custom datapanels (array; created at runtime).
     local store = profile.quiDatatexts
     if type(store) == "table" and type(store.panels) == "table" then
         for _, panelDB in ipairs(store.panels) do
@@ -588,22 +440,11 @@ if ns.Helpers and ns.Helpers.BorderRegistry then
     })
 end
 
----=================================================================================
---- INITIALIZATION
----=================================================================================
-
--- LOD catch-up: first PEW already fired before this module loads, so the old
--- one-shot PLAYER_ENTERING_WORLD init runs via ns.WhenLoggedIn instead. This
--- module loads ~1.2s after login, so game data APIs (gold, spec, durability,
--- bags, etc.) are warm by the time the 0.5s delay elapses.
--- ns.WhenLoggedIn is nil only in the headless test harness.
 if ns.WhenLoggedIn then
     ns.WhenLoggedIn(function()
         C_Timer.After(0.5, function()
             Datapanels:RefreshAll()
 
-            -- Safety retry: if db wasn't ready or panels failed to create,
-            -- try once more after an additional delay
             local count = 0
             for _ in pairs(Datapanels.activePanels) do count = count + 1 end
             local db = QUICore.db and QUICore.db.profile and QUICore.db.profile.quiDatatexts
@@ -616,10 +457,6 @@ if ns.WhenLoggedIn then
         end)
     end)
 end
-
----------------------------------------------------------------------------
--- LAYOUT MODE REGISTRATION
----------------------------------------------------------------------------
 
 local SETTINGS_FEATURE_ID = "datatextPanel"
 local registeredSettingsLookups = {}
@@ -730,7 +567,6 @@ do
                     end,
                 })
 
-                -- Add to FRAME_ANCHOR_INFO and register as anchor target
                 if ns.FRAME_ANCHOR_INFO then
                     ns.FRAME_ANCHOR_INFO[elementKey] = {
                         displayName = displayName,
@@ -764,7 +600,6 @@ do
     C_Timer.After(2, RegisterLayoutModeElements)
 end
 
--- Debug slash command
 SLASH_QUIDATAPANELS1 = "/quidp"
 SlashCmdList["QUIDATAPANELS"] = function(msg)
     if msg == "show" then
@@ -790,4 +625,3 @@ SlashCmdList["QUIDATAPANELS"] = function(msg)
         print("/quidp refresh - Refresh all panels")
     end
 end
-

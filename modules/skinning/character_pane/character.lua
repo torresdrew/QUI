@@ -1,7 +1,3 @@
----------------------------------------------------------------------------
--- QUI Character Pane Module
--- Custom character panel styling with equipment overlays and stats panel
----------------------------------------------------------------------------
 local ADDON_NAME, ns = ...
 local QUI = ns.QUI or {}
 ns.QUI = QUI
@@ -17,9 +13,6 @@ local function CJKFont(fs, p, s, f)
     end
 end
 
--- Resolve the user's configured general font FACE (falling back to the WoW
--- default). CJKFont keeps CJK glyph fallback either way; this just ensures the
--- label uses the QUI font instead of the hardcoded engine default.
 local function GeneralFontFace()
     return (ns.Helpers and ns.Helpers.GetGeneralFont and ns.Helpers.GetGeneralFont()) or STANDARD_TEXT_FONT
 end
@@ -30,13 +23,10 @@ local function GetSkinBase()
     return ns.SkinBase
 end
 
--- COMBAT FOLLOW-UP — character panel geometry is applied immediately. Only
--- decoration/stat refresh work that still needs a regen follow-up is queued.
----------------------------------------------------------------------------
-local pendingDecorMode = nil     -- "character" or "other"
+local pendingDecorMode = nil
 local pendingStatsPanelRefresh = false
-local pendingCharacterFrameScale = nil   -- deferred CharacterFrame:SetScale (protected in combat)
-local pendingPaneLayout = false          -- deferred protected pane layout (decor reposition + slot SetScale/SetPoint)
+local pendingCharacterFrameScale = nil
+local pendingPaneLayout = false
 local ScheduleUpdate
 local ApplyCharacterPaneLayout
 
@@ -64,14 +54,11 @@ end
 local charCombatFrame = CreateFrame("Frame")
 charCombatFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
 charCombatFrame:SetScript("OnEvent", function()
-    -- Apply any deferred CharacterFrame scale first — SetScale is safe now that
-    -- combat ended and does not require the frame to be shown.
     if pendingCharacterFrameScale then
         if CharacterFrame then CharacterFrame:SetScale(pendingCharacterFrameScale) end
         pendingCharacterFrameScale = nil
     end
 
-    -- If CharacterFrame closed during combat, drop the rest of the queued work
     if not CharacterFrame or not CharacterFrame:IsShown() then
         pendingDecorMode = nil
         pendingStatsPanelRefresh = false
@@ -79,9 +66,6 @@ charCombatFrame:SetScript("OnEvent", function()
         return
     end
 
-    -- Re-run the deferred protected pane layout (HideBlizzardDecorations +
-    -- slot reposition) now that combat has ended. force=true bypasses the
-    -- layoutApplied guard set when we deferred during combat.
     if pendingPaneLayout then
         pendingPaneLayout = false
         if ApplyCharacterPaneLayout then ApplyCharacterPaneLayout(true) end
@@ -117,9 +101,6 @@ end)
 
 local function SetCharacterFrameScale(scale)
     if not CharacterFrame then return end
-    -- CharacterFrame is a protected UIPanel; SetScale on it taints in combat.
-    -- Defer to the charCombatFrame PLAYER_REGEN_ENABLED handler, mirroring
-    -- inspect.lua SetInspectScaleDeferred.
     if InCombatLockdown() then
         pendingCharacterFrameScale = scale
         return
@@ -127,9 +108,6 @@ local function SetCharacterFrameScale(scale)
     CharacterFrame:SetScale(scale)
 end
 
--- Blizzard can return protected "secret" stat values in combat and some
--- restricted contexts. Probe the actual stat APIs instead of assuming a whole
--- activity type (for example active Mythic+) is unreadable.
 local function AreCharacterStatsSecretsDisabled()
     local ok, healthMax = pcall(UnitHealthMax, "player")
     if not ok or Helpers.IsSecretValue(healthMax) then
@@ -153,11 +131,6 @@ local function AreCharacterStatsSecretsDisabled()
     return false
 end
 
----------------------------------------------------------------------------
--- Module Constants
----------------------------------------------------------------------------
-
--- Equipment slot mapping: slotName -> slotID
 local EQUIPMENT_SLOTS = {
     { name = "Head", id = INVSLOT_HEAD, side = "left" },
     { name = "Neck", id = INVSLOT_NECK, side = "left" },
@@ -179,29 +152,25 @@ local EQUIPMENT_SLOTS = {
     { name = "Trinket1", id = INVSLOT_TRINKET2, side = "right" },
 }
 
--- Color palette (QUI brand colors)
 local C = {
-    bg = { 0.067, 0.094, 0.153, 0.95 },        -- Deep Cool Grey
-    bgLight = { 0.122, 0.161, 0.216, 1 },      -- Dark Slate
-    accent = { 0.376, 0.647, 0.980, 1 },         -- Sky Blue
-    text = { 0.953, 0.957, 0.965, 1 },         -- Off-White
-    textMuted = { 0.6, 0.65, 0.7, 1 },         -- Grey
-    border = { 0.2, 0.25, 0.3, 1 },            -- Cool Grey
+    bg = { 0.067, 0.094, 0.153, 0.95 },
+    bgLight = { 0.122, 0.161, 0.216, 1 },
+    accent = { 0.376, 0.647, 0.980, 1 },
+    text = { 0.953, 0.957, 0.965, 1 },
+    textMuted = { 0.6, 0.65, 0.7, 1 },
+    border = { 0.2, 0.25, 0.3, 1 },
 
-    -- Stat bar colors
-    health = { 0.937, 0.267, 0.267, 1 },       -- Soft Red
-    mana = { 0.231, 0.510, 0.965, 1 },         -- Soft Blue
-    crit = { 0.976, 0.451, 0.086, 1 },         -- Orange
-    haste = { 0.918, 0.702, 0.031, 1 },        -- Yellow
-    mastery = { 0.545, 0.361, 0.965, 1 },      -- Purple
-    versatility = { 0.024, 0.714, 0.831, 1 },  -- Cyan
+    health = { 0.937, 0.267, 0.267, 1 },
+    mana = { 0.231, 0.510, 0.965, 1 },
+    crit = { 0.976, 0.451, 0.086, 1 },
+    haste = { 0.918, 0.702, 0.031, 1 },
+    mastery = { 0.545, 0.361, 0.965, 1 },
+    versatility = { 0.024, 0.714, 0.831, 1 },
 
-    -- Status colors
-    enchanted = { 0.376, 0.647, 0.980, 1 },      -- Sky Blue (enchanted)
-    missing = { 0.6, 0.6, 0.6, 0.7 },          -- Muted grey (missing enchant)
+    enchanted = { 0.376, 0.647, 0.980, 1 },
+    missing = { 0.6, 0.6, 0.6, 0.7 },
 }
 
--- Gem type colors (standard WoW gem socket colors)
 local GEM_COLORS = {
     Red = { 1, 0.2, 0.2, 1 },
     Blue = { 0.2, 0.4, 1, 1 },
@@ -215,7 +184,6 @@ local GEM_COLORS = {
     Primordial = { 0.4, 0.6, 0.8, 1 },
 }
 
--- Class name abbreviations for long names that overflow title area
 local CLASS_ABBREVIATIONS = {
     ["Demon Hunter"] = "DH",
     ["Death Knight"] = "DK",
@@ -225,27 +193,17 @@ local function AbbreviateClassName(className)
     return CLASS_ABBREVIATIONS[className] or className
 end
 
----------------------------------------------------------------------------
--- Module State
----------------------------------------------------------------------------
 local characterPaneInitialized = false
-local slotOverlays = {}  -- Stores overlay frames for each slot
+local slotOverlays = {}
 local statsPanel = nil
 local pendingUpdate = false
-local updatingStatsPanel = false  -- Guard to prevent multiple simultaneous updates
+local updatingStatsPanel = false
 
--- TAINT SAFETY: Store per-frame state in weak-keyed table instead of writing properties
--- to Blizzard frames, which taints them in Midnight (12.0)
 local frameState, GetState = Helpers.CreateStateTable()
 local EMPTY = {}
 
--- Forward declarations (for functions called before definition)
 local CreateStatsPanel
 
----------------------------------------------------------------------------
--- Get settings from database
----------------------------------------------------------------------------
--- Shared defaults table (reused when DB isn't ready to prevent reference issues)
 local defaultSettings = {
     enabled = true,
     showItemName = true,
@@ -258,7 +216,6 @@ local defaultSettings = {
     showModelBackground = true,
     secondaryStatFormat = "both",
     showTooltips = false,
-    -- Inspect-specific overlay settings (separate from character)
     showInspectItemName = true,
     showInspectItemLevel = true,
     showInspectEnchants = true,
@@ -270,23 +227,14 @@ local function GetSettings()
     return settings or defaultSettings
 end
 
----------------------------------------------------------------------------
--- Forward declarations for font tracking (used by CreateSlotOverlay)
----------------------------------------------------------------------------
 local trackedEnchantFonts = {}
 local trackedILvlFonts = {}
-local trackedItemNameFonts = {}  -- For item name text (line 1)
+local trackedItemNameFonts = {}
 
----------------------------------------------------------------------------
--- Get global font from QUI settings
----------------------------------------------------------------------------
 local function GetGlobalFont()
     return Helpers.GetGeneralFont()
 end
 
----------------------------------------------------------------------------
--- Shared styling helpers (character panel widgets)
----------------------------------------------------------------------------
 local sidebarTabBorders = Helpers.CreateStateTable()
 local sidebarTabHooked = Helpers.CreateStateTable()
 local sidebarTabBaseWidth = nil
@@ -307,8 +255,6 @@ local function SetInsetPixelPoints(region, relativeTo, pixels)
     end
 end
 
--- Border chrome delegates to the shared SkinBase policy. Kept as a local name
--- so existing call sites remain thin per-frame wiring.
 local function ApplyOnePixelBorder(frame, withBackground, borderColor, bgColor)
     local skinBase = GetSkinBase()
     if skinBase and skinBase.ApplyChromeBackdrop then
@@ -321,10 +267,6 @@ local function ApplyOnePixelBorder(frame, withBackground, borderColor, bgColor)
     end
 end
 
--- Live-recolor a frame skinned via ApplyOnePixelBorder. Routes through
--- SkinBase.SetBackdropColors so a scale refresh keeps the new color; a bare
--- SetBackdrop*Color is discarded when RefreshPixelBackdrop rebuilds from the
--- persisted backdrop data.
 local function SetOnePixelBorderColors(frame, borderColor, bgColor)
     local skinBase = GetSkinBase()
     if skinBase and skinBase.SetBackdropColors then
@@ -360,9 +302,6 @@ local function ApplySlotPixelBackdrop(borderFrame, borderColor)
     ApplyOnePixelBorder(borderFrame, false, borderColor)
 end
 
--- Character-pane frame chrome is unified onto the standard skin colors (the
--- same source every other skinned frame uses) so the pane tracks global
--- skin-color changes. Semantic stat/status/text colors in C stay fixed.
 local function GetCharacterChromePalette()
     local skinBase = GetSkinBase()
     if skinBase and skinBase.GetChromePalette then
@@ -384,8 +323,6 @@ local function GetCharacterBorderColor()
     return color[1], color[2], color[3], color[4] or 1
 end
 
--- Same source as the border color for now; kept as a separate named getter so
--- accent (hover) and resting-border can diverge later without touching callers.
 local function GetCharacterAccentColor()
     local color = GetCharacterChromePalette().accent
     return color[1], color[2], color[3], color[4] or 1
@@ -401,8 +338,6 @@ local function StyleCloseButton(button)
     if skinBase and skinBase.SkinChromeCloseButton then
         skinBase.SkinChromeCloseButton(button, {
             stateKey = "characterPaneClose",
-            -- glyph + size inherit the unified "×"/14 default (matches every other
-            -- QUI close button); only the chrome inset/palette stay pane-specific.
             font = GetGlobalFont(),
             fontFlags = "OUTLINE",
             textColor = C.text,
@@ -481,7 +416,6 @@ end
 local function StyleSidebarTab(tab, index, uniformWidth, uniformHeight)
     if not tab then return end
 
-    -- Keep tab sizing consistent with the first tab.
     if uniformWidth and uniformHeight and uniformWidth > 0 and uniformHeight > 0 then
         QUICore:SetPixelPerfectSize(tab, uniformWidth, uniformHeight)
     end
@@ -527,7 +461,6 @@ local function StyleSidebarTab(tab, index, uniformWidth, uniformHeight)
     ApplyOnePixelBorder(border, false)
     UpdateSidebarTabBorder(tab)
 
-    -- Keep the first tab's native regions on fixed texcoords.
     if index == 1 and not (frameState[tab] or EMPTY).sidebarTexCoordHooked then
         for _, region in next, { tab:GetRegions() } do
             if region and region.SetTexCoord then
@@ -560,8 +493,6 @@ end
 local function StyleSidebarTabs()
     local tabs = { _G.PaperDollSidebarTab1, _G.PaperDollSidebarTab2, _G.PaperDollSidebarTab3 }
 
-    -- Determine and cache a stable one-time reference size to prevent
-    -- cumulative shrink when Blizzard refreshes sidebar tabs on click.
     if not sidebarTabBaseWidth or not sidebarTabBaseHeight then
         local refTab = tabs[1]
         if refTab and refTab.GetWidth and refTab.GetHeight then
@@ -572,8 +503,6 @@ local function StyleSidebarTabs()
         end
     end
 
-    -- Force a centered, stable layout over the stats column.
-    -- Stats panel center is approximately -38px from CharacterFrame TOPRIGHT.
     if CharacterFrame and sidebarTabBaseWidth and sidebarTabBaseHeight then
         local spacing = 0
         local totalWidth = (sidebarTabBaseWidth * 3) + (spacing * 2)
@@ -601,16 +530,10 @@ local function StyleSidebarTabs()
     end
 end
 
----------------------------------------------------------------------------
--- Utility: Get item quality color
----------------------------------------------------------------------------
 local function GetItemQualityColorRGB(quality)
     return Helpers.GetItemQualityColor(quality)
 end
 
----------------------------------------------------------------------------
--- Utility: Format large numbers (17257920 -> "17.2M")
----------------------------------------------------------------------------
 local function FormatNumber(num)
     if Helpers.IsSecretValue(num) then
         return "--" -- @secret-policy: encode-secret-as-placeholder
@@ -628,9 +551,6 @@ local function FormatNumber(num)
     end
 end
 
----------------------------------------------------------------------------
--- Utility: Format stat percentage
----------------------------------------------------------------------------
 local function FormatPercent(value, decimals)
     decimals = decimals or 2
 
@@ -642,9 +562,6 @@ local function FormatPercent(value, decimals)
     return string.format("%." .. decimals .. "f%%", value)
 end
 
----------------------------------------------------------------------------
--- Structured item-data helpers
----------------------------------------------------------------------------
 local TOOLTIP_LINE_TYPE_GEM_SOCKET = Enum and Enum.TooltipDataLineType and Enum.TooltipDataLineType.GemSocket or 3
 local TOOLTIP_LINE_TYPE_ENCHANT = Enum and Enum.TooltipDataLineType and Enum.TooltipDataLineType.ItemEnchantmentPermanent or 15
 local TOOLTIP_LINE_TYPE_ITEM_LEVEL = Enum and Enum.TooltipDataLineType and Enum.TooltipDataLineType.ItemLevel or 31
@@ -815,14 +732,10 @@ local function CanItemUsePermanentEnchant(itemLink)
     return false
 end
 
----------------------------------------------------------------------------
--- Get item level for a slot
----------------------------------------------------------------------------
 local function GetSlotItemLevel(unit, slotId)
     local itemLink = GetReadableInventoryItemLink(unit, slotId)
     if not itemLink then return nil end
 
-    -- Ensure item data is cached
     local itemID = GetItemIDFromLink(itemLink)
     if itemID and C_Item and C_Item.RequestLoadItemDataByID then
         local cached = true
@@ -879,9 +792,6 @@ local function GetSlotItemLevel(unit, slotId)
     return nil
 end
 
----------------------------------------------------------------------------
--- Get item quality for a slot
----------------------------------------------------------------------------
 local function GetSlotItemQuality(unit, slotId)
     local ok, quality = pcall(function()
         return GetInventoryItemQuality(unit, slotId)
@@ -892,14 +802,11 @@ local function GetSlotItemQuality(unit, slotId)
     return nil
 end
 
----------------------------------------------------------------------------
--- Get enchant text for a slot (returns actual enchant name)
----------------------------------------------------------------------------
 local function GetEnchantText(unit, slotId)
     local itemLink = GetReadableInventoryItemLink(unit, slotId)
-    if not itemLink then return nil, nil end  -- No item
+    if not itemLink then return nil, nil end
 
-    local isEnchantable = CanItemUsePermanentEnchant(itemLink, slotId)
+    local isEnchantable = CanItemUsePermanentEnchant(itemLink)
 
     local tooltipData = GetInventoryTooltipData(unit, slotId)
     if tooltipData then
@@ -925,9 +832,6 @@ local function GetEnchantText(unit, slotId)
     return nil, isEnchantable
 end
 
----------------------------------------------------------------------------
--- Get upgrade track info for a slot (e.g., "Myth 6/6", "Hero 4/6")
----------------------------------------------------------------------------
 local function GetUpgradeTrack(unit, slotId)
     local itemLink = GetReadableInventoryItemLink(unit, slotId)
     if not itemLink then return nil, nil, nil end
@@ -970,9 +874,6 @@ local function GetUpgradeTrack(unit, slotId)
     return nil, nil, nil
 end
 
----------------------------------------------------------------------------
--- Get gem info for a slot (returns gems and total socket count)
----------------------------------------------------------------------------
 local function GetGemInfo(unit, slotId)
     local itemLink = GetReadableInventoryItemLink(unit, slotId)
     if not itemLink then return {}, 0 end
@@ -1053,12 +954,10 @@ local function GetGemInfo(unit, slotId)
         end
     end
 
-    -- If tooltip detection failed, use filled count as minimum
     if totalSockets < filledCount then
         totalSockets = filledCount
     end
 
-    -- Add empty socket entries
     local emptySockets = totalSockets - filledCount
     for i = 1, emptySockets do
         table.insert(gems, {
@@ -1072,9 +971,6 @@ local function GetGemInfo(unit, slotId)
     return gems, totalSockets
 end
 
----------------------------------------------------------------------------
--- Get durability for a slot
----------------------------------------------------------------------------
 local function GetSlotDurability(slotId)
     local current, max = GetInventoryItemDurability(slotId)
     if current and max and max > 0 then
@@ -1083,21 +979,13 @@ local function GetSlotDurability(slotId)
     return nil, nil, nil
 end
 
----------------------------------------------------------------------------
--- Create overlay frame for an equipment slot
--- @param slotFrame: The slot frame to overlay
--- @param slotInfo: Slot configuration (id, name, side, etc.)
--- @param unit: Optional unit type ("player" or "target") for settings lookup
----------------------------------------------------------------------------
 local function CreateSlotOverlay(slotFrame, slotInfo, unit)
     if not slotFrame then return nil end
     local overlayUnit = unit or "player"
 
-    -- Get scale setting
     local settings = GetSettings()
     local scale = 1.0
 
-    -- Base sizes (will be multiplied by scale)
     local ITEM_LEVEL_FONT = math.floor(12 * scale)
     local ENCHANT_FONT = math.floor(9 * scale)
     local ENCHANT_WIDTH_LEFT = math.floor(110 * scale)
@@ -1109,17 +997,8 @@ local function CreateSlotOverlay(slotFrame, slotInfo, unit)
     overlay:SetAllPoints(slotFrame)
     overlay:SetFrameLevel(slotFrame:GetFrameLevel() + 10)
     overlay:SetClipsChildren(false)
-    overlay.unit = overlayUnit  -- Store unit for font refresh
+    overlay.unit = overlayUnit
 
-    -- === 3-LINE TEXT LAYOUT ===
-    -- Line 1: Item Name
-    -- Line 2: ilvl + upgrade track (e.g., "289 (Myth 6/6)")
-    -- Line 3: Enchant (single line)
-    -- Text on INNER side, Gems on OUTER side
-    -- Weapons: Name BELOW icon, Enchant ABOVE icon
-
-    -- Unified font and size for all 3 lines (controlled by single slider)
-    -- Use inspect-specific settings for any non-player inspected unit.
     local slotFont = GetGlobalFont()
     local slotTextSize
     if IsInspectUnit(overlayUnit) then
@@ -1128,20 +1007,17 @@ local function CreateSlotOverlay(slotFrame, slotInfo, unit)
         slotTextSize = settings.slotTextSize or ENCHANT_FONT
     end
     local TEXT_WIDTH = math.floor(140 * scale)
-    local FONT_FLAGS = "OUTLINE"  -- Thin black outline for readability
+    local FONT_FLAGS = "OUTLINE"
 
-    -- Line 1: Item Name
     overlay.itemName = overlay:CreateFontString(nil, "OVERLAY")
     CJKFont(overlay.itemName, slotFont, slotTextSize, FONT_FLAGS)
-    overlay.itemName:SetTextColor(1, 1, 1, 1)  -- Will be colored by quality
+    overlay.itemName:SetTextColor(1, 1, 1, 1)
     overlay.itemName:SetWordWrap(false)
     overlay.itemName:SetWidth(TEXT_WIDTH)
-    -- Only track character panel fonts (not inspect) for font refresh
     if not IsInspectUnit(overlayUnit) then
         table.insert(trackedItemNameFonts, overlay.itemName)
     end
 
-    -- Line 2: Item Level + Upgrade Track
     overlay.itemLevel = overlay:CreateFontString(nil, "OVERLAY")
     CJKFont(overlay.itemLevel, slotFont, slotTextSize, FONT_FLAGS)
     overlay.itemLevel:SetTextColor(1, 1, 1, 1)
@@ -1150,14 +1026,11 @@ local function CreateSlotOverlay(slotFrame, slotInfo, unit)
         table.insert(trackedILvlFonts, overlay.itemLevel)
     end
 
-    -- Line 3: Enchant text (single line, truncated)
-    -- Compute enchant color respecting class color toggle
     local enchantColor
     local useClassColor = IsInspectUnit(overlayUnit) and settings.inspectEnchantClassColor or settings.enchantClassColor
     local customEnchantColor = IsInspectUnit(overlayUnit) and settings.inspectEnchantTextColor or settings.enchantTextColor
     if useClassColor then
         local _, class = UnitClass(overlayUnit)
-        -- PTR7: classFile is secret for secret-identity inspect targets.
         -- @secret-policy: collapse-only — skin falls back to neutral styling
         local classIsSecret = issecretvalue and issecretvalue(class)
         if classIsSecret then class = nil end
@@ -1179,9 +1052,7 @@ local function CreateSlotOverlay(slotFrame, slotInfo, unit)
         table.insert(trackedEnchantFonts, overlay.enchant)
     end
 
-    -- Position text on INNER side of column (3-line vertical stack)
     if slotInfo.side == "left" then
-        -- Text on RIGHT (inner side)
         overlay.itemName:SetPoint("TOPLEFT", overlay, "TOPRIGHT", 4, 2)
         overlay.itemName:SetJustifyH("LEFT")
         overlay.itemLevel:SetPoint("TOPLEFT", overlay.itemName, "BOTTOMLEFT", 0, -1)
@@ -1189,7 +1060,6 @@ local function CreateSlotOverlay(slotFrame, slotInfo, unit)
         overlay.enchant:SetPoint("TOPLEFT", overlay.itemLevel, "BOTTOMLEFT", 0, -1)
         overlay.enchant:SetJustifyH("LEFT")
     elseif slotInfo.side == "right" then
-        -- Text on LEFT (inner side)
         overlay.itemName:SetPoint("TOPRIGHT", overlay, "TOPLEFT", -4, 2)
         overlay.itemName:SetJustifyH("RIGHT")
         overlay.itemLevel:SetPoint("TOPRIGHT", overlay.itemName, "BOTTOMRIGHT", 0, -1)
@@ -1197,7 +1067,6 @@ local function CreateSlotOverlay(slotFrame, slotInfo, unit)
         overlay.enchant:SetPoint("TOPRIGHT", overlay.itemLevel, "BOTTOMRIGHT", 0, -1)
         overlay.enchant:SetJustifyH("RIGHT")
     elseif slotInfo.id == INVSLOT_MAINHAND then
-        -- MainHand weapon: Text on LEFT side (3-line stack)
         overlay.itemName:SetPoint("TOPRIGHT", overlay, "TOPLEFT", -4, 2)
         overlay.itemName:SetJustifyH("RIGHT")
         overlay.itemLevel:SetPoint("TOPRIGHT", overlay.itemName, "BOTTOMRIGHT", 0, -1)
@@ -1205,7 +1074,6 @@ local function CreateSlotOverlay(slotFrame, slotInfo, unit)
         overlay.enchant:SetPoint("TOPRIGHT", overlay.itemLevel, "BOTTOMRIGHT", 0, -1)
         overlay.enchant:SetJustifyH("RIGHT")
     else
-        -- SecondaryHand weapon: Text on RIGHT side (3-line stack)
         overlay.itemName:SetPoint("TOPLEFT", overlay, "TOPRIGHT", 4, 2)
         overlay.itemName:SetJustifyH("LEFT")
         overlay.itemLevel:SetPoint("TOPLEFT", overlay.itemName, "BOTTOMLEFT", 0, -1)
@@ -1214,28 +1082,22 @@ local function CreateSlotOverlay(slotFrame, slotInfo, unit)
         overlay.enchant:SetJustifyH("LEFT")
     end
 
-    -- Gem icons on OUTER side of column (reversed from before)
     overlay.gems = {}
     for i = 1, 4 do
         local gem = overlay:CreateTexture(nil, "OVERLAY")
         gem:SetSize(GEM_SIZE, GEM_SIZE)
         gem:SetTexCoord(0.08, 0.92, 0.08, 0.92)
 
-        -- Position gems on OUTER side
         if slotInfo.side == "left" then
-            -- Gems on LEFT (outer side) - stack vertically
             local yOffset = (i - 1) * (GEM_SIZE + GEM_SPACING)
             gem:SetPoint("TOPRIGHT", overlay, "TOPLEFT", -2, -yOffset)
         elseif slotInfo.side == "right" then
-            -- Gems on RIGHT (outer side) - stack vertically
             local yOffset = (i - 1) * (GEM_SIZE + GEM_SPACING)
             gem:SetPoint("TOPLEFT", overlay, "TOPRIGHT", 2, -yOffset)
         elseif slotInfo.id == INVSLOT_MAINHAND then
-            -- MainHand: gems on RIGHT (text is on LEFT)
             local yOffset = (i - 1) * (GEM_SIZE + GEM_SPACING)
             gem:SetPoint("TOPLEFT", overlay, "TOPRIGHT", 2, -yOffset)
         else
-            -- SecondaryHand: gems on LEFT (text is on RIGHT)
             local yOffset = (i - 1) * (GEM_SIZE + GEM_SPACING)
             gem:SetPoint("TOPRIGHT", overlay, "TOPLEFT", -2, -yOffset)
         end
@@ -1244,10 +1106,8 @@ local function CreateSlotOverlay(slotFrame, slotInfo, unit)
         overlay.gems[i] = gem
     end
 
-    -- Store scale for later reference
     overlay.currentScale = scale
 
-    -- Durability bar (optional, vertical bar on side)
     overlay.durabilityBar = CreateFrame("StatusBar", nil, overlay)
     overlay.durabilityBar:SetSize(3, slotFrame:GetHeight() - 4)
     overlay.durabilityBar:SetPoint("LEFT", overlay, "LEFT", 2, 0)
@@ -1257,7 +1117,6 @@ local function CreateSlotOverlay(slotFrame, slotInfo, unit)
     overlay.durabilityBar:SetStatusBarColor(0.2, 0.8, 0.2, 1)
     overlay.durabilityBar:Hide()
 
-    -- Background for durability bar
     local duraBg = overlay.durabilityBar:CreateTexture(nil, "BACKGROUND")
     duraBg:SetAllPoints()
     duraBg:SetColorTexture(0, 0, 0, 0.5)
@@ -1266,9 +1125,6 @@ local function CreateSlotOverlay(slotFrame, slotInfo, unit)
     return overlay
 end
 
----------------------------------------------------------------------------
--- Update a single slot overlay
----------------------------------------------------------------------------
 local function UpdateSlotOverlay(overlay, unit)
     if not overlay or not overlay.slotInfo then return end
     unit = unit or overlay.unit or "player"
@@ -1279,8 +1135,6 @@ local function UpdateSlotOverlay(overlay, unit)
         return
     end
 
-    -- Use inspect-specific settings when not player
-    -- Use ~= false pattern so nil (missing from saved vars) defaults to true (show)
     local isInspect = IsInspectUnit(unit)
     local showItemName, showItemLevel, showEnchants, showGems
     if isInspect then
@@ -1305,7 +1159,6 @@ local function UpdateSlotOverlay(overlay, unit)
 
     overlay:Show()
 
-    -- Get item info for name and quality
     local itemName
     if C_Item and C_Item.GetItemInfo then
         local ok, name = pcall(C_Item.GetItemInfo, itemLink)
@@ -1322,7 +1175,6 @@ local function UpdateSlotOverlay(overlay, unit)
     local quality = GetSlotItemQuality(unit, slotId)
     local r, g, b = GetItemQualityColorRGB(quality)
 
-    -- Update item name (Line 1)
     if overlay.itemName then
         if showItemName and itemName then
             overlay.itemName:SetText(itemName)
@@ -1333,41 +1185,31 @@ local function UpdateSlotOverlay(overlay, unit)
         end
     end
 
-    -- Update item level + upgrade track (Line 2)
-    -- ilvl is always white, track is customizable color
-    -- Left column: "289 (Myth 6/6)" | Right column: "(Myth 6/6) 289"
     if showItemLevel then
         local itemLevel = GetSlotItemLevel(unit, slotId)
 
         if itemLevel then
-            -- Get upgrade track (e.g., "Myth", "6", "6")
             local track, current, max = GetUpgradeTrack(unit, slotId)
             local ilvlText
             if track and current and max then
-                -- Get track color from settings or default to orange
                 local trackColor = isInspect and settings.inspectUpgradeTrackColor or settings.upgradeTrackColor
                 trackColor = trackColor or {0.98, 0.60, 0.35, 1}
                 local trackHex = string.format("%02x%02x%02x",
                     math.floor(trackColor[1] * 255),
                     math.floor(trackColor[2] * 255),
                     math.floor(trackColor[3] * 255))
-                -- Mirror format based on column side
-                -- Text on right side of slot = ilvl (Track)
-                -- Text on left side of slot = (Track) ilvl
                 local slotSide = overlay.slotInfo and overlay.slotInfo.side
                 local slotId = overlay.slotInfo and overlay.slotInfo.id
                 if slotSide == "right" or slotId == INVSLOT_MAINHAND then
-                    -- Right column & MainHand (text on left): (Track) ilvl
                     ilvlText = string.format("|cff%s(%s %s/%s)|r %d", trackHex, track, current, max, itemLevel)
                 else
-                    -- Left column & SecondaryHand (text on right): ilvl (Track)
                     ilvlText = string.format("%d |cff%s(%s %s/%s)|r", itemLevel, trackHex, track, current, max)
                 end
             else
                 ilvlText = tostring(itemLevel)
             end
             overlay.itemLevel:SetText(ilvlText)
-            overlay.itemLevel:SetTextColor(1, 1, 1, 1)  -- Always white base
+            overlay.itemLevel:SetTextColor(1, 1, 1, 1)
             overlay.itemLevel:Show()
         else
             overlay.itemLevel:Hide()
@@ -1376,10 +1218,8 @@ local function UpdateSlotOverlay(overlay, unit)
         overlay.itemLevel:Hide()
     end
 
-    -- Update enchant text (shows actual enchant name)
     if showEnchants then
         local enchantText, isEnchantable = GetEnchantText(unit, slotId)
-        -- Compute enchant color respecting class color toggle
         local enchantColor
         local useClassColor = isInspect and settings.inspectEnchantClassColor or settings.enchantClassColor
         local customEnchantColor = isInspect and settings.inspectEnchantTextColor or settings.enchantTextColor
@@ -1387,7 +1227,6 @@ local function UpdateSlotOverlay(overlay, unit)
         noEnchantColor = noEnchantColor or {0.5, 0.5, 0.5}
         if useClassColor then
             local _, class = UnitClass(unit)
-            -- PTR7: classFile is secret for secret-identity inspect targets.
             -- @secret-policy: collapse-only — skin falls back to neutral styling
             local classIsSecret = issecretvalue and issecretvalue(class)
             if classIsSecret then class = nil end
@@ -1406,7 +1245,6 @@ local function UpdateSlotOverlay(overlay, unit)
                 overlay.enchant:SetText(enchantText)
                 overlay.enchant:SetTextColor(enchantColor[1], enchantColor[2], enchantColor[3], 1)
             else
-                -- Enchantable slot but no enchant - show "No Enchant" in customizable color
                 overlay.enchant:SetText(ns.L["No Enchant"])
                 overlay.enchant:SetTextColor(noEnchantColor[1], noEnchantColor[2], noEnchantColor[3], 1)
             end
@@ -1418,22 +1256,18 @@ local function UpdateSlotOverlay(overlay, unit)
         overlay.enchant:Hide()
     end
 
-    -- Update gem icons (actual textures, including empty sockets)
     if showGems then
         local gems, totalSockets = GetGemInfo(unit, slotId)
         for i, gemTex in ipairs(overlay.gems) do
             if gems[i] then
                 if gems[i].filled then
-                    -- Filled socket: show gem icon
                     local gemIcon = gems[i].icon
-                    -- Must be valid icon (non-nil, non-zero, and numeric)
                     if gemIcon and gemIcon ~= 0 and type(gemIcon) == "number" then
                         gemTex:SetTexture(gemIcon)
                         gemTex:SetDesaturated(false)
                         gemTex:SetVertexColor(1, 1, 1, 1)
                         gemTex:Show()
                     else
-                        -- Fallback to colored square if icon not available
                         local gemType = gems[i].type or "Prismatic"
                         local color = GEM_COLORS[gemType] or GEM_COLORS.Prismatic
                         gemTex:SetColorTexture(color[1], color[2], color[3], color[4])
@@ -1441,7 +1275,6 @@ local function UpdateSlotOverlay(overlay, unit)
                         gemTex:Show()
                     end
                 else
-                    -- Empty socket: show grey socket icon
                     gemTex:SetTexture("Interface\\ItemSocketingFrame\\UI-EmptySocket-Prismatic")
                     gemTex:SetDesaturated(true)
                     gemTex:SetVertexColor(0.6, 0.6, 0.6, 0.9)
@@ -1457,12 +1290,10 @@ local function UpdateSlotOverlay(overlay, unit)
         end
     end
 
-    -- Update durability bar
     if settings.showDurability and unit == "player" then
         local current, max, pct = GetSlotDurability(slotId)
         if pct then
             overlay.durabilityBar:SetValue(pct)
-            -- Color: green > yellow > red based on durability
             if pct > 50 then
                 overlay.durabilityBar:SetStatusBarColor(0.2, 0.8, 0.2, 1)
             elseif pct > 25 then
@@ -1479,18 +1310,12 @@ local function UpdateSlotOverlay(overlay, unit)
     end
 end
 
----------------------------------------------------------------------------
--- LAYOUT REARRANGEMENT FUNCTIONS
--- These rearrange Blizzard's CharacterFrame into a portrait-style layout
----------------------------------------------------------------------------
-
--- Track if layout has been applied
 local layoutApplied = false
 local customBg = nil
-local equipMgrPopup = nil  -- Floating Equipment Manager container
-local titlesPopup = nil      -- Floating Titles container
-local allEquipmentSlots = {}  -- Stores all equipment slot frames for border updates
-local UpdateEquipmentSlotBorder = nil  -- Function to update slot borders (set in HideBlizzardDecorations)
+local equipMgrPopup = nil
+local titlesPopup = nil
+local allEquipmentSlots = {}
+local UpdateEquipmentSlotBorder = nil
 
 local function RefreshEquipmentSlotBorders()
     if #allEquipmentSlots == 0 or not UpdateEquipmentSlotBorder then return end
@@ -1504,21 +1329,12 @@ local function RefreshEquipmentSlotBorders()
     end
 end
 
----------------------------------------------------------------------------
--- Helper: Check if skinning module is handling the background
----------------------------------------------------------------------------
 local function IsSkinningHandlingBackground()
     local skinningAPI = _G.QUI_CharacterFrameSkinning
     return skinningAPI and skinningAPI.IsEnabled and skinningAPI.IsEnabled()
 end
 
----------------------------------------------------------------------------
--- Hide Blizzard CharacterFrame decorations
----------------------------------------------------------------------------
 local function HideBlizzardDecorations()
-    -- Defensive: repositions protected CharacterFrame children (sidebar tabs,
-    -- close button, bottom tabs) — forbidden in combat. Callers gate via
-    -- ApplyCharacterPaneLayout, but self-defer too in case of a direct caller.
     if InCombatLockdown() then
         pendingPaneLayout = true
         return
@@ -1526,51 +1342,37 @@ local function HideBlizzardDecorations()
 
     local settings = GetSettings()
 
-    -- Main frame decorations (only hide elements specific to Character tab)
-    -- NOTE: Don't hide CharacterFrame.NineSlice, CharacterFrame.Bg, or CharacterFramePortrait globally
-    -- Portrait visibility is handled in tab switching hooks
     if CharacterFrame.TopTileStreaks then CharacterFrame.TopTileStreaks:Hide() end
 
-    -- Hide Blizzard's center character name text (we show ilvl in center instead)
     if CharacterFrameTitleText then CharacterFrameTitleText:Hide() end
     if CharacterFrame.TitleText then CharacterFrame.TitleText:Hide() end
 
-    -- Hide sidebar tab decorations (ornate corner textures in top-right)
     if PaperDollSidebarTabs then
         if PaperDollSidebarTabs.DecorLeft then PaperDollSidebarTabs.DecorLeft:Hide() end
         if PaperDollSidebarTabs.DecorRight then PaperDollSidebarTabs.DecorRight:Hide() end
-        -- Sidebar tab positions are normalized in StyleSidebarTabs().
         PaperDollSidebarTabs:ClearAllPoints()
         PaperDollSidebarTabs:SetPoint("TOP", CharacterFrame, "TOPRIGHT", -38, -30)
         StyleSidebarTabs()
     end
 
-    -- Move close button 30px right to align with extended panel
     if CharacterFrame.CloseButton then
         CharacterFrame.CloseButton:ClearAllPoints()
         CharacterFrame.CloseButton:SetPoint("TOPRIGHT", CharacterFrame, "TOPRIGHT", 52, -5)
         StyleCloseButton(CharacterFrame.CloseButton)
     end
 
-    -- Move bottom tabs (Character/Reputation/Currency) down 50px
     AnchorCharacterFrameBottomTabs(-48)
 
-    -- Character frame inset decorations
     if CharacterFrameInset then
         if CharacterFrameInset.NineSlice then CharacterFrameInset.NineSlice:Hide() end
         if CharacterFrameInset.Bg then CharacterFrameInset.Bg:SetAlpha(0) end
     end
 
-    -- Stats pane background
     if CharacterFrameInsetRight then
         if CharacterFrameInsetRight.Bg then CharacterFrameInsetRight.Bg:SetAlpha(0) end
         if CharacterFrameInsetRight.NineSlice then CharacterFrameInsetRight.NineSlice:Hide() end
     end
 
-    -- Mask Blizzard's stats pane (we replace it visually). Keep it Shown so
-    -- Blizzard's unrestricted code keeps updating its FontStrings — we mirror
-    -- those into our panel during combat / encounters / M+ / PvP, when API
-    -- reads from addon code return secret values.
     if CharacterStatsPane then
         ns.SafeCallMethod("best-effort-style", CharacterStatsPane, "SetAlpha", 0)
         ns.SafeCallMethodIfPresent("best-effort-style", CharacterStatsPane, "EnableMouse", false)
@@ -1579,7 +1381,6 @@ local function HideBlizzardDecorations()
         end
     end
 
-    -- PaperDoll inner borders
     local innerBorders = {
         "PaperDollInnerBorderBottom", "PaperDollInnerBorderBottom2",
         "PaperDollInnerBorderBottomLeft", "PaperDollInnerBorderBottomRight",
@@ -1592,7 +1393,6 @@ local function HideBlizzardDecorations()
         if border then border:Hide() end
     end
 
-    -- Slot frame decorations (the colored borders around slots)
     local slotFrames = {
         "CharacterBackSlotFrame", "CharacterChestSlotFrame", "CharacterFeetSlotFrame",
         "CharacterFinger0SlotFrame", "CharacterFinger1SlotFrame", "CharacterHandsSlotFrame",
@@ -1605,7 +1405,6 @@ local function HideBlizzardDecorations()
         local frame = _G[frameName]
         if frame then
             frame:Hide()
-            -- Hook to keep hidden (Blizzard may re-show on updates)
             if not (frameState[frame] or EMPTY).hideHooked then
                 hooksecurefunc(frame, "Show", function(self)
                     C_Timer.After(0, function()
@@ -1617,7 +1416,6 @@ local function HideBlizzardDecorations()
         end
     end
 
-    -- Block Blizzard's IconBorder from showing (prevent double borders)
     local function BlockIconBorder(iconBorder)
         if not iconBorder or (frameState[iconBorder] or EMPTY).blocked then return end
         GetState(iconBorder).blocked = true
@@ -1626,23 +1424,16 @@ local function HideBlizzardDecorations()
         Helpers.DeferredSetAtlasBlock(iconBorder, false)
     end
 
-    -- Skin equipment slot icons (same pattern as CDM/buff bar)
     local function SkinEquipmentSlot(slot)
         if not slot then return end
 
-        -- Hide NormalTexture (decorative frame)
         local normalTex = slot:GetNormalTexture()
         if normalTex then normalTex:SetAlpha(0) end
 
-        -- Hide BottomRightSlotTexture if exists (decorative corner on weapon slots)
         if slot.BottomRightSlotTexture then
             slot.BottomRightSlotTexture:Hide()
         end
 
-        -- Hide non-icon decorative regions, but preserve runtime-state overlays
-        -- that Blizzard toggles on filter contexts (upgrade vendor dim/dither
-        -- via ItemContextOverlay, bag search via searchOverlay, status badges
-        -- via IconOverlay/2, quest border via IconQuestTexture).
         local preserve = {
             [slot.icon or false] = true,
             [slot.Icon or false] = true,
@@ -1661,18 +1452,15 @@ local function HideBlizzardDecorations()
             end
         end
 
-        -- Block Blizzard's IconBorder (we use custom border frame instead)
         if slot.IconBorder then
             BlockIconBorder(slot.IconBorder)
         end
 
-        -- Apply base crop to icon texture (0.08/0.92 pattern - removes grey edges)
         local iconTex = slot.icon or slot.Icon
         if iconTex and iconTex.SetTexCoord then
             iconTex:SetTexCoord(0.08, 0.92, 0.08, 0.92)
         end
 
-        -- Create border frame as child of slot (won't be affected by Blizzard's texture updates)
         if not (frameState[slot] or EMPTY).borderFrame then
             local borderFrame = CreateFrame("Frame", nil, slot, "BackdropTemplate")
             borderFrame:SetFrameLevel(slot:GetFrameLevel() + 10)
@@ -1682,14 +1470,12 @@ local function HideBlizzardDecorations()
         end
     end
 
-    -- Update border color based on equipped item quality
     local function UpdateSlotBorder(slot)
         local borderFrame = slot and (frameState[slot] or EMPTY).borderFrame
         if not borderFrame then return end
 
         local slotID = slot:GetID()
 
-        -- Use inventory quality because item-info caching can lag behind slot updates.
         local ok, quality = pcall(GetInventoryItemQuality, "player", slotID)
         if not ok or Helpers.IsSecretValue(quality) then
             quality = nil
@@ -1697,18 +1483,13 @@ local function HideBlizzardDecorations()
 
         local r, g, b = GetCharacterBorderColor()
         if quality and quality >= 0 then
-            -- C_Item.GetItemQualityColor: quality is a non-nil ItemQuality and
-            -- returns non-nil RGB values per local generated ItemDocumentation.lua.
             r, g, b = C_Item.GetItemQualityColor(quality)
         end
 
-        -- ApplySlotPixelBackdrop persists data.borderColor and re-renders; a bare
-        -- SetBackdropBorderColor here is redundant and discarded on scale refresh.
         ApplySlotPixelBackdrop(borderFrame, { r, g, b, 1 })
         borderFrame:Show()
     end
 
-    -- All equipment slot names
     local equipmentSlotNames = {
         "CharacterHeadSlot", "CharacterNeckSlot", "CharacterShoulderSlot",
         "CharacterBackSlot", "CharacterChestSlot", "CharacterShirtSlot",
@@ -1719,7 +1500,6 @@ local function HideBlizzardDecorations()
         "CharacterMainHandSlot", "CharacterSecondaryHandSlot",
     }
 
-    -- Skin all equipment slots
     local allSlots = {}
     for _, slotName in ipairs(equipmentSlotNames) do
         local slot = _G[slotName]
@@ -1730,11 +1510,9 @@ local function HideBlizzardDecorations()
         end
     end
 
-    -- Expose to module scope for OnShow refresh
     allEquipmentSlots = allSlots
     UpdateEquipmentSlotBorder = UpdateSlotBorder
 
-    -- Hook equipment changes to update all borders
     local firstSlot = allSlots[1]
     if firstSlot and not (frameState[firstSlot] or EMPTY).equipHooked then
         firstSlot:HookScript("OnEvent", function(self, event)
@@ -1749,7 +1527,6 @@ local function HideBlizzardDecorations()
         GetState(firstSlot).equipHooked = true
     end
 
-    -- Model scene background elements
     local modelBgs = {
         "CharacterModelFrameBackgroundTopLeft", "CharacterModelFrameBackgroundBotLeft",
         "CharacterModelFrameBackgroundTopRight", "CharacterModelFrameBackgroundBotRight",
@@ -1760,28 +1537,20 @@ local function HideBlizzardDecorations()
         if bg then bg:Hide() end
     end
 
-    -- Hide model control frame (rotate/zoom buttons)
     if CharacterModelScene and CharacterModelScene.ControlFrame then
         CharacterModelScene.ControlFrame:Hide()
     end
 end
 
----------------------------------------------------------------------------
--- Create custom QUI background
----------------------------------------------------------------------------
 local function CreateCustomBackground()
     local settings = GetSettings()
 
-    -- Check if skinning module is handling the background
     local skinningAPI = _G.QUI_CharacterFrameSkinning
     if skinningAPI and skinningAPI.IsEnabled and skinningAPI.IsEnabled() then
-        -- Use skinning module's background with extended dimensions
         if skinningAPI.SetExtended then
             skinningAPI.SetExtended(true)
         end
     else
-        -- Skinning disabled - create our own background for character pane
-        -- Use global skinning colors for consistency
         local sr, sg, sb, sa = GetCharacterBorderColor()
         local bgr, bgg, bgb, bga = GetCharacterBgColor()
 
@@ -1793,31 +1562,20 @@ local function CreateCustomBackground()
         end
         ApplyOnePixelBorder(customBg, true, { sr, sg, sb, sa }, { bgr, bgg, bgb, bga })
 
-        -- Extend background beyond CharacterFrame bounds (can't resize CharacterFrame directly)
         local PANEL_HEIGHT_EXTENSION = 50
         local PANEL_WIDTH_EXTENSION = 55
         customBg:ClearAllPoints()
         customBg:SetPoint("TOPLEFT", CharacterFrame, "TOPLEFT", 0, 0)
         customBg:SetPoint("BOTTOMRIGHT", CharacterFrame, "BOTTOMRIGHT", PANEL_WIDTH_EXTENSION, -PANEL_HEIGHT_EXTENSION)
 
-        -- Colors already persisted by ApplyOnePixelBorder above; a bare setter here
-        -- is discarded on the next scale refresh. Live recolor goes through the
-        -- bgColorPicker callback via SetOnePixelBorderColors.
         customBg:Show()
     end
 
-    -- Note: Model area uses customBg background (no separate modelBg needed)
-    -- Creating a child frame of CharacterModelScene would render in front of the 3D model
-
-    -- Apply panel scale from settings (base scale 1.30, slider is multiplier)
     local BASE_SCALE = 1.30
     local scaleMultiplier = settings.panelScale or 1.0
     SetCharacterFrameScale(BASE_SCALE * scaleMultiplier)
 end
 
----------------------------------------------------------------------------
--- Slot column definitions for portrait layout
----------------------------------------------------------------------------
 local LEFT_COLUMN_SLOTS = {
     "CharacterHeadSlot",
     "CharacterNeckSlot",
@@ -1838,24 +1596,18 @@ local RIGHT_COLUMN_SLOTS = {
     "CharacterTrinket1Slot",
 }
 
----------------------------------------------------------------------------
--- Reposition equipment slots into portrait layout
----------------------------------------------------------------------------
 local function RepositionSlots()
-    -- Defensive: SetScales/SetPoints protected equipment slots — forbidden in
-    -- combat. Callers gate via ApplyCharacterPaneLayout; self-defer too.
     if InCombatLockdown() then
         pendingPaneLayout = true
         return
     end
 
     local settings = GetSettings()
-    if not CharacterFrameBg then return end  -- Need this frame as anchor
+    if not CharacterFrameBg then return end
 
-    local vpad = 14  -- Vertical padding between slots
-    local SLOT_SCALE = 0.90  -- Scale down slots to 90%
+    local vpad = 14
+    local SLOT_SCALE = 0.90
 
-    -- All slots to scale
     local allSlots = {
         CharacterHeadSlot, CharacterNeckSlot, CharacterShoulderSlot,
         CharacterBackSlot, CharacterChestSlot, CharacterShirtSlot,
@@ -1866,12 +1618,10 @@ local function RepositionSlots()
         CharacterMainHandSlot, CharacterSecondaryHandSlot,
     }
 
-    -- Apply scale to all slots
     for _, slot in ipairs(allSlots) do
         if slot then slot:SetScale(SLOT_SCALE) end
     end
 
-    -- LEFT COLUMN: Head is anchor, others chain below
     CharacterHeadSlot:ClearAllPoints()
     CharacterHeadSlot:SetPoint("TOPLEFT", CharacterFrameBg, "TOPLEFT", 20, -30)
 
@@ -1893,7 +1643,6 @@ local function RepositionSlots()
     CharacterTabardSlot:ClearAllPoints()
     CharacterTabardSlot:SetPoint("TOPLEFT", CharacterShirtSlot, "BOTTOMLEFT", 0, -vpad)
 
-    -- RIGHT COLUMN: Hands is anchor, others chain below (closer to stats panel)
     CharacterHandsSlot:ClearAllPoints()
     CharacterHandsSlot:SetPoint("TOPLEFT", CharacterFrameBg, "TOPLEFT", 413, -30)
 
@@ -1918,13 +1667,10 @@ local function RepositionSlots()
     CharacterTrinket1Slot:ClearAllPoints()
     CharacterTrinket1Slot:SetPoint("TOPLEFT", CharacterTrinket0Slot, "BOTTOMLEFT", 0, -vpad)
 
-    -- LEFT COLUMN BOTTOM: Wrist aligned horizontally with Trinket2
     CharacterWristSlot:ClearAllPoints()
     CharacterWristSlot:SetPoint("TOP", CharacterTrinket1Slot, "TOP", 0, 0)
     CharacterWristSlot:SetPoint("LEFT", CharacterHeadSlot, "LEFT", 0, 0)
 
-    -- BOTTOM: Weapons centered between columns
-    -- Panel extended by 50px, weapons moved 40px lower than before (yOffset: 21 + 50 - 40 = 31)
     CharacterMainHandSlot:ClearAllPoints()
     CharacterMainHandSlot:SetPoint("BOTTOM", CharacterFrameBg, "BOTTOM", -102, -29)
 
@@ -1932,14 +1678,10 @@ local function RepositionSlots()
     CharacterSecondaryHandSlot:SetPoint("LEFT", CharacterMainHandSlot, "RIGHT", 30, 0)
 end
 
----------------------------------------------------------------------------
--- Position CharacterModelScene
----------------------------------------------------------------------------
 local function PositionModelScene()
     local settings = GetSettings()
     if not CharacterModelScene then return end
 
-    -- Position model scene between slot columns
     CharacterModelScene:ClearAllPoints()
     CharacterModelScene:SetPoint("TOPLEFT", CharacterFrame, "TOPLEFT", 86, -85)
     CharacterModelScene:SetPoint("BOTTOMRIGHT", CharacterFrame, "BOTTOMRIGHT", -204, 65)
@@ -1948,13 +1690,9 @@ local function PositionModelScene()
 
 end
 
----------------------------------------------------------------------------
--- Position stats panel for portrait layout
----------------------------------------------------------------------------
 local function PositionStatsPanelForLayout()
     local settings = GetSettings()
 
-    -- Create stats panel if not exists
     local justCreated = false
     if not statsPanel then
         statsPanel = CreateStatsPanel(CharacterFrame, "player")
@@ -1969,16 +1707,12 @@ local function PositionStatsPanelForLayout()
         statsPanel:SetFrameLevel(10)
         statsPanel:Show()
 
-        -- If just created, trigger ScheduleUpdate to populate content
         if justCreated then
             C_Timer.After(0.05, ScheduleUpdate)
         end
     end
 end
 
----------------------------------------------------------------------------
--- Shared average ilvl accessor (overall / equipped / pvp)
----------------------------------------------------------------------------
 local function GetPlayerAverageItemLevels()
     local overall, equipped, pvp = GetAverageItemLevel()
     overall = tonumber(overall) or 0
@@ -1987,9 +1721,6 @@ local function GetPlayerAverageItemLevels()
     return overall, equipped, pvp
 end
 
----------------------------------------------------------------------------
--- Hover tooltip for center ilvl display
----------------------------------------------------------------------------
 local function ShowCenterILvlTooltip(self)
     if not self then return end
 
@@ -2011,34 +1742,27 @@ local function ShowCenterILvlTooltip(self)
     GameTooltip:Show()
 end
 
----------------------------------------------------------------------------
--- Setup title area: Top-left display with [Name] [ilvl] [Spec Class]
----------------------------------------------------------------------------
 local function SetupTitleArea()
     local font = GetGlobalFont()
 
-    -- Hide Blizzard's level text (we'll show our own combined display)
     if CharacterLevelText then
         CharacterLevelText:Hide()
     end
 
-    -- Create top-left two-line display: Line 1 = Name, Line 2 = Level + Spec
     if not (frameState[CharacterFrame] or EMPTY).ilvlDisplay then
         local displayFrame = CreateFrame("Frame", nil, CharacterFrame)
         displayFrame:SetSize(400, 30)
-        displayFrame:SetPoint("TOPLEFT", CharacterFrame, "TOPLEFT", 19, -10)  -- Aligned with first slot
+        displayFrame:SetPoint("TOPLEFT", CharacterFrame, "TOPLEFT", 19, -10)
         displayFrame:SetFrameLevel(CharacterFrame:GetFrameLevel() + 10)
 
-        -- Line 1: Character name
         local nameText = displayFrame:CreateFontString(nil, "OVERLAY")
         CJKFont(nameText, font, 12, "")
         nameText:SetPoint("TOPLEFT", displayFrame, "TOPLEFT", 0, 0)
         nameText:SetJustifyH("LEFT")
 
-        -- Line 2: Level + Spec (right-aligned near right icons)
         local specText = CharacterFrame:CreateFontString(nil, "OVERLAY")
         CJKFont(specText, font, 12, "")
-        specText:SetPoint("TOPRIGHT", CharacterFrame, "TOPRIGHT", -132, -10)  -- Aligned with right slot column
+        specText:SetPoint("TOPRIGHT", CharacterFrame, "TOPRIGHT", -132, -10)
         specText:SetJustifyH("RIGHT")
 
         displayFrame.text = nameText
@@ -2046,15 +1770,14 @@ local function SetupTitleArea()
         GetState(CharacterFrame).ilvlDisplay = displayFrame
     end
 
-    -- Create center ilvl display (title bar) - shows equipped | overall
     if not (frameState[CharacterFrame] or EMPTY).centerILvl then
         local centerFrame = CreateFrame("Frame", nil, CharacterFrame)
         centerFrame:SetSize(200, 20)
-        centerFrame:SetPoint("TOP", CharacterFrame, "TOP", -62, -10)  -- Title bar, shifted left over model
+        centerFrame:SetPoint("TOP", CharacterFrame, "TOP", -62, -10)
         centerFrame:SetFrameLevel(CharacterFrame:GetFrameLevel() + 10)
 
         local centerText = centerFrame:CreateFontString(nil, "OVERLAY")
-        CJKFont(centerText, font, 21, "OUTLINE")  -- Large font
+        CJKFont(centerText, font, 21, "OUTLINE")
         centerText:SetPoint("CENTER")
         centerText:SetJustifyH("CENTER")
 
@@ -2067,22 +1790,12 @@ local function SetupTitleArea()
     end
 end
 
----------------------------------------------------------------------------
--- Master function: Apply portrait layout
----------------------------------------------------------------------------
 ApplyCharacterPaneLayout = function(force)
     local settings = GetSettings()
     if not settings.enabled then return end
 
-    -- Only apply once per session (unless forced)
     if layoutApplied and not force then return end
 
-    -- HideBlizzardDecorations repositions protected CharacterFrame children
-    -- (PaperDollSidebarTabs, CloseButton, bottom tabs) and the slot pass
-    -- SetScales/SetPoints the equipment slots — all ADDON_ACTION_FORBIDDEN in
-    -- combat. Defer the protected layout to PLAYER_REGEN_ENABLED (mirrors
-    -- inspect.lua pendingInspectLayout/ApplyInspectPaneLayout); the QUI-owned
-    -- background/title/text skinning below is insecure-safe and runs now.
     local inCombat = InCombatLockdown()
     if inCombat then
         pendingPaneLayout = true
@@ -2094,7 +1807,6 @@ ApplyCharacterPaneLayout = function(force)
     SetupTitleArea()
 
     if not inCombat then
-        -- Let Blizzard's slot setup for the current frame finish before anchoring.
         RunAfterCharacterPaneLayoutTick(function()
             RepositionSlots()
             RefreshEquipmentSlotBorders()
@@ -2106,21 +1818,16 @@ ApplyCharacterPaneLayout = function(force)
     layoutApplied = true
 end
 
----------------------------------------------------------------------------
--- Initialize slot overlays for character frame
----------------------------------------------------------------------------
 local currentOverlayScale = nil
 
 local function InitializeCharacterOverlays(forceRecreate)
     local settings = GetSettings()
     local newScale = 1.0
 
-    -- Check if scale changed - need to recreate overlays
     if characterPaneInitialized and currentOverlayScale == newScale and not forceRecreate then
         return
     end
 
-    -- If scale changed, destroy existing overlays
     if characterPaneInitialized and currentOverlayScale ~= newScale then
         for slotId, overlay in pairs(slotOverlays) do
             if overlay then
@@ -2145,9 +1852,6 @@ local function InitializeCharacterOverlays(forceRecreate)
     characterPaneInitialized = true
 end
 
----------------------------------------------------------------------------
--- Update all slot overlays
----------------------------------------------------------------------------
 local function UpdateAllSlotOverlays(unit, overlayTable)
     overlayTable = overlayTable or slotOverlays
     unit = unit or "player"
@@ -2157,24 +1861,14 @@ local function UpdateAllSlotOverlays(unit, overlayTable)
     end
 end
 
----------------------------------------------------------------------------
--- Create stats panel (replaces CharacterFrameInsetRight)
----------------------------------------------------------------------------
 CreateStatsPanel = function(parent, unit)
     local settings = GetSettings()
 
-    -- Create main panel frame
     local panel = CreateFrame("Frame", nil, parent, "BackdropTemplate")
     panel:SetSize(200, 400)
 
-    -- No backdrop - let customBg show through (avoids double-layered background)
     panel:SetBackdrop(nil)
 
-    -- Plain ScrollFrame (no template). UIPanelScrollFrameTemplate inherits from
-    -- SecureScrollFrameTemplate; addon-side geometry mods (SetSize on the child,
-    -- SetWidth on the thumb, etc.) taint the secure template's xrange/yrange
-    -- reads in 12.0+, producing "secret number value" errors. Plain ScrollFrames
-    -- have no secure inheritance, so they're safe to size from addon code.
     local scrollFrame = CreateFrame("ScrollFrame", nil, panel)
     scrollFrame:SetPoint("TOPLEFT", 5, -5)
     scrollFrame:SetPoint("BOTTOMRIGHT", -5, 5)
@@ -2187,7 +1881,7 @@ CreateStatsPanel = function(parent, unit)
     end)
 
     local scrollChild = CreateFrame("Frame", nil, scrollFrame)
-    scrollChild:SetSize(130, 1)  -- Width matches scroll area (160 - 30 padding), height set dynamically
+    scrollChild:SetSize(130, 1)
     scrollFrame:SetScrollChild(scrollChild)
 
     panel.scrollFrame = scrollFrame
@@ -2197,30 +1891,21 @@ CreateStatsPanel = function(parent, unit)
     return panel
 end
 
----------------------------------------------------------------------------
--- Track font strings and underlines for refresh
----------------------------------------------------------------------------
 local trackedFontStrings = {}
 local trackedUnderlines = {}
--- Note: trackedEnchantFonts is declared earlier (before CreateSlotOverlay)
 
 local function TrackFontString(fontString, category)
     table.insert(trackedFontStrings, { fs = fontString, cat = category })
 end
 
----------------------------------------------------------------------------
--- Refresh all character panel fonts
----------------------------------------------------------------------------
 local function RefreshCharacterPanelFonts()
     local settings = GetSettings()
     local font = GetGlobalFont()
 
-    -- Get pixel-based sizes (with fallback to old multiplier settings for migration)
     local statsSize = settings.statsTextSize or (settings.textSize and math.floor(11 * settings.textSize)) or 11
     local statsColor = settings.statsTextColor or settings.textColor or {0.953, 0.957, 0.965}
     local headerSize = settings.headerTextSize or (settings.headerSize and math.floor(12 * settings.headerSize)) or 12
 
-    -- Header color: use class color if enabled, otherwise use custom color
     local headerColor
     if settings.headerClassColor then
         local _, class = UnitClass("player")
@@ -2234,7 +1919,6 @@ local function RefreshCharacterPanelFonts()
         headerColor = settings.headerColor or {0.376, 0.647, 0.980}
     end
 
-    -- Clean up invalid references
     local validStrings = {}
     for _, entry in ipairs(trackedFontStrings) do
         if entry.fs and entry.fs.SetFont then
@@ -2243,7 +1927,6 @@ local function RefreshCharacterPanelFonts()
     end
     trackedFontStrings = validStrings
 
-    -- Update all tracked font strings
     for _, entry in ipairs(trackedFontStrings) do
         local fs = entry.fs
         local cat = entry.cat
@@ -2265,25 +1948,19 @@ local function RefreshCharacterPanelFonts()
         end
     end
 
-    -- Update section header underlines with header color
     if trackedUnderlines then
         local sb = GetSkinBase()
         for _, line in ipairs(trackedUnderlines) do
             if line and line.SetColorTexture then
                 line:SetColorTexture(headerColor[1], headerColor[2], headerColor[3], 0.3)
-                -- Re-disable texel snapping: SetColorTexture re-enables the
-                -- engine default, which rasterizes the 1px underline to nothing
-                -- at fractional UI scale (snap was applied at creation only).
                 if sb and sb.DisablePixelSnap then sb.DisablePixelSnap(line) end
             end
         end
     end
 
-    -- Update enchant text (slot overlays)
     local enchantSize = settings.enchantTextSize or 10
     local noEnchantColor = settings.noEnchantTextColor or {0.5, 0.5, 0.5}
 
-    -- Enchant color: use class color if enabled, otherwise use custom color
     local enchantColor
     if settings.enchantClassColor then
         local _, class = UnitClass("player")
@@ -2297,7 +1974,6 @@ local function RefreshCharacterPanelFonts()
         enchantColor = settings.enchantTextColor or {0.376, 0.647, 0.980}
     end
 
-    -- Enchant font: use custom font if specified, otherwise global font
     local enchantFont = font
     if settings.enchantFont then
         local LSM = ns.LSM
@@ -2309,11 +1985,9 @@ local function RefreshCharacterPanelFonts()
         end
     end
 
-    -- Unified slot text size for all 3 lines (same font, size, and outline)
     local slotTextSize = settings.slotTextSize or 10
-    local FONT_FLAGS = "OUTLINE"  -- Thin black outline for readability
+    local FONT_FLAGS = "OUTLINE"
 
-    -- Update item name text (Line 1)
     local validItemNames = {}
     for _, fs in ipairs(trackedItemNameFonts) do
         if fs and fs.SetFont then
@@ -2323,7 +1997,6 @@ local function RefreshCharacterPanelFonts()
     end
     trackedItemNameFonts = validItemNames
 
-    -- Update item level text (Line 2)
     local validILvl = {}
     for _, fs in ipairs(trackedILvlFonts) do
         if fs and fs.SetFont then
@@ -2333,12 +2006,10 @@ local function RefreshCharacterPanelFonts()
     end
     trackedILvlFonts = validILvl
 
-    -- Update enchant text (Line 3) - use same font as other lines for consistency
     local validEnchants = {}
     for _, fs in ipairs(trackedEnchantFonts) do
         if fs and fs.SetFont then
             CJKFont(fs, font, slotTextSize, FONT_FLAGS)
-            -- Color based on text content
             local text = fs:GetText()
             if text and text == "No Enchant" then
                 fs:SetTextColor(noEnchantColor[1], noEnchantColor[2], noEnchantColor[3], 1)
@@ -2351,12 +2022,8 @@ local function RefreshCharacterPanelFonts()
     trackedEnchantFonts = validEnchants
 end
 
--- Expose globally for settings panel
 _G.QUI_RefreshCharacterPanelFonts = RefreshCharacterPanelFonts
 
----------------------------------------------------------------------------
--- Show stat tooltip (similar to Blizzard's PaperDollStatTooltip)
----------------------------------------------------------------------------
 local function ShowStatTooltip(self)
     local settings = GetSettings()
     if not settings.showTooltips then
@@ -2376,9 +2043,6 @@ local function ShowStatTooltip(self)
     GameTooltip:Show()
 end
 
----------------------------------------------------------------------------
--- Create a stat row (label + value)
----------------------------------------------------------------------------
 local function CreateStatRow(parent, yOffset)
     local settings = GetSettings()
     local font = GetGlobalFont()
@@ -2391,7 +2055,6 @@ local function CreateStatRow(parent, yOffset)
     row:SetSize(parent:GetWidth() - 10, rowHeight)
     row:SetPoint("TOPLEFT", 5, yOffset)
 
-    -- Enable mouse for tooltips (only if setting is enabled)
     if settings.showTooltips then
         row:EnableMouse(true)
         row:SetScript("OnEnter", ShowStatTooltip)
@@ -2419,16 +2082,12 @@ local function CreateStatRow(parent, yOffset)
     return row
 end
 
----------------------------------------------------------------------------
--- Create a section header
----------------------------------------------------------------------------
 local function CreateSectionHeader(parent, text, yOffset)
     local settings = GetSettings()
     local font = GetGlobalFont()
     local headerSize = settings.headerTextSize or 12
     local fontSize = math.max(headerSize - 2, 10)
     local headerHeight = 14
-    -- Compute header color respecting class color toggle
     local headerColor
     if settings.headerClassColor then
         local _, class = UnitClass("player")
@@ -2450,14 +2109,13 @@ local function CreateSectionHeader(parent, text, yOffset)
     header:SetShadowOffset(0, 0)
     TrackFontString(header, "sectionHeader")
 
-    -- Underline (uses headerColor)
     local line = parent:CreateTexture(nil, "ARTWORK")
     line:SetHeight(GetPixelSize(line))
     line:SetPoint("TOPLEFT", header, "BOTTOMLEFT", 0, -2)
     line:SetPoint("RIGHT", parent, "RIGHT", -5, 0)
     line:SetColorTexture(headerColor[1], headerColor[2], headerColor[3], 0.3)
     if UIKit and UIKit.DisablePixelSnap then
-        UIKit.DisablePixelSnap(line) -- keep the 1px underline crisp/visible at fractional scales
+        UIKit.DisablePixelSnap(line)
     end
     if UIKit and UIKit.RegisterScaleRefresh then
         UIKit.RegisterScaleRefresh(line, "characterPaneSectionUnderline", function(owner)
@@ -2470,9 +2128,6 @@ local function CreateSectionHeader(parent, text, yOffset)
     return header, headerHeight + spacingAfterHeader
 end
 
----------------------------------------------------------------------------
--- Create a stat bar (for secondary stats)
----------------------------------------------------------------------------
 local function CreateStatBar(parent, yOffset, color)
     local settings = GetSettings()
     local font = GetGlobalFont()
@@ -2488,7 +2143,6 @@ local function CreateStatBar(parent, yOffset, color)
     row:SetSize(parent:GetWidth() - 10, rowHeight)
     row:SetPoint("TOPLEFT", 5, yOffset)
 
-    -- Enable mouse for tooltips (only if setting is enabled)
     if settings.showTooltips then
         row:EnableMouse(true)
         row:SetScript("OnEnter", ShowStatTooltip)
@@ -2513,7 +2167,6 @@ local function CreateStatBar(parent, yOffset, color)
     row.value:SetShadowOffset(0, 0)
     TrackFontString(row.value, "barValue")
 
-    -- Progress bar
     row.bar = CreateFrame("StatusBar", nil, row)
     row.bar:SetSize(row:GetWidth(), barHeight)
     row.bar:SetPoint("BOTTOMLEFT", row, "BOTTOMLEFT", 0, barOffset)
@@ -2522,7 +2175,6 @@ local function CreateStatBar(parent, yOffset, color)
     row.bar:SetMinMaxValues(0, 100)
     row.bar:SetStatusBarColor(color[1], color[2], color[3], color[4])
 
-    -- Bar background
     local barBg = row.bar:CreateTexture(nil, "BACKGROUND")
     barBg:SetAllPoints()
     barBg:SetColorTexture(0, 0, 0, 0.4)
@@ -2530,19 +2182,12 @@ local function CreateStatBar(parent, yOffset, color)
     return row
 end
 
----------------------------------------------------------------------------
--- Finalize stats panel layout after rows are populated
----------------------------------------------------------------------------
 local function FinalizeStatsPanelLayout(panel, scrollChild, yOffset)
-    -- Set scroll child height
     local contentHeight = math.abs(yOffset) + 20
     scrollChild:SetHeight(contentHeight)
 
-    -- Scale the stats panel to fit without scrollbar
     panel:SetScale(0.92)
 
-    -- Reset scroll position when content fits in viewport. No scrollbar to
-    -- show/hide (the plain ScrollFrame has none — wheel-only scrolling).
     local scrollFrame = panel.scrollFrame
     if scrollFrame then
         C_Timer.After(0.01, function()
@@ -2557,21 +2202,8 @@ local function FinalizeStatsPanelLayout(panel, scrollChild, yOffset)
     end
 end
 
----------------------------------------------------------------------------
--- Native CharacterStatsPane mirror: when secret values prevent us from
--- reading stat APIs from addon code, mirror Blizzard's already-formatted
--- FontString text (built in unrestricted code, so the strings are safe to
--- copy via SetText) into our curated rows.
----------------------------------------------------------------------------
-
--- Ensures Blizzard's CharacterStatsPane stays visually masked but Shown so
--- its unrestricted update path keeps writing fresh values into its
--- FontStrings — which we then mirror.
 local function MaskNativeStatsPane()
     if not CharacterStatsPane then return end
-    -- Show explicitly: if anything (skinning, our own past hide path, Blizzard
-    -- tab transitions) left the pane :Hide()'d, its update path won't run and
-    -- our mirror reads stale text. Keep it Shown but visually invisible.
     ns.SafeCallMethod("best-effort-style", CharacterStatsPane, "Show")
     ns.SafeCallMethod("best-effort-style", CharacterStatsPane, "SetAlpha", 0)
     ns.SafeCallMethodIfPresent("best-effort-style", CharacterStatsPane, "EnableMouse", false)
@@ -2580,9 +2212,6 @@ local function MaskNativeStatsPane()
     end
 end
 
----------------------------------------------------------------------------
--- Update stats panel content
----------------------------------------------------------------------------
 local function UpdateStatsPanel(panel, unit)
     if not panel or not panel.scrollChild then return end
 
@@ -2601,7 +2230,6 @@ local function UpdateStatsPanel(panel, unit)
         local scrollChild = panel.scrollChild
         unit = unit or panel.unit or "player"
 
-        -- First, hide all tracked FontStrings (headers, labels, values)
         for _, entry in ipairs(trackedFontStrings) do
             if entry.fs and entry.fs.Hide then
                 entry.fs:Hide()
@@ -2609,18 +2237,15 @@ local function UpdateStatsPanel(panel, unit)
             end
         end
 
-        -- Hide all tracked underlines (Textures)
         for _, line in ipairs(trackedUnderlines) do
             if line and line.Hide then
                 line:Hide()
             end
         end
 
-        -- Clear the tracking tables
         wipe(trackedFontStrings)
         wipe(trackedUnderlines)
 
-        -- Clear child frames (stat rows, stat bars)
         local children = {scrollChild:GetChildren()}
         for i = #children, 1, -1 do
             local frame = children[i]
@@ -2635,7 +2260,6 @@ local function UpdateStatsPanel(panel, unit)
             end
         end
 
-        -- Also clear any remaining regions (FontStrings, Textures) on scrollChild
         local regions = {scrollChild:GetRegions()}
         for i = #regions, 1, -1 do
             local region = regions[i]
@@ -2665,12 +2289,8 @@ local function UpdateStatsPanel(panel, unit)
         local GetStatOrNil = function(func, ...)
             return statPolicy:GetRaw(func, ...)
         end
-        -- Combat / encounter / M+ / PvP gate. When true, rich tooltips and
-        -- Lua-side value-derived calculations are skipped; direct C-side
-        -- SetFormattedText calls still render live values.
         local secretsOff = statPolicy.secretsRestricted
 
-        -- HEALTH & RESOURCE
         local row = CreateStatRow(scrollChild, y)
         row.label:SetText(ns.L["Health"])
         do
@@ -2710,18 +2330,15 @@ local function UpdateStatsPanel(panel, unit)
 
         y = y - 5
 
-        -- ATTRIBUTES
         local _, headerHeight = CreateSectionHeader(scrollChild, ns.L["Attributes"], y)
         y = y - headerHeight
 
-        -- Primary stats vary by class, but we show all and let WoW hide irrelevant ones
         local stats = {
             { label = ns.L["Strength"], statIndex = 1, func = function() return UnitStat(unit, 1) end },
             { label = ns.L["Agility"], statIndex = 2, func = function() return UnitStat(unit, 2) end },
             { label = ns.L["Stamina"], statIndex = 3, func = function() return UnitStat(unit, 3) end },
             { label = ns.L["Intellect"], statIndex = 4, func = function() return UnitStat(unit, 4) end },
         }
-        -- Pull spec primary stat once via non-secret API for visibility filter.
         local specPrimaryStat
         if unit == "player" and C_SpecializationInfo and C_SpecializationInfo.GetSpecialization then
             local sp = C_SpecializationInfo.GetSpecialization()
@@ -2734,10 +2351,6 @@ local function UpdateStatsPanel(panel, unit)
         for _, stat in ipairs(stats) do
             local statValue, effectiveStat, posBuff, negBuff = SafeGetStatValues(UnitStat, unit, stat.statIndex)
 
-            -- Visibility filter:
-            --   OOC: render only when value > 0 (Blizzard hides irrelevant attrs)
-            --   Combat: render Stamina + spec primary stat (non-secret signals).
-            --     If spec primary is unknown, fall back to all 4.
             local shouldShow
             if secretsOff then
                 shouldShow = stat.statIndex == 3
@@ -2751,8 +2364,6 @@ local function UpdateStatsPanel(panel, unit)
                 row = CreateStatRow(scrollChild, y)
                 row.label:SetText(stat.label)
 
-                -- Direct API → SetFormattedText. UnitStat returns 5 values;
-                -- the 2nd is the effective stat we display.
                 local uOk, _, eff = pcall(UnitStat, unit, stat.statIndex)
                 if uOk and (Helpers.IsSecretValue(eff) or eff) then
                     row.value:SetFormattedText("%s", eff)
@@ -2764,7 +2375,6 @@ local function UpdateStatsPanel(panel, unit)
                     _G["DEFAULT_STAT"..stat.statIndex.."_TOOLTIP"],
                     nil,
                     function()
-                    -- Set tooltip (Blizzard format)
                     local statName = _G["SPELL_STAT"..stat.statIndex.."_NAME"]
                     local tooltipText = HIGHLIGHT_FONT_COLOR_CODE..format(PAPERDOLLFRAME_TOOLTIP_FORMAT, statName).." "
                     local effectiveStatDisplay = BreakUpLargeNumbers(effectiveStat)
@@ -2790,7 +2400,6 @@ local function UpdateStatsPanel(panel, unit)
 
                     row.tooltip2 = _G["DEFAULT_STAT"..stat.statIndex.."_TOOLTIP"]
 
-                    -- Add class-specific tooltip info (similar to Blizzard's PaperDollFrame_SetStat)
                     if unit == "player" then
                         ns.SafeCall("best-effort-style", function()
                             local _, unitClass = UnitClass("player")
@@ -2799,16 +2408,13 @@ local function UpdateStatsPanel(panel, unit)
                             spec = C_SpecializationInfo.GetSpecialization()
                             if spec then
                                 role = GetSpecializationRole(spec)
-                                -- PTR7: UnitSex is SecretWhenUnitIdentityRestricted, and
-                                -- GetSpecializationInfo is SecretArguments=AllowedWhenUntainted,
-                                -- so a secret sex must not be forwarded (sex is Nilable).
                                 -- @secret-policy: collapse-only — nil sex = default spec name
                                 local playerSex = UnitSex("player")
                                 if issecretvalue and issecretvalue(playerSex) then playerSex = nil end
                                 primaryStat = select(6, C_SpecializationInfo.GetSpecializationInfo(spec, false, false, nil, playerSex))
                             end
 
-                            if stat.statIndex == 1 then -- Strength
+                            if stat.statIndex == 1 then
                                 if GetAttackPowerForStat then
                                     local attackPower = GetAttackPowerForStat(1, effectiveStat)
                                     if HasAPEffectsSpellPower and HasAPEffectsSpellPower() then
@@ -2828,7 +2434,7 @@ local function UpdateStatsPanel(panel, unit)
                                         row.tooltip2 = STAT_NO_BENEFIT_TOOLTIP
                                     end
                                 end
-                            elseif stat.statIndex == 2 then -- Agility
+                            elseif stat.statIndex == 2 then
                                 if (not primaryStat or primaryStat == 2) then
                                     if HasAPEffectsSpellPower and HasAPEffectsSpellPower() then
                                         row.tooltip2 = STAT_TOOLTIP_BONUS_AP_SP
@@ -2846,11 +2452,11 @@ local function UpdateStatsPanel(panel, unit)
                                 else
                                     row.tooltip2 = STAT_NO_BENEFIT_TOOLTIP
                                 end
-                            elseif stat.statIndex == 3 then -- Stamina
+                            elseif stat.statIndex == 3 then
                                 if UnitHPPerStamina and GetUnitMaxHealthModifier then
                                     row.tooltip2 = format(row.tooltip2, BreakUpLargeNumbers(((effectiveStat*UnitHPPerStamina("player")))*GetUnitMaxHealthModifier("player")))
                                 end
-                            elseif stat.statIndex == 4 then -- Intellect
+                            elseif stat.statIndex == 4 then
                                 if HasAPEffectsSpellPower and HasAPEffectsSpellPower() then
                                     row.tooltip2 = STAT_NO_BENEFIT_TOOLTIP
                                 elseif HasSPEffectsAttackPower and HasSPEffectsAttackPower() then
@@ -2862,7 +2468,6 @@ local function UpdateStatsPanel(panel, unit)
                                 end
                             end
                         end)
-                        -- If pcall failed, keep the default tooltip2
                     end
                 end)
 
@@ -2872,7 +2477,6 @@ local function UpdateStatsPanel(panel, unit)
 
         y = y - 5
 
-    -- SECONDARY STATS
     _, headerHeight = CreateSectionHeader(scrollChild, ns.L["Secondary"], y)
     y = y - headerHeight
 
@@ -2895,22 +2499,10 @@ local function UpdateStatsPanel(panel, unit)
         row = CreateStatBar(scrollChild, y, stat.color)
         row.label:SetText(stat.label)
 
-        -- Direct API + C-side SetFormattedText. Secret values pass through
-        -- to the C printf without ever entering Lua arithmetic, so this
-        -- works the same in combat / encounters / M+ / PvP as it does OOC.
-        --
-        -- Versatility is the exception: its full percent is a Lua sum of two
-        -- APIs (rating bonus + non-rating bonus), and that "+" throws on secret
-        -- values once we are tainted in restricted content. When secrets are
-        -- restricted, fill from the single rating-bonus call only -- a lone
-        -- secret the C printf / SetValue can still consume.
         local percentFunc = stat.percentFunc
         if secretsOff and stat.combatPercentFunc then
             percentFunc = stat.combatPercentFunc
         end
-        -- In restricted content these getters RETURN secrets (pcall succeeds),
-        -- so a bare `and pct` truth-test throws. Probe first and let secrets
-        -- ride the C-side SetFormattedText/SetValue sinks (ARMOR-row idiom).
         local pctOk, pct = pcall(percentFunc)
         local ratingOk, rating = pcall(stat.ratingFunc)
         local pctHas = pctOk and (Helpers.IsSecretValue(pct) or pct)
@@ -2919,7 +2511,7 @@ local function UpdateStatsPanel(panel, unit)
             if pctHas then row.value:SetFormattedText("%.2f%%", pct) end
         elseif statFormat == "rating" then
             if ratingHas then row.value:SetFormattedText("%s", rating) end
-        else  -- "both"
+        else
             if pctHas and ratingHas then
                 row.value:SetFormattedText("%s (%.2f%%)", rating, pct)
             elseif pctHas then
@@ -2927,9 +2519,6 @@ local function UpdateStatsPanel(panel, unit)
             end
         end
 
-        -- Bar fill: SetValue is C-side and accepts secret numbers, but it
-        -- silently clamps to whatever the bar's max is. Forward directly
-        -- without comparison — out of range just clips harmlessly.
         if pctHas then
             ns.SafeCallMethod("sink-forward", row.bar, "SetValue", pct)
         end
@@ -2940,7 +2529,6 @@ local function UpdateStatsPanel(panel, unit)
             tooltipBody = STAT_CRITICAL_STRIKE_TOOLTIP
         elseif stat.statKey == "HASTE" then
             local _, class = UnitClass(unit)
-            -- PTR7: classFile is secret for secret-identity inspect targets.
             -- @secret-policy: collapse-only — concat throws on secret; safe fallback in all branches
             if issecretvalue and issecretvalue(class) then class = nil end
             tooltipBody = class and _G["STAT_HASTE_"..class.."_TOOLTIP"] or STAT_HASTE_TOOLTIP
@@ -2964,7 +2552,6 @@ local function UpdateStatsPanel(panel, unit)
                 end
             elseif stat.statKey == "HASTE" then
                 local _, class = UnitClass(unit)
-                -- PTR7: classFile is secret for secret-identity inspect targets.
                 -- @secret-policy: collapse-only — concat throws on secret; safe fallback in all branches
                 if issecretvalue and issecretvalue(class) then class = nil end
                 local hasteRating = SafeGetStat(GetCombatRating, CR_HASTE_SPELL)
@@ -3005,11 +2592,6 @@ local function UpdateStatsPanel(panel, unit)
                     row.tooltip2 = ratingText
                 end
             elseif stat.statKey == "VERSATILITY" then
-                -- The rich tooltip needs the full bonus = rating bonus + non-rating
-                -- bonus, a Lua sum. If either component is secret (the policy probed
-                -- a different stat and missed this one), bail and keep the plain
-                -- STAT_VERSATILITY_TOOLTIP rather than formatting a 0.00% row from
-                -- the SafeGetStat zero-fallback.
                 if GetStatOrNil(GetCombatRatingBonus, CR_VERSATILITY_DAMAGE_DONE) == nil
                     or GetStatOrNil(GetVersatilityBonus, CR_VERSATILITY_DAMAGE_DONE) == nil then
                     return
@@ -3027,7 +2609,6 @@ local function UpdateStatsPanel(panel, unit)
 
     y = y - 5
 
-    -- TERTIARY
     _, headerHeight = CreateSectionHeader(scrollChild, ns.L["Tertiary"], y)
     y = y - headerHeight
 
@@ -3047,9 +2628,6 @@ local function UpdateStatsPanel(panel, unit)
     }
 
     for _, stat in ipairs(tertiaryStats) do
-        -- Tertiary rows are gear-dependent. OOC, hide when zero. In combat
-        -- we always render — can't compare secrets, and showing 0% briefly
-        -- is preferable to a row appearing/disappearing on combat boundary.
         local hasOocValue = (stat.statKey == "AVOIDANCE" and avoidance > 0)
             or (stat.statKey == "LIFESTEAL" and leech > 0)
             or (stat.statKey == "SPEED" and speed > 0)
@@ -3058,8 +2636,6 @@ local function UpdateStatsPanel(panel, unit)
             row = CreateStatRow(scrollChild, y)
             row.label:SetText(stat.label)
 
-            -- Direct API → SetFormattedText. Pulls live values whether
-            -- secret or not — C-side printf forwards them transparently.
             local valueFn
             if stat.statKey == "AVOIDANCE" and GetAvoidance then
                 valueFn = GetAvoidance
@@ -3123,29 +2699,25 @@ local function UpdateStatsPanel(panel, unit)
 
     y = y - 5
 
-    -- ATTACK
     _, headerHeight = CreateSectionHeader(scrollChild, ns.L["Attack"], y)
     y = y - headerHeight
 
     local attackStats = {
         { label = ns.L["Attack Power"], func = function() return UnitAttackPower(unit) end, format = FormatNumber, statKey = "ATTACK_POWER" },
-        { label = ns.L["Spell Power"], func = function() return GetSpellBonusDamage(2) end, format = FormatNumber, statKey = "SPELLPOWER" },  -- 2 = Holy, generic spell power
+        { label = ns.L["Spell Power"], func = function() return GetSpellBonusDamage(2) end, format = FormatNumber, statKey = "SPELLPOWER" },
         { label = ns.L["Attack Speed"], func = function() return UnitAttackSpeed(unit) end, format = function(v) return string.format("%.2fs", v or 0) end, statKey = "ATTACK_SPEED" },
     }
 
-    -- Class-based filter for attack rows so we don't show Spell Power for
-    -- a Warrior or skip Attack Power for a Mage. Non-secret signals only.
     local classFilter = {}
     do
         local _, cls = UnitClass(unit)
-        -- PTR7: classFile is secret for secret-identity inspect targets.
         -- @secret-policy: collapse-only — skin falls back to neutral styling
         if issecretvalue and issecretvalue(cls) then cls = nil end
         local casterClasses = { MAGE = true, PRIEST = true, WARLOCK = true }
         local hybridClasses = { DRUID = true, PALADIN = true, SHAMAN = true, EVOKER = true, MONK = true }
         classFilter.ATTACK_POWER = not casterClasses[cls]
         classFilter.SPELLPOWER   = casterClasses[cls] or hybridClasses[cls]
-        classFilter.ATTACK_SPEED = true  -- always relevant
+        classFilter.ATTACK_SPEED = true
     end
 
     for _, stat in ipairs(attackStats) do
@@ -3160,12 +2732,8 @@ local function UpdateStatsPanel(panel, unit)
             row = CreateStatRow(scrollChild, y)
             row.label:SetText(stat.label)
 
-            -- Direct API → SetFormattedText. AttackSpeed wants "%.2fs", others
-            -- want raw integer; pick spec from statKey.
             local fmtStr = (stat.statKey == "ATTACK_SPEED") and "%.2fs" or "%s"
             local vOk, v = pcall(stat.func)
-            -- Probe before the truth-test: the getter returns a secret under
-            -- stat restriction; forward it to the C text sink (ARMOR idiom).
             if vOk and (Helpers.IsSecretValue(v) or v) then row.value:SetFormattedText(fmtStr, v) end
 
             local tooltipTitle, tooltipBody
@@ -3208,7 +2776,6 @@ local function UpdateStatsPanel(panel, unit)
 
     y = y - 5
 
-    -- DEFENSE
     _, headerHeight = CreateSectionHeader(scrollChild, ns.L["Defense"], y)
     y = y - headerHeight
 
@@ -3218,7 +2785,6 @@ local function UpdateStatsPanel(panel, unit)
     local block = SafeGetStat(GetBlockChance)
     local staggerPercent = 0
     local _, classTag = UnitClass(unit)
-    -- PTR7: classFile is secret for secret-identity inspect targets.
     -- @secret-policy: collapse-only — skin falls back to neutral styling
     if issecretvalue and issecretvalue(classTag) then classTag = nil end
     local isBrewmaster = false
@@ -3256,8 +2822,6 @@ local function UpdateStatsPanel(panel, unit)
         tinsert(defenseStats, { label = ns.L["Stagger"], value = FormatPercent(staggerPercent), statKey = "STAGGER" })
     end
 
-    -- Class-based defense filter for combat (non-secret signal). OOC we
-    -- still render everything so users can see their actual values.
     local defenseFilter = {}
     do
         local plate = (classTag == "WARRIOR" or classTag == "PALADIN" or classTag == "DEATHKNIGHT")
@@ -3280,7 +2844,6 @@ local function UpdateStatsPanel(panel, unit)
             row = CreateStatRow(scrollChild, y)
             row.label:SetText(stat.label)
 
-            -- Direct API → SetFormattedText. Different format per stat.
             if stat.statKey == "ARMOR" then
                 local aOk, _, aEff = pcall(UnitArmor, unit)
                 if aOk and (Helpers.IsSecretValue(aEff) or aEff) then row.value:SetFormattedText("%s", aEff) end
@@ -3363,10 +2926,6 @@ local function UpdateStatsPanel(panel, unit)
         end
     end
 
-        -- GEMS (socket summary): filled-gem counts per color across all
-        -- equipped gear + an empty-socket tally. Reuses the per-slot
-        -- GetGemInfo enumeration (secret-guarded, tooltip-scan backed);
-        -- colors from GEM_COLORS. Opt-in via showGemSummary.
         if settings.showGemSummary then
             y = y - 5
             _, headerHeight = CreateSectionHeader(scrollChild, ns.L["Gems"], y)
@@ -3418,13 +2977,11 @@ local function UpdateStatsPanel(panel, unit)
         end
 
         FinalizeStatsPanelLayout(panel, scrollChild, y)
-    end)  -- End SafeCall; failure already reported by ns.SafeCall (probed + deduped)
+    end)
 
     updatingStatsPanel = false
 
     if not success then
-        -- Last-resort: panel update threw. Hide our panel and let Blizzard's
-        -- native stats pane render (un-mask it) so the user still sees stats.
         if panel then ns.SafeCallMethod("best-effort-style", panel, "Hide") end
         if CharacterStatsPane then
             ns.SafeCallMethod("best-effort-style", CharacterStatsPane, "SetAlpha", 1)
@@ -3436,29 +2993,22 @@ local function UpdateStatsPanel(panel, unit)
     end
 end
 
----------------------------------------------------------------------------
--- Get color for item level (tiered based on gear quality)
----------------------------------------------------------------------------
 local function GetILvlColor(ilvl)
-    -- Color tiers for Midnight beta (~240-290 range)
     if ilvl >= 285 then
-        return 1, 0.5, 0           -- Orange (Mythic raid tier)
+        return 1, 0.5, 0
     elseif ilvl >= 275 then
-        return 0.64, 0.21, 0.93    -- Purple (Heroic raid)
+        return 0.64, 0.21, 0.93
     elseif ilvl >= 265 then
-        return 0, 0.44, 0.87       -- Blue (Mythic dungeon)
+        return 0, 0.44, 0.87
     elseif ilvl >= 255 then
-        return 0, 1, 0             -- Green (Heroic dungeon)
+        return 0, 1, 0
     elseif ilvl >= 245 then
-        return 1, 1, 1             -- White (Normal)
+        return 1, 1, 1
     else
-        return 0.62, 0.62, 0.62    -- Grey (Below normal)
+        return 0.62, 0.62, 0.62
     end
 end
 
----------------------------------------------------------------------------
--- Update Item Level Display: [Name] [ilvl] [Spec Class]
----------------------------------------------------------------------------
 local function UpdateILvlDisplay()
     if not CharacterFrame or not (frameState[CharacterFrame] or EMPTY).ilvlDisplay then return end
 
@@ -3468,7 +3018,6 @@ local function UpdateILvlDisplay()
     local displayFrame = (frameState[CharacterFrame] or EMPTY).ilvlDisplay
     if not displayFrame.text then return end
 
-    -- Get player info
     local rawName = UnitName("player")
     local name = "Unknown"
     if not Helpers.IsSecretValue(rawName) then
@@ -3478,12 +3027,8 @@ local function UpdateILvlDisplay()
     local overall, equipped, pvp = GetPlayerAverageItemLevels()
     local ilvlStr = string.format("%.0f", equipped)
 
-    -- Get spec and class
     local specName = ""
     local className = ""
-    -- Canonical namespaced API (matches the in-file usage at ~2667). The bare
-    -- GetSpecialization/GetSpecializationInfo globals only exist behind the
-    -- loadDeprecationFallbacks CVar, so call through C_SpecializationInfo directly.
     local specIndex = C_SpecializationInfo and C_SpecializationInfo.GetSpecialization
         and C_SpecializationInfo.GetSpecialization()
     if specIndex and C_SpecializationInfo.GetSpecializationInfo then
@@ -3491,48 +3036,38 @@ local function UpdateILvlDisplay()
         specName = specNameLocal or ""
     end
     local _, classNameLocal, classIdLocal = UnitClass("player")
-    -- PTR7: UnitClass is SecretWhenUnitIdentityRestricted — token/classID can be
-    -- secret; GetClassInfo's classID is not Nilable and the abbreviation below is
-    -- Lua string work, so collapse both before any truth-test or call.
     -- @secret-policy: collapse-only — falls back to neutral (uncolored) text
     if issecretvalue and issecretvalue(classNameLocal) then classNameLocal = nil end
     if issecretvalue and issecretvalue(classIdLocal) then classIdLocal = nil end
     if classNameLocal then
-        -- Get localized class name
         local classInfo = classIdLocal and C_CreatureInfo.GetClassInfo(classIdLocal)
         className = classInfo and classInfo.className or classNameLocal
     end
 
-    -- Get class color
     local classColor = Helpers.GetClassColorTable(classNameLocal)
-    local r, g, b = 1, 1, 1  -- Default white
+    local r, g, b = 1, 1, 1
     if classColor then
         r, g, b = classColor.r, classColor.g, classColor.b
     end
 
-    -- Line 1: Character name (class colored)
     displayFrame.text:SetText(name)
     displayFrame.text:SetTextColor(r, g, b, 1)
 
-    -- Line 2: Level + Spec (class colored)
     if displayFrame.specText then
         local specLine = string.format("%d %s %s", level, specName, AbbreviateClassName(className))
         displayFrame.specText:SetText(specLine)
         displayFrame.specText:SetTextColor(r, g, b, 1)
     end
 
-    -- Update center ilvl display (above model) - shows equipped | overall with color coding
     local centerFrame = (frameState[CharacterFrame] or EMPTY).centerILvl
     if centerFrame and centerFrame.text then
         centerFrame.cachedOverallILvl = overall
         centerFrame.cachedEquippedILvl = equipped
         centerFrame.cachedPvpILvl = pvp
 
-        -- Get colors for each ilvl tier
         local eR, eG, eB = GetILvlColor(equipped)
         local oR, oG, oB = GetILvlColor(overall)
 
-        -- Format with color codes (one decimal point)
         local equippedHex = string.format("%02x%02x%02x", math.floor(eR*255), math.floor(eG*255), math.floor(eB*255))
         local overallHex = string.format("%02x%02x%02x", math.floor(oR*255), math.floor(oG*255), math.floor(oB*255))
         local equippedStr = string.format("%.1f", equipped)
@@ -3543,23 +3078,18 @@ local function UpdateILvlDisplay()
     end
 end
 
----------------------------------------------------------------------------
--- Debounce update function
----------------------------------------------------------------------------
 ScheduleUpdate = function()
-    if ns.IsSkinningEnabled and not ns.IsSkinningEnabled() then return end -- master skinning gate
+    if ns.IsSkinningEnabled and not ns.IsSkinningEnabled() then return end
     if pendingUpdate then return end
     pendingUpdate = true
 
     C_Timer.After(0.05, function()
         pendingUpdate = false
 
-        -- Update character frame if visible AND on Character tab (not Reputation/Currency)
         if CharacterFrame and CharacterFrame:IsShown() and PaperDollFrame and PaperDollFrame:IsShown() then
             UpdateAllSlotOverlays("player", slotOverlays)
             UpdateILvlDisplay()
             if statsPanel then
-                -- Don't update/show stats panel if Equipment Manager is open
                 local equipMgrOpen = PaperDollFrame.EquipmentManagerPane
                                      and PaperDollFrame.EquipmentManagerPane:IsShown()
                 if not equipMgrOpen then
@@ -3568,20 +3098,15 @@ ScheduleUpdate = function()
             end
         end
 
-        -- Update inspect frame if visible (delegated to qui_inspect.lua)
         if ns.QUI.InspectPane and ns.QUI.InspectPane.UpdateInspectFrame then
             ns.QUI.InspectPane.UpdateInspectFrame()
         end
     end)
 end
 
----------------------------------------------------------------------------
--- Create floating Equipment Manager container (positioning only - skinning in skinning/character.lua)
----------------------------------------------------------------------------
 local function CreateEquipMgrPopup()
     if equipMgrPopup then return equipMgrPopup end
 
-    -- Position accounts for extended character pane (55px width extension + 10px gap)
     local PANEL_WIDTH_EXTENSION = 55
     equipMgrPopup = CreateFrame("Frame", "QUI_EquipMgrPopup", UIParent, "BackdropTemplate")
     equipMgrPopup:SetSize(205, 400)
@@ -3594,7 +3119,6 @@ local function CreateEquipMgrPopup()
     equipMgrPopup:SetScript("OnDragStop", equipMgrPopup.StopMovingOrSizing)
     equipMgrPopup:Hide()
 
-    -- Default Blizzard backdrop (skinning module will override if enabled)
     equipMgrPopup:SetBackdrop({
         bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
         edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
@@ -3604,25 +3128,19 @@ local function CreateEquipMgrPopup()
         insets = { left = 8, right = 8, top = 8, bottom = 8 }
     })
 
-    -- Title bar (text only - styling in skinning module)
     local title = equipMgrPopup:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     title:SetPoint("TOP", 0, -15)
     title:SetText(ns.L["Equipment Manager"])
     equipMgrPopup.title = title
 
-    -- Expose globally for skinning module to access
     _G.QUI_EquipMgrPopup = equipMgrPopup
 
     return equipMgrPopup
 end
 
----------------------------------------------------------------------------
--- Create floating Titles container (positioning only - skinning in skinning/character.lua)
----------------------------------------------------------------------------
 local function CreateTitlesPopup()
     if titlesPopup then return titlesPopup end
 
-    -- Position accounts for extended character pane (55px width extension + 10px gap)
     local PANEL_WIDTH_EXTENSION = 55
     titlesPopup = CreateFrame("Frame", "QUI_TitlesPopup", UIParent, "BackdropTemplate")
     titlesPopup:SetSize(205, 400)
@@ -3635,7 +3153,6 @@ local function CreateTitlesPopup()
     titlesPopup:SetScript("OnDragStop", titlesPopup.StopMovingOrSizing)
     titlesPopup:Hide()
 
-    -- Default Blizzard backdrop (skinning module will override if enabled)
     titlesPopup:SetBackdrop({
         bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
         edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
@@ -3645,13 +3162,11 @@ local function CreateTitlesPopup()
         insets = { left = 8, right = 8, top = 8, bottom = 8 }
     })
 
-    -- Title bar (text only - styling in skinning module)
     local title = titlesPopup:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     title:SetPoint("TOP", 0, -15)
     title:SetText(ns.L["Titles"])
     titlesPopup.title = title
 
-    -- Expose globally for skinning module to access
     _G.QUI_TitlesPopup = titlesPopup
 
     return titlesPopup
@@ -3757,32 +3272,23 @@ local function SelectCharacterStatsSidebarTab()
     end
 end
 
----------------------------------------------------------------------------
--- Hook character frame
----------------------------------------------------------------------------
-local characterFrameHooked = false  -- Prevent duplicate hook registration
+local characterFrameHooked = false
 
 local function HookCharacterFrame()
-    if ns.IsSkinningEnabled and not ns.IsSkinningEnabled() then return end -- master skinning gate
+    if ns.IsSkinningEnabled and not ns.IsSkinningEnabled() then return end
     if not CharacterFrame then return end
     if characterFrameHooked then return end
     characterFrameHooked = true
 
-    -- Forward declarations for settings button and panel (used by HideCustomElements)
     local gearBtn, settingsPanel
 
-    -- Initialize when character frame first shows
     CharacterFrame:HookScript("OnShow", function()
-        -- Delay check to allow tab frames to initialize their visibility
         C_Timer.After(0.01, function()
             if PaperDollFrame and PaperDollFrame:IsShown() then
-                -- Character tab is active - apply custom layout
                 ApplyCharacterPaneLayout()
                 InitializeCharacterOverlays()
                 ScheduleUpdate()
             else
-                -- Opening Currency/Reputation directly via hotkey - hide custom elements and reset scale
-                -- Only hide our customBg if skinning module isn't handling it
                 if not IsSkinningHandlingBackground() and customBg then
                     customBg:Hide()
                 end
@@ -3799,18 +3305,13 @@ local function HookCharacterFrame()
     end)
 
     CharacterFrame:HookScript("OnHide", function()
-        -- Reset layout flag so repositioning runs on next show
         layoutApplied = false
 
-        -- Cleanup tooltips
         GameTooltip:Hide()
 
         RestoreCharacterPanePopouts()
     end)
 
-    -- Re-mask Blizzard's stats pane every time Blizzard re-Shows it (e.g. when
-    -- clicking "Character Stats" button or on tab transitions). We keep it
-    -- Shown so its FontStrings stay current — we just render alpha 0.
     if CharacterStatsPane then
         hooksecurefunc(CharacterStatsPane, "Show", function()
             C_Timer.After(0, function()
@@ -3822,7 +3323,6 @@ local function HookCharacterFrame()
         end)
     end
 
-    -- Re-apply sidebar tab skin when Blizzard refreshes tab visuals.
     if type(_G.PaperDollFrame_UpdateSidebarTabs) == "function" and not (frameState[CharacterFrame] or EMPTY).sidebarSkinHooked then
         hooksecurefunc("PaperDollFrame_UpdateSidebarTabs", function()
             C_Timer.After(0, function()
@@ -3835,7 +3335,6 @@ local function HookCharacterFrame()
         GetState(CharacterFrame).sidebarSkinHooked = true
     end
 
-    -- Equipment Manager tab: Reparent to floating popup (Blizzard native appearance)
     if PaperDollSidebarTab3 and not (frameState[PaperDollSidebarTab3] or EMPTY).hooked then
         PaperDollSidebarTab3:HookScript("OnClick", function()
             local settings = GetSettings()
@@ -3843,46 +3342,38 @@ local function HookCharacterFrame()
 
             RestoreCharacterPanePopouts()
 
-            -- Create floating container if needed
             local popup = CreateEquipMgrPopup()
 
-            -- Reparent Equipment Manager pane to floating popup
             local pane = PaperDollFrame and PaperDollFrame.EquipmentManagerPane
             if pane then
-                -- Store original parent for restoration
                 if not (frameState[pane] or EMPTY).originalParent then
                     GetState(pane).originalParent = pane:GetParent()
                 end
 
-                -- Reparent to floating popup (Blizzard appearance preserved)
                 pane:SetParent(popup)
                 pane:ClearAllPoints()
-                pane:SetPoint("TOPLEFT", popup, "TOPLEFT", 5, -30)  -- Below title
+                pane:SetPoint("TOPLEFT", popup, "TOPLEFT", 5, -30)
                 pane:SetPoint("BOTTOMRIGHT", popup, "BOTTOMRIGHT", -5, 5)
                 pane:Show()
 
-                -- CRITICAL: ScrollBox has independent anchors - must reposition it too
                 if pane.ScrollBox then
                     pane.ScrollBox:ClearAllPoints()
-                    pane.ScrollBox:SetPoint("TOPLEFT", pane, "TOPLEFT", 5, -35)  -- Below buttons
-                    pane.ScrollBox:SetPoint("BOTTOMRIGHT", pane, "BOTTOMRIGHT", -25, 5)  -- Extra right margin to hide scrollbar area
+                    pane.ScrollBox:SetPoint("TOPLEFT", pane, "TOPLEFT", 5, -35)
+                    pane.ScrollBox:SetPoint("BOTTOMRIGHT", pane, "BOTTOMRIGHT", -25, 5)
                 end
 
                 popup:Show()
 
-                -- Trigger skinning module to apply styles (if enabled)
                 local skinningAPI = _G.QUI_CharacterFrameSkinning
                 if skinningAPI and skinningAPI.SkinEquipmentManager then
                     skinningAPI.SkinEquipmentManager()
                 end
             end
 
-            -- Keep stats panel visible so user can see stats while managing gear
         end)
         GetState(PaperDollSidebarTab3).hooked = true
     end
 
-    -- Titles tab (Tab2): Reparent to floating popup
     if PaperDollSidebarTab2 and not (frameState[PaperDollSidebarTab2] or EMPTY).hooked then
         PaperDollSidebarTab2:HookScript("OnClick", function()
             local settings = GetSettings()
@@ -3890,25 +3381,20 @@ local function HookCharacterFrame()
 
             RestoreCharacterPanePopouts()
 
-            -- Create floating container if needed
             local popup = CreateTitlesPopup()
 
-            -- Reparent Title Manager pane to floating popup
             local pane = PaperDollFrame and PaperDollFrame.TitleManagerPane
             if pane then
-                -- Store original parent for restoration
                 if not (frameState[pane] or EMPTY).originalParent then
                     GetState(pane).originalParent = pane:GetParent()
                 end
 
-                -- Reparent to floating popup
                 pane:SetParent(popup)
                 pane:ClearAllPoints()
-                pane:SetPoint("TOPLEFT", popup, "TOPLEFT", 5, -30)  -- Below title
+                pane:SetPoint("TOPLEFT", popup, "TOPLEFT", 5, -30)
                 pane:SetPoint("BOTTOMRIGHT", popup, "BOTTOMRIGHT", -5, 5)
                 pane:Show()
 
-                -- ScrollBox has independent anchors - must reposition it too
                 if pane.ScrollBox then
                     pane.ScrollBox:ClearAllPoints()
                     pane.ScrollBox:SetPoint("TOPLEFT", pane, "TOPLEFT", 5, -5)
@@ -3917,7 +3403,6 @@ local function HookCharacterFrame()
 
                 popup:Show()
 
-                -- Trigger skinning module to apply styles (if enabled)
                 local skinningAPI = _G.QUI_CharacterFrameSkinning
                 if skinningAPI and skinningAPI.SkinTitleManager then
                     skinningAPI.SkinTitleManager()
@@ -3927,14 +3412,12 @@ local function HookCharacterFrame()
         GetState(PaperDollSidebarTab2).hooked = true
     end
 
-    -- Ensure Equipment Manager popups appear above custom layout
     if GearManagerPopupFrame then
         GearManagerPopupFrame:SetFrameStrata("DIALOG")
         if GearManagerPopupFrame.IconSelector then
             GearManagerPopupFrame.IconSelector:SetFrameStrata("FULLSCREEN")
         end
 
-        -- Reposition icon selector popup next to our floating popup
         hooksecurefunc(GearManagerPopupFrame, "Show", function(self)
             C_Timer.After(0, function()
                 if self and equipMgrPopup and equipMgrPopup:IsShown() then
@@ -3945,7 +3428,6 @@ local function HookCharacterFrame()
         end)
     end
 
-    -- Character Stats tab (Tab1): Show stats panel and restore Equipment Manager/Titles
     if PaperDollSidebarTab1 then
         PaperDollSidebarTab1:HookScript("OnClick", function()
             local settings = GetSettings()
@@ -3953,21 +3435,14 @@ local function HookCharacterFrame()
             RestoreCharacterPanePopouts()
             SelectCharacterStatsSidebarTab()
 
-            -- Show stats panel
             if settings.enabled and statsPanel then
                 statsPanel:Show()
             end
         end)
     end
 
-    -- TAB SWITCHING: Hide custom elements when switching to other tabs
-    -- This prevents stats panel/overlays from showing over Reputation/Currency
-
-    -- Helper to adjust tab and close button positions for Reputation/Currency tabs
     local function AdjustForNonCharacterTab()
-        -- Move tabs up 50 pixels: -48 → +2
         AnchorCharacterFrameBottomTabs(2)
-        -- Move close button left 55 pixels: 52 → -3
         if CharacterFrame.CloseButton then
             CharacterFrame.CloseButton:ClearAllPoints()
             CharacterFrame.CloseButton:SetPoint("TOPRIGHT", CharacterFrame, "TOPRIGHT", -3, -5)
@@ -3975,18 +3450,14 @@ local function HookCharacterFrame()
     end
 
     local function RestoreCharacterTabPositions()
-        -- Restore original tab position
         AnchorCharacterFrameBottomTabs(-48)
-        -- Restore original close button position
         if CharacterFrame.CloseButton then
             CharacterFrame.CloseButton:ClearAllPoints()
             CharacterFrame.CloseButton:SetPoint("TOPRIGHT", CharacterFrame, "TOPRIGHT", 52, -5)
         end
     end
 
-    -- Helper to hide all custom elements (when leaving Character tab)
     local function HideCustomElements()
-        -- QUI-owned frames — always safe to hide
         if statsPanel then statsPanel:Hide() end
         for _, overlay in pairs(slotOverlays) do
             if overlay then overlay:Hide() end
@@ -3997,7 +3468,6 @@ local function HookCharacterFrame()
         if (frameState[CharacterFrame] or EMPTY).gearBtn then (frameState[CharacterFrame] or EMPTY).gearBtn:Hide() end
         if (frameState[CharacterFrame] or EMPTY).settingsPanel then (frameState[CharacterFrame] or EMPTY).settingsPanel:Hide() end
 
-        -- Handle background and decorations based on skinning state
         if IsSkinningHandlingBackground() then
             local skinningAPI = _G.QUI_CharacterFrameSkinning
             if skinningAPI and skinningAPI.SetExtended then
@@ -4005,7 +3475,6 @@ local function HookCharacterFrame()
             end
         else
             if customBg then customBg:Hide() end
-            -- Blizzard decoration Show calls — defer if in combat
             if InCombatLockdown() then
                 pendingDecorMode = "other"
             else
@@ -4016,22 +3485,18 @@ local function HookCharacterFrame()
             end
         end
 
-        -- Apply scale and tab/button repositioning immediately.
         SetCharacterFrameScale(1.0)
         AdjustForNonCharacterTab()
     end
 
-    -- Hide when Reputation tab opens
     if ReputationFrame then
         ReputationFrame:HookScript("OnShow", HideCustomElements)
     end
 
-    -- Hide when Currency tab opens
     if TokenFrame then
         TokenFrame:HookScript("OnShow", HideCustomElements)
     end
 
-    -- Show when Character tab (PaperDollFrame) opens
     if PaperDollFrame then
         PaperDollFrame:HookScript("OnShow", function()
             local settings = GetSettings()
@@ -4044,13 +3509,11 @@ local function HookCharacterFrame()
                 local scaleMultiplier = settings.panelScale or 1.0
                 SetCharacterFrameScale(BASE_SCALE * scaleMultiplier)
 
-                -- Ensure layout is applied (creates statsPanel if needed)
                 if not layoutApplied then
                     ApplyCharacterPaneLayout()
                     InitializeCharacterOverlays()
                 end
 
-                -- Handle background based on skinning state
                 if IsSkinningHandlingBackground() then
                     local skinningAPI = _G.QUI_CharacterFrameSkinning
                     if skinningAPI and skinningAPI.SetExtended then
@@ -4058,7 +3521,6 @@ local function HookCharacterFrame()
                     end
                 else
                     if customBg then customBg:Show() end
-                    -- Blizzard decoration Hide calls — defer if in combat
                     if InCombatLockdown() then
                         pendingDecorMode = "character"
                     else
@@ -4069,25 +3531,20 @@ local function HookCharacterFrame()
                     end
                 end
 
-                -- Mask Blizzard's stats pane (keep it Shown so it keeps
-                -- updating its FontStrings, just render alpha 0).
                 MaskNativeStatsPane()
                 if statsPanel then statsPanel:Show() end
                 for _, overlay in pairs(slotOverlays) do
                     if overlay then overlay:Show() end
                 end
-                -- Show ilvl display, center ilvl, and settings button on Character tab
                 if (frameState[CharacterFrame] or EMPTY).ilvlDisplay then (frameState[CharacterFrame] or EMPTY).ilvlDisplay:Show() end
                 if (frameState[CharacterFrame] or EMPTY).centerILvl then (frameState[CharacterFrame] or EMPTY).centerILvl:Show() end
                 if (frameState[CharacterFrame] or EMPTY).gearBtn then (frameState[CharacterFrame] or EMPTY).gearBtn:Show() end
                 ScheduleUpdate()
-                -- Refresh equipment slot borders (may be reset by Blizzard on reopen)
                 if #allEquipmentSlots > 0 and UpdateEquipmentSlotBorder then
                     C_Timer.After(0.05, function()
                         RefreshEquipmentSlotBorders()
                     end)
                 end
-                -- The layout helper creates statsPanel on the next frame during first open.
                 RunAfterCharacterPaneLayoutTick(function()
                     if statsPanel then
                         statsPanel:Show()
@@ -4105,14 +3562,8 @@ local function HookCharacterFrame()
         GetState(CharacterFrameTab1).popoutRestoreHooked = true
     end
 
-    ---------------------------------------------------------------------------
-    -- Settings gear icon and mini-panel (in-pane customization)
-    ---------------------------------------------------------------------------
-
-    -- Only create settings button if module is enabled
     local settings = GetSettings()
     if not settings.enabled then
-        -- Hide existing button if module was disabled
         if (frameState[CharacterFrame] or EMPTY).gearBtn then
             (frameState[CharacterFrame] or EMPTY).gearBtn:Hide()
         end
@@ -4122,28 +3573,20 @@ local function HookCharacterFrame()
         return
     end
 
-    -- Create gear icon (more prominent position in title bar)
     if not (frameState[CharacterFrame] or EMPTY).gearBtn then
         gearBtn = CreateFrame("Button", "QUI_CharacterSettingsBtn", CharacterFrame, "BackdropTemplate")
-        -- Width 118 keeps the icon and label inside one bordered button across UI scales.
-        -- Do NOT call gearLabel:GetStringWidth() to drive this — it returns 0 before
-        -- the FontString has been laid out, which collapses the button to icon-only width).
         QUICore:SetPixelPerfectSize(gearBtn, 118, 20)
         QUICore:SetPixelPerfectPoint(gearBtn, "TOPRIGHT", CharacterFrame, "TOPRIGHT", 6, -6)
         local br, bg, bb = GetCharacterBorderColor()
-        -- ApplyOnePixelBorder persists data.bgColor/data.borderColor; the prior
-        -- Helpers.SetFrameBackdrop* writes were shadowed by data.* on scale refresh.
         ApplyOnePixelBorder(gearBtn, true, { br, bg, bb, 1 }, { 0.1, 0.1, 0.1, 0.8 })
         gearBtn:SetFrameStrata("HIGH")
         gearBtn:SetFrameLevel(100)
 
-        -- Gear icon inside button
         local gearIcon = gearBtn:CreateTexture(nil, "ARTWORK")
         gearIcon:SetSize(14, 14)
         gearIcon:SetPoint("LEFT", gearBtn, "LEFT", 5, 0)
         gearIcon:SetTexture("Interface\\Buttons\\UI-OptionsButton")
 
-        -- "Settings" label
         local gearLabel = gearBtn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
         gearLabel:SetPoint("LEFT", gearIcon, "RIGHT", 4, 0)
         gearLabel:SetPoint("RIGHT", gearBtn, "RIGHT", -6, 0)
@@ -4152,7 +3595,6 @@ local function HookCharacterFrame()
         gearLabel:SetText(ns.L["Settings"])
         gearLabel:SetTextColor(C.text[1], C.text[2], C.text[3], 1)
 
-        -- Hover effect
         gearBtn:SetScript("OnEnter", function(self)
             local r, g, b = GetCharacterAccentColor()
             SetOnePixelBorderColors(self, { r, g, b, 1 })
@@ -4164,30 +3606,20 @@ local function HookCharacterFrame()
 
         GetState(CharacterFrame).gearBtn = gearBtn
 
-        -- Settings panel (positioned to the right of CharacterFrame)
         settingsPanel = CreateFrame("Frame", "QUI_CharSettingsPanel", CharacterFrame, "BackdropTemplate")
         settingsPanel:SetSize(450, 600)
         settingsPanel:SetPoint("TOPLEFT", CharacterFrame, "TOPRIGHT", 53, 0)
         ApplyOnePixelBorder(settingsPanel, true, { C.border[1], C.border[2], C.border[3], 1 }, { 0.051, 0.067, 0.09, 0.97 })
-        -- Match the main QUI options panel background (#0d1117 @ 0.97 alpha)
-        -- rather than the lighter character-panel bg, so settings popouts feel
-        -- like the same surface as the rest of QUI's settings UI.
-        -- Colors already persisted via ApplyOnePixelBorder above (data.* shadows the
-        -- _quiBg*/_quiBorder* fallback on refresh, so the prior Helpers writes were dead).
         settingsPanel:SetFrameStrata("DIALOG")
         settingsPanel:SetFrameLevel(200)
         settingsPanel:EnableMouse(true)
         settingsPanel:Hide()
         GetState(CharacterFrame).settingsPanel = settingsPanel
 
-        -- Subtle content-area wash (white 2%) layered on top of the dark
-        -- backdrop — matches QUI_Options C.bgContent so the surface reads as
-        -- the same "card" the main settings panel uses.
         local panelContentBg = settingsPanel:CreateTexture(nil, "BACKGROUND", nil, 1)
         SetInsetPixelPoints(panelContentBg, settingsPanel, 1)
         panelContentBg:SetColorTexture(1, 1, 1, 0.02)
 
-        -- Horizontal accent gradient wash to match the main QUI options panel.
         local panelGlow = settingsPanel:CreateTexture(nil, "BACKGROUND", nil, 2)
         SetInsetPixelPoints(panelGlow, settingsPanel, 1)
         panelGlow:SetTexture("Interface\\BUTTONS\\WHITE8x8")
@@ -4210,22 +3642,17 @@ local function HookCharacterFrame()
         GetState(settingsPanel).accentGlow = panelGlow
         settingsPanel:HookScript("OnShow", ApplyPanelGlow)
 
-        -- Title
         local title = settingsPanel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
         title:SetPoint("TOP", settingsPanel, "TOP", 0, -8)
         CJKFont(title, GeneralFontFace(), 14, "")
         title:SetText(ns.L["QUI Character Panel"])
         title:SetTextColor(C.accent[1], C.accent[2], C.accent[3], 1)
 
-        -- Close button (X)
         local closeBtn = CreateFrame("Button", nil, settingsPanel, "UIPanelCloseButton")
         closeBtn:SetPoint("TOPRIGHT", -3, -3)
         closeBtn:SetScript("OnClick", function() settingsPanel:Hide() end)
         StyleCloseButton(closeBtn)
 
-        -- Plain ScrollFrame (no template). See comment on the stats-panel scroll
-        -- frame: UIPanelScrollFrameTemplate inherits from SecureScrollFrameTemplate,
-        -- and addon-side geometry mods taint its xrange/yrange reads in 12.0+.
         local scrollFrame = CreateFrame("ScrollFrame", nil, settingsPanel)
         scrollFrame:SetPoint("TOPLEFT", settingsPanel, "TOPLEFT", 5, -28)
         scrollFrame:SetPoint("BOTTOMRIGHT", settingsPanel, "BOTTOMRIGHT", -5, 40)
@@ -4238,16 +3665,10 @@ local function HookCharacterFrame()
         end)
 
         local scrollChild = CreateFrame("Frame", nil, scrollFrame)
-        scrollChild:SetWidth(440)  -- settingsPanel(450) - left(5) - right(5)
-        scrollChild:SetHeight(1)  -- Will be updated after adding widgets
+        scrollChild:SetWidth(440)
+        scrollChild:SetHeight(1)
         scrollFrame:SetScrollChild(scrollChild)
 
-        -- Defer the form-widget construction (and the QUI.GUI widget-API load
-        -- that comes with it) until the user actually opens the settings
-        -- panel. The scaffold above is cheap native frames; only the form
-        -- widgets below need the QUI_Options companion addon, so building
-        -- them lazily keeps QUI_Options unloaded at login when the user
-        -- never opens this panel.
         local panelContentBuilt = false
         local function BuildPanelContent()
             if panelContentBuilt then return true end
@@ -4265,12 +3686,10 @@ local function HookCharacterFrame()
             local settings = GetSettings()
             local charDB = settings
 
-        -- Layout constants
         local PAD = 8
         local FORM_ROW = 28
         local y = -5
 
-        -- Refresh callback for overlay toggles
         local function RefreshAll()
             if _G.QUI_RefreshCharacterPanelFonts then
                 _G.QUI_RefreshCharacterPanelFonts()
@@ -4278,9 +3697,6 @@ local function HookCharacterFrame()
             ScheduleUpdate()
         end
 
-        -- Alternating-row tint helpers (mirror the main QUI options panel
-        -- rhythm: odd rows plain, even rows with a 2% white wash). The counter
-        -- resets at every section header so each section starts clean.
         local _rowIdx = 0
         local function ResetRows() _rowIdx = 0 end
         local function PlaceRow(widget, currentY)
@@ -4297,18 +3713,13 @@ local function HookCharacterFrame()
             return currentY - FORM_ROW
         end
 
-        -- Widget references for conditional disable
         local widgetRefs = {}
 
-        ---------------------------------------------------------------------------
-        -- APPEARANCE Section
-        ---------------------------------------------------------------------------
         local appearHeader = GUI:CreateSectionHeader(scrollChild, ns.L["Appearance"])
         appearHeader:SetPoint("TOPLEFT", PAD, y)
         y = y - appearHeader.gap
         ResetRows()
 
-        -- Scale slider (multiplier on base 1.30 scale, range 0.75-1.5)
         local BASE_SCALE = 1.30
         local scaleSlider = GUI:CreateFormSlider(scrollChild, ns.L["Panel Scale"], 0.75, 1.5, 0.05, "panelScale", charDB, function()
             local multiplier = charDB.panelScale or 1.0
@@ -4317,20 +3728,15 @@ local function HookCharacterFrame()
             { description = ns.L["Zoom factor applied to the character panel on top of the base scale. 1.0 leaves the panel at the default QUI size."] })
         y = PlaceRow(scaleSlider, y)
 
-        -- Background color (uses shared skinning background color)
         local core = GetCore()
         local generalDB = core and core.db and core.db.profile and core.db.profile.general
         local bgColorPicker = nil
         if generalDB then
             bgColorPicker = GUI:CreateFormColorPicker(scrollChild, ns.L["Background Color"], "skinBgColor", generalDB, function()
-                -- Update local customBg if we own it
                 if customBg and not IsSkinningHandlingBackground() then
                     local col = generalDB.skinBgColor or C.bg
-                    -- Persist into data.bgColor so the picked color survives a UI-scale
-                    -- rebuild (a bare SetBackdropColor reverts on the next refresh).
                     SetOnePixelBorderColors(customBg, nil, { col[1], col[2], col[3], col[4] or 0.95 })
                 end
-                -- Also refresh skinning module if it's active
                 if _G.QUI_RefreshCharacterFrameColors then
                     _G.QUI_RefreshCharacterFrameColors()
                 end
@@ -4338,7 +3744,6 @@ local function HookCharacterFrame()
                 { description = ns.L["Background color applied to the character panel. Shared with the global skinning background so character and inspect panels match."] })
             y = PlaceRow(bgColorPicker, y)
 
-            -- Refresh color picker when panel shows (in case color changed in main QUI options)
             settingsPanel:HookScript("OnShow", function()
                 if bgColorPicker and bgColorPicker.swatch and generalDB and generalDB.skinBgColor then
                     local col = generalDB.skinBgColor
@@ -4349,9 +3754,6 @@ local function HookCharacterFrame()
 
         y = y - 10
 
-        ---------------------------------------------------------------------------
-        -- SLOT OVERLAYS Section
-        ---------------------------------------------------------------------------
         local overlayHeader = GUI:CreateSectionHeader(scrollChild, ns.L["Slot Overlays"])
         overlayHeader:SetPoint("TOPLEFT", PAD, y)
         y = y - overlayHeader.gap
@@ -4383,9 +3785,6 @@ local function HookCharacterFrame()
 
         y = y - 10
 
-        ---------------------------------------------------------------------------
-        -- STATS PANEL Section
-        ---------------------------------------------------------------------------
         local statsPanelHeader = GUI:CreateSectionHeader(scrollChild, ns.L["Stats Panel"])
         statsPanelHeader:SetPoint("TOPLEFT", PAD, y)
         y = y - statsPanelHeader.gap
@@ -4393,7 +3792,6 @@ local function HookCharacterFrame()
 
         local showTooltips = GUI:CreateFormCheckbox(scrollChild, ns.L["Show Stat Tooltips"], "showTooltips", charDB, function()
             RefreshAll()
-            -- Force update stats panel to apply tooltip changes
             if statsPanel then
                 UpdateStatsPanel(statsPanel, "player")
             end
@@ -4402,9 +3800,6 @@ local function HookCharacterFrame()
 
         y = y - 10
 
-        ---------------------------------------------------------------------------
-        -- SECONDARY STATS Section
-        ---------------------------------------------------------------------------
         local secondaryStatsHeader = GUI:CreateSectionHeader(scrollChild, ns.L["Secondary Stats"])
         secondaryStatsHeader:SetPoint("TOPLEFT", PAD, y)
         y = y - secondaryStatsHeader.gap
@@ -4421,9 +3816,6 @@ local function HookCharacterFrame()
 
         y = y - 10
 
-        ---------------------------------------------------------------------------
-        -- TEXT SIZES Section
-        ---------------------------------------------------------------------------
         local textSizeHeader = GUI:CreateSectionHeader(scrollChild, ns.L["Text Sizes"])
         textSizeHeader:SetPoint("TOPLEFT", PAD, y)
         y = y - textSizeHeader.gap
@@ -4443,9 +3835,6 @@ local function HookCharacterFrame()
 
         y = y - 10
 
-        ---------------------------------------------------------------------------
-        -- TEXT COLORS Section
-        ---------------------------------------------------------------------------
         local textColorHeader = GUI:CreateSectionHeader(scrollChild, ns.L["Text Colors"])
         textColorHeader:SetPoint("TOPLEFT", PAD, y)
         y = y - textColorHeader.gap
@@ -4455,7 +3844,6 @@ local function HookCharacterFrame()
             { description = ns.L["Color used for the stat values in the stats panel."] })
         y = PlaceRow(statsTextColor, y)
 
-        -- Header Class Color toggle
         local headerClassColor = GUI:CreateFormCheckbox(scrollChild, ns.L["Header Class Color"], "headerClassColor", charDB, function()
             RefreshAll()
             if widgetRefs.headerColor then
@@ -4471,7 +3859,6 @@ local function HookCharacterFrame()
         headerColor:SetAlpha(charDB.headerClassColor and 0.4 or 1.0)
         y = PlaceRow(headerColor, y)
 
-        -- Enchant Class Color toggle
         local enchantClassColor = GUI:CreateFormCheckbox(scrollChild, ns.L["Enchant Class Color"], "enchantClassColor", charDB, function()
             RefreshAll()
             if widgetRefs.enchantColor then
@@ -4497,14 +3884,9 @@ local function HookCharacterFrame()
 
         y = y - 10
 
-        -- Update scroll child height
         scrollChild:SetHeight(math.abs(y) + 20)
 
-        ---------------------------------------------------------------------------
-        -- Reset Button (at bottom of panel, outside scroll)
-        ---------------------------------------------------------------------------
         local resetBtn = GUI:CreateButton(settingsPanel, ns.L["Reset"], 80, 24, function()
-            -- Reset all settings to defaults (background color is shared via Skinning tab)
             charDB.panelScale = 1.0
             charDB.showItemName = true
             charDB.showItemLevel = true
@@ -4523,13 +3905,10 @@ local function HookCharacterFrame()
             charDB.noEnchantTextColor = {0.5, 0.5, 0.5}
             charDB.upgradeTrackColor = {0.98, 0.60, 0.35, 1}
 
-            -- Apply scale (base 1.30 * multiplier 1.0)
             SetCharacterFrameScale(1.30)
 
-            -- Refresh and reload the settings panel to reflect reset values
             RefreshAll()
 
-            -- Reload the settings panel to update widget states
             settingsPanel:Hide()
             RunAfterCharacterPaneLayoutTick(function()
                 settingsPanel:Show()
@@ -4539,13 +3918,7 @@ local function HookCharacterFrame()
 
             return true
         end
-        -- (BuildPanelContent body kept at the original indent to keep this
-        -- patch a small diff. Closing 'end' above terminates the function.)
 
-        -- Toggle panel on gear click. Lazily build the form widgets (and
-        -- load QUI_Options as a side effect) on first open so the
-        -- companion addon stays unloaded when the user never opens this
-        -- panel.
         gearBtn:SetScript("OnClick", function()
             if settingsPanel:IsShown() then
                 settingsPanel:Hide()
@@ -4556,7 +3929,6 @@ local function HookCharacterFrame()
         end)
     end
 
-    -- Hide settings panel when character frame closes (outside creation block)
     CharacterFrame:HookScript("OnHide", function()
         if (frameState[CharacterFrame] or EMPTY).settingsPanel then
             (frameState[CharacterFrame] or EMPTY).settingsPanel:Hide()
@@ -4564,9 +3936,6 @@ local function HookCharacterFrame()
     end)
 end
 
----------------------------------------------------------------------------
--- Event frame for initialization
----------------------------------------------------------------------------
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("ADDON_LOADED")
 eventFrame:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
@@ -4586,7 +3955,6 @@ eventFrame:RegisterEvent("PVP_MATCH_ACTIVE")
 
 eventFrame:SetScript("OnEvent", function(self, event, arg1)
     if event == "ADDON_LOADED" then
-        -- Note: Blizzard_InspectUI is now hooked by qui_inspect.lua
         if arg1 == "Blizzard_CharacterFrame" then
             HookCharacterFrame()
         end
@@ -4598,7 +3966,6 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
            event == "CHALLENGE_MODE_RESET" or event == "PVP_MATCH_ACTIVE" then
         ScheduleUpdate()
     elseif event == "PLAYER_ENTERING_WORLD" then
-        -- Delayed init check
         C_Timer.After(0.5, function()
             if CharacterFrame then
                 HookCharacterFrame()
@@ -4610,9 +3977,6 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
     end
 end)
 
--- LOD catch-up: first PEW already fired before this module loads. Also covers
--- Blizzard_CharacterFrame having loaded before us (CharacterFrame exists).
--- ns.WhenLoggedIn is nil only in the headless test harness.
 if ns.WhenLoggedIn then
     ns.WhenLoggedIn(function()
         C_Timer.After(0.5, function()
@@ -4624,13 +3988,7 @@ if ns.WhenLoggedIn then
     end)
 end
 
----------------------------------------------------------------------------
--- Global refresh function
----------------------------------------------------------------------------
 _G.QUI_RefreshCharacterPane = function()
-    -- Re-apply the chrome that reads the skin colors (close button + sidebar
-    -- tabs) so a global skin-color change recolors them live, not just the
-    -- equipment-slot borders that ScheduleUpdate handles.
     if CharacterFrame then
         if CharacterFrame.CloseButton then
             StyleCloseButton(CharacterFrame.CloseButton)
@@ -4640,9 +3998,6 @@ _G.QUI_RefreshCharacterPane = function()
     ScheduleUpdate()
 end
 
----------------------------------------------------------------------------
--- Module API
----------------------------------------------------------------------------
 QUI.CharacterPane = {
     Refresh = function()
         ScheduleUpdate()
@@ -4653,20 +4008,13 @@ QUI.CharacterPane = {
 
 ns.CharacterPane = QUI.CharacterPane
 
----------------------------------------------------------------------------
--- Shared exports for qui_inspect.lua
--- These functions/tables are exported for the inspect module to use
----------------------------------------------------------------------------
 QUI.CharacterShared = {
-    -- Constants
     EQUIPMENT_SLOTS = EQUIPMENT_SLOTS,
     C = C,
 
-    -- Settings/DB access
     GetSettings = GetSettings,
     GetGlobalFont = GetGlobalFont,
 
-    -- Core functions
     CreateSlotOverlay = CreateSlotOverlay,
     UpdateAllSlotOverlays = UpdateAllSlotOverlays,
     ScheduleUpdate = ScheduleUpdate,
@@ -4674,7 +4022,6 @@ QUI.CharacterShared = {
     GetILvlColor = GetILvlColor,
     AbbreviateClassName = AbbreviateClassName,
 
-    -- Secret-safe tooltip/item parsers (shared with inspect.lua)
     CleanTooltipText = CleanTooltipText,
     ReadableNumber = ReadableNumber,
     GetReadableInventoryItemLink = GetReadableInventoryItemLink,
@@ -4689,9 +4036,6 @@ if ns.Registry then
         group = "character",
         importCategories = { "skinning" },
     })
-    -- Second registration in the "skinning" group so a global skin-color change
-    -- (RefreshAll("skinning")) recolors the character pane like every other
-    -- skinned frame. The "character" group above is driven by other triggers.
     ns.Registry:Register("characterSkin", {
         refresh = _G.QUI_RefreshCharacterPane,
         priority = 45,

@@ -47,13 +47,6 @@ GUI.Colors = GUI.Colors or {
 
 local C = GUI.Colors
 
----------------------------------------------------------------------------
--- FONT PATH (central) — bundled Quazii font, resolved lazily so LSM / AssetPath
--- are ready regardless of core file load order. QUI_Options/framework.lua mirrors
--- this; defining it on the core GUI shell makes the path reachable suite-wide at
--- login (UIKit.CreateButton and other early factories resolve through it before
--- the Options addon loads).
----------------------------------------------------------------------------
 function GUI:GetFontPath()
     if not self.FONT_PATH then
         local lsm = ns.LSM
@@ -254,7 +247,6 @@ function GUI:ResolveThemePreset(presetName)
 
     if presetName == "Class Colored" then
         local _, class = UnitClass("player")
-        -- CUSTOM_CLASS_COLORS-aware via the shared helper (resolved at runtime)
         local color = ns.Helpers and ns.Helpers.GetClassColorTable(class)
         if color then return color.r, color.g, color.b end
         return 0.376, 0.647, 0.980
@@ -328,6 +320,7 @@ end
 local function ShellShow()
     if QUI and type(QUI.EnsureOptionsLoaded) == "function" then
         local ok = QUI:EnsureOptionsLoaded()
+        ---@type fun(...): ... -- GUI.Show is swapped in by the LoD Options addon
         local show = GUI.Show
         if ok and type(show) == "function" and show ~= ShellShow then
             return show(GUI)
